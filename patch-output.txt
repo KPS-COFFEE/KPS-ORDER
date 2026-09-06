@@ -1,0 +1,4 @@
+/home/runner/work/KPS-ORDER/KPS-ORDER/tools/patch_apex_v2.py:50: SyntaxWarning: invalid escape sequence '\/'
+  const APEX_API_BASE = (document.querySelector('meta[name="kps-apex-api"]')?.content || 'https://kps-apex-os-v507-test.onrender.com').replace(/\\\/$/, '');
+Required marker(s) not found: ['const sendOrder = () => {']
+exit_code=1
