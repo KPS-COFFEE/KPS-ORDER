@@ -23,6 +23,23 @@ jobs:
           python-version: '3.12'
       - name: Inspect current uploaded index integration points
         run: python tools/inspect_index.py
+      - name: Capture actual checkout/send source anchors
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('index.html').read_text(encoding='utf-8',errors='replace')
+          out=[]
+          for term in ['sendOrder','kpsSendOrder','els.send','wa.me','DELIVERY_WHATSAPP']:
+              out.append(f'=== {term} count={text.count(term)} ===')
+              start=0
+              for _ in range(min(text.count(term),4)):
+                  pos=text.find(term,start)
+                  if pos<0: break
+                  out.append(text[max(0,pos-900):min(len(text),pos+1800)])
+                  out.append('\n---\n')
+                  start=pos+len(term)
+          Path('send-anchor-output.txt').write_text('\n'.join(out),encoding='utf-8')
+          PY
       - name: Make patch tolerant of current sendOrder formatting
         run: |
           python - <<'PY'
@@ -48,6 +65,7 @@ jobs:
           set +e
           python tools/patch_apex_v2.py > patch-output.txt 2>&1
           code=$?
+          cat send-anchor-output.txt >> patch-output.txt
           cat patch-output.txt
           echo "exit_code=$code" >> patch-output.txt
           echo "code=$code" >> "$GITHUB_OUTPUT"
