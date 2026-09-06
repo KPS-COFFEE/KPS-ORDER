@@ -31,7 +31,10 @@ jobs:
           s=p.read_text(encoding='utf-8')
           s=s.replace('    "const sendOrder = () => {",\n','')
           old='send_start = text.find("  const sendOrder = () => {")'
-          new="send_match = re.search(r'(?m)^\\s*const\\s+sendOrder\\s*=\\s*(?:async\\s*)?\\(\\)\\s*=>\\s*\\{', text)\\nif not send_match:\\n    raise SystemExit(\"sendOrder function not found\")\\nsend_start = send_match.start()"
+          new='''send_match = re.search(r'(?m)^\\s*const\\s+sendOrder\\s*=\\s*(?:async\\s*)?\\(\\)\\s*=>\\s*\\{', text)
+          if not send_match:
+              raise SystemExit("sendOrder function not found")
+          send_start = send_match.start()'''
           if old not in s:
               raise SystemExit('sendOrder patch-script anchor not found')
           s=s.replace(old,new,1)
