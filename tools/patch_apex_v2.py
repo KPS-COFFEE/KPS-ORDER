@@ -6,24 +6,33 @@ from pathlib import Path
 PATH = Path("index.html")
 text = PATH.read_text(encoding="utf-8")
 
-if "KPS_APEX_V2_INTEGRATION" in text:
+MARKER = "KPS_APEX_V2_INTEGRATION"
+if MARKER in text:
     print("KPS APEX V2 integration already present")
     raise SystemExit(0)
 
 required = [
-    "<script id=\"kpsOrderScript\">",
+    '<script id="kpsOrderScript">',
     "const DELIVERY_WHATSAPP",
     "const addProduct = (article, button) => {",
     "const sendOrder = () => {",
     "$$('.add-to-cart-btn').forEach((button) => {",
-    "id=\"kpsCustomerNotes\"",
+    'id="kpsCustomerNotes"',
 ]
-for token in required:
-    if token not in text:
-        raise SystemExit(f"Required marker not found: {token}")
+missing = [token for token in required if token not in text]
+if missing:
+    raise SystemExit(f"Required marker(s) not found: {missing}")
 
-# Payment remains part of the same checkout; no redesign of the working panel.
-payment = '''<div class="kps-field" id="kpsPaymentField">
+
+def replace_once(old: str, new: str, label: str) -> None:
+    global text
+    if old not in text:
+        raise SystemExit(f"Anchor not found: {label}")
+    text = text.replace(old, new, 1)
+
+
+notes_anchor = '<div class="kps-field">\n<label for="kpsCustomerNotes">ملاحظات الطلب</label>'
+payment_html = '''<div class="kps-field" id="kpsPaymentField">
 <label for="kpsPaymentMethod">طريقة الدفع *</label>
 <select id="kpsPaymentMethod">
 <option value="cash">كاش</option>
@@ -32,37 +41,55 @@ payment = '''<div class="kps-field" id="kpsPaymentField">
 <small class="kps-field-help">يتم تثبيت طريقة الدفع مع الطلب داخل KPS APEX.</small>
 </div>
 '''
-notes_marker = '<div class="kps-field">\n<label for="kpsCustomerNotes">ملاحظات الطلب</label>'
-text = text.replace(notes_marker, payment + notes_marker, 1)
+replace_once(notes_anchor, payment_html + notes_anchor, "checkout notes/payment")
 
-# Keep the public endpoint configurable and secret-free. This is a public API URL, not a credential.
-const_marker = "  const DELIVERY_WHATSAPP = '966550472662'; // غيّر الرقم هنا عند تخصيص رقم التوصيل.\n"
-constants = const_marker + '''  // KPS_APEX_V2_INTEGRATION — public customer-order API only; never place secrets in this public repository.
-  const APEX_API_BASE = (document.querySelector('meta[name="kps-apex-api"]')?.content || 'https://kps-apex-os-v507-test.onrender.com').replace(/\\/$/, '');
+delivery_match = re.search(r"(?m)^(\s*const DELIVERY_WHATSAPP\s*=\s*'[^']+';[^\n]*\n)", text)
+if not delivery_match:
+    raise SystemExit("DELIVERY_WHATSAPP constant not found")
+constants = delivery_match.group(1) + '''  // KPS_APEX_V2_INTEGRATION — public catalog/order endpoints only; never place secrets here.
+  const APEX_API_BASE = (document.querySelector('meta[name="kps-apex-api"]')?.content || 'https://kps-apex-os-v507-test.onrender.com').replace(/\\\/$/, '');
   const APEX_CATALOG_URL = `${APEX_API_BASE}/api/public/v2/catalog/delivery`;
   const APEX_ORDER_URL = `${APEX_API_BASE}/api/public/v2/orders`;
 '''
-text = text.replace(const_marker, constants, 1)
+text = text[:delivery_match.start()] + constants + text[delivery_match.end():]
 
-vars_marker = "  let activeInvoiceNumber = '';\n  let activeInvoiceGovernorate = '';\n"
-vars_new = vars_marker + '''  let activeRequestKey = '';
+vars_anchor = "  let activeInvoiceNumber = '';\n  let activeInvoiceGovernorate = '';\n"
+replace_once(
+    vars_anchor,
+    vars_anchor + '''  let activeRequestKey = '';
   let apexCatalogReady = false;
   let apexMenuVersion = 0;
   let apexCatalogController = null;
-'''
-text = text.replace(vars_marker, vars_new, 1)
+''',
+    "integration state",
+)
 
-# Bind the new payment field inside the existing UI object.
-els_marker = "    notes: $('#kpsCustomerNotes'),\n"
-text = text.replace(els_marker, els_marker + "    payment: $('#kpsPaymentMethod'),\n", 1)
+replace_once(
+    "    notes: $('#kpsCustomerNotes'),\n",
+    "    notes: $('#kpsCustomerNotes'),\n    payment: $('#kpsPaymentMethod'),\n",
+    "payment element",
+)
 
-# Product actions remain the same visually, but the live APEX catalog is authoritative.
-add_marker = "  const addProduct = (article, button) => {\n"
-text = text.replace(add_marker, add_marker + "    if (!apexCatalogReady) { showToast('جاري تحديث المنيو من KPS APEX…'); return; }\n    activeRequestKey = '';\n", 1)
-text = text.replace("  const updateQuantity = (id, delta) => {\n", "  const updateQuantity = (id, delta) => {\n    activeRequestKey = '';\n", 1)
-text = text.replace("  const removeItem = (id) => {\n", "  const removeItem = (id) => {\n    activeRequestKey = '';\n", 1)
+replace_once(
+    "  const addProduct = (article, button) => {\n",
+    "  const addProduct = (article, button) => {\n    if (!apexCatalogReady) { showToast('جاري تحديث المنيو من KPS APEX…'); return; }\n    activeRequestKey = '';\n",
+    "addProduct",
+)
+replace_once(
+    "  const updateQuantity = (id, delta) => {\n",
+    "  const updateQuantity = (id, delta) => {\n    activeRequestKey = '';\n",
+    "updateQuantity",
+)
+replace_once(
+    "  const removeItem = (id) => {\n",
+    "  const removeItem = (id) => {\n    activeRequestKey = '';\n",
+    "removeItem",
+)
 
-helper_marker = "  const normalizePhone = (value) => value.replace(/\\D/g, '');\n"
+helper_anchor = "  const normalizePhone = (value) => value.replace(/\\D/g, '');\n"
+if helper_anchor not in text:
+    raise SystemExit("normalizePhone anchor not found")
+
 helpers = r'''  const normalizeCatalogText = (value) => String(value || '')
     .replace(/[\u064B-\u065F\u0670]/g, '')
     .replace(/[إأآ]/g, 'ا')
@@ -111,15 +138,18 @@ helpers = r'''  const normalizeCatalogText = (value) => String(value || '')
       return title && normalizeCatalogText(title.textContent).includes(wanted);
     });
     if (found) return found;
+
     const section = document.createElement('section');
     const safeId = `apex-category-${wanted || 'menu'}`;
     section.id = safeId;
-    section.innerHTML = `<div class="section-title"><div class="line"></div><h2></h2></div><div class="grid"></div>`;
+    section.innerHTML = '<div class="section-title"><div class="line"></div><h2></h2></div><div class="grid"></div>';
     section.querySelector('h2').textContent = category || 'المنيو';
-    const footer = document.querySelector('footer.footer');
-    (footer?.parentNode || document.body).insertBefore(section, footer || null);
+
+    const contact = document.getElementById('contact');
+    (contact?.parentNode || document.body).insertBefore(section, contact || null);
+
     const nav = document.querySelector('.top-sticky');
-    if (nav) {
+    if (nav && !nav.querySelector(`a[href="#${safeId}"]`)) {
       const link = document.createElement('a');
       link.href = `#${safeId}`;
       link.textContent = category || 'المنيو';
@@ -131,6 +161,7 @@ helpers = r'''  const normalizeCatalogText = (value) => String(value || '')
   const makeProductArticle = (item) => {
     const article = document.createElement('article');
     article.className = 'card product order-product';
+
     const imageUrl = absoluteApexUrl(item.image_url);
     if (imageUrl) {
       const img = document.createElement('img');
@@ -144,6 +175,7 @@ helpers = r'''  const normalizeCatalogText = (value) => String(value || '')
       placeholder.style.cssText = 'min-height:180px;display:grid;place-items:center;background:radial-gradient(circle,#2b130b,#111 68%);color:#f26532;font-weight:900;font-size:24px';
       article.appendChild(placeholder);
     }
+
     const info = document.createElement('div');
     info.className = 'info';
     const h3 = document.createElement('h3');
@@ -168,11 +200,22 @@ helpers = r'''  const normalizeCatalogText = (value) => String(value || '')
     article.dataset.productName = item.name || '';
     article.dataset.productPrice = current.toFixed(2);
     article.dataset.apexProductCode = item.code || '';
+
     const title = article.querySelector('h3');
     if (title) title.textContent = item.name || '';
-    const image = article.querySelector('img');
+
     const remoteImage = absoluteApexUrl(item.image_url);
-    if (image && remoteImage) { image.src = remoteImage; image.alt = item.name || 'KPS COFFEE'; }
+    let image = article.querySelector('img');
+    if (remoteImage) {
+      if (!image) {
+        image = document.createElement('img');
+        image.loading = 'lazy';
+        article.prepend(image);
+      }
+      image.src = remoteImage;
+      image.alt = item.name || 'KPS COFFEE';
+    }
+
     const price = article.querySelector('.info > span') || article.querySelector('.info span');
     if (price) {
       price.textContent = '';
@@ -197,40 +240,77 @@ helpers = r'''  const normalizeCatalogText = (value) => String(value || '')
     apexCatalogReady = false;
     setApexStatus('loading', 'جاري تحديث المنيو والأسعار والعروض من KPS APEX…');
     $$('.add-to-cart-btn').forEach((button) => { button.disabled = true; });
+
     if (apexCatalogController) apexCatalogController.abort();
     apexCatalogController = new AbortController();
     const timeout = setTimeout(() => apexCatalogController.abort(), 12000);
+
     try {
-      const response = await fetch(APEX_CATALOG_URL, { headers: { 'Accept': 'application/json' }, cache: 'no-store', signal: apexCatalogController.signal });
+      const response = await fetch(APEX_CATALOG_URL, {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store',
+        signal: apexCatalogController.signal
+      });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
       const payload = await response.json();
       if (!payload?.ok || !Array.isArray(payload.items)) throw new Error('Invalid catalog payload');
+
       apexMenuVersion = Number(payload.menu_version || 0);
       const existing = [...document.querySelectorAll('article.order-product')];
-      const byName = new Map(existing.map((article) => [normalizeCatalogText(article.dataset.productName || article.querySelector('h3')?.textContent), article]));
-      const byCode = new Map(existing.filter((article) => article.dataset.apexProductCode).map((article) => [String(article.dataset.apexProductCode), article]));
+      const byName = new Map(existing.map((article) => [
+        normalizeCatalogText(article.dataset.productName || article.querySelector('h3')?.textContent),
+        article
+      ]));
+      const byCode = new Map(existing.filter((article) => article.dataset.apexProductCode).map((article) => [
+        String(article.dataset.apexProductCode),
+        article
+      ]));
       const used = new Set();
+
       for (const item of payload.items) {
         let article = byCode.get(String(item.code || '')) || byName.get(normalizeCatalogText(item.name));
         if (!article) {
           article = makeProductArticle(item);
           const section = sectionForCategory(item.category || 'المنيو');
           let grid = section.querySelector('.grid');
-          if (!grid) { grid = document.createElement('div'); grid.className = 'grid'; section.appendChild(grid); }
+          if (!grid) {
+            grid = document.createElement('div');
+            grid.className = 'grid';
+            section.appendChild(grid);
+          }
           grid.appendChild(article);
         }
         paintCatalogItem(article, item);
         used.add(article);
       }
-      existing.forEach((article) => { if (!used.has(article)) article.hidden = true; });
+
+      existing.forEach((article) => {
+        if (!used.has(article)) article.hidden = true;
+      });
+
       apexCatalogReady = true;
-      $$('.add-to-cart-btn').forEach((button) => { if (!button.closest('article')?.hidden) button.disabled = false; });
-      document.querySelectorAll('.kps-price-note').forEach((node) => { node.textContent = `الأسعار والعروض محدثة مباشرة من KPS APEX${apexMenuVersion ? ` — Menu V${apexMenuVersion}` : ''}. يتم تثبيت الطلب في النظام أولًا ثم فتح واتساب.`; });
-      setApexStatus('ok', `متصل بـ KPS APEX ✓${apexMenuVersion ? ` · Menu V${apexMenuVersion}` : ''}${payload.delivery_open === false ? ' · التوصيل مغلق حاليًا' : ''}`);
+      $$('.add-to-cart-btn').forEach((button) => {
+        if (!button.closest('article')?.hidden) button.disabled = false;
+      });
+
+      document.querySelectorAll('.kps-price-note').forEach((node) => {
+        node.textContent = `الأسعار والعروض محدثة مباشرة من KPS APEX${apexMenuVersion ? ` — Menu V${apexMenuVersion}` : ''}. يتم تثبيت الطلب في النظام أولًا ثم فتح واتساب.`;
+      });
+      setApexStatus(
+        'ok',
+        `متصل بـ KPS APEX ✓${apexMenuVersion ? ` · Menu V${apexMenuVersion}` : ''}${payload.delivery_open === false ? ' · التوصيل مغلق حاليًا' : ''}`
+      );
+      if (payload.delivery_open === false) {
+        $$('.add-to-cart-btn').forEach((button) => { button.disabled = true; });
+      }
     } catch (error) {
       console.error('KPS APEX catalog sync failed', error);
       apexCatalogReady = false;
-      $$('.add-to-cart-btn').forEach((button) => { button.disabled = true; button.title = 'تعذر تحديث المنيو من KPS APEX'; });
+      $$('.add-to-cart-btn').forEach((button) => {
+        button.disabled = true;
+        button.title = 'تعذر تحديث المنيو من KPS APEX';
+      });
       setApexStatus('error', 'تعذر تحديث المنيو من KPS APEX. الطلب متوقف مؤقتًا لحماية الأسعار والطلبات.');
     } finally {
       clearTimeout(timeout);
@@ -243,23 +323,29 @@ helpers = r'''  const normalizeCatalogText = (value) => String(value || '')
   };
 
 '''
-text = text.replace(helper_marker, helpers + helper_marker, 1)
+text = text.replace(helper_anchor, helpers + helper_anchor, 1)
 
-# Replace only the old WhatsApp-only finalization. WhatsApp remains, but only after APEX has durably accepted the order.
-send_pattern = re.compile(
-    r"  const sendOrder = \(\) => \{\n.*?\n  \};\n\n  \$\$\('\.add-to-cart-btn'\)\.forEach\(\(button\) => \{\n    button\.addEventListener\('click', \(\) => addProduct\(button\.closest\('article\.product'\), button\)\);\n  \}\);",
-    re.S,
-)
+send_start = text.find("  const sendOrder = () => {")
+listeners_start = text.find("  $$('.add-to-cart-btn').forEach((button) => {", send_start)
+if send_start < 0 or listeners_start < 0:
+    raise SystemExit("sendOrder/listener block not found")
+listeners_end = text.find("  els.fab.addEventListener", listeners_start)
+if listeners_end < 0:
+    raise SystemExit("end of original product listener block not found")
+
 send_replacement = r'''  const sendOrder = async () => {
     const error = validateCheckout();
     if (error) { showToast(error); return; }
     if (!apexCatalogReady) { showToast('تعذر تثبيت الطلب: المنيو غير متصل بـ KPS APEX'); return; }
     if (!cart.size) { showToast('السلة فارغة'); return; }
+
     savePhone();
     if (!activeRequestKey) activeRequestKey = newRequestKey();
+
     const originalText = els.send.textContent;
     els.send.disabled = true;
     els.send.textContent = 'جاري تثبيت الطلب في KPS APEX…';
+
     const payload = {
       request_key: activeRequestKey,
       customer_name: els.name.value.trim(),
@@ -268,8 +354,12 @@ send_replacement = r'''  const sendOrder = async () => {
       district: els.district.value.trim(),
       location_url: els.location.value.trim(),
       payment_method: els.payment?.value || 'cash',
-      items: [...cart.values()].map((item) => ({ product_id: Number(item.id), qty: Number(item.qty) }))
+      items: [...cart.values()].map((item) => ({
+        product_id: Number(item.id),
+        qty: Number(item.qty)
+      }))
     };
+
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 18000);
@@ -281,20 +371,28 @@ send_replacement = r'''  const sendOrder = async () => {
           body: JSON.stringify(payload),
           signal: controller.signal
         });
-      } finally { clearTimeout(timeout); }
+      } finally {
+        clearTimeout(timeout);
+      }
+
       let result = {};
       try { result = await response.json(); } catch (_) {}
       if (!response.ok || !result?.ok) {
         const detail = result?.detail || result?.message || `HTTP ${response.status}`;
         throw new Error(detail);
       }
+
       activeInvoiceNumber = result.invoice_no;
       activeInvoiceGovernorate = els.governorate.value.trim();
       apexMenuVersion = Number(result.menu_version || apexMenuVersion || 0);
+
       const { quantity } = getTotals();
       const serverSubtotal = Number(result.total_halalas || 0) / 100;
-      const lines = [...cart.values()].map((item, index) => `${index + 1}) ${item.name} × ${item.qty} = ${money(item.price * item.qty)}`);
+      const lines = [...cart.values()].map((item, index) =>
+        `${index + 1}) ${item.name} × ${item.qty} = ${money(item.price * item.qty)}`
+      );
       const paymentLabel = els.payment?.value === 'network' ? 'شبكة / دفع إلكتروني' : 'كاش';
+
       const message = [
         '🟠 *طلب توصيل جديد - KPS COFFEE*',
         `رقم الطلب في KPS APEX: *${result.invoice_no}*`,
@@ -317,12 +415,16 @@ send_replacement = r'''  const sendOrder = async () => {
         '',
         '✅ تم تثبيت الطلب في KPS APEX قبل إرسال واتساب'
       ].filter(Boolean).join('\n');
+
       const url = `https://wa.me/${DELIVERY_WHATSAPP}?text=${encodeURIComponent(message)}`;
       window.open(url, '_blank', 'noopener,noreferrer');
       showToast(`تم تثبيت الطلب ${result.invoice_no} وفتح واتساب`);
+      setApexStatus('ok', `تم تثبيت الطلب ${result.invoice_no} في KPS APEX ✓`);
     } catch (error) {
       console.error('KPS APEX order creation failed', error);
-      const message = error?.name === 'AbortError' ? 'انتهت مهلة الاتصال. اضغط إرسال مرة أخرى؛ لن يتكرر الطلب.' : `تعذر تثبيت الطلب: ${error?.message || 'خطأ اتصال'}`;
+      const message = error?.name === 'AbortError'
+        ? 'انتهت مهلة الاتصال. اضغط إرسال مرة أخرى؛ لن يتكرر الطلب.'
+        : `تعذر تثبيت الطلب: ${error?.message || 'خطأ اتصال'}`;
       showToast(message);
       setApexStatus('error', `${message} لم يتم فتح واتساب حتى لا يضيع الطلب.`);
     } finally {
@@ -332,18 +434,21 @@ send_replacement = r'''  const sendOrder = async () => {
   };
 
   $$('.add-to-cart-btn').forEach(bindProductButton);
-  syncCatalogFromApex();'''
-text, count = send_pattern.subn(send_replacement, text, count=1)
-if count != 1:
-    raise SystemExit(f"sendOrder patch count={count}, expected 1")
+  syncCatalogFromApex();
+'''
+text = text[:send_start] + send_replacement + text[listeners_end:]
 
-# The server invoice is authoritative; stop generating a customer-only invoice when using APEX.
-text = text.replace("    if (!activeInvoiceNumber || activeInvoiceGovernorate !== governorate) {\n      activeInvoiceNumber = buildInvoiceNumber(governorate);\n      activeInvoiceGovernorate = governorate;\n    }\n", "", 1)
-
-# Any meaningful edit after a failed attempt gets a new idempotency key; an unchanged retry keeps its key.
-listener_marker = "  els.phone.addEventListener('change', savePhone);\n"
-text = text.replace(listener_marker, listener_marker + "  [els.name, els.phone, els.district, els.location, els.notes, els.payment].filter(Boolean).forEach((node) => node.addEventListener('change', () => { activeRequestKey = ''; }));\n", 1)
-text = text.replace("  els.governorate.addEventListener('change', () => {\n    activeInvoiceNumber = '';\n", "  els.governorate.addEventListener('change', () => {\n    activeRequestKey = '';\n    activeInvoiceNumber = '';\n", 1)
+phone_listener = "  els.phone.addEventListener('change', savePhone);\n"
+replace_once(
+    phone_listener,
+    phone_listener + "  [els.name, els.phone, els.district, els.location, els.notes, els.payment].filter(Boolean).forEach((node) => node.addEventListener('change', () => { activeRequestKey = ''; }));\n",
+    "customer field listeners",
+)
+replace_once(
+    "  els.governorate.addEventListener('change', () => {\n    activeInvoiceNumber = '';\n",
+    "  els.governorate.addEventListener('change', () => {\n    activeRequestKey = '';\n    activeInvoiceNumber = '';\n",
+    "governorate listener",
+)
 
 PATH.write_text(text, encoding="utf-8")
 print("KPS ORDER → APEX V2 patch applied")
