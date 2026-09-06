@@ -7,7 +7,6 @@ on:
       - agent/apex-v2-integration
     paths:
       - 'tools/patch_apex_v2.py'
-      - 'tools/inspect_index.py'
       - '.github/workflows/apex-v2-integration.yml'
   workflow_dispatch:
 jobs:
@@ -21,56 +20,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Inspect current uploaded index integration points
-        run: python tools/inspect_index.py
-      - name: Capture actual checkout/send source anchors
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          text=Path('index.html').read_text(encoding='utf-8',errors='replace')
-          out=[]
-          for term in ['sendOrder','kpsSendOrder','els.send','wa.me','DELIVERY_WHATSAPP']:
-              out.append(f'=== {term} count={text.count(term)} ===')
-              start=0
-              for _ in range(min(text.count(term),4)):
-                  pos=text.find(term,start)
-                  if pos<0: break
-                  out.append(text[max(0,pos-900):min(len(text),pos+1800)])
-                  out.append('\n---\n')
-                  start=pos+len(term)
-          Path('send-anchor-output.txt').write_text('\n'.join(out),encoding='utf-8')
-          PY
-      - name: Make patch tolerant of current sendOrder formatting
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('tools/patch_apex_v2.py')
-          s=p.read_text(encoding='utf-8')
-          s=s.replace('    "const sendOrder = () => {",\n','')
-          old='send_start = text.find("  const sendOrder = () => {")'
-          new='''send_match = re.search(r'(?m)^\\s*const\\s+sendOrder\\s*=\\s*(?:async\\s*)?\\(\\)\\s*=>\\s*\\{', text)
-          if not send_match:
-              raise SystemExit("sendOrder function not found")
-          send_start = send_match.start()'''
-          if old not in s:
-              raise SystemExit('sendOrder patch-script anchor not found')
-          s=s.replace(old,new,1)
-          p.write_text(s,encoding='utf-8')
-          print('patch helper made tolerant')
-          PY
-      - name: Patch existing live-design index without rebuilding it
+      - name: Patch current KPS ORDER without redesigning it
         id: patch
         shell: bash
         run: |
           set +e
           python tools/patch_apex_v2.py > patch-output.txt 2>&1
           code=$?
-          cat send-anchor-output.txt >> patch-output.txt
           cat patch-output.txt
           echo "exit_code=$code" >> patch-output.txt
           echo "code=$code" >> "$GITHUB_OUTPUT"
           exit 0
-      - name: Verify integration markers and preserve WhatsApp flow
+      - name: Verify APEX integration and preserved WhatsApp flow
         if: steps.patch.outputs.code == '0'
         run: |
           python - <<'PY'
@@ -84,26 +45,29 @@ jobs:
             'request_key',
             'apexCatalogReady',
             'syncCatalogFromApex',
+            'openAvailabilityNotice',
+            'skipAvailabilityNotice',
             'DELIVERY_WHATSAPP',
             'https://wa.me/${DELIVERY_WHATSAPP}',
-            'kpsPaymentMethod',
-            'تم تثبيت الطلب في KPS APEX قبل إرسال واتساب',
+            'els.paymentMethod',
+            'تم تثبيت الطلب في KPS APEX قبل فتح واتساب',
           ]
           missing=[x for x in required if x not in text]
           assert not missing, f'Missing integration markers: {missing}'
           assert text.count('id="kpsOrderScript"') == 1
+          assert text.count('id="kpsPaymentMethod"') == 1, 'payment field must remain single'
           match=re.search(r'<script id="kpsOrderScript">(.*?)</script>',text,re.S)
           assert match, 'order script not found'
           Path('/tmp/kps-order.js').write_text(match.group(1),encoding='utf-8')
-          print('KPS ORDER APEX V2 structural QA: PASS')
+          print('KPS ORDER → APEX V2 structural QA: PASS')
           PY
           node --check /tmp/kps-order.js
           git diff --check
-      - name: Commit patched index on integration branch only
+      - name: Commit integrated index on isolated branch only
         if: steps.patch.outputs.code == '0'
         run: |
           if git diff --quiet -- index.html; then
-            echo 'index.html already patched; nothing to commit'
+            echo 'index.html already integrated; nothing to commit'
             exit 0
           fi
           git config user.name 'KPS APEX Automation'
@@ -111,7 +75,7 @@ jobs:
           git add index.html
           git commit -m 'Integrate KPS ORDER with APEX V2 catalog and orders'
           git push origin HEAD:agent/apex-v2-integration
-      - name: Persist patch diagnostic on failure
+      - name: Persist diagnostic on failure
         if: always() && steps.patch.outputs.code != '0'
         run: |
           git config user.name 'KPS APEX Automation'
