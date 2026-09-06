@@ -1,0 +1,63 @@
+name: KPS ORDER APEX V2 Integration
+permissions:
+  contents: write
+on:
+  push:
+    branches:
+      - agent/apex-v2-integration
+    paths:
+      - 'tools/patch_apex_v2.py'
+      - '.github/workflows/apex-v2-integration.yml'
+  workflow_dispatch:
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/apex-v2-integration
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch existing live-design index without rebuilding it
+        run: python tools/patch_apex_v2.py
+      - name: Verify integration markers and preserve WhatsApp flow
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path('index.html').read_text(encoding='utf-8')
+          required=[
+            'KPS_APEX_V2_INTEGRATION',
+            '/api/public/v2/catalog/delivery',
+            '/api/public/v2/orders',
+            'request_key',
+            'apexCatalogReady',
+            'syncCatalogFromApex',
+            'DELIVERY_WHATSAPP',
+            'https://wa.me/${DELIVERY_WHATSAPP}',
+            'kpsPaymentMethod',
+            'تم تثبيت الطلب في KPS APEX قبل إرسال واتساب',
+          ]
+          missing=[x for x in required if x not in text]
+          assert not missing, f'Missing integration markers: {missing}'
+          assert text.count('id="kpsOrderScript"') == 1
+          match=re.search(r'<script id="kpsOrderScript">(.*?)</script>',text,re.S)
+          assert match, 'order script not found'
+          Path('/tmp/kps-order.js').write_text(match.group(1),encoding='utf-8')
+          print('KPS ORDER APEX V2 structural QA: PASS')
+          PY
+          node --check /tmp/kps-order.js
+          git diff --check
+      - name: Commit patched index on integration branch only
+        run: |
+          if git diff --quiet -- index.html; then
+            echo 'index.html already patched; nothing to commit'
+            exit 0
+          fi
+          git config user.name 'KPS APEX Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add index.html
+          git commit -m 'Integrate KPS ORDER with APEX V2 catalog and orders'
+          git push origin HEAD:agent/apex-v2-integration
