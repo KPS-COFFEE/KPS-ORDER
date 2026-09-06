@@ -23,6 +23,21 @@ jobs:
           python-version: '3.12'
       - name: Inspect current uploaded index integration points
         run: python tools/inspect_index.py
+      - name: Make patch tolerant of current sendOrder formatting
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tools/patch_apex_v2.py')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('    "const sendOrder = () => {",\n','')
+          old='send_start = text.find("  const sendOrder = () => {")'
+          new="send_match = re.search(r'(?m)^\\s*const\\s+sendOrder\\s*=\\s*(?:async\\s*)?\\(\\)\\s*=>\\s*\\{', text)\\nif not send_match:\\n    raise SystemExit(\"sendOrder function not found\")\\nsend_start = send_match.start()"
+          if old not in s:
+              raise SystemExit('sendOrder patch-script anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          print('patch helper made tolerant')
+          PY
       - name: Patch existing live-design index without rebuilding it
         id: patch
         shell: bash
