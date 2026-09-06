@@ -24,8 +24,18 @@ jobs:
       - name: Inspect current uploaded index integration points
         run: python tools/inspect_index.py
       - name: Patch existing live-design index without rebuilding it
-        run: python tools/patch_apex_v2.py
+        id: patch
+        shell: bash
+        run: |
+          set +e
+          python tools/patch_apex_v2.py > patch-output.txt 2>&1
+          code=$?
+          cat patch-output.txt
+          echo "exit_code=$code" >> patch-output.txt
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
       - name: Verify integration markers and preserve WhatsApp flow
+        if: steps.patch.outputs.code == '0'
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -54,6 +64,7 @@ jobs:
           node --check /tmp/kps-order.js
           git diff --check
       - name: Commit patched index on integration branch only
+        if: steps.patch.outputs.code == '0'
         run: |
           if git diff --quiet -- index.html; then
             echo 'index.html already patched; nothing to commit'
@@ -64,3 +75,12 @@ jobs:
           git add index.html
           git commit -m 'Integrate KPS ORDER with APEX V2 catalog and orders'
           git push origin HEAD:agent/apex-v2-integration
+      - name: Persist patch diagnostic on failure
+        if: always() && steps.patch.outputs.code != '0'
+        run: |
+          git config user.name 'KPS APEX Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add patch-output.txt
+          git commit -m 'Record KPS ORDER APEX patch diagnostic' || exit 0
+          git push origin HEAD:agent/apex-v2-integration
+          exit 1
