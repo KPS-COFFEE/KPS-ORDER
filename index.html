@@ -1227,7 +1227,7 @@ body.kps-image-viewer-open{
       return;
     }
 
-    const id = buildCartItemKey(name, price);
+    const id = article.dataset.productId || buildCartItemKey(name, price);
     const existing = cart.get(id);
     if (existing) {
       existing.qty += 1;
@@ -1388,6 +1388,23 @@ body.kps-image-viewer-open{
         priceNode.textContent = money(current);
       }
     }
+
+
+    article.querySelector('[data-apex-variants]')?.remove();
+    if (Array.isArray(item.variants) && item.variants.length) {
+      const variants = document.createElement('div');
+      variants.dataset.apexVariants = '1';
+      variants.setAttribute('aria-label', 'الألوان المتاحة');
+      variants.style.cssText = 'display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:10px 0 2px';
+      item.variants.forEach((variant) => {
+        const chip = document.createElement('span');
+        chip.title = variant.name || variant.color || variant.sku;
+        chip.setAttribute('aria-label', chip.title);
+        chip.style.cssText = 'display:inline-flex;width:24px;height:24px;border-radius:999px;border:2px solid #fff;box-shadow:0 0 0 1px #777;background:' + (variant.hex || '#777');
+        variants.appendChild(chip);
+      });
+      (article.querySelector('.info') || article).appendChild(variants);
+    }
   };
 
   const syncCatalogFromApex = async () => {
@@ -1411,16 +1428,20 @@ body.kps-image-viewer-open{
 
       apexMenuVersion = Number(payload.menu_version || 0);
       const existing = [...document.querySelectorAll('article.product')];
-      const byName = new Map(existing.map((article) => [
-        normalizeCatalogText(article.dataset.productName || article.querySelector('h3')?.textContent), article
-      ]));
+      const byName = new Map();
+      existing.forEach((article) => {
+        const key = normalizeCatalogText(article.dataset.productName || article.querySelector('h3')?.textContent);
+        if (!byName.has(key)) byName.set(key, []);
+        byName.get(key).push(article);
+      });
       const byCode = new Map(existing.filter((article) => article.dataset.apexProductCode).map((article) => [
         String(article.dataset.apexProductCode), article
       ]));
       const used = new Set();
 
       for (const item of payload.items) {
-        let article = byCode.get(String(item.code || '')) || byName.get(normalizeCatalogText(item.name));
+        const named = byName.get(normalizeCatalogText(item.name)) || [];
+        let article = byCode.get(String(item.code || '')) || named.find((candidate) => !used.has(candidate));
         if (!article) {
           article = makeApexProductArticle(item);
           const section = sectionForCategory(item.category || 'المنيو');
@@ -1439,6 +1460,21 @@ body.kps-image-viewer-open{
       existing.forEach((article) => {
         if (!used.has(article) && article.classList.contains('order-product')) article.hidden = true;
       });
+
+      const availableProductIds = new Set(payload.items.map((item) => String(item.id)));
+      let cartChanged = false;
+      [...cart.keys()].forEach((id) => {
+        if (/^\\d+$/.test(String(id)) && !availableProductIds.has(String(id))) {
+          cart.delete(id);
+          cartChanged = true;
+        }
+      });
+      if (cartChanged) {
+        activeRequestKey = '';
+        activeInvoiceNumber = '';
+        renderCart();
+        showToast('تم حذف صنف غير متاح من السلة');
+      }
 
       apexCatalogReady = true;
       if (typeof updateProductAvailability === 'function') updateProductAvailability();
