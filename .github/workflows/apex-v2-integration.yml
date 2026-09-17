@@ -7,6 +7,7 @@ on:
       - agent/apex-v2-integration
     paths:
       - 'tools/patch_apex_v2.py'
+      - 'tools/patch_product_options_v1038.py'
       - '.github/workflows/apex-v2-integration.yml'
   workflow_dispatch:
 jobs:
@@ -27,6 +28,10 @@ jobs:
           set +e
           python tools/patch_apex_v2.py > patch-output.txt 2>&1
           code=$?
+          if [ "$code" -eq 0 ]; then
+            python tools/patch_product_options_v1038.py >> patch-output.txt 2>&1
+            code=$?
+          fi
           cat patch-output.txt
           echo "exit_code=$code" >> patch-output.txt
           echo "code=$code" >> "$GITHUB_OUTPUT"
@@ -40,11 +45,15 @@ jobs:
           text=Path('index.html').read_text(encoding='utf-8')
           required=[
             'KPS_APEX_V2_INTEGRATION',
+            'KPS_APEX_PRODUCT_OPTIONS_V1038',
             '/api/public/v2/catalog/delivery',
             '/api/public/v2/orders',
             'request_key',
             'apexCatalogReady',
             'syncCatalogFromApex',
+            'configureProduct',
+            'option_groups',
+            'options: item.options || {}',
             'openAvailabilityNotice',
             'skipAvailabilityNotice',
             'DELIVERY_WHATSAPP',
@@ -59,7 +68,7 @@ jobs:
           match=re.search(r'<script id="kpsOrderScript">(.*?)</script>',text,re.S)
           assert match, 'order script not found'
           Path('/tmp/kps-order.js').write_text(match.group(1),encoding='utf-8')
-          print('KPS ORDER → APEX V2 structural QA: PASS')
+          print('KPS ORDER → APEX V10.38 structural QA: PASS')
           PY
           node --check /tmp/kps-order.js
           git diff --check
@@ -73,7 +82,7 @@ jobs:
           git config user.name 'KPS APEX Automation'
           git config user.email 'actions@users.noreply.github.com'
           git add index.html
-          git commit -m 'Integrate KPS ORDER with APEX V2 catalog and orders'
+          git commit -m 'Add per-unit Mojito flavour selection'
           git push origin HEAD:agent/apex-v2-integration
       - name: Persist diagnostic on failure
         if: always() && steps.patch.outputs.code != '0'
