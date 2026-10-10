@@ -93,9 +93,15 @@ def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_
         customer.locator('#branch-select').select_option('kps-branch-1')
         customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
         choices = customer.locator('#product-options select')
-        expect(choices.locator('option[value=BLACK]')).to_be_disabled()
-        expect(choices.locator('option[value=BLUE]')).to_be_enabled()
-        choices.select_option('BLUE')
+        # Inspect the native option property: Playwright's enabled matcher does
+        # not apply its disabled semantics to <option>. Real keyboard selection
+        # must skip the paused choice rather than programmatically select blue.
+        assert choices.locator('option[value=BLACK]').evaluate('(option) => option.disabled') is True
+        assert choices.locator('option[value=BLUE]').evaluate('(option) => option.disabled') is False
+        choices.press('Home')
+        expect(choices).to_have_value('')
+        choices.press('ArrowDown')
+        expect(choices).to_have_value('BLUE')
         for width in (390, 1280):
             _capture(customer, 'customer-black-paused-blue-available', width)
         customer.locator('#product-dialog [data-close]').first.click()
@@ -117,9 +123,13 @@ def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_
             customer.reload()
             customer.locator('#branch-select').select_option(f'kps-branch-{branch_no}')
             customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
-            option = customer.locator('#product-options option[value=BLACK]')
-            assert option.is_disabled() is (not black_available)
-            expect(customer.locator('#product-options option[value=BLUE]')).to_be_enabled()
+            choices = customer.locator('#product-options select')
+            assert choices.locator('option[value=BLACK]').evaluate('(option) => option.disabled') is (not black_available)
+            assert choices.locator('option[value=BLUE]').evaluate('(option) => option.disabled') is False
+            choices.press('Home')
+            expect(choices).to_have_value('')
+            choices.press('ArrowDown')
+            expect(choices).to_have_value('BLACK' if black_available else 'BLUE')
             customer.locator('#product-dialog [data-close]').first.click()
         page.locator('#language').click()
         page.locator(f'[data-action=edit-product][data-id="{identifier}"]').click()
