@@ -1,0 +1,155 @@
+"""Small independent web service. Authoritative data resides exclusively in PostgreSQL."""
+from __future__ import annotations
+
+import importlib
+import os
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import psycopg
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from . import auth, catalog, db, orders
+
+ROOT = Path(__file__).resolve().parents[1]
+PUBLIC = ROOT / 'public'
+
+
+@asynccontextmanager
+async def lifespan(app):
+    app.state.database_configured = bool(os.getenv('DATABASE_URL'))
+    if app.state.database_configured:
+        # A bad configured migration/database blocks startup; no storage substitute is created.
+        db.migrate()
+    yield
+
+
+app = FastAPI(title='KPS Independent Orders', version='4.0.0', lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
+hosts = [item.strip() for item in os.getenv('APP_ALLOWED_HOSTS', '').split(',') if item.strip()]
+if hosts:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
+
+
+@app.middleware('http')
+async def security(request: Request, call_next):
+    trace = uuid.uuid4().hex
+    try:
+        if request.url.path.startswith('/api/') and request.method not in {'GET', 'HEAD', 'OPTIONS'}:
+            auth.check_origin(request)
+        length = request.headers.get('content-length')
+        if length and (not length.isdecimal() or int(length) > 8 * 1024 * 1024):
+            response = JSONResponse({'detail': {'code': 'BODY_TOO_LARGE', 'message': 'الملف أو الطلب أكبر من الحد المسموح.'}}, status_code=413)
+        else:
+            response = await call_next(request)
+    except Exception as exc:
+        from fastapi import HTTPException
+        if isinstance(exc, HTTPException):
+            response = JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
+        else:
+            # Never serialize DB error details, submitted fields or provider credentials to a client.
+            response = JSONResponse({'detail': {'code': 'SERVICE_UNAVAILABLE', 'message': 'تعذر تنفيذ العملية الآن. حاول لاحقًا.'}}, status_code=503)
+    response.headers['X-Request-ID'] = trace
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'same-origin'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
+    response.headers['Content-Security-Policy'] = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                                                   "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
+                                                   "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+    if os.getenv('APP_ENV', 'production') == 'production':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    if request.url.path.startswith('/api/') or request.url.path.startswith('/ops'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_input(request: Request, exc: RequestValidationError):
+    fields = ['.'.join(map(str, error['loc'][1:])) for error in exc.errors()]
+    return JSONResponse({'detail': {'code': 'VALIDATION_ERROR', 'message': 'راجع الحقول المطلوبة وصحتها.', 'fields': fields}}, status_code=422)
+
+
+@app.exception_handler(psycopg.OperationalError)
+async def database_unavailable(request: Request, exc):
+    return JSONResponse({'detail': {'code': 'DATABASE_UNAVAILABLE', 'message': 'قاعدة البيانات غير متاحة مؤقتًا.'}}, status_code=503)
+
+
+app.include_router(auth.router)
+app.include_router(catalog.router)
+app.include_router(orders.router)
+# Components are separate files within this one service and share canonical tables.
+for name in ('operations', 'chat', 'reporting', 'admin'):
+    try:
+        module = importlib.import_module('.' + name, __package__)
+    except ModuleNotFoundError as exc:
+        if exc.name != __package__ + '.' + name:
+            raise
+    else:
+        app.include_router(module.router)
+
+
+def revision():
+    return os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
+
+
+@app.get('/health')
+def health():
+    return {'status': 'alive', 'revision': revision(), 'application': 'kps-order-independent-v4'}
+
+
+@app.get('/ready')
+def ready():
+    try:
+        with db.tx() as conn:
+            conn.execute('SELECT 1')
+            applied = conn.execute('SELECT count(*) AS n FROM schema_migrations').fetchone()['n']
+            products = conn.execute("SELECT count(*) AS n FROM products WHERE settings->>'source_verified'='true'").fetchone()['n']
+            branches = conn.execute("SELECT count(*) AS n FROM branches WHERE settings->>'operational_data_verified'='true' OR settings->>'ordering_verified'='true'").fetchone()['n']
+        try:
+            auth.provider_config()
+            otp = True
+        except Exception:
+            otp = False
+        return {'status': 'ready', 'revision': revision(), 'database': 'connected', 'applied_migrations': applied,
+                'customer_otp_configured': otp, 'verified_products': products, 'verified_branches': branches,
+                'ordering_configured': bool(otp and products and branches)}
+    except Exception:
+        return JSONResponse({'status': 'not_ready', 'revision': revision(), 'database': 'unavailable'}, status_code=503)
+
+
+@app.get('/')
+def customer_page():
+    path = PUBLIC / 'index.html'
+    if not path.is_file():
+        return JSONResponse({'detail': {'code': 'UI_UNAVAILABLE', 'message': 'واجهة المتجر قيد الإعداد.'}}, status_code=503)
+    return FileResponse(path, media_type='text/html', headers={'Cache-Control': 'no-cache'})
+
+
+@app.get('/ops')
+@app.get('/ops.html')
+def operations_page():
+    path = PUBLIC / 'ops.html'
+    if not path.is_file():
+        return JSONResponse({'detail': {'code': 'UI_UNAVAILABLE', 'message': 'واجهة التشغيل قيد الإعداد.'}}, status_code=503)
+    return FileResponse(path, media_type='text/html', headers={'Cache-Control': 'no-cache'})
+
+
+@app.get('/{filename}')
+def frontend_file(filename: str):
+    # Never mount the repository, data files, migrations, environment or the legacy executable menu.
+    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js'}:
+        raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
+    path = PUBLIC / filename
+    if not path.is_file() or path.is_symlink():
+        raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
+    return FileResponse(path)
+
+
+if (PUBLIC / 'assets').exists():
+    app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')

@@ -1,0 +1,630 @@
+"""Independent delivery operations. Monetary values are integer halalas."""
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+import json as jsonlib
+from uuid import uuid4
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field, StrictInt
+from . import db, auth
+
+router = APIRouter(prefix='/api', tags=['operations'])
+RIYADH = ZoneInfo('Asia/Riyadh')
+TERMINAL = ('delivered', 'cancelled', 'transferred')
+
+
+def uid(): return uuid4().hex
+
+def safe(value):
+    return jsonlib.loads(jsonlib.dumps(value, default=lambda o: o.isoformat() if hasattr(o, 'isoformat') else str(o)))
+
+def fail(status, message): raise HTTPException(status, message)
+
+def roles(user, *allowed):
+    if user['role'] not in allowed: fail(403, 'الصلاحية غير كافية')
+
+def same_scope(user, row):
+    return user.get('brand_id') == row['brand_id']
+
+def order_access(c, user, order):
+    if not order or not auth.can_access_order(user, order, c): fail(404, 'الطلب غير موجود')
+
+def shift_access(c, user, shift, manager=False):
+    if not shift or not same_scope(user, shift): fail(404, 'الشفت غير موجود')
+    if user['role']=='owner': return
+    if not set(shift['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'تم سحب صلاحية أحد فروع الشفت')
+    if shift['user_id']==user['id'] and not manager: return
+    if user['role']=='delivery_manager':
+        parent = c.execute('SELECT user_id FROM shifts WHERE id=%s', (shift.get('manager_shift_id'),)).fetchone()
+        if parent and parent['user_id']==user['id']: return
+    fail(403, 'الشفت خارج نطاق صلاحيتك')
+
+def lock_shift(c, sid):
+    return c.execute('SELECT * FROM shifts WHERE id=%s FOR UPDATE', (sid,)).fetchone()
+
+def balance(c, s):
+    v=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM custody_events WHERE shift_id=%s',(s['id'],)).fetchone()['n']
+    return s['opening_halalas']+int(v)
+
+def available_balance(c,s):
+    pending=c.execute("SELECT coalesce(sum(amount_halalas),0) n FROM custody_transfers WHERE from_shift_id=%s AND status='pending'",(s['id'],)).fetchone()['n']
+    return balance(c,s)-int(pending)
+
+def unresolved(c, sid):
+    return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(sid,)).fetchone()['n']
+
+def event(c,sid,amount,kind,ref,actor,reason):
+    c.execute('INSERT INTO custody_events(id,shift_id,amount_halalas,kind,reference_id,actor_id,reason) VALUES(%s,%s,%s,%s,%s,%s,%s)',(uid(),sid,amount,kind,ref,actor,reason))
+
+def mutate(c,user,request,operation,body,perform):
+    # One small-site financial mutation lane per brand keeps multi-row handovers
+    # and task/collection changes in a consistent order across endpoints.
+    c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('operations:'+user['brand_id'],))
+    key=request.headers.get('Idempotency-Key','')
+    replay=c.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND operation=%s AND key=%s',(user['id'],operation,key)).fetchone()
+    if replay:authorize_replay(c,user,operation,body,replay['response'])
+    return db.idempotent(c,user['id'],key,operation,safe(body),lambda: safe(perform()))
+
+def authorize_replay(c,user,operation,body,result):
+    # Replay protection never extends withdrawn authorization. Validate current
+    # resources, not the scope frozen in a formerly successful response.
+    sid=result.get('shift_id') or (result.get('shift') or {}).get('id')
+    if operation.startswith('cash.event:'):sid=operation.split(':',1)[1]
+    if sid:shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone())
+    task=(result.get('task') or {}).get('id') or result.get('task_id')
+    if task:
+        t=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(task,)).fetchone()
+        if not t:fail(404,'المهمة غير متاحة')
+        order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone())
+    for field,table in [('collection_id','collections'),('refund_id','refunds')]:
+        if result.get(field):
+            row=c.execute('SELECT order_id FROM '+table+' WHERE id=%s',(result[field],)).fetchone()
+            if not row:fail(404,'السجل غير متاح')
+            order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(row['order_id'],)).fetchone())
+    cid=result.get('conversation_id') or (result.get('conversation') or {}).get('id')
+    if operation.startswith('chat.') and ':' in operation:cid=operation.split(':',1)[1]
+    if cid:
+        from .chat import conversation
+        conversation(c,user,cid)
+    transfer_id=result.get('transfer_id') or (result.get('transfer') or {}).get('id')
+    if transfer_id and operation.startswith('custody.'):
+        row=c.execute('SELECT * FROM custody_transfers WHERE id=%s',(transfer_id,)).fetchone()
+        if not row:fail(404,'التسليم غير متاح')
+        source=c.execute('SELECT * FROM shifts WHERE id=%s',(row['from_shift_id'],)).fetchone()
+        if row['recipient_user_id']==user['id']:
+            if not same_scope(user,source) or (user['role']!='owner' and not set(source['branch_ids'])<=set(user.get('branch_ids',[]))):fail(403,'تم سحب صلاحية التسليم')
+        else:shift_access(c,user,source)
+    if result.get('report_id'):
+        from .reporting import report
+        report(c,user,result['report_id'])
+    if result.get('handover_id'):
+        row=c.execute('SELECT h.*,s.brand_id,s.branch_ids,s.user_id source_user,t.user_id target_user FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE h.id=%s',(result['handover_id'],)).fetchone()
+        if not row or not same_scope(user,row) or (user['role']!='owner' and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
+
+class ShiftOpen(BaseModel):
+    kind: str
+    branch_ids: list[str] = Field(default_factory=list)
+    manager_shift_id: str|None=None
+    user_id: str|None=None
+    opening_halalas: StrictInt=Field(0,ge=0)
+    reason: str=''
+
+@router.post('/shifts')
+def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','driver')
+    with db.tx() as c:
+        def perform():
+            target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
+            if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')
+            if target['id']!=user['id']:
+                roles(user,'owner','delivery_manager')
+                if user['role']=='delivery_manager' and (target['role']!='driver' or body.kind!='driver'):fail(403,'المدير يفتح شفتات السائقين التابعين فقط')
+            if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
+            if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
+            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
+            if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(target['id'],)).fetchone(): fail(409,'يوجد شفت مفتوح')
+            brand=target.get('brand_id') or user.get('brand_id')
+            bids=body.branch_ids or target.get('branch_ids',[])
+            if not brand or not bids: fail(422,'يلزم براند وفروع فعلية للشفت')
+            for bid in bids:
+                b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
+                if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
+            if body.opening_halalas:
+                roles(user,'owner')
+                if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
+            if body.kind=='driver':
+                manager=lock_shift(c,body.manager_shift_id)
+                if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']): fail(409,'يلزم شفت مدير مخول مفتوح')
+                manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
+                if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (manager_user['role']!='owner' and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
+                if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
+            elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
+            sid=uid()
+            carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL FOR UPDATE',(target['id'],)).fetchall()
+            carried=sum(x['amount_halalas'] for x in carryovers)
+            c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas) VALUES(%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried))
+            for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
+            db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'carryover_ids':[x['id'] for x in carryovers]})
+            return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}
+        return mutate(c,user,request,'shift.open',body.model_dump(),perform)
+
+@router.get('/shifts')
+@router.get('/shifts/current')
+def shifts(user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','driver','delivery_staff')
+    with db.tx() as c:
+        if user['role']=='owner': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
+        elif user['role']=='delivery_manager': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s OR s.manager_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY opened_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
+        elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
+        else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
+        return safe({'shifts':rows,**people_data(c,user)})
+
+def people_data(c,user):
+    users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver') ORDER BY display_name",(user['brand_id'],)).fetchall()
+    users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
+    managers=c.execute("SELECT s.id,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
+    managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
+    return {'authorized_receivers':users,'available_manager_shifts':managers}
+
+@router.get('/operations/people')
+def people(user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','delivery_staff','driver')
+    with db.tx() as c:
+        data=people_data(c,user);return safe({'users':data['authorized_receivers'],**data})
+
+def day_start(config):
+    value=config.get('operational_day_start')
+    if value is None:return 0,False
+    try:
+        parts=value.split(':')
+        h,m=int(parts[0]),int(parts[1])
+        if len(parts)!=2 or not 0<=h<=23 or not 0<=m<=59:raise ValueError()
+        return h*60+m,True
+    except (AttributeError,ValueError,TypeError,IndexError):fail(503,'بداية اليوم التشغيلي غير صحيحة')
+
+@router.get('/shifts/{sid}')
+def shift_detail(sid:str,user=Depends(auth.current_user)):
+    with db.tx() as c:
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s)
+        return safe({'shift':s,'expected_halalas':balance(c,s),'tasks':c.execute('SELECT t.*,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall(), 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT * FROM shifts WHERE manager_shift_id=%s ORDER BY opened_at',(sid,)).fetchall()})
+
+@router.post('/shifts/{sid}/closing')
+def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
+    with db.tx() as c:
+        def perform():
+            s=lock_shift(c,sid); shift_access(c,user,s)
+            if s['status']=='open': c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
+            elif s['status']!='closing': fail(409,'الشفت ليس مفتوحا')
+            db.audit(c,user['id'],'shift.closing','shift',sid)
+            return {'shift_id':sid,'status':'closing','unresolved_tasks':unresolved(c,sid),'expected_halalas':balance(c,s)}
+        return mutate(c,user,request,'shift.closing:'+sid,{},perform)
+
+class ClosureSubmit(BaseModel):
+    counted_halalas: StrictInt=Field(ge=0)
+    handover_halalas: StrictInt=Field(ge=0)
+    retained_halalas: StrictInt=Field(0,ge=0)
+
+@router.post('/shifts/{sid}/submit')
+def submit_close(sid:str,body:ClosureSubmit,request:Request,user=Depends(auth.current_user)):
+    with db.tx() as c:
+        def perform():
+            s=lock_shift(c,sid); shift_access(c,user,s)
+            if s['status']!='closing': fail(409,'اطلب التقفيلة أولا')
+            if unresolved(c,sid): fail(409,'توجد مهام معلقة')
+            if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
+            if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'توجد شفتات سائقين غير مقفلة، تشمل شفتات بلا طلبات')
+            if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone(): fail(409,'توجد تسليمات غير مؤكدة')
+            if body.counted_halalas!=body.handover_halalas+body.retained_halalas: fail(422,'المعدود يجب أن يساوي التسليم مع المحتفظ به')
+            values=body.model_dump();values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
+            c.execute("UPDATE shifts SET status='submitted',submission=%s,submitted_at=now() WHERE id=%s",(db.json(values),sid))
+            db.audit(c,user['id'],'shift.submit','shift',sid,values)
+            return {'shift_id':sid,'status':'submitted','submission':values}
+        return mutate(c,user,request,'shift.submit:'+sid,body.model_dump(),perform)
+
+class Review(BaseModel):
+    exception_reason: str|None=None
+    reason: str=''
+
+@router.post('/shifts/{sid}/return')
+def return_close(sid:str,body:Review,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
+            if s['status']!='submitted' or not body.reason.strip(): fail(422,'تحتاج تقفيلة مرسلة وسبب تصحيح')
+            if c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchone(): fail(409,'تم تأكيد التسليم النهائي؛ يلزم قيد تصحيح مرتبط')
+            c.execute("UPDATE custody_transfers SET status='rejected' WHERE from_shift_id=%s AND closure AND status='pending'",(sid,))
+            c.execute("UPDATE shifts SET status='closing',submission=NULL,submitted_at=NULL WHERE id=%s",(sid,))
+            db.audit(c,user['id'],'shift.return','shift',sid,{'reason':body.reason})
+            return {'shift_id':sid,'status':'closing'}
+        return mutate(c,user,request,'shift.return:'+sid,body.model_dump(),perform)
+
+@router.post('/shifts/{sid}/approve')
+def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
+            if s['kind']=='manager': roles(user,'owner')
+            if s['status']!='submitted': fail(409,'التقفيلة غير مرسلة')
+            sub=s['submission']
+            if sub['difference_halalas'] or sub['retained_halalas']:
+                roles(user,'owner')
+                if not body.exception_reason or not body.exception_reason.strip(): fail(422,'الفرق أو العهدة المحتفظ بها تحتاج اعتماد المالك وسبب ظاهر')
+            if unresolved(c,sid): fail(409,'مهام معلقة')
+            if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
+            if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'سائق غير مقفل')
+            if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone(): fail(409,'استلام غير مؤكد')
+            receipts=c.execute("SELECT coalesce(sum(amount_halalas),0) n,count(*) nrows FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchone()
+            if int(receipts['n'])!=sub['handover_halalas'] or not receipts['nrows']: fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
+            if sub['difference_halalas']:event(c,sid,sub['difference_halalas'],'adjustment','closure-difference:'+sid,user['id'],body.exception_reason)
+            if sub['retained_halalas']:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason))
+            c.execute("UPDATE shifts SET status='closed',closed_at=now(),approved_by=%s,exception_reason=%s WHERE id=%s",(user['id'],body.exception_reason,sid))
+            from .reporting import create_snapshot
+            rid=create_snapshot(c,sid,user['id'])
+            db.audit(c,user['id'],'shift.approve','shift',sid,{'report_id':rid,'exception_reason':body.exception_reason})
+            return {'shift_id':sid,'status':'closed','report_id':rid,'pdf_status':'pending'}
+        result=mutate(c,user,request,'shift.approve:'+sid,body.model_dump(),perform)
+    from .reporting import generate_files
+    generate_files(result['report_id'])
+    return result
+
+def eligible_driver_shift(c,s,order):
+    if not s or s['kind']!='driver' or s['status']!='open' or s['brand_id']!=order['brand_id'] or order['branch_id'] not in s['branch_ids']:fail(409,'شفت السائق غير مؤهل')
+    driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
+    if not driver or not driver['active'] or driver['role']!='driver' or driver['brand_id']!=order['brand_id'] or order['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
+    manager=lock_shift(c,s['manager_shift_id'])
+    if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
+    principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
+    if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (principal['role']!='owner' and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
+    return manager
+
+class Assignment(BaseModel): driver_shift_id:str
+
+@router.post('/orders/{oid}/assign')
+def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','delivery_staff')
+    with db.tx() as c:
+        def perform():
+            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+            if o['service']!='delivery' or o['preparation_status'] in ('cancelled','rejected','completed') or o.get('completed_at'):fail(409,'الطلب غير قابل للإسناد')
+            s=lock_shift(c,body.driver_shift_id)
+            if not s or s['kind']!='driver' or s['status']!='open' or s['brand_id']!=o['brand_id'] or o['branch_id'] not in s['branch_ids']:fail(409,'السائق غير مؤهل أو شفته غير مفتوح')
+            driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
+            if not driver or not driver['active'] or driver['role']!='driver' or o['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
+            manager=lock_shift(c,s['manager_shift_id'])
+            if not manager or manager['status']!='open':fail(409,'شفت المدير غير مفتوح')
+            eligible_driver_shift(c,s,o)
+            if user['role']=='delivery_manager' and manager['user_id']!=user['id']:fail(403,'الشفت تابع لمدير آخر')
+            if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
+            tid=uid(); c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by) VALUES(%s,%s,%s,%s,%s)',(tid,oid,s['user_id'],s['id'],user['id']))
+            c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(oid,))
+            db.audit(c,user['id'],'task.assign','order',oid,{'task_id':tid,'shift_id':s['id']})
+            return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
+        return mutate(c,user,request,'order.assign:'+oid,body.model_dump(),perform)
+
+@router.get('/tasks')
+def tasks(user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','delivery_staff','driver')
+    with db.tx() as c:
+        if user['role']=='driver':rows=c.execute('SELECT t.*,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
+        else:rows=c.execute('SELECT t.*,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC LIMIT 500').fetchall(); rows=[r for r in rows if same_scope(user,r) and (user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[]))]
+        if user['role']=='driver':
+            rows=[r for r in rows if r['branch_id'] in user.get('branch_ids',[])]
+            for r in rows:
+                if r['status'] in TERMINAL or r['driver_id']!=user['id']:
+                    r.pop('customer',None)
+                    r['snapshot']=safe(r['snapshot']);r['snapshot'].pop('notes',None);r['snapshot'].pop('note',None)
+                    for item in r['snapshot'].get('items',[]):item.pop('note',None)
+        return safe({'tasks':rows})
+
+class TaskTransition(BaseModel):
+    status:str
+    proof:str=Field('',max_length=2000)
+    reason:str=Field('',max_length=2000)
+
+@router.post('/tasks/{tid}/transition')
+def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(auth.current_user)):
+    roles(user,'driver','owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            t=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+            if not t:fail(404,'المهمة غير موجودة')
+            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(t['order_id'],)).fetchone()
+            t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
+            s=lock_shift(c,t['shift_id']);shift_access(c,user,s)
+            if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
+            allowed={'assigned':('accepted','problem'),'accepted':('picked_up','problem'),'picked_up':('delivered','problem'),'problem':('accepted','picked_up','cancelled')}
+            if body.status not in allowed.get(t['status'],()):fail(409,'انتقال حالة غير صالح')
+            if body.status=='picked_up' and o['preparation_status']!='handed_over':fail(409,'يلزم تأكيد تسليم الفرع للسائق')
+            if body.status=='delivered' and (o['payment_status']!='paid' or not body.proof.strip()):fail(409,'يلزم تحصيل فعلي ودليل تسليم')
+            if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
+            if body.status=='cancelled':
+                roles(user,'owner','delivery_manager')
+                if o['payment_status'] in ('paid','partially_refunded'):fail(409,'يلزم استرداد كامل قبل الإلغاء')
+            timestamp={'accepted':'accepted_at','picked_up':'picked_up_at','delivered':'delivered_at'}.get(body.status)
+            sql="UPDATE driver_tasks SET status=%s,proof=%s,reason=%s" + (f',{timestamp}=coalesce({timestamp},now())' if timestamp else '')+' WHERE id=%s'
+            c.execute(sql,(body.status,body.proof,body.reason,tid))
+            c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
+            if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
+            db.audit(c,user['id'],'task.transition','task',tid,body.model_dump())
+            return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
+        return mutate(c,user,request,'task.transition:'+tid,body.model_dump(),perform)
+
+class TaskHandover(BaseModel): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
+
+@router.post('/tasks/{tid}/handover')
+def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
+            if not t:fail(404,'المهمة غير موجودة')
+            shift_access(c,user,lock_shift(c,t['shift_id']))
+            to=lock_shift(c,body.driver_shift_id);o=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone()
+            if t['status'] in TERMINAL or not to or to['status']!='open' or to['kind']!='driver' or to['brand_id']!=o['brand_id'] or o['branch_id'] not in to['branch_ids'] or to['id']==t['shift_id']:fail(409,'شفت الاستلام غير مؤهل')
+            eligible_driver_shift(c,to,o)
+            if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(t['order_id'],)).fetchone():fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
+            c.execute('UPDATE driver_tasks SET transfer_shift_id=%s,transfer_requested_by=%s,reason=%s WHERE id=%s',(to['id'],user['id'],body.reason,tid))
+            db.audit(c,user['id'],'task.handover.request','task',tid,body.model_dump())
+            return {'task_id':tid,'transfer_shift_id':to['id'],'acceptance_required':True}
+        return mutate(c,user,request,'task.handover:'+tid,body.model_dump(),perform)
+
+@router.post('/tasks/{tid}/accept-handover')
+def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)):
+    roles(user,'driver')
+    with db.tx() as c:
+        def perform():
+            prior=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+            if not prior:fail(404,'المهمة غير موجودة')
+            c.execute('SELECT id FROM orders WHERE id=%s FOR UPDATE',(prior['order_id'],))
+            t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
+            if not t or not t['transfer_shift_id'] or t['status'] in TERMINAL:fail(404,'لا يوجد تحويل معلق')
+            if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(t['order_id'],)).fetchone():fail(409,'تم تحصيل المهمة؛ يلزم إنهاؤها لدى صاحب عهدة التحصيل')
+            to=lock_shift(c,t['transfer_shift_id']);shift_access(c,user,to)
+            if to['user_id']!=user['id'] or to['status']!='open':fail(409,'الشفت غير متاح')
+            order=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone();eligible_driver_shift(c,to,order)
+            status=t['status']; c.execute("UPDATE driver_tasks SET status='transferred' WHERE id=%s",(tid,));newid=uid()
+            c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at) VALUES(%s,%s,%s,%s,%s,%s,now(),%s)',(newid,t['order_id'],user['id'],to['id'],status if status=='picked_up' else 'accepted',t['transfer_requested_by'],t['picked_up_at']))
+            db.audit(c,user['id'],'task.handover.accept','task',tid,{'new_task_id':newid})
+            return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(newid,)).fetchone()}
+        return mutate(c,user,request,'task.handover.accept:'+tid,{},perform)
+
+class Collection(BaseModel):
+    method:str
+    amount_halalas:StrictInt=Field(gt=0)
+    tendered_halalas:StrictInt|None=Field(None,ge=0)
+    reference:str=Field('',max_length=200)
+
+@router.post('/orders/{oid}/collect')
+def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_user)):
+    roles(user,'driver','branch_manager','owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+            if o['payment_status']!='unpaid' or o['preparation_status'] in ('cancelled','rejected'):fail(409,'الطلب غير قابل للتحصيل')
+            if body.method not in ('cash','card') or body.amount_halalas!=o['total_halalas']:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح')
+            if body.method=='card' and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
+            if body.method=='cash' and (body.tendered_halalas is None or body.tendered_halalas<body.amount_halalas):fail(422,'المبلغ النقدي المسلم غير كاف')
+            sid=None
+            if o['service']=='delivery':
+                if user['role']!='driver':fail(403,'التحصيل من السائق المكلف فقط')
+                t=c.execute("SELECT * FROM driver_tasks WHERE order_id=%s AND driver_id=%s AND status='picked_up' FOR UPDATE",(oid,user['id'])).fetchone()
+                if not t:fail(409,'استلم المهمة من الفرع أولا')
+                s=lock_shift(c,t['shift_id'])
+                if s['status'] not in ('open','closing'):fail(409,'الشفت لا يسمح بالتحصيل')
+                sid=s['id']
+            else:roles(user,'branch_manager','owner')
+            cid=uid();change=(body.tendered_halalas-body.amount_halalas) if body.method=='cash' else 0
+            c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],body.method,body.amount_halalas,body.tendered_halalas,change,body.reference))
+            if sid and body.method=='cash':event(c,sid,body.amount_halalas,'collection',cid,user['id'],'تحصيل نقدي صافي بعد الباقي')
+            c.execute("UPDATE orders SET payment_status='paid',payment_method=%s,version=version+1 WHERE id=%s",(body.method,oid))
+            db.audit(c,user['id'],'order.collect','order',oid,{'collection_id':cid,'amount_halalas':body.amount_halalas,'method':body.method,'change_halalas':change})
+            return {'collection_id':cid,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
+        return mutate(c,user,request,'order.collect:'+oid,body.model_dump(),perform)
+
+class Refund(BaseModel):
+    amount_halalas:StrictInt=Field(gt=0)
+    method:str
+    reason:str=Field(min_length=1,max_length=2000)
+    line_quantities:dict[str,StrictInt]=Field(default_factory=dict)
+    shift_id:str|None=None
+
+@router.post('/orders/{oid}/refund')
+def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+            col=c.execute('SELECT * FROM collections WHERE order_id=%s',(oid,)).fetchone()
+            prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']
+            if not col or body.method!=col['method'] or body.amount_halalas+prior>col['amount_halalas']:fail(422,'مبلغ أو وسيلة الاسترداد غير صالح')
+            lines={}
+            for x in o['snapshot']['items']:lines[x['product_id']]=lines.get(x['product_id'],0)+x['quantity']
+            for pid,q in body.line_quantities.items():
+                previous=c.execute("SELECT coalesce(sum((line_quantities->>%s)::int),0) n FROM refunds WHERE order_id=%s",(pid,oid)).fetchone()['n']
+                if q<0 or pid not in lines or q+previous>lines[pid]:fail(422,'كمية استرداد الصنف غير صالحة')
+            sid=body.shift_id or col['shift_id']
+            if sid:
+                s=lock_shift(c,sid);shift_access(c,user,s)
+                if s['status'] not in ('open','closing') or s['brand_id']!=o['brand_id']:fail(409,'الاسترداد يحتاج عهدة شفت مفتوح؛ لا يعدل تقفيلة تاريخية')
+                if body.method=='cash' and available_balance(c,s)<body.amount_halalas:fail(409,'العهدة النقدية غير كافية')
+            elif o['service']=='delivery' and body.method=='cash':fail(409,'يلزم شفت عهدة للاسترداد النقدي')
+            rid=uid();c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,col['id'],oid,sid,body.method,body.amount_halalas,db.json(body.line_quantities),body.reason,user['id']))
+            if sid and body.method=='cash':event(c,sid,-body.amount_halalas,'refund',rid,user['id'],body.reason)
+            status='refunded' if body.amount_halalas+prior==col['amount_halalas'] else 'partially_refunded'
+            c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',(status,oid))
+            db.audit(c,user['id'],'order.refund','order',oid,{'refund_id':rid,**body.model_dump()})
+            return {'refund_id':rid,'payment_status':status}
+        return mutate(c,user,request,'order.refund:'+oid,body.model_dump(),perform)
+
+class Custody(BaseModel):
+    from_shift_id:str
+    to_shift_id:str|None=None
+    recipient_user_id:str|None=None
+    amount_halalas:StrictInt=Field(ge=0)
+    reference:str=Field(min_length=1,max_length=200)
+    closure:bool=False
+
+@router.post('/custody')
+def custody_transfer(body:Custody,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','driver','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            ids=sorted(set([body.from_shift_id]+([body.to_shift_id] if body.to_shift_id else [])))
+            locked={i:lock_shift(c,i) for i in ids};src=locked[body.from_shift_id];shift_access(c,user,src)
+            to=locked.get(body.to_shift_id)
+            if src['status']=='closed' or (to and (to['status'] not in ('open','closing') or to['brand_id']!=src['brand_id'])):fail(409,'شفت عهدة غير متاح')
+            recipient=(to['user_id'] if to else body.recipient_user_id)
+            target=c.execute('SELECT * FROM users WHERE id=%s AND active',(recipient,)).fetchone()
+            if not target or target['id']==src['user_id'] or target['role'] not in ('owner','delivery_manager','driver') or not same_scope(user,target):fail(422,'يلزم مستلم مخول مستقل يؤكد فعليا')
+            if src['kind']=='driver' and (not to or to['id']!=src['manager_shift_id']):fail(403,'تسليم السائق إلى شفت مديره فقط')
+            if src['kind']=='manager' and to and to['kind']=='driver' and to['manager_shift_id']!=src['id']:fail(403,'السلفة لسائق تابع فقط')
+            if not to and target['role']!='owner':fail(403,'المستلم النهائي المالك المخول')
+            pending=c.execute("SELECT coalesce(sum(amount_halalas),0) n FROM custody_transfers WHERE from_shift_id=%s AND status='pending'",(src['id'],)).fetchone()['n']
+            if body.closure:
+                if src['status']!='submitted':fail(409,'يلزم إرسال التقفيلة أولا')
+                existing=c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected'",(src['id'],)).fetchone()
+                if existing or body.amount_halalas!=src['submission']['handover_halalas']:fail(409,'مبلغ تسليم التقفيلة غير مطابق أو مسجل سابقا')
+            else:
+                if src['status'] not in ('open','closing') or body.amount_halalas<=0 or body.amount_halalas+pending>balance(c,src):fail(409,'العهدة المتاحة غير كافية أو الشفت مرسل')
+            cid=uid();c.execute('INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,recipient_user_id,amount_halalas,reference,closure,created_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(cid,src['id'],body.to_shift_id,recipient,body.amount_halalas,body.reference,body.closure,user['id']))
+            db.audit(c,user['id'],'custody.request','custody',cid,body.model_dump())
+            return {'transfer':c.execute('SELECT * FROM custody_transfers WHERE id=%s',(cid,)).fetchone()}
+        return mutate(c,user,request,'custody.request',body.model_dump(),perform)
+
+@router.get('/custody')
+def custody_list(user=Depends(auth.current_user)):
+    roles(user,'owner','driver','delivery_manager')
+    with db.tx() as c:
+        rows=c.execute('SELECT t.* FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id WHERE t.recipient_user_id=%s OR s.user_id=%s ORDER BY t.created_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
+        return safe({'transfers':rows})
+
+@router.post('/custody/{cid}/confirm')
+def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','driver','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            t=c.execute('SELECT * FROM custody_transfers WHERE id=%s FOR UPDATE',(cid,)).fetchone()
+            if not t or t['recipient_user_id']!=user['id']:fail(404,'التسليم غير موجود أو أنت لست المستلم')
+            if t['status']!='pending':fail(409,'التسليم غير معلق')
+            ids=sorted(set([t['from_shift_id']]+([t['to_shift_id']] if t['to_shift_id'] else [])))
+            ss={i:lock_shift(c,i) for i in ids}
+            if ss[t['from_shift_id']]['status']=='closed' or (t['to_shift_id'] and ss[t['to_shift_id']]['status'] not in ('open','closing')):fail(409,'شفت مقفل')
+            c.execute("UPDATE custody_transfers SET status='confirmed',confirmed_by=%s,confirmed_at=now() WHERE id=%s",(user['id'],cid))
+            event(c,t['from_shift_id'],-t['amount_halalas'],'transfer_out',cid,user['id'],t['reference'])
+            if t['to_shift_id']:event(c,t['to_shift_id'],t['amount_halalas'],'transfer_in',cid,user['id'],t['reference'])
+            db.audit(c,user['id'],'custody.confirm','custody',cid,{'actual_recipient':user['id']})
+            return {'transfer_id':cid,'status':'confirmed'}
+        return mutate(c,user,request,'custody.confirm:'+cid,{},perform)
+
+class AuthorizedCash(BaseModel):
+    corrects_report_id:str|None=None
+    kind:str
+    amount_halalas:StrictInt
+    reason:str=Field(min_length=1,max_length=2000)
+    reference:str=Field(min_length=1,max_length=200)
+
+@router.post('/shifts/{sid}/cash-event')
+def authorized_cash(sid:str,body:AuthorizedCash,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner')
+    with db.tx() as c:
+        def perform():
+            s=lock_shift(c,sid);shift_access(c,user,s)
+            if s['status'] not in ('open','closing'):fail(409,'الشفت لا يقبل تعديل عهدة')
+            if body.kind not in ('expense','direct_receipt','adjustment') or not body.amount_halalas:fail(422,'نوع القيد غير صالح')
+            if body.kind=='expense' and body.amount_halalas>=0 or body.kind=='direct_receipt' and body.amount_halalas<=0:fail(422,'إشارة المبلغ غير صحيحة')
+            if available_balance(c,s)+body.amount_halalas<0:fail(409,'العهدة غير كافية')
+            eid=uid();event(c,sid,body.amount_halalas,body.kind,eid,user['id'],body.reason+' / '+body.reference)
+            if body.corrects_report_id:
+                from .reporting import report
+                original=report(c,user,body.corrects_report_id)
+                version=c.execute('SELECT coalesce(max(correction_version),1)+1 n FROM report_corrections WHERE report_id=%s',(original['id'],)).fetchone()['n']
+                c.execute('INSERT INTO report_corrections(id,report_id,correction_version,shift_id,event_reference_id,amount_halalas,reason,authorized_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(uid(),original['id'],version,sid,eid,body.amount_halalas,body.reason,user['id']))
+            db.audit(c,user['id'],'custody.authorized_event','shift',sid,body.model_dump())
+            return {'event_id':eid,'expected_halalas':balance(c,s)}
+        return mutate(c,user,request,'cash.event:'+sid,body.model_dump(),perform)
+
+@router.get('/dashboard')
+def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:str|None=None,branch_id:str|None=None,service:str|None=None,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','delivery_staff','branch_manager')
+    with db.tx() as c:
+        brand=brand_id or user['brand_id']
+        if brand!=user['brand_id']:fail(403,'براند غير مخول')
+        cfg=c.execute('SELECT settings FROM brands WHERE id=%s',(brand,)).fetchone()
+        if not cfg:fail(404,'البراند غير موجود')
+        setting=c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand,)).fetchone()
+        config={**cfg['settings'],**(setting['settings'] if setting else {})}
+        minutes,configured=day_start(config)
+        now=datetime.now(RIYADH);day=(now-timedelta(minutes=minutes)).date()
+        if period=='yesterday':day-=timedelta(days=1)
+        try:
+            lo=datetime.fromisoformat(start).replace(tzinfo=RIYADH) if start else datetime.combine(day,datetime.min.time(),RIYADH)+timedelta(minutes=minutes)
+            hi=datetime.fromisoformat(end).replace(tzinfo=RIYADH) if end else lo+timedelta(days=1)
+        except ValueError:fail(422,'تاريخ غير صالح')
+        if hi<=lo or hi-lo>timedelta(days=93):fail(422,'الفترة يجب أن تكون بين يوم و93 يوما')
+        clauses=['o.brand_id=%s','o.created_at>=%s','o.created_at<%s'];params=[brand,lo,hi]
+        if user['role']!='owner':clauses.append('o.branch_id=ANY(%s)');params.append(user.get('branch_ids',[]))
+        if branch_id:
+            if user['role']!='owner' and branch_id not in user.get('branch_ids',[]):fail(403,'فرع غير مخول')
+            clauses.append('o.branch_id=%s');params.append(branch_id)
+        if service:
+            if service not in ('delivery','pickup','car'):fail(422,'نوع طلب غير صالح')
+            clauses.append('o.service=%s');params.append(service)
+        where=' AND '.join(clauses)
+        summary=c.execute("SELECT count(*) orders,count(*) FILTER(WHERE preparation_status='new') new,count(*) FILTER(WHERE completed_at IS NULL AND preparation_status NOT IN ('cancelled','rejected','new')) active,count(*) FILTER(WHERE completed_at IS NOT NULL) completed,count(*) FILTER(WHERE preparation_status IN ('cancelled','rejected')) cancelled,coalesce(sum(total_halalas) FILTER(WHERE completed_at IS NOT NULL),0) gross_completed_halalas,coalesce(sum(delivery_fee_halalas) FILTER(WHERE completed_at IS NOT NULL),0) delivery_fee_halalas FROM orders o WHERE "+where,params).fetchone()
+        refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
+        late=config.get('late_after_minutes',60)
+        if not isinstance(late,int) or not 1<=late<=1440:fail(503,'حد التأخير غير صحيح')
+        summary['live_overdue']=c.execute("SELECT count(*) n FROM orders o WHERE o.service='delivery' AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected') AND o.created_at<now()-(%s*interval '1 minute') AND "+where,[late,*params]).fetchone()['n']
+        summary['refund_halalas']=int(refs);summary['net_completed_halalas']=int(summary['gross_completed_halalas'])-int(refs)
+        items=c.execute("WITH lines AS (SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item WHERE o.completed_at IS NOT NULL AND "+where+" GROUP BY o.id,o.total_halalas,item->>'product_id') SELECT product_id,max(name) name,sum(greatest(quantity-coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r WHERE r.order_id=lines.order_id),0),0)) quantity,sum(gross_halalas) gross_halalas,round(sum(gross_halalas::numeric*greatest(total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=lines.order_id),0),0)/nullif(total_halalas,0))) net_halalas FROM lines GROUP BY product_id ORDER BY quantity DESC LIMIT 10",params).fetchall()
+        branch_top=c.execute("SELECT o.branch_id,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
+        timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
+        timing['threshold_minutes']=late;timing['threshold_configured']='late_after_minutes' in config
+        # Collection events use their own timestamps, independently of order cohorts and custody transfers.
+        cash_where=where.replace('o.created_at>=','p.created_at>=').replace('o.created_at<','p.created_at<')
+        collected=c.execute('SELECT p.method,coalesce(sum(p.amount_halalas),0) amount_halalas FROM collections p JOIN orders o ON o.id=p.order_id WHERE '+cash_where+' GROUP BY p.method',params).fetchall()
+        shift_rows=c.execute("SELECT status,count(*) count,coalesce(sum((submission->>'difference_halalas')::bigint),0) difference_halalas FROM shifts WHERE brand_id=%s AND opened_at<%s AND coalesce(closed_at,%s)>=%s AND (%s OR branch_ids ?| %s) GROUP BY status",(brand,hi,hi,lo,user['role']=='owner',[branch_id] if branch_id else user.get('branch_ids',[]))).fetchall()
+        return safe({'period':{'start':lo,'end':hi,'timezone':'Asia/Riyadh','operational_day_start_minutes':minutes,'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ الفترة الحالية يوم تقويمي بتوقيت الرياض'},'summary':summary,'top_items':items,'top_branches':branch_top,'delivery_time':timing,'collections':collected,'shifts':shift_rows,'definitions_url':'/docs/metrics'})
+
+class ManagerHandover(BaseModel):
+    target_manager_shift_id:str
+    reason:str=Field(min_length=1,max_length=2000)
+
+@router.post('/shifts/{sid}/handover-manager')
+def manager_handover(sid:str,body:ManagerHandover,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            ids=sorted(set([sid,body.target_manager_shift_id]));ss={i:lock_shift(c,i) for i in ids};src=ss[sid];target=ss[body.target_manager_shift_id]
+            shift_access(c,user,src)
+            if not target or src['kind']!='manager' or target['kind']!='manager' or src['id']==target['id'] or src['status'] not in ('open','closing') or target['status']!='open' or src['brand_id']!=target['brand_id'] or not set(src['branch_ids'])<=set(target['branch_ids']):fail(409,'المناوبة البديلة غير مؤهلة')
+            if c.execute("SELECT 1 FROM manager_handovers WHERE from_shift_id=%s AND status='pending'",(sid,)).fetchone():fail(409,'يوجد تسليم مناوبة معلق')
+            children=c.execute("SELECT id FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id",(sid,)).fetchall()
+            hid=uid();c.execute('INSERT INTO manager_handovers(id,from_shift_id,to_shift_id,branch_ids,driver_shift_ids,reason,requested_by) VALUES(%s,%s,%s,%s,%s,%s,%s)',(hid,sid,target['id'],db.json(src['branch_ids']),db.json([x['id'] for x in children]),body.reason,user['id']))
+            c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
+            db.audit(c,user['id'],'manager.handover.request','shift',sid,{'handover_id':hid,**body.model_dump()})
+            return {'handover_id':hid,'status':'pending','driver_shift_ids':[x['id'] for x in children],'cash_handover_requires_separate_confirmation':True}
+        return mutate(c,user,request,'manager.handover:'+sid,body.model_dump(),perform)
+
+@router.get('/manager-handovers')
+def manager_handover_list(user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    with db.tx() as c:
+        rows=c.execute('SELECT h.* FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE s.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) ORDER BY h.created_at DESC LIMIT 100',(user['brand_id'],user['id'],user['id'],user['role']=='owner')).fetchall();return safe({'handovers':rows})
+
+@router.post('/manager-handovers/{hid}/accept')
+def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    with db.tx() as c:
+        def perform():
+            h=c.execute('SELECT * FROM manager_handovers WHERE id=%s FOR UPDATE',(hid,)).fetchone()
+            if not h or h['status']!='pending':fail(404,'تسليم المناوبة غير معلق')
+            ids=sorted([h['from_shift_id'],h['to_shift_id']]);ss={i:lock_shift(c,i) for i in ids};src=ss[h['from_shift_id']];target=ss[h['to_shift_id']]
+            if target['user_id']!=user['id'] or target['brand_id']!=user['brand_id']:fail(403,'المستلم الحقيقي فقط يقبل المناوبة')
+            if target['status']!='open' or src['status']!='closing':fail(409,'حالة الشفت غير صالحة')
+            c.execute("UPDATE shifts SET manager_shift_id=%s WHERE id=ANY(%s) AND manager_shift_id=%s AND status<>'closed'",(target['id'],h['driver_shift_ids'],src['id']))
+            c.execute("UPDATE manager_handovers SET status='accepted',accepted_by=%s,accepted_at=now() WHERE id=%s",(user['id'],hid))
+            db.audit(c,user['id'],'manager.handover.accept','shift',target['id'],{'handover_id':hid,'driver_shift_ids':h['driver_shift_ids'],'cash_transferred':False})
+            return {'handover_id':hid,'status':'accepted','cash_transferred':False}
+        return mutate(c,user,request,'manager.handover.accept:'+hid,{},perform)

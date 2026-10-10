@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#fbf9f5">
+  <meta name="description" content="منيو KPS COFFEE وطلبات التوصيل والاستلام من الفرع والسيارة">
+  <title>KPS COFFEE | الطلبات</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/customer.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#menu">انتقل إلى المنيو</a>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="/" aria-label="KPS COFFEE الرئيسية">
+      <img id="brand-logo" class="brand-logo" alt="KPS COFFEE" hidden>
+      <span class="brand-text" dir="ltr">KPS <span>COFFEE</span><small>طلبك، على طريقتك</small></span>
+    </a>
+    <div class="header-actions"><button id="orders-button" class="button quiet" type="button">طلباتي</button><button id="account-button" class="button secondary" type="button">تسجيل الدخول</button><button id="header-cart" class="button cart-header" type="button" aria-controls="basket">السلة <span id="header-count" class="count">0</span></button></div>
+  </div>
+</header>
+<main class="page-shell">
+  <section id="banner-area" class="banner-area" aria-label="إعلانات KPS COFFEE">
+    <div id="banner-content" class="intro-banner"><div><span class="eyebrow" dir="ltr">KPS COFFEE</span><h1>اطلب مباشرة من KPS COFFEE</h1><p>تصفح المنيو، ثم حدد الخدمة والفرع المناسب لطلبك.</p></div><span class="banner-mark" aria-hidden="true">KPS</span></div>
+    <div id="banner-controls" class="banner-controls" hidden></div>
+  </section>
+  <div id="site-notice" class="notice" role="status" hidden></div>
+  <section class="service-panel panel" aria-labelledby="service-title">
+    <div class="section-heading"><div><span class="eyebrow">قبل أن تختار</span><h2 id="service-title">كيف تستلم طلبك؟</h2></div><span id="branch-summary" class="muted">حدد الفرع للتحقق من الإتاحة</span></div>
+    <div class="service-form">
+      <fieldset class="service-options"><legend class="sr-only">نوع الخدمة</legend><label class="choice"><input type="radio" name="service" value="delivery"><span><b>توصيل</b><small>إلى موقعك</small></span></label><label class="choice"><input type="radio" name="service" value="pickup" checked><span><b>استلام من الفرع</b><small>جهز طلبك قبل الوصول</small></span></label><label class="choice"><input type="radio" name="service" value="car"><span><b>استلام بالسيارة</b><small>في الفروع المتاحة</small></span></label></fieldset>
+      <label class="field">الفرع<select id="branch-select"><option value="">اختر الفرع</option></select></label>
+    </div>
+    <div id="service-notice" class="inline-note" role="status"></div>
+    <div id="location-fields" class="location-fields" hidden><label class="field">وصف العنوان<input id="address" autocomplete="street-address" maxlength="500" placeholder="الحي، الشارع، رقم المبنى وأي علامة واضحة"></label><div class="row wrap"><button id="locate-button" class="button secondary" type="button">استخدام موقعي الحالي</button><button id="manual-location-button" class="button quiet" type="button">إدخال الموقع يدويًا</button><span id="location-state" class="muted">لم يُحدد الموقع</span></div><div id="manual-location" class="form-grid" hidden><label class="field">خط العرض<input id="latitude" type="number" min="-90" max="90" step="any" inputmode="decimal" dir="ltr"></label><label class="field">خط الطول<input id="longitude" type="number" min="-180" max="180" step="any" inputmode="decimal" dir="ltr"></label><button id="save-location" class="button secondary" type="button">اعتماد الموقع المدخل</button></div></div>
+    <div id="car-fields" class="form-grid car-fields" hidden><label class="field">نوع السيارة<input id="car-model" maxlength="60" autocomplete="off" placeholder="نوع وموديل السيارة"></label><label class="field">لون السيارة<input id="car-color" maxlength="40" autocomplete="off"></label><label class="field">رقم اللوحة<input id="car-plate" maxlength="30" autocomplete="off"></label></div>
+  </section>
+  <div class="store-layout">
+    <section id="menu" class="menu-section" aria-labelledby="menu-title">
+      <div class="section-heading menu-heading"><div><span class="eyebrow">كل اختيار له مزاج</span><h2 id="menu-title">المنيو</h2><p id="menu-count" class="muted">جاري تحميل المنيو المعتمد…</p></div><label class="search field"><span class="sr-only">البحث في المنيو</span><input id="search" type="search" autocomplete="off" placeholder="ابحث عن صنف…"></label></div>
+      <nav id="categories" class="category-tabs" aria-label="أقسام المنيو"></nav>
+      <div id="catalog-notice" class="inline-note" hidden></div>
+      <div id="products" class="product-grid" aria-live="polite"><div class="empty-state"><span class="loader" aria-hidden="true"></span><p>جاري تحميل الأصناف…</p></div></div>
+    </section>
+    <aside id="basket" class="basket panel" aria-labelledby="basket-title">
+      <div class="section-heading"><h2 id="basket-title">سلتك</h2><span id="basket-count" class="pill">0 أصناف</span></div>
+      <div id="cart-lines" class="cart-lines"><div class="empty-state"><span class="empty-symbol" aria-hidden="true">＋</span><h3>ابدأ باختيارك المفضل</h3><p>الأصناف التي تضيفها ستظهر هنا.</p></div></div>
+      <div id="basket-details" hidden><label class="field">اسم المستلم<input id="customer-name" maxlength="100" autocomplete="name" placeholder="اسمك لاستلام الطلب"></label><label class="field">ملاحظات على الطلب <span class="muted">اختياري</span><textarea id="order-notes" rows="2" maxlength="1000" placeholder="أضف أي ملاحظة مهمة للتجهيز"></textarea></label><fieldset class="payment-options"><legend>الدفع عند الاستلام</legend><label><input type="radio" name="payment" value="cash" checked> كاش</label><label><input type="radio" name="payment" value="card"> شبكة</label></fieldset><p class="small muted">اختيار الشبكة للدفع عند الاستلام. لا تُدخل بيانات بطاقتك هنا.</p><div id="quote-summary" class="quote-summary"></div><div id="basket-error" class="notice error" role="alert" hidden></div><button id="checkout-button" class="button primary full" type="button">مراجعة وتأكيد الطلب</button><p class="small muted basket-footnote">تأكيد الهوية بالجوال يحمي طلباتك ومحادثاتك.</p></div>
+    </aside>
+  </div>
+</main>
+<footer class="site-footer"><span dir="ltr">KPS COFFEE</span><span>طلباتك ومحادثاتك في مكان واحد</span><a href="/ops.html">دخول فريق التشغيل</a></footer>
+<button id="mobile-basket" class="mobile-basket button primary" type="button" hidden><span id="mobile-basket-count">السلة</span><span id="mobile-basket-total"></span></button>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<dialog id="product-dialog" class="dialog product-dialog" aria-labelledby="product-title"><div class="dialog-header"><span class="eyebrow">اختياراتك</span><button class="icon-button" data-close type="button" aria-label="إغلاق تفاصيل الصنف">×</button></div><div class="dialog-scroll"><img id="product-image" class="product-detail-image" alt=""><h2 id="product-title"></h2><p id="product-description" class="muted" hidden></p><div class="row between"><strong id="product-price" class="money"></strong><span id="product-restriction" class="pill warning" hidden>متوفر في حفر الباطن فقط</span></div><div id="product-availability" class="inline-note" hidden></div><div class="quantity-row"><span>العدد</span><div class="stepper"><button id="product-minus" type="button" aria-label="تقليل العدد">−</button><input id="product-qty" value="1" type="number" min="1" max="30" inputmode="numeric" aria-label="عدد الصنف"><button id="product-plus" type="button" aria-label="زيادة العدد">＋</button></div></div><div id="product-option-hint" class="inline-note" hidden></div><button id="apply-first-option" class="button quiet" type="button" hidden></button><div id="product-options" class="option-units"></div><label class="field">ملاحظات على الصنف <span class="muted">اختياري</span><textarea id="product-notes" rows="2" maxlength="300"></textarea></label><div id="product-error" class="notice error" role="alert" hidden></div></div><div class="dialog-footer"><button id="product-add" class="button primary full" type="button">إضافة للسلة</button></div></dialog>
+<dialog id="account-dialog" class="dialog account-dialog" aria-labelledby="account-title"><div class="dialog-header"><h2 id="account-title">دخول آمن بالجوال</h2><button class="icon-button" data-close type="button" aria-label="إغلاق تسجيل الدخول">×</button></div><div class="dialog-scroll"><div id="account-profile" hidden><p id="profile-label"></p><button id="logout-button" class="button secondary" type="button">تسجيل الخروج</button></div><form id="otp-request-form"><p class="muted">لإتمام الطلب ومتابعته والوصول إلى محادثاته، تحقق من رقم جوالك.</p><label class="field">رقم الجوال<input id="phone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" placeholder="05xxxxxxxx" required maxlength="20"></label><button id="send-otp" class="button primary full" type="submit">إرسال رمز التحقق</button></form><form id="otp-verify-form" hidden><p id="otp-info" class="muted"></p><label class="field">رمز التحقق<input id="otp-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" minlength="4" dir="ltr" required></label><button id="verify-otp" class="button primary full" type="submit">تحقق ودخول</button><button id="change-phone" class="button quiet full" type="button">تغيير رقم الجوال</button></form><div id="account-error" class="notice error" role="alert" hidden></div><div id="otp-unavailable" class="notice" hidden>التحقق بالجوال غير متاح حاليًا. يمكنك تصفح المنيو وحفظ سلتك، وسيُتاح تأكيد الطلب بعد تفعيل خدمة التحقق.</div></div></dialog>
+<dialog id="orders-dialog" class="dialog orders-dialog" aria-labelledby="orders-title"><div class="dialog-header"><h2 id="orders-title">طلباتي</h2><button class="icon-button" data-close type="button" aria-label="إغلاق الطلبات">×</button></div><div class="dialog-scroll"><div id="orders-list"></div><div id="order-detail" hidden></div><div id="orders-error" class="notice error" role="alert" hidden></div></div></dialog>
+<dialog id="chat-dialog" class="dialog chat-dialog" aria-labelledby="chat-title"><div class="dialog-header"><div><h2 id="chat-title">محادثة الطلب</h2><p id="chat-route" class="small muted"></p></div><button class="icon-button" data-close type="button" aria-label="إغلاق المحادثة">×</button></div><div id="chat-messages" class="chat-messages" aria-live="polite"></div><div id="chat-error" class="notice error" role="alert" hidden></div><form id="chat-form" class="chat-compose"><label class="field"><span class="sr-only">رسالتك</span><textarea id="chat-text" rows="2" maxlength="4000" placeholder="اكتب رسالتك…"></textarea></label><div class="row wrap"><label class="button secondary upload-button">إرفاق صورة<input id="chat-image" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only"></label><span id="chat-image-name" class="small muted"></span><button id="send-message" class="button primary" type="submit">إرسال</button></div><p class="small muted">الصور: JPG أو PNG أو WebP، بحد أقصى 5 ميجابايت.</p></form></dialog>
+<dialog id="confirm-dialog" class="dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">مراجعة الطلب</h2><button class="icon-button" data-close type="button" aria-label="إغلاق المراجعة">×</button></div><div class="dialog-scroll"><div id="confirm-content"></div><div id="confirm-error" class="notice error" role="alert" hidden></div></div><div class="dialog-footer"><button id="confirm-submit" class="button primary full" type="button">تأكيد الطلب</button></div></dialog>
+</body>
+</html>

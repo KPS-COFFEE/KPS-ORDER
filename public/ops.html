@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>KPS ORDER — التشغيل</title>
+  <link rel="stylesheet" href="/ops.css">
+  <script src="/ops.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">انتقل للمحتوى</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="KPS COFFEE"><img src="/assets/kps-logo-fb911a7b4bb4.png" alt="KPS COFFEE" width="48" height="48"><span>ORDER <small id="ops-label">التشغيل</small></span></a>
+    <div class="header-actions"><span id="session-label"></span><button type="button" id="language" class="quiet" lang="en">English</button><button type="button" id="logout" class="quiet" hidden>خروج</button></div>
+  </header>
+  <div id="status" role="status" aria-live="polite" class="status-line">جاري التحقق من الجلسة…</div>
+  <div class="app-shell" id="app-shell" hidden>
+    <aside class="side"><nav id="navigation" aria-label="التشغيل"></nav><p id="scope-note" class="muted"></p><p class="time-zone" id="zone-note">الأوقات بتوقيت الرياض</p></aside>
+    <main id="main" tabindex="-1"><div id="page-heading" class="page-heading"></div><div id="content"></div></main>
+  </div>
+  <main class="login-shell" id="login-shell" hidden>
+    <section class="panel login-panel">
+      <span class="eyebrow" dir="ltr">KPS ORDER</span><h1 id="login-title">دخول الموظفين</h1><p id="login-note" class="muted">حساب الموظف يحدد نطاق الوصول. الدخول المخصص للعملاء من المتجر.</p>
+      <form id="login-form"><label><span id="login-email-label">اسم الدخول</span><input name="username" type="text" autocomplete="username" dir="ltr" required maxlength="150"></label><label><span id="login-password-label">كلمة المرور</span><input name="password" type="password" autocomplete="current-password" dir="ltr" required maxlength="200"></label><p class="form-error" id="login-error" role="alert"></p><button type="submit" id="login-submit">دخول آمن</button></form>
+    </section>
+  </main>
+  <dialog id="modal" aria-labelledby="modal-title"><div class="modal-head"><h2 id="modal-title"></h2><button type="button" id="modal-close" class="quiet" aria-label="إغلاق">×</button></div><div id="modal-body"></div></dialog>
+</body>
+</html>

@@ -1,0 +1,16 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1100" viewBox="0 0 900 1100">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#171717"/>
+      <stop offset="100%" stop-color="#2b160e"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="1100" rx="44" fill="url(#bg)"/>
+  <circle cx="450" cy="350" r="230" fill="#f26532" opacity=".15"/>
+  <path d="M285 260h330l-35 430c-3 41-36 73-77 73H397c-41 0-74-32-77-73Z" fill="#f26532"/>
+  <path d="M320 295h260l-10 95H330Z" fill="#111"/>
+  <rect x="300" y="205" width="300" height="85" rx="35" fill="#f26532"/>
+  <text x="450" y="875" text-anchor="middle" font-family="Tahoma,Arial" font-size="72" font-weight="700" fill="#fff">كوب إضافي</text>
+  <text x="450" y="970" text-anchor="middle" font-family="Tahoma,Arial" font-size="48" font-weight="700" fill="#f26532">1.00 ر.س</text>
+</svg>

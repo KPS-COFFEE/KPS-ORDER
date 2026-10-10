@@ -1,0 +1,52 @@
+# New web service only, in the owner-confirmed My Workspace.
+# PostgreSQL already exists: dpg-db4rjgo473hc738soueg-a, Frankfurt, PG18.
+# This Blueprint deliberately does not define databases: do not create another.
+# No existing static service, APEX resource, customer domain, or traffic change.
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+previews:
+  generation: "off"
+
+services:
+  - type: web
+    name: kps-order-emergency-v4
+    runtime: docker
+    repo: https://github.com/KPS-COFFEE/KPS-ORDER
+    branch: agent/kps-order-emergency-v4
+    region: frankfurt
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: "off"
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: DATABASE_URL
+        # Copy the existing DB's Internal Database URL directly into this
+        # private Dashboard value. Never post credentials in chat or git.
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: PUBLIC_BASE_URL
+        # Confirm the allocated service URL and set this at creation.
+        sync: false
+      - key: APP_ALLOWED_HOSTS
+        # Exact allocated onrender.com hostname; no wildcard.
+        sync: false
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_TTL_HOURS
+        value: "12"
+      - key: INITIAL_CATALOG_IMPORT
+        value: "true"
+      - key: OTP_PROVIDER
+        # Public guest browsing is testable. Customer verification stays closed
+        # until an actual provider account and credentials are configured.
+        value: disabled
+      - key: OTP_CHANNEL
+        value: sms
+    # No domains entry: order.kps.sa cutover requires launch gates + owner go.
+    # No disk: protected attachment/report bytea data is durable in PostgreSQL.
+    # Configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and
+    # TWILIO_VERIFY_SERVICE_SID privately before changing OTP_PROVIDER.
+
