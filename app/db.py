@@ -167,6 +167,7 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
         from . import catalog, service_hours
         catalog.apply_final_catalog_approval(conn)
         apply_owner_display_decisions(conn)
+        service_hours.apply_default_branch_hours(conn)
         service_hours.apply_default_delivery_hours(conn)
 
 

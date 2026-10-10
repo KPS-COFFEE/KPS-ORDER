@@ -105,6 +105,36 @@ def closed_delivery_message(hours, now=None):
     return f'التوصيل مغلق الآن، ويعود {day} الساعة {clock} {period} بتوقيت السعودية.'
 
 
+
+def apply_default_branch_hours(conn):
+    """Apply approved Friday closing once, without overwriting canonical seed or owner edits."""
+    from . import db
+    rows=conn.execute("SELECT * FROM branches WHERE brand_id='kps' AND branch_no BETWEEN 1 AND 20 ORDER BY branch_no FOR UPDATE").fetchall()
+    for branch in rows:
+        number=branch['branch_no']
+        if (branch['id']!=f'kps-branch-{number}' or
+                branch['source_id']!=f'apex-canonical-branch-no:{number}'):
+            continue
+        decision=conn.execute(
+            "INSERT INTO branch_opening_hours_decisions(branch_id,decision_id,result) "
+            "VALUES(%s,%s,'evaluating') ON CONFLICT(branch_id) DO NOTHING RETURNING branch_id",
+            (branch['id'],'kps-owner-friday-closed-2026-10-10')
+        ).fetchone()
+        if not decision:
+            continue
+        result='preserved_existing_owner_hours'
+        if branch['settings'].get('opening_hours') is None:
+            conn.execute("UPDATE branches SET settings=jsonb_set(settings,'{opening_hours}',%s::jsonb),updated_at=now() WHERE id=%s",
+                         (db.json(DEFAULT_KPS_BRANCH_OPENING_HOURS),branch['id']))
+            db.audit(conn,None,'branch.owner_opening_hours','branch',branch['id'],
+                     {'owner_approved':True,'branch_no':number,'timezone':'Asia/Riyadh',
+                      'friday_closed':'05:30-12:30','other_days':'24h',
+                      'service_enablement_unchanged':True})
+            result='applied_24h_except_friday'
+        conn.execute('UPDATE branch_opening_hours_decisions SET result=%s,evaluated_at=now() WHERE branch_id=%s',
+                     (result,branch['id']))
+
+
 def apply_default_delivery_hours(conn):
     """Evaluate the owner's approved default once per existing KPS branch.
 
