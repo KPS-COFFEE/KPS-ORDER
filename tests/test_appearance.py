@@ -78,7 +78,10 @@ def _capture_theme(page, name):
 def _settled_store_appearance(page):
     page.evaluate("""async () => {
         await document.fonts.ready;
-        await Promise.all(Array.from(document.images).filter(img => img.getBoundingClientRect().top < innerHeight).map(img => img.decode()));
+        await Promise.all(Array.from(document.images).filter(img => {
+            const r=img.getBoundingClientRect();
+            return img.getAttribute('src') && img.getClientRects().length && r.top < innerHeight && r.bottom > 0;
+        }).map(img => img.decode()));
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     }""")
     return page.locator('body,.site-header,.intro-banner,.service-panel,.search input,.product-card,.basket').evaluate_all("""els => els.map(el => {
