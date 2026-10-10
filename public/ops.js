@@ -201,7 +201,7 @@
         ${textarea(tr('العبارات — كل عبارة في سطر مستقل (حتى 8 عبارات)','Phrases — one per line (up to 8)'),'ticker_lines',(current.ticker_lines||[]).join('\n'),true)}
         ${field(tr('مدة دورة الحركة بالثواني (14–90)','Animation cycle seconds (14–90)'),'ticker_seconds',current.ticker_seconds||28,{type:'number',min:14,max:90,required:true})}
         ${check(tr('إظهار العبارة الأدبية في البنر الرئيسي','Show approved literary phrase in hero'),'quote_enabled',current.quote_enabled)}
-        ${textarea(tr('العبارة الأدبية أو بيت الشعر — اختياري ولا يظهر قبل التفعيل','Literary phrase or verse — optional and hidden until enabled'),'quote_text',current.quote_text||'',true)}
+        ${textarea(tr('العبارة الأدبية أو بيت الشعر — اختياري ولا يظهر قبل التفعيل','Literary phrase or verse — optional and hidden until enabled'),'quote_text',current.quote_text||'')}
         ${notice(tr('لا تضف خصومات أو عروض أسعار لم يتم اعتمادها. الصور تتبدل تلقائيًا من البنرات المفعلة في هذا التبويب، ويمكن رفع صورة للجوال وأخرى للكمبيوتر.','Do not publish unapproved commercial offers. Active image banners rotate automatically; desktop and mobile images can be uploaded below.'))}
         ${formEnd(tr('حفظ إعدادات العرض','Save presentation settings'))}
       </form>`,async fd=>{

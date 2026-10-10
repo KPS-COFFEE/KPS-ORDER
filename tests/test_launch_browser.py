@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from test_browser import ARTIFACTS, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from test_browser import ARTIFACTS, ROOT, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
@@ -51,9 +51,9 @@ def _configure_branches(context, base, headers):
     _patch(context, base, headers, '/api/admin/products/kps-01', {'settings': {'unavailable_branch_ids': ['kps-branch-3']}})
 
 
-def _evidence(page, name, **details):
+def _evidence(page, name, full_page=True, **details):
     ARTIFACTS.mkdir(exist_ok=True)
-    page.screenshot(path=str(ARTIFACTS / (name + '.png')), full_page=True, animations='disabled')
+    page.screenshot(path=str(ARTIFACTS / (name + '.png')), full_page=full_page, animations='disabled')
     (ARTIFACTS / (name + '.json')).write_text(json.dumps({
         'synthetic': True, 'revision': os.getenv('RUNTIME_REVISION', 'local-unversioned'),
         'viewport': page.viewport_size, 'physical_device': False, **details}, ensure_ascii=False, indent=2))
@@ -90,7 +90,7 @@ def test_approved_original_lettering_orange_ticker_above_header_left_to_right_an
             }""")
             assert layout['stripBottom'] <= layout['headerTop'] + 1 and layout['background'] == 'rgb(233, 101, 22)'
             assert not layout['overflow']
-            _evidence(page, f'launch-orange-ticker-{width}', approved_lettering='original supplied JPEG bytes')
+            _evidence(page, f'launch-orange-ticker-{width}', full_page=False, approved_lettering='original supplied JPEG bytes')
         page.mouse.move(5, 890)
         direction = page.locator('#announcement-track').evaluate("""element => {
             const animation=element.getAnimations()[0];if(!animation)return null;
@@ -220,3 +220,68 @@ def test_denied_geolocation_retains_city_branch_manual_choice_and_car_directions
     finally:
         context.close()
         owner_context.close()
+
+
+def test_owner_banner_city_speed_link_image_scope_and_ticker_edits_through_real_forms(live_app, chromium_browser):
+    from playwright.sync_api import expect
+    context, page, errors = _context(chromium_browser, live_app)
+    _owner_login(context, live_app, _staff())
+    try:
+        page.goto('/ops')
+        expect(page.locator('#app-shell')).to_be_visible()
+        page.locator('#navigation [data-page=admin]').click()
+        page.locator('[data-action=admin-tab][data-tab=banners]').click()
+        page.locator('[data-action=create-banner]').click()
+        form = page.locator('#banner-form')
+        expect(form).to_be_visible()
+        form.locator('input[name=title]').fill('إعلان اختبار لوحة المالك')
+        form.locator('textarea[name=body]').fill('بيانات معزولة لا تظهر للعملاء الحقيقيين.')
+        form.locator('input[name=button_label]').fill('تفاصيل الإعلان')
+        form.locator('input[name=sort_order]').fill('2')
+        form.locator('input[name=rotation_seconds]').fill('5.5')
+        form.locator('select[name=cities]').select_option(label='حفر الباطن')
+        form.locator('input[name=campaign_link]').fill('https://www.kps.sa/branches?test=owner-form')
+        form.locator('input[name="banner:kps-branch-1"]').check()
+        form.locator('input[name=active]').check()
+        product = next(item for item in json.loads((ROOT / 'data/catalog.json').read_text())['products'] if item['id'] == 'kps-01')
+        form.locator('input[name=desktop_image]').set_input_files(str(ROOT / 'public' / product['image_url'].lstrip('/')))
+        with page.expect_response(lambda response: '/api/admin/banners' in response.url and response.request.method == 'POST') as created:
+            form.locator('button[type=submit]').click()
+        response = created.value
+        assert response.status == 200, response.text()
+        banner = response.json()
+        assert banner['rotation_ms'] == 5500 and banner['cities'] == ['حفر الباطن']
+        assert banner['branch_ids'] == ['kps-branch-1'] and banner['desktop_asset_id']
+        assert banner['destination'] == {'kind': 'link', 'id': 'https://www.kps.sa/branches?test=owner-form'}
+        expect(page.locator('#modal')).not_to_be_visible()
+        page.locator(f'[data-action=edit-banner][data-id="{banner["id"]}"]').click()
+        expect(form.locator('input[name=rotation_seconds]')).to_have_value('5.5')
+        expect(form.locator('input[name=campaign_link]')).to_have_value(banner['destination']['id'])
+        expect(form.locator('select[name=cities]')).to_have_values(['حفر الباطن'])
+        expect(form.locator('input[name="banner:kps-branch-1"]')).to_be_checked()
+        expect(form.locator('input[name="banner:kps-branch-9"]')).not_to_be_checked()
+        expect(form.locator('#desktop-preview img')).to_be_visible()
+        form.locator('input[name=title]').scroll_into_view_if_needed()
+        _evidence(page, 'launch-owner-banner-1280', full_page=False, owner_interface='real saved and reopened banner form', synthetic_campaign=banner['id'])
+        page.locator('#modal-close').click()
+        page.locator('[data-action=presentation-settings]').click()
+        presentation = page.locator('#homepage-presentation-form')
+        presentation.locator('textarea[name=ticker_lines]').fill('الأماكن والأوقات تجمّلها القهوة دائمًا\nSpeciality Coffee\nعبارة اختبار قابلة للتعديل')
+        presentation.locator('input[name=ticker_seconds]').fill('34')
+        presentation.locator('input[name=ticker_enabled]').check()
+        assert presentation.evaluate('form => form.checkValidity()'), 'Ticker-only edits must save with an empty disabled literary phrase.'
+        with page.expect_response(lambda response: '/api/admin/settings' in response.url and response.request.method == 'PATCH') as saved:
+            presentation.locator('button[type=submit]').click()
+        assert saved.value.status == 200, saved.value.text()
+        expect(page.locator('#modal')).not_to_be_visible()
+        page.locator('[data-action=presentation-settings]').click()
+        expect(presentation.locator('input[name=ticker_seconds]')).to_have_value('34')
+        expect(presentation.locator('textarea[name=ticker_lines]')).to_have_value('الأماكن والأوقات تجمّلها القهوة دائمًا\nSpeciality Coffee\nعبارة اختبار قابلة للتعديل')
+        public = context.request.get(live_app + '/api/banners?branch_id=kps-branch-1').json()
+        assert public['presentation']['ticker_seconds'] == 34
+        assert public['presentation']['ticker_lines'][-1] == 'عبارة اختبار قابلة للتعديل'
+        assert public['banners'][0]['id'] == banner['id']
+        assert context.request.get(live_app + '/api/banners?branch_id=kps-branch-9').json()['banners'] == []
+        assert not errors
+    finally:
+        context.close()
