@@ -242,7 +242,7 @@ def make_print_html(snap):
     sections.append(section('carryovers','العهد المحتفظ بها وترحيلها بين الشفتات',carryovers,'لا توجد عهد مرحلة محفوظة في هذه اللقطة.'))
 
     css='''
-    *{box-sizing:border-box}html{background:#eef1ef;color:#172620}body{margin:0;font:15px/1.55 Arial,"DejaVu Sans",sans-serif}
+    *{box-sizing:border-box}html{background:#eef1ef;color:#172620}body{margin:0;background:#eef1ef;font:15px/1.55 Arial,"DejaVu Sans",sans-serif}
     main{max-width:1080px;margin:24px auto;padding:32px;background:#fff}header{border-bottom:3px solid #234d3b;padding-bottom:18px}
     .brand{font-size:18px;font-weight:700;color:#234d3b;margin:0}h1{font-size:27px;margin:4px 0 12px}h2{font-size:20px;border-bottom:1px solid #b9c9c0;padding:8px 0;margin:25px 0 12px;color:#234d3b}
     h3{font-size:16px;margin:0 0 10px}h4,h5{font-size:14px;margin:8px 0}p{margin:8px 0}.note,.empty,.muted{color:#57655e}.note{font-size:13px}
@@ -257,7 +257,7 @@ def make_print_html(snap):
     .unit{padding:6px 10px;border-right:2px solid #c0d0c6;margin-top:8px}footer{border-top:1px solid #b9c9c0;margin-top:24px;padding-top:10px;font-size:12px;color:#57655e}
     @media(max-width:720px){main{margin:0;padding:18px 14px}.fields{grid-template-columns:1fr;gap:10px}.field{grid-template-columns:1fr;gap:2px}.record{padding:12px}h1{font-size:23px}.reference{font-size:13px}}
     @page{size:A4;margin:14mm}
-    @media print{html{background:#fff}body{font-size:10px;line-height:1.45}main{max-width:none;margin:0;padding:0}button{display:none}.brand{font-size:14px}h1{font-size:20px}h2{font-size:15px;margin-top:16px;break-after:avoid}h3{font-size:12px;break-after:avoid}h4,h5{font-size:11px;break-after:avoid}.record{padding:10px;border-radius:0;break-inside:avoid}.fields{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 15px}.field{grid-template-columns:105px minmax(0,1fr);gap:6px;break-inside:avoid}dt,.reference{font-size:10px}.timestamp,.currency,.note,footer{font-size:9px}.item,.unit{break-inside:avoid}header{break-inside:avoid}footer{break-inside:avoid}}
+    @media print{html{background:#fff}body{background:#fff;font-size:10px;line-height:1.45}main{max-width:none;margin:0;padding:0}button{display:none}.brand{font-size:14px}h1{font-size:20px}h2{font-size:15px;margin-top:16px;break-after:avoid}h3{font-size:12px;break-after:avoid}h4,h5{font-size:11px;break-after:avoid}.record{padding:10px;border-radius:0;break-inside:avoid}.fields{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 15px}.field{grid-template-columns:105px minmax(0,1fr);gap:6px;break-inside:avoid}dt,.reference{font-size:10px}.timestamp,.currency,.note,footer{font-size:9px}.item,.unit{break-inside:avoid}header{break-inside:avoid}footer{break-inside:avoid}}
     '''
     return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>تقفيلة '+esc(title)+'</title><style>'+css+'</style><script src="/report.js" defer></script></head><body><main><header><p class="brand">'+esc(title)+'</p><h1>تقرير تشغيلي وتقفيلة</h1><button type="button" data-print-report>طباعة التقرير</button>'+intro+'<p class="note">القيم والنتائج أدناه من اللقطة النهائية المحفوظة عند اعتماد التقفيلة. المراجع معروضة كاملة، والأوقات بتوقيت الرياض. أحداث العهدة تسجل حركة النقد؛ لا تضاف مرة أخرى إلى تحصيلات الطلبات.</p></header>'+''.join(sections)+'<footer>نهاية التقرير المحفوظ · مرجع التقفيلة '+ref(snap.get('reference'))+' · جميع المبالغ بالريال السعودي</footer></main></body></html>'
 
