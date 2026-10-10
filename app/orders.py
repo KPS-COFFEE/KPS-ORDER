@@ -176,7 +176,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             conditions.extend(['o.created_at>=%s', 'o.created_at<%s'])
             params.extend([low, high])
             period_info = {'start': low.isoformat(), 'end': high.isoformat(), 'operational_day_configured': configured}
-        rows = conn.execute('SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE ' + ' AND '.join(conditions) + ' ORDER BY ' + ordering + ' LIMIT %s OFFSET %s',
+        rows = conn.execute('SELECT o.*,b.name branch_name,b.branch_no FROM orders o JOIN branches b ON b.id=o.branch_id WHERE ' + ' AND '.join(conditions) + ' ORDER BY ' + ordering + ' LIMIT %s OFFSET %s',
                             (*params, limit + 1, offset)).fetchall()
         if user['role']!='customer':
             performance.enrich_orders(conn,rows[:limit])

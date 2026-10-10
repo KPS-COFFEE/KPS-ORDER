@@ -63,7 +63,7 @@ class TestFinalStaffIdentity:
         unknown=client.post('/api/identity/staff/code/request',json={'phone':'0500000001'})
         assert request.status_code==unknown.status_code==200
         assert set(request.json())==set(unknown.json())=={'accepted','challenge_id','expires_in','code_length'}
-        assert request.json()['code_length']==6 and 'email' not in request.text
+        assert request.json()['code_length']==6 and '@' not in request.text and driver['email'] not in request.text
         assert client.post('/api/identity/staff/code/request',json={'phone':'0507778899','email':'attacker@fixture.invalid'}).status_code==422
         challenge=request.json()['challenge_id']
         code=_code(challenge)
@@ -164,6 +164,10 @@ class TestFinalStaffIdentity:
         with db.tx() as conn:conn.execute("UPDATE identity_channels SET state=%s,enabled=false WHERE brand_id='kps' AND channel='email'",(channel_state,))
         assert _verify(client,challenge).status_code==400
         assert client.post('/api/identity/staff/code/request',json={'phone':'0507778899'}).status_code==503
+        def blocked_send(row):
+            pytest.fail('A disabled active/paused email channel must not dispatch an existing queued code.')
+        monkeypatch.setattr(email_delivery,'_send',blocked_send)
+        assert email_delivery.dispatch_once()['attempted']==0
         with db.tx() as conn:
             conn.execute("UPDATE identity_channels SET state='testing' WHERE brand_id='kps' AND channel='email'")
             conn.execute("UPDATE brands SET active=false WHERE id='kps'")

@@ -516,7 +516,7 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     fee = branch['settings']['delivery_fee_halalas'] if body.service == 'delivery' else 0
     if subtotal + fee > 10000000:
         raise db.error(422, 'ORDER_VALUE_LIMIT', 'قيمة الطلب أعلى من الحد المسموح للموقع.')
-    return {'brand_id': body.brand_id, 'branch_id': body.branch_id, 'branch_name': branch['name'],
+    return {'brand_id': body.brand_id, 'branch_id': body.branch_id, 'branch_no': branch['branch_no'], 'branch_name': branch['name'],
             'branch_city': branch['city'], 'branch_location': branch['settings'].get('location'),
             'service': body.service, 'payment_method': body.payment_method, 'items': snapshots,
             'subtotal_halalas': subtotal, 'delivery_fee_halalas': fee, 'total_halalas': subtotal + fee,

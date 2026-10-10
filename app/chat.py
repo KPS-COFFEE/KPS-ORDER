@@ -21,6 +21,9 @@ def allowed(user,row):
 def conversation(c,user,cid,lock=False):
     row=c.execute('SELECT * FROM conversations WHERE id=%s'+(' FOR UPDATE' if lock else ''),(cid,)).fetchone()
     if not row or not allowed(user,row):fail(404,'المحادثة غير موجودة')
+    if row['order_id']:
+        order=c.execute('SELECT order_no FROM orders WHERE id=%s AND brand_id=%s',(row['order_id'],row['brand_id'])).fetchone()
+        row['order_no']=order['order_no'] if order else None
     return row
 
 class CreateConversation(BaseModel):
@@ -72,7 +75,7 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
         if status:
             if status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             scope+=' AND v.status=%s';p.append(status)
-        rows=c.execute('SELECT v.*,coalesce(o.service,v.context_service) service,b.name branch_name,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id JOIN branches b ON b.id=v.branch_id WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
+        rows=c.execute('SELECT v.*,o.order_no,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id JOIN branches b ON b.id=v.branch_id WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
         return safe({'conversations':rows,'offset':offset,'limit':50})
 
 @router.get('/conversations/{cid}/messages')

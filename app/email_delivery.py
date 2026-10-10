@@ -122,7 +122,7 @@ def dispatch_once(limit=10):
     attempted = 0
     for _ in range(max(1,min(20,limit))):
         with db.tx() as conn:
-            row = conn.execute("SELECT * FROM email_outbox WHERE ((status IN ('pending','failed') AND attempts<8 AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now())) AND (kind<>'owner_report' OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND ic.enabled AND ic.state='active')) AND (kind<>'identity' OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND ic.state IN ('active','testing'))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1").fetchone()
+            row = conn.execute("SELECT * FROM email_outbox WHERE ((status IN ('pending','failed') AND attempts<8 AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now())) AND (kind<>'owner_report' OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND ic.enabled AND ic.state='active')) AND (kind<>'identity' OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND (ic.state='testing' OR (ic.state='active' AND ic.enabled)))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1").fetchone()
             if not row:
                 break
             if row['status']=='sending' and (os.getenv('EMAIL_PROVIDER')=='smtp_ssl' or row['attempts']>=8):
