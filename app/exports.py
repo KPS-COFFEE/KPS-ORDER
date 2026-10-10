@@ -19,15 +19,19 @@ from psycopg.rows import dict_row
 from . import auth, db
 
 router = APIRouter(prefix='/api/admin')
-FORMAT = 'kps-portable-v1'
+FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'products', 'users', 'assets', 'banners',
           'shifts', 'orders', 'driver_tasks', 'collections', 'refunds', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
           'audit_events', 'recovery_events', 'recovery_state', 'recovery_alerts',
-          'idempotency_keys', 'sessions', 'otp_challenges', 'rate_limits')
-AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys'}
+          'idempotency_keys', 'sessions', 'otp_challenges', 'rate_limits',
+          'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
+          'performance_provinces', 'performance_province_branches', 'province_performance_policies',
+          'closure_drafts', 'report_renderings', 'report_notifications')
+AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+               'identity_tokens', 'email_outbox', 'email_webhook_events'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts'}
 PUBLIC = db.ROOT / 'public' / 'assets'
 MAX_WEB_EXPORT = 64 * 1024 * 1024
@@ -49,7 +53,9 @@ def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
     direct = {'branches', 'products', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
-              'conversations', 'otp_challenges'} | INFRASTRUCTURE_TABLES
+              'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
+              'performance_provinces', 'performance_province_branches', 'province_performance_policies',
+              'report_notifications'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
@@ -60,8 +66,10 @@ def _scoped_sql(table, brand):
         return 'from_shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
     if table == 'custody_events':
         return 'shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
-    if table == 'report_corrections':
+    if table in {'report_corrections', 'report_renderings'}:
         return 'report_id IN (SELECT id FROM closure_reports WHERE brand_id=%s)', (brand,)
+    if table == 'closure_drafts':
+        return 'shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
     if table in {'chat_attachments', 'chat_messages', 'conversation_reads', 'conversation_transfers'}:
         return 'conversation_id IN (SELECT id FROM conversations WHERE brand_id=%s)', (brand,)
     if table == 'audit_events':
@@ -111,6 +119,9 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                 if table == 'users' and not full:
                     row.pop('password_hash', None)
                     row.pop('username', None)
+                if table == 'report_notifications' and not full:
+                    # A business export never conveys an authentication-mail capability.
+                    row['email_outbox_id'] = None
                 for column, value in list(row.items()):
                     if isinstance(value, (bytes, bytearray, memoryview)):
                         identity = str(row.get('id', index))
@@ -231,6 +242,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str) -> 
                 sequence = conn.execute("SELECT pg_get_serial_sequence('chat_messages','seq') AS name").fetchone()['name']
                 if sequence:
                     conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM chat_messages),0),1),EXISTS(SELECT 1 FROM chat_messages))", (sequence,))
+            if 'orders' in actual:
+                conn.execute("SELECT setval('order_human_number_seq',greatest(coalesce((SELECT max(order_no) FROM orders),0),1),EXISTS(SELECT 1 FROM orders))")
             counts = {table: conn.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n']
                       for table in manifest['table_order']}
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:
@@ -246,5 +259,5 @@ def business_export(user=Depends(auth.require_roles('owner'))):
     with db.tx() as conn:
         db.audit(conn, user['id'], 'business.export.generated', 'brand', user['brand_id'],
                  {'format': FORMAT, 'counts': manifest['counts'], 'sha256': hashlib.sha256(contents).hexdigest()})
-    filename = 'kps-business-export-v1-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '.zip'
+    filename = 'kps-business-export-v2-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '.zip'
     return Response(contents, media_type='application/zip', headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Cache-Control': 'no-store'})

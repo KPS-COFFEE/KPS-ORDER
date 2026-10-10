@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import json as jsonlib
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from . import db, auth
 
 router = APIRouter(prefix='/api', tags=['operations'])
@@ -290,7 +290,7 @@ def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_
     return result
 
 def eligible_driver_shift(c,s,order):
-    if not s or s['kind']!='driver' or s['status']!='open' or s['brand_id']!=order['brand_id'] or order['branch_id'] not in s['branch_ids']:fail(409,'شفت السائق غير مؤهل')
+    if not s or s['kind']!='driver' or s['status']!='open' or not s.get('available',True) or s['brand_id']!=order['brand_id'] or order['branch_id'] not in s['branch_ids']:fail(409,'شفت السائق غير مؤهل')
     driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
     if not driver or not driver['active'] or driver['role']!='driver' or driver['brand_id']!=order['brand_id'] or order['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
     manager=lock_shift(c,s['manager_shift_id'])
@@ -319,6 +319,7 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
             if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
             tid=uid(); c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by) VALUES(%s,%s,%s,%s,%s)',(tid,oid,s['user_id'],s['id'],user['id']))
             c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(oid,))
+            db.event(c,oid,user['id'],'task.assigned',{'task_id':tid,'driver_id':s['user_id']})
             db.audit(c,user['id'],'task.assign','order',oid,{'task_id':tid,'shift_id':s['id']})
             return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
         return mutate(c,user,request,'order.assign:'+oid,body.model_dump(),perform)
@@ -367,6 +368,7 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             c.execute(sql,(body.status,body.proof,body.reason,tid))
             c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
             if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
+            db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status']})
             db.audit(c,user['id'],'task.transition','task',tid,body.model_dump())
             return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
         return mutate(c,user,request,'task.transition:'+tid,body.model_dump(),perform)
@@ -654,3 +656,88 @@ def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_us
             db.audit(c,user['id'],'manager.handover.accept','shift',target['id'],{'handover_id':hid,'driver_shift_ids':h['driver_shift_ids'],'cash_transferred':False})
             return {'handover_id':hid,'status':'accepted','cash_transferred':False}
         return mutate(c,user,request,'manager.handover.accept:'+hid,{},perform)
+
+
+@router.get('/operations/drivers')
+def driver_roster(user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','delivery_staff')
+    with db.tx() as c:
+        rows=c.execute("SELECT u.id,u.display_name,u.branch_ids,u.active,u.email,u.phone,u.invitation_status,"
+                       "s.id shift_id,s.status shift_status,s.available shift_available,s.manager_shift_id,"
+                       "(SELECT count(*) FROM driver_tasks t WHERE t.driver_id=u.id AND t.status NOT IN ('delivered','cancelled','transferred')) active_tasks "
+                       "FROM users u LEFT JOIN shifts s ON s.user_id=u.id AND s.status<>'closed' "
+                       "WHERE u.brand_id=%s AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
+        visible=[]
+        for row in rows:
+            if user['role']!='owner':
+                row['branch_ids']=[bid for bid in row['branch_ids'] if bid in user['branch_ids']]
+                if not row['branch_ids']:continue
+            row['availability']='inactive' if not row['active'] else ('no_open_shift' if not row['shift_id'] else ('available' if row['shift_status']=='open' and row.get('shift_available') and not row['active_tasks'] else 'busy'))
+            visible.append(row)
+        return safe({'drivers':visible})
+
+
+class ClosureDraft(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    counted_halalas:StrictInt=Field(ge=0)
+    handover_halalas:StrictInt=Field(ge=0)
+    retained_halalas:StrictInt|None=Field(None,ge=0)
+    notes:str=Field('',max_length=1000)
+    reference:str=Field('',max_length=200)
+    recipient_user_id:str|None=Field(None,max_length=80)
+    revision:StrictInt|None=Field(None,ge=1)
+
+
+@router.get('/shifts/{sid}/draft')
+def closure_draft(sid:str,user=Depends(auth.current_user)):
+    with db.tx() as c:
+        shift=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,shift)
+        row=c.execute('SELECT * FROM closure_drafts WHERE shift_id=%s',(sid,)).fetchone()
+        return safe({'draft':dict(row['draft'],revision=row['revision'],updated_at=row['updated_at']) if row else None,
+                     'expected_halalas':balance(c,shift),'status':shift['status']})
+
+
+@router.post('/shifts/{sid}/draft')
+def save_closure_draft(sid:str,body:ClosureDraft,request:Request,user=Depends(auth.current_user)):
+    with db.tx() as c:
+        shift=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,shift)
+        if shift['user_id']!=user['id']:fail(403,'حفظ المسودة لصاحب الشفت فقط')
+        if shift['status'] not in ('open','closing'):fail(409,'لا تعدل مسودة تقفيلة مرسلة أو مقفلة')
+        def perform():
+            current=lock_shift(c,sid);shift_access(c,user,current)
+            if current['user_id']!=user['id'] or current['status'] not in ('open','closing'):fail(409,'لا تعدل مسودة تقفيلة مرسلة أو مقفلة')
+            existing=c.execute('SELECT * FROM closure_drafts WHERE shift_id=%s FOR UPDATE',(sid,)).fetchone()
+            if existing and body.revision!=existing['revision']:fail(409,'تغيرت مسودة التقفيلة؛ حدّثها قبل الحفظ')
+            retained=body.counted_halalas-body.handover_halalas
+            if retained<0 or (body.retained_halalas is not None and body.retained_halalas!=retained):fail(422,'التسليم لا يتجاوز المعدود والمحتفظ به هو الفرق بينهما')
+            if body.recipient_user_id:
+                target=c.execute('SELECT * FROM users WHERE id=%s AND brand_id=%s AND active',(body.recipient_user_id,user['brand_id'])).fetchone()
+                if not target or target['role'] not in ('owner','delivery_manager','driver') or target['id']==user['id']:fail(422,'مستلم غير مخول')
+            draft=body.model_dump(exclude={'revision'})|{'retained_halalas':retained,'expected_halalas':balance(c,shift),
+                                                         'difference_halalas':body.counted_halalas-balance(c,shift)}
+            row=c.execute('INSERT INTO closure_drafts(shift_id,user_id,draft) VALUES(%s,%s,%s) '
+                          'ON CONFLICT(shift_id) DO UPDATE SET draft=excluded.draft,revision=closure_drafts.revision+1,updated_at=now() '
+                          'RETURNING revision,updated_at',(sid,user['id'],db.json(draft))).fetchone()
+            db.audit(c,user['id'],'shift.closure_draft.saved','shift',sid,{'revision':row['revision']})
+            return {'draft':dict(draft,**row),'expected_halalas':draft['expected_halalas'],'status':shift['status']}
+        return mutate(c,user,request,'shift.draft:'+sid,body.model_dump(),perform)
+
+
+class AvailabilityUpdate(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    available:bool
+
+
+@router.post('/shifts/{sid}/availability')
+def set_shift_availability(sid:str,body:AvailabilityUpdate,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','driver')
+    with db.tx() as c:
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,s)
+        if s['kind']!='driver' or s['status']!='open':fail(409,'التوفر يخص شفت سائق مفتوح فقط')
+        def perform():
+            current=lock_shift(c,sid);shift_access(c,user,current)
+            if current['kind']!='driver' or current['status']!='open':fail(409,'التوفر يخص شفت سائق مفتوح فقط')
+            c.execute('UPDATE shifts SET available=%s WHERE id=%s',(body.available,sid))
+            db.audit(c,user['id'],'shift.availability','shift',sid,{'available':body.available})
+            return {'shift_id':sid,'available':body.available}
+        return mutate(c,user,request,'shift.availability:'+sid,body.model_dump(),perform)

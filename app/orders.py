@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from . import auth, catalog, db
+from . import auth, catalog, db, performance
 
 router = APIRouter(prefix='/api/orders')
 
@@ -17,6 +17,14 @@ def scoped_order(conn, order_id, user, lock=False):
     if not row or not auth.can_access_order(user, row, conn):
         raise db.error(404, 'ORDER_NOT_FOUND', 'الطلب غير موجود ضمن صلاحياتك.')
     return row
+
+
+def customer_order_view(row):
+    result=dict(row)
+    result.pop('performance_snapshot',None)
+    result['customer']={key:value for key,value in row['customer'].items()
+                        if key not in {'risk_alert','risk_reasons','requires_operational_confirmation'}}
+    return result
 
 
 def _ensure_manager_duty(conn, brand_id, branch_id):
@@ -34,30 +42,49 @@ def _ensure_manager_duty(conn, brand_id, branch_id):
 
 
 @router.post('')
-def create_order(body: catalog.QuoteBody, user=Depends(auth.require_roles('customer')), idempotency_key: str | None = Header(default=None)):
+def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(auth.require_roles('customer')), idempotency_key: str | None = Header(default=None)):
     if user['brand_id'] != body.brand_id:
         raise db.error(403, 'BRAND_FORBIDDEN', 'حساب العميل لا يتبع هذا البراند.')
     with db.tx() as conn:
+        auth.assert_customer_order_eligible(conn,user)
         def perform():
+            if not db.rate_limit(conn,'order-principal:'+user['id'],10,600):
+                raise db.error(429,'ORDER_RATE_LIMIT','أرسلت طلبات كثيرة. انتظر قليلًا قبل طلب جديد.')
+            if request and not db.rate_limit(conn,'order-ip:'+(request.client.host if request.client else 'unknown'),200,600):
+                raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
             quote = catalog.quote_order(conn, body, for_update=True)
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
             if body.service == 'delivery':
                 _ensure_manager_duty(conn, body.brand_id, body.branch_id)
             customer = body.customer.model_dump(exclude_none=True)
-            # Server-verified phone only; QuoteBody forbids caller-supplied phone/customer identifiers.
-            customer['phone'] = user['phone']
+            # Contact is not ownership proof; only the opaque authenticated customer ID owns the order.
+            supplied_phone = customer.pop('phone',None)
+            customer['phone'] = auth.normalize_phone(supplied_phone) if supplied_phone else user.get('phone')
+            if not customer['phone']:
+                raise db.error(422,'CUSTOMER_PHONE_REQUIRED','أدخل رقم اتصال صحيحًا قبل الطلب.')
+            customer.update(auth.identity_snapshot(user))
+            if supplied_phone and customer['phone'] != user.get('phone'):
+                for flag in ('phone_verified','phone_sms_verified','phone_whatsapp_verified'):customer[flag]=False
+            if user.get('identity_kind') == 'guest':
+                recent=conn.execute("SELECT 1 FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1",
+                                    (body.brand_id,body.branch_id,customer['phone'],db.json(quote['items']))).fetchone()
+                config=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(body.brand_id,)).fetchone()
+                threshold=(config['settings'] if config else {}).get('guest_operational_confirmation_above_halalas')
+                customer['risk_alert']=bool(recent)
+                customer['risk_reasons']=['similar_recent_unverified_contact_order'] if recent else []
+                customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
             order_id = db.new_id('order_')
             row = conn.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
-                               'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) '
-                               'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
+                               'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot) '
+                               'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                                (order_id, body.brand_id, body.branch_id, user['id'], body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
-                                db.json(quote), db.json(customer))).fetchone()
+                                db.json(quote), db.json(customer), db.json(performance.capture_policy(conn,body.brand_id,body.branch_id)))).fetchone()
             db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
             db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': body.branch_id, 'total_halalas': quote['total_halalas']})
-            return {'order': row}
+            return {'order': customer_order_view(row)}
         return db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform)
 
 
@@ -66,7 +93,11 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 offset: int = Query(default=0, ge=0, le=100000), branch_id: str | None = Query(default=None, max_length=80),
                 service: str | None = Query(default=None, max_length=20), status: str | None = Query(default=None, max_length=30),
                 period: str | None = Query(default=None, max_length=20), start: str | None = Query(default=None, max_length=50),
-                end: str | None = Query(default=None, max_length=50)):
+                end: str | None = Query(default=None, max_length=50),
+                sort: str | None = Query(default=None, max_length=20),
+                neighborhood: str | None = Query(default=None, max_length=120),
+                driver_id: str | None = Query(default=None, max_length=80),
+                search: str | None = Query(default=None, max_length=80)):
     conditions, params = ['o.brand_id=%s'], [user['brand_id']]
     if user['role'] == 'customer':
         conditions.append('o.customer_id=%s')
@@ -95,8 +126,25 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         conditions.append('o.service=%s')
         params.append(service)
     if status:
-        conditions.append('o.preparation_status=%s')
-        params.append(status)
+        if status == 'active':
+            conditions.append("o.preparation_status NOT IN ('completed','cancelled') AND o.delivery_status NOT IN ('delivered','cancelled')")
+        else:
+            conditions.append('(o.preparation_status=%s OR o.delivery_status=%s)')
+            params.extend([status,status])
+    if neighborhood:
+        conditions.append("o.customer->>'neighborhood' ILIKE %s")
+        params.append('%'+neighborhood.replace('%','\\%').replace('_','\\_')+'%')
+    if driver_id:
+        conditions.append("EXISTS(SELECT 1 FROM driver_tasks td WHERE td.order_id=o.id AND td.driver_id=%s AND td.status<>'transferred')")
+        params.append(driver_id)
+    if search:
+        conditions.append('(o.order_no::text=%s OR o.id=%s)')
+        params.extend([search.strip(),search.strip()])
+    sort = sort or ('newest' if user['role']=='customer' else 'active_oldest')
+    if sort not in {'newest','oldest','active_oldest'}:
+        raise db.error(422,'ORDER_SORT_INVALID','ترتيب الطلبات غير صحيح.')
+    ordering = {'newest':'o.created_at DESC,o.order_no DESC', 'oldest':'o.created_at ASC,o.order_no ASC',
+                'active_oldest':"CASE WHEN o.preparation_status NOT IN ('completed','cancelled') AND o.delivery_status NOT IN ('delivered','cancelled') THEN 0 ELSE 1 END,o.created_at ASC,o.order_no ASC"}[sort]
     with db.tx() as conn:
         if user['role'] == 'driver' and not conn.execute("SELECT to_regclass('driver_tasks') AS n").fetchone()['n']:
             return {'orders': [], 'next_offset': None}
@@ -126,9 +174,13 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             conditions.extend(['o.created_at>=%s', 'o.created_at<%s'])
             params.extend([low, high])
             period_info = {'start': low.isoformat(), 'end': high.isoformat(), 'operational_day_configured': configured}
-        rows = conn.execute('SELECT o.* FROM orders o WHERE ' + ' AND '.join(conditions) + ' ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s',
+        rows = conn.execute('SELECT o.*,b.name branch_name FROM orders o JOIN branches b ON b.id=o.branch_id WHERE ' + ' AND '.join(conditions) + ' ORDER BY ' + ordering + ' LIMIT %s OFFSET %s',
                             (*params, limit + 1, offset)).fetchall()
-    return {'orders': rows[:limit], 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info}
+        if user['role']!='customer':
+            performance.enrich_orders(conn,rows[:limit])
+        else:
+            rows=[customer_order_view(row) for row in rows]
+    return {'sort':sort, 'orders': rows[:limit], 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info}
 
 
 @router.get('/{order_id}')
@@ -136,6 +188,10 @@ def get_order(order_id: str, user=Depends(auth.current_user)):
     with db.tx() as conn:
         row = scoped_order(conn, order_id, user)
         events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
+        if user['role']!='customer':
+            performance.enrich_orders(conn,[row])
+        else:
+            row=customer_order_view(row)
     return {'order': row, 'events': events}
 
 
@@ -161,6 +217,9 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                            'preparing': {'ready', 'cancelled'}, 'ready': {'handed_over', 'completed', 'cancelled'}}
             if body.status not in transitions.get(current, set()):
                 raise db.error(409, 'PREPARATION_TRANSITION_INVALID', 'انتقال حالة التجهيز غير مسموح.')
+            if body.status in {'accepted','preparing'} and order['customer'].get('requires_operational_confirmation'):
+                if not conn.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' AND details->>'result'='reached'",(order_id,)).fetchone():
+                    raise db.error(409,'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED','تتطلب سياسة الطلب اتصالًا تشغيليًا موثقًا قبل التجهيز. لا يعتبر ذلك توثيق جوال.')
             if body.status == 'cancelled':
                 if not body.reason.strip():
                     raise db.error(422, 'CANCELLATION_REASON_REQUIRED', 'اكتب سبب رفض أو إلغاء الطلب.')
@@ -207,8 +266,33 @@ def arrival(order_id: str, body: ArrivalBody, user=Depends(auth.require_roles('c
             if order['version'] != body.version:
                 raise db.error(409, 'ORDER_VERSION_CONFLICT', 'تغير الطلب. حدّث الصفحة.')
             if order['arrival_at']:
-                return {'order': order}
+                return {'order': customer_order_view(order)}
             row = conn.execute('UPDATE orders SET arrival_at=now(),version=version+1 WHERE id=%s RETURNING *', (order_id,)).fetchone()
             db.event(conn, order_id, user['id'], 'customer.arrived')
-            return {'order': row}
+            return {'order': customer_order_view(row)}
         return db.idempotent(conn, user['id'], idempotency_key, 'order.arrival:' + order_id, body.model_dump(), perform)
+
+
+class ContactConfirmationBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    result: str = Field(pattern='^(reached|unreachable)$')
+    reason: str = Field(min_length=1,max_length=500)
+
+
+@router.post('/{order_id}/operational-confirmation')
+def operational_confirmation(order_id:str,body:ContactConfirmationBody,
+                             user=Depends(auth.require_roles('owner','branch_manager','delivery_manager')),
+                             idempotency_key:str|None=Header(default=None)):
+    if not body.reason.strip():
+        raise db.error(422,'CONTACT_CONFIRMATION_REASON_REQUIRED','اكتب نتيجة الاتصال التشغيلي.')
+    with db.tx() as conn:
+        scoped_order(conn,order_id,user)
+        def perform():
+            order=scoped_order(conn,order_id,user,lock=True)
+            if order['preparation_status'] in {'completed','cancelled'} or order['delivery_status'] in {'delivered','cancelled'}:
+                raise db.error(409,'ORDER_COMPLETED','الطلب منتهٍ.')
+            db.event(conn,order_id,user['id'],'order.operational_confirmation',body.model_dump())
+            db.audit(conn,user['id'],'order.operational_confirmation','order',order_id,body.model_dump())
+            return {'order_id':order_id,'result':body.result,'phone_verified':bool(order['customer'].get('phone_verified')),
+                    'operational_confirmation_only':True}
+        return db.idempotent(conn,user['id'],idempotency_key,'order.operational_confirmation:'+order_id,body.model_dump(),perform)

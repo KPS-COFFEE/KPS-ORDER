@@ -1,4 +1,4 @@
-name: KPS ORDER Independent Emergency V4
+name: KPS ORDER Independent V5
 
 "on":
   push:
@@ -74,20 +74,20 @@ jobs:
           done
           git diff --check
       - name: Run isolated PostgreSQL 18 and source regression
-        run: python -m pytest -q --strict-markers --junitxml=test-results/emergency-v4.xml
+        run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
       - name: Retain synthetic test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: emergency-v4-test-results
-          path: test-results/emergency-v4.xml
+          name: v5-test-results
+          path: test-results/v5.xml
           if-no-files-found: warn
           retention-days: 7
       - name: Retain actual browser emulation screenshots and metadata
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: emergency-v4-browser-evidence
+          name: v5-browser-evidence
           # Only explicit synthetic-data browser evidence. Never upload the
           # repository, environment files, credentials or operational backups.
           path: |
@@ -95,5 +95,6 @@ jobs:
             test-artifacts/*.json
             test-artifacts/*.pdf
             test-artifacts/*.csv
+            test-artifacts/v5-reports/**
           if-no-files-found: warn
           retention-days: 7

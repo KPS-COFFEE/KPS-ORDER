@@ -1,11 +1,17 @@
 # Independent KPS ORDER hosting and recovery
 
-Status: the owner selected **My Workspace**. The independent paid PostgreSQL
-instance and Docker web service below have been created. The first web deploy
-was live at revision `30bdba…`, but its private `DATABASE_URL` is still unbound
-and `/ready` returns 503. This is not an operational database-backed deployment.
-No customer traffic or domain has been moved. Paid independent resources and
-test deployment are authorized; do not create duplicate resources.
+Status at the V5 preflight on 2026-10-10: the existing independent Docker
+service is live at `bf654354ab907597d81d2ff4d269fc33f8088794`, on
+`agent/kps-order-emergency-v4`, with auto deploy and previews disabled.
+`/ready` returned 200, database connected, five migrations, zero verified
+products and branches, and ordering unconfigured. The independent PostgreSQL
+18 database is available with its external IP allowlist empty. The owner
+selected My Workspace previously; this was reconfirmed through resource
+metadata. Reuse these resources for V5. No customer routing has moved.
+
+Private DATABASE_URL binding and `/ready` health check were completed in V4.
+The historical setup details below describe the original enrollment; they
+are not remaining V5 binding tasks.
 
 ## Verified source and resource audit — 10 October 2026
 
@@ -268,3 +274,32 @@ recovery instance validation before claiming the cloud recovery gates passed.
 - [List PostgreSQL exports](https://api-docs.render.com/reference/list-postgres-export)
 - [Retrieve PostgreSQL recovery information](https://api-docs.render.com/reference/retrieve-postgres-recovery-info)
 - [Small-business hosting cost model](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses)
+
+## V5 mail and safe release
+
+The existing paid resources are reused with no mandatory new worker service,
+map provider, disk or database. The app process runs a durable report retry
+worker and, only with an authorized configured provider, the mail worker.
+No real email provider, SMTP credential or verified sender has been supplied.
+Configure secrets only in the existing service environment: EMAIL_PROVIDER
+(resend or smtp_ssl), EMAIL_FROM, MAIL_OUTBOX_KEY (base64-encoded 32 random
+bytes) and RESEND_API_KEY or dedicated SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD
+(SSL port 465). Do not use a Gmail account password in chat.
+
+Start the email channel in testing, prove arrival by consuming a one-use
+link in an authorized inbox, then enable active. Current owner password
+access is preserved until that succeeds. The provider response alone never
+marks a channel delivery-proven. SMS and WhatsApp stay disabled and honest.
+
+V5 schema changes are additive. Original five migration checksums remain
+unchanged. Portable format v2 includes identity, thresholds, drafts, report
+renderings and notifications in private full recovery; business exports
+exclude sessions, identity tokens and encrypted authentication-mail payloads.
+Use an isolated empty test target for restore. Never substitute a historical
+backup for the operating database or erase orders received after a release.
+
+A rollback must use a schema-compatible, security-reviewed V5 revision.
+An arbitrary pre-V5 image lacks guest/channel/invitation authorization and
+is not an approved operational rollback. Keep the same live database and
+its newer records. Customer DNS cutover remains a separate owner-approved
+step after actual operating setup and acceptance.

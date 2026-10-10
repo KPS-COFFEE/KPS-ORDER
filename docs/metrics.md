@@ -19,3 +19,15 @@ Closed-report correction uses owner-authorized `/api/shifts/{open_shift_id}/cash
 Live overdue counts unfinished delivery orders older than the configured delay threshold since order creation, excluding cancellations/rejections. Completed-delivery delay uses pickup-to-delivery intervals and is separate. If the delay setting is missing, the response exposes the 60-minute UI default and `threshold_configured=false`; it is not an asserted delivery promise.
 
 All operations/chat mutation transactions take a per-brand PostgreSQL advisory lock before their specific row locks. This deliberately serializes the small emergency site's financial mutation lane to avoid inconsistent multi-record locking during task, custody, and manager handovers. Reads and different brands remain independent. Replay of a previously successful idempotency key rechecks current resource authorization before disclosing its cached response; withdrawing branch/brand access does not preserve old access via a saved key.
+
+## V5 province standards and identity
+
+Preparation duration runs from branch acceptance to branch readiness. Driver wait runs from readiness to driver pickup. Delivery duration retains the V4 pickup-to-delivery definition. Total duration runs from order confirmation to completion. A phase that has not begun has no elapsed value; missing/cancelled intervals are excluded rather than counted as zero.
+
+Province standards have immutable versions, effective timestamps, and explicit `delivery` or `total` basis. T1 and T2 are positive seconds, T1<T2; excellent is <=T1, good is >T1 and <=T2, late is >T2. No configured policy is neutral. Confirmation captures the actual effective policy; future changes do not recolor historical approved snapshots. Live order age remains a separate alert.
+
+Human order numbers use a PostgreSQL sequence, never MAX()+1. A restore advances that sequence past the restored maximum. Cancellation never renumbers an order.
+
+V5 compact and owner report renderings reference the same immutable saved closure snapshot with a source digest and template version. Original approved V4 files remain available. New presentation files are stored separately and protected once ready. Owner notifications and encrypted mail outbox are durable and deduplicated; provider acceptance is distinct from delivery. Email or report failure does not repeat cash or reopen the shift.
+
+Guest phone/email contact is explicitly unverified. Guest ownership is a server session principal, independent of a typed phone, sequential reference, URL, or caller-supplied customer ID. Email verification establishes only email ownership. Staff invitations fix role/scope on the server and keep pending accounts inactive until proof.

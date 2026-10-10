@@ -1,0 +1,241 @@
+"""V5 browser-operated guest → staff → driver → final-report journey.
+
+Real HTTP and isolated PostgreSQL only, no browser API interception. The invite
+link is read from the isolated encrypted test outbox with the test key; no real
+external mail is sent and this does not certify a production email channel.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import secrets
+from pathlib import Path
+
+import pytest
+
+from app import auth, db, email_delivery
+from test_browser import (ARTIFACTS, WIDTHS, PASSWORD, _context, _capture, _staff,
+                          _staff_ui_login, _authenticated_post, _submit_modal,
+                          chromium_browser, live_app as original_live_app)
+
+pytestmark = [pytest.mark.postgres,
+              pytest.mark.skipif(__import__('os').getenv('TEST_BROWSER') != '1',
+                                 reason='V5 browser acceptance requires TEST_BROWSER=1; emulation, not a physical phone.')]
+
+
+@pytest.fixture
+def v5_live_app(database, tmp_path, monkeypatch):
+    """Configure an isolated durable outbox, with its worker intentionally off."""
+    monkeypatch.setenv('EMAIL_PROVIDER', 'smtp_ssl')
+    monkeypatch.setenv('EMAIL_FROM', 'synthetic-browser@example.test')
+    monkeypatch.setenv('SMTP_HOST', 'test-mail.invalid')
+    monkeypatch.setenv('SMTP_USERNAME', 'synthetic-outbox-only')
+    monkeypatch.setenv('SMTP_PASSWORD', secrets.token_urlsafe(24))
+    monkeypatch.setenv('MAIL_OUTBOX_KEY', base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
+    monkeypatch.setenv('EMAIL_WORKER_ENABLED', 'false')
+    monkeypatch.setenv('REPORT_WORKER_ENABLED', 'false')
+    with db.tx() as conn:
+        conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='email'")
+    yield from original_live_app.__wrapped__(database, tmp_path)
+
+
+def _font_evidence(page):
+    result = page.evaluate("""async () => {
+        const loaded = await Promise.all([400,600,700].map(weight => document.fonts.load(weight+' 18px "Noto Kufi Arabic"')));
+        await document.fonts.ready;
+        const faces=Array.from(document.fonts).filter(face=>face.family.replaceAll('"','')==='Noto Kufi Arabic');
+        return {counts:loaded.map(list=>list.length),faces:faces.map(face=>({weight:face.weight,status:face.status})),
+                family:getComputedStyle(document.body).fontFamily,synthesis:getComputedStyle(document.body).fontSynthesis};
+    }""")
+    assert result['counts'] == [1, 1, 1]
+    assert all(face['status'] == 'loaded' for face in result['faces'])
+    assert 'Noto Kufi Arabic' in result['family']
+    assert result['synthesis'] == 'none'
+    return result
+
+
+def _read_synthetic_invitation(email):
+    with db.tx() as conn:
+        row = conn.execute("SELECT * FROM email_outbox WHERE recipient=%s AND kind='identity' ORDER BY created_at DESC LIMIT 1", (email,)).fetchone()
+        assert row and row['status'] == 'pending'
+        payload = email_delivery._payload(row)
+    # The secret stays in memory and is never added to screenshots or artifacts.
+    return next(line for line in payload['text'].splitlines() if '/#identity_challenge=' in line)
+
+
+def _close_detail(page):
+    if page.locator('#modal').is_visible():
+        page.locator('#modal-close').click()
+
+
+def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live_app, chromium_browser):
+    from playwright.sync_api import expect
+    base = v5_live_app
+    users = {role: _staff(role=role) for role in ('owner', 'delivery_manager', 'branch_manager')}
+    with db.tx() as conn:
+        conn.execute("UPDATE products SET settings=settings||'{\"source_verified\":true}'::jsonb")
+        for index, branch_id in enumerate(('kps-branch-1', 'kps-branch-9')):
+            point = {'lat': 28.4001 + index * .01, 'lng': 45.9001 + index * .01}
+            settings = {'active': True, 'ordering_verified': True, 'location_verified': True,
+                        'pickup_enabled': True, 'car_enabled': True, 'delivery_enabled': True,
+                        'opening_hours': [{'days': list(range(7)), 'start': '00:00', 'end': '00:00'}],
+                        'delivery_hours': [{'days': list(range(7)), 'start': '00:00', 'end': '00:00'}],
+                        'payment_methods': ['cash', 'card'], 'location': point,
+                        'coverage': {'type': 'radius', 'center': point, 'radius_meters': 5000},
+                        'delivery_fee_halalas': 0, 'minimum_order_halalas': 0}
+            conn.execute('UPDATE branches SET settings=settings||%s WHERE id=%s', (db.json(settings), branch_id))
+        conn.execute("UPDATE users SET branch_ids=%s WHERE id=%s", (db.json(['kps-branch-1', 'kps-branch-9']), users['delivery_manager']['id']))
+        conn.execute("UPDATE app_settings SET settings=settings||'{\"operational_day_start\":\"00:00\"}'::jsonb WHERE brand_id='kps'")
+        product = conn.execute("SELECT id,name,price_halalas FROM products WHERE brand_id='kps' AND coalesce(jsonb_array_length(settings->'option_groups'),0)=0 AND coalesce(jsonb_array_length(settings->'available_cities'),0)=0 ORDER BY id LIMIT 1").fetchone()
+    contexts, pages, errors, fonts = {}, {}, [], {}
+    try:
+        for role, user in users.items():
+            context, page, page_errors = _context(chromium_browser, base)
+            contexts[role], pages[role] = context, page
+            errors.append(page_errors)
+            _staff_ui_login(page, user)
+            fonts[role] = _font_evidence(page)
+        owner, manager, branch = [pages[role] for role in ('owner', 'delivery_manager', 'branch_manager')]
+        # Manager registers one driver for two authorized branches through the UI.
+        manager.locator('[data-page=drivers]').click()
+        manager.locator('[data-action=invite-staff]').click()
+        email = 'synthetic-driver-' + secrets.token_hex(5) + '@example.test'
+        for name, value in {'display_name': 'سائق اختبار V5 فقط', 'email': email, 'phone': '0500000022'}.items():
+            manager.locator(f'#modal-body [name={name}]').fill(value)
+        manager.locator('#modal-body [name="scope:kps-branch-1"]').check()
+        manager.locator('#modal-body [name="scope:kps-branch-9"]').check()
+        _capture(manager, 'v5-manager-two-branch-driver-invitation')
+        _submit_modal(manager)
+        expect(manager.locator('#content')).to_contain_text('سائق اختبار V5 فقط')
+        driver_context, driver, driver_errors = _context(chromium_browser, base)
+        contexts['driver'], pages['driver'] = driver_context, driver
+        errors.append(driver_errors)
+        driver.goto(_read_synthetic_invitation(email))
+        expect(driver.locator('#app-shell')).to_be_visible()
+        assert '#identity_token' not in driver.url
+        driver_user = driver_context.request.get(base + '/api/session').json()['user']
+        assert driver_user['role'] == 'driver' and driver_user['email_verified_at']
+        assert driver_user['phone_sms_verified_at'] is None and driver_user['phone_whatsapp_verified_at'] is None
+        assert set(driver_user['branch_ids']) == {'kps-branch-1', 'kps-branch-9'}
+        fonts['driver'] = _font_evidence(driver)
+        manager_shift = _authenticated_post(contexts['delivery_manager'], base, '/api/shifts', {'kind': 'manager', 'branch_ids': ['kps-branch-1','kps-branch-9']})['shift']['id']
+        driver_shift = _authenticated_post(driver_context, base, '/api/shifts', {'kind': 'driver', 'branch_ids': ['kps-branch-1','kps-branch-9'], 'manager_shift_id': manager_shift})['shift']['id']
+        customer_context, customer, customer_errors = _context(chromium_browser, base)
+        contexts['guest'], pages['guest'] = customer_context, customer
+        errors.append(customer_errors)
+        customer.goto('/')
+        expect(customer.locator('.product-card')).to_have_count(35)
+        fonts['guest'] = _font_evidence(customer)
+        customer.locator('#branch-select').select_option('kps-branch-1')
+        expect(customer.locator('#branch-directions')).to_have_attribute('href', __import__('re').compile(r'destination=28\.4001%2C45\.9001'))
+        customer.locator('input[name=service][value=delivery]').check()
+        customer.locator('#neighborhood').fill('حي اختبار V5 فقط')
+        customer.locator('#address').fill('عنوان اختبار معزول — لا تجهيز ولا إرسال فعلي')
+        customer.locator('#manual-location-button').click()
+        customer.locator('#latitude').fill('28.4002')
+        customer.locator('#longitude').fill('45.9002')
+        customer.locator('#save-location').click()
+        customer.get_by_role('button', name='تفاصيل ' + product['name'], exact=True).first.click()
+        cart_before = customer.locator('#header-count').inner_text()
+        if customer.locator('#product-image-zoom').is_visible():
+            customer.locator('#product-image-zoom').click()
+            expect(customer.locator('#image-dialog')).to_be_visible()
+            _capture(customer, 'v5-customer-lightbox-no-cart-change')
+            customer.locator('#image-dialog [data-close]').click()
+            assert customer.locator('#header-count').inner_text() == cart_before
+        customer.locator('#product-add').click()
+        customer.locator('#customer-name').fill('ضيف اختبار V5 فقط')
+        customer.locator('#customer-phone').fill('0500000033')
+        expect(customer.locator('#checkout-button')).to_be_enabled()
+        customer.locator('#checkout-button').click()
+        expect(customer.locator('#guest-form')).to_be_visible()
+        expect(customer.locator('#email-login-button')).to_be_hidden()
+        expect(customer.locator('#otp-request-form')).to_be_hidden()
+        customer.locator('#guest-submit').click()
+        expect(customer.locator('#confirm-dialog')).to_be_visible()
+        _capture(customer, 'v5-guest-delivery-order-review')
+        customer.locator('#confirm-submit').click()
+        expect(customer.locator('#orders-dialog')).to_be_visible()
+        with db.tx() as conn:
+            order = conn.execute("SELECT * FROM orders WHERE customer->>'name'='ضيف اختبار V5 فقط'").fetchone()
+            assert order and order['customer']['identity_kind'] == 'guest'
+            assert not order['customer']['phone_verified']
+        order_id, total = order['id'], order['total_halalas']
+        manager.locator('[data-page=orders]').click()
+        expect(manager.locator(f'[data-order-id="{order_id}"]')).to_be_visible()
+        _capture(manager, 'v5-manager-sequential-orders')
+        manager.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
+        expect(manager.locator('#modal-body')).to_contain_text('ضيف — الجوال غير موثق')
+        manager.locator(f'[data-action=assign][data-id="{order_id}"]').click()
+        _submit_modal(manager, {'driver_shift_id': driver_shift})
+        driver.locator('[data-page=tasks]').click()
+        driver.locator('[data-action=task-transition][data-status=accepted]').click()
+        branch.locator('[data-page=orders]').click()
+        for status in ('accepted','preparing','ready','handed_over'):
+            branch.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
+            branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status={status}]').click()
+            expect(branch.locator(f'#modal-body [data-action=prepare][data-status={status}]')).not_to_be_visible()
+            _close_detail(branch)
+        driver.locator('[data-page=tasks]').click()
+        driver.locator('[data-action=task-transition][data-status=picked_up]').click()
+        driver.locator('[data-action=collect]').click()
+        driver.locator('#modal-body [name=tendered]').fill(f'{total/100:.2f}')
+        _submit_modal(driver, check=['confirmed'])
+        driver.locator('[data-action=delivered]').click()
+        _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
+        driver.locator('[data-page=shifts]').click()
+        driver.locator(f'[data-action=start-closing][data-id="{driver_shift}"]').click()
+        driver.locator('#closure-form [name=counted]').fill(f'{total/100:.2f}')
+        driver.locator('#closure-form [name=handover]').fill(f'{total/100:.2f}')
+        driver.locator('#closure-form [name=reference]').fill('V5-SYNTHETIC-DRIVER-BAG')
+        driver.locator('#closure-form [name=recipient_user_id]').select_option(users['delivery_manager']['id'])
+        driver.locator('#save-closure-draft').click()
+        expect(driver.locator('#closure-draft-state')).to_contain_text('محفوظة')
+        _capture(driver, 'v5-driver-compact-saved-draft')
+        _close_detail(driver)
+        driver.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
+        expect(driver.locator('#closure-form [name=counted]')).to_have_value(f'{total/100:.2f}')
+        _submit_modal(driver)
+        manager.locator('[data-page=custody]').click()
+        manager.locator('[data-action=confirm-custody]').click()
+        _submit_modal(manager, check=['received'])
+        manager.locator('[data-page=shifts]').click()
+        manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
+        manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()
+        _submit_modal(manager, check=['confirmed'])
+        manager.locator(f'[data-action=start-closing][data-id="{manager_shift}"]').click()
+        manager.locator('#closure-form [name=counted]').fill(f'{total/100:.2f}')
+        manager.locator('#closure-form [name=handover]').fill(f'{total/100:.2f}')
+        manager.locator('#closure-form [name=reference]').fill('V5-SYNTHETIC-MANAGER-BAG')
+        manager.locator('#closure-form [name=recipient_user_id]').select_option(users['owner']['id'])
+        _capture(manager, 'v5-manager-compact-closure')
+        _submit_modal(manager)
+        owner.locator('[data-page=custody]').click()
+        owner.locator('[data-action=confirm-custody]').click()
+        _submit_modal(owner, check=['received'])
+        owner.locator('[data-page=shifts]').click()
+        owner.locator(f'[data-action=shift-detail][data-id="{manager_shift}"]').click()
+        owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
+        _submit_modal(owner, check=['confirmed'])
+        owner.locator('[data-page=reports]').click()
+        expect(owner.locator('.owner-notifications')).to_be_visible()
+        expect(owner.locator('.owner-notifications')).to_contain_text('معتمد نهائيًا')
+        expect(owner.locator('.owner-notifications')).to_contain_text('بانتظار قناة البريد')
+        _capture(owner, 'v5-owner-final-notification-no-fake-mail')
+        with db.tx() as conn:
+            assert conn.execute('SELECT count(*) n FROM collections WHERE order_id=%s', (order_id,)).fetchone()['n'] == 1
+            assert conn.execute("SELECT count(*) n FROM closure_reports WHERE shift_id IN (%s,%s)", (driver_shift,manager_shift)).fetchone()['n'] == 2
+            assert conn.execute("SELECT count(*) n FROM orders WHERE customer_id=%s", (order['customer_id'],)).fetchone()['n'] == 1
+            assert conn.execute('SELECT status FROM shifts WHERE id=%s', (manager_shift,)).fetchone()['status'] == 'closed'
+        assert not any(errors), errors
+        (ARTIFACTS / 'v5-browser-evidence-metadata.json').write_text(json.dumps({
+            'test_only': True, 'real_http': True, 'network_api_interception': False,
+            'database': 'UUID-isolated PostgreSQL schema', 'widths_px': WIDTHS,
+            'physical_device_test': False, 'external_email_delivery_tested': False,
+            'email_link_source': 'isolated encrypted synthetic test outbox, not an external mailbox',
+            'sms_configured': False, 'whatsapp_configured': False, 'font_loads': fonts,
+            'financial_events': {'orders':1,'collections':1,'driver_closures':1,'manager_closures':1},
+        },ensure_ascii=False,indent=2)+'\n')
+    finally:
+        for context in contexts.values():
+            context.close()

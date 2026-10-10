@@ -51,7 +51,7 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 
 def public_user(user: dict) -> dict:
-    return {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active')}
+    return {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle')}
 
 
 def secure_cookie() -> bool:
@@ -174,8 +174,8 @@ def login(body: LoginBody, request: Request, response: Response):
     if not allowed:
         raise db.error(429, 'LOGIN_RATE_LIMIT', 'محاولات دخول كثيرة. انتظر قليلًا.')
     with db.tx() as conn:
-        user = conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id WHERE lower(u.username)=lower(%s) AND u.role<>%s AND u.active AND b.active',
-                            (body.username, 'customer')).fetchone()
+        user = conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id WHERE lower(u.username)=lower(%s) AND u.role<>%s AND u.active AND u.invitation_status=%s AND b.active',
+                            (body.username, 'customer', 'active')).fetchone()
         valid = verify_password(body.password, user['password_hash'] if user else None)
         if not valid or not user:
             raise db.error(401, 'INVALID_CREDENTIALS', 'بيانات الدخول غير صحيحة.')
@@ -203,7 +203,7 @@ def normalize_phone(value: str) -> str:
 
 def provider_config() -> tuple[str, str, str]:
     if os.getenv('OTP_PROVIDER') != 'twilio_verify':
-        raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد. لا يمكن تأكيد الطلب قبل تفعيله.')
+        raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد. يمكنك الطلب كضيف إذا كان متاحًا.')
     sid, secret, service = (os.getenv(name, '') for name in ('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID'))
     if not re.fullmatch(r'AC[a-fA-F0-9]{32}', sid) or not re.fullmatch(r'VA[a-fA-F0-9]{32}', service) or not secret:
         raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
@@ -283,9 +283,14 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
                                (body.challenge_id,)).fetchone()
         if not claimed:
             raise db.error(409, 'OTP_ALREADY_USED', 'تم استخدام طلب التحقق بالفعل.')
-        conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone) VALUES(%s,%s,'customer',%s,%s) ON CONFLICT(brand_id,phone) WHERE role='customer' DO NOTHING",
-                     (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone']))
-        user = conn.execute("SELECT * FROM users WHERE brand_id=%s AND phone=%s AND role='customer' AND active", (challenge['brand_id'], challenge['phone'])).fetchone()
+        channel = os.getenv('OTP_CHANNEL', 'sms')
+        proof_column = 'phone_whatsapp_verified_at' if channel == 'whatsapp' else 'phone_sms_verified_at'
+        conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone,identity_kind,phone_verified_at," + proof_column + ") VALUES(%s,%s,'customer',%s,%s,%s,now(),now()) ON CONFLICT(brand_id,phone) WHERE role='customer' AND phone_verified_at IS NOT NULL DO NOTHING",
+                     (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone'], 'phone_'+channel+'_verified'))
+        user = conn.execute("SELECT * FROM users WHERE brand_id=%s AND phone=%s AND role='customer' AND phone_verified_at IS NOT NULL AND active", (challenge['brand_id'], challenge['phone'])).fetchone()
+        if user:
+            conn.execute('UPDATE users SET '+proof_column+'=now() WHERE id=%s',(user['id'],))
+            conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s',(challenge['brand_id'],channel))
         if not user:
             raise db.error(403, 'CUSTOMER_DISABLED', 'هذا الحساب موقوف. تواصل مع الإدارة.')
         return establish_session(conn, user, response)
@@ -322,3 +327,526 @@ if __name__ == '__main__':
         raise SystemExit('Passwords differ.')
     bootstrap_owner(chosen, password, args.brand)
     print('Owner account created. No password or session token has been printed.')
+
+# V5 identities reuse canonical users and revocable sessions. No role is inferred from contact data.
+from . import email_delivery
+
+CHANNEL_STATES = {'unconfigured','testing','active','paused','fault'}
+TOKEN_PURPOSES = {'customer_link','email_login','staff_login','owner_link','recovery'}
+
+
+def identity_snapshot(user):
+    return {'identity_kind': user.get('identity_kind','legacy'),
+            'email_verified': bool(user.get('email_verified_at')),
+            'phone_verified': bool(user.get('phone_verified_at')),
+            'phone_sms_verified': bool(user.get('phone_sms_verified_at')),
+            'phone_whatsapp_verified': bool(user.get('phone_whatsapp_verified_at'))}
+
+
+def _channel(conn, brand, channel):
+    row = conn.execute('SELECT * FROM identity_channels WHERE brand_id=%s AND channel=%s',(brand,channel)).fetchone()
+    return row or {'state':'unconfigured','enabled':False,'delivery_proven_at':None}
+
+
+def channel_readiness(conn, brand):
+    rows = {}
+    for channel in ('guest','email','sms','whatsapp'):
+        row = _channel(conn,brand,channel)
+        configured = True if channel=='guest' else email_delivery.configuration()['configured'] if channel=='email' else False
+        if channel in {'sms','whatsapp'}:
+            try:
+                provider_config()
+                configured = os.getenv('OTP_CHANNEL','sms') == channel
+            except Exception:
+                configured = False
+        available = bool(row['enabled'] and row['state']=='active' and configured)
+        if channel!='guest':
+            available = available and bool(row['delivery_proven_at'])
+        rows[channel] = {'state':row['state'],'enabled':row['enabled'],'available':available,
+                         'configured':configured,'delivery_proven':bool(row['delivery_proven_at'])}
+    return rows
+
+
+def assert_customer_order_eligible(conn, user):
+    if user['role']!='customer' or not user.get('active',True):
+        raise db.error(403,'CUSTOMER_REQUIRED','الطلب يتطلب جلسة عميل مخوّلة.')
+    if user.get('identity_kind')=='guest':
+        if not channel_readiness(conn,user['brand_id'])['guest']['available']:
+            raise db.error(403,'GUEST_ORDERING_PAUSED','الطلب كضيف متوقف حاليًا.')
+        if not user.get('display_name') or not user.get('phone'):
+            raise db.error(422,'GUEST_CONTACT_REQUIRED','أدخل الاسم ورقم الاتصال.')
+        normalize_phone(user['phone'])
+    elif not (user.get('email_verified_at') or user.get('phone_verified_at') or user.get('identity_kind','legacy')=='legacy'):
+        raise db.error(403,'CUSTOMER_IDENTITY_UNVERIFIED','تحقق من الهوية أو اختر الطلب كضيف.')
+
+
+@router.get('/identity/channels')
+def public_channels(brand_id: str='kps'):
+    with db.tx() as conn:
+        if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(brand_id,)).fetchone():
+            raise db.error(404,'BRAND_NOT_FOUND','البراند غير متاح.')
+        return {'channels':channel_readiness(conn,brand_id),
+                'session_recovery':'البريد الموثق يستعيد الحساب. عند فقد جلسة ضيف بلا بريد موثق تواصل مع فريق التشغيل؛ رقم الجوال والطلب وحدهما لا يمنحان الوصول.'}
+
+
+class GuestBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    display_name: str = Field(min_length=1,max_length=100)
+    phone: str = Field(min_length=8,max_length=30)
+    brand_id: str = Field(default='kps',min_length=1,max_length=80)
+    email: str | None = Field(default=None,max_length=254)
+
+
+@router.post('/identity/guest')
+def guest_session(body:GuestBody,request:Request,response:Response):
+    check_origin(request)
+    phone = normalize_phone(body.phone)
+    name = body.display_name.strip()
+    if not name or '\x00' in name:
+        raise db.error(422,'GUEST_NAME_REQUIRED','أدخل الاسم.')
+    # Optional email is a hint, never used for identity matching or ownership.
+    contact_email=email_delivery.normalize_email(body.email) if body.email else None
+    ip = request.client.host if request.client else 'unknown'
+    with db.tx() as conn:
+        allowed = db.rate_limit(conn,'guest-create-contact:'+body.brand_id+':'+token_hash(phone),10,600)
+        allowed = db.rate_limit(conn,'guest-create-ip:'+ip,200,600) and allowed
+    if not allowed:
+        raise db.error(429,'GUEST_RATE_LIMIT','طلبات كثيرة. انتظر قليلًا.')
+    with db.tx() as conn:
+        if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
+            raise db.error(404,'BRAND_NOT_FOUND','البراند غير متاح.')
+        if not channel_readiness(conn,body.brand_id)['guest']['available']:
+            raise db.error(403,'GUEST_ORDERING_PAUSED','الطلب كضيف متوقف حاليًا.')
+        existing = _find_session(conn,request)
+        if existing:
+            csrf=request.headers.get('x-csrf-token','')
+            if not csrf or not hmac.compare_digest(token_hash(csrf),existing['csrf_hash']):
+                raise db.error(403,'CSRF_REJECTED','حدّث الصفحة قبل تعديل جلسة الضيف.')
+            if existing['role']!='customer':
+                raise db.error(403,'STAFF_SESSION_PROTECTED','استخدم جلسة عميل منفصلة عن الموظف.')
+        if existing and existing['brand_id']==body.brand_id and existing.get('identity_kind')=='guest':
+            user = conn.execute('UPDATE users SET display_name=%s,phone=%s,contact_email=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,contact_email,existing['id'])).fetchone()
+            conn.execute('UPDATE sessions SET revoked_at=now() WHERE id=%s',(existing['session_id'],))
+        else:
+            identifier=db.new_id('guest_')
+            user=conn.execute("INSERT INTO users(id,display_name,phone,role,brand_id,identity_kind,contact_email) VALUES(%s,%s,%s,'customer',%s,'guest',%s) RETURNING *",(identifier,name,phone,body.brand_id,contact_email)).fetchone()
+        return establish_session(conn,user,response)
+
+
+def _optional_identity(request, conn):
+    user=_find_session(conn,request)
+    if not user:
+        return None
+    csrf=request.headers.get('x-csrf-token','')
+    if not csrf or not hmac.compare_digest(token_hash(csrf),user['csrf_hash']):
+        raise db.error(403,'CSRF_REJECTED','انتهى التحقق الآمن. حدّث الصفحة.')
+    return user
+
+
+def _email_ready(conn,brand,testing=False):
+    row=_channel(conn,brand,'email')
+    if not email_delivery.configuration()['configured'] or row['state'] not in ({'active','testing'} if testing else {'active'}):
+        raise db.error(503,'EMAIL_CHANNEL_UNAVAILABLE','قناة البريد غير مهيأة ومختبرة بعد. يبقى الطلب كضيف متاحًا.')
+    if not testing and (not row['enabled'] or not row['delivery_proven_at']):
+        raise db.error(503,'EMAIL_CHANNEL_UNAVAILABLE','قناة البريد بانتظار إثبات وصول فعلي.')
+
+
+def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,created_by=None):
+    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(brand+':email-token:'+email+':'+purpose,))
+    identifier=db.new_id('email_')
+    secret=secrets.token_urlsafe(32)
+    # Superseding a purpose invalidates prior links and their unsent durable deliveries.
+    prior=conn.execute('SELECT id FROM identity_tokens WHERE brand_id=%s AND email=%s AND purpose=%s AND consumed_at IS NULL AND revoked_at IS NULL',(brand,email,purpose)).fetchall()
+    conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE brand_id=%s AND email=%s AND purpose=%s AND consumed_at IS NULL AND revoked_at IS NULL',(brand,email,purpose))
+    for row in prior:
+        conn.execute("UPDATE email_outbox SET status='cancelled',updated_at=now() WHERE brand_id=%s AND dedupe_key=%s AND status IN ('pending','failed')",(brand,'identity:'+row['id']))
+    conn.execute("INSERT INTO identity_tokens(id,brand_id,user_id,purpose,email,token_hash,session_id,created_by,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,now()+interval '15 minutes')",(identifier,brand,user_id,purpose,email,token_hash(secret),session_id,created_by))
+    base=os.getenv('PUBLIC_BASE_URL','').rstrip('/')
+    if not base.startswith(('https://','http://')) or (not base.startswith('https://') and os.getenv('APP_ENV') not in {'testing','development'}):
+        raise db.error(503,'PUBLIC_ORIGIN_UNCONFIGURED','عنوان البريد الآمن غير مهيأ.')
+    link=base+'/#identity_challenge='+identifier+'&identity_token='+secret
+    mail=email_delivery.enqueue_mail(conn,brand_id=brand,recipient=email,kind='identity',dedupe_key='identity:'+identifier,
+        payload={'subject':'KPS COFFEE — تحقق من البريد', 'text':'طلب تحقق قصير الصلاحية لمرة واحدة. إذا لم تطلبه فتجاهله.\n'+link})
+    if not mail:
+        raise db.error(503,'EMAIL_CHANNEL_UNAVAILABLE','تعذر حفظ إرسال البريد الآمن.')
+    db.audit(conn,created_by,'identity.email.queued','identity_token',identifier,{'purpose':purpose})
+    return identifier
+
+
+class EmailRequestBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    email:str=Field(min_length=3,max_length=254)
+    brand_id:str=Field(default='kps',min_length=1,max_length=80)
+    purpose:Literal['customer_link','email_login','staff_login','owner_link','recovery']='email_login'
+
+
+@router.post('/identity/email/request')
+def email_request(body:EmailRequestBody,request:Request):
+    check_origin(request)
+    email=email_delivery.normalize_email(body.email)
+    ip=request.client.host if request.client else 'unknown'
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'email-request:'+body.brand_id+':'+token_hash(email),3,600)
+        allowed=db.rate_limit(conn,'email-request-ip:'+ip,20,600) and allowed
+    if not allowed:
+        raise db.error(429,'EMAIL_RATE_LIMIT','انتظر قبل إعادة طلب البريد.')
+    identifier=db.new_id('email_')  # Same response for unknown/disabled accounts.
+    with db.tx() as conn:
+        if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
+            return {'accepted':True,'challenge_id':identifier,'expires_in':900}
+        current=_optional_identity(request,conn)
+        linking=body.purpose in {'customer_link','owner_link'}
+        _email_ready(conn,body.brand_id,testing=linking and bool(current))
+        if linking:
+            role='owner' if body.purpose=='owner_link' else 'customer'
+            if not current or current['role']!=role or current['brand_id']!=body.brand_id:
+                raise db.error(403,'LINK_SESSION_REQUIRED','يتطلب ربط البريد جلسة الحساب الحالي.')
+            if current.get('email_verified_at') and current.get('email')!=email:
+                raise db.error(409,'EMAIL_CHANGE_REQUIRES_RECOVERY','تغيير بريد موثق يتطلب مسار استرداد مخوّل.')
+            conflict=conn.execute('SELECT id FROM users WHERE brand_id=%s AND lower(email)=%s AND id<>%s',(body.brand_id,email,current['id'])).fetchone()
+            if not conflict:
+                identifier=_create_email_token(conn,brand=body.brand_id,email=email,purpose=body.purpose,user_id=current['id'],session_id=current['session_id'],created_by=current['id'])
+        else:
+            account=conn.execute('SELECT * FROM users WHERE brand_id=%s AND lower(email)=%s AND active AND email_verified_at IS NOT NULL AND invitation_status=%s',(body.brand_id,email,'active')).fetchone()
+            valid=account and (body.purpose=='recovery' or (body.purpose=='staff_login' and account['role']!='customer') or (body.purpose=='email_login' and account['role']=='customer'))
+            if valid or (body.purpose=='email_login' and not conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s',(body.brand_id,email)).fetchone()):
+                identifier=_create_email_token(conn,brand=body.brand_id,email=email,purpose=body.purpose,user_id=account['id'] if valid else None)
+    return {'accepted':True,'challenge_id':identifier,'expires_in':900}
+
+
+class EmailVerifyBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    challenge_id:str=Field(min_length=5,max_length=80)
+    token:str=Field(min_length=20,max_length=120)
+    display_name:str|None=Field(default=None,min_length=1,max_length=100)
+    phone:str|None=Field(default=None,min_length=8,max_length=30)
+
+
+@router.post('/identity/email/verify')
+def email_verify(body:EmailVerifyBody,request:Request,response:Response):
+    check_origin(request)
+    ip=request.client.host if request.client else 'unknown'
+    # Attempts are committed before errors; rollback cannot reset brute-force limits.
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'email-verify-ip:'+ip,30,600)
+        challenge=conn.execute('UPDATE identity_tokens SET attempts=attempts+1 WHERE id=%s AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() AND attempts<5 RETURNING *',(body.challenge_id,)).fetchone()
+    if not allowed:
+        raise db.error(429,'EMAIL_RATE_LIMIT','محاولات كثيرة. انتظر قليلًا.')
+    if not challenge or not hmac.compare_digest(challenge['token_hash'],token_hash(body.token)):
+        raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط منتهي أو غير صالح أو مستخدم.')
+    with db.tx() as conn:
+        row=conn.execute('SELECT * FROM identity_tokens WHERE id=%s AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE',(body.challenge_id,)).fetchone()
+        if not row:
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط منتهي أو غير صالح أو مستخدم.')
+        if row['session_id']:
+            current=_optional_identity(request,conn)
+            if not current or current['session_id']!=row['session_id'] or current['id']!=row['user_id']:
+                raise db.error(403,'LINK_SESSION_REQUIRED','افتح الرابط من جلسة الحساب الذي طلب ربط البريد.')
+        user=conn.execute('SELECT * FROM users WHERE id=%s FOR UPDATE',(row['user_id'],)).fetchone() if row['user_id'] else None
+        invitation=row['purpose'] in {'invitation','add_owner'}
+        if user and ((not user['active'] and not invitation) or user['brand_id']!=row['brand_id']):
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
+        if invitation and (not user or user['invitation_status']!='pending_email' or user['email']!=row['email']):
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الدعوة ملغاة أو مستهلكة.')
+        if invitation:
+            inviter=conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id WHERE u.id=%s AND u.active AND b.active',(row['created_by'],)).fetchone()
+            normal=bool(inviter and inviter['brand_id']==row['brand_id'] and inviter['role'] in {'owner','delivery_manager'} and (inviter['role']=='owner' or (user['role']=='driver' and set(user['branch_ids'])<=set(inviter['branch_ids']))))
+            # The existing explicitly authorized brand-provisioning route can invite its first owner.
+            # Persisted audit ties the grant to exactly that new brand and principal; no broad cross-brand privilege.
+            first_owner=bool(inviter and inviter['role']=='owner' and row['purpose']=='add_owner' and user['role']=='owner' and
+                conn.execute("SELECT 1 FROM audit_events WHERE actor_id=%s AND action='brand.created' AND entity_type='brand' AND entity_id=%s AND details->>'owner_user_id'=%s",(inviter['id'],row['brand_id'],user['id'])).fetchone() and
+                not conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role='owner' AND id<>%s",(row['brand_id'],user['id'])).fetchone())
+            if not (normal or first_owner) or (row['purpose']=='add_owner' and (inviter['role']!='owner' or user['role']!='owner')):
+                raise db.error(400,'EMAIL_TOKEN_INVALID','الدعوة لم تعد مخولة.')
+        if row['purpose']=='email_login' and user and user['role']!='customer':
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
+        if _channel(conn,row['brand_id'],'email')['state'] not in {'testing','active'}:
+            raise db.error(400,'EMAIL_TOKEN_INVALID','قناة البريد متوقفة حاليًا.')
+        if row['purpose'] in {'staff_login','recovery'} and (not user or not user['email_verified_at'] or user['email']!=row['email']):
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
+        if row['purpose']=='staff_login' and user['role']=='customer':
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
+        if row['purpose']=='owner_link' and (not user or user['role']!='owner'):
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
+        if row['purpose']=='customer_link' and (not user or user['role']!='customer'):
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
+        conflict=conn.execute('SELECT id FROM users WHERE brand_id=%s AND lower(email)=%s',(row['brand_id'],row['email'])).fetchone()
+        if conflict and (not user or conflict['id']!=user['id']):
+            raise db.error(409,'EMAIL_IDENTITY_CONFLICT','البريد مرتبط بحساب آخر. لا يتم دمج الحسابات تلقائيًا.')
+        if not user:
+            if row['purpose']!='email_login':
+                raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
+            user=conn.execute("INSERT INTO users(id,role,brand_id,display_name,email,email_verified_at,identity_kind,phone) VALUES(%s,'customer',%s,%s,%s,now(),'email_verified',%s) RETURNING *",(db.new_id('customer_'),row['brand_id'],body.display_name or '',row['email'],normalize_phone(body.phone) if body.phone else None)).fetchone()
+        else:
+            name=body.display_name.strip() if body.display_name else user['display_name']
+            phone=normalize_phone(body.phone) if body.phone else user['phone']
+            if invitation and (not name or not phone):
+                raise db.error(422,'STAFF_PROFILE_REQUIRED','أكمل الاسم ورقم الاتصال.')
+            if user.get('phone_verified_at') and phone!=user['phone']:
+                raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','تغيير الجوال الموثق يتطلب تحققًا مستقلاً.')
+            user=conn.execute("UPDATE users SET email=%s,email_verified_at=now(),identity_kind=%s,display_name=%s,phone=%s,active=true,invitation_status='active',updated_at=now() WHERE id=%s RETURNING *",(row['email'],'email_verified' if user['role']=='customer' else 'staff_email_verified',name,phone,user['id'])).fetchone()
+        conn.execute('UPDATE identity_tokens SET consumed_at=now() WHERE id=%s',(row['id'],))
+        conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s',(row['brand_id'],'email'))
+        conn.execute("UPDATE email_outbox SET status='delivered',delivery_at=now(),updated_at=now() WHERE brand_id=%s AND dedupe_key=%s AND status IN ('pending','provider_accepted','sending','failed')",(row['brand_id'],'identity:'+row['id']))
+        if row['purpose'] in {'owner_link','recovery'}:
+            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(user['id'],))
+        elif row['session_id']:
+            conn.execute('UPDATE sessions SET revoked_at=now() WHERE id=%s',(row['session_id'],))
+        result=establish_session(conn,user,response)
+        if user['role']=='owner':
+            conn.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s AND revoked_at IS NULL',(user['id'],))
+        db.audit(conn,user['id'],'identity.email.verified','user',user['id'],{'purpose':row['purpose']})
+        return result
+
+
+def require_owner_step_up(conn,user):
+    if user['role']!='owner' or not user.get('session_id') or not conn.execute("SELECT 1 FROM sessions WHERE id=%s AND user_id=%s AND revoked_at IS NULL AND step_up_at>now()-interval '10 minutes'",(user.get('session_id'),user['id'])).fetchone():
+        raise db.error(403,'OWNER_STEP_UP_REQUIRED','أعد تحقق المالك قبل دعوة مالك أو مدير إضافي.')
+
+
+class StepUpBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    password:str=Field(min_length=1,max_length=200)
+
+
+@router.post('/identity/step-up')
+def owner_step_up(body:StepUpBody,user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'owner-step-up:'+user['id'],5,600)
+    if not allowed:
+        raise db.error(429,'STEP_UP_RATE_LIMIT','انتظر قبل إعادة التحقق.')
+    with db.tx() as conn:
+        if not verify_password(body.password,user.get('password_hash')):
+            raise db.error(401,'INVALID_CREDENTIALS','تعذر إعادة التحقق من الحساب.')
+        conn.execute('UPDATE sessions SET step_up_at=now() WHERE id=%s AND revoked_at IS NULL',(user['session_id'],))
+        db.audit(conn,user['id'],'owner.step_up','user',user['id'])
+    return {'verified':True,'expires_in':600}
+
+
+def _staff_scope(conn,user,branches):
+    if len(branches)>500 or len(set(branches))!=len(branches):
+        raise db.error(422,'BRANCH_SCOPE_INVALID','أزل التكرار وحدد الفروع المصرح بها.')
+    for branch in branches:
+        if not conn.execute('SELECT 1 FROM branches WHERE id=%s AND brand_id=%s',(branch,user['brand_id'])).fetchone():
+            raise db.error(403,'BRANCH_SCOPE_FORBIDDEN','الفرع خارج البراند المصرح به.')
+    if user['role']!='owner' and not set(branches)<=set(user.get('branch_ids',[])):
+        raise db.error(403,'BRANCH_SCOPE_FORBIDDEN','الفرع خارج نطاق المدير.')
+    return branches
+
+
+def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
+    """Never strand a running task or the driver's custody by removing its executor."""
+    if row['role']=='owner' and not new_active:
+        conn.execute("SELECT id FROM users WHERE brand_id=%s AND role='owner' AND active ORDER BY id FOR UPDATE",(row['brand_id'],)).fetchall()
+        if not conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role='owner' AND active AND id<>%s",(row['brand_id'],row['id'])).fetchone():
+            raise db.error(409,'LAST_OWNER_PROTECTED','لا يمكن إيقاف آخر مالك نشط.')
+    removed=set(row.get('branch_ids',[]))-set(new_scope)
+    if (not new_active) and conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(row['id'],)).fetchone():
+        raise db.error(409,'STAFF_OPEN_SHIFT','أغلق الشفت وسلّم العهدة قبل إيقاف الحساب.')
+    if removed and conn.execute("SELECT 1 FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')",(row['id'],list(removed))).fetchone():
+        raise db.error(409,'STAFF_OPEN_TASKS','أعد إسناد المهام مع قبول التسليم قبل سحب فرع السائق.')
+    if removed and row['role'] in {'driver','delivery_manager','delivery_staff'}:
+        if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND branch_ids ?| %s",(row['id'],list(removed))).fetchone():
+            raise db.error(409,'STAFF_OPEN_SHIFT','سلّم المناوبة والعهدة قبل سحب نطاق الشفت المفتوح.')
+
+
+def _staff_record(conn,identifier,user):
+    row=conn.execute("SELECT * FROM users WHERE id=%s AND brand_id=%s AND role<>'customer' FOR UPDATE",(identifier,user['brand_id'])).fetchone()
+    if not row or (user['role']!='owner' and (row['role']!='driver' or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):
+        raise db.error(404,'STAFF_NOT_FOUND','السجل غير موجود ضمن صلاحياتك.')
+    return row
+
+
+def staff_public(conn,row):
+    output=public_user(row)
+    shift=conn.execute("SELECT id,kind,status,available FROM shifts WHERE user_id=%s AND status<>'closed' ORDER BY opened_at DESC LIMIT 1",(row['id'],)).fetchone()
+    output['open_shift']=shift
+    busy=bool(conn.execute("SELECT 1 FROM driver_tasks WHERE driver_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(row['id'],)).fetchone())
+    output['available']=bool(shift and shift['status']=='open' and shift.get('available') and not busy and row['active'])
+    return output
+
+
+class StaffInvitationBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    display_name:str=Field(min_length=1,max_length=100)
+    email:str=Field(min_length=3,max_length=254)
+    phone:str=Field(min_length=8,max_length=30)
+    branch_ids:list[str]=Field(default_factory=list,max_length=500)
+    employee_ref:str|None=Field(default=None,max_length=80)
+    vehicle:dict=Field(default_factory=dict)
+    role:Literal['driver','owner','delivery_manager','delivery_staff','branch_manager']='driver'
+
+
+def _vehicle(value):
+    if set(value)-{'type','plate','description'} or any(not isinstance(v,str) or len(v)>150 or '\x00' in v for v in value.values()):
+        raise db.error(422,'VEHICLE_INVALID','بيانات المركبة غير صحيحة.')
+    return value
+
+
+@router.post('/identity/staff/invitations')
+def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','delivery_manager'))):
+    email=email_delivery.normalize_email(body.email)
+    phone=normalize_phone(body.phone)
+    name=body.display_name.strip()
+    if not name or '\x00' in name:
+        raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')
+    if user['role']=='delivery_manager' and body.role!='driver':
+        raise db.error(403,'DRIVER_ROLE_ONLY','مدير التوصيل يدعو سائقًا فقط.')
+    vehicle=_vehicle(body.vehicle)
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'staff-invite:'+user['id'],30,3600)
+    if not allowed:
+        raise db.error(429,'EMAIL_RATE_LIMIT','دعوات كثيرة. انتظر قليلًا.')
+    with db.tx() as conn:
+        email_state=_channel(conn,user['brand_id'],'email')['state']
+        ready=email_delivery.configuration()['configured'] and email_state in {'active','testing'}
+        scope=_staff_scope(conn,user,body.branch_ids)
+        if body.role!='owner' and not scope:
+            raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
+        if body.role in {'owner','delivery_manager'}:
+            require_owner_step_up(conn,user)
+        # Serialize identity conflicts without revealing the matched account's attributes.
+        conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
+        if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s',(user['brand_id'],email)).fetchone():
+            raise db.error(409,'STAFF_IDENTITY_CONFLICT','تعذر إنشاء الدعوة. راجع البريد أو الدعوات المخولة.')
+        identifier=db.new_id('staff_')
+        invitation_state='pending_email' if ready else 'draft'
+        row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
+        challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
+        db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,{'role':body.role,'branch_ids':scope})
+        return {'user':staff_public(conn,row),'challenge_id':challenge,'invitation_status':invitation_state,'delivery_status':'queued' if ready else 'channel_unavailable'}
+
+
+@router.get('/identity/staff')
+def staff_list(user=Depends(require_roles('owner','delivery_manager'))):
+    with db.tx() as conn:
+        rows=conn.execute("SELECT * FROM users WHERE brand_id=%s AND role<>'customer' ORDER BY role,display_name LIMIT 500",(user['brand_id'],)).fetchall()
+        if user['role']=='delivery_manager':
+            rows=[r for r in rows if r['role']=='driver' and set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
+        return {'users':[staff_public(conn,row) for row in rows]}
+
+
+class StaffUpdateBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    email:str|None=Field(default=None,min_length=3,max_length=254)
+    display_name:str|None=Field(default=None,min_length=1,max_length=100)
+    phone:str|None=Field(default=None,min_length=8,max_length=30)
+    branch_ids:list[str]|None=Field(default=None,max_length=500)
+    active:bool|None=None
+    employee_ref:str|None=Field(default=None,max_length=80)
+    vehicle:dict|None=None
+
+
+@router.patch('/identity/staff/{identifier}')
+def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles('owner','delivery_manager'))):
+    with db.tx() as conn:
+        row=_staff_record(conn,identifier,user)
+        scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
+        active=body.active if body.active is not None else row['active']
+        email=email_delivery.normalize_email(body.email) if body.email is not None else row['email']
+        email_changed=email!=row['email']
+        if email_changed:
+            if row['role']=='owner':
+                require_owner_step_up(conn,user)
+            if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(row['id'],)).fetchone():
+                raise db.error(409,'STAFF_OPEN_SHIFT','أغلق الشفت وسلّم العهدة قبل تغيير بريد الدخول.')
+            if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s AND id<>%s',(user['brand_id'],email,identifier)).fetchone():
+                raise db.error(409,'STAFF_IDENTITY_CONFLICT','البريد غير متاح لحساب الموظف.')
+            if body.active:
+                raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','تغيير البريد يتطلب دعوة وتحققًا جديدين.')
+            active=False
+        if active and (row['invitation_status'] not in {'active','paused'} or not row['email_verified_at']):
+            # Legacy active staff remain during migration, but cannot be activated by bypassing proof.
+            if not (row['active'] and row['identity_kind']=='legacy'):
+                raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
+        ensure_safe_staff_scope_change(conn,row,scope,active)
+        name=body.display_name.strip() if body.display_name is not None else row['display_name']
+        if not name or '\x00' in name:
+            raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')
+        phone=normalize_phone(body.phone) if body.phone else row['phone']
+        if row['phone_verified_at'] and phone!=row['phone']:
+            raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','رقم موثق يحتاج تحققًا مستقلًا لتغييره.')
+        vehicle=_vehicle(body.vehicle) if body.vehicle is not None else row['vehicle']
+        status=row['invitation_status'] if active else 'paused' if row['invitation_status']=='active' else row['invitation_status']
+        if active and row['email_verified_at']:
+            status='active'
+        output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
+        if email_changed:
+            output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
+        if scope!=row['branch_ids'] or active!=row['active'] or email_changed:
+            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
+            conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
+            conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
+        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set)})
+        return {'user':staff_public(conn,output)}
+
+
+@router.post('/identity/staff/{identifier}/resend')
+def resend_invitation(identifier:str,user=Depends(require_roles('owner','delivery_manager'))):
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'invite-resend:'+identifier,3,600)
+    if not allowed:
+        raise db.error(429,'EMAIL_RATE_LIMIT','انتظر قبل إعادة الدعوة.')
+    with db.tx() as conn:
+        row=_staff_record(conn,identifier,user)
+        _email_ready(conn,user['brand_id'],testing=True)
+        if row['invitation_status'] not in {'pending_email','draft'} or not row['email']:
+            raise db.error(409,'INVITATION_NOT_PENDING','لا توجد دعوة معلقة قابلة للإرسال.')
+        if row['role'] in {'owner','delivery_manager'}:
+            require_owner_step_up(conn,user)
+        conn.execute("UPDATE users SET invitation_status='pending_email' WHERE id=%s",(identifier,))
+        challenge=_create_email_token(conn,brand=user['brand_id'],email=row['email'],purpose='add_owner' if row['role']=='owner' else 'invitation',user_id=identifier,created_by=user['id'])
+        return {'accepted':True,'challenge_id':challenge,'delivery_status':'queued'}
+
+
+@router.post('/identity/staff/{identifier}/revoke-invitation')
+def revoke_invitation(identifier:str,user=Depends(require_roles('owner','delivery_manager'))):
+    with db.tx() as conn:
+        row=_staff_record(conn,identifier,user)
+        if row['invitation_status'] not in {'pending_email','draft'}:
+            raise db.error(409,'INVITATION_NOT_PENDING','الحساب مفعل؛ استخدم الإيقاف المخوّل بعد تسليم مهامه.')
+        conn.execute("UPDATE users SET active=false,invitation_status='revoked',updated_at=now() WHERE id=%s",(identifier,))
+        conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
+        conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
+        db.audit(conn,user['id'],'staff.invitation.revoked','user',identifier)
+        return {'revoked':True}
+
+
+@router.get('/identity/settings')
+def identity_settings(user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        rows=conn.execute('SELECT channel,state,enabled,delivery_proven_at,updated_at FROM identity_channels WHERE brand_id=%s ORDER BY channel',(user['brand_id'],)).fetchall()
+        return {'channels':rows,'readiness':channel_readiness(conn,user['brand_id']),
+                'email_provider':email_delivery.configuration(),
+                'required_secret_settings':['EMAIL_PROVIDER','EMAIL_FROM','MAIL_OUTBOX_KEY','RESEND_API_KEY or SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD'],
+                'email_security':'لا تستخدم كلمة مرور Gmail في المحادثة. استخدم مزودًا مخولًا أو بيانات SMTP مخصصة في إعدادات الخادم السرية.'}
+
+
+class ChannelUpdateBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    channel:Literal['guest','email','sms','whatsapp']
+    state:Literal['unconfigured','testing','active','paused','fault']
+    enabled:bool=False
+
+
+@router.patch('/identity/settings')
+def update_identity_settings(body:ChannelUpdateBody,user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        row=_channel(conn,user['brand_id'],body.channel)
+        if body.channel!='guest' and body.state=='active':
+            configured=channel_readiness(conn,user['brand_id'])[body.channel]['configured']
+            if not configured or not row['delivery_proven_at']:
+                raise db.error(409,'CHANNEL_DELIVERY_PROOF_REQUIRED','يلزم إعداد مخوّل وإثبات وصول واستخدام رمز فعلي قبل التفعيل.')
+        if body.channel=='guest' and body.state not in {'active','paused'}:
+            raise db.error(422,'GUEST_POLICY_INVALID','سياسة الضيف مفعلة أو متوقفة.')
+        if body.enabled and body.state!='active':
+            raise db.error(422,'CHANNEL_STATE_INVALID','القناة تعمل فقط في الحالة المجربة والمفعلة.')
+        conn.execute('INSERT INTO identity_channels(brand_id,channel,state,enabled,updated_by) VALUES(%s,%s,%s,%s,%s) ON CONFLICT(brand_id,channel) DO UPDATE SET state=excluded.state,enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=now()',(user['brand_id'],body.channel,body.state,body.enabled,user['id']))
+        db.audit(conn,user['id'],'identity.channel.updated','brand',user['brand_id'],body.model_dump())
+        return {'channels':channel_readiness(conn,user['brand_id'])}
+
+
+@router.get('/identity/email/outbox')
+def email_outbox_status(user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        return {'messages':conn.execute('SELECT id,kind,status,attempts,last_error,created_at,delivery_at FROM email_outbox WHERE brand_id=%s ORDER BY created_at DESC LIMIT 100',(user['brand_id'],)).fetchall()}

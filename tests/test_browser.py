@@ -9,6 +9,7 @@ source menu assets; the banner is clearly labelled test-only, without an offer.
 from __future__ import annotations
 
 import json
+import base64
 import os
 import re
 import secrets
@@ -54,7 +55,17 @@ def _customer_session():
 
 
 @pytest.fixture
-def live_app(database, tmp_path):
+def synthetic_mail(monkeypatch):
+    # Encrypted local synthetic messages only; workers never contact a provider.
+    monkeypatch.setenv('EMAIL_PROVIDER','resend')
+    monkeypatch.setenv('EMAIL_FROM','sender@example.invalid')
+    monkeypatch.setenv('RESEND_API_KEY','synthetic-never-dispatched')
+    monkeypatch.setenv('MAIL_OUTBOX_KEY',base64.urlsafe_b64encode(b'W'*32).decode())
+    monkeypatch.setenv('EMAIL_WORKER_ENABLED','false')
+
+
+@pytest.fixture
+def live_app(database, tmp_path, synthetic_mail):
     with socket.socket() as reservation:
         reservation.bind(('127.0.0.1', 0))
         port = reservation.getsockname()[1]
@@ -257,10 +268,13 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
         page.keyboard.press('Escape')
 
         page.locator('#account-button').click()
-        page.locator('#phone').fill('0500000000')
-        page.locator('#send-otp').click()
-        expect(page.locator('#otp-unavailable')).to_be_visible()
+        # V5 hides unconfigured channels and offers the authorized guest path.
+        expect(page.locator('#guest-form')).to_be_visible()
+        expect(page.locator('#otp-request-form')).not_to_be_visible()
+        expect(page.locator('#email-login-button')).not_to_be_visible()
         expect(page.locator('#otp-verify-form')).not_to_be_visible()
+        rejected=context.request.post(live_app+'/api/auth/otp/request',headers={'Origin':live_app},data={'phone':'0500000000','brand_id':'kps'})
+        assert rejected.status==503
         page.keyboard.press('Escape')
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n'] == 0
@@ -514,6 +528,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         manager_shift=_authenticated_post(contexts['manager'],live_app,'/api/shifts',{'kind':'manager','branch_ids':[branch_id]})['shift']['id']
         driver_shift=_authenticated_post(contexts['driver'],live_app,'/api/shifts',{'kind':'driver','branch_ids':[branch_id],'manager_shift_id':manager_shift})['shift']['id']
         manager.locator('#navigation [data-page=orders]').click()
+        manager.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
         manager.locator(f'[data-action=assign][data-id="{order_id}"]').click()
         _submit_modal(manager,{'driver_shift_id':driver_shift})
         _capture(manager,'delivery-manager-live-synthetic-orders')
@@ -524,6 +539,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         accept.click()
         expect(driver.locator('[data-action=task-transition][data-status=picked_up]')).to_be_visible()
         branch.locator('#navigation [data-page=orders]').click()
+        branch.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
         expect(branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status=handed_over]')).to_be_visible()
         _capture(branch,'branch-ready-synthetic-order')
         branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status=handed_over]').click()
@@ -659,9 +675,14 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
     _owner_login(owner_context,live_app,owner)
     brand_id='browser-new-brand-test'
     brand_name='براند اختبار جديد فقط'
+    _authenticated_post(owner_context,live_app,'/api/identity/step-up',{'password':PASSWORD})
     created=_authenticated_post(owner_context,live_app,'/api/admin/brands',{
-        'id':brand_id,'name':brand_name,'owner_username':'browser.newbrand.owner',
-        'owner_password':PASSWORD,'owner_display_name':'مالك براند اختبار فقط'})
+        'id':brand_id,'name':brand_name,'owner_email':'brand-owner@example.invalid',
+        'owner_display_name':'مالك براند اختبار فقط'})
+    assert created['invitation_status']=='pending_email'
+    with db.tx() as conn:
+        invited=conn.execute('SELECT active,email_verified_at FROM users WHERE id=%s',(created['owner_user_id'],)).fetchone()
+        assert invited['active'] is False and invited['email_verified_at'] is None
     assert created['customer_path']=='/?brand_id='+brand_id
     context,page,errors=_context(chromium_browser,live_app)
     try:
@@ -696,14 +717,13 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
         assert not any('/assets/kps-' in url or 'brand_id=kps' in url for url in requests)
         _capture(page,'owner-created-empty-brand-customer-storefront')
 
-        # The actual OTP endpoint receives the selected brand and truthfully
-        # rejects the disabled provider in this isolated test environment.
+        # Unconfigured OTP stays hidden. The real disabled endpoint still
+        # rejects requests while the new brand has its own isolated guest policy.
         page.locator('#account-button').click()
-        page.locator('#phone').fill('0500000001')
-        with page.expect_request('**/api/auth/otp/request') as sent:
-            page.locator('#send-otp').click()
-        assert sent.value.post_data_json['brand_id']==brand_id
-        expect(page.locator('#otp-unavailable')).to_be_visible()
+        expect(page.locator('#guest-form')).to_be_visible()
+        expect(page.locator('#otp-request-form')).not_to_be_visible()
+        rejected=context.request.post(live_app+'/api/auth/otp/request',headers={'Origin':live_app},data={'phone':'0500000001','brand_id':brand_id})
+        assert rejected.status==503
         page.keyboard.press('Escape')
         assert page.evaluate("localStorage.getItem('kps-unconfirmed-basket-v2:kps')")==kps_draft
         page.goto('/')

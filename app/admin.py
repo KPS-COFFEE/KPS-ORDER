@@ -4,11 +4,12 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import math
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Header, Response, UploadFile
 from PIL import Image, UnidentifiedImageError
-from . import auth, db
+from . import auth, db, catalog, email_delivery
 
 router = APIRouter(prefix='/api')
 owner = auth.require_roles('owner')
@@ -60,7 +61,7 @@ def branch_ids(conn, values, brand):
 def coordinate(value):
     if not isinstance(value, dict) or set(value) != {'lat', 'lng'}:
         raise db.error(422, 'COORDINATE_INVALID', 'الموقع يحتاج خط عرض وطول فعليين.')
-    if any(type(value[k]) not in {int, float} for k in ('lat', 'lng')) or not -90 <= value['lat'] <= 90 or not -180 <= value['lng'] <= 180:
+    if any(type(value[k]) not in {int, float} or not math.isfinite(value[k]) for k in ('lat', 'lng')) or not -90 <= value['lat'] <= 90 or not -180 <= value['lng'] <= 180:
         raise db.error(422, 'COORDINATE_INVALID', 'الموقع غير صحيح.')
     return value
 
@@ -126,9 +127,9 @@ def validate_options(groups, variants=None):
 
 def validate_branch_settings(settings, branch_city):
     allowed = {'active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
-               'coverage','location','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
+               'coverage','location','location_verified','map_url','map_url_verified','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
     keys(settings, allowed)
-    for field in ('active','pickup_enabled','car_enabled','delivery_enabled','ordering_verified','operational_data_verified'):
+    for field in ('active','pickup_enabled','car_enabled','delivery_enabled','ordering_verified','operational_data_verified','location_verified','map_url_verified'):
         if field in settings and type(settings[field]) is not bool:
             raise db.error(422, 'BOOLEAN_INVALID', 'إعداد التفعيل يجب أن يكون صحيحًا أو خطأ.')
     for field in ('opening_hours','delivery_hours'):
@@ -139,6 +140,8 @@ def validate_branch_settings(settings, branch_city):
             money(settings[field], field)
     if settings.get('location') is not None:
         coordinate(settings['location'])
+    if settings.get('map_url') is not None and not catalog.safe_map_url(settings['map_url']):
+        raise db.error(422,'MAP_URL_NOT_ALLOWED','اختر رابط Google Maps معتمدًا دون روابط خارجية.')
     if 'payment_methods' in settings and (not isinstance(settings['payment_methods'], list) or not settings['payment_methods'] or set(settings['payment_methods']) - {'cash','card'}):
         raise db.error(422, 'PAYMENT_METHOD_INVALID', 'طرق الدفع المسموحة كاش وشبكة عند الاستلام.')
     coverage = settings.get('coverage')
@@ -211,7 +214,15 @@ def update_product(record_id: str, body: dict, user=Depends(owner), idem: str | 
         def perform():
             row = scoped(conn,'products',record_id,user)
             changes = body.get('settings',{})
-            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description'})
+            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids'})
+            if 'lifecycle' in changes and changes['lifecycle'] not in {'draft','active','paused'}:
+                raise db.error(422,'PRODUCT_LIFECYCLE_INVALID','حالة الصنف مسودة أو مفعل أو موقوف.')
+            if 'lifecycle' in changes:
+                changes['enabled']=changes['lifecycle']=='active'
+            elif 'enabled' in changes:
+                changes['lifecycle']='active' if changes['enabled'] is True else 'paused'
+            if 'available_branch_ids' in changes:
+                branch_ids(conn,changes['available_branch_ids'],user['brand_id'])
             for key in ('enabled','source_verified'):
                 if key in changes and type(changes[key]) is not bool:
                     raise db.error(422,'BOOLEAN_INVALID','قيمة التفعيل غير صحيحة.')
@@ -237,6 +248,8 @@ def update_product(record_id: str, body: dict, user=Depends(owner), idem: str | 
                     raise db.error(422,'OPTIONS_INVALID','خيارات الصنف غير صحيحة.')
             validate_options(changes.get('option_groups',row['settings'].get('option_groups',[])),changes.get('variants',row['settings'].get('variants',[])))
             settings = row['settings'] | changes
+            if settings.get('lifecycle') == 'active' and settings.get('source_verified') is not True:
+                raise db.error(422,'PRODUCT_SOURCE_UNVERIFIED','اعتمد السعر والصورة والخيارات قبل تفعيل الصنف.')
             name = text(body.get('name',row['name']),200,'اسم الصنف')
             category = text(body.get('category',row['category']),150,'التصنيف')
             price = money(body.get('price_halalas',row['price_halalas']),'سعر الصنف')
@@ -248,31 +261,7 @@ def update_product(record_id: str, body: dict, user=Depends(owner), idem: str | 
 
 @router.post('/admin/users')
 def create_user(body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
-    keys(body, {'username','display_name','role','branch_ids','password','phone'})
-    role = body.get('role')
-    if role not in auth.ROLES-{'customer'}:
-        raise db.error(422,'ROLE_INVALID','اختر دور موظف صحيحًا.')
-    username = text(body.get('username'),150,'اسم الدخول')
-    if not re.fullmatch(r'[A-Za-z0-9_.@-]{3,150}',username):
-        raise db.error(422,'USERNAME_INVALID','اسم الدخول يحتاج 3 أحرف أو أكثر دون مسافات.')
-    password = auth.hash_password(body.get('password'))
-    with db.tx() as conn:
-        def perform():
-            if conn.execute('SELECT 1 FROM users WHERE lower(username)=lower(%s)',(username,)).fetchone():
-                raise db.error(409,'USERNAME_EXISTS','اسم الدخول مستخدم.')
-            scope = branch_ids(conn,body.get('branch_ids',[]),user['brand_id'])
-            if role!='owner' and not scope:
-                raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد الفروع المصرح بها للموظف.')
-            identifier = db.new_id('user_')
-            display_name = text(body.get('display_name',''),200,'الاسم')
-            phone = auth.normalize_phone(body['phone']) if body.get('phone') else None
-            row = conn.execute('INSERT INTO users(id,username,display_name,role,brand_id,branch_ids,password_hash,phone) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,username,display_name,role,brand_id,branch_ids,phone,active',(identifier,username,display_name,role,user['brand_id'],db.json(scope),password,phone)).fetchone()
-            db.audit(conn,user['id'],'user.created','user',identifier,{'role':role,'branch_ids':scope})
-            return row
-        # Digest uses a one-way password digest instead of persisting a password.
-        safe_body = body | {'password':hashlib.sha256(str(body.get('password')).encode()).hexdigest()}
-        return db.idempotent(conn,user['id'],idem,'user.create',safe_body,perform)
-
+    raise db.error(422,'STAFF_EMAIL_INVITATION_REQUIRED','أنشئ الموظف بدعوة بريد فردية من شاشة الموظفين.')
 
 @router.patch('/admin/users/{record_id}')
 def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
@@ -286,6 +275,12 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
             active = body.get('active',row['active'])
             if role not in auth.ROLES-{'customer'} or type(active) is not bool:
                 raise db.error(422,'USER_CONFIGURATION_INVALID','إعدادات الموظف غير صحيحة.')
+            if role != row['role'] and role != 'owner':
+                raise db.error(403,'STAFF_ROLE_INVITATION_REQUIRED','تغيير دور الموظف يحتاج مسار دعوة مخول.')
+            if role == 'owner' and row['role'] != 'owner':
+                raise db.error(403,'OWNER_INVITATION_REQUIRED','إضافة مالك تحتاج دعوة بريد واعتماد المالك الحالي.')
+            if active and row.get('invitation_status') in {'draft','pending_email','pending_verification'}:
+                raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','يلزم تحقق الموظف من بريده قبل التفعيل.')
             conn.execute('SELECT id FROM users WHERE brand_id=%s AND role=%s AND active ORDER BY id FOR UPDATE',(user['brand_id'],'owner')).fetchall()
             if row['role']=='owner' and (role!='owner' or not active):
                 other = conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND role=%s AND active AND id<>%s',(user['brand_id'],'owner',record_id)).fetchone()
@@ -294,6 +289,9 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
             scope = branch_ids(conn,body.get('branch_ids',row['branch_ids']),user['brand_id'])
             if role!='owner' and not scope:
                 raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد الفروع المصرح بها للموظف.')
+            auth.ensure_safe_staff_scope_change(conn,row,scope,active)
+            if role != row['role'] and conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(record_id,)).fetchone():
+                raise db.error(409,'OPEN_SHIFT_ROLE_PROTECTED','أغلق أو سلّم مسؤولية الشفت قبل تغيير الدور.')
             hashed = auth.hash_password(body['password']) if body.get('password') else row['password_hash']
             name = text(body.get('display_name',row['display_name']),200,'الاسم')
             updated = conn.execute('UPDATE users SET display_name=%s,role=%s,branch_ids=%s,active=%s,password_hash=%s,updated_at=now() WHERE id=%s RETURNING id,username,display_name,role,brand_id,branch_ids,phone,active',(name,role,db.json(scope),active,hashed,record_id)).fetchone()
@@ -306,17 +304,19 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
 
 @router.patch('/admin/settings')
 def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
-    keys(body, {'operational_day_start','late_after_minutes','theme'})
+    keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas'})
     if 'operational_day_start' in body and not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',str(body['operational_day_start'])):
         raise db.error(422,'OPERATIONAL_DAY_INVALID','وقت بداية اليوم التشغيلي بصيغة HH:MM.')
     if 'late_after_minutes' in body and (type(body['late_after_minutes']) is not int or not 1<=body['late_after_minutes']<=1440):
         raise db.error(422,'DELAY_SETTING_INVALID','حد التأخير من 1 إلى 1440 دقيقة.')
+    if 'guest_operational_confirmation_above_halalas' in body and body['guest_operational_confirmation_above_halalas'] is not None:
+        money(body['guest_operational_confirmation_above_halalas'],'حد طلب الاتصال التشغيلي')
     if 'theme' in body:
         theme=body['theme']; keys(theme,{'accent','background','text','font'})
         for key in {'accent','background','text'} & set(theme):
             if not re.fullmatch(r'#[A-Fa-f0-9]{6}',str(theme[key])):
                 raise db.error(422,'THEME_INVALID','اللون بصيغة آمنة #RRGGBB.')
-        if theme.get('font','Tahoma') not in {'Tahoma','Arial','sans-serif'}:
+        if theme.get('font','Tahoma') not in {'Tahoma','Arial','sans-serif','Noto Kufi Arabic'}:
             raise db.error(422,'THEME_INVALID','اختر خطًا معتمدًا.')
     with db.tx() as conn:
         def perform():
@@ -483,13 +483,15 @@ def create_product(body:dict,user=Depends(owner),idem:str|None=Header(None,alias
     if not name or not category:
         raise db.error(422,'PRODUCT_IDENTITY_REQUIRED','اسم الصنف وتصنيفه مطلوبان.')
     settings=body.get('settings',{})
-    keys(settings,{'description','option_groups','variants','available_cities','unavailable_branch_ids','image_url','image_asset_id'})
+    keys(settings,{'description','option_groups','variants','available_cities','unavailable_branch_ids','available_branch_ids','image_url','image_asset_id'})
     validate_options(settings.get('option_groups',[]),settings.get('variants',[]))
     with db.tx() as conn:
         def perform():
             identifier=db.new_id('product_');source_id=text(body.get('source_id','admin:'+identifier),200,'مرجع المصدر')
             if conn.execute("SELECT 1 FROM products WHERE brand_id=%s AND settings->>'source_id'=%s",(user['brand_id'],source_id)).fetchone():
                 raise db.error(409,'PRODUCT_SOURCE_EXISTS','الصنف موجود بهذا المرجع؛ حدّث سجله دون إعادة إنشائه.')
+            if 'available_branch_ids' in settings:
+                branch_ids(conn,settings['available_branch_ids'],user['brand_id'])
             if 'unavailable_branch_ids' in settings:
                 branch_ids(conn,settings['unavailable_branch_ids'],user['brand_id'])
             if settings.get('image_asset_id'):
@@ -499,7 +501,7 @@ def create_product(body:dict,user=Depends(owner),idem:str|None=Header(None,alias
                 settings['image_url']='/api/product-assets/'+asset['id']
             elif settings.get('image_url') and not re.fullmatch(r'/assets/[A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|webp|svg)',settings['image_url']):
                 raise db.error(422,'IMAGE_URL_INVALID','اختر صورة محلية معتمدة.')
-            configured=settings|{'enabled':False,'source_verified':False,'source_id':source_id}
+            configured=settings|{'enabled':False,'lifecycle':'draft','source_verified':False,'source_id':source_id}
             row=conn.execute('INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *',(identifier,user['brand_id'],name,category,price,db.json(configured))).fetchone()
             db.audit(conn,user['id'],'product.created','product',identifier,{'source_id':source_id,'price_halalas':price})
             return {'product':row}
@@ -517,22 +519,80 @@ def public_product_asset(record_id:str):
 
 @router.post('/admin/brands')
 def create_brand(body:dict,user=Depends(owner),idem:str|None=Header(None,alias='Idempotency-Key')):
-    keys(body,{'id','name','owner_username','owner_password','owner_display_name'})
+    keys(body,{'id','name','owner_email','owner_display_name'})
     brand_id=text(body.get('id'),60,'معرف البراند'); name=text(body.get('name'),200,'اسم البراند')
-    username=text(body.get('owner_username'),150,'دخول مالك البراند')
-    if not re.fullmatch(r'[a-z][a-z0-9_-]{1,59}',brand_id) or not re.fullmatch(r'[A-Za-z0-9_.@-]{3,150}',username) or not name:
-        raise db.error(422,'BRAND_IDENTITY_INVALID','أدخل هوية البراند ودخول إدارته بشكل صحيح.')
-    hashed=auth.hash_password(body.get('owner_password'))
+    if not re.fullmatch(r'[a-z][a-z0-9_-]{1,59}',brand_id) or not name:
+        raise db.error(422,'BRAND_IDENTITY_INVALID','أدخل هوية البراند بشكل صحيح.')
+    email=email_delivery.normalize_email(text(body.get('owner_email',''),254,'بريد مالك البراند'))
     display_name=text(body.get('owner_display_name',''),200,'اسم المسؤول')
     with db.tx() as conn:
+        auth.require_owner_step_up(conn,user)
         def perform():
-            if conn.execute('SELECT 1 FROM brands WHERE id=%s',(brand_id,)).fetchone() or conn.execute('SELECT 1 FROM users WHERE lower(username)=lower(%s)',(username,)).fetchone():
-                raise db.error(409,'BRAND_OR_USERNAME_EXISTS','البراند أو اسم الدخول موجود؛ لا يُعاد إنشاؤه.')
+            if conn.execute('SELECT 1 FROM brands WHERE id=%s',(brand_id,)).fetchone():
+                raise db.error(409,'BRAND_OR_USERNAME_EXISTS','البراند موجود؛ لا يُعاد إنشاؤه.')
             conn.execute('INSERT INTO brands(id,name) VALUES(%s,%s)',(brand_id,name))
             conn.execute('INSERT INTO app_settings(brand_id,settings) VALUES(%s,%s)',(brand_id,db.json({})))
+            conn.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled) VALUES(%s,'guest','active',true),(%s,'email','testing',true),(%s,'sms','unconfigured',false),(%s,'whatsapp','unconfigured',false)",(brand_id,brand_id,brand_id,brand_id))
             identifier=db.new_id('user_')
-            conn.execute("INSERT INTO users(id,username,display_name,role,brand_id,password_hash) VALUES(%s,%s,%s,'owner',%s,%s)",(identifier,username,display_name,brand_id,hashed))
-            db.audit(conn,user['id'],'brand.created','brand',brand_id,{'owner_user_id':identifier})
-            return {'brand_id':brand_id,'name':name,'owner_user_id':identifier,'customer_path':'/?brand_id='+brand_id,'staff_login':username}
-        safe_body=body|{'owner_password':hashlib.sha256(str(body.get('owner_password')).encode()).hexdigest()}
-        return db.idempotent(conn,user['id'],idem,'brand.create',safe_body,perform)
+            conn.execute("INSERT INTO users(id,display_name,role,brand_id,email,active,identity_kind,invitation_status) VALUES(%s,%s,'owner',%s,%s,false,'pending_email','pending_email')",(identifier,display_name,brand_id,email))
+            challenge=auth._create_email_token(conn,brand=brand_id,email=email,purpose='add_owner',user_id=identifier,created_by=user['id'])
+            db.audit(conn,user['id'],'brand.created','brand',brand_id,{'owner_user_id':identifier,'invitation_status':'pending_email'})
+            return {'brand_id':brand_id,'name':name,'owner_user_id':identifier,'invitation_status':'pending_email','challenge_id':challenge,'customer_path':'/?brand_id='+brand_id}
+        return db.idempotent(conn,user['id'],idem,'brand.create',body,perform)
+
+
+@router.patch('/admin/brand-services')
+def brand_services(body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
+    keys(body, {'services', 'reason'})
+    services = body.get('services')
+    keys(services, {'delivery', 'pickup', 'car_pickup'})
+    if not services or any(type(value) is not bool for value in services.values()):
+        raise db.error(422, 'SERVICE_POLICY_INVALID', 'اختر خدمات البراند المراد تفعيلها أو إيقافها.')
+    reason = text(body.get('reason', ''), 500, 'سبب تعديل الخدمات')
+    if not reason:
+        raise db.error(422, 'SERVICE_POLICY_REASON_REQUIRED', 'اكتب سبب تعديل الخدمات.')
+    with db.tx() as conn:
+        def perform():
+            row = conn.execute('SELECT settings FROM brands WHERE id=%s FOR UPDATE', (user['brand_id'],)).fetchone()
+            previous = row['settings'].get('services', {})
+            settings = row['settings'] | {'services': previous | services}
+            conn.execute('UPDATE brands SET settings=%s WHERE id=%s', (db.json(settings), user['brand_id']))
+            db.audit(conn, user['id'], 'brand.services.updated', 'brand', user['brand_id'],
+                     {'previous': previous, 'services': settings['services'], 'reason': reason})
+            return {'services': settings['services'], 'existing_orders_preserved': True}
+        return db.idempotent(conn, user['id'], idem, 'brand.services.update', body, perform)
+
+
+@router.post('/admin/delivery-only')
+def delivery_only(body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
+    keys(body, {'branch_ids', 'confirm', 'reason'})
+    if type(body.get('confirm', False)) is not bool:
+        raise db.error(422, 'CONFIRMATION_INVALID', 'راجع أثر التغيير ثم أكد الحفظ.')
+    reason = text(body.get('reason', ''), 500, 'سبب تعديل الخدمات')
+    with db.tx() as conn:
+        scope = branch_ids(conn, body.get('branch_ids', []), user['brand_id'])
+        if not scope:
+            raise db.error(422, 'BRANCH_SCOPE_REQUIRED', 'حدد الفروع المراد تعديل خدماتها.')
+        brand = conn.execute('SELECT settings FROM brands WHERE id=%s FOR SHARE', (user['brand_id'],)).fetchone()
+        rows = [scoped(conn, 'branches', bid, user) for bid in sorted(scope)]
+        warnings = []
+        for row in rows:
+            available, code, why = catalog.branch_service(row, 'delivery', brand_settings=brand['settings'])
+            if not available:
+                warnings.append({'branch_id': row['id'], 'branch_no': row['branch_no'], 'name': row['name'], 'code': code,
+                                 'reason': why, 'will_accept_new_orders': False})
+        preview = {'branch_ids': scope, 'disabled_services': ['pickup', 'car_pickup'], 'delivery_will_be_enabled': False,
+                   'warnings': warnings, 'existing_orders_preserved': True}
+        if not body.get('confirm'):
+            return dict(preview, saved=False, confirmation_required=True)
+        if not reason:
+            raise db.error(422, 'SERVICE_POLICY_REASON_REQUIRED', 'اكتب سبب تعديل الخدمات.')
+        def perform():
+            for row in rows:
+                settings = row['settings'] | {'pickup_enabled': False, 'car_enabled': False}
+                conn.execute('UPDATE branches SET settings=%s,updated_at=now() WHERE id=%s', (db.json(settings), row['id']))
+                db.audit(conn, user['id'], 'branch.delivery_only', 'branch', row['id'],
+                         {'previous': {key: row['settings'].get(key) for key in ('pickup_enabled','car_enabled','delivery_enabled')},
+                          'reason': reason, 'delivery_preserved': row['settings'].get('delivery_enabled', False)})
+            return dict(preview, saved=True, confirmation_required=False)
+        return db.idempotent(conn, user['id'], idem, 'branches.delivery_only', body, perform)

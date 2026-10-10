@@ -100,3 +100,7 @@ python tools/extract_catalog.py --source /path/to/verified-kps-source.html
 ```
 
 The tool extracts embedded assets and writes both versioned seed contracts. It refuses a runtime-catalog replacement without explicit identity/code reconciliation. Source-card ids and original branch numbers remain stable. The private owner handoff and email are not copied into these public data artifacts.
+
+## V5 read-only recheck
+
+On 2026-10-10, another GET of the original storefront returned 200, 7,245,235 bytes and the identical SHA-256 above. The preserved root index is still unchanged. A new public upstream catalog GET timed out after 20 seconds with zero response bytes. This recheck proves preserved page content; it does not approve live catalog data or provide missing branch operational coordinates. No upstream write was performed.

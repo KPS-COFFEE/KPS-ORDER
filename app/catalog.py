@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
+from urllib.parse import urlsplit, parse_qs, urlencode, unquote
 
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
@@ -54,8 +55,11 @@ def _minute(value):
     return hour * 60 + minute
 
 
-def branch_service(branch: dict, service: str, now=None) -> tuple[bool, str | None, str | None]:
+def branch_service(branch: dict, service: str, now=None, brand_settings=None) -> tuple[bool, str | None, str | None]:
     settings = branch['settings']
+    service_key = 'car_pickup' if service == 'car' else service
+    if (brand_settings or {}).get('services', {}).get(service_key, True) is not True:
+        return False, 'BRAND_SERVICE_DISABLED', 'هذه الخدمة موقوفة من إدارة البراند.'
     if settings.get('active', True) is not True:
         return False, 'BRANCH_DISABLED', 'الفرع متوقف عن استقبال الطلبات الجديدة.'
     if service == 'delivery' and normalize_city(branch['city']) not in DELIVERY_CITIES:
@@ -75,7 +79,7 @@ def branch_service(branch: dict, service: str, now=None) -> tuple[bool, str | No
             return False, 'DELIVERY_HOURS_UNCONFIGURED', 'ساعات التوصيل لهذا الفرع غير مهيأة.'
         if not _hours_open(settings['delivery_hours'], now):
             return False, 'DELIVERY_CLOSED', 'التوصيل غير متاح الآن.'
-        if not settings.get('coverage') or not valid_location(settings.get('location')):
+        if not settings.get('coverage') or not location_verified(branch):
             return False, 'COVERAGE_UNCONFIGURED', 'نطاق التوصيل أو موقع الفرع غير مهيأ.'
         fee = settings.get('delivery_fee_halalas')
         if not isinstance(fee, int) or isinstance(fee, bool) or fee < 0:
@@ -125,7 +129,7 @@ def covered(coverage: dict, location: dict) -> bool:
 
 def product_availability(product: dict, branch: dict | None) -> tuple[bool, str | None]:
     settings = product['settings']
-    if settings.get('enabled', True) is not True:
+    if settings.get('lifecycle') in {'draft', 'paused'} or settings.get('enabled', True) is not True:
         return False, 'الصنف غير متاح حاليًا.'
     cities = settings.get('available_cities') or []
     # Additional hard guard preserves the explicitly identified original two source records.
@@ -156,7 +160,7 @@ def public_product(product: dict, branch=None) -> dict:
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
     result.update(option_groups=settings.get('option_groups', []), variants=settings.get('variants', []),
                   available_cities=settings.get('available_cities', []), enabled=settings.get('enabled', True),
-                  source_verified=settings.get('source_verified') is True, available=available, unavailable_reason=reason)
+                  source_verified=settings.get('source_verified') is True, lifecycle=settings.get('lifecycle', 'active' if settings.get('enabled', True) else 'paused'), available=available, unavailable_reason=reason)
     return result
 
 
@@ -171,7 +175,7 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
             branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s', (branch_id, brand_id)).fetchone()
             if not branch:
                 raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود.')
-        products = conn.execute('SELECT * FROM products WHERE brand_id=%s ORDER BY id', (brand_id,)).fetchall()
+        products = conn.execute("SELECT * FROM products WHERE brand_id=%s AND coalesce(settings->>'lifecycle','active')<>'draft' ORDER BY id", (brand_id,)).fetchall()
         preferences = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
@@ -185,16 +189,19 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (brand_id,)).fetchone():
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
+        brand_settings = conn.execute('SELECT settings FROM brands WHERE id=%s', (brand_id,)).fetchone()['settings']
         rows = conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no', (brand_id,)).fetchall()
     result = []
     for branch in rows:
         item = {key: branch[key] for key in ('id', 'brand_id', 'branch_no', 'name', 'city')}
-        item['location'] = branch['settings'].get('location')
+        item['location'] = branch['settings'].get('location') if location_verified(branch) else None
+        item['directions_url'] = directions_url(branch)
+        item['location_verified'] = location_verified(branch)
         item['payment_methods'] = branch['settings'].get('payment_methods') or []
         item['delivery_eligible'] = normalize_city(branch['city']) in DELIVERY_CITIES
         item['services'] = {}
         for service in ('pickup', 'car', 'delivery'):
-            available, code, reason = branch_service(branch, service)
+            available, code, reason = branch_service(branch, service, brand_settings=brand_settings)
             item['services'][service] = {'available': available, 'code': code, 'reason': reason}
         result.append(item)
     return {'branches': result}
@@ -227,6 +234,8 @@ class Car(BaseModel):
 class CustomerInfo(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=100)
+    phone: str | None = Field(default=None, min_length=8, max_length=30)
+    neighborhood: str = Field(default='', max_length=120)
     address: str = Field(default='', max_length=500)
     location: Location | None = None
     car: Car | None = None
@@ -314,11 +323,11 @@ def _price_units(product: dict, item: OrderItem) -> tuple[int, list]:
 
 def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     lock = ' FOR SHARE' if for_update else ''
-    brand = conn.execute('SELECT id FROM brands WHERE id=%s AND active' + lock, (body.brand_id,)).fetchone()
+    brand = conn.execute('SELECT id,settings FROM brands WHERE id=%s AND active' + lock, (body.brand_id,)).fetchone()
     branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s' + lock, (body.branch_id, body.brand_id)).fetchone()
     if not brand or not branch:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع أو البراند غير موجود.')
-    available, code, reason = branch_service(branch, body.service)
+    available, code, reason = branch_service(branch, body.service, brand_settings=brand['settings'])
     if not available:
         raise db.error(409, code, reason)
     if body.payment_method not in branch['settings']['payment_methods']:
@@ -400,3 +409,132 @@ def branch_product_availability(branch_id: str, product_id: str, body: Availabil
             ok, reason = product_availability(dict(product, settings=settings), branch)
             return {'product_id': product_id, 'branch_id': branch_id, 'available': ok, 'reason': reason}
         return db.idempotent(conn, user['id'], idempotency_key, 'branch.product_availability:' + branch_id + ':' + product_id, body.model_dump(), perform)
+
+
+MAP_HOSTS = {'www.google.com', 'google.com', 'maps.google.com', 'maps.app.goo.gl', 'goo.gl'}
+DISTANCE_LABEL = 'مسافة مباشرة تقريبية، وليست مسافة الطريق'
+
+
+def safe_map_url(value):
+    """Validate only. Never resolve a pasted URL or contact an arbitrary host."""
+    if not isinstance(value, str) or len(value) > 2000 or any(ord(c) < 32 for c in value):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme != 'https' or parsed.hostname not in MAP_HOSTS or parsed.username or parsed.password or parsed.port not in (None, 443):
+            return None
+        path = unquote(parsed.path)
+        if any(segment in {'.','..'} for segment in path.split('/')) or '\\' in path:
+            return None
+        if parsed.hostname == 'maps.app.goo.gl':
+            return value if re.fullmatch(r'/[A-Za-z0-9_-]+/?', path) else None
+        if parsed.hostname == 'goo.gl':
+            return value if re.fullmatch(r'/maps/[A-Za-z0-9_-]+/?', path) else None
+        if not re.match(r'^/maps(?:/|$)', path) and not (parsed.hostname=='maps.google.com' and path in {'','/'}):
+            return None
+        return value
+    except ValueError:
+        return None
+
+
+def location_verified(branch):
+    settings = branch['settings']
+    verified = settings.get('location_verified') is True if 'location_verified' in settings else (
+           settings.get('operational_data_verified') is True or settings.get('ordering_verified') is True)
+    return valid_location(settings.get('location')) and verified
+
+
+def directions_url(branch):
+    if location_verified(branch):
+        point = branch['settings']['location']
+        return 'https://www.google.com/maps/dir/?' + urlencode({'api': '1', 'destination': f"{point['lat']},{point['lng']}", 'travelmode': 'driving'})
+    settings = branch['settings']
+    return safe_map_url(settings.get('map_url')) if settings.get('map_url_verified') is True else None
+
+
+def direct_distance(a, b):
+    if not valid_location(a) or not valid_location(b):
+        return None
+    lat1, lat2 = math.radians(a['lat']), math.radians(b['lat'])
+    dl = math.radians(b['lng']-a['lng'])
+    h = math.sin((lat2-lat1)/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dl/2)**2
+    return 2*6371000*math.asin(min(1, math.sqrt(h)))
+
+
+class MapURLBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    url: str = Field(min_length=1, max_length=2000)
+
+
+@router.post('/location/parse-map-url')
+def parse_map_url(body: MapURLBody):
+    value = safe_map_url(body.url)
+    if not value:
+        raise db.error(422, 'MAP_URL_NOT_ALLOWED', 'اختر دبوسًا أو رابط Google Maps معتمدًا.')
+    parsed = urlsplit(value)
+    query = parse_qs(parsed.query)
+    candidate = (query.get('destination') or query.get('query') or query.get('q') or [None])[0]
+    if candidate is None:
+        # @lat,lng is merely a viewport center, not a confirmed destination pin.
+        match = re.search(r'!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)', parsed.path)
+        if match:
+            candidate = match.group(1)+','+match.group(2)
+    if not candidate or not re.fullmatch(r'-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?', candidate):
+        raise db.error(422, 'MAP_PIN_REQUIRED', 'تعذر استخراج دبوس موثوق من الرابط دون فتحه. حدد الموقع مباشرة.')
+    lat, lng = map(float, candidate.split(','))
+    point = {'lat': lat, 'lng': lng}
+    if not valid_location(point):
+        raise db.error(422, 'COORDINATE_INVALID', 'الموقع غير صحيح.')
+    return {'location': point, 'source': 'customer_selected', 'location_is_device_verified': False}
+
+
+class NearestBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    location: Location
+    product_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+@router.post('/operations/nearest-branches')
+def nearest_branches(body: NearestBody, user=Depends(auth.require_roles('owner', 'delivery_manager', 'delivery_staff'))):
+    point = body.location.model_dump()
+    with db.tx() as conn:
+        brand = conn.execute('SELECT settings FROM brands WHERE id=%s AND active', (user['brand_id'],)).fetchone()
+        if not brand:
+            raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير موجود.')
+        rows = conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no', (user['brand_id'],)).fetchall()
+        products = conn.execute('SELECT * FROM products WHERE brand_id=%s AND id=ANY(%s)', (user['brand_id'], body.product_ids)).fetchall() if body.product_ids else []
+        if set(body.product_ids) != {row['id'] for row in products}:
+            raise db.error(422, 'PRODUCT_NOT_FOUND', 'صنف خارج البراند أو غير موجود.')
+    eligible, excluded = [], []
+    for branch in rows:
+        if user['role'] != 'owner' and branch['id'] not in user['branch_ids']:
+            continue
+        available, code, reason = branch_service(branch, 'delivery', brand_settings=brand['settings'])
+        if available and not location_verified(branch):
+            available, code, reason = False, 'BRANCH_LOCATION_UNVERIFIED', 'دبوس الفرع غير معتمد.'
+        if available and not covered(branch['settings']['coverage'], point):
+            available, code, reason = False, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق خدمة الفرع.'
+        missing = []
+        for product in products:
+            ok, why = product_availability(product, branch)
+            if not ok or product['settings'].get('source_verified') is not True:
+                missing.append({'product_id': product['id'], 'reason': why or 'بيانات الصنف لم تعتمد.'})
+        if available and missing:
+            available, code, reason = False, 'PRODUCT_UNAVAILABLE', 'بعض أصناف السلة غير متاحة في الفرع.'
+        item = {key: branch[key] for key in ('id', 'branch_no', 'name', 'city')}
+        item.update(available=available, code=code, reason=reason, unavailable_products=missing,
+                    directions_url=directions_url(branch), distance_label=DISTANCE_LABEL,
+                    delivery_fee_halalas=branch['settings'].get('delivery_fee_halalas'),
+                    location_verified=location_verified(branch), covered=covered(branch['settings'].get('coverage'),point),
+                    services={service:{'available':state[0],'code':state[1],'reason':state[2]}
+                              for service in ('pickup','car','delivery')
+                              for state in [branch_service(branch,service,brand_settings=brand['settings'])]})
+        if available:
+            item['direct_distance_meters'] = round(direct_distance(point, branch['settings']['location']), 1)
+            eligible.append(item)
+        else:
+            item['direct_distance_meters'] = None
+            excluded.append(item)
+    eligible.sort(key=lambda row: (row['direct_distance_meters'], row['branch_no']))
+    return {'branches': eligible, 'excluded': excluded, 'distance_label': DISTANCE_LABEL,
+            'location_source': 'customer_selected', 'routing_provider': None, 'automatically_changes_order': False}

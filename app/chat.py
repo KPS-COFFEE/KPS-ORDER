@@ -42,8 +42,8 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 existing=c.execute('SELECT * FROM conversations WHERE order_id=%s',(o['id'],)).fetchone()
                 order_id=o['id'];branch_id=o['branch_id'];customer_id=o['customer_id'];brand_id=o['brand_id'];service=o['service']
             else:
-                # Real customer sessions are issued only after provider-backed OTP;
-                # staff/owner accounts cannot fabricate an unverified customer context.
+                # Customer/guest ownership comes from the revocable server session;
+                # staff/owner accounts cannot fabricate a customer's context.
                 roles(user,'customer')
                 if body.branch_id is None or body.service is None:fail(422,'حدد نوع الخدمة والفرع لبدء المحادثة')
                 branch=c.execute('SELECT id,brand_id FROM branches WHERE id=%s AND brand_id=%s',(body.branch_id,user['brand_id'])).fetchone()

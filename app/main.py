@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import auth, catalog, db, orders
+from . import auth, catalog, db, email_delivery, orders
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
@@ -25,24 +25,30 @@ LOGGER = logging.getLogger('kps_order')
 
 @asynccontextmanager
 async def lifespan(app):
-    recovery_task = None
+    background_tasks = []
     app.state.database_configured = bool(os.getenv('DATABASE_URL'))
     if app.state.database_configured:
         # A bad configured migration/database blocks startup; no storage substitute is created.
         db.migrate()
         from . import recovery
         if recovery.configuration()['poll_configured']:
-            recovery_task = asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor')
+            background_tasks.append(asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor'))
+        from . import email_delivery, report_notifications
+        if email_delivery.configuration()['configured'] and os.getenv('EMAIL_WORKER_ENABLED', 'true').lower() == 'true':
+            background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
+        if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
+            background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
     try:
         yield
     finally:
-        if recovery_task is not None:
-            recovery_task.cancel()
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
             with suppress(asyncio.CancelledError):
-                await recovery_task
+                await task
 
 
-app = FastAPI(title='KPS Independent Orders', version='4.0.0', lifespan=lifespan,
+app = FastAPI(title='KPS Independent Orders', version='5.0.0', lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
 hosts = [item.strip() for item in os.getenv('APP_ALLOWED_HOSTS', '').split(',') if item.strip()]
 if hosts:
@@ -98,8 +104,11 @@ async def database_unavailable(request: Request, exc):
 app.include_router(auth.router)
 app.include_router(catalog.router)
 app.include_router(orders.router)
+# Provider callbacks use their own signed timestamped verification, rather than
+# browser Origin or session cookies. They must stay outside the /api namespace.
+app.include_router(email_delivery.webhook_router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery'):
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'performance', 'report_notifications'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
@@ -110,7 +119,7 @@ def revision():
 
 @app.get('/health')
 def health():
-    return {'status': 'alive', 'revision': revision(), 'application': 'kps-order-independent-v4'}
+    return {'status': 'alive', 'revision': revision(), 'application': 'kps-order-independent-v5'}
 
 
 @app.get('/ready')
@@ -121,6 +130,7 @@ def ready():
             applied = conn.execute('SELECT count(*) AS n FROM schema_migrations').fetchone()['n']
             products = conn.execute("SELECT count(*) AS n FROM products WHERE settings->>'source_verified'='true'").fetchone()['n']
             branches = conn.execute("SELECT count(*) AS n FROM branches WHERE settings->>'operational_data_verified'='true' OR settings->>'ordering_verified'='true'").fetchone()['n']
+            identity = auth.channel_readiness(conn, 'kps')
         try:
             auth.provider_config()
             otp = True
@@ -128,7 +138,8 @@ def ready():
             otp = False
         return {'status': 'ready', 'revision': revision(), 'database': 'connected', 'applied_migrations': applied,
                 'customer_otp_configured': otp, 'verified_products': products, 'verified_branches': branches,
-                'ordering_configured': bool(otp and products and branches)}
+                'identity_channels': identity,
+                'ordering_configured': bool(any(channel['available'] for channel in identity.values()) and products and branches)}
     except Exception:
         return JSONResponse({'status': 'not_ready', 'revision': revision(), 'database': 'unavailable'}, status_code=503)
 

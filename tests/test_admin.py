@@ -97,13 +97,17 @@ def test_real_banner_upload_schedule_scope_edit_persistence_and_private_preview(
 
 
 @pytest.mark.postgres
-def test_employee_creation_scope_session_revocation_and_owner_protection(owner):
+def test_legacy_employee_session_revocation_and_owner_protection(owner):
     client,mutate=owner
-    assert mutate('POST','/api/admin/users',{'username':'test-driver','role':'driver','password':'TestOnly!DriverPassword1'}).status_code==422
-    created=mutate('POST','/api/admin/users',{'username':'test-driver','role':'driver','password':'TestOnly!DriverPassword1','branch_ids':['kps-branch-1']})
-    assert created.status_code==200,created.text
-    assert 'password_hash' not in created.json()
-    uid=created.json()['id']
+    # V5 requires email invitation for newly enrolled staff. Existing active
+    # employees retain private password access during their safe transition.
+    rejected=mutate('POST','/api/admin/users',{'username':'test-driver','role':'driver','password':'TestOnly!DriverPassword1','branch_ids':['kps-branch-1']})
+    assert rejected.status_code==422
+    assert rejected.json()['detail']['code']=='STAFF_EMAIL_INVITATION_REQUIRED'
+    uid='test-existing-driver'
+    with db.tx() as conn:
+        conn.execute("INSERT INTO users(id,username,display_name,role,brand_id,branch_ids,password_hash) VALUES(%s,'test-driver','موظف سابق للاختبار','driver','kps',%s,%s)",
+                     (uid,db.json(['kps-branch-1']),auth.hash_password('TestOnly!DriverPassword1')))
     owner_cookies=dict(client.cookies);owner_csrf=client.headers['X-CSRF-Token']
     login=client.post('/api/auth/login',json={'username':'test-driver','password':'TestOnly!DriverPassword1'});assert login.status_code==200
     employee_cookies=dict(client.cookies)
@@ -115,17 +119,34 @@ def test_employee_creation_scope_session_revocation_and_owner_protection(owner):
 
 
 @pytest.mark.postgres
-def test_add_brand_same_database_creates_separate_scoped_owner_and_no_catalog_fork(owner):
+def test_add_brand_same_database_invites_separate_scoped_owner_and_no_catalog_fork(owner,monkeypatch):
+    import base64
+    from urllib.parse import urlsplit,parse_qs
+    from app import email_delivery
     client,mutate=owner
-    payload={'id':'testbrand','name':'براند اختبار','owner_username':'testbrand-owner','owner_password':'TestOnly!BrandPassword1'}
+    monkeypatch.setenv('EMAIL_PROVIDER','resend')
+    monkeypatch.setenv('EMAIL_FROM','sender@example.invalid')
+    monkeypatch.setenv('RESEND_API_KEY','synthetic-never-dispatched')
+    monkeypatch.setenv('MAIL_OUTBOX_KEY',base64.urlsafe_b64encode(b'B'*32).decode())
+    assert client.post('/api/identity/step-up',json={'password':'TestOnly!PrivatePassword1'}).status_code==200
+    payload={'id':'testbrand','name':'براند اختبار','owner_email':'owner@example.invalid','owner_display_name':'مالك اختبار'}
     r=mutate('POST','/api/admin/brands',payload,key='create-second-brand');assert r.status_code==200,r.text
+    assert r.json()['invitation_status']=='pending_email'
     assert mutate('POST','/api/admin/brands',payload,key='create-second-brand').json()==r.json()
     empty_catalog=client.get('/api/catalog?brand_id=testbrand')
     assert empty_catalog.status_code==200,empty_catalog.text
     assert empty_catalog.json()['products']==[]
-    own=client.get('/api/admin/config').json();assert own['brand']['id']=='kps'
+    assert client.get('/api/admin/config').json()['brand']['id']=='kps'
+    with db.tx() as conn:
+        invited=conn.execute('SELECT * FROM users WHERE id=%s',(r.json()['owner_user_id'],)).fetchone()
+        assert invited['active'] is False and invited['email_verified_at'] is None
+        row=conn.execute('SELECT * FROM email_outbox WHERE dedupe_key=%s',('identity:'+r.json()['challenge_id'],)).fetchone()
+        params=parse_qs(urlsplit(email_delivery._payload(row)['text'].splitlines()[-1]).fragment)
     client.cookies.clear()
-    login=client.post('/api/auth/login',json={'username':'testbrand-owner','password':'TestOnly!BrandPassword1'});assert login.status_code==200
-    client.headers['X-CSRF-Token']=login.json()['csrf_token']
+    verified=client.post('/api/identity/email/verify',json={'challenge_id':params['identity_challenge'][0],'token':params['identity_token'][0],
+                                                       'display_name':'مالك اختبار','phone':'0500000000'})
+    assert verified.status_code==200,verified.text
+    assert verified.json()['user']['id']==invited['id']
+    client.headers['X-CSRF-Token']=verified.json()['csrf_token']
     assert client.get('/api/admin/config').json()['brand']['id']=='testbrand'
     assert mutate('PATCH','/api/admin/products/kps-33',{'price_halalas':1}).status_code==404

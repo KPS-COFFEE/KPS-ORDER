@@ -123,6 +123,8 @@ def apply_migrations(conn, seed=True):
 
 def seed_initial(conn):
     conn.execute("INSERT INTO brands(id,name) VALUES('kps','KPS COFFEE') ON CONFLICT DO NOTHING")
+    conn.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled) VALUES('kps','guest','active',true) ON CONFLICT DO NOTHING")
+    conn.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled) SELECT 'kps',channel,'unconfigured',false FROM (VALUES('email'),('sms'),('whatsapp')) c(channel) ON CONFLICT DO NOTHING")
     for name, kind in [('branches.json', 'branches'), ('catalog.json', 'products')]:
         file = ROOT / 'data' / name
         if not file.exists():
