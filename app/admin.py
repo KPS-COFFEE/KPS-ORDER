@@ -325,7 +325,7 @@ def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(Non
         money(body['guest_operational_confirmation_above_halalas'],'حد طلب الاتصال التشغيلي')
     if 'theme' in body:
         theme=body['theme']; keys(theme,{'accent','background','text','font','profile'})
-        if 'profile' in theme and theme['profile'] not in {'CHARCOAL','ORIGINAL_Light'}:
+        if 'profile' in theme and (not isinstance(theme['profile'],str) or theme['profile'] not in {'CHARCOAL','ORIGINAL_Light'}):
             raise db.error(422,'THEME_INVALID','اختر فحمي أو التصميم السابق.')
         for key in {'accent','background','text'} & set(theme):
             if not re.fullmatch(r'#[A-Fa-f0-9]{6}',str(theme[key])):

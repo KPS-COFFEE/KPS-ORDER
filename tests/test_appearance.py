@@ -15,6 +15,27 @@ from test_browser import (ARTIFACTS, WIDTHS, _context, _owner_login, _staff,
                           chromium_browser, live_app, synthetic_mail)
 
 
+def test_appearance_official_domain_cannot_apply_unapproved_preview_or_saved_profile():
+    import subprocess
+    script = """
+    const fs=require('fs'),vm=require('vm');
+    for(const host of ['order.kps.sa','kps-order-test.onrender.com','kps-order-emergency-v4.onrender.com']) {
+      const root={dataset:{}};
+      const window={addEventListener(){}};
+      vm.runInNewContext(fs.readFileSync('public/assets/appearance.js','utf8'),{
+        document:{documentElement:root,querySelector(){return {setAttribute(){}}}},window,
+        location:{hostname:host,search:'?theme=CHARCOAL'},URLSearchParams,URL,
+        localStorage:{getItem(){return 'CHARCOAL'},setItem(){}}
+      });
+      window.KPSAppearance.apply({profile:'CHARCOAL'});
+      window.KPSAppearance.preview('CHARCOAL');
+      const expected=host==='kps-order-emergency-v4.onrender.com'?'CHARCOAL':'ORIGINAL_Light';
+      if(root.dataset.kpsTheme!==expected) throw Error('Unauthorized rollout: '+host);
+    }
+    """
+    subprocess.run(['node','-e',script],check=True)
+
+
 @pytest.mark.postgres
 def test_appearance_owner_merge_validation_scope_and_operational_preservation(owner):
     client, mutate = owner
@@ -31,7 +52,8 @@ def test_appearance_owner_merge_validation_scope_and_operational_preservation(ow
         assert client.get('/api/catalog').json()['brand']['theme']['profile'] == profile
         for key,value in existing.items():
             if key != 'theme': assert result.json()['settings'][key] == value
-    assert mutate('PATCH','/api/admin/settings',{'theme':{'profile':'arbitrary'}}).status_code == 422
+    for invalid in ['arbitrary',[],{},1,None]:
+        assert mutate('PATCH','/api/admin/settings',{'theme':{'profile':invalid}}).status_code == 422
     after = client.get('/api/admin/config').json()
     assert before['products'] == after['products'] and before['branches'] == after['branches']
     with db.tx() as conn:
@@ -44,6 +66,7 @@ def _capture_theme(page, name):
     for width in WIDTHS:
         page.set_viewport_size({'width':width,'height':900})
         page.wait_for_timeout(80)
+        if name=='menu': page.locator('#menu').evaluate("el=>el.scrollIntoView({block:'start'})")
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert page.locator('html').get_attribute('data-kps-theme') == 'CHARCOAL'
         for dialog in page.locator('dialog[open]').all():
@@ -59,7 +82,11 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
     page.goto('/')
     expect(page.locator('.product-card')).to_have_count(34)
     page.evaluate('document.fonts.ready')
-    original = page.screenshot()
+    original = page.screenshot(path=str(ARTIFACTS/'original-store-1280.png'))
+    page.set_viewport_size({'width':390,'height':900})
+    page.locator('#menu').evaluate("el=>el.scrollIntoView({block:'start'})")
+    page.screenshot(path=str(ARTIFACTS/'original-menu-390.png'))
+    page.set_viewport_size({'width':1280,'height':900})
     page.goto('/?theme=CHARCOAL')
     expect(page.locator('.product-card')).to_have_count(34)
     page.evaluate('document.fonts.ready')
@@ -74,8 +101,12 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
     page.locator('#product-dialog [data-close]').click()
     page.locator('#account-button').click()
     _capture_theme(page,'account')
-    page.locator('#account-dialog [data-close]').click()
+    page.locator('#guest-name').fill('ضيف اختبار المظهر فقط')
+    page.locator('#guest-phone').fill('0500000044')
+    page.locator('#guest-submit').click()
+    expect(page.locator('#account-dialog')).not_to_be_visible()
     page.locator('#contacts-button').click()
+    expect(page.locator('#contacts-dialog')).to_be_visible()
     _capture_theme(page,'contacts')
     page.locator('#contacts-dialog [data-close]').click()
     page.emulate_media(media='print')
@@ -89,7 +120,7 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
         for role in ['owner','delivery_manager','delivery_staff','branch_manager','driver']:
             user=_staff(role)
             ctx,p,errs=_context(chromium_browser,live_app);contexts.append(ctx)
-            _owner_login(ctx,live_app,user)
+            headers=_owner_login(ctx,live_app,user)
             p.goto('/ops?theme=CHARCOAL')
             expect(p.locator('#app-shell')).to_be_visible()
             p.wait_for_function("document.querySelector('#content').getAttribute('aria-busy')==='false'")
@@ -111,6 +142,9 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                 p.locator('[data-action=admin-tab][data-tab=settings]').click()
                 p.locator('[data-appearance=ORIGINAL_Light]').click()
                 expect(p.locator('html')).to_have_attribute('data-kps-theme','ORIGINAL_Light')
+                assert 'theme=' not in p.url
+                p.reload()
+                expect(p.locator('html')).to_have_attribute('data-kps-theme','ORIGINAL_Light')
                 p.goto('/')
                 expect(p.locator('.product-card')).to_have_count(34)
                 p.set_viewport_size({'width':1280,'height':900})
@@ -126,7 +160,7 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                 restored_ctx.close()
             else:
                 assert p.locator('[data-appearance]').count()==0
-                denied=ctx.request.patch(live_app+'/api/admin/settings',headers={'Origin':live_app},data={'theme':{'profile':'CHARCOAL'}})
+                denied=ctx.request.patch(live_app+'/api/admin/settings',headers=headers,data={'theme':{'profile':'CHARCOAL'}})
                 assert denied.status in (401,403)
             assert not errs
     finally:

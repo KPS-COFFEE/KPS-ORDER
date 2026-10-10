@@ -23,6 +23,7 @@
   html[data-kps-theme="CHARCOAL"] :is(.site-header,.topbar) .brand { color: #f7f5f0; }
   html[data-kps-theme="CHARCOAL"] :is(.site-header,.topbar) :is(.quiet,.secondary) { background: #46433f; color: #f7f5f0; border-color: #797065; }
   html[data-kps-theme="CHARCOAL"] :is(.intro-banner,.campaign-banner) { background: #363636; color: #f7f5f0; border: 1px solid #56524c; }
+  html[data-kps-theme="CHARCOAL"] .site-header .brand-text>small { color: #d7d1c8; }
   html[data-kps-theme="CHARCOAL"] .intro-banner p { color: #d7d1c8; }
   html[data-kps-theme="CHARCOAL"] :is(.menu-heading,.page-heading,.side,.site-footer) :is(.muted,p,.time-zone) { color: #d7d1c8; }
   html[data-kps-theme="CHARCOAL"] :is(.menu-heading,.page-heading,.site-footer,.intro-banner,.side) .eyebrow { color: #ffad79; }

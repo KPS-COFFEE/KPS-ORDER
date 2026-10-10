@@ -107,7 +107,7 @@ jobs:
         run: |
           node <<'NODE'
           const fs = require('fs');
-          const names = ['charcoal-menu-390.png', 'charcoal-store-1280.png', 'charcoal-khaliya-390.png', 'charcoal-owner-appearance-1280.png', 'original-restored-1280.png', 'final-khaliya-single-card-390.png', 'final-khaliya-single-card-1280.png', 'final-khaliya-required-types-390.png', 'final-khaliya-required-types-1280.png', 'final-registered-mobile-login-390-390.png', 'final-registered-mobile-login-1280-1280.png'];
+          const names = ['original-store-1280.png', 'original-menu-390.png', 'charcoal-menu-390.png', 'charcoal-store-1280.png', 'charcoal-khaliya-390.png', 'charcoal-owner-appearance-1280.png', 'original-restored-1280.png', 'final-khaliya-single-card-390.png', 'final-khaliya-single-card-1280.png', 'final-khaliya-required-types-390.png', 'final-khaliya-required-types-1280.png', 'final-registered-mobile-login-390-390.png', 'final-registered-mobile-login-1280-1280.png'];
           for (const name of names) {
             const path = 'test-artifacts/' + name;
             if (fs.existsSync(path)) console.log('KPS_PUBLIC_UI_EVIDENCE ' + JSON.stringify({name, synthetic: true, revision: process.env.RUNTIME_REVISION, base64: fs.readFileSync(path).toString('base64')}));

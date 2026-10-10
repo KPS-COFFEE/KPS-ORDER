@@ -25,7 +25,12 @@
       paint();
     },
     preview(profile) { if (!valid(profile) || !previewAllowed) return; preview = profile; paint(); },
-    saved(theme, brandId) { preview = null; this.apply(theme, brandId); },
+    saved(theme, brandId) {
+      preview = null;
+      const url = new URL(location.href);
+      if (url.searchParams.has('theme')) { url.searchParams.delete('theme'); history.replaceState(null, '', url); }
+      this.apply(theme, brandId);
+    },
     get profile() { return root.dataset.kpsTheme; }
   });
   window.addEventListener('storage', event => {
