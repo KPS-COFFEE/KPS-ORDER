@@ -314,9 +314,42 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
         return db.idempotent(conn,user['id'],idem,'user.update:'+record_id,safe_body,perform)
 
 
+
+def homepage_presentation_config(existing=None, changes=None, brand_id=None):
+    """Owner-controlled, text-only customer presentation; safe for other brands."""
+    defaults = {
+        'ticker_enabled': brand_id == 'kps',
+        'ticker_lines': ['طلبك، على طريقتك'] if brand_id == 'kps' else [],
+        'ticker_seconds': 28,
+        'quote_enabled': False,
+        'quote_text': '',
+    }
+    current = existing if isinstance(existing, dict) else {}
+    if changes is not None:
+        keys(changes, defaults)
+    result = defaults | current | (changes or {})
+    keys(result, defaults)
+    if type(result['ticker_enabled']) is not bool or type(result['quote_enabled']) is not bool:
+        raise db.error(422, 'PRESENTATION_INVALID', 'فعّل أو أوقف المحتوى بقيمة صحيحة.')
+    if type(result['ticker_seconds']) is not int or not 14 <= result['ticker_seconds'] <= 90:
+        raise db.error(422, 'TICKER_SPEED_INVALID', 'مدة حركة الشريط بين 14 و90 ثانية.')
+    lines = result['ticker_lines']
+    if not isinstance(lines, list) or len(lines) > 8:
+        raise db.error(422, 'TICKER_LINES_INVALID', 'يمكن إدخال حتى ثماني عبارات قصيرة.')
+    if any(not isinstance(line, str) or not line.strip() or len(line) > 140 or '\x00' in line for line in lines):
+        raise db.error(422, 'TICKER_LINES_INVALID', 'كل عبارة يجب أن تكون نصًا واضحًا لا يتجاوز 140 حرفًا.')
+    result['ticker_lines'] = [line.strip() for line in lines]
+    if result['ticker_enabled'] and not result['ticker_lines']:
+        raise db.error(422, 'TICKER_LINES_REQUIRED', 'أضف عبارة واحدة على الأقل أو أوقف الشريط.')
+    result['quote_text'] = text(result['quote_text'], 240, 'العبارة الأدبية')
+    if result['quote_enabled'] and not result['quote_text']:
+        raise db.error(422, 'HERO_QUOTE_REQUIRED', 'أدخل العبارة الأدبية المعتمدة قبل عرضها.')
+    return result
+
+
 @router.patch('/admin/settings')
 def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
-    keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas'})
+    keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas','homepage_presentation'})
     if 'operational_day_start' in body and not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',str(body['operational_day_start'])):
         raise db.error(422,'OPERATIONAL_DAY_INVALID','وقت بداية اليوم التشغيلي بصيغة HH:MM.')
     if 'late_after_minutes' in body and (type(body['late_after_minutes']) is not int or not 1<=body['late_after_minutes']<=1440):
@@ -338,6 +371,8 @@ def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(Non
             settings=row['settings']|body
             if 'theme' in body:
                 settings['theme']=(row['settings'].get('theme') or {})|body['theme']
+            if 'homepage_presentation' in body:
+                settings['homepage_presentation'] = homepage_presentation_config(row['settings'].get('homepage_presentation'), body['homepage_presentation'], user['brand_id'])
             conn.execute('UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id=%s',(db.json(settings),user['brand_id']))
             db.audit(conn,user['id'],'settings.updated','brand',user['brand_id'],{'fields':list(body)})
             return {'settings':settings}
@@ -446,9 +481,15 @@ def active_banners(conn,brand_id,branch_id):
 def public_banners(brand_id:str='kps',branch_id:str|None=None):
     with db.tx() as conn:
         rows=active_banners(conn,brand_id,branch_id)
+        configuration=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand_id,)).fetchone()
+        presentation=homepage_presentation_config((configuration or {}).get('settings',{}).get('homepage_presentation'),brand_id=brand_id)
     def asset_url(identifier):
         return f'/api/banner-assets/{identifier}?brand_id={brand_id}'+(f'&branch_id={branch_id}' if branch_id else '') if identifier else None
-    return {'banners':[{'id':row['id'],'title':row['title'],'body':row['body'],'button_label':row['button_label'],'destination':row['destination'],'desktop_image_url':asset_url(row['desktop_asset_id']),'mobile_image_url':asset_url(row['mobile_asset_id'])} for row in rows]}
+    return {'banners':[{'id':row['id'],'title':row['title'],'body':row['body'],'button_label':row['button_label'],'destination':row['destination'],'desktop_image_url':asset_url(row['desktop_asset_id']),'mobile_image_url':asset_url(row['mobile_asset_id'])} for row in rows],
+            'presentation':{'ticker_enabled':presentation['ticker_enabled'],
+                            'ticker_lines':presentation['ticker_lines'] if presentation['ticker_enabled'] else [],
+                            'ticker_seconds':presentation['ticker_seconds'],
+                            'quote_text':presentation['quote_text'] if presentation['quote_enabled'] else ''}}
 
 
 @router.get('/banner-assets/{record_id}')
