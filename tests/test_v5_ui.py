@@ -90,7 +90,7 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
         page.locator('#latitude').fill('28.4002')
         page.locator('#longitude').fill('45.9002')
         page.locator('#save-location').click()
-        expect(page.locator('#basket-error')).to_contain_text('الحي')
+        expect(page.locator('#basket-error')).to_have_text('أدخل اسم حي التوصيل بصورة واضحة.')
         expect(page.locator('#checkout-button')).to_be_disabled()
         page.locator('#neighborhood').fill('حي اختبار فقط')
         expect(page.locator('#checkout-button')).to_be_enabled()
