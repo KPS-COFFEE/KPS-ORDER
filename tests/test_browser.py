@@ -117,19 +117,50 @@ def _context(browser, base, token=None, csrf=None):
     return context, page, errors
 
 
+def _save_overflow_diagnostic(page,prefix,width,dimensions,dialogs):
+    """Read-only geometry and viewport evidence before an overflow assertion."""
+    outside=page.evaluate("""() => Array.from(document.querySelectorAll('*')).filter(element => {
+        const style=getComputedStyle(element);
+        return element.getClientRects().length && style.visibility !== 'hidden' && style.display !== 'none';
+    }).map(element => {
+        const rect=element.getBoundingClientRect();
+        const classes=Array.from(element.classList);
+        return {
+            selector:element.tagName.toLowerCase()+(element.id?'#'+CSS.escape(element.id):'')+
+                classes.slice(0,4).map(value=>'.'+CSS.escape(value)).join(''),
+            id:element.id,class:element.getAttribute('class')||'',
+            left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
+            clientWidth:element.clientWidth,scrollWidth:element.scrollWidth,
+            overflowX:getComputedStyle(element).overflowX,
+            insideTableWrap:Boolean(element.closest('.table-wrap')),
+            excess:Math.max(0,-rect.left,rect.right-innerWidth)
+        };
+    }).filter(element => element.excess>0).sort((a,b)=>b.excess-a.excess).slice(0,30)""")
+    diagnostic={'test_only':True,'capture':prefix,'viewport':page.viewport_size,
+                'document':dimensions,'visible_dialogs':dialogs,'outside_viewport_elements':outside,
+                'environment':'Real Chromium browser emulation with isolated synthetic PostgreSQL fixtures',
+                'physical_device_test':False,'auth_credentials_included':False}
+    stem=f'TEST_ONLY_overflow_{prefix}-{width}'
+    page.screenshot(path=str(ARTIFACTS/f'{stem}.png'),full_page=False)
+    (ARTIFACTS/f'{stem}.json').write_text(json.dumps(diagnostic,ensure_ascii=False,indent=2)+'\n')
+
+
 def _capture(page, prefix):
     for width in WIDTHS:
         page.set_viewport_size({'width': width, 'height': 900})
         page.wait_for_timeout(60)
         dimensions = page.evaluate('({width:innerWidth,scroll:document.documentElement.scrollWidth,background:getComputedStyle(document.body).backgroundColor})')
-        assert dimensions['scroll'] <= dimensions['width'], (prefix, width, dimensions)
         # A table may scroll inside its own .table-wrap, but the modal itself
         # must fit its content without clipping or whole-dialog horizontal scroll.
         dialogs=page.evaluate("""() => Array.from(document.querySelectorAll('dialog')).filter(dialog =>
             dialog.getClientRects().length && getComputedStyle(dialog).visibility !== 'hidden').map(dialog => ({
                 id:dialog.id,width:dialog.clientWidth,scroll:dialog.scrollWidth,
+                left:dialog.getBoundingClientRect().left,right:dialog.getBoundingClientRect().right,
                 overflow:getComputedStyle(dialog).overflowX
             }))""")
+        if dimensions['scroll']>dimensions['width'] or any(dialog['scroll']>dialog['width'] for dialog in dialogs):
+            _save_overflow_diagnostic(page,prefix,width,dimensions,dialogs)
+        assert dimensions['scroll'] <= dimensions['width'], (prefix, width, dimensions)
         for dialog in dialogs:
             assert dialog['scroll'] <= dialog['width'], (prefix, width, 'dialog horizontal overflow', dialog)
         background = dimensions['background']
