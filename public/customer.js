@@ -283,10 +283,6 @@
 
   const motionPreference=window.matchMedia('(prefers-reduced-motion: reduce)');
   const prefersLessMotion=()=>motionPreference.matches;
-  const approvedTickerArtwork=new Map([
-    ['الأماكن والأوقات تجمّلها القهوة دائمًا',{url:'/assets/kps-ticker-arabic-original.jpeg',width:1242,height:584}],
-    ['Speciality Coffee',{url:'/assets/kps-ticker-english-original.jpeg',width:1242,height:402}],
-  ]);
   function updateTickerMotion() {
     const track=$('announcement-track'),control=$('ticker-pause'),reduced=prefersLessMotion();
     track.classList.toggle('is-paused',state.tickerPaused||reduced);
@@ -305,16 +301,9 @@
     const part=node('span','ticker-cycle');
     const addPhrases=(duplicate=false)=>{
       for(const phrase of phrases){
-        const artwork=state.brand.id==='kps'?approvedTickerArtwork.get(phrase):null;
-        if(artwork){
-          const img=node('img','ticker-art');img.src=artwork.url;img.alt=phrase;img.width=artwork.width;img.height=artwork.height;img.decoding='async';
-          if(duplicate){img.alt='';img.setAttribute('aria-hidden','true');}
-          part.append(img);
-        }else{
-          const item=node('span','ticker-text',phrase);item.dir='auto';
-          if(duplicate)item.setAttribute('aria-hidden','true');
-          part.append(item);
-        }
+        const item=node('span','ticker-text',phrase);item.dir='auto';
+        if(duplicate)item.setAttribute('aria-hidden','true');
+        part.append(item);
         const point=node('span','ticker-separator','•');
         point.setAttribute('aria-hidden','true');
         part.append(point);
@@ -475,6 +464,8 @@
   else if(motionPreference.addListener)motionPreference.addListener(onMotionPreferenceChange);
   let tickerViewportWidth=innerWidth;
   window.addEventListener('resize',()=>{if(tickerViewportWidth===innerWidth)return;tickerViewportWidth=innerWidth;clearTimeout(renderTicker.resizeTimer);renderTicker.resizeTimer=setTimeout(renderTicker,150);},{passive:true});
+  // Re-measure text when the existing local Noto font finishes loading.
+  if(document.fonts)document.fonts.ready.then(renderTicker);
   function renderBrand() {
     const name=state.brand.name||'الطلبات';document.title=`${name} | الطلبات`;
     document.querySelector('meta[name=description]').content=`منيو ${name} وطلبات التوصيل والاستلام من الفرع والسيارة`;

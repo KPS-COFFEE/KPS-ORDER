@@ -59,7 +59,7 @@ def _evidence(page, name, full_page=True, **details):
         'viewport': page.viewport_size, 'physical_device': False, **details}, ensure_ascii=False, indent=2))
 
 
-def test_approved_original_lettering_orange_ticker_above_header_left_to_right_and_dynamic_reduced_motion(live_app, chromium_browser):
+def test_editable_text_only_noto_ticker_above_header_left_to_right_and_dynamic_reduced_motion(live_app, chromium_browser):
     from playwright.sync_api import expect
     owner_context, _, _ = _context(chromium_browser, live_app)
     headers = _owner_login(owner_context, live_app, _staff())
@@ -78,9 +78,14 @@ def test_approved_original_lettering_orange_ticker_above_header_left_to_right_an
         expect(page.locator('.banner-mark')).to_have_count(0)
         expect(page.locator('.banner-dot')).to_have_count(2)
         first_cycle = page.locator('.ticker-cycle').first
-        expect(first_cycle.locator('img[alt="الأماكن والأوقات تجمّلها القهوة دائمًا"]')).to_have_attribute('src', '/assets/kps-ticker-arabic-original.jpeg')
-        expect(first_cycle.locator('img[alt="Speciality Coffee"]')).to_have_attribute('src', '/assets/kps-ticker-english-original.jpeg')
-        page.wait_for_function("[...document.querySelectorAll('.ticker-art')].every(img => img.complete && img.naturalWidth > 0)")
+        expect(page.locator('#announcement-ticker img')).to_have_count(0)
+        expect(first_cycle.locator('.ticker-text').nth(0)).to_have_text('الأماكن والأوقات تجمّلها القهوة دائمًا')
+        expect(first_cycle.locator('.ticker-text').nth(1)).to_have_text('Speciality Coffee')
+        assert first_cycle.locator('.ticker-text').nth(0).get_attribute('dir') == 'auto'
+        page.evaluate('() => document.fonts.ready')
+        assert first_cycle.locator('.ticker-text').first.evaluate("el => getComputedStyle(el).fontFamily").startswith('"Noto Kufi Arabic"')
+        assert page.evaluate('document.fonts.check(\'600 17px "Noto Kufi Arabic"\')')
+        assert not page.evaluate("performance.getEntriesByType('resource').some(entry => entry.name.includes('kps-ticker-'))"), 'Text strip must not request lettering images.'
         for width in (390, 1280):
             page.set_viewport_size({'width': width, 'height': 900})
             layout = page.evaluate("""() => {
@@ -90,7 +95,8 @@ def test_approved_original_lettering_orange_ticker_above_header_left_to_right_an
             }""")
             assert layout['stripBottom'] <= layout['headerTop'] + 1 and layout['background'] == 'rgb(233, 101, 22)'
             assert not layout['overflow']
-            _evidence(page, f'launch-orange-ticker-{width}', full_page=False, approved_lettering='original supplied JPEG bytes')
+            page.wait_for_function("document.querySelector('.ticker-cycle').getBoundingClientRect().width >= document.querySelector('.announcement-viewport').getBoundingClientRect().width")
+            _evidence(page, f'text-only-strip-{width}', full_page=False, lettering='editable Noto Kufi Arabic text; zero strip images')
         page.mouse.move(5, 890)
         direction = page.locator('#announcement-track').evaluate("""element => {
             const animation=element.getAnimations()[0];if(!animation)return null;
@@ -282,6 +288,39 @@ def test_owner_banner_city_speed_link_image_scope_and_ticker_edits_through_real_
         assert public['presentation']['ticker_lines'][-1] == 'عبارة اختبار قابلة للتعديل'
         assert public['banners'][0]['id'] == banner['id']
         assert context.request.get(live_app + '/api/banners?branch_id=kps-branch-9').json()['banners'] == []
+        # Reuse the same existing editor for text changes, ordering, deletion,
+        # and hiding an empty strip; image banners are not modified.
+        presentation.locator('textarea[name=ticker_lines]').fill('Speciality Coffee\nالقهوة تجمعنا دائمًا')
+        presentation.locator('input[name=ticker_seconds]').fill('24')
+        with page.expect_response(lambda response: '/api/admin/settings' in response.url and response.request.method == 'PATCH') as reordered:
+            presentation.locator('button[type=submit]').click()
+        assert reordered.value.status == 200, reordered.value.text()
+        page.locator('[data-action=presentation-settings]').click()
+        expect(presentation.locator('textarea[name=ticker_lines]')).to_have_value('Speciality Coffee\nالقهوة تجمعنا دائمًا')
+        expect(presentation.locator('input[name=ticker_seconds]')).to_have_value('24')
+        _evidence(page, 'text-only-strip-owner-1280', full_page=False, owner_interface='existing text editor, edited/reordered/deleted phrases and speed persisted')
+        presentation.locator('input[name=ticker_enabled]').uncheck()
+        presentation.locator('textarea[name=ticker_lines]').fill('')
+        assert presentation.evaluate('form => form.checkValidity()'), 'An owner must be able to remove all phrases and stop the strip.'
+        with page.expect_response(lambda response: '/api/admin/settings' in response.url and response.request.method == 'PATCH') as disabled:
+            presentation.locator('button[type=submit]').click()
+        assert disabled.value.status == 200, disabled.value.text()
+        hidden=context.request.get(live_app + '/api/banners?branch_id=kps-branch-1').json()
+        assert not hidden['presentation']['ticker_enabled'] and hidden['presentation']['ticker_lines'] == []
+        assert hidden['banners'] == public['banners'], 'Text editing must preserve the independent image banner.'
+        page.locator('[data-action=presentation-settings]').click()
+        presentation.locator('input[name=ticker_enabled]').check()
+        assert not presentation.evaluate('form => form.checkValidity()'), 'An enabled strip needs at least one phrase.'
+        final_lines=['Speciality Coffee', 'القهوة تجمعنا دائمًا', '<strong>Editable text</strong>']
+        presentation.locator('textarea[name=ticker_lines]').fill('\n'.join(final_lines))
+        with page.expect_response(lambda response: '/api/admin/settings' in response.url and response.request.method == 'PATCH') as enabled:
+            presentation.locator('button[type=submit]').click()
+        assert enabled.value.status == 200, enabled.value.text()
+        page.goto('/')
+        first=page.locator('.ticker-cycle').first.locator('.ticker-text:not([aria-hidden=true])')
+        expect(first).to_have_text(final_lines)
+        expect(page.locator('#announcement-ticker img, #announcement-ticker strong')).to_have_count(0)
+        assert page.locator('#announcement-track').evaluate("el => el.style.getPropertyValue('--ticker-duration')") == '24s'
         assert not errors
     finally:
         context.close()
