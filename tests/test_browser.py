@@ -123,6 +123,15 @@ def _capture(page, prefix):
         page.wait_for_timeout(60)
         dimensions = page.evaluate('({width:innerWidth,scroll:document.documentElement.scrollWidth,background:getComputedStyle(document.body).backgroundColor})')
         assert dimensions['scroll'] <= dimensions['width'], (prefix, width, dimensions)
+        # A table may scroll inside its own .table-wrap, but the modal itself
+        # must fit its content without clipping or whole-dialog horizontal scroll.
+        dialogs=page.evaluate("""() => Array.from(document.querySelectorAll('dialog')).filter(dialog =>
+            dialog.getClientRects().length && getComputedStyle(dialog).visibility !== 'hidden').map(dialog => ({
+                id:dialog.id,width:dialog.clientWidth,scroll:dialog.scrollWidth,
+                overflow:getComputedStyle(dialog).overflowX
+            }))""")
+        for dialog in dialogs:
+            assert dialog['scroll'] <= dialog['width'], (prefix, width, 'dialog horizontal overflow', dialog)
         background = dimensions['background']
         channels=[int(value) for value in re.findall(r'\d+',background)[:3]]
         assert len(channels)==3 and min(channels)>=220, (prefix, background)
@@ -564,6 +573,10 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             _capture(actor,f'{kind}-saved-financial-report-synthetic')
             detail=contexts[who].request.get(live_app+f'/api/reports/{report_id}').json()['report']
             assert detail['pdf_status']=='ready'
+            # This exact authenticated API snapshot matches the PDF and CSV
+            # fetched below; all actors/orders are isolated synthetic fixtures.
+            (ARTIFACTS/f'TEST_ONLY_{kind}_report_snapshot.json').write_text(
+                json.dumps(detail['snapshot'],ensure_ascii=False,indent=2)+'\n')
             summary=detail['snapshot']['summary']
             assert summary['unique_orders']==1 and summary['cash_collected_halalas']==1000
             assert summary['submission']['expected_halalas']==1000 and summary['submission']['counted_halalas']==1000
