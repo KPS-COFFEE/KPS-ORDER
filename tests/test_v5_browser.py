@@ -183,7 +183,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _submit_modal(driver, check=['confirmed'])
         driver.locator('[data-action=delivered]').click()
         _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
-        driver.locator('[data-page=shifts]').click()
+        driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'[data-action=start-closing][data-id="{driver_shift}"]').click()
         driver.locator('#closure-form [name=counted]').fill(f'{total/100:.2f}')
         driver.locator('#closure-form [name=handover]').fill(f'{total/100:.2f}')
@@ -199,7 +199,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         manager.locator('[data-page=custody]').click()
         manager.locator('[data-action=confirm-custody]').click()
         _submit_modal(manager, check=['received'])
-        manager.locator('[data-page=shifts]').click()
+        manager.locator('#navigation [data-page=shifts]').click()
         manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
         manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()
         _submit_modal(manager, check=['confirmed'])
@@ -213,7 +213,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         owner.locator('[data-page=custody]').click()
         owner.locator('[data-action=confirm-custody]').click()
         _submit_modal(owner, check=['received'])
-        owner.locator('[data-page=shifts]').click()
+        owner.locator('#navigation [data-page=shifts]').click()
         owner.locator(f'[data-action=shift-detail][data-id="{manager_shift}"]').click()
         owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
         _submit_modal(owner, check=['confirmed'])
@@ -227,6 +227,19 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             assert conn.execute("SELECT count(*) n FROM closure_reports WHERE shift_id IN (%s,%s)", (driver_shift,manager_shift)).fetchone()['n'] == 2
             assert conn.execute("SELECT count(*) n FROM orders WHERE customer_id=%s", (order['customer_id'],)).fetchone()['n'] == 1
             assert conn.execute('SELECT status FROM shifts WHERE id=%s', (manager_shift,)).fetchone()['status'] == 'closed'
+            final_reports=conn.execute('SELECT id,kind,snapshot FROM closure_reports WHERE shift_id IN (%s,%s)',(driver_shift,manager_shift)).fetchall()
+        for report in final_reports:
+            reviewer=driver_context if report['kind']=='driver' else contexts['delivery_manager']
+            path=base+'/api/reports/'+report['id']+'/renderings/v5/'
+            compact=reviewer.request.get(path+'pdf')
+            assert compact.status==200 and compact.body().startswith(b'%PDF')
+            (ARTIFACTS / ('v5_'+report['kind']+'_final.pdf')).write_bytes(compact.body())
+            if report['kind']=='manager':
+                for fmt in ('pdf','csv'):
+                    detailed=contexts['owner'].request.get(path+fmt)
+                    assert detailed.status==200
+                    (ARTIFACTS / ('v5_owner_final.'+fmt)).write_bytes(detailed.body())
+                (ARTIFACTS / 'v5-final-financial-snapshot.json').write_text(json.dumps({'test_only':True,'snapshot':report['snapshot']},ensure_ascii=False,default=str,indent=2)+'\n')
         assert not any(errors), errors
         (ARTIFACTS / 'v5-browser-evidence-metadata.json').write_text(json.dumps({
             'test_only': True, 'real_http': True, 'network_api_interception': False,
