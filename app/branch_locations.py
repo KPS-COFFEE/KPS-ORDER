@@ -157,8 +157,10 @@ def apply_workbook_matches(conn):
                             },
                         }
                         if location:
+                            # The existing owner form/API accept a text source.
+                            # Full pin evidence remains in the decision ledger.
                             patch.update(location=location, location_verified=True,
-                                         location_source=match['destination_evidence'])
+                                         location_source=match['destination_evidence']['source_url'])
                         conn.execute('UPDATE branches SET settings=settings || %s,updated_at=now() WHERE id=%s',
                                      (db.json(patch), branch['id']))
                         db.audit(conn, None, 'branch.owner_workbook_maps_binding', 'branch', branch['id'],

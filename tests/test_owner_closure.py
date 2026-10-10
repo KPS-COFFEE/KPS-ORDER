@@ -70,6 +70,8 @@ def test_independent_color_stop_global_and_branch_rechecks_order_and_preserves_h
     previous = _product(client)
     assert len(client.get('/api/catalog').json()['products']) == 34
     owner_cookies, owner_csrf = dict(client.cookies), client.headers['X-CSRF-Token']
+    client.cookies.clear()
+    client.headers.pop('X-CSRF-Token', None)
     guest = client.post('/api/identity/guest', json={'brand_id': 'kps', 'display_name': 'اختبار فقط', 'phone': '0500000021'})
     assert guest.status_code == 200, guest.text
     client.headers['X-CSRF-Token'] = guest.json()['csrf_token']

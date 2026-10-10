@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from app import branch_locations, catalog, db
+from app import admin, branch_locations, catalog, db
 
 EXPECTED_PLACE_IDS = {
     1: 'ChIJ4YCabfY51z8RRvgEX468j7c', 2: 'ChIJE0dZrh5B1z8RpGSHUypO04s',
@@ -99,7 +99,7 @@ def test_existing_twenty_rows_receive_fourteen_exact_bindings_without_activation
             match = matches[branch['branch_no']]
             evidence = match.get('destination_evidence')
             coordinate_changes = ({'location': evidence['location'], 'location_verified': True,
-                                   'location_source': evidence} if evidence else {})
+                                   'location_source': evidence['source_url']} if evidence else {})
             for key, value in old['settings'].items():
                 # Only an explicitly verified destination may replace initial
                 # coordinate fields. Every service and other setting survives.
@@ -107,8 +107,15 @@ def test_existing_twenty_rows_receive_fourteen_exact_bindings_without_activation
             if evidence:
                 assert settings['location'] == evidence['location']
                 assert catalog.location_verified(branch)
-                assert settings['location_source'] == evidence
-                assert settings['location_source']['place_id'] == EXPECTED_PLACE_IDS[branch['branch_no']]
+                assert settings['location_source'] == evidence['source_url']
+                assert parse_qs(urlsplit(settings['location_source']).query)['destination_place_id'] == [EXPECTED_PLACE_IDS[branch['branch_no']]]
+                # Actual imported values must round-trip through the owner form
+                # contract without dict-to-string evidence corruption.
+                admin.validate_branch_settings(
+                    {key: settings[key] for key in ('location', 'location_verified', 'location_source',
+                                                    'place_id', 'map_url', 'map_url_verified')},
+                    branch['city'],
+                )
             else:
                 assert settings['location'] is None
                 assert not catalog.location_verified(branch)
@@ -171,16 +178,28 @@ def test_identity_mismatch_and_existing_duplicate_binding_are_not_imported(unbou
 
 
 @pytest.mark.postgres
-def test_restart_preserves_later_owner_edits_and_does_not_duplicate_audits(unbound_branches):
+@pytest.mark.parametrize('remove_pin', [False, True], ids=['remove_place_binding_only', 'remove_complete_location'])
+def test_restart_preserves_later_owner_edits_and_does_not_duplicate_audits(unbound_branches, remove_pin):
     with db.tx() as conn:
         branch_locations.apply_workbook_matches(conn)
         before = conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_workbook_maps_binding'").fetchone()['n']
+        owner_change = {'place_id': None, 'map_url': None, 'map_url_verified': False}
+        if remove_pin:
+            owner_change.update(location=None, location_verified=False)
         conn.execute("UPDATE branches SET settings=settings || %s WHERE id='kps-branch-1'",
-                     (db.json({'place_id': None, 'map_url': None, 'map_url_verified': False}),))
+                     (db.json(owner_change),))
+        changed_settings = conn.execute("SELECT settings FROM branches WHERE id='kps-branch-1'").fetchone()['settings']
     db.migrate()
     with db.tx() as conn:
         branch_locations.apply_workbook_matches(conn)
         edited = conn.execute("SELECT * FROM branches WHERE id='kps-branch-1'").fetchone()
-        assert catalog.directions_url(edited) is None
+        assert edited['settings'] == changed_settings
+        if remove_pin:
+            assert not catalog.location_verified(edited)
+            assert catalog.directions_url(edited) is None
+        else:
+            assert catalog.location_verified(edited)
+            query = parse_qs(urlsplit(catalog.directions_url(edited)).query)
+            assert query == {'api': ['1'], 'destination': ['28.3986693,45.9836647'], 'travelmode': ['driving']}
         assert conn.execute('SELECT count(*) AS n FROM owner_branch_location_decisions').fetchone()['n'] == 20
         assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_workbook_maps_binding'").fetchone()['n'] == before
