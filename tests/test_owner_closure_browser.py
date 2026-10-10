@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import os
+import re
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
+import psycopg
 
 from test_browser import ARTIFACTS, ROOT, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
 
@@ -27,7 +30,23 @@ def _capture(page, name, width):
     page.screenshot(path=str(ARTIFACTS / f'{name}-{width}.png'), full_page=False)
 
 
-def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_forms(live_app, chromium_browser):
+@contextmanager
+def _hold_real_catalog_read(database):
+    """Delay the real HTTP database read only inside this test's UUID schema."""
+    with psycopg.connect(database, connect_timeout=5) as conn:
+        database_name, schema = conn.execute('SELECT current_database(), current_schema()').fetchone()
+        assert database_name.startswith('test_') or database_name.endswith('_test')
+        assert re.fullmatch(r'kps_test_[0-9a-f]{32}', schema)
+        conn.execute("SET LOCAL lock_timeout='5s'")
+        conn.execute("SET LOCAL idle_in_transaction_session_timeout='15s'")
+        conn.execute('LOCK TABLE products IN ACCESS EXCLUSIVE MODE')
+        try:
+            yield
+        finally:
+            conn.rollback()  # Releases the read delay even if a browser assertion fails.
+
+
+def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_forms(live_app, chromium_browser, database):
     from playwright.sync_api import expect
     context, page, errors = _context(chromium_browser, live_app)
     headers = _owner_login(context, live_app, _staff())
@@ -91,12 +110,15 @@ def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_
             form.locator('button[type=submit]').click()
         assert stopped.value.status == 200, stopped.value.text()
         customer.goto('/')
+        expect(customer.locator(f'.product-card[data-product-id="{identifier}"]')).to_be_visible()
         with customer.expect_response(lambda r: urlsplit(r.url).path == '/api/catalog'
                 and parse_qs(urlsplit(r.url).query).get('branch_id') == ['kps-branch-1']) as scoped_catalog:
-            customer.locator('#branch-select').select_option('kps-branch-1')
-            # Open the real dialog before awaiting the branch catalog: it must
-            # follow the eventual branch data rather than retain an old object.
-            customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
+            with _hold_real_catalog_read(database):
+                customer.locator('#branch-select').select_option('kps-branch-1')
+                # The real branch catalog cannot finish until the lock releases.
+                customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
+                expect(customer.locator('#product-add')).to_be_disabled()
+                expect(customer.locator('#product-availability')).to_contain_text('جارٍ التحقق')
         assert scoped_catalog.value.status == 200, scoped_catalog.value.text()
         expect(customer.locator('#product-add')).to_be_enabled()
         choices = customer.locator('#product-options select')
@@ -128,24 +150,30 @@ def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_
         assert branch_stop.value.status == 200, branch_stop.value.text()
         for branch_no, black_available in [(1, False), (9, True)]:
             customer.reload()
+            expect(customer.locator(f'.product-card[data-product-id="{identifier}"]')).to_be_visible()
             with customer.expect_response(lambda r: urlsplit(r.url).path == '/api/catalog'
                     and parse_qs(urlsplit(r.url).query).get('branch_id') == [f'kps-branch-{branch_no}']) as scoped_catalog:
-                customer.locator('#branch-select').select_option(f'kps-branch-{branch_no}')
-                customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
-                customer.locator('#product-qty').fill('2')
-                customer.locator('#product-qty').press('Tab')
-                customer.locator('#product-notes').fill('TEST ONLY preserved note')
-                choices = customer.locator('#product-options select')
-                expect(choices).to_have_count(2)
-                for index in range(2):
-                    choices.nth(index).press('End')
-                    expect(choices.nth(index)).to_have_value('BLUE')
+                with _hold_real_catalog_read(database):
+                    customer.locator('#branch-select').select_option(f'kps-branch-{branch_no}')
+                    customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
+                    expect(customer.locator('#product-add')).to_be_disabled()
+                    expect(customer.locator('#product-availability')).to_contain_text('جارٍ التحقق')
+                    customer.locator('#product-qty').fill('2')
+                    customer.locator('#product-qty').press('Tab')
+                    customer.locator('#product-notes').fill('TEST ONLY preserved note')
+                    choices = customer.locator('#product-options select')
+                    expect(choices).to_have_count(2)
+                    choices.nth(0).press('Home')
+                    choices.nth(0).press('ArrowDown')
+                    expect(choices.nth(0)).to_have_value('BLACK')
+                    choices.nth(1).press('End')
+                    expect(choices.nth(1)).to_have_value('BLUE')
             assert scoped_catalog.value.status == 200, scoped_catalog.value.text()
             expect(customer.locator('#product-add')).to_be_enabled()
             expect(customer.locator('#product-qty')).to_have_value('2')
             expect(customer.locator('#product-notes')).to_have_value('TEST ONLY preserved note')
-            for index in range(2):
-                expect(choices.nth(index)).to_have_value('BLUE')
+            expect(choices.nth(0)).to_have_value('BLACK' if black_available else '')
+            expect(choices.nth(1)).to_have_value('BLUE')
             customer.locator('#product-qty').fill('1')
             customer.locator('#product-qty').press('Tab')
             choices = customer.locator('#product-options select')
