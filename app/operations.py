@@ -1,5 +1,6 @@
 """Independent delivery operations. Monetary values are integer halalas."""
 from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 import json as jsonlib
 from uuid import uuid4
@@ -15,7 +16,10 @@ TERMINAL = ('delivered', 'cancelled', 'transferred')
 def uid(): return uuid4().hex
 
 def safe(value):
-    return jsonlib.loads(jsonlib.dumps(value, default=lambda o: o.isoformat() if hasattr(o, 'isoformat') else str(o)))
+    def encode(o):
+        if isinstance(o,Decimal):return int(o) if o==o.to_integral_value() else float(o)
+        return o.isoformat() if hasattr(o,'isoformat') else str(o)
+    return jsonlib.loads(jsonlib.dumps(value,default=encode))
 
 def fail(status, message): raise HTTPException(status, message)
 
@@ -64,6 +68,12 @@ def mutate(c,user,request,operation,body,perform):
     if replay:authorize_replay(c,user,operation,body,replay['response'])
     return db.idempotent(c,user['id'],key,operation,safe(body),lambda: safe(perform()))
 
+def history_result_access(c,user,oid):
+    order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+    if user['role']=='driver':
+        if not order or order['brand_id']!=user['brand_id'] or order['branch_id'] not in user.get('branch_ids',[]) or not c.execute('SELECT 1 FROM driver_tasks WHERE order_id=%s AND driver_id=%s',(oid,user['id'])).fetchone():fail(404,'السجل خارج الصلاحية الحالية')
+    else:order_access(c,user,order)
+
 def authorize_replay(c,user,operation,body,result):
     # Replay protection never extends withdrawn authorization. Validate current
     # resources, not the scope frozen in a formerly successful response.
@@ -74,17 +84,21 @@ def authorize_replay(c,user,operation,body,result):
     if task:
         t=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(task,)).fetchone()
         if not t:fail(404,'المهمة غير متاحة')
-        order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone())
+        history_result_access(c,user,t['order_id'])
     for field,table in [('collection_id','collections'),('refund_id','refunds')]:
         if result.get(field):
             row=c.execute('SELECT order_id FROM '+table+' WHERE id=%s',(result[field],)).fetchone()
             if not row:fail(404,'السجل غير متاح')
-            order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(row['order_id'],)).fetchone())
+            history_result_access(c,user,row['order_id'])
     cid=result.get('conversation_id') or (result.get('conversation') or {}).get('id')
     if operation.startswith('chat.') and ':' in operation:cid=operation.split(':',1)[1]
     if cid:
-        from .chat import conversation
-        conversation(c,user,cid)
+        if operation.startswith('chat.transfer:'):
+            completed=c.execute('SELECT t.actor_id,v.brand_id,v.branch_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE t.id=%s AND t.conversation_id=%s',(result.get('transfer_id'),cid)).fetchone()
+            if not completed or completed['actor_id']!=user['id'] or completed['brand_id']!=user['brand_id'] or (user['role']!='owner' and completed['branch_id'] not in user.get('branch_ids',[])):fail(404,'التحويل خارج الصلاحية الحالية')
+        else:
+            from .chat import conversation
+            conversation(c,user,cid)
     transfer_id=result.get('transfer_id') or (result.get('transfer') or {}).get('id')
     if transfer_id and operation.startswith('custody.'):
         row=c.execute('SELECT * FROM custody_transfers WHERE id=%s',(transfer_id,)).fetchone()
@@ -156,12 +170,13 @@ def shifts(user=Depends(auth.current_user)):
         elif user['role']=='delivery_manager': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s OR s.manager_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY opened_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
         elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
         else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
+        rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
         return safe({'shifts':rows,**people_data(c,user)})
 
 def people_data(c,user):
     users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver') ORDER BY display_name",(user['brand_id'],)).fetchall()
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
-    managers=c.execute("SELECT s.id,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
+    managers=c.execute("SELECT s.id,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
     return {'authorized_receivers':users,'available_manager_shifts':managers}
 
@@ -185,7 +200,13 @@ def day_start(config):
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s)
-        return safe({'shift':s,'expected_halalas':balance(c,s),'tasks':c.execute('SELECT t.*,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall(), 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT * FROM shifts WHERE manager_shift_id=%s ORDER BY opened_at',(sid,)).fetchall()})
+        task_rows=c.execute('SELECT t.*,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
+        if user['role']=='driver':
+            for task in task_rows:
+                if task['status'] in TERMINAL:
+                    task['snapshot']=safe(task['snapshot']);task['snapshot'].pop('notes',None);task['snapshot'].pop('note',None)
+                    for item in task['snapshot'].get('items',[]):item.pop('note',None)
+        return safe({'shift':s,'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT * FROM shifts WHERE manager_shift_id=%s ORDER BY opened_at',(sid,)).fetchall()})
 
 @router.post('/shifts/{sid}/closing')
 def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
@@ -496,7 +517,8 @@ def custody_transfer(body:Custody,request:Request,user=Depends(auth.current_user
 def custody_list(user=Depends(auth.current_user)):
     roles(user,'owner','driver','delivery_manager')
     with db.tx() as c:
-        rows=c.execute('SELECT t.* FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id WHERE t.recipient_user_id=%s OR s.user_id=%s ORDER BY t.created_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
+        rows=c.execute('SELECT t.*,s.brand_id,s.branch_ids FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id WHERE s.brand_id=%s AND (t.recipient_user_id=%s OR s.user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['brand_id'],user['id'],user['id'])).fetchall()
+        rows=[r for r in rows if user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
         return safe({'transfers':rows})
 
 @router.post('/custody/{cid}/confirm')
@@ -507,6 +529,9 @@ def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user)):
             t=c.execute('SELECT * FROM custody_transfers WHERE id=%s FOR UPDATE',(cid,)).fetchone()
             if not t or t['recipient_user_id']!=user['id']:fail(404,'التسليم غير موجود أو أنت لست المستلم')
             if t['status']!='pending':fail(409,'التسليم غير معلق')
+            source=c.execute('SELECT * FROM shifts WHERE id=%s',(t['from_shift_id'],)).fetchone()
+            if not same_scope(user,source) or (user['role']!='owner' and not set(source['branch_ids'])<=set(user.get('branch_ids',[]))):fail(403,'تم سحب صلاحية فروع التسليم')
+            if t['to_shift_id']:shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(t['to_shift_id'],)).fetchone())
             ids=sorted(set([t['from_shift_id']]+([t['to_shift_id']] if t['to_shift_id'] else [])))
             ss={i:lock_shift(c,i) for i in ids}
             if ss[t['from_shift_id']]['status']=='closed' or (t['to_shift_id'] and ss[t['to_shift_id']]['status'] not in ('open','closing')):fail(409,'شفت مقفل')
@@ -611,7 +636,7 @@ def manager_handover(sid:str,body:ManagerHandover,request:Request,user=Depends(a
 def manager_handover_list(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager')
     with db.tx() as c:
-        rows=c.execute('SELECT h.* FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE s.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) ORDER BY h.created_at DESC LIMIT 100',(user['brand_id'],user['id'],user['id'],user['role']=='owner')).fetchall();return safe({'handovers':rows})
+        rows=c.execute('SELECT h.* FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE s.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) ORDER BY h.created_at DESC LIMIT 100',(user['brand_id'],user['id'],user['id'],user['role']=='owner')).fetchall();rows=[r for r in rows if user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[]))];return safe({'handovers':rows})
 
 @router.post('/manager-handovers/{hid}/accept')
 def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_user)):
@@ -622,6 +647,7 @@ def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_us
             if not h or h['status']!='pending':fail(404,'تسليم المناوبة غير معلق')
             ids=sorted([h['from_shift_id'],h['to_shift_id']]);ss={i:lock_shift(c,i) for i in ids};src=ss[h['from_shift_id']];target=ss[h['to_shift_id']]
             if target['user_id']!=user['id'] or target['brand_id']!=user['brand_id']:fail(403,'المستلم الحقيقي فقط يقبل المناوبة')
+            shift_access(c,user,target)
             if target['status']!='open' or src['status']!='closing':fail(409,'حالة الشفت غير صالحة')
             c.execute("UPDATE shifts SET manager_shift_id=%s WHERE id=ANY(%s) AND manager_shift_id=%s AND status<>'closed'",(target['id'],h['driver_shift_ids'],src['id']))
             c.execute("UPDATE manager_handovers SET status='accepted',accepted_by=%s,accepted_at=now() WHERE id=%s",(user['id'],hid))

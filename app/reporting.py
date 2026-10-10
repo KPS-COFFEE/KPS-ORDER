@@ -75,7 +75,7 @@ def cell(v):
 
 def make_csv(snap):
     out=io.StringIO();writer=csv.writer(out);writer.writerow(['نوع السجل','المرجع','الحالة/الطريقة','المبلغ بالهللات','الفرع/الشفت','الوقت'])
-    for o in snap['orders']:writer.writerow([cell(v) for v in ['order',o['id'],o['delivery_status'],o['total_halalas'],o['branch_id'],o['created_at']]])
+    for o in snap['orders']:writer.writerow([cell(v) for v in ['order_completed' if o.get('fulfilled_in_report') else 'order_history_only',o['id'],o['delivery_status'],o['total_halalas'],o['branch_id'],o['created_at']]])
     for name in ('collections','refunds'):
         for r in snap[name]:writer.writerow([cell(v) for v in [name,r['id'],r['method'],r['amount_halalas'],r['shift_id'],r['created_at']]])
     for r in snap['custody_events']:writer.writerow([cell(v) for v in ['custody',r['id'],r['kind'],r['amount_halalas'],r['shift_id'],r['created_at']]])
@@ -161,7 +161,7 @@ def report_detail(rid:str,user=Depends(auth.current_user)):
 def print_report(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:r=report(c,user,rid)
     s=r['snapshot'];esc=lambda x:html.escape(str(x))
-    rows=''.join('<tr><td>'+esc(o['id'])+'</td><td>'+esc(o['branch_id'])+'</td><td>'+esc(o['delivery_status'])+'</td><td>'+f'{o["total_halalas"]/100:.2f}'+'</td></tr>' for o in s['orders'])
+    rows=''.join('<tr><td>'+esc(o['id'])+'</td><td>'+esc(o['branch_id'])+'</td><td>'+esc(o['delivery_status'])+(' — منفذ ضمن التقرير' if o.get('fulfilled_in_report') else ' — سجل تحويل تاريخي')+'</td><td>'+f'{o["total_halalas"]/100:.2f}'+'</td></tr>' for o in s['orders'])
     summary=''.join('<p>'+esc(k)+': '+esc(v)+'</p>' for k,v in s['summary']['submission'].items())
     page='<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>تقفيلة KPS</title><style>body{font:16px sans-serif;max-width:1100px;margin:24px;background:white;color:#222}table{width:100%;border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}@media print{button{display:none}}</style><h1>تقرير تشغيلي وتقفيلة KPS</h1><p>'+esc(s['reference'])+' — '+esc(s['operational_date'])+' — Asia/Riyadh</p><button type="button" data-print-report>طباعة</button><script src="/report.js" defer></script>'+summary+'<table><tr><th>الطلب</th><th>الفرع</th><th>الحالة</th><th>ر.س</th></tr>'+rows+'</table><h2>تفاصيل اللقطة النهائية المحفوظة</h2><pre>'+esc(__import__('json').dumps(s,ensure_ascii=False,indent=2))+'</pre></html>'
     return Response(page,media_type='text/html',headers={'Cache-Control':'private, no-store','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'self'"})

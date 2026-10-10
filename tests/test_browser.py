@@ -16,7 +16,9 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -328,9 +330,34 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         _capture(ops, 'operations-banner-administration')
         ops.locator('[data-action=create-banner]').click()
         expect(ops.locator('#modal')).to_be_visible()
+        banner_title='اختبار إدارة البنر — دون عرض تجاري'
+        ops.locator('#banner-form input[name=title]').fill(banner_title)
+        ops.locator('#banner-form textarea[name=body]').fill('بيانات اختبار معزولة؛ لا خصم ولا سعر جديد.')
+        ops.locator('#banner-form input[name=button_label]').fill('تفاصيل الصنف')
+        ops.locator('#banner-form select[name=destination]').select_option('product:kps-33')
+        ops.locator('#banner-form input[name=desktop_image]').set_input_files(str(source_image))
+        ops.locator('#banner-form input[name=active]').check()
+        ops.locator('#banner-form input[name="banner:kps-branch-1"]').check()
+        now=datetime.now(ZoneInfo('Asia/Riyadh'))
+        ops.locator('#banner-form input[name=starts]').fill((now-timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M'))
+        ops.locator('#banner-form input[name=ends]').fill((now+timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M'))
+        expect(ops.locator('#desktop-preview')).to_contain_text(banner_title)
+        expect(ops.locator('#mobile-preview')).to_contain_text(banner_title)
         _capture(ops, 'operations-banner-editor')
+        ops.locator('#banner-form button[type=submit]').click()
+        expect(ops.locator('#modal')).not_to_be_visible()
+        expect(ops.locator('#content')).to_contain_text(banner_title)
+        assert len(context.request.get(live_app+'/api/banners?brand_id=kps&branch_id=kps-branch-1').json()['banners'])==1
+        assert context.request.get(live_app+'/api/banners?brand_id=kps&branch_id=kps-branch-5').json()['banners']==[]
+        ops.locator('[data-action=edit-banner]').first.click()
+        expect(ops.locator('#modal')).to_be_visible()
         ops.keyboard.press('Escape')
         expect(ops.locator('#modal')).not_to_be_visible()
+        ops.locator('[data-action=edit-banner]').first.click()
+        ops.locator('#banner-form input[name=active]').uncheck()
+        ops.locator('#banner-form button[type=submit]').click()
+        expect(ops.locator('#modal')).not_to_be_visible()
+        assert context.request.get(live_app+'/api/banners?brand_id=kps&branch_id=kps-branch-1').json()['banners']==[]
         assert not errors and not owner_errors, (errors, owner_errors)
         (ARTIFACTS / 'browser-evidence-metadata.json').write_text(json.dumps({
             'environment': 'Headless Chromium browser emulation, real local FastAPI HTTP and isolated PostgreSQL',

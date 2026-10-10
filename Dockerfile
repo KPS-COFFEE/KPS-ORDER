@@ -22,6 +22,7 @@ COPY --chown=kpsorder:kpsorder app/ ./app/
 COPY --chown=kpsorder:kpsorder migrations/ ./migrations/
 COPY --chown=kpsorder:kpsorder data/ ./data/
 COPY --chown=kpsorder:kpsorder public/ ./public/
+COPY --chown=kpsorder:kpsorder docs/metrics.md ./docs/metrics.md
 
 USER kpsorder
 EXPOSE 10000

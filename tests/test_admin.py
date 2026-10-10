@@ -120,7 +120,9 @@ def test_add_brand_same_database_creates_separate_scoped_owner_and_no_catalog_fo
     payload={'id':'testbrand','name':'براند اختبار','owner_username':'testbrand-owner','owner_password':'TestOnly!BrandPassword1'}
     r=mutate('POST','/api/admin/brands',payload,key='create-second-brand');assert r.status_code==200,r.text
     assert mutate('POST','/api/admin/brands',payload,key='create-second-brand').json()==r.json()
-    assert client.get('/api/catalog?brand_id=testbrand').json()['items']==[]
+    empty_catalog=client.get('/api/catalog?brand_id=testbrand')
+    assert empty_catalog.status_code==200,empty_catalog.text
+    assert empty_catalog.json()['products']==[]
     own=client.get('/api/admin/config').json();assert own['brand']['id']=='kps'
     client.cookies.clear()
     login=client.post('/api/auth/login',json={'username':'testbrand-owner','password':'TestOnly!BrandPassword1'});assert login.status_code==200

@@ -100,3 +100,14 @@ CREATE TABLE IF NOT EXISTS report_corrections (
  UNIQUE(report_id,correction_version)
 );
 DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='immutable_report_corrections' AND tgrelid='report_corrections'::regclass) THEN CREATE TRIGGER immutable_report_corrections BEFORE UPDATE OR DELETE ON report_corrections FOR EACH ROW EXECUTE FUNCTION prevent_financial_mutation(); END IF; END $$;
+CREATE OR REPLACE FUNCTION protect_final_operational_record() RETURNS trigger AS $$ BEGIN
+ IF (TG_TABLE_NAME='shifts' AND OLD.status='closed') OR (TG_TABLE_NAME='driver_tasks' AND OLD.status IN ('delivered','cancelled','transferred')) OR (TG_TABLE_NAME='custody_transfers' AND OLD.status='confirmed') OR (TG_TABLE_NAME='manager_handovers' AND OLD.status='accepted') THEN RAISE EXCEPTION 'Final operational record is immutable'; END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='immutable_closed_shift' AND tgrelid='shifts'::regclass) THEN CREATE TRIGGER immutable_closed_shift BEFORE UPDATE OR DELETE ON shifts FOR EACH ROW EXECUTE FUNCTION protect_final_operational_record(); END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='immutable_final_task' AND tgrelid='driver_tasks'::regclass) THEN CREATE TRIGGER immutable_final_task BEFORE UPDATE OR DELETE ON driver_tasks FOR EACH ROW EXECUTE FUNCTION protect_final_operational_record(); END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='immutable_confirmed_custody' AND tgrelid='custody_transfers'::regclass) THEN CREATE TRIGGER immutable_confirmed_custody BEFORE UPDATE OR DELETE ON custody_transfers FOR EACH ROW EXECUTE FUNCTION protect_final_operational_record(); END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='immutable_accepted_manager_handover' AND tgrelid='manager_handovers'::regclass) THEN CREATE TRIGGER immutable_accepted_manager_handover BEFORE UPDATE OR DELETE ON manager_handovers FOR EACH ROW EXECUTE FUNCTION protect_final_operational_record(); END IF;
+END $$;

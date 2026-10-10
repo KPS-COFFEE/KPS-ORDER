@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import psycopg
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +19,7 @@ from . import auth, catalog, db, orders
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
+LOGGER = logging.getLogger('kps_order')
 
 
 @asynccontextmanager
@@ -53,6 +55,8 @@ async def security(request: Request, call_next):
             response = JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
         else:
             # Never serialize DB error details, submitted fields or provider credentials to a client.
+            LOGGER.error('request_failed trace=%s method=%s path=%s error_type=%s',
+                         trace, request.method, request.url.path, type(exc).__name__)
             response = JSONResponse({'detail': {'code': 'SERVICE_UNAVAILABLE', 'message': 'تعذر تنفيذ العملية الآن. حاول لاحقًا.'}}, status_code=503)
     response.headers['X-Request-ID'] = trace
     response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -84,14 +88,9 @@ app.include_router(auth.router)
 app.include_router(catalog.router)
 app.include_router(orders.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin'):
-    try:
-        module = importlib.import_module('.' + name, __package__)
-    except ModuleNotFoundError as exc:
-        if exc.name != __package__ + '.' + name:
-            raise
-    else:
-        app.include_router(module.router)
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports'):
+    module = importlib.import_module('.' + name, __package__)
+    app.include_router(module.router)
 
 
 def revision():
@@ -138,6 +137,14 @@ def operations_page():
     if not path.is_file():
         return JSONResponse({'detail': {'code': 'UI_UNAVAILABLE', 'message': 'واجهة التشغيل قيد الإعداد.'}}, status_code=503)
     return FileResponse(path, media_type='text/html', headers={'Cache-Control': 'no-cache'})
+
+
+@app.get('/docs/metrics')
+def metric_definitions(user=Depends(auth.current_user)):
+    if user['role'] not in {'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}:
+        raise db.error(403, 'STAFF_REQUIRED', 'تعريفات تقارير التشغيل متاحة للموظفين المخولين.')
+    return FileResponse(ROOT / 'docs' / 'metrics.md', media_type='text/plain; charset=utf-8',
+                        headers={'Cache-Control': 'no-store'})
 
 
 @app.get('/{filename}')

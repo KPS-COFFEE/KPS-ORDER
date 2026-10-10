@@ -12,6 +12,8 @@
 !data/**
 !public/
 !public/**
+!docs/
+!docs/metrics.md
 
 # Defense in depth even inside an allowed runtime directory.
 **/__pycache__/**

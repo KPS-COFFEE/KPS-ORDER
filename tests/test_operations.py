@@ -32,9 +32,9 @@ def ops(client):
         with db.tx() as c:u=c.execute('SELECT * FROM users WHERE id=%s',('ops-'+name,)).fetchone()
         client.app.dependency_overrides[auth.current_user]=lambda:u
         return client
-    def order(service='delivery',total=1000,name=None):
+    def order(service='delivery',total=1000,name=None,items=None,notes=''):
         oid=name or 'ops-order-'+uuid4().hex
-        snap={'items':[{'product_id':'ops-product','name':'قهوة تجربة','quantity':1,'unit_price_halalas':total,'line_total_halalas':total,'units':[],'note':''}],'branch_name':'فرع اختبار'}
+        snap={'items':items if items is not None else [{'product_id':'ops-product','name':'قهوة تجربة','quantity':1,'unit_price_halalas':total,'line_total_halalas':total,'units':[],'note':''}],'branch_name':'فرع اختبار','notes':notes}
         with db.tx() as c:c.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s)',(oid,'ops-brand','ops-branch','ops-customer',service,'ready','pending' if service=='delivery' else 'not_applicable','cash',total,total,db.json(snap),db.json({'name':'اختبار'})))
         return oid
     def post(who,path,body=None,key=None,status=200):
@@ -68,6 +68,7 @@ def close_driver(post,driver,manager,counted=1000):
     post('manager','/api/custody/'+transfer+'/confirm')
     return post('manager','/api/shifts/'+driver+'/approve',key='close-driver-key')
 
+@pytest.mark.postgres
 def test_delivery_custody_closure_reports_no_double_cash(ops):
     actor,post,order,shifts=ops;manager,driver=shifts();oid=delivered(post,order,driver)
     post('manager','/api/shifts/'+manager+'/closing')
@@ -92,6 +93,7 @@ def test_delivery_custody_closure_reports_no_double_cash(ops):
         assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==1
 
 
+@pytest.mark.postgres
 def test_zero_task_shift_requires_real_zero_receipt_and_blocks_manager(ops):
     actor,post,order,shifts=ops;manager,driver=shifts()
     post('manager','/api/shifts/'+manager+'/closing')
@@ -101,6 +103,7 @@ def test_zero_task_shift_requires_real_zero_receipt_and_blocks_manager(ops):
     post('owner','/api/shifts/'+manager+'/approve',status=409)
 
 
+@pytest.mark.postgres
 def test_closing_freezes_assignment_and_pending_tasks_gate(ops):
     actor,post,order,shifts=ops;manager,driver=shifts()
     oid=order();post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':driver})
@@ -109,6 +112,7 @@ def test_closing_freezes_assignment_and_pending_tasks_gate(ops):
     post('manager','/api/orders/'+order()+'/assign',{'driver_shift_id':driver},status=409)
 
 
+@pytest.mark.postgres
 def test_chat_attachments_durable_route_transfer_and_scope(ops):
     actor,post,order,shifts=ops;oid=order('pickup')
     conv=post('customer','/api/conversations',{'order_id':oid})['conversation']['id']
@@ -120,7 +124,8 @@ def test_chat_attachments_durable_route_transfer_and_scope(ops):
     assert actor('other').get(attachment['url']).status_code==404
     assert actor('branch').get(attachment['url']).content==img.getvalue()
     assert actor('manager').get(attachment['url']).status_code==404
-    post('branch','/api/conversations/'+conv+'/transfer',{'target':'delivery','reason':'شكوى تخص التوصيل'})
+    transferred=post('branch','/api/conversations/'+conv+'/transfer',{'target':'delivery','reason':'شكوى تخص التوصيل'},key='transfer-reconnect-key')
+    assert post('branch','/api/conversations/'+conv+'/transfer',{'target':'delivery','reason':'شكوى تخص التوصيل'},key='transfer-reconnect-key')==transferred
     assert actor('branch').get(attachment['url']).status_code==404
     assert actor('manager').get(attachment['url']).content==img.getvalue()
     assert len(actor('manager').get('/api/conversations/'+conv+'/messages').json()['messages'])==1
@@ -128,6 +133,7 @@ def test_chat_attachments_durable_route_transfer_and_scope(ops):
     assert actor('driver').get('/api/conversations').status_code==403
 
 
+@pytest.mark.postgres
 def test_discrepancy_partial_handover_retained_carryover(ops):
     actor,post,order,shifts=ops;manager,driver=shifts();delivered(post,order,driver)
     partial=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':400,'reference':'PARTIAL'})['transfer']['id']
@@ -147,6 +153,7 @@ def test_discrepancy_partial_handover_retained_carryover(ops):
         assert c.execute("SELECT amount_halalas FROM custody_events WHERE shift_id=%s AND kind='adjustment'",(driver,)).fetchone()['amount_halalas']==-100
 
 
+@pytest.mark.postgres
 def test_dashboard_setting_midnight_refund_and_card_split(ops):
     actor,post,order,shifts=ops;manager,driver=shifts();oid=delivered(post,order,driver)
     with db.tx() as c:
@@ -162,6 +169,7 @@ def test_dashboard_setting_midnight_refund_and_card_split(ops):
     assert actor('other').get('/api/dashboard?brand_id=ops-brand').status_code==403
 
 
+@pytest.mark.postgres
 def test_cash_card_pickup_does_not_enter_delivery_custody(ops):
     actor,post,order,shifts=ops;manager,driver=shifts();oid=order('pickup')
     post('driver','/api/orders/'+oid+'/collect',{'method':'card','amount_halalas':1000,'reference':'TEST'},status=404)
@@ -171,6 +179,7 @@ def test_cash_card_pickup_does_not_enter_delivery_custody(ops):
     assert detail['expected_halalas']==0 and detail['collections']==[]
 
 
+@pytest.mark.postgres
 def test_reports_financial_records_immutable_after_menu_change(ops):
     actor,post,order,shifts=ops;manager,driver=shifts();oid=delivered(post,order,driver);r=close_driver(post,driver,manager)
     before=actor('owner').get('/api/reports/'+r['report_id']).json()['report']['snapshot']
@@ -183,6 +192,7 @@ def test_reports_financial_records_immutable_after_menu_change(ops):
         with db.tx() as c:c.execute('UPDATE collections SET amount_halalas=9000 WHERE order_id=%s',(oid,))
 
 
+@pytest.mark.postgres
 def test_report_pdf_failure_keeps_closed_snapshot_and_retries(ops,monkeypatch):
     from app import reporting
     actor,post,order,shifts=ops;manager,driver=shifts();delivered(post,order,driver)
@@ -198,11 +208,13 @@ def test_report_pdf_failure_keeps_closed_snapshot_and_retries(ops,monkeypatch):
     assert actor('owner').get('/api/reports/'+r['report_id']+'/pdf').content.startswith(b'%PDF')
 
 
+@pytest.mark.postgres
 def test_manager_cannot_open_owner_duty_or_other_manager_shift(ops):
     actor,post,order,shifts=ops
     post('manager','/api/shifts',{'kind':'manager','user_id':'ops-owner','branch_ids':['ops-branch']},status=403)
 
 
+@pytest.mark.postgres
 def test_transfer_acceptance_rechecks_collection_and_revoked_scope(ops):
     actor,post,order,shifts=ops;manager,driver=shifts()
     driver2=post('driver2','/api/shifts',{'kind':'driver','manager_shift_id':manager,'branch_ids':['ops-branch']})['shift']['id']
@@ -220,17 +232,18 @@ def test_transfer_acceptance_rechecks_collection_and_revoked_scope(ops):
     assert actor('driver').get('/api/shifts/'+driver).status_code==403
 
 
+@pytest.mark.postgres
 def test_duplicate_product_lines_refund_subtracted_once(ops):
-    actor,post,order,shifts=ops;manager,driver=shifts();oid=delivered(post,order,driver)
-    with db.tx() as c:
-        snapshot=c.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()['snapshot']
-        snapshot['items']=[{**snapshot['items'][0],'quantity':1,'unit_price_halalas':500,'line_total_halalas':500,'units':[{'options':{'color':'black'}}]},{**snapshot['items'][0],'quantity':1,'unit_price_halalas':500,'line_total_halalas':500,'units':[{'options':{'color':'white'}}]}]
-        c.execute('UPDATE orders SET snapshot=%s WHERE id=%s',(db.json(snapshot),oid))
+    actor,post,order,shifts=ops;manager,driver=shifts()
+    base={'product_id':'ops-product','name':'كوب تجربة','quantity':1,'unit_price_halalas':500,'line_total_halalas':500,'note':''}
+    items=[{**base,'units':[{'options':{'color':'black'}}]},{**base,'units':[{'options':{'color':'white'}}]}]
+    oid=delivered(post,lambda:order(items=items),driver)
     post('manager','/api/orders/'+oid+'/refund',{'amount_halalas':500,'method':'cash','reason':'TEST كوب واحد','line_quantities':{'ops-product':1}})
     item=actor('owner').get('/api/dashboard').json()['top_items'][0]
     assert item['quantity']==1 and item['net_halalas']==500
 
 
+@pytest.mark.postgres
 def test_task_transfer_across_manager_reports_does_not_duplicate_completed_sale(ops):
     actor,post,order,shifts=ops;manager,driver=shifts()
     with db.tx() as c:c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('ops-manager2','manager2','delivery_manager','ops-brand','[\"ops-branch\"]')")
@@ -256,6 +269,7 @@ def test_task_transfer_across_manager_reports_does_not_duplicate_completed_sale(
     assert target['summary']['card_collected_halalas']==1000
 
 
+@pytest.mark.postgres
 def test_concurrent_assignment_replays_one_task_and_rejects_second_writer(ops):
     from concurrent.futures import ThreadPoolExecutor
     actor,post,order,shifts=ops;manager,driver=shifts();oid=order()
@@ -266,3 +280,56 @@ def test_concurrent_assignment_replays_one_task_and_rejects_second_writer(ops):
     assert len({r.json()['task']['id'] for r in responses})==1
     post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':driver},status=409)
     with db.tx() as c:assert c.execute('SELECT count(*) n FROM driver_tasks WHERE order_id=%s',(oid,)).fetchone()['n']==1
+
+
+@pytest.mark.postgres
+def test_completed_driver_safe_replays_and_revoked_financial_lists(ops):
+    actor,post,order,shifts=ops;manager,driver=shifts();oid=order(notes='باب خاص')
+    task=post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':driver})['task']['id']
+    post('driver','/api/tasks/'+task+'/transition',{'status':'accepted'})
+    with db.tx() as c:
+        c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(oid,))
+    post('driver','/api/tasks/'+task+'/transition',{'status':'picked_up'})
+    body={'method':'cash','amount_halalas':1000,'tendered_halalas':1000}
+    collection=post('driver','/api/orders/'+oid+'/collect',body,key='replay-after-delivery')
+    done={'status':'delivered','proof':'TEST العميل استلم'}
+    outcome=post('driver','/api/tasks/'+task+'/transition',done,key='delivery-reconnect-key')
+    assert post('driver','/api/orders/'+oid+'/collect',body,key='replay-after-delivery')==collection
+    assert post('driver','/api/tasks/'+task+'/transition',done,key='delivery-reconnect-key')==outcome
+    rows=actor('driver').get('/api/shifts/'+driver).json()['tasks']
+    assert 'notes' not in rows[0]['snapshot'] and 'note' not in rows[0]['snapshot']['items'][0]
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-driver'")
+    post('driver','/api/orders/'+oid+'/collect',body,key='replay-after-delivery',status=404)
+    assert actor('driver').get('/api/shifts').json()['shifts']==[]
+    assert actor('driver').get('/api/custody').json()['transfers']==[]
+
+
+@pytest.mark.postgres
+def test_custody_receiver_branch_revoked_before_actual_confirm(ops):
+    actor,post,order,shifts=ops;manager,driver=shifts();delivered(post,order,driver)
+    tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':200,'reference':'REVOKE-TEST'})['transfer']['id']
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-manager'")
+    post('manager','/api/custody/'+tid+'/confirm',status=403)
+    assert actor('manager').get('/api/custody').json()['transfers']==[]
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM custody_transfers WHERE id=%s',(tid,)).fetchone()['status']=='pending'
+        assert c.execute("SELECT count(*) n FROM custody_events WHERE reference_id=%s",(tid,)).fetchone()['n']==0
+
+
+@pytest.mark.postgres
+def test_manager_handover_real_acceptance_scope_revocation_and_cash_separation(ops):
+    actor,post,order,shifts=ops;manager,driver=shifts()
+    with db.tx() as c:c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('ops-manager2','manager2','delivery_manager','ops-brand','[\"ops-branch\"]')")
+    replacement=post('manager2','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
+    handover=post('manager','/api/shifts/'+manager+'/handover-manager',{'target_manager_shift_id':replacement,'reason':'TEST تبديل مناوبة'})['handover_id']
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-manager2'")
+    post('manager2','/api/manager-handovers/'+handover+'/accept',status=403)
+    assert actor('manager2').get('/api/manager-handovers').json()['handovers']==[]
+    with db.tx() as c:
+        assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(driver,)).fetchone()['manager_shift_id']==manager
+        c.execute("UPDATE users SET branch_ids='[\"ops-branch\"]' WHERE id='ops-manager2'")
+    accepted=post('manager2','/api/manager-handovers/'+handover+'/accept')
+    assert accepted['cash_transferred'] is False
+    with db.tx() as c:
+        assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(driver,)).fetchone()['manager_shift_id']==replacement
+        assert c.execute('SELECT count(*) n FROM custody_events').fetchone()['n']==0

@@ -314,8 +314,12 @@ class TestPostgreSQLCore:
             conn.execute('UPDATE users SET branch_ids=%s WHERE id=%s', (db.json(['kps-branch-1']), driver['id']))
             conn.execute("UPDATE driver_tasks SET status='transferred' WHERE id=%s", (task_id,))
         assert client.get('/api/orders/' + order['id']).status_code == 404
+        with pytest.raises(psycopg.Error):
+            with db.tx() as conn:
+                conn.execute("UPDATE driver_tasks SET status='delivered' WHERE id=%s", (task_id,))
         with db.tx() as conn:
-            conn.execute("UPDATE driver_tasks SET status='delivered' WHERE id=%s", (task_id,))
+            conn.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) VALUES(%s,%s,%s,%s,'delivered',%s)",
+                         (db.new_id('delivered_'), order['id'], driver['id'], driver_shift, manager['id']))
         assert client.get('/api/orders/' + order['id']).status_code == 404
         with db.tx() as conn:
             conn.execute("UPDATE users SET branch_ids='[]'::jsonb WHERE id=%s", (manager['id'],))

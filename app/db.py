@@ -98,22 +98,27 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
 
 def migrate():
     with tx() as conn:
-        conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
-        conn.execute('CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())')
-        for file in sorted((ROOT / 'migrations').glob('*.sql')):
-            contents = file.read_text()
-            checksum = hashlib.sha256(contents.encode()).hexdigest()
-            previous = conn.execute('SELECT sha256 FROM schema_migrations WHERE version=%s', (file.name,)).fetchone()
-            if previous:
-                if previous['sha256'] != checksum:
-                    raise RuntimeError(f'Applied migration {file.name} changed; add a forward migration instead.')
-                continue
-            if re.search(r'\b(?:DROP\s+TABLE|TRUNCATE|DROP\s+DATABASE)\b', contents, re.I):
-                raise RuntimeError('Destructive startup migrations are prohibited.')
-            conn.execute(contents)
-            conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (file.name, checksum))
-        if os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true':
-            seed_initial(conn)
+        apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
+
+
+def apply_migrations(conn, seed=True):
+    """Shared migration engine for startup and a separate, empty-schema restore drill."""
+    conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
+    conn.execute('CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())')
+    for file in sorted((ROOT / 'migrations').glob('*.sql')):
+        contents = file.read_text()
+        checksum = hashlib.sha256(contents.encode()).hexdigest()
+        previous = conn.execute('SELECT sha256 FROM schema_migrations WHERE version=%s', (file.name,)).fetchone()
+        if previous:
+            if previous['sha256'] != checksum:
+                raise RuntimeError(f'Applied migration {file.name} changed; add a forward migration instead.')
+            continue
+        if re.search(r'\b(?:DROP\s+TABLE|TRUNCATE|DROP\s+DATABASE)\b', contents, re.I):
+            raise RuntimeError('Destructive startup migrations are prohibited.')
+        conn.execute(contents)
+        conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (file.name, checksum))
+    if seed:
+        seed_initial(conn)
 
 
 def seed_initial(conn):
