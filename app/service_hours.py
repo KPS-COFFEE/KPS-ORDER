@@ -12,6 +12,13 @@ from zoneinfo import ZoneInfo
 RIYADH = ZoneInfo('Asia/Riyadh')
 DELIVERY_DAY_START_MINUTES = 16 * 60
 DEFAULT_DELIVERY_HOURS = [{'days': list(range(7)), 'start': '16:00', 'end': '04:00'}]
+# KPS branch open every day, except Friday 05:30–12:30 Asia/Riyadh.
+# Monday=0, Friday=4; delivery service hours and enablement remain independent.
+DEFAULT_KPS_BRANCH_OPENING_HOURS = [
+    {'days': [0, 1, 2, 3, 5, 6], 'start': '00:00', 'end': '00:00'},
+    {'days': [4], 'start': '00:00', 'end': '05:30'},
+    {'days': [4], 'start': '12:30', 'end': '00:00'},
+]
 DELIVERY_HOURS_DECISION = 'owner-delivery-hours-2026-10-10'
 
 

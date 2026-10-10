@@ -1,5 +1,8 @@
 # Delivery operating hours
 
+**Separate KPS branch opening policy (owner approved 2026-10-10):** branches are open all day Monday–Thursday and Saturday–Sunday. On Friday, branches are open 00:00–05:30 and 12:30–24:00, closed 05:30–12:30 Asia/Riyadh. The branch opening gate applies independently to pickup, car pickup, and delivery; all existing disabled service flags remain unchanged. The 16:00–04:00 delivery service window is independent and more restrictive when applicable.
+
+
 The approved KPS default accepts delivery daily from **16:00 inclusive to
 04:00 exclusive in Asia/Riyadh**. At 04:00, new delivery admission and fresh
 configured delivery shifts stop; a clear message shows the next opening.

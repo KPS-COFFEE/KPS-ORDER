@@ -9,7 +9,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Header, Response, UploadFile
 from PIL import Image, UnidentifiedImageError
-from . import auth, db, catalog, email_delivery
+from . import auth, db, catalog, email_delivery, service_hours
 
 router = APIRouter(prefix='/api')
 owner = auth.require_roles('owner')
@@ -596,7 +596,9 @@ def create_branch(body:dict,user=Depends(owner),idem:str|None=Header(None,alias=
             source_id=text(body.get('source_id','admin:'+identifier),200,'مرجع المصدر')
             if conn.execute('SELECT 1 FROM branches WHERE brand_id=%s AND source_id=%s',(user['brand_id'],source_id)).fetchone():
                 raise db.error(409,'BRANCH_SOURCE_EXISTS','مرجع المصدر موجود لفرع آخر.')
-            settings={'pickup_enabled':False,'car_enabled':False,'delivery_enabled':False,'ordering_verified':False}|supplied_settings
+            settings={'pickup_enabled':False,'car_enabled':False,'delivery_enabled':False,'ordering_verified':False}\
+                     |({'opening_hours':service_hours.DEFAULT_KPS_BRANCH_OPENING_HOURS} if user['brand_id']=='kps' and 'opening_hours' not in supplied_settings else {})\
+                     |supplied_settings
             row=conn.execute('INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *',(identifier,branch_no,source_id,user['brand_id'],name,branch_city,db.json(settings))).fetchone()
             db.audit(conn,user['id'],'branch.created','branch',identifier,{'branch_no':branch_no,'source_id':source_id})
             return {'branch':row}
