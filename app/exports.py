@@ -25,8 +25,10 @@ TABLES = ('brands', 'app_settings', 'branches', 'products', 'users', 'assets', '
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
-          'audit_events', 'idempotency_keys', 'sessions', 'otp_challenges', 'rate_limits')
+          'audit_events', 'recovery_events', 'recovery_state', 'recovery_alerts',
+          'idempotency_keys', 'sessions', 'otp_challenges', 'rate_limits')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys'}
+INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts'}
 PUBLIC = db.ROOT / 'public' / 'assets'
 MAX_WEB_EXPORT = 64 * 1024 * 1024
 
@@ -46,7 +48,8 @@ def _encode(value) -> bytes:
 def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
-    direct = {'branches', 'products', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports', 'conversations', 'otp_challenges'}
+    direct = {'branches', 'products', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+              'conversations', 'otp_challenges'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
@@ -87,8 +90,8 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
     available = {row['table_name'] for row in conn.execute(
         "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'").fetchall()}
     selected = [table for table in TABLES if table in available and (full or table not in AUTH_TABLES)]
-    if full and available - set(TABLES) - {'schema_migrations'}:
-        raise ValueError('Unrecognized application tables require an updated backup format.')
+    if available - set(TABLES) - {'schema_migrations'}:
+        raise db.error(409, 'EXPORT_SCHEMA_UNSUPPORTED', 'أضيفت سجلات تشغيلية جديدة. يلزم تحديث صيغة التصدير قبل إخراج نسخة كاملة.')
     migrations = conn.execute('SELECT version,sha256 FROM schema_migrations ORDER BY version').fetchall()
     with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         def add(name, content):
@@ -131,7 +134,10 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                     'source_identifier_fields': {'branches': ['id', 'branch_no', 'source_id'],
                                                  'products': ['id', 'settings.source_id'], 'orders': ['id', 'snapshot']},
                     'deduplication': 'Preserve primary/source IDs; verify counts/totals before import. Never replay sales or collections.',
-                    'credentials_included': bool(full)}
+                    'credentials_included': bool(full),
+                    'excluded_tables': [] if full else sorted(AUTH_TABLES),
+                    'infrastructure_tables': [table for table in selected if table in INFRASTRUCTURE_TABLES],
+                    'infrastructure_import_policy': 'Preserve observations and failure queues as historical source records; do not activate source hosting configuration or replay alerts.'}
         archive.writestr('manifest.json', _encode(manifest))
     return output.getvalue(), manifest
 

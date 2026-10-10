@@ -1,10 +1,11 @@
 # Independent KPS ORDER hosting and recovery
 
-Status: the owner selected **My Workspace** and the independent paid PostgreSQL
-instance below has been created and is available. The new web service has not
-been created or deployed; no customer traffic or domain has been moved. Paid
-independent resources and test deployment are already authorized. Do not create
-a second database while completing this service deployment.
+Status: the owner selected **My Workspace**. The independent paid PostgreSQL
+instance and Docker web service below have been created. The first web deploy
+was live at revision `30bdba…`, but its private `DATABASE_URL` is still unbound
+and `/ready` returns 503. This is not an operational database-backed deployment.
+No customer traffic or domain has been moved. Paid independent resources and
+test deployment are authorized; do not create duplicate resources.
 
 ## Verified source and resource audit — 10 October 2026
 
@@ -17,6 +18,8 @@ a second database while completing this service deployment.
 | Current live deploy | `dep-daloetqd0e5s7383vc8g`, live since 17 September 2026 |
 | New implementation branch | `agent/kps-order-emergency-v4` |
 | New independent database | `dpg-db4rjgo473hc738soueg-a`, `kps-order-emergency-v4-db`, available |
+| New independent web service | `srv-db4s1v942hec73epmar0`, `kps-order-emergency-v4` |
+| New independent test URL | `https://kps-order-emergency-v4.onrender.com` |
 | Database / database user | `kps_order_emergency_v4_db` / `kps_order_emergency_v4_db_user` |
 | Confirmed workspace | My Workspace, `tea-d9ttnf142hec7393049g` |
 
@@ -27,7 +30,7 @@ KPS ORDER static site in My Workspace remains available throughout development.
 
 ## Concrete deployment configuration
 
-`render.yaml` now defines **only** the new paid Docker web service. It deliberately
+`render.yaml` defines **only** the paid Docker web service. It deliberately
 omits a `databases` section because the managed PostgreSQL 18 instance already
 exists in Frankfurt. The web service must use that instance's private internal
 URL. Frankfurt is a regional choice for Saudi users, not a measured latency
@@ -37,7 +40,7 @@ automatic preview stacks are disabled. No custom domain is attached.
 
 | Resource | Configuration | Estimated full-month charge |
 | --- | --- | ---: |
-| Web service (not yet created) | `0.5c-512mb`, 0.5 CPU / 512 MB, one instance | USD 7.00 |
+| Web service (created) | `0.5c-512mb`, 0.5 CPU / 512 MB, one instance | USD 7.00 |
 | PostgreSQL compute (created) | `0.1c-256mb`, 0.1 CPU / 256 MB | USD 6.00 |
 | PostgreSQL storage (created) | 1 GB at USD 0.30/GB/month | USD 0.30 |
 | **Base estimate** | **One app + one independent database** | **USD 13.30** |
@@ -60,12 +63,18 @@ storage, memory, transfer and backup cost. Move to an authorized private object
 store if measured file volume justifies it; retain stable attachment IDs and
 checksums during that migration.
 
-Docker copies only runtime `app`, `data`, `migrations`, `public` and pinned
-requirements. It excludes the historical root site, uploaded handoff, tests,
+Docker copies runtime `app`, `data`, `migrations`, `public`, staff metric
+documentation, the exact private `tools/portable_backup.py` operator CLI and
+pinned requirements. It excludes other legacy tools, the historical root site, uploaded handoff, tests,
 local environments, credentials and backup files. The process runs as an
 unprivileged user. Uvicorn listens on `0.0.0.0:$PORT`; core lifespan runs
 versioned, additive migrations under the PostgreSQL advisory lock. No startup
 reset/reseed of operational data is permitted.
+
+The private backup CLI can be run in Render Shell after environment binding.
+Its presence in the image does not persist generated backup files: copy verified
+archives to an authorized protected destination outside the ephemeral web
+filesystem, and use a separate permitted target for restoration drills.
 
 ## Configuration and test deployment
 
@@ -77,15 +86,16 @@ reset/reseed of operational data is permitted.
    using Render CLI v2.7.0 or higher. The current environment has no Render CLI
    or Docker executable, so container build/remote deploy verification must not
    be reported as passed before it is actually run.
-3. Apply this **service-only** Blueprint to create exactly one independent web
-   service. Do not create another database. Open the existing database's
+3. Configure the **existing** independent web service
+   [in Render Dashboard](https://dashboard.render.com/web/srv-db4s1v942hec73epmar0).
+   The service-only Blueprint is a reviewable configuration reference; do not
+   apply it as a second stack that creates another service. Open the existing database's
    [Render Dashboard page](https://dashboard.render.com/d/dpg-db4rjgo473hc738soueg-a),
    choose **Connect → Internal Database URL**, and copy that value directly into
    the new service's private `DATABASE_URL` field in Render. Credentials must
    stay in Render/private execution; do not send them in chat or commit them.
-4. Set `PUBLIC_BASE_URL` to the allocated HTTPS service URL and
-   `APP_ALLOWED_HOSTS` to its exact hostname. Do not use a wildcard. Confirm the
-   actual allocated URL rather than claiming the draft service name is live.
+4. Set `PUBLIC_BASE_URL=https://kps-order-emergency-v4.onrender.com` and
+   `APP_ALLOWED_HOSTS=kps-order-emergency-v4.onrender.com`. Do not use a wildcard.
 5. Retain `SESSION_COOKIE_SECURE=true`. Bootstrap the owner through the private
    CLI documented by core, with an independently verified identity and a
    password entered privately. There are no public owner login defaults.
@@ -117,6 +127,11 @@ authentication config. Installing the CLI alone would not supply authorization.
 Database credentials have not been fetched or printed. Complete the private
 connection binding in Render Dashboard; do not request passwords/API keys in
 chat as a workaround.
+
+The read-only Render connector also lacks export/recovery-info API operations.
+Repository monitoring can call the documented REST endpoints after the owner
+configures a private Render API key; having the monitoring code does not prove
+that cloud backup observations or delivery have been enrolled.
 
 ## Backup guarantees and remaining recovery gates
 
@@ -178,6 +193,67 @@ and, where required, encrypt both exports and their metadata. Changing the
 application version must never replace the operating database with an older
 copy or discard orders created after the backup.
 
+## Repository backup monitoring and actual configuration boundary
+
+`app/recovery.py` and migration `004_recovery.sql` retain protected provider
+observations, canonical health state and an owner-only durable alert queue in
+PostgreSQL. `/api/admin/recovery` reports unknown/unconfigured values until real
+provider evidence arrives. A successful backup observation does not establish a
+measured restore time. No backup download URL, raw webhook body, API key or
+signing secret is stored in recovery tables or returned to the owner panel.
+
+To enable read-only monitoring, configure the following directly in the existing
+service's private Render environment, then redeploy:
+
+| Private setting | Value / purpose |
+| --- | --- |
+| `RENDER_POSTGRES_ID` | Exactly `dpg-db4rjgo473hc738soueg-a`; any other database is rejected |
+| `RENDER_BACKUP_BRAND_ID` | Existing owner brand ID; default `kps` |
+| `RENDER_API_KEY` | Authorized private Render API credential; never paste into chat or commit |
+| `RECOVERY_POLL_ENABLED` | `true` by default when the bound API credential exists; `false` disables background checks |
+| `RECOVERY_POLL_INTERVAL_SECONDS` | Default 900; enforced range 900–86400 |
+
+After database migrations, an optional task in the existing app process performs
+fixed-resource GET requests to `/v1/postgres/{id}/export` and `/recovery` every
+15 minutes by default. It creates no export, restore instance, cron service or
+other paid resource. It stops when private monitoring configuration is absent.
+The owner can request the same check with a CSRF-protected refresh action.
+
+The official recovery response supplies `recoveryStatus` (`AVAILABLE`,
+`BACKUP_NOT_READY` or `NOT_AVAILABLE`) and optional `startsAt`. The app records
+the actual earliest recoverable timestamp only when available. The API does not
+supply an upper recovery timestamp, configured retention duration, exact
+potential-loss window or measured RTO, so those fields remain unverified. Export
+entries supply IDs and creation timestamps; their signed download URLs are
+discarded. `BACKUP_NOT_READY` is a visible blocker, not an invented failure.
+An observed `NOT_AVAILABLE`, signed backup/PITR/WAL failure, or failed provider
+verification creates an appropriately labeled durable owner alert. Repeated
+unacknowledged failures of the same type are grouped within 24 hours while all
+observations remain available. Owner acknowledgment retains the record; it
+does not erase or retroactively fix a failure. External alert delivery is not
+configured or claimed.
+
+Signed provider events can additionally be ingested at
+`https://kps-order-emergency-v4.onrender.com/webhooks/render/recovery` after
+configuring `RENDER_WEBHOOK_SIGNING_SECRET` privately and actually enrolling
+the endpoint in Render. The handler verifies Standard Webhooks HMAC-SHA256
+against the raw body, a five-minute timestamp bound and the exact new database
+ID. Event retries are idempotent; a reused ID with changed content is rejected.
+Render webhooks require a Pro workspace or higher. No workspace upgrade or
+webhook enrollment has been performed; optional API polling avoids adding that
+subscription merely for this test configuration. Signed event handling is
+implemented and tested with synthetic signatures, which is not cloud delivery
+proof. The existing Render connector cannot perform enrollment or obtain a
+signing secret through its exposed tools.
+
+CI uses only an ephemeral PostgreSQL 18 test database and synthetic provider
+responses/signatures. It restores actual application archives into a separate
+isolated test schema and runs Chromium against the real test app/database;
+the retained screenshots/PDF/CSV examples contain synthetic test data. This
+validates repository behavior, not Render PITR operation. Capture a real
+bound-database observation, provider failure delivery drill and distinct
+recovery instance validation before claiming the cloud recovery gates passed.
+
 ## Official references
 
 - [Render pricing](https://render.com/pricing)
@@ -187,4 +263,8 @@ copy or discard orders created after the backup.
 - [Render persistent disks](https://render.com/docs/disks)
 - [Render regions](https://render.com/docs/regions)
 - [Blueprint YAML reference](https://render.com/docs/blueprint-spec)
+- [Render webhooks and signed event protocol](https://render.com/docs/webhooks)
+- [Official Render API OpenAPI schema](https://api-docs.render.com/openapi/render-public-api-1.json)
+- [List PostgreSQL exports](https://api-docs.render.com/reference/list-postgres-export)
+- [Retrieve PostgreSQL recovery information](https://api-docs.render.com/reference/retrieve-postgres-recovery-info)
 - [Small-business hosting cost model](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses)

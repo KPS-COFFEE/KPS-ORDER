@@ -333,3 +333,63 @@ def test_manager_handover_real_acceptance_scope_revocation_and_cash_separation(o
     with db.tx() as c:
         assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(driver,)).fetchone()['manager_shift_id']==replacement
         assert c.execute('SELECT count(*) n FROM custody_events').fetchone()['n']==0
+
+
+@pytest.mark.postgres
+def test_chat_without_order_context_routing_replay_history_and_attachment_scopes(ops):
+    actor,post,order,shifts=ops
+    body={'branch_id':'ops-branch','service':'pickup'}
+    opened=post('customer','/api/conversations',body,key='no-order-context-key')
+    conv=opened['conversation']['id'];assert opened['conversation']['order_id'] is None
+    assert opened['conversation']['route']=='branch' and opened['conversation']['context_service']=='pickup'
+    assert post('customer','/api/conversations',body,key='no-order-context-key')==opened
+    assert post('customer','/api/conversations',body)['conversation']['id']==conv
+    post('customer','/api/conversations/'+conv+'/messages',{'text':'شكوى تخص التوصيل بدأت من الاستلام'})
+    inbox=actor('branch').get('/api/conversations').json()['conversations'];assert len(inbox)==1
+    assert inbox[0]['service']=='pickup' and inbox[0]['order_id'] is None
+    assert actor('manager').get('/api/conversations').json()['conversations']==[]
+    img=io.BytesIO();Image.new('RGB',(10,10),'orange').save(img,format='PNG')
+    attachment=post('customer','/api/conversations/'+conv+'/attachments',{'content_type':'image/png','data_base64':base64.b64encode(img.getvalue()).decode()})
+    post('customer','/api/conversations/'+conv+'/messages',{'attachment_id':attachment['id']})
+    transferred=post('branch','/api/conversations/'+conv+'/transfer',{'target':'delivery','reason':'شكوى توصيل'},key='no-order-transfer-key')
+    assert post('branch','/api/conversations/'+conv+'/transfer',{'target':'delivery','reason':'شكوى توصيل'},key='no-order-transfer-key')==transferred
+    assert actor('branch').get('/api/conversations/'+conv+'/messages').status_code==404
+    assert actor('branch').get(attachment['url']).status_code==404
+    assert actor('manager').get(attachment['url']).content==img.getvalue()
+    visible=actor('manager').get('/api/conversations/'+conv+'/messages').json()
+    assert len(visible['messages'])==2 and visible['transfers'][0]['from_route']=='branch'
+    assert visible['conversation']['order_id'] is None
+    post('manager','/api/conversations/'+conv+'/transfer',{'target':'branch','reason':'محاولة إعادة شكوى التوصيل للفرع'},status=409)
+    assert actor('other').get('/api/conversations/'+conv+'/messages').status_code==404
+    assert actor('driver').get('/api/conversations/'+conv+'/messages').status_code==404
+    post('owner','/api/conversations',body,status=403)
+    post('driver','/api/conversations',body,status=403)
+
+
+@pytest.mark.postgres
+def test_chat_without_order_requires_service_branch_and_customer_ownership(ops):
+    actor,post,order,shifts=ops
+    post('customer','/api/conversations',{},status=422)
+    post('customer','/api/conversations',{'service':'delivery'},status=422)
+    post('customer','/api/conversations',{'branch_id':'ops-branch'},status=422)
+    post('customer','/api/conversations',{'branch_id':'ops-branch-other','service':'delivery'},status=404)
+    post('customer','/api/conversations',{'branch_id':'ops-branch','service':'product_inquiry'},status=422)
+    post('customer','/api/conversations',{'branch_id':'ops-branch','service':'pickup','category':'product_inquiry'},status=422)
+    with db.tx() as c:c.execute("INSERT INTO users(id,display_name,role,brand_id) VALUES('ops-customer2','Customer 2','customer','ops-brand')")
+    opened=post('customer','/api/conversations',{'branch_id':'ops-branch','service':'delivery'})['conversation']
+    assert opened['route']=='delivery'
+    assert actor('branch').get('/api/conversations/'+opened['id']+'/messages').status_code==404
+    assert actor('customer2').get('/api/conversations/'+opened['id']+'/messages').status_code==404
+    assert actor('customer2').get('/api/conversations').json()['conversations']==[]
+    assert actor('manager').get('/api/conversations').json()['conversations'][0]['id']==opened['id']
+    car=post('customer','/api/conversations',{'branch_id':'ops-branch','service':'car'})['conversation']
+    assert car['route']=='branch' and car['context_service']=='car'
+
+
+@pytest.mark.postgres
+def test_order_linked_chat_context_still_uses_real_order(ops):
+    actor,post,order,shifts=ops;oid=order('pickup')
+    post('customer','/api/conversations',{'order_id':oid,'branch_id':'ops-branch-other','service':'pickup'},status=422)
+    post('customer','/api/conversations',{'order_id':oid,'service':'delivery'},status=422)
+    row=post('customer','/api/conversations',{'order_id':oid})['conversation']
+    assert row['order_id']==oid and row['context_service']=='pickup' and row['route']=='branch'

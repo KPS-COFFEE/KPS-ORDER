@@ -1,11 +1,12 @@
 """Small independent web service. Authoritative data resides exclusively in PostgreSQL."""
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import os
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import psycopg
@@ -24,11 +25,21 @@ LOGGER = logging.getLogger('kps_order')
 
 @asynccontextmanager
 async def lifespan(app):
+    recovery_task = None
     app.state.database_configured = bool(os.getenv('DATABASE_URL'))
     if app.state.database_configured:
         # A bad configured migration/database blocks startup; no storage substitute is created.
         db.migrate()
-    yield
+        from . import recovery
+        if recovery.configuration()['poll_configured']:
+            recovery_task = asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor')
+    try:
+        yield
+    finally:
+        if recovery_task is not None:
+            recovery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await recovery_task
 
 
 app = FastAPI(title='KPS Independent Orders', version='4.0.0', lifespan=lifespan,
@@ -88,7 +99,7 @@ app.include_router(auth.router)
 app.include_router(catalog.router)
 app.include_router(orders.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin', 'exports'):
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 

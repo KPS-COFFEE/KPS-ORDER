@@ -23,6 +23,7 @@ COPY --chown=kpsorder:kpsorder migrations/ ./migrations/
 COPY --chown=kpsorder:kpsorder data/ ./data/
 COPY --chown=kpsorder:kpsorder public/ ./public/
 COPY --chown=kpsorder:kpsorder docs/metrics.md ./docs/metrics.md
+COPY --chown=kpsorder:kpsorder tools/portable_backup.py ./tools/portable_backup.py
 
 USER kpsorder
 EXPOSE 10000

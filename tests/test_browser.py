@@ -254,6 +254,29 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
     try:
         page.goto('/')
         expect(page.locator('.product-card')).to_have_count(35)
+        # Persisted general contact uses real HTTP even while this branch is closed
+        # for orders. This seeded test session proves UI scope, not SMS delivery.
+        page.locator('#contacts-button').click()
+        expect(page.locator('#contacts-dialog')).to_be_visible()
+        page.locator('#contact-service').select_option('delivery')
+        page.locator('#contact-branch').select_option('kps-branch-5')
+        page.locator('#contact-start').click()
+        expect(page.locator('#chat-dialog')).to_be_visible()
+        page.locator('#chat-text').fill('تواصل اختبار محفوظ دون طلب مع فريق التوصيل')
+        page.locator('#send-message').click()
+        expect(page.locator('.chat-bubble')).to_contain_text('تواصل اختبار محفوظ دون طلب')
+        with db.tx() as conn:
+            general=conn.execute('SELECT * FROM conversations WHERE customer_id=%s AND order_id IS NULL',(customer_id,)).fetchone()
+            assert general['branch_id']=='kps-branch-5' and general['context_service']=='delivery' and general['route']=='delivery'
+        page.reload()
+        expect(page.locator('#account-button')).to_have_text('حسابي')
+        page.locator('#contacts-button').click()
+        expect(page.locator('#contacts-list [data-conversation-id]')).to_have_count(1)
+        _capture(page,'customer-persisted-no-order-inbox')
+        page.locator(f'#contacts-list [data-conversation-id="{general["id"]}"]').click()
+        expect(page.locator('.chat-bubble')).to_contain_text('تواصل اختبار محفوظ دون طلب')
+        _capture(page,'customer-own-no-order-delivery-chat')
+        page.keyboard.press('Escape')
         page.locator('#branch-select').select_option('kps-branch-1')
         page.get_by_role('button', name='تفاصيل كوب حراري', exact=True).first.click()
         page.locator('#product-qty').fill('2')
@@ -369,3 +392,294 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         context.close()
         if owner_context:
             owner_context.close()
+
+
+def _role_fixture():
+    """Explicitly synthetic second brand: no current KPS prices or scopes changed."""
+    brand='browser-ops-test'
+    branch_id='browser-ops-branch-test'
+    users={}
+    with db.tx() as conn:
+        conn.execute('INSERT INTO brands(id,name) VALUES(%s,%s)',(brand,'براند اختبار متصفح معزول'))
+        conn.execute('INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES(%s,1,%s,%s,%s,%s,%s)',
+                     (branch_id,'browser-synthetic-source',brand,'فرع اختبار معزول','حفر الباطن',db.json({})))
+        conn.execute('INSERT INTO app_settings(brand_id,settings) VALUES(%s,%s)',
+                     (brand,db.json({'operational_day_start':'05:30','late_after_minutes':60})))
+        for name,role in [('owner','owner'),('manager','delivery_manager'),('driver','driver'),('branch','branch_manager'),('customer','customer')]:
+            identifier='browser-ops-'+name
+            username='browser.ops.'+name if name!='customer' else None
+            conn.execute('INSERT INTO users(id,username,display_name,password_hash,role,brand_id,branch_ids) VALUES(%s,%s,%s,%s,%s,%s,%s)',
+                         (identifier,username,'اختبار '+name+' فقط',auth.hash_password(PASSWORD) if username else None,role,brand,db.json([branch_id])))
+            users[name]={'id':identifier,'username':username}
+        order_id='browser-ops-test-order'
+        snapshot={'items':[{'product_id':'browser-synthetic-coffee','name':'قهوة اختبار معزول','quantity':1,
+                            'unit_price_halalas':1000,'line_total_halalas':1000,'units':[],'note':''}],
+                  'branch_name':'فرع اختبار معزول','notes':'اختبار فقط؛ لا يُجهز أو يُرسل سائق فعلي.'}
+        conn.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,'
+                     'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,\'delivery\',\'ready\',\'pending\',\'cash\',1000,0,1000,%s,%s)',
+                     (order_id,brand,branch_id,users['customer']['id'],db.json(snapshot),db.json({'name':'عميل اختبار فقط','address':'عنوان اختبار معزول','location':{'lat':28.4,'lng':45.9}})))
+    return users,branch_id,order_id
+
+
+def _staff_ui_login(page,user):
+    from playwright.sync_api import expect
+    page.goto('/ops.html')
+    page.locator('#login-form input[name=username]').fill(user['username'])
+    page.locator('#login-form input[name=password]').fill(PASSWORD)
+    page.locator('#login-submit').click()
+    expect(page.locator('#app-shell')).to_be_visible()
+    expect(page.locator('#content .loading')).to_have_count(0)
+
+
+def _authenticated_post(context,base,path,body=None):
+    session=context.request.get(base+'/api/session').json()
+    response=context.request.post(base+path,headers={'Origin':base,'X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data=body or {})
+    assert response.ok,response.text()
+    return response.json()
+
+
+def _submit_modal(page,values=None,check=None):
+    from playwright.sync_api import expect
+    for name,value in (values or {}).items():
+        field=page.locator(f'#modal-body [name="{name}"]')
+        if field.evaluate('(el)=>el.tagName')=='SELECT':field.select_option(value)
+        else:field.fill(value)
+    for name in check or []:page.locator(f'#modal-body input[name="{name}"]').check()
+    page.locator('#modal-body button[type=submit]').click()
+    expect(page.locator('#modal')).not_to_be_visible()
+
+
+def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(live_app,chromium_browser):
+    """Browser-operated assignment, delivery, receipt and final approvals, no API interception."""
+    from playwright.sync_api import expect
+    users,branch_id,order_id=_role_fixture()
+    contexts={}
+    pages={}
+    errors=[]
+    csp_errors=[]
+    try:
+        for name in ['owner','manager','driver','branch']:
+            context,page,page_errors=_context(chromium_browser,live_app)
+            contexts[name]=context;pages[name]=page
+            page.on('console',lambda message:csp_errors.append(message.text) if ('Content Security Policy' in message.text or 'Refused to execute inline' in message.text) else None)
+            _staff_ui_login(page,users[name])
+            errors.append(page_errors)
+        owner,manager,driver,branch=[pages[name] for name in ['owner','manager','driver','branch']]
+        assert manager.locator('#navigation [data-page=admin]').count()==0
+        assert branch.locator('#navigation [data-page=admin]').count()==0
+        assert driver.locator('#navigation [data-page=dashboard]').count()==0
+        assert driver.locator('#navigation [data-page=orders]').count()==0
+        expect(driver.locator('#navigation [data-page=tasks]')).to_be_visible()
+
+        manager_shift=_authenticated_post(contexts['manager'],live_app,'/api/shifts',{'kind':'manager','branch_ids':[branch_id]})['shift']['id']
+        driver_shift=_authenticated_post(contexts['driver'],live_app,'/api/shifts',{'kind':'driver','branch_ids':[branch_id],'manager_shift_id':manager_shift})['shift']['id']
+        manager.locator('#navigation [data-page=orders]').click()
+        manager.locator(f'[data-action=assign][data-id="{order_id}"]').click()
+        _submit_modal(manager,{'driver_shift_id':driver_shift})
+        _capture(manager,'delivery-manager-live-synthetic-orders')
+        driver.locator('#navigation [data-page=tasks]').click()
+        accept=driver.locator('[data-action=task-transition][data-status=accepted]')
+        expect(accept).to_be_visible()
+        _capture(driver,'driver-assigned-synthetic-task')
+        accept.click()
+        expect(driver.locator('[data-action=task-transition][data-status=picked_up]')).to_be_visible()
+        branch.locator('#navigation [data-page=orders]').click()
+        expect(branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status=handed_over]')).to_be_visible()
+        _capture(branch,'branch-ready-synthetic-order')
+        branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status=handed_over]').click()
+        expect(branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status=handed_over]')).not_to_be_visible()
+        driver.locator('[data-action=task-transition][data-status=picked_up]').click()
+        expect(driver.locator('[data-action=collect]')).to_be_visible()
+        driver.locator('[data-action=collect]').click()
+        driver.locator('#modal-body input[name=tendered]').fill('20.00')
+        expect(driver.locator('#change-preview')).to_contain_text('١٠')
+        _capture(driver,'driver-actual-cash-collection-and-change')
+        _submit_modal(driver,check=['confirmed'])
+        driver.locator('[data-action=delivered]').click()
+        _submit_modal(driver,{'proof':'إثبات تسليم اختبار معزول؛ لا يوجد تسليم فعلي.'})
+        with db.tx() as conn:
+            collection=conn.execute('SELECT * FROM collections WHERE order_id=%s',(order_id,)).fetchone()
+            assert collection['amount_halalas']==1000 and collection['tendered_halalas']==2000 and collection['change_halalas']==1000
+            assert conn.execute('SELECT delivery_status FROM orders WHERE id=%s',(order_id,)).fetchone()['delivery_status']=='delivered'
+
+        driver.locator('#navigation [data-page=shifts]').click()
+        driver.locator(f'[data-action=start-closing][data-id="{driver_shift}"]').click()
+        expect(driver.locator('#closure-form')).to_be_visible()
+        expect(driver.locator('#modal-body')).to_contain_text('الرصيد المتوقع')
+        expect(driver.locator('#modal-body')).to_contain_text('النقد المعدود')
+        driver.locator('#closure-form input[name=counted]').fill('10.00')
+        driver.locator('#closure-form input[name=handover]').fill('10.00')
+        driver.locator('#closure-form input[name=reference]').fill('BROWSER-TEST-DRIVER-BAG')
+        driver.locator('#closure-form select[name=recipient_user_id]').select_option(users['manager']['id'])
+        expect(driver.locator('#closure-difference')).to_contain_text('٠')
+        _capture(driver,'driver-counted-cash-closure-review')
+        _submit_modal(driver)
+
+        # This is the receiving manager's own authenticated browser, not a sender override.
+        manager.locator('#navigation [data-page=custody]').click()
+        expect(manager.locator('[data-action=confirm-custody]')).to_have_count(1)
+        _capture(manager,'delivery-manager-pending-driver-receipt')
+        manager.locator('[data-action=confirm-custody]').click()
+        _submit_modal(manager,check=['received'])
+        manager.locator('#navigation [data-page=shifts]').click()
+        manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
+        expect(manager.locator('#modal-body')).to_contain_text('التسليم النهائي المستلم المؤكد')
+        manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()
+        expect(manager.locator('#modal-body')).to_contain_text('المستلم المؤكد')
+        expect(manager.locator('#modal-body')).to_contain_text('المعدود')
+        _capture(manager,'delivery-manager-driver-closure-approval')
+        _submit_modal(manager,check=['confirmed'])
+        with db.tx() as conn:
+            assert conn.execute('SELECT status FROM shifts WHERE id=%s',(driver_shift,)).fetchone()['status']=='closed'
+
+        manager.locator(f'[data-action=start-closing][data-id="{manager_shift}"]').click()
+        expect(manager.locator('#closure-form')).to_be_visible()
+        manager.locator('#closure-form input[name=counted]').fill('10.00')
+        manager.locator('#closure-form input[name=handover]').fill('10.00')
+        manager.locator('#closure-form input[name=reference]').fill('BROWSER-TEST-MANAGER-BAG')
+        manager.locator('#closure-form select[name=recipient_user_id]').select_option(users['owner']['id'])
+        _capture(manager,'delivery-manager-counted-final-closure')
+        _submit_modal(manager)
+        owner.locator('#navigation [data-page=custody]').click()
+        expect(owner.locator('[data-action=confirm-custody]')).to_have_count(1)
+        owner.locator('[data-action=confirm-custody]').click()
+        _submit_modal(owner,check=['received'])
+        owner.locator('#navigation [data-page=shifts]').click()
+        owner.locator(f'[data-action=shift-detail][data-id="{manager_shift}"]').click()
+        owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
+        _capture(owner,'owner-final-manager-closure-approval')
+        _submit_modal(owner,check=['confirmed'])
+
+        # Both reports are really generated after committed, approved closures.
+        saved={}
+        for kind,who,shift in [('driver','driver',driver_shift),('manager','manager',manager_shift)]:
+            actor=pages[who]
+            actor.locator('#navigation [data-page=reports]').click()
+            report_rows=contexts[who].request.get(live_app+'/api/reports').json()['reports']
+            report_id=next(report['id'] for report in report_rows if report['shift_id']==shift)
+            actor.locator(f'[data-action=report-view][data-id="{report_id}"]').click()
+            expect(actor.locator('#modal-body')).to_contain_text('المتوقع')
+            expect(actor.locator('#modal-body')).to_contain_text('المعدود')
+            expect(actor.locator('#modal-body')).to_contain_text('التسليم المؤكد')
+            _capture(actor,f'{kind}-saved-financial-report-synthetic')
+            detail=contexts[who].request.get(live_app+f'/api/reports/{report_id}').json()['report']
+            assert detail['pdf_status']=='ready'
+            summary=detail['snapshot']['summary']
+            assert summary['unique_orders']==1 and summary['cash_collected_halalas']==1000
+            assert summary['submission']['expected_halalas']==1000 and summary['submission']['counted_halalas']==1000
+            assert summary['submission']['difference_halalas']==0
+            for suffix in ['pdf','csv']:
+                response=contexts[who].request.get(live_app+f'/api/reports/{report_id}/{suffix}')
+                assert response.ok,response.text()
+                contents=response.body()
+                if suffix=='pdf':assert contents.startswith(b'%PDF')
+                else:assert contents.startswith(b'\xef\xbb\xbf')
+                (ARTIFACTS/f'TEST_ONLY_{kind}_closure_example.{suffix}').write_bytes(contents)
+            with actor.expect_popup() as opened:
+                actor.locator('#modal-body a[href$="/print"]').click()
+            print_page=opened.value
+            print_errors=[]
+            print_page.on('pageerror',lambda error:print_errors.append(str(error)))
+            print_page.on('console',lambda message:csp_errors.append(message.text) if ('Content Security Policy' in message.text or 'Refused to execute inline' in message.text) else None)
+            print_page.wait_for_load_state('networkidle')
+            expect(print_page.locator('[data-print-report]')).to_be_visible()
+            _capture(print_page,f'{kind}-real-report-print-view-synthetic')
+            print_page.pdf(path=str(ARTIFACTS/f'TEST_ONLY_{kind}_browser_print_example.pdf'),format='A4',print_background=True)
+            assert not print_errors,print_errors
+            print_page.close()
+            actor.keyboard.press('Escape')
+            saved[kind]={'unique_orders':summary['unique_orders'],'cash_collected_halalas':summary['cash_collected_halalas'],
+                         'card_collected_halalas':summary['card_collected_halalas'],'expected_halalas':summary['submission']['expected_halalas'],
+                         'counted_halalas':summary['submission']['counted_halalas'],'received_halalas':summary['submission']['handover_halalas'],
+                         'difference_halalas':summary['submission']['difference_halalas']}
+        with db.tx() as conn:
+            assert conn.execute('SELECT count(*) AS n FROM collections WHERE order_id=%s',(order_id,)).fetchone()['n']==1
+            assert conn.execute('SELECT count(*) AS n FROM closure_reports WHERE shift_id=ANY(%s)',([driver_shift,manager_shift],)).fetchone()['n']==2
+        assert saved['driver']['cash_collected_halalas']==saved['manager']['cash_collected_halalas']==1000
+        (ARTIFACTS/'TEST_ONLY_financial_example_summary.json').write_text(json.dumps({
+            'test_only':True,'currency':'SAR','environment':'Chromium browser emulation, real isolated PostgreSQL and HTTP',
+            'physical_delivery_or_cash_receipt':False,'physical_device_test':False,'customer_details_included':False,
+            'description_ar':'طلب اختبار واحد بقيمة 10 ريالات. استلم السائق ورقة 20 وأعاد 10. التحصيل 10، والتسليم للمدير 10 ثم للمالك 10، دون احتسابها كمبيعات إضافية.',
+            'reports':saved},ensure_ascii=False,indent=2))
+        assert all(not page_errors for page_errors in errors),errors
+        assert not csp_errors,csp_errors
+    finally:
+        for context in contexts.values():context.close()
+
+
+def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolation(live_app,chromium_browser):
+    """A real owner-created empty brand never inherits the KPS menu or identity."""
+    from playwright.sync_api import expect
+    owner=_staff()
+    owner_context,_,owner_errors=_context(chromium_browser,live_app)
+    _owner_login(owner_context,live_app,owner)
+    brand_id='browser-new-brand-test'
+    brand_name='براند اختبار جديد فقط'
+    created=_authenticated_post(owner_context,live_app,'/api/admin/brands',{
+        'id':brand_id,'name':brand_name,'owner_username':'browser.newbrand.owner',
+        'owner_password':PASSWORD,'owner_display_name':'مالك براند اختبار فقط'})
+    assert created['customer_path']=='/?brand_id='+brand_id
+    context,page,errors=_context(chromium_browser,live_app)
+    try:
+        # Save an actual source-product draft on the default KPS storefront.
+        page.goto('/')
+        expect(page.locator('.product-card')).to_have_count(35)
+        page.locator('.product-image-button').first.click()
+        page.locator('#product-add').click()
+        expect(page.locator('#product-dialog')).not_to_be_visible()
+        expect(page.locator('.cart-line')).to_have_count(1)
+        kps_draft=page.evaluate("localStorage.getItem('kps-unconfirmed-basket-v2:kps')")
+        assert json.loads(kps_draft)['brandId']=='kps'
+
+        page.wait_for_load_state('networkidle')
+        requests=[]
+        page.on('request',lambda request:requests.append(request.url))
+        page.goto(created['customer_path'])
+        expect(page.locator('#brand-name')).to_contain_text(brand_name)
+        expect(page.locator('#footer-brand')).to_have_text(brand_name)
+        expect(page).to_have_title(brand_name+' | الطلبات')
+        expect(page.locator('#brand-home')).to_have_attribute('href',created['customer_path'])
+        expect(page.locator('.product-card')).to_have_count(0)
+        expect(page.locator('.cart-line')).to_have_count(0)
+        expect(page.locator('#products')).to_contain_text('لم تُضف أصناف لهذا البراند بعد.')
+        expect(page.locator('#branch-select option')).to_have_count(1)
+        expect(page.locator('#brand-logo')).not_to_be_visible()
+        assert page.locator('#brand-logo').get_attribute('src') is None
+        expect(page.locator('#banner-content')).to_contain_text('اطلب مباشرة من '+brand_name)
+        expect(page.locator('body')).not_to_contain_text('KPS')
+        assert any('/api/catalog?brand_id='+brand_id in url for url in requests)
+        assert any('/api/branches?brand_id='+brand_id in url for url in requests)
+        assert not any('/assets/kps-' in url or 'brand_id=kps' in url for url in requests)
+        _capture(page,'owner-created-empty-brand-customer-storefront')
+
+        # The actual OTP endpoint receives the selected brand and truthfully
+        # rejects the disabled provider in this isolated test environment.
+        page.locator('#account-button').click()
+        page.locator('#phone').fill('0500000001')
+        with page.expect_request('**/api/auth/otp/request') as sent:
+            page.locator('#send-otp').click()
+        assert sent.value.post_data_json['brand_id']==brand_id
+        expect(page.locator('#otp-unavailable')).to_be_visible()
+        page.keyboard.press('Escape')
+        assert page.evaluate("localStorage.getItem('kps-unconfirmed-basket-v2:kps')")==kps_draft
+        page.goto('/')
+        expect(page.locator('.product-card')).to_have_count(35)
+        expect(page.locator('.cart-line')).to_have_count(1)
+        expect(page.locator('#brand-name')).to_contain_text('KPS')
+        expect(page.locator('#brand-logo')).to_be_visible()
+
+        # Invalid identity fails closed, with no request for the default menu.
+        requests.clear()
+        page.goto('/?brand_id=INVALID%2Fbrand')
+        expect(page.locator('#site-notice')).to_contain_text('رابط البراند غير صالح')
+        expect(page.locator('.product-card')).to_have_count(0)
+        expect(page.locator('#account-button')).to_be_disabled()
+        assert not any('/api/catalog' in url or '/api/branches' in url for url in requests)
+        assert not errors and not owner_errors,errors+owner_errors
+        (ARTIFACTS/'owner-created-brand-test-metadata.json').write_text(json.dumps({
+            'test_only':True,'brand_created_via_real_authenticated_api':True,'brand_has_no_products_or_branches':True,
+            'catalog_or_api_interception':False,'source_kps_menu_unchanged':True,'draft_storage_scoped_by_brand':True,
+            'environment':'Chromium browser emulation with real isolated PostgreSQL and HTTP',
+            'physical_device_test':False,'real_external_sms_verification':False},indent=2))
+    finally:
+        context.close();owner_context.close()

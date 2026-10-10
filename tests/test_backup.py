@@ -39,11 +39,28 @@ def _chat(actor, post, oid):
     return conv, attachment, image.getvalue()
 
 
+def _recovery_rows(brand='ops-brand'):
+    event, alert = 'recovery-event-' + uuid.uuid4().hex, 'recovery-alert-' + uuid.uuid4().hex
+    resource = 'TEST-ONLY-RESOURCE-' + brand
+    with db.tx() as conn:
+        conn.execute("INSERT INTO recovery_events(id,brand_id,database_id,provider_event_id,event_type,outcome,source,request_digest,occurred_at,metadata) "
+                     "VALUES(%s,%s,%s,%s,'postgres_backup_failed','failed','provider_api','test-only-digest',now(),%s)",
+                     (event, brand, resource, 'test-provider-' + event, db.json({'test_only': True})))
+        conn.execute("INSERT INTO recovery_state(brand_id,database_id,last_failure_at,last_verified_at,verification_source,retention_days) "
+                     "VALUES(%s,%s,now(),now(),'provider_api',7)", (brand, resource))
+        conn.execute("INSERT INTO recovery_alerts(id,brand_id,database_id,event_id,code,event_type) "
+                     "VALUES(%s,%s,%s,%s,'BACKUP_PROVIDER_FAILURE','postgres_backup_failed')", (alert, brand, resource, event))
+    return event, alert, resource
+
+
 @pytest.mark.postgres
 def test_owner_business_export_preserves_bytea_and_excludes_other_brands_and_credentials(ops):
     actor, post, order, shifts = ops
     oid = order('pickup')
     conv, attachment, picture = _chat(actor, post, oid)
+    unlinked = post('customer', '/api/conversations', {'service': 'pickup', 'branch_id': 'ops-branch'})['conversation']['id']
+    recovery_event, _, _ = _recovery_rows()
+    _recovery_rows('ops-other')
     with db.tx() as conn:
         conn.execute("UPDATE users SET username='private-owner-test',password_hash=%s WHERE id='ops-owner'", (auth.hash_password('PrivateTestPassword!1'),))
         conn.execute("INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,expires_at) VALUES('otp-test-export','ops-brand','+966500000000','TEST-ONLY',now()+interval '5 minutes')")
@@ -56,6 +73,11 @@ def test_owner_business_export_preserves_bytea_and_excludes_other_brands_and_cre
     assert all('password_hash' not in user and 'username' not in user and user['brand_id'] == 'ops-brand' for user in users)
     assert {row['id'] for row in json.loads(archive.read('data/brands.json'))} == {'ops-brand'}
     assert [row['id'] for row in json.loads(archive.read('data/orders.json'))] == [oid]
+    contexts = {row['id']: row for row in json.loads(archive.read('data/conversations.json'))}
+    assert contexts[unlinked]['order_id'] is None and contexts[unlinked]['context_service'] == 'pickup'
+    assert {row['id'] for row in json.loads(archive.read('data/recovery_events.json'))} == {recovery_event}
+    assert set(manifest['infrastructure_tables']) == {'recovery_events', 'recovery_state', 'recovery_alerts'}
+    assert set(manifest['excluded_tables']) == AUTH_TABLES
     blob = json.loads(archive.read('data/chat_attachments.json'))[0]['data']['$binary']
     assert archive.read(blob) == picture
     assert actor('customer').get('/api/admin/export').status_code == 403
@@ -71,6 +93,9 @@ def test_full_backup_restores_orders_messages_images_closures_reports_without_ov
     manager, driver = shifts()
     oid = delivered(post, order, driver)
     conv, attachment, picture = _chat(actor, post, oid)
+    unlinked = post('customer', '/api/conversations', {'service': 'delivery', 'branch_id': 'ops-branch'})['conversation']['id']
+    post('customer', '/api/conversations/' + unlinked + '/messages', {'text': 'سياق محفوظ دون طلب'})
+    recovery_event, recovery_alert, recovery_database = _recovery_rows()
     driver_closed = close_driver(post, driver, manager)
     post('manager', '/api/shifts/' + manager + '/closing')
     post('manager', '/api/shifts/' + manager + '/submit', {'counted_halalas': 1000, 'handover_halalas': 1000})
@@ -102,6 +127,12 @@ def test_full_backup_restores_orders_messages_images_closures_reports_without_ov
             assert bytes(reports[manager_closed['report_id']]['pdf_data']) == manager_pdf
             assert reports[manager_closed['report_id']]['snapshot']['summary']['cash_collected_halalas'] == 1000
             assert restored.execute('SELECT count(*) AS n FROM chat_messages WHERE conversation_id=%s', (conv,)).fetchone()['n'] == 1
+            context = restored.execute('SELECT order_id,context_service FROM conversations WHERE id=%s', (unlinked,)).fetchone()
+            assert context['order_id'] is None and context['context_service'] == 'delivery'
+            assert restored.execute('SELECT event_id,acknowledged_at FROM recovery_alerts WHERE id=%s', (recovery_alert,)).fetchone()['event_id'] == recovery_event
+            state = restored.execute('SELECT retention_days,last_failure_at FROM recovery_state WHERE brand_id=%s AND database_id=%s',
+                                     ('ops-brand', recovery_database)).fetchone()
+            assert state['retention_days'] == 7 and state['last_failure_at'] is not None
         db.migrate()  # Code restart operates on the original source schema and preserves newer arrivals.
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n'] == 2

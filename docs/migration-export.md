@@ -6,6 +6,8 @@ An authenticated brand owner can download /api/admin/export. The v1 business ZIP
 
 The manifest describes source revision, migration checksums, scope, creation time, row counts, monetary totals and every file's size/SHA-256. BYTEA becomes individually hashed blobs; JSON rows refer to their exact files. Original static KPS images are included. Preserve primary IDs/source identifiers during eventual TILQA import, reject repeated source records, and never replay historical sales, collections or custody transfers. This export does not activate a TILQA integration.
 
+Brand-scoped recovery observations, backup state and durable owner alerts are included in both formats, with their table names declared separately in the manifest. They contain no signing/API secrets, raw provider payloads or download URLs. Retain these as historical source observations; importing them does not activate old hosting configuration or replay alerts. Conversations without an order retain their explicit service/branch context and messages.
+
 The browser download has a 64 MiB uncompressed limit to protect the smallest service. Larger datasets need the private backup tool or a separately scoped export process. Failure does not delete or change data.
 
 ## Private full backup

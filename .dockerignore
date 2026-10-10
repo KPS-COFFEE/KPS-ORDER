@@ -25,3 +25,8 @@
 **/*.sql.gz
 **/*.sqlite*
 **/*HANDOFF*
+
+# This private operator CLI is code, not backup data. Other legacy tools and
+# generated archives remain excluded; the exception must follow *backup*.
+!tools/
+!tools/portable_backup.py

@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: kps-order-emergency-v4-${{ github.event.pull_request.number || github.ref }}
+  group: kps-order-emergency-v4-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -93,5 +93,7 @@ jobs:
           path: |
             test-artifacts/*.png
             test-artifacts/*.json
+            test-artifacts/*.pdf
+            test-artifacts/*.csv
           if-no-files-found: warn
           retention-days: 7
