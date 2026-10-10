@@ -335,6 +335,9 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     if body.service == 'delivery':
         if not body.customer.location or not body.customer.address.strip():
             raise db.error(422, 'DELIVERY_ADDRESS_REQUIRED', 'حدد موقع وعنوان التوصيل.')
+        neighborhood = body.customer.neighborhood.strip()
+        if '\x00' in neighborhood or sum(character.isalnum() for character in neighborhood) < 2:
+            raise db.error(422, 'DELIVERY_NEIGHBORHOOD_REQUIRED', 'أدخل اسم حي التوصيل بصورة واضحة.')
         if not covered(branch['settings']['coverage'], body.customer.location.model_dump()):
             raise db.error(409, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق توصيل هذا الفرع.')
     if body.service == 'car' and not body.customer.car:

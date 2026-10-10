@@ -28,6 +28,59 @@ def test_missing_policy_and_unstarted_stages_never_fake_zero_or_good():
     assert performance._phase(now,None,now,terminal=True)['seconds'] is None
 
 
+@pytest.mark.postgres
+def test_dashboard_uses_frozen_province_policy_and_rejected_orders_are_excluded(v5):
+    actor,call,body,_=v5
+    policy={'province_id':'TEST-dashboard','province_name':'TEST province','branch_ids':['v5-a','v5-b'],
+            'metric':'delivery','t1_seconds':1200,'t2_seconds':1800,'effective_at':'2026-01-01T00:00:00+03:00'}
+    assert call('manager','POST','/api/performance/policies',policy).status_code==200
+    manager=call('manager','POST','/api/shifts',{'kind':'manager','branch_ids':['v5-a','v5-b']}).json()['shift']['id']
+    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).json()['shift']['id']
+    original=call('customer','POST','/api/orders',body('delivery')).json()['order']
+    oid=original['id']
+    task=call('manager','POST','/api/orders/'+oid+'/assign',{'driver_shift_id':driver}).json()['task']['id']
+    start=datetime.now(timezone.utc)-timedelta(hours=2)
+    with db.tx() as c:
+        c.execute("UPDATE driver_tasks SET status='picked_up' WHERE id=%s",(task,))
+        c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(oid,))
+    collected=call('driver','POST','/api/orders/'+oid+'/collect',
+                   {'method':'cash','amount_halalas':1200,'tendered_halalas':1200})
+    assert collected.status_code==200,collected.text
+    with db.tx() as c:
+        c.execute("UPDATE orders SET created_at=%s,completed_at=%s,delivery_status='delivered' WHERE id=%s",
+                  (start,start+timedelta(seconds=2000),oid))
+        c.execute("UPDATE driver_tasks SET status='delivered',picked_up_at=%s,delivered_at=%s WHERE id=%s",
+                  (start+timedelta(seconds=199),start+timedelta(seconds=2000),task))
+    changed=call('manager','POST','/api/performance/policies',policy|{'t1_seconds':2400,'t2_seconds':3000})
+    assert changed.status_code==200,changed.text
+    rejected=call('customer','POST','/api/orders',body('delivery')).json()['order']
+    with db.tx() as c:
+        c.execute("UPDATE orders SET preparation_status='rejected' WHERE id=%s",(rejected['id'],))
+    detail=actor('manager').get('/api/orders/'+oid).json()['order']
+    assert detail['performance']['classification']=='late' and detail['performance']['policy_version']==1
+    reject_detail=actor('manager').get('/api/orders/'+rejected['id']).json()['order']
+    assert reject_detail['performance']['classification']=='excluded'
+    lo=(start-timedelta(seconds=1)).isoformat();hi=(datetime.now(timezone.utc)+timedelta(seconds=1)).isoformat()
+    dash=actor('manager').get('/api/dashboard',params={'start':lo,'end':hi}).json()
+    frozen=dash['delivery_performance']
+    assert frozen['policy_source']=='order_snapshot'
+    assert frozen['completed_late']==1 and frozen['completed']['late']==1
+    assert frozen['classifications']['excluded']==1
+    assert frozen['valid']==1 and frozen['excluded']==1 and frozen['average_seconds']==1801
+    assert dash['delivery_time']['delayed']==1 and dash['delivery_time']['valid']==1
+    assert call('driver','POST','/api/shifts/'+driver+'/closing').status_code==200
+    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'counted_halalas':1200,'handover_halalas':1200}).status_code==200
+    transfer=call('driver','POST','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,
+                  'amount_halalas':1200,'reference':'TEST-policy-bag','closure':True}).json()['transfer']['id']
+    assert call('manager','POST','/api/custody/'+transfer+'/confirm').status_code==200
+    approved=call('manager','POST','/api/shifts/'+driver+'/approve')
+    assert approved.status_code==200,approved.text
+    report=actor('manager').get('/api/reports/'+approved.json()['report_id']).json()['report']
+    saved=next(row for row in report['snapshot']['orders'] if row['id']==oid)
+    assert saved['performance']==detail['performance']
+    assert saved['timings']['delivery']['seconds']==frozen['average_seconds']
+
+
 @pytest.mark.parametrize('url',['http://www.google.com/maps','https://evil.invalid/maps?q=1,2','https://www.google.com.evil.invalid/maps?q=1,2','https://www.google.com@127.0.0.1/maps','https://www.google.com:8080/maps','https://maps.app.goo.gl/../secret','https://127.0.0.1/admin','file:///etc/passwd'])
 def test_maps_never_accept_arbitrary_server_fetch_targets(url):
     assert catalog.safe_map_url(url) is None
@@ -215,6 +268,26 @@ def test_multi_branch_one_shift_revocation_preserves_task_custody_and_draft(v5):
     assert call('manager','POST','/api/shifts/'+manager+'/closing').status_code==200
     zero=call('manager','POST','/api/shifts/'+manager+'/submit',{'counted_halalas':0,'handover_halalas':0})
     assert zero.status_code==409
+
+
+@pytest.mark.postgres
+def test_chat_fallback_can_claim_after_previous_assignee_scope_is_withdrawn(v5):
+    actor,call,body,_=v5
+    order=call('customer','POST','/api/orders',body()).json()['order']
+    cid=call('customer','POST','/api/conversations',{'order_id':order['id']}).json()['conversation']['id']
+    assert call('branch','POST','/api/conversations/'+cid+'/claim').status_code==200
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('v5-backup-branch','TEST fallback','branch_manager','v5-test',%s)",
+                  (db.json(['v5-a']),))
+        c.execute("UPDATE users SET branch_ids='[]' WHERE id='v5-branch'")
+        backup=c.execute("SELECT * FROM users WHERE id='v5-backup-branch'").fetchone()
+    result=actor('owner')
+    result.app.dependency_overrides[auth.current_user]=lambda:backup
+    reclaimed=result.post('/api/conversations/'+cid+'/claim',json={},headers={'Idempotency-Key':uuid4().hex})
+    assert reclaimed.status_code==200,reclaimed.text
+    assert reclaimed.json()['assignee_id']=='v5-backup-branch'
+    assert actor('branch').get('/api/conversations/'+cid+'/messages').status_code==404
+    assert actor('customer').get('/api/conversations/'+cid+'/messages').status_code==200
 
 
 @pytest.mark.parametrize('url',['https://www.google.com/maps/../url?q=https://evil.invalid','https://www.google.com/maps/%2e%2e/url?q=https://evil.invalid','https://goo.gl/not-a-maps-link'])

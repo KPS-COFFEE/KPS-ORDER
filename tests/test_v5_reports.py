@@ -30,12 +30,15 @@ def test_v5_same_source_numbers_escape_drilldown_and_real_fonts():
     snap['orders'][0]['snapshot']['items'][0]['name']='قهوة <script>bad()</script>'
     changed=deepcopy(snap)
     compact=reporting.make_v5_print_html(snap)
-    detailed=reporting.make_v5_print_html(snap,'owner')
+    detailed=reporting.make_v5_print_html(snap,'owner','TEST-SAVED-REPORT-1')
     csv=reporting.make_v5_csv(snap,'owner').decode('utf-8-sig')
     assert snap==changed
     assert 'data-report-template="5"' in compact and '<pre' not in compact
     assert 'TEST-ORDER-1' not in compact # detail appendix is not printed by default
     assert 'TEST-ORDER-1' in detailed and '<details' in detailed and 'id="order-TEST-ORDER-1"' in detailed
+    for fmt in ('pdf','csv'):
+        assert 'href="/api/reports/TEST-SAVED-REPORT-1/renderings/v5/'+fmt+'"' in detailed
+    assert 'report-actions screen-only' in detailed
     assert '&lt;script&gt;bad()&lt;/script&gt;' in detailed and '<script>bad()' not in detailed
     assert '1000' in csv and '10.00' in csv and 'presentation_template,5' in csv
     for weight in ('Regular','SemiBold','Bold'):

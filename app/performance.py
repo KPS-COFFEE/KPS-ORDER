@@ -93,7 +93,7 @@ def enrich_orders(conn, rows, now=None):
     for row in rows:
         point = points.get(row['id'], {})
         done = row.get('completed_at') or point.get('task.delivered')
-        cancelled = row['preparation_status'] == 'cancelled' or row['delivery_status'] == 'cancelled'
+        cancelled = row['preparation_status'] in {'cancelled', 'rejected'} or row['delivery_status'] == 'cancelled'
         terminal = bool(done or cancelled)
         accepted, ready, pickup = point.get('preparation.accepted'), point.get('preparation.ready'), point.get('task.picked_up')
         times = {'acceptance_wait': _phase(row['created_at'], accepted, now, terminal, cancelled),
@@ -115,6 +115,50 @@ def enrich_orders(conn, rows, now=None):
         row['neighborhood'] = row.get('customer', {}).get('neighborhood', '')
         row['server_now'] = now.isoformat()
     return rows
+
+
+def delivery_summary(conn, where, params, now=None):
+    """Aggregate the same frozen classifications shown in order lists/reports.
+
+    Read in bounded batches instead of loading a whole operational period into
+    memory. Live order age is deliberately not this road-duration metric.
+    """
+    now = _date(now) if now else datetime.now(timezone.utc)
+    codes = tuple(LABELS)
+    result = {'basis': BASIS['delivery'], 'policy_source': 'order_snapshot',
+              'total_orders': 0, 'classifications': dict.fromkeys(codes, 0),
+              'live': dict.fromkeys(codes, 0), 'completed': dict.fromkeys(codes, 0),
+              'valid': 0, 'excluded': 0, 'average_seconds': None,
+              'live_late': 0, 'completed_late': 0}
+    after, total_seconds = '', 0
+    while True:
+        rows = conn.execute("SELECT o.* FROM orders o WHERE o.service='delivery' AND " + where +
+                            ' AND o.id>%s ORDER BY o.id LIMIT 500', [*params, after]).fetchall()
+        if not rows:
+            break
+        enrich_orders(conn, rows, now=now)
+        for row in rows:
+            result['total_orders'] += 1
+            point = row['performance']
+            code, state = point['classification'], point['state']
+            result['classifications'][code] += 1
+            complete = state == 'completed'
+            terminal = complete or state == 'cancelled' or bool(row.get('completed_at'))
+            result['completed' if terminal else 'live'][code] += 1
+            if complete and point['seconds'] is not None:
+                result['valid'] += 1
+                total_seconds += point['seconds']
+                result['completed_late'] += code == 'late'
+            elif terminal:
+                result['excluded'] += 1
+            elif state == 'running':
+                result['live_late'] += code == 'late'
+        after = rows[-1]['id']
+        if len(rows) < 500:
+            break
+    if result['valid']:
+        result['average_seconds'] = total_seconds / result['valid']
+    return result
 
 
 def policy_scope(conn, user, province_id, branch_ids):

@@ -177,8 +177,8 @@ def claim(cid:str,request:Request,user=Depends(auth.current_user)):
         def perform():
             v=conversation(c,user,cid,True)
             if v['assignee_id'] and v['assignee_id']!=user['id']:
-                previous=c.execute('SELECT active FROM users WHERE id=%s',(v['assignee_id'],)).fetchone()
-                if previous and previous['active'] and user['role']!='owner':fail(409,'المحادثة لدى موظف آخر؛ يراجع المدير نقل المسؤولية')
+                previous=c.execute('SELECT * FROM users WHERE id=%s',(v['assignee_id'],)).fetchone()
+                if previous and previous['active'] and allowed(previous,v) and user['role']!='owner':fail(409,'المحادثة لدى موظف آخر؛ يراجع المدير نقل المسؤولية')
             c.execute("UPDATE conversations SET assignee_id=%s,status='in_progress' WHERE id=%s",(user['id'],cid))
             db.audit(c,user['id'],'chat.claim','conversation',cid)
             return {'assignee_id':user['id'],'status':'in_progress'}

@@ -7,16 +7,23 @@ external mail is sent and this does not certify a production email channel.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import os
 import secrets
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app import auth, db, email_delivery
 from test_browser import (ARTIFACTS, WIDTHS, PASSWORD, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
-                          chromium_browser, live_app as original_live_app)
+                          chromium_browser, ROOT)
 
 pytestmark = [pytest.mark.postgres,
               pytest.mark.skipif(__import__('os').getenv('TEST_BROWSER') != '1',
@@ -25,7 +32,7 @@ pytestmark = [pytest.mark.postgres,
 
 @pytest.fixture
 def v5_live_app(database, tmp_path, monkeypatch):
-    """Configure an isolated durable outbox, with its worker intentionally off."""
+    """Real restartable HTTP process; its DB and encrypted outbox are isolated."""
     monkeypatch.setenv('EMAIL_PROVIDER', 'smtp_ssl')
     monkeypatch.setenv('EMAIL_FROM', 'synthetic-browser@example.test')
     monkeypatch.setenv('SMTP_HOST', 'test-mail.invalid')
@@ -36,7 +43,60 @@ def v5_live_app(database, tmp_path, monkeypatch):
     monkeypatch.setenv('REPORT_WORKER_ENABLED', 'false')
     with db.tx() as conn:
         conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='email'")
-    yield from original_live_app.__wrapped__(database, tmp_path, None)
+    with socket.socket() as reservation:
+        reservation.bind(('127.0.0.1', 0))
+        port = reservation.getsockname()[1]
+    base = f'http://127.0.0.1:{port}'
+    env = {**os.environ, 'DATABASE_URL': database, 'APP_ENV': 'testing',
+           'PUBLIC_BASE_URL': base, 'APP_ALLOWED_ORIGINS': base,
+           'APP_ALLOWED_HOSTS': '127.0.0.1,localhost',
+           'SESSION_COOKIE_SECURE': 'false', 'OTP_PROVIDER': 'disabled',
+           'INITIAL_CATALOG_IMPORT': 'true'}
+    log_path = tmp_path / 'v5-browser-test-app.log'
+
+    class IsolatedApp(str):
+        process = None
+        restart_count = 0
+
+        def stop(self):
+            if self.process is None:
+                return
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+
+        def start(self):
+            self.process = subprocess.Popen(
+                [sys.executable, '-m', 'uvicorn', 'app.main:app', '--host',
+                 '127.0.0.1', '--port', str(port)],
+                cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    pytest.fail('Isolated V5 HTTP server did not start: ' + log_path.read_text()[-3000:])
+                try:
+                    if httpx.get(base + '/ready', timeout=1).status_code == 200:
+                        return
+                except httpx.HTTPError:
+                    pass
+                time.sleep(.1)
+            pytest.fail('Isolated V5 HTTP server readiness timed out.')
+
+        def restart(self):
+            self.stop()
+            self.start()
+            self.restart_count += 1
+
+    with log_path.open('w') as log:
+        server = IsolatedApp(base)
+        server.start()
+        try:
+            yield server
+        finally:
+            server.stop()
 
 
 def _font_evidence(page):
@@ -164,6 +224,15 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         manager.locator('[data-page=orders]').click()
         expect(manager.locator(f'[data-order-id="{order_id}"]')).to_be_visible()
         _capture(manager, 'v5-manager-sequential-orders')
+        # The exact acceptance sequence prepares at the executing branch before
+        # dispatch; neither view creates a second order or a second sale.
+        branch.locator('[data-page=orders]').click()
+        expect(branch.locator(f'[data-order-id="{order_id}"]')).to_be_visible()
+        for status in ('accepted','preparing','ready'):
+            branch.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
+            branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status={status}]').click()
+            expect(branch.locator(f'#modal-body [data-action=prepare][data-status={status}]')).not_to_be_visible()
+            _close_detail(branch)
         manager.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
         expect(manager.locator('#modal-body')).to_contain_text('ضيف — الجوال غير موثق')
         manager.locator(f'[data-action=assign][data-id="{order_id}"]').click()
@@ -171,7 +240,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         driver.locator('[data-page=tasks]').click()
         driver.locator('[data-action=task-transition][data-status=accepted]').click()
         branch.locator('[data-page=orders]').click()
-        for status in ('accepted','preparing','ready','handed_over'):
+        for status in ('handed_over',):
             branch.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
             branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status={status}]').click()
             expect(branch.locator(f'#modal-body [data-action=prepare][data-status={status}]')).not_to_be_visible()
@@ -228,18 +297,57 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             assert conn.execute("SELECT count(*) n FROM orders WHERE customer_id=%s", (order['customer_id'],)).fetchone()['n'] == 1
             assert conn.execute('SELECT status FROM shifts WHERE id=%s', (manager_shift,)).fetchone()['status'] == 'closed'
             final_reports=conn.execute('SELECT id,kind,snapshot FROM closure_reports WHERE shift_id IN (%s,%s)',(driver_shift,manager_shift)).fetchall()
+        saved_report_files = {}
         for report in final_reports:
             reviewer=driver_context if report['kind']=='driver' else contexts['delivery_manager']
             path=base+'/api/reports/'+report['id']+'/renderings/v5/'
             compact=reviewer.request.get(path+'pdf')
             assert compact.status==200 and compact.body().startswith(b'%PDF')
+            saved_report_files[(report['id'],report['kind'],'pdf')] = compact.body()
             (ARTIFACTS / ('v5_'+report['kind']+'_final.pdf')).write_bytes(compact.body())
             if report['kind']=='manager':
                 for fmt in ('pdf','csv'):
                     detailed=contexts['owner'].request.get(path+fmt)
                     assert detailed.status==200
+                    saved_report_files[(report['id'],'owner',fmt)] = detailed.body()
                     (ARTIFACTS / ('v5_owner_final.'+fmt)).write_bytes(detailed.body())
                 (ARTIFACTS / 'v5-final-financial-snapshot.json').write_text(json.dumps({'test_only':True,'snapshot':report['snapshot']},ensure_ascii=False,default=str,indent=2)+'\n')
+        # Restart the actual HTTP process against the SAME isolated PostgreSQL
+        # schema. Startup executes all safe migrations/catalog import again;
+        # it must not reset the guest identity, ledger, closures or saved bytes.
+        def persistence_state():
+            with db.tx() as conn:
+                conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+                return {
+                    'order': conn.execute('SELECT id,order_no,customer_id,customer,snapshot,total_halalas,payment_status,delivery_status FROM orders WHERE id=%s',(order_id,)).fetchone(),
+                    'shifts': conn.execute('SELECT id,status,submission FROM shifts WHERE id IN (%s,%s) ORDER BY id',(driver_shift,manager_shift)).fetchall(),
+                    'collections': conn.execute('SELECT * FROM collections WHERE order_id=%s ORDER BY id',(order_id,)).fetchall(),
+                    'reports': conn.execute('SELECT id,snapshot,pdf_data,csv_data FROM closure_reports WHERE shift_id IN (%s,%s) ORDER BY id',(driver_shift,manager_shift)).fetchall(),
+                    'renderings': conn.execute('SELECT report_id,template_version,view_kind,status,source_sha256,html_data,pdf_data,csv_data FROM report_renderings ORDER BY report_id,view_kind').fetchall(),
+                    'notifications': conn.execute('SELECT * FROM report_notifications ORDER BY id').fetchall(),
+                    'migrations': conn.execute('SELECT version,sha256 FROM schema_migrations ORDER BY version').fetchall(),
+                }
+        before_restart = persistence_state()
+        base.restart()
+        assert base.restart_count == 1
+        assert persistence_state() == before_restart
+        for role, context in contexts.items():
+            session = context.request.get(base+'/api/session')
+            assert session.status == 200 and session.json()['user'] and session.json()['csrf_token'], role
+        tracked = customer_context.request.get(base+'/api/orders/'+order_id)
+        assert tracked.status == 200 and tracked.json()['order']['snapshot'] == order['snapshot']
+        assert tracked.json()['order']['delivery_status'] == 'delivered'
+        for (rid,role,fmt),contents in saved_report_files.items():
+            context = driver_context if role == 'driver' else contexts['delivery_manager'] if role == 'manager' else contexts['owner']
+            response = context.request.get(base+'/api/reports/'+rid+'/renderings/v5/'+fmt)
+            assert response.status == 200 and response.body() == contents
+        customer.reload()
+        expect(customer.locator('.product-card')).to_have_count(35)
+        owner.reload()
+        expect(owner.locator('#app-shell')).to_be_visible()
+        owner.locator('[data-page=reports]').click()
+        expect(owner.locator('.owner-notifications')).to_contain_text('معتمد نهائيًا')
+        _capture(owner, 'v5-owner-reports-after-real-http-restart')
         assert not any(errors), errors
         (ARTIFACTS / 'v5-browser-evidence-metadata.json').write_text(json.dumps({
             'test_only': True, 'real_http': True, 'network_api_interception': False,
@@ -248,6 +356,11 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             'email_link_source': 'isolated encrypted synthetic test outbox, not an external mailbox',
             'sms_configured': False, 'whatsapp_configured': False, 'font_loads': fonts,
             'financial_events': {'orders':1,'collections':1,'driver_closures':1,'manager_closures':1},
+            'actual_http_process_restarts': base.restart_count,
+            'restart_database_and_saved_report_bytes_identical': True,
+            'authenticated_guest_and_staff_sessions_survived_restart': True,
+            'saved_report_sha256': {rid+':'+role+':'+fmt:hashlib.sha256(contents).hexdigest()
+                                    for (rid,role,fmt),contents in saved_report_files.items()},
         },ensure_ascii=False,indent=2)+'\n')
     finally:
         for context in contexts.values():

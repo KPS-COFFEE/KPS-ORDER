@@ -585,8 +585,10 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         now=datetime.now(RIYADH);day=(now-timedelta(minutes=minutes)).date()
         if period=='yesterday':day-=timedelta(days=1)
         try:
-            lo=datetime.fromisoformat(start).replace(tzinfo=RIYADH) if start else datetime.combine(day,datetime.min.time(),RIYADH)+timedelta(minutes=minutes)
-            hi=datetime.fromisoformat(end).replace(tzinfo=RIYADH) if end else lo+timedelta(days=1)
+            lo=datetime.fromisoformat(start) if start else datetime.combine(day,datetime.min.time(),RIYADH)+timedelta(minutes=minutes)
+            lo=lo.replace(tzinfo=RIYADH) if lo.tzinfo is None else lo.astimezone(RIYADH)
+            hi=datetime.fromisoformat(end) if end else lo+timedelta(days=1)
+            hi=hi.replace(tzinfo=RIYADH) if hi.tzinfo is None else hi.astimezone(RIYADH)
         except ValueError:fail(422,'تاريخ غير صالح')
         if hi<=lo or hi-lo>timedelta(days=93):fail(422,'الفترة يجب أن تكون بين يوم و93 يوما')
         clauses=['o.brand_id=%s','o.created_at>=%s','o.created_at<%s'];params=[brand,lo,hi]
@@ -608,11 +610,17 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         branch_top=c.execute("SELECT o.branch_id,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
         timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
         timing['threshold_minutes']=late;timing['threshold_configured']='late_after_minutes' in config
+        from .performance import delivery_summary
+        frozen_performance=delivery_summary(c,where,params)
+        timing['legacy_delayed']=timing['delayed']
+        timing.update(valid=frozen_performance['valid'],excluded=frozen_performance['excluded'],
+                      average_seconds=frozen_performance['average_seconds'],delayed=frozen_performance['completed_late'])
+        timing['classification_basis']='frozen_province_policy'
         # Collection events use their own timestamps, independently of order cohorts and custody transfers.
         cash_where=where.replace('o.created_at>=','p.created_at>=').replace('o.created_at<','p.created_at<')
         collected=c.execute('SELECT p.method,coalesce(sum(p.amount_halalas),0) amount_halalas FROM collections p JOIN orders o ON o.id=p.order_id WHERE '+cash_where+' GROUP BY p.method',params).fetchall()
         shift_rows=c.execute("SELECT status,count(*) count,coalesce(sum((submission->>'difference_halalas')::bigint),0) difference_halalas FROM shifts WHERE brand_id=%s AND opened_at<%s AND coalesce(closed_at,%s)>=%s AND (%s OR branch_ids ?| %s) GROUP BY status",(brand,hi,hi,lo,user['role']=='owner',[branch_id] if branch_id else user.get('branch_ids',[]))).fetchall()
-        return safe({'period':{'start':lo,'end':hi,'timezone':'Asia/Riyadh','operational_day_start_minutes':minutes,'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ الفترة الحالية يوم تقويمي بتوقيت الرياض'},'summary':summary,'top_items':items,'top_branches':branch_top,'delivery_time':timing,'collections':collected,'shifts':shift_rows,'definitions_url':'/docs/metrics'})
+        return safe({'period':{'start':lo,'end':hi,'timezone':'Asia/Riyadh','operational_day_start_minutes':minutes,'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ الفترة الحالية يوم تقويمي بتوقيت الرياض'},'summary':summary,'top_items':items,'top_branches':branch_top,'delivery_time':timing,'delivery_performance':frozen_performance,'collections':collected,'shifts':shift_rows,'definitions_url':'/docs/metrics'})
 
 class ManagerHandover(BaseModel):
     target_manager_shift_id:str

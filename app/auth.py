@@ -228,29 +228,45 @@ class OTPRequestBody(BaseModel):
     brand_id: str = Field(default='kps', min_length=1, max_length=80)
 
 
+def _otp_channel_ready(conn, brand_id: str, channel: str):
+    """An installed provider is not permission to bypass a paused identity channel.
+
+    Testing permits the owner's real delivery proof before activation. Existing
+    authenticated customers and guest ordering are independent of this check.
+    """
+    if channel not in {'sms', 'whatsapp'}:
+        raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'قناة التحقق غير مهيأة.')
+    row = _channel(conn, brand_id, channel)
+    if row['state'] not in {'testing', 'active'} or (
+            row['state'] == 'active' and (not row['enabled'] or not row['delivery_proven_at'])):
+        raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'قناة التحقق متوقفة أو بانتظار اختبارها. يمكنك الطلب كضيف إذا كان متاحًا.')
+
+
 @router.post('/auth/otp/request')
 def request_otp(body: OTPRequestBody, request: Request):
     check_origin(request)
     provider_config()
     phone = normalize_phone(body.phone)
+    channel = os.getenv('OTP_CHANNEL', 'sms')
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (body.brand_id,)).fetchone():
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
+        _otp_channel_ready(conn, body.brand_id, channel)
         allowed = db.rate_limit(conn, 'otp-request-phone:' + phone, 3, 600)
         allowed = db.rate_limit(conn, 'otp-request-ip:' + ip, 10, 600) and allowed
     if not allowed:
         raise db.error(429, 'OTP_RATE_LIMIT', 'طلبات تحقق كثيرة. انتظر قبل المحاولة مجددًا.')
-    channel = os.getenv('OTP_CHANNEL', 'sms')
-    if channel not in {'sms', 'whatsapp'}:
-        raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'قناة التحقق غير مهيأة.')
     result = _provider_post('Verifications', {'To': phone, 'Channel': channel})
-    if result.get('status') != 'pending' or not result.get('sid'):
+    if result.get('status') != 'pending' or not result.get('sid') or result.get('channel', channel) != channel:
         raise db.error(503, 'OTP_NOT_SENT', 'لم يؤكد المزود إرسال رمز التحقق.')
     challenge_id = db.new_id('otp_')
     with db.tx() as conn:
-        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,expires_at) VALUES(%s,%s,%s,%s,now()+interval \'10 minutes\')',
-                     (challenge_id, body.brand_id, phone, result['sid']))
+        # Recheck after provider latency so pausing the channel cannot create a
+        # new usable challenge. Record the channel actually used by the provider.
+        _otp_channel_ready(conn, body.brand_id, channel)
+        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at) VALUES(%s,%s,%s,%s,%s,now()+interval \'10 minutes\')',
+                     (challenge_id, body.brand_id, phone, result['sid'], channel))
     return {'challenge_id': challenge_id, 'expires_in': 600, 'channel': channel}
 
 
@@ -274,22 +290,25 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
         raise db.error(429, 'OTP_RATE_LIMIT', 'محاولات تحقق كثيرة. انتظر قليلًا.')
     if not challenge:
         raise db.error(400, 'OTP_EXPIRED', 'رمز التحقق منتهي أو مستهلك. اطلب رمزًا جديدًا.')
+    channel = challenge['delivery_channel']
+    with db.tx() as conn:
+        _otp_channel_ready(conn, challenge['brand_id'], channel)
     # Only the provider's approved result authenticates a phone; typed phone/code never does.
     result = _provider_post('VerificationCheck', {'VerificationSid': challenge['provider_reference'], 'Code': body.code})
-    if result.get('status') != 'approved' or result.get('to') != challenge['phone']:
+    if result.get('status') != 'approved' or result.get('to') != challenge['phone'] or result.get('channel', channel) != channel:
         raise db.error(400, 'OTP_INVALID', 'رمز التحقق غير صحيح.')
     with db.tx() as conn:
+        _otp_channel_ready(conn, challenge['brand_id'], channel)
         claimed = conn.execute('UPDATE otp_challenges SET verified_at=now() WHERE id=%s AND verified_at IS NULL AND expires_at>now() RETURNING id',
                                (body.challenge_id,)).fetchone()
         if not claimed:
             raise db.error(409, 'OTP_ALREADY_USED', 'تم استخدام طلب التحقق بالفعل.')
-        channel = os.getenv('OTP_CHANNEL', 'sms')
         proof_column = 'phone_whatsapp_verified_at' if channel == 'whatsapp' else 'phone_sms_verified_at'
         conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone,identity_kind,phone_verified_at," + proof_column + ") VALUES(%s,%s,'customer',%s,%s,%s,now(),now()) ON CONFLICT(brand_id,phone) WHERE role='customer' AND phone_verified_at IS NOT NULL DO NOTHING",
                      (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone'], 'phone_'+channel+'_verified'))
         user = conn.execute("SELECT * FROM users WHERE brand_id=%s AND phone=%s AND role='customer' AND phone_verified_at IS NOT NULL AND active", (challenge['brand_id'], challenge['phone'])).fetchone()
         if user:
-            conn.execute('UPDATE users SET '+proof_column+'=now() WHERE id=%s',(user['id'],))
+            user = conn.execute('UPDATE users SET '+proof_column+'=now() WHERE id=%s RETURNING *',(user['id'],)).fetchone()
             conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s',(challenge['brand_id'],channel))
         if not user:
             raise db.error(403, 'CUSTOMER_DISABLED', 'هذا الحساب موقوف. تواصل مع الإدارة.')

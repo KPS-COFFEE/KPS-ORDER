@@ -17,7 +17,7 @@ DELIVERY_CITIES = {'حفرالباطن', 'الذيبية', 'القيصومة', '
 
 
 def city(value):
-    normalized = re.sub(r'\s+', '', str(value))
+    normalized = re.sub(r'\s+', '', catalog.normalize_city(str(value)))
     return 'رفحاء' if normalized == 'رفحا' else normalized
 
 
@@ -133,7 +133,7 @@ def validate_branch_settings(settings, branch_city):
         if field in settings and type(settings[field]) is not bool:
             raise db.error(422, 'BOOLEAN_INVALID', 'إعداد التفعيل يجب أن يكون صحيحًا أو خطأ.')
     for field in ('opening_hours','delivery_hours'):
-        if settings.get(field) is not None:
+        if settings.get(field) not in (None, []):
             hours(settings[field])
     for field in ('delivery_fee_halalas','minimum_order_halalas'):
         if settings.get(field) is not None:
@@ -142,7 +142,8 @@ def validate_branch_settings(settings, branch_city):
         coordinate(settings['location'])
     if settings.get('map_url') is not None and not catalog.safe_map_url(settings['map_url']):
         raise db.error(422,'MAP_URL_NOT_ALLOWED','اختر رابط Google Maps معتمدًا دون روابط خارجية.')
-    if 'payment_methods' in settings and (not isinstance(settings['payment_methods'], list) or not settings['payment_methods'] or set(settings['payment_methods']) - {'cash','card'}):
+    if 'payment_methods' in settings and (not isinstance(settings['payment_methods'], list) or
+            any(not isinstance(value, str) or value not in {'cash','card'} for value in settings['payment_methods'])):
         raise db.error(422, 'PAYMENT_METHOD_INVALID', 'طرق الدفع المسموحة كاش وشبكة عند الاستلام.')
     coverage = settings.get('coverage')
     if coverage is not None:
@@ -194,12 +195,16 @@ def update_branch(record_id: str, body: dict, user=Depends(owner), idem: str | N
             changes = body.get('settings',{})
             validate_branch_settings(changes,branch_city)
             settings = row['settings'] | changes
+            if 'map_url' in changes and changes['map_url'] is None:
+                settings['map_url_verified'] = False
+            if 'location' in changes and changes['location'] is None:
+                settings['location_verified'] = False
             if settings.get('delivery_enabled') and city(branch_city) not in DELIVERY_CITIES:
                 raise db.error(422,'DELIVERY_CITY_FORBIDDEN','أوقف التوصيل قبل نقل الفرع إلى مدينة غير معتمدة.')
             enabled = any(settings.get(f) for f in ('pickup_enabled','car_enabled','delivery_enabled'))
             if enabled and (not settings.get('ordering_verified') or not settings.get('opening_hours') or not settings.get('payment_methods')):
                 raise db.error(422,'BRANCH_CONFIGURATION_INCOMPLETE','تحقق من التشغيل وساعات العمل وطرق الدفع قبل تفعيل الفرع.')
-            if settings.get('delivery_enabled') and any(settings.get(k) is None for k in ('delivery_hours','coverage','location','delivery_fee_halalas')):
+            if settings.get('delivery_enabled') and (any(not settings.get(k) for k in ('delivery_hours','coverage','location')) or settings.get('delivery_fee_halalas') is None):
                 raise db.error(422,'DELIVERY_CONFIGURATION_INCOMPLETE','يلزم الموقع والتغطية والساعات والرسوم الفعلية قبل تفعيل التوصيل.')
             conn.execute('UPDATE branches SET name=%s,city=%s,settings=%s,updated_at=now() WHERE id=%s',(name,branch_city,db.json(settings),record_id))
             db.audit(conn,user['id'],'branch.updated','branch',record_id,{'fields':list(body),'settings_fields':list(changes)})

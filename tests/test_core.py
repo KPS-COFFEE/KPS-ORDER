@@ -138,7 +138,7 @@ def _authenticate(client, user):
 def _body(service='pickup', branch='kps-branch-1', product='kps-01'):
     return {'brand_id': 'kps', 'branch_id': branch, 'service': service, 'payment_method': 'cash',
             'items': [{'product_id': product, 'quantity': 2}],
-            'customer': {'name': 'اختبار فقط', 'address': 'عنوان اختبار', 'location': {'lat': 28.4, 'lng': 45.9},
+            'customer': {'name': 'اختبار فقط', 'neighborhood': 'حي اختبار', 'address': 'عنوان اختبار', 'location': {'lat': 28.4, 'lng': 45.9},
                          'car': {'plate': 'TEST-ONLY', 'color': 'أبيض', 'model': 'اختبار'}}}
 
 
@@ -386,6 +386,8 @@ class TestPostgreSQLCore:
     def test_real_provider_contract_success_and_wrong_phone_rejected(self, client, monkeypatch):
         # Network is mocked exclusively in this test; no development OTP branch exists in application code.
         monkeypatch.setattr(auth, 'provider_config', lambda: ('AC' + '1' * 32, 'test-only', 'VA' + '1' * 32))
+        with db.tx() as conn:
+            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='sms'")
         outputs = {'Verifications': {'status': 'pending', 'sid': 'VE' + '2' * 32},
                    'VerificationCheck': {'status': 'approved', 'to': '+966500000000'}}
         monkeypatch.setattr(auth, '_provider_post', lambda path, data: outputs[path])

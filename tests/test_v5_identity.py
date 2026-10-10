@@ -295,3 +295,128 @@ class TestV5Identity:
             assert conn.execute('SELECT status FROM email_outbox WHERE dedupe_key=%s',('identity:'+request['challenge_id'],)).fetchone()['status']=='delivered'
             # Mail server delivery alone never marks the channel as inbox-proven.
             assert conn.execute("SELECT delivery_proven_at FROM identity_channels WHERE brand_id='kps' AND channel='email'").fetchone()['delivery_proven_at'] is None
+
+    @pytest.mark.parametrize('state', ['unconfigured', 'paused', 'fault'])
+    def test_optional_otp_respects_disabled_channel_and_guest_stays_available(self,client,monkeypatch,state):
+        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        calls=[]
+        monkeypatch.setattr(auth,'_provider_post',lambda path,data: calls.append((path,data)))
+        with db.tx() as conn:
+            conn.execute("UPDATE identity_channels SET state=%s,enabled=false WHERE brand_id='kps' AND channel='sms'",(state,))
+        result=client.post('/api/auth/otp/request',json={'phone':'0500000000'})
+        assert result.status_code==503 and result.json()['detail']['code']=='OTP_CHANNEL_UNAVAILABLE'
+        assert calls==[]
+        guest=_guest(client)
+        assert guest['identity_kind']=='guest' and guest['phone_verified_at'] is None
+
+    def test_pausing_otp_revokes_pending_authentication_not_existing_guest(self,client,monkeypatch):
+        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        calls=[]
+        def provider(path,data):
+            calls.append(path)
+            return {'status':'pending','sid':'VE'+'2'*32} if path=='Verifications' else {'status':'approved','to':'+966500000000'}
+        monkeypatch.setattr(auth,'_provider_post',provider)
+        with db.tx() as conn:
+            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='sms'")
+        sent=client.post('/api/auth/otp/request',json={'phone':'0500000000'})
+        assert sent.status_code==200,sent.text
+        guest=_guest(client)
+        with db.tx() as conn:
+            conn.execute("UPDATE identity_channels SET state='paused',enabled=false WHERE brand_id='kps' AND channel='sms'")
+        denied=client.post('/api/auth/otp/verify',json={'challenge_id':sent.json()['challenge_id'],'code':'123456'})
+        assert denied.status_code==503 and calls==['Verifications']
+        assert client.get('/api/session').json()['user']['id']==guest['id']
+        with db.tx() as conn:
+            assert conn.execute("SELECT count(*) n FROM users WHERE phone_verified_at IS NOT NULL").fetchone()['n']==0
+
+    def test_otp_proof_uses_actual_send_channel_after_runtime_setting_change(self,client,monkeypatch):
+        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        monkeypatch.setenv('OTP_CHANNEL','sms')
+        def provider(path,data):
+            if path=='Verifications':
+                assert data['Channel']=='sms'
+                return {'status':'pending','sid':'VE'+'2'*32}
+            return {'status':'approved','to':'+966500000000'}
+        monkeypatch.setattr(auth,'_provider_post',provider)
+        with db.tx() as conn:
+            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel IN ('sms','whatsapp')")
+        sent=client.post('/api/auth/otp/request',json={'phone':'0500000000'}).json()
+        monkeypatch.setenv('OTP_CHANNEL','whatsapp')
+        result=client.post('/api/auth/otp/verify',json={'challenge_id':sent['challenge_id'],'code':'123456'})
+        assert result.status_code==200,result.text
+        user=result.json()['user']
+        assert user['identity_kind']=='phone_sms_verified'
+        assert user['phone_sms_verified_at'] and user['phone_whatsapp_verified_at'] is None
+        with db.tx() as conn:
+            assert conn.execute('SELECT delivery_channel FROM otp_challenges WHERE id=%s',(sent['challenge_id'],)).fetchone()['delivery_channel']=='sms'
+            channels={r['channel']:r['delivery_proven_at'] for r in conn.execute("SELECT channel,delivery_proven_at FROM identity_channels WHERE brand_id='kps' AND channel IN ('sms','whatsapp')").fetchall()}
+            assert channels['sms'] and channels['whatsapp'] is None
+
+    def test_legacy_pending_otp_without_channel_cannot_fabricate_proof(self,client,monkeypatch):
+        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        calls=[]
+        monkeypatch.setattr(auth,'_provider_post',lambda path,data: calls.append(path))
+        identifier=db.new_id('otp_')
+        with db.tx() as conn:
+            conn.execute("INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,expires_at) VALUES(%s,'kps','+966500000000',%s,now()+interval '10 minutes')",(identifier,'VE'+'2'*32))
+        result=client.post('/api/auth/otp/verify',json={'challenge_id':identifier,'code':'123456'})
+        assert result.status_code==503 and result.json()['detail']['code']=='OTP_CHANNEL_UNAVAILABLE'
+        assert calls==[]
+
+    def test_provider_cannot_verify_different_channel_than_original_send(self,client,monkeypatch):
+        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        def provider(path,data):
+            return {'status':'pending','sid':'VE'+'2'*32,'channel':'sms'} if path=='Verifications' else {'status':'approved','to':'+966500000000','channel':'whatsapp'}
+        monkeypatch.setattr(auth,'_provider_post',provider)
+        with db.tx() as conn:
+            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='sms'")
+        sent=client.post('/api/auth/otp/request',json={'phone':'0500000000'}).json()
+        result=client.post('/api/auth/otp/verify',json={'challenge_id':sent['challenge_id'],'code':'123456'})
+        assert result.status_code==400 and result.json()['detail']['code']=='OTP_INVALID'
+        with db.tx() as conn:
+            assert conn.execute("SELECT count(*) n FROM users WHERE phone_verified_at IS NOT NULL").fetchone()['n']==0
+            assert conn.execute('SELECT verified_at FROM otp_challenges WHERE id=%s',(sent['challenge_id'],)).fetchone()['verified_at'] is None
+
+    @pytest.mark.parametrize('neighborhood',['','   ','...','\u200b\u200f','\x00الحزم'])
+    @pytest.mark.parametrize('identity',['guest','email_verified'])
+    def test_delivery_quote_and_checkout_require_meaningful_neighborhood(self,client,neighborhood,identity):
+        _prepare_catalog()
+        if identity=='guest':
+            _guest(client)
+        else:
+            user=_make_user()
+            with db.tx() as conn:
+                conn.execute("UPDATE users SET identity_kind='email_verified',email_verified_at=now(),phone='+966500000000' WHERE id=%s",(user['id'],))
+            _authenticate(client,user)
+        body=_body('delivery')
+        body['customer']['neighborhood']=neighborhood
+        for route in ('/api/quote','/api/orders'):
+            result=client.post(route,json=body,headers={'Idempotency-Key':'missing-delivery-district'})
+            assert result.status_code==422 and result.json()['detail']['code']=='DELIVERY_NEIGHBORHOOD_REQUIRED'
+        with db.tx() as conn:
+            assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n']==0
+
+    @pytest.mark.parametrize('service',['pickup','car'])
+    def test_non_delivery_neighborhood_remains_optional(self,client,service):
+        _prepare_catalog()
+        _guest(client)
+        body=_body(service)
+        body['customer']['neighborhood']=''
+        assert client.post('/api/quote',json=body).status_code==200
+        result=_create(client,body,key='non-delivery-no-district')
+        assert result.status_code==200,result.text
+
+    def test_delivery_keeps_trimmed_neighborhood_in_durable_order(self,client):
+        _prepare_catalog()
+        manager=_make_user('delivery_manager',branches=['kps-branch-1'])
+        with db.tx() as conn:
+            conn.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager',%s,'kps',%s)",(db.new_id('shift_'),manager['id'],db.json(['kps-branch-1'])))
+        _guest(client)
+        body=_body('delivery')
+        body['customer']['neighborhood']='  حي الحزم  '
+        result=_create(client,body,key='district-snapshot')
+        assert result.status_code==200,result.text
+        order=result.json()['order']
+        assert order['customer']['neighborhood']=='حي الحزم'
+        db.migrate()
+        assert client.get('/api/orders/'+order['id']).json()['order']['customer']['neighborhood']=='حي الحزم'

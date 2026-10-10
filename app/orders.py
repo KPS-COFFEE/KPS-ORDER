@@ -58,6 +58,8 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             if body.service == 'delivery':
                 _ensure_manager_duty(conn, body.brand_id, body.branch_id)
             customer = body.customer.model_dump(exclude_none=True)
+            if body.service == 'delivery':
+                customer['neighborhood'] = customer['neighborhood'].strip()
             # Contact is not ownership proof; only the opaque authenticated customer ID owns the order.
             supplied_phone = customer.pop('phone',None)
             customer['phone'] = auth.normalize_phone(supplied_phone) if supplied_phone else user.get('phone')

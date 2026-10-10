@@ -12,12 +12,34 @@ def test_configuration_rejects_malformed_options_and_city_aliases():
     assert admin.city('رفحاء')=='رفحاء'
     assert admin.city('رفحا')=='رفحاء'
     assert admin.city('حفر الباطن')=='حفرالباطن'
+    assert admin.city('قبة')=='قبه'
     for groups in [[42],[{'code':'COLOR','values':[42]}],[{'code':'COLOR','values':[{'code':'BLK'}],'min_select':False}]]:
         with pytest.raises(HTTPException):admin.validate_options(groups)
     with pytest.raises(HTTPException):
         admin.validate_branch_settings({'delivery_enabled':True},'الدمام')
     with pytest.raises(HTTPException):
         admin.validate_branch_settings({'coverage':{'type':'radius','center':{'lat':True,'lng':45},'radius_meters':10}},'حفر الباطن')
+
+
+@pytest.mark.postgres
+def test_disabled_branch_can_clear_form_fields_without_retaining_old_values(owner):
+    client,mutate=owner
+    configured={'pickup_enabled':True,'ordering_verified':True,'payment_methods':['cash'],
+                'opening_hours':[{'days':list(range(7)),'start':'00:00','end':'00:00'}],
+                'location':{'lat':28,'lng':45},'location_verified':True,
+                'map_url':'https://www.google.com/maps/dir/?api=1&destination=28,45','map_url_verified':True}
+    assert mutate('PATCH','/api/admin/branches/kps-branch-1',{'settings':configured}).status_code==200
+    assert mutate('PATCH','/api/admin/branches/kps-branch-1',{'settings':{'opening_hours':[]}}).status_code==422
+    empty={'pickup_enabled':False,'car_enabled':False,'delivery_enabled':False,'opening_hours':[],
+           'delivery_hours':[],'payment_methods':[],'coverage':None,'map_url':None,'location':None}
+    result=mutate('PATCH','/api/admin/branches/kps-branch-1',{'settings':empty})
+    assert result.status_code==200,result.text
+    settings=result.json()['settings']
+    assert settings['opening_hours']==[] and settings['payment_methods']==[]
+    assert settings['coverage'] is None and settings['map_url'] is None and settings['location'] is None
+    assert settings['map_url_verified'] is False and settings['location_verified'] is False
+    branch=next(b for b in client.get('/api/branches').json()['branches'] if b['id']=='kps-branch-1')
+    assert branch['directions_url'] is None
 
 
 @pytest.fixture
