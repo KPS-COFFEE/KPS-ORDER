@@ -89,6 +89,178 @@ def brand_title(snap):
     brand_id=str(snap.get('shift',{}).get('brand_id') or '')
     return 'KPS COFFEE' if brand_id=='kps' else brand_id
 
+def make_print_html(snap):
+    """Present only the saved closure snapshot; rendering never changes its ledger."""
+    from datetime import datetime,timezone
+    from decimal import Decimal
+
+    esc=lambda value:html.escape(str(value),quote=True)
+    labels={
+        'expected_halalas':'النقد المتوقع','counted_halalas':'النقد المعدود',
+        'handover_halalas':'التسليم النهائي المؤكد','retained_halalas':'العهدة المحتفظ بها',
+        'difference_halalas':'الفرق المعتمد','cash_collected_halalas':'التحصيل النقدي الصافي بعد الباقي',
+        'card_collected_halalas':'تحصيل الشبكة','cash_refunded_halalas':'استردادات الكاش',
+        'card_refunded_halalas':'استردادات الشبكة','gross_completed_halalas':'قيمة الطلبات المكتملة',
+        'net_collections_halalas':'صافي التحصيلات','delivery_fees_halalas':'رسوم الطلبات المكتملة',
+    }
+    names={
+        'driver':'سائق','manager':'مدير توصيل','delivery':'توصيل','pickup':'استلام من الفرع','car':'استلام بالسيارة',
+        'cash':'كاش','card':'شبكة','open':'مفتوح','closing':'قيد التقفيل','submitted':'مقدم للاعتماد','closed':'مقفل',
+        'new':'جديد','accepted':'مقبول','preparing':'قيد التجهيز','ready':'جاهز','handed_over':'سُلّم من الفرع',
+        'completed':'مكتمل','pending':'بانتظار التأكيد','assigned':'مسند','picked_up':'مستلم من الفرع',
+        'problem':'مشكلة مسجلة','delivered':'تم التسليم','cancelled':'ملغى','transferred':'محول',
+        'not_applicable':'لا ينطبق','unpaid':'غير مدفوع','paid':'مدفوع','partially_refunded':'مسترد جزئيا',
+        'refunded':'مسترد بالكامل','confirmed':'مؤكد من المستلم','rejected':'مرفوض',
+        'collection':'تحصيل نقدي','refund':'استرداد نقدي','transfer_in':'عهدة مستلمة','transfer_out':'عهدة مسلمة',
+        'expense':'مصروف أو سلفة','direct_receipt':'استلام نقد مباشر','adjustment':'تسوية معتمدة',
+    }
+    def present(value):return value is not None and value!=''
+    def text(value):return esc(value) if present(value) else 'غير مسجل'
+    def ref(value):return '<bdi class="reference" dir="ltr">'+esc(value)+'</bdi>' if present(value) else 'غير مسجل'
+    def money(value):
+        if not present(value):return 'غير مسجل'
+        return '<bdi class="money" dir="ltr">'+f'{Decimal(str(value))/100:,.2f}'+'</bdi> <span class="currency">ر.س</span>'
+    def named(value):return text(names.get(value,value))
+    def refs(values):return '<span class="references">'+''.join(ref(v) for v in values)+'</span>' if values else 'لا توجد'
+    def stamp(value):
+        if not present(value):return 'غير مسجل'
+        try:
+            parsed=value if isinstance(value,datetime) else datetime.fromisoformat(str(value).replace('Z','+00:00'))
+            if parsed.tzinfo is None:parsed=parsed.replace(tzinfo=timezone.utc)
+            local=parsed.astimezone(ZoneInfo('Asia/Riyadh'))
+        except (TypeError,ValueError):return ref(value)
+        return '<span class="timestamp"><span>التاريخ '+ref(local.strftime('%Y-%m-%d'))+'</span><span>وقت الرياض '+ref(local.strftime('%H:%M:%S'))+'</span></span>'
+    def fields(rows):
+        return '<dl class="fields">'+''.join('<div class="field"><dt>'+esc(label)+'</dt><dd>'+value+'</dd></div>' for label,value in rows)+'</dl>'
+    def record(title,rows,extra=''):
+        return '<article class="record"><h3>'+esc(title)+'</h3>'+fields(rows)+extra+'</article>'
+    def section(key,title,records,empty):
+        return '<section id="'+key+'"><h2>'+esc(title)+'</h2>'+(''.join(records) if records else '<p class="empty">'+esc(empty)+'</p>')+'</section>'
+    def closure_rows(closure):
+        return [(labels[key],money(closure.get(key))) for key in ('expected_halalas','counted_halalas','handover_halalas','retained_halalas','difference_halalas')]
+
+    shift=snap.get('shift',{});summary=snap.get('summary',{});title=brand_title(snap)
+    intro=fields([
+        ('مرجع التقفيلة',ref(snap.get('reference'))),('نوع التقفيلة',named(snap.get('kind'))),
+        ('التاريخ التشغيلي',ref(snap.get('operational_date'))),('المنطقة الزمنية',ref(snap.get('timezone'))),
+        ('حدود اليوم',text('يوم تشغيلي حسب الإعداد المحفوظ' if snap.get('operational_day_configured') else 'يوم تقويمي؛ بداية اليوم التشغيلي غير محددة')),
+        ('مرجع الشفت',ref(shift.get('id'))),('صاحب الشفت',ref(shift.get('user_id'))),('حالة الشفت',named(shift.get('status'))),
+        ('الفروع المشمولة',refs(shift.get('branch_ids',[]))),('البراند',ref(shift.get('brand_id'))),
+        ('شفت المدير المسؤول',ref(shift.get('manager_shift_id'))),('المدير المسؤول',ref(snap.get('manager_user_id'))),
+        ('بداية الشفت',stamp(shift.get('opened_at'))),('تقديم التقفيلة',stamp(shift.get('submitted_at'))),
+        ('اعتماد نهاية الشفت',stamp(shift.get('closed_at'))),('المعد',ref(snap.get('prepared_by'))),
+        ('المعتمد',ref(snap.get('approved_by'))),
+    ])
+    financial=[('عهدة افتتاح الشفت',money(shift.get('opening_halalas'))),*closure_rows(summary.get('submission') or shift.get('submission') or {})]
+    financial += [(labels[key],money(summary.get(key))) for key in ('cash_collected_halalas','card_collected_halalas','cash_refunded_halalas','card_refunded_halalas','gross_completed_halalas','delivery_fees_halalas','net_collections_halalas')]
+    financial += [('عدد الطلبات في السجل',ref(summary.get('unique_orders'))),('الطلبات المنفذة ضمن التقرير',ref(summary.get('completed_orders')))]
+    if shift.get('exception_reason'):financial.append(('سبب الاستثناء المعتمد',text(shift['exception_reason'])))
+    sections=[section('financial','ملخص التقفيلة والتحصيلات', [record('جميع المبالغ بالريال السعودي',financial)],'')]
+
+    order_records=[]
+    for order in snap.get('orders',[]):
+        saved=order.get('snapshot') or {};items=[]
+        for index,item in enumerate(saved.get('items',[]),1):
+            item_rows=[('الصنف',text(item.get('name'))),('مرجع المنتج',ref(item.get('product_id'))),('الكمية',ref(item.get('quantity'))),('سعر الوحدة',money(item.get('unit_price_halalas'))),('مبلغ الصنف',money(item.get('line_total_halalas')))]
+            if item.get('source_id'):item_rows.append(('مرجع المنتج في المصدر',ref(item['source_id'])))
+            units=[]
+            for unit_index,unit in enumerate(item.get('units',[]),1):
+                unit_rows=[('سعر الوحدة المحفوظ',money(unit.get('price_halalas')))]
+                descriptions=unit.get('option_snapshot') or {}
+                if descriptions:
+                    for group_code,group in descriptions.items():
+                        choices=[]
+                        for choice in group.get('choices',[]):
+                            choice_text=text(choice.get('name') or choice.get('code'))
+                            if choice.get('code'):choice_text+=' <span class="muted">('+ref(choice['code'])+')</span>'
+                            if choice.get('price_delta_halalas') is not None:choice_text+=' — تعديل السعر '+money(choice['price_delta_halalas'])
+                            choices.append(choice_text)
+                        unit_rows.append((str(group.get('name') or group_code),' / '.join(choices) or 'لا توجد خيارات'))
+                else:
+                    for group_code,choices in (unit.get('options') or {}).items():
+                        unit_rows.append(('الخيار '+str(group_code),refs(choices) if isinstance(choices,list) else ref(choices)))
+                units.append('<div class="unit"><h5>الوحدة '+str(unit_index)+'</h5>'+fields(unit_rows)+'</div>')
+            items.append('<div class="item"><h4>الصنف '+str(index)+'</h4>'+fields(item_rows)+''.join(units)+'</div>')
+        order_rows=[('مرجع الطلب',ref(order.get('id'))),('الخدمة',named(order.get('service'))),('مرجع الفرع',ref(order.get('branch_id'))),('اسم الفرع المحفوظ',text(saved.get('branch_name'))),('حالة التجهيز',named(order.get('preparation_status'))),('حالة التوصيل',named(order.get('delivery_status'))),('حالة الدفع',named(order.get('payment_status'))),('الاحتساب',text('منفذ ضمن التقرير' if order.get('fulfilled_in_report') else 'سجل تاريخي؛ لا يحتسب ضمن المبيعات المكتملة')),('قيمة الأصناف',money(order.get('subtotal_halalas'))),('رسوم التوصيل',money(order.get('delivery_fee_halalas'))),('إجمالي الطلب',money(order.get('total_halalas'))),('إنشاء الطلب',stamp(order.get('created_at'))),('اكتمال الطلب',stamp(order.get('completed_at')))]
+        if saved.get('branch_city'):order_rows.append(('مدينة الفرع',text(saved['branch_city'])))
+        if saved.get('payment_method'):order_rows.append(('طريقة الدفع المختارة',named(saved['payment_method'])))
+        order_records.append(record('طلب '+str(len(order_records)+1),order_rows,''.join(items)))
+    sections.append(section('orders','الطلبات والأصناف والخيارات المحفوظة',order_records,'لا توجد طلبات ضمن هذه التقفيلة.'))
+
+    collection_records=[]
+    for r in snap.get('collections',[]):
+        collection_records.append(record('تحصيل '+str(len(collection_records)+1),[
+            ('مرجع التحصيل',ref(r.get('id'))),('مرجع الطلب',ref(r.get('order_id'))),('شفت التحصيل',ref(r.get('shift_id'))),('المحصل',ref(r.get('collector_id'))),
+            ('وسيلة التحصيل',named(r.get('method'))),('المبلغ المحصل الصافي',money(r.get('amount_halalas'))),
+            ('النقد المسلم من العميل',money(r.get('tendered_halalas'))),('الباقي للعميل',money(r.get('change_halalas'))),
+            ('مرجع الدفع الفعلي',ref(r.get('reference'))),('وقت التحصيل',stamp(r.get('created_at'))),
+        ]))
+    sections.append(section('collections','تحصيلات الكاش والشبكة ومراجعها',collection_records,'لا توجد تحصيلات.'))
+
+    refund_records=[]
+    for r in snap.get('refunds',[]):
+        returned=''.join('<div class="unit">'+fields([('مرجع المنتج',ref(product)),('الكمية المعادة',ref(quantity))])+'</div>' for product,quantity in (r.get('line_quantities') or {}).items())
+        refund_records.append(record('استرداد '+str(len(refund_records)+1),[
+            ('مرجع الاسترداد',ref(r.get('id'))),('مرجع التحصيل الأصلي',ref(r.get('collection_id'))),('مرجع الطلب',ref(r.get('order_id'))),('شفت الاسترداد',ref(r.get('shift_id'))),
+            ('وسيلة الاسترداد',named(r.get('method'))),('مبلغ الاسترداد',money(r.get('amount_halalas'))),('سبب الاسترداد',text(r.get('reason'))),('المخول بالاسترداد',ref(r.get('authorized_by'))),('وقت الاسترداد',stamp(r.get('created_at'))),
+        ],'<h4>الكميات المعادة</h4>'+ (returned or '<p class="empty">لم تسجل كميات أصناف معادة لهذا الاسترداد.</p>')))
+    sections.append(section('refunds','الاستردادات المعتمدة والكميات المعادة',refund_records,'لا توجد استردادات.'))
+
+    event_records=[record('حركة عهدة '+str(index),[
+        ('مرجع الحركة',ref(r.get('id'))),('الشفت',ref(r.get('shift_id'))),('نوع الحركة',named(r.get('kind'))),('مبلغ الحركة بإشارته',money(r.get('amount_halalas'))),('المرجع المرتبط',ref(r.get('reference_id'))),('منفذ الحركة',ref(r.get('actor_id'))),('سبب الحركة',text(r.get('reason'))),('وقت الحركة',stamp(r.get('created_at'))),
+    ]) for index,r in enumerate(snap.get('custody_events',[]),1)]
+    sections.append(section('custody-events','حركات العهدة والمصروفات والسلف',event_records,'لا توجد حركات عهدة.'))
+
+    transfers=[record('تسليم عهدة '+str(index),[
+        ('مرجع التسليم',ref(r.get('id'))),('من شفت',ref(r.get('from_shift_id'))),('إلى شفت',ref(r.get('to_shift_id'))),('المستلم المحدد',ref(r.get('recipient_user_id'))),('مبلغ التسليم',money(r.get('amount_halalas'))),('نوع التسليم',text('تسليم التقفيلة النهائي' if r.get('closure') else 'تسليم جزئي أو أثناء الشفت')),('حالة التأكيد',named(r.get('status'))),('مرجع التسليم الفعلي',ref(r.get('reference'))),('منشئ التسليم',ref(r.get('created_by'))),('المستلم الذي أكد',ref(r.get('confirmed_by'))),('إنشاء التسليم',stamp(r.get('created_at'))),('تأكيد الاستلام',stamp(r.get('confirmed_at'))),
+    ]) for index,r in enumerate(snap.get('transfers',[]),1)]
+    sections.append(section('custody-transfers','تسليمات العهدة وتأكيد المستلم',transfers,'لا توجد تسليمات عهدة.'))
+
+    tasks=[record('مهمة '+str(index),[
+        ('مرجع المهمة',ref(r.get('id'))),('مرجع الطلب',ref(r.get('order_id'))),('السائق',ref(r.get('driver_id'))),('شفت السائق',ref(r.get('shift_id'))),('حالة المهمة',named(r.get('status'))),('المسند',ref(r.get('assigned_by'))),('وقت الإسناد',stamp(r.get('created_at'))),('قبول المهمة',stamp(r.get('accepted_at'))),('الاستلام من الفرع',stamp(r.get('picked_up_at'))),('تسليم العميل',stamp(r.get('delivered_at'))),('دليل التسليم المسجل',text(r.get('proof'))),('المشكلة أو سبب الاستثناء',text(r.get('reason'))),('شفت التحويل المطلوب',ref(r.get('transfer_shift_id'))),('طالب تحويل المهمة',ref(r.get('transfer_requested_by'))),
+    ]) for index,r in enumerate(snap.get('tasks',[]),1)]
+    sections.append(section('tasks','المهام والتحويلات والاستثناءات وأوقات التوصيل',tasks,'لا توجد مهام ضمن هذه التقفيلة.'))
+
+    children=[record('تقفيلة سائق '+str(index),[
+        ('مرجع تقرير السائق',ref(r.get('id'))),('مرجع الشفت',ref(r.get('shift_id'))),('إصدار التقرير',ref(r.get('version'))),*closure_rows(r.get('closure') or {}),
+    ]) for index,r in enumerate(snap.get('driver_reports',[]),1)]
+    sections.append(section('driver-closures','تقفيلات السائقين التابعة، بما فيها شفتات دون طلبات',children,'لا توجد تقفيلات سائقين تابعة لهذا التقرير.'))
+
+    corrections=[record('تصحيح مرتبط '+str(index),[
+        ('مرجع التصحيح',ref(r.get('id'))),('التقرير الأصلي',ref(r.get('report_id'))),('إصدار التصحيح',ref(r.get('correction_version'))),('شفت التصحيح',ref(r.get('shift_id'))),('مرجع حركة التسوية',ref(r.get('event_reference_id'))),('مبلغ التصحيح بإشارته',money(r.get('amount_halalas'))),('سبب التصحيح',text(r.get('reason'))),('المخول بالتصحيح',ref(r.get('authorized_by'))),('وقت التصحيح',stamp(r.get('created_at'))),
+    ]) for index,r in enumerate(snap.get('linked_corrections',[]),1)]
+    sections.append(section('corrections','التصحيحات المرتبطة المحفوظة وقت الاعتماد',corrections,'لا توجد تصحيحات مرتبطة في هذه اللقطة.'))
+
+    handovers=[record('تسليم مناوبة '+str(index),[
+        ('مرجع تسليم المسؤولية',ref(r.get('id'))),('شفت المدير المسلم',ref(r.get('from_shift_id'))),('شفت المدير المستلم',ref(r.get('to_shift_id'))),('الفروع المنقولة',refs(r.get('branch_ids',[]))),('شفتات السائقين المنقولة',refs(r.get('driver_shift_ids',[]))),('حالة القبول',named(r.get('status'))),('سبب تسليم المناوبة',text(r.get('reason'))),('طالب التسليم',ref(r.get('requested_by'))),('المدير الذي قبل',ref(r.get('accepted_by'))),('طلب التسليم',stamp(r.get('created_at'))),('قبول المسؤولية',stamp(r.get('accepted_at'))),
+    ]) for index,r in enumerate(snap.get('manager_handovers',[]),1)]
+    sections.append(section('manager-handovers','تسليم مسؤولية مناوبة مديري التوصيل',handovers,'لا توجد تسليمات مسؤولية في هذه اللقطة.'))
+
+    carryovers=[record('عهدة مرحلة '+str(index),[
+        ('مرجع الترحيل',ref(r.get('id'))),('الشفت السابق',ref(r.get('from_shift_id'))),('صاحب العهدة',ref(r.get('user_id'))),('مبلغ العهدة المحتفظ بها',money(r.get('amount_halalas'))),('المعتمد',ref(r.get('approved_by'))),('سبب الإبقاء',text(r.get('reason'))),('الشفت الذي رحلت إليه',ref(r.get('to_shift_id'))),('اعتماد الإبقاء',stamp(r.get('created_at'))),('وقت الترحيل',stamp(r.get('carried_at'))),
+    ]) for index,r in enumerate(snap.get('retained_carryovers',[]),1)]
+    sections.append(section('carryovers','العهد المحتفظ بها وترحيلها بين الشفتات',carryovers,'لا توجد عهد مرحلة محفوظة في هذه اللقطة.'))
+
+    css='''
+    *{box-sizing:border-box}html{background:#eef1ef;color:#172620}body{margin:0;font:15px/1.55 Arial,"DejaVu Sans",sans-serif}
+    main{max-width:1080px;margin:24px auto;padding:32px;background:#fff}header{border-bottom:3px solid #234d3b;padding-bottom:18px}
+    .brand{font-size:18px;font-weight:700;color:#234d3b;margin:0}h1{font-size:27px;margin:4px 0 12px}h2{font-size:20px;border-bottom:1px solid #b9c9c0;padding:8px 0;margin:25px 0 12px;color:#234d3b}
+    h3{font-size:16px;margin:0 0 10px}h4,h5{font-size:14px;margin:8px 0}p{margin:8px 0}.note,.empty,.muted{color:#57655e}.note{font-size:13px}
+    button{font:inherit;background:#234d3b;color:#fff;border:0;border-radius:5px;padding:9px 22px;cursor:pointer;margin:6px 0 14px}
+    .record{border:1px solid #d0dad4;border-radius:6px;padding:15px;margin:10px 0;background:#fff;min-width:0}
+    .fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px;margin:0}
+    .field{display:grid;grid-template-columns:135px minmax(0,1fr);gap:9px;min-width:0;align-items:start}
+    dt{font-size:13px;color:#57655e}dd{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-wrap}
+    .reference{font-family:Arial,"DejaVu Sans",sans-serif;font-size:13px;unicode-bidi:isolate;overflow-wrap:anywhere;max-width:100%}
+    .references{display:flex;flex-direction:column;align-items:flex-start;gap:3px}.money{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.currency{white-space:nowrap;font-size:12px}
+    .timestamp{display:flex;flex-direction:column;gap:2px;font-size:12px}.item{border-top:1px solid #dce4df;padding:8px 0 0;margin-top:12px}
+    .unit{padding:6px 10px;border-right:2px solid #c0d0c6;margin-top:8px}footer{border-top:1px solid #b9c9c0;margin-top:24px;padding-top:10px;font-size:12px;color:#57655e}
+    @media(max-width:720px){main{margin:0;padding:18px 14px}.fields{grid-template-columns:1fr;gap:10px}.field{grid-template-columns:1fr;gap:2px}.record{padding:12px}h1{font-size:23px}.reference{font-size:13px}}
+    @page{size:A4;margin:14mm}
+    @media print{html{background:#fff}body{font-size:10px;line-height:1.45}main{max-width:none;margin:0;padding:0}button{display:none}.brand{font-size:14px}h1{font-size:20px}h2{font-size:15px;margin-top:16px;break-after:avoid}h3{font-size:12px;break-after:avoid}h4,h5{font-size:11px;break-after:avoid}.record{padding:10px;border-radius:0;break-inside:avoid}.fields{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 15px}.field{grid-template-columns:105px minmax(0,1fr);gap:6px;break-inside:avoid}dt,.reference{font-size:10px}.timestamp,.currency,.note,footer{font-size:9px}.item,.unit{break-inside:avoid}header{break-inside:avoid}footer{break-inside:avoid}}
+    '''
+    return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>تقفيلة '+esc(title)+'</title><style>'+css+'</style><script src="/report.js" defer></script></head><body><main><header><p class="brand">'+esc(title)+'</p><h1>تقرير تشغيلي وتقفيلة</h1><button type="button" data-print-report>طباعة التقرير</button>'+intro+'<p class="note">القيم والنتائج أدناه من اللقطة النهائية المحفوظة عند اعتماد التقفيلة. المراجع معروضة كاملة، والأوقات بتوقيت الرياض. أحداث العهدة تسجل حركة النقد؛ لا تضاف مرة أخرى إلى تحصيلات الطلبات.</p></header>'+''.join(sections)+'<footer>نهاية التقرير المحفوظ · مرجع التقفيلة '+ref(snap.get('reference'))+' · جميع المبالغ بالريال السعودي</footer></main></body></html>'
+
 def make_pdf(snap):
     from datetime import datetime,timezone
     from decimal import Decimal
@@ -285,10 +457,7 @@ def report_detail(rid:str,user=Depends(auth.current_user)):
 @router.get('/{rid}/print')
 def print_report(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:r=report(c,user,rid)
-    s=r['snapshot'];esc=lambda x:html.escape(str(x));title=esc(brand_title(s))
-    rows=''.join('<tr><td>'+esc(o['id'])+'</td><td>'+esc(o['branch_id'])+'</td><td>'+esc(o['delivery_status'])+(' — منفذ ضمن التقرير' if o.get('fulfilled_in_report') else ' — سجل تحويل تاريخي')+'</td><td>'+f'{o["total_halalas"]/100:.2f}'+'</td></tr>' for o in s['orders'])
-    summary=''.join('<p>'+esc(k)+': '+esc(v)+'</p>' for k,v in s['summary']['submission'].items())
-    page='<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>تقفيلة '+title+'</title><style>body{font:16px sans-serif;max-width:1100px;margin:24px;background:white;color:#222}table{width:100%;border-collapse:collapse}td,th{border:1px solid #aaa;padding:8px;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}@media print{button{display:none}}</style><h1>تقرير تشغيلي وتقفيلة '+title+'</h1><p>'+esc(s['reference'])+' — '+esc(s['operational_date'])+' — Asia/Riyadh</p><button type="button" data-print-report>طباعة</button><script src="/report.js" defer></script>'+summary+'<table><tr><th>الطلب</th><th>الفرع</th><th>الحالة</th><th>ر.س</th></tr>'+rows+'</table><h2>تفاصيل اللقطة النهائية المحفوظة</h2><pre>'+esc(__import__('json').dumps(s,ensure_ascii=False,indent=2))+'</pre></html>'
+    page=make_print_html(r['snapshot'])
     return Response(page,media_type='text/html',headers={'Cache-Control':'private, no-store','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'self'"})
 
 @router.get('/{rid}/pdf')

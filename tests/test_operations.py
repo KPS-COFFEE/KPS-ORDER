@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app import db,auth
 from app.operations import day_start,same_scope
 from app.chat import allowed
-from app.reporting import cell,make_pdf
+from app.reporting import cell,make_pdf,make_print_html
 
 
 def test_scope_and_operational_day_helpers():
@@ -20,6 +20,87 @@ def test_scope_and_operational_day_helpers():
     with pytest.raises(HTTPException):day_start({'operational_day_start':'25:00'})
     assert cell(' =IMPORTXML("evil")').startswith("'")
     assert cell('-1').startswith("'")
+
+def test_structured_print_saved_finances_references_and_escaping():
+    from copy import deepcopy
+    from html import unescape
+    import re
+
+    when='2026-10-09T22:15:30+00:00'
+    closure={'expected_halalas':1000,'counted_halalas':1000,'handover_halalas':900,'retained_halalas':100,'difference_halalas':0}
+    snap={
+        'brand_name':'براند <script>alert(1)</script>','reference':'saved-shift-0123456789abcdef',
+        'kind':'manager','timezone':'Asia/Riyadh','operational_date':'2026-10-09','operational_day_configured':False,
+        'prepared_by':'saved-preparer','approved_by':'saved-approver','manager_user_id':'saved-manager',
+        'shift':{'id':'saved-shift-0123456789abcdef','kind':'manager','brand_id':'saved-brand','branch_ids':['saved-branch'],
+                 'user_id':'saved-manager','status':'closed','opening_halalas':0,'opened_at':when,'submitted_at':when,'closed_at':when,
+                 'submission':closure,'exception_reason':'سبب محفوظ <img src=x onerror=alert(1)>'},
+        'summary':{'submission':closure,'unique_orders':2,'completed_orders':1,'cash_collected_halalas':1000,
+                   'card_collected_halalas':0,'cash_refunded_halalas':None,'card_refunded_halalas':0,
+                   'gross_completed_halalas':1000,'delivery_fees_halalas':0,'net_collections_halalas':900},
+        'orders':[{'id':'saved-order','branch_id':'saved-branch','service':'delivery','preparation_status':'handed_over',
+                   'delivery_status':'delivered','payment_status':'paid','fulfilled_in_report':True,
+                   'subtotal_halalas':1000,'delivery_fee_halalas':0,'total_halalas':1000,'created_at':when,'completed_at':when,
+                   'snapshot':{'branch_name':'فرع محفوظ','payment_method':'cash','items':[{
+                       'product_id':'saved-product','source_id':'saved-source','name':'قهوة <script>bad()</script>',
+                       'quantity':1,'unit_price_halalas':1000,'line_total_halalas':1000,
+                       'units':[{'price_halalas':1000,'options':{'COLOR':'black'},'option_snapshot':{
+                           'COLOR':{'name':'اللون','choices':[{'code':'black','name':'أسود <img src=x>','price_delta_halalas':0}]}}}]}]} }],
+        'collections':[{'id':'saved-collection','order_id':'saved-order','shift_id':'saved-driver-shift','collector_id':'saved-driver',
+                        'method':'cash','amount_halalas':1000,'tendered_halalas':2000,'change_halalas':1000,
+                        'reference':'PAY-<script>bad()</script>','created_at':when}],
+        'refunds':[{'id':'saved-refund','collection_id':'saved-collection','order_id':'saved-order','shift_id':'saved-driver-shift',
+                    'method':'cash','amount_halalas':100,'reason':'سبب الاسترداد المحفوظ','authorized_by':'saved-approver',
+                    'line_quantities':{'saved-product':1},'created_at':when}],
+        'custody_events':[{'id':'saved-event','shift_id':'saved-driver-shift','kind':'transfer_out','amount_halalas':-900,
+                          'reference_id':'saved-transfer','actor_id':'saved-manager','reason':'تسليم جزئي محفوظ','created_at':when}],
+        'transfers':[{'id':'saved-transfer','from_shift_id':'saved-driver-shift','to_shift_id':'saved-shift-0123456789abcdef',
+                      'recipient_user_id':'saved-manager','amount_halalas':900,'reference':'saved-bag','closure':False,'status':'confirmed',
+                      'created_by':'saved-driver','confirmed_by':'saved-manager','created_at':when,'confirmed_at':when}],
+        'tasks':[{'id':'saved-task','order_id':'saved-order','driver_id':'saved-driver','shift_id':'saved-driver-shift','status':'delivered',
+                  'assigned_by':'saved-manager','created_at':when,'accepted_at':when,'picked_up_at':when,'delivered_at':when,
+                  'proof':'إثبات محفوظ','reason':'سبب المهمة المحفوظ','transfer_shift_id':'saved-next-shift','transfer_requested_by':'saved-requester'}],
+        'driver_reports':[{'id':'saved-zero-task-report','shift_id':'saved-zero-task-shift','version':1,
+                          'closure':dict.fromkeys(closure,0)}],
+        'linked_corrections':[{'id':'saved-correction','report_id':'saved-original-report','correction_version':2,
+                              'shift_id':'saved-correction-shift','event_reference_id':'saved-correction-event','amount_halalas':-100,
+                              'reason':'سبب التصحيح المحفوظ','authorized_by':'saved-approver','created_at':when}],
+        'manager_handovers':[{'id':'saved-manager-handover','from_shift_id':'saved-previous-manager-shift','to_shift_id':'saved-shift-0123456789abcdef',
+                             'branch_ids':['saved-branch'],'driver_shift_ids':['saved-driver-shift'],'status':'accepted',
+                             'reason':'سبب تسليم المسؤولية المحفوظ','requested_by':'saved-old-manager','accepted_by':'saved-manager',
+                             'created_at':when,'accepted_at':when}],
+        'retained_carryovers':[{'id':'saved-carryover','from_shift_id':'saved-driver-shift','user_id':'saved-driver','amount_halalas':100,
+                               'approved_by':'saved-approver','reason':'سبب الإبقاء المحفوظ','to_shift_id':'saved-next-shift',
+                               'created_at':when,'carried_at':when}],
+    }
+    original=deepcopy(snap);page=make_print_html(snap)
+    assert snap==original
+    def visible_value(label):
+        match=re.search('<dt>'+re.escape(label)+'</dt><dd>(.*?)</dd>',page,re.S)
+        assert match,label
+        return unescape(re.sub('<[^>]+>','',match.group(1)))
+    assert visible_value('المبلغ المحصل الصافي')=='10.00 ر.س'
+    assert visible_value('النقد المسلم من العميل')=='20.00 ر.س'
+    assert visible_value('الباقي للعميل')=='10.00 ر.س'
+    assert visible_value('مبلغ الحركة بإشارته')=='-9.00 ر.س'
+    assert visible_value('التحصيل النقدي الصافي بعد الباقي')=='10.00 ر.س'
+    assert visible_value('تحصيل الشبكة')=='0.00 ر.س'
+    assert visible_value('استردادات الكاش')=='غير مسجل'
+    assert visible_value('عدد الطلبات في السجل')=='2' # Saved summary, not a recount of fixture records.
+    assert visible_value('الطلبات المنفذة ضمن التقرير')=='1'
+    assert '2026-10-10' in visible_value('بداية الشفت') and '01:15:30' in visible_value('بداية الشفت')
+    assert 'بداية اليوم التشغيلي غير محددة' in page
+    for section in ('financial','orders','collections','refunds','custody-events','custody-transfers','tasks','driver-closures','corrections','manager-handovers','carryovers'):
+        assert '<section id="'+section+'">' in page
+    for key in ('orders','collections','refunds','custody_events','transfers','tasks','driver_reports','linked_corrections','manager_handovers','retained_carryovers'):
+        for row in snap[key]:assert row['id'] in page
+    for reference in ('saved-source','saved-original-report','saved-correction-event','saved-zero-task-shift','saved-next-shift','saved-requester','saved-bag','saved-old-manager'):
+        assert reference in page
+    assert 'اللون' in page and 'black' in page and 'تعديل السعر' in page and 'الكميات المعادة' in page
+    assert '&lt;script&gt;' in page and '&lt;img src=x&gt;' in page and 'PAY-&lt;script&gt;' in page
+    assert '<script>alert(1)' not in page and '<script>bad()' not in page and '<img src=x' not in page
+    assert '<pre' not in page and '_halalas' not in page
+    assert 'data-print-report' in page and '<script src="/report.js" defer></script>' in page and 'onclick=' not in page
 
 @pytest.fixture
 def ops(client):
