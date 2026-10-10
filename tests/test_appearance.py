@@ -2,11 +2,12 @@
 
 All data is synthetic in the existing isolated PostgreSQL test fixtures.
 """
-import hashlib
+from io import BytesIO
 import os
 from pathlib import Path
 
 import pytest
+from PIL import Image, ImageChops
 
 from app import db
 from test_admin import owner
@@ -74,6 +75,19 @@ def _capture_theme(page, name):
         page.screenshot(path=str(ARTIFACTS / f'charcoal-{name}-{width}.png'))
 
 
+def _settled_store_appearance(page):
+    page.evaluate("""async () => {
+        await document.fonts.ready;
+        await Promise.all(Array.from(document.images).filter(img => img.getBoundingClientRect().top < innerHeight).map(img => img.decode()));
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }""")
+    return page.locator('body,.site-header,.intro-banner,.service-panel,.search input,.product-card,.basket').evaluate_all("""els => els.map(el => {
+        const r=el.getBoundingClientRect(),s=getComputedStyle(el);
+        return {x:r.x,y:r.y,width:r.width,height:r.height,color:s.color,background:s.backgroundColor,
+            border:s.border,shadow:s.boxShadow,font:s.font,padding:s.padding};
+    })""")
+
+
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit real Chromium test required.')
 def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, chromium_browser):
@@ -81,8 +95,8 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
     context,page,errors = _context(chromium_browser,live_app)
     page.goto('/')
     expect(page.locator('.product-card')).to_have_count(34)
-    page.evaluate('document.fonts.ready')
-    original = page.screenshot(path=str(ARTIFACTS/'original-store-1280.png'))
+    original_styles = _settled_store_appearance(page)
+    original = page.screenshot(path=str(ARTIFACTS/'original-store-1280.png'),animations='disabled')
     page.set_viewport_size({'width':390,'height':900})
     page.locator('#menu').evaluate("el=>el.scrollIntoView({block:'start'})")
     page.screenshot(path=str(ARTIFACTS/'original-menu-390.png'))
@@ -145,18 +159,17 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                 assert 'theme=' not in p.url
                 p.reload()
                 expect(p.locator('html')).to_have_attribute('data-kps-theme','ORIGINAL_Light')
-                p.goto('/')
-                expect(p.locator('.product-card')).to_have_count(34)
-                p.set_viewport_size({'width':1280,'height':900})
-                p.evaluate('document.fonts.ready')
-                restored=p.screenshot()
                 # Owner versus anonymous header differs. Compare in a fresh session.
                 restored_ctx,restored_page,_=_context(chromium_browser,live_app)
                 restored_page.goto('/')
                 expect(restored_page.locator('.product-card')).to_have_count(34)
-                restored_page.evaluate('document.fonts.ready')
-                assert restored_page.screenshot() == original
-                restored_page.screenshot(path=str(ARTIFACTS/'original-restored-1280.png'))
+                assert _settled_store_appearance(restored_page) == original_styles
+                restored=restored_page.screenshot(path=str(ARTIFACTS/'original-restored-1280.png'),animations='disabled')
+                # Decode actual pixels; Chromium can vary rounded-edge antialias
+                # by 1/255 in a few pixels. Geometry and CSS above must match exactly.
+                difference=ImageChops.difference(Image.open(BytesIO(restored)).convert('RGB'),Image.open(BytesIO(original)).convert('RGB'))
+                assert max(high for low,high in difference.getextrema()) <= 1
+                assert sum(pixel!=(0,0,0) for pixel in difference.get_flattened_data()) <= 100
                 restored_ctx.close()
             else:
                 assert p.locator('[data-appearance]').count()==0
