@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -90,14 +91,20 @@ def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_
             form.locator('button[type=submit]').click()
         assert stopped.value.status == 200, stopped.value.text()
         customer.goto('/')
-        customer.locator('#branch-select').select_option('kps-branch-1')
-        customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
+        with customer.expect_response(lambda r: urlsplit(r.url).path == '/api/catalog'
+                and parse_qs(urlsplit(r.url).query).get('branch_id') == ['kps-branch-1']) as scoped_catalog:
+            customer.locator('#branch-select').select_option('kps-branch-1')
+            # Open the real dialog before awaiting the branch catalog: it must
+            # follow the eventual branch data rather than retain an old object.
+            customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
+        assert scoped_catalog.value.status == 200, scoped_catalog.value.text()
+        expect(customer.locator('#product-add')).to_be_enabled()
         choices = customer.locator('#product-options select')
         # Inspect the native option property: Playwright's enabled matcher does
         # not apply its disabled semantics to <option>. Real keyboard selection
         # must skip the paused choice rather than programmatically select blue.
-        assert choices.locator('option[value=BLACK]').evaluate('(option) => option.disabled') is True
-        assert choices.locator('option[value=BLUE]').evaluate('(option) => option.disabled') is False
+        expect(choices.locator('option[value=BLACK]')).to_have_js_property('disabled', True)
+        expect(choices.locator('option[value=BLUE]')).to_have_js_property('disabled', False)
         choices.press('Home')
         expect(choices).to_have_value('')
         choices.press('ArrowDown')
@@ -121,11 +128,29 @@ def test_owner_original_image_draft_publish_and_pause_only_black_through_actual_
         assert branch_stop.value.status == 200, branch_stop.value.text()
         for branch_no, black_available in [(1, False), (9, True)]:
             customer.reload()
-            customer.locator('#branch-select').select_option(f'kps-branch-{branch_no}')
-            customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
+            with customer.expect_response(lambda r: urlsplit(r.url).path == '/api/catalog'
+                    and parse_qs(urlsplit(r.url).query).get('branch_id') == [f'kps-branch-{branch_no}']) as scoped_catalog:
+                customer.locator('#branch-select').select_option(f'kps-branch-{branch_no}')
+                customer.locator(f'.product-card[data-product-id="{identifier}"] .product-image-button').click()
+                customer.locator('#product-qty').fill('2')
+                customer.locator('#product-qty').press('Tab')
+                customer.locator('#product-notes').fill('TEST ONLY preserved note')
+                choices = customer.locator('#product-options select')
+                expect(choices).to_have_count(2)
+                for index in range(2):
+                    choices.nth(index).press('End')
+                    expect(choices.nth(index)).to_have_value('BLUE')
+            assert scoped_catalog.value.status == 200, scoped_catalog.value.text()
+            expect(customer.locator('#product-add')).to_be_enabled()
+            expect(customer.locator('#product-qty')).to_have_value('2')
+            expect(customer.locator('#product-notes')).to_have_value('TEST ONLY preserved note')
+            for index in range(2):
+                expect(choices.nth(index)).to_have_value('BLUE')
+            customer.locator('#product-qty').fill('1')
+            customer.locator('#product-qty').press('Tab')
             choices = customer.locator('#product-options select')
-            assert choices.locator('option[value=BLACK]').evaluate('(option) => option.disabled') is (not black_available)
-            assert choices.locator('option[value=BLUE]').evaluate('(option) => option.disabled') is False
+            expect(choices.locator('option[value=BLACK]')).to_have_js_property('disabled', not black_available)
+            expect(choices.locator('option[value=BLUE]')).to_have_js_property('disabled', False)
             choices.press('Home')
             expect(choices).to_have_value('')
             choices.press('ArrowDown')
