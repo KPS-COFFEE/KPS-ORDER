@@ -123,11 +123,11 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
             headers=_owner_login(ctx,live_app,user)
             p.goto('/ops?theme=CHARCOAL')
             expect(p.locator('#app-shell')).to_be_visible()
-            p.wait_for_function("document.querySelector('#content').getAttribute('aria-busy')==='false'")
+            expect(p.locator('#content')).to_have_attribute('aria-busy','false')
             pages=p.locator('#navigation [data-page]').evaluate_all('(els)=>els.map(el=>el.dataset.page)')
             for screen in pages:
                 p.locator(f'#navigation [data-page={screen}]').click()
-                p.wait_for_function("document.querySelector('#content').getAttribute('aria-busy')==='false'")
+                expect(p.locator('#content')).to_have_attribute('aria-busy','false')
                 _capture_theme(p,role+'-'+screen)
             if role=='owner':
                 p.locator('[data-action=admin-tab][data-tab=settings]').click()
