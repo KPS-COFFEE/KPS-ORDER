@@ -12,7 +12,7 @@ from test_browser import _context, _owner_login, _staff, chromium_browser, live_
 
 def test_homepage_presentation_validation_and_safe_defaults():
     default = admin.homepage_presentation_config(brand_id='kps')
-    assert default['ticker_enabled'] and default['ticker_lines'] == ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee']
+    assert not default['ticker_enabled'] and default['ticker_lines'] == ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee']
     assert not default['quote_enabled'] and default['quote_text'] == ''
     assert not admin.homepage_presentation_config(brand_id='another-brand')['ticker_enabled']
     for bad in [
@@ -39,9 +39,9 @@ def test_owner_settings_public_filtered_quote_and_preservation(owner):
         fingerprint = db.preservation_snapshot(conn)
 
     public = client.get('/api/banners').json()
-    assert public['presentation']['ticker_enabled'] is True
+    assert public['presentation']['ticker_enabled'] is False
     assert public['presentation']['quote_text'] == ''
-    assert public['presentation']['ticker_lines'] == ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee']
+    assert public['presentation']['ticker_lines'] == []
 
     changed = {
         'ticker_enabled': True,
@@ -78,6 +78,39 @@ def test_owner_settings_public_filtered_quote_and_preservation(owner):
     client.post('/api/auth/logout')
     assert mutate('PATCH', '/api/admin/settings',
                   {'homepage_presentation': {'ticker_enabled': True}}).status_code in (401, 403)
+
+
+@pytest.mark.postgres
+def test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activation(owner):
+    client, mutate = owner
+    saved = {'ticker_enabled': True, 'ticker_lines': ['Speciality Coffee', 'عبارة محفوظة للمالك'],
+             'ticker_seconds': 42, 'quote_enabled': True, 'quote_text': 'نص البنر المحفوظ'}
+    settings = {'homepage_presentation': saved, 'theme': {'profile': 'CHARCOAL'}, 'operational_day_start': '05:30'}
+    with db.tx() as conn:
+        conn.execute('UPDATE app_settings SET settings=%s WHERE brand_id=%s', (db.json(settings), 'kps'))
+        conn.execute("INSERT INTO brands(id,name) VALUES('other-pause-test','Other isolated brand')")
+        conn.execute("INSERT INTO app_settings(brand_id,settings) VALUES('other-pause-test',%s)", (db.json(settings),))
+        fingerprint = db.preservation_snapshot(conn)
+        # Simulate an existing installation upgrading from migration 014,
+        # within this fixture's disposable local PostgreSQL schema only.
+        conn.execute("DELETE FROM schema_migrations WHERE version='015_pause_promotional_strip.sql'")
+    db.migrate()
+    with db.tx() as conn:
+        actual = conn.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
+        assert actual == settings | {'homepage_presentation': saved | {'ticker_enabled': False}}
+        assert conn.execute("SELECT settings FROM app_settings WHERE brand_id='other-pause-test'").fetchone()['settings'] == settings
+        assert db.preservation_snapshot(conn) == fingerprint
+        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='presentation.owner_ticker_paused'").fetchone()['n'] == 1
+    hidden = client.get('/api/banners').json()['presentation']
+    assert not hidden['ticker_enabled'] and hidden['ticker_lines'] == []
+    assert hidden['quote_text'] == saved['quote_text']
+    assert client.get('/api/admin/config').json()['settings']['homepage_presentation']['ticker_lines'] == saved['ticker_lines']
+    db.migrate()
+    assert not client.get('/api/banners').json()['presentation']['ticker_enabled']
+    restored = mutate('PATCH', '/api/admin/settings', {'homepage_presentation': {'ticker_enabled': True}})
+    assert restored.status_code == 200, restored.text
+    db.migrate()
+    assert client.get('/api/banners').json()['presentation']['ticker_lines'] == saved['ticker_lines']
 
 
 @pytest.mark.postgres

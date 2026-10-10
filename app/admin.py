@@ -357,7 +357,7 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
 def homepage_presentation_config(existing=None, changes=None, brand_id=None):
     """Owner-controlled, text-only customer presentation; safe for other brands."""
     defaults = {
-        'ticker_enabled': brand_id == 'kps',
+        'ticker_enabled': False,
         'ticker_lines': ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee'] if brand_id == 'kps' else [],
         'ticker_seconds': 28,
         'quote_enabled': False,

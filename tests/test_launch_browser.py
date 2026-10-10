@@ -59,11 +59,46 @@ def _evidence(page, name, full_page=True, **details):
         'viewport': page.viewport_size, 'physical_device': False, **details}, ensure_ascii=False, indent=2))
 
 
+def test_paused_strip_is_hidden_on_mobile_and_desktop_and_keeps_hero_logo_and_owner_text(live_app, chromium_browser):
+    from playwright.sync_api import expect
+    context, page, errors = _context(chromium_browser, live_app)
+    headers = _owner_login(context, live_app, _staff())
+    try:
+        default = context.request.get(live_app + '/api/banners').json()['presentation']
+        assert not default['ticker_enabled'] and default['ticker_lines'] == []
+        lines = ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee']
+        _patch(context, live_app, headers, '/api/admin/settings', {
+            'homepage_presentation': {'ticker_enabled': False, 'ticker_lines': lines, 'ticker_seconds': 28}})
+        before = context.request.get(live_app + '/api/admin/config').json()
+        page.goto('/')
+        expect(page.locator('#brand-logo')).to_be_visible()
+        expect(page.locator('#banner-area')).to_be_visible()
+        for width in (390, 1280):
+            page.set_viewport_size({'width': width, 'height': 900})
+            expect(page.locator('#announcement-ticker')).not_to_be_visible()
+            expect(page.locator('#announcement-track .ticker-text')).to_have_count(0)
+            assert page.locator('.site-header').bounding_box()['y'] == 0
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            _evidence(page, f'text-strip-paused-{width}', full_page=False, strip_state='owner-paused; saved phrases retained')
+        after = context.request.get(live_app + '/api/admin/config').json()
+        assert after['settings']['homepage_presentation']['ticker_lines'] == lines
+        assert after['settings']['homepage_presentation']['ticker_seconds'] == 28
+        assert before['products'] == after['products'] and before['branches'] == after['branches']
+        assert before['banners'] == after['banners']
+        assert before['settings'].get('theme') == after['settings'].get('theme')
+        assert not errors
+    finally:
+        context.close()
+
+
 def test_editable_text_only_noto_ticker_above_header_left_to_right_and_dynamic_reduced_motion(live_app, chromium_browser):
     from playwright.sync_api import expect
     owner_context, _, _ = _context(chromium_browser, live_app)
     headers = _owner_login(owner_context, live_app, _staff())
     _patch(owner_context, live_app, headers, '/api/admin/settings', {'theme': {'profile': 'ORIGINAL_Light'}})
+    # The owner has now paused the strip by default. This isolated test
+    # explicitly enables it to retain text/motion acceptance coverage.
+    _patch(owner_context, live_app, headers, '/api/admin/settings', {'homepage_presentation': {'ticker_enabled': True}})
     for number in (1, 2):
         response = owner_context.request.post(live_app + '/api/admin/banners', headers={
             **headers, 'Idempotency-Key': 'launch-banner-' + uuid4().hex},

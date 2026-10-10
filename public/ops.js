@@ -191,7 +191,7 @@
 
   function editHomepagePresentation() {
     const current=state.config?.settings?.homepage_presentation||{
-      ticker_enabled:state.user.brand_id==='kps',
+      ticker_enabled:false,
       ticker_lines:state.user.brand_id==='kps'?['الأماكن والأوقات تجمّلها القهوة دائمًا','Speciality Coffee']:[],
       ticker_seconds:28,quote_enabled:false,quote_text:''
     };
