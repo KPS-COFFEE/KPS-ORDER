@@ -3,9 +3,12 @@ import os
 from uuid import uuid4
 
 import pytest
+import psycopg
+from psycopg import sql
 from fastapi import HTTPException
 
 from app import admin, db
+from app.exports import build_archive, restore_archive
 from test_admin import owner
 from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
 
@@ -105,6 +108,23 @@ def test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activ
     assert not hidden['ticker_enabled'] and hidden['ticker_lines'] == []
     assert hidden['quote_text'] == saved['quote_text']
     assert client.get('/api/admin/config').json()['settings']['homepage_presentation']['ticker_lines'] == saved['ticker_lines']
+    # The pause audit must also round-trip through an empty-schema restore,
+    # without migrations inserting a duplicate audit before archive import.
+    with db.tx() as conn:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        contents, manifest = build_archive(conn, full=True)
+    target = 'kps_restore_' + uuid4().hex
+    base_url = os.environ['TEST_DATABASE_URL']
+    try:
+        archive_result = restore_archive(contents, target_url=base_url, target_schema=target)
+        assert archive_result['verified'] and archive_result['counts'] == manifest['counts']
+        with psycopg.connect(base_url, row_factory=psycopg.rows.dict_row) as conn:
+            conn.execute(sql.SQL('SET LOCAL search_path TO {}').format(sql.Identifier(target)))
+            assert conn.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'] == actual
+            assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='presentation.owner_ticker_paused'").fetchone()['n'] == 1
+    finally:
+        with psycopg.connect(base_url) as conn:
+            conn.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(target)))
     db.migrate()
     assert not client.get('/api/banners').json()['presentation']['ticker_enabled']
     restored = mutate('PATCH', '/api/admin/settings', {'homepage_presentation': {'ticker_enabled': True}})
