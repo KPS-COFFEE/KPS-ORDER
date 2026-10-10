@@ -21,7 +21,7 @@ def local(value):
 def configured_branch():
     return {'id': 'ops-branch', 'brand_id': 'ops-brand', 'city': 'حفر الباطن',
             'settings': {'active': True, 'pickup_enabled': True, 'car_enabled': True,
-                         'delivery_enabled': True, 'operational_data_verified': True,
+                         'delivery_enabled': True, 'operational_data_verified': True, 'ordering_verified': True,
                          'opening_hours': [{'days': list(range(7)), 'start': '00:00', 'end': '00:00'}],
                          'delivery_hours': deepcopy(service_hours.DEFAULT_DELIVERY_HOURS),
                          'payment_methods': ['cash', 'card'], 'delivery_fee_halalas': 0,
