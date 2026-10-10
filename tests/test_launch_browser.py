@@ -359,3 +359,55 @@ def test_owner_banner_city_speed_link_image_scope_and_ticker_edits_through_real_
         assert not errors
     finally:
         context.close()
+
+
+def test_owner_service_visibility_delivery_only_and_pause_one_branch(live_app, chromium_browser):
+    from playwright.sync_api import expect
+    owner_context, owner_page, owner_errors=_context(chromium_browser,live_app)
+    headers=_owner_login(owner_context,live_app,_staff('owner'))
+    customer_context,customer,errors=_context(chromium_browser,live_app)
+    try:
+        _configure_branches(owner_context,live_app,headers)
+        response=owner_context.request.post(
+            live_app+'/api/admin/delivery-only',
+            headers={**headers,'Idempotency-Key':'browser-delivery-only-'+uuid4().hex},
+            data={'branch_ids':['kps-branch-1','kps-branch-9'],
+                  'reason':'Synthetic browser acceptance: delivery only','confirm':True}
+        )
+        assert response.status==200,response.text()
+        assert response.json()['saved'] is True
+        customer.goto('/')
+        customer.locator('#branch-select').select_option('kps-branch-1')
+        expect(customer.locator('input[name=service][value=pickup]').locator('..')).to_be_hidden()
+        expect(customer.locator('input[name=service][value=car]').locator('..')).to_be_hidden()
+        expect(customer.locator('input[name=service][value=delivery]')).to_be_checked()
+        assert not customer.locator('input[name=service][value=delivery]').is_disabled()
+
+        # Owner pauses delivery on branch 1; branch 9 stays untouched.
+        result=_patch(owner_context,live_app,headers,'/api/admin/branches/kps-branch-1',
+                      {'settings':{'delivery_enabled':False},
+                       'reason':'Owner test: stop branch-1 delivery only'})
+        assert result['settings']['delivery_enabled'] is False
+        customer.reload()
+        customer.locator('#branch-select').select_option('kps-branch-1')
+        for kind in ('pickup','car','delivery'):
+            expect(customer.locator(f'input[name=service][value={kind}]').locator('..')).to_be_hidden()
+        expect(customer.locator('#service-notice')).to_contain_text('موقوفة')
+        customer.locator('#branch-select').select_option('kps-branch-9')
+        expect(customer.locator('input[name=service][value=delivery]')).to_be_checked()
+
+        # Global service shutdown hides options even without a chosen branch.
+        _patch(owner_context,live_app,headers,'/api/admin/brand-services',
+               {'services':{'pickup':False,'car_pickup':False,'delivery':True},
+                'reason':'Synthetic visibility test'})
+        customer.goto('/')
+        for kind in ('pickup','car'):
+            expect(customer.locator(f'input[name=service][value={kind}]').locator('..')).to_be_hidden()
+        expect(customer.locator('input[name=service][value=delivery]')).to_be_checked()
+        for width in (390,1280):
+            customer.set_viewport_size({'width':width,'height':860})
+            assert customer.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert not errors and not owner_errors
+    finally:
+        customer_context.close()
+        owner_context.close()

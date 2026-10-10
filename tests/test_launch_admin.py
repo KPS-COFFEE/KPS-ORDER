@@ -312,3 +312,19 @@ def test_branch_pickup_car_and_delivery_toggles_are_independent(owner):
         assert all(settings[other] is True for other in ('pickup_enabled', 'car_enabled', 'delivery_enabled') if other != disabled)
         assert settings['delivery_fee_halalas'] == 500 and settings['coverage'] == operating['coverage']
         assert mutate('PATCH', '/api/admin/branches/kps-branch-1', {'settings': {disabled: True}}).status_code == 200
+
+
+@pytest.mark.postgres
+def test_one_branch_delivery_pause_records_owner_reason_without_touching_other_branch(owner):
+    client,mutate=owner
+    result=mutate('PATCH','/api/admin/branches/kps-branch-1',
+                  {'settings':{'delivery_enabled':False},'reason':'أوقف المالك توصيل الفرع الأول'})
+    assert result.status_code==200,result.text
+    assert result.json()['settings']['delivery_enabled'] is False
+    with db.tx() as conn:
+        audit=conn.execute("SELECT details FROM audit_events WHERE action='branch.updated' AND entity_id='kps-branch-1' ORDER BY created_at DESC LIMIT 1").fetchone()
+        assert audit['details']['reason']=='أوقف المالك توصيل الفرع الأول'
+        other=conn.execute("SELECT settings FROM branches WHERE id='kps-branch-9'").fetchone()
+        assert other['settings']['delivery_enabled'] is False
+    assert mutate('PATCH','/api/admin/branches/kps-branch-1',
+                  {'settings':{'delivery_enabled':False},'reason':'x'*501}).status_code==422
