@@ -13,6 +13,10 @@ from . import auth, db, catalog, email_delivery
 
 router = APIRouter(prefix='/api')
 owner = auth.require_roles('owner')
+branch_admin = auth.require_permission('branches_manage')
+product_admin = auth.require_permission('products_manage')
+banner_admin = auth.require_permission('banners_manage')
+appearance_admin = auth.require_permission('appearance_manage')
 DELIVERY_CITIES = {'حفرالباطن', 'الذيبية', 'القيصومة', 'الخفجي', 'رفحاء', 'قبه'}
 
 
@@ -27,6 +31,8 @@ def scoped(conn, table, record_id, user):
     row = conn.execute(f'SELECT * FROM {table} WHERE id=%s AND brand_id=%s FOR UPDATE', (record_id, user['brand_id'])).fetchone()
     if not row:
         raise db.error(404, 'RECORD_NOT_FOUND', 'السجل غير موجود ضمن صلاحياتك.')
+    if table == 'branches' and user['role'] == 'admin' and record_id not in user['branch_ids']:
+        raise db.error(404, 'RECORD_NOT_FOUND', 'الفرع خارج نطاقك المخول.')
     return row
 
 
@@ -53,6 +59,8 @@ def branch_ids(conn, values, brand):
     if len(set(values)) != len(values):
         raise db.error(422, 'BRANCH_SCOPE_INVALID', 'أزل الفروع المكررة.')
     for value in values:
+        # Brand membership is validated below; delegated branch scope is
+        # enforced at each caller as user-aware configuration.
         if not conn.execute('SELECT 1 FROM branches WHERE id=%s AND brand_id=%s', (value, brand)).fetchone():
             raise db.error(422, 'BRANCH_SCOPE_INVALID', 'أحد الفروع خارج البراند.')
     return values
@@ -127,7 +135,7 @@ def validate_options(groups, variants=None):
 
 def validate_branch_settings(settings, branch_city):
     allowed = {'active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
-               'coverage','location','location_verified','map_url','map_url_verified','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
+               'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
     keys(settings, allowed)
     for field in ('active','pickup_enabled','car_enabled','delivery_enabled','ordering_verified','operational_data_verified','location_verified','map_url_verified'):
         if field in settings and type(settings[field]) is not bool:
@@ -142,6 +150,10 @@ def validate_branch_settings(settings, branch_city):
         coordinate(settings['location'])
     if settings.get('map_url') is not None and not catalog.safe_map_url(settings['map_url']):
         raise db.error(422,'MAP_URL_NOT_ALLOWED','اختر رابط Google Maps معتمدًا دون روابط خارجية.')
+    if settings.get('place_id') is not None and not re.fullmatch(r'[A-Za-z0-9_-]{10,250}', str(settings['place_id'])):
+        raise db.error(422,'PLACE_ID_INVALID','معرف Google Maps غير صحيح.')
+    if settings.get('location_source') is not None:
+        text(settings['location_source'], 1000, 'مصدر تحقق موقع الفرع')
     if 'payment_methods' in settings and (not isinstance(settings['payment_methods'], list) or
             any(not isinstance(value, str) or value not in {'cash','card'} for value in settings['payment_methods'])):
         raise db.error(422, 'PAYMENT_METHOD_INVALID', 'طرق الدفع المسموحة كاش وشبكة عند الاستلام.')
@@ -168,7 +180,7 @@ def validate_branch_settings(settings, branch_city):
 
 
 @router.get('/admin/config')
-def configuration(user=Depends(owner)):
+def configuration(user=Depends(auth.require_configuration())):
     with db.tx() as conn:
         result = {'brand': conn.execute('SELECT * FROM brands WHERE id=%s',(user['brand_id'],)).fetchone(),
                   'branches': conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no',(user['brand_id'],)).fetchall(),
@@ -181,11 +193,25 @@ def configuration(user=Depends(owner)):
         result['otp_configured'] = True
     except Exception:
         result['otp_configured'] = False
+    if user['role'] == 'admin':
+        result['branches'] = [b for b in result['branches'] if b['id'] in user['branch_ids']]
+        result['users'] = []
+        if not auth.has_permission(user, 'products_manage'):
+            # Names/categories support the existing banner destination editor.
+            result['products'] = [{k:p[k] for k in ('id','name','category')} for p in result['products']] if auth.has_permission(user,'banners_manage') else []
+        if not auth.has_permission(user, 'banners_manage'):
+            result['banners'] = []
+        else:
+            allowed_branches = set(user['branch_ids'])
+            result['banners'] = [b for b in result['banners']
+                                 if b['branch_ids'] and set(b['branch_ids']) <= allowed_branches]
+        result['settings'] = {k:v for k,v in result['settings'].items() if k in {'theme','homepage_presentation'}} if auth.has_permission(user,'appearance_manage') else {}
+        result['brand'] = {k:result['brand'][k] for k in ('id','name')}
     return result
 
 
 @router.patch('/admin/branches/{record_id}')
-def update_branch(record_id: str, body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
+def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: str | None=Header(None,alias='Idempotency-Key')):
     keys(body, {'name','city','settings'})
     with db.tx() as conn:
         def perform():
@@ -197,7 +223,13 @@ def update_branch(record_id: str, body: dict, user=Depends(owner), idem: str | N
             settings = row['settings'] | changes
             if 'map_url' in changes and changes['map_url'] is None:
                 settings['map_url_verified'] = False
+            elif 'map_url' in changes and changes['map_url'] != row['settings'].get('map_url') and 'map_url_verified' not in changes:
+                settings['map_url_verified'] = False
+            if 'place_id' in changes and changes['place_id'] != row['settings'].get('place_id') and 'map_url_verified' not in changes:
+                settings['map_url_verified'] = False
             if 'location' in changes and changes['location'] is None:
+                settings['location_verified'] = False
+            elif 'location' in changes and changes['location'] != row['settings'].get('location') and 'location_verified' not in changes:
                 settings['location_verified'] = False
             if settings.get('delivery_enabled') and city(branch_city) not in DELIVERY_CITIES:
                 raise db.error(422,'DELIVERY_CITY_FORBIDDEN','أوقف التوصيل قبل نقل الفرع إلى مدينة غير معتمدة.')
@@ -213,7 +245,7 @@ def update_branch(record_id: str, body: dict, user=Depends(owner), idem: str | N
 
 
 @router.patch('/admin/products/{record_id}')
-def update_product(record_id: str, body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
+def update_product(record_id: str, body: dict, user=Depends(product_admin), idem: str | None=Header(None,alias='Idempotency-Key')):
     keys(body, {'name','category','price_halalas','settings'})
     with db.tx() as conn:
         def perform():
@@ -277,10 +309,15 @@ def create_user(body: dict, user=Depends(owner), idem: str | None=Header(None,al
 
 @router.patch('/admin/users/{record_id}')
 def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
-    keys(body, {'display_name','role','branch_ids','active','password'})
+    keys(body, {'display_name','role','branch_ids','active','password','permissions'})
     with db.tx() as conn:
         def perform():
             row = scoped(conn,'users',record_id,user)
+            permissions=auth.validate_admin_permissions(body.get('permissions',row.get('permissions') or []))
+            if permissions and row['role'] != 'admin':
+                raise db.error(422,'ADMIN_ROLE_REQUIRED','صلاحيات الإدارة مخصصة لدور أدمن فقط.')
+            if 'permissions' in body:
+                auth.require_owner_step_up(conn,user)
             if row['role']=='customer':
                 raise db.error(403,'CUSTOMER_ACCOUNT_PROTECTED','لا يمكن تحويل حساب عميل إلى موظف.')
             role = body.get('role',row['role'])
@@ -307,8 +344,10 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
             hashed = auth.hash_password(body['password']) if body.get('password') else row['password_hash']
             name = text(body.get('display_name',row['display_name']),200,'الاسم')
             updated = conn.execute('UPDATE users SET display_name=%s,role=%s,branch_ids=%s,active=%s,password_hash=%s,updated_at=now() WHERE id=%s RETURNING id,username,display_name,role,brand_id,branch_ids,phone,active',(name,role,db.json(scope),active,hashed,record_id)).fetchone()
+            conn.execute('UPDATE users SET permissions=%s WHERE id=%s',(db.json(permissions),record_id))
+            updated['permissions']=permissions
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(record_id,))
-            db.audit(conn,user['id'],'user.updated','user',record_id,{'fields':list(body)})
+            db.audit(conn,user['id'],'user.updated','user',record_id,{'fields':list(body),**({'permissions':permissions} if 'permissions' in body else {})})
             return updated
         safe_body=body | ({'password':hashlib.sha256(body['password'].encode()).hexdigest()} if 'password' in body else {})
         return db.idempotent(conn,user['id'],idem,'user.update:'+record_id,safe_body,perform)
@@ -319,7 +358,7 @@ def homepage_presentation_config(existing=None, changes=None, brand_id=None):
     """Owner-controlled, text-only customer presentation; safe for other brands."""
     defaults = {
         'ticker_enabled': brand_id == 'kps',
-        'ticker_lines': ['طلبك، على طريقتك'] if brand_id == 'kps' else [],
+        'ticker_lines': ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee'] if brand_id == 'kps' else [],
         'ticker_seconds': 28,
         'quote_enabled': False,
         'quote_text': '',
@@ -348,7 +387,9 @@ def homepage_presentation_config(existing=None, changes=None, brand_id=None):
 
 
 @router.patch('/admin/settings')
-def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
+def update_settings(body: dict, user=Depends(appearance_admin), idem: str | None=Header(None,alias='Idempotency-Key')):
+    if user['role']=='admin' and set(body)-{'theme','homepage_presentation'}:
+        raise db.error(403,'ROLE_FORBIDDEN','إعدادات التشغيل الحساسة للمالك فقط.')
     keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas','homepage_presentation'})
     if 'operational_day_start' in body and not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',str(body['operational_day_start'])):
         raise db.error(422,'OPERATIONAL_DAY_INVALID','وقت بداية اليوم التشغيلي بصيغة HH:MM.')
@@ -380,9 +421,11 @@ def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(Non
 
 
 @router.post('/admin/assets')
-async def upload_asset(file: UploadFile=File(...), purpose: str='banner', user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
+async def upload_asset(file: UploadFile=File(...), purpose: str='banner', user=Depends(auth.require_configuration()), idem: str | None=Header(None,alias='Idempotency-Key')):
     if purpose not in {'banner','product'}:
         raise db.error(422,'ASSET_PURPOSE_INVALID','نوع الصورة غير صحيح.')
+    if not auth.has_permission(user,'banners_manage' if purpose=='banner' else 'products_manage'):
+        raise db.error(403,'ROLE_FORBIDDEN','رفع الصورة يحتاج صلاحية نوعها.')
     contents=await file.read(5*1024*1024+1)
     if len(contents)>5*1024*1024 or not contents:
         raise db.error(413,'IMAGE_SIZE_INVALID','الصورة يجب ألا تتجاوز 5 ميجابايت.')
@@ -406,20 +449,39 @@ async def upload_asset(file: UploadFile=File(...), purpose: str='banner', user=D
 
 
 @router.get('/admin/assets/{record_id}')
-def preview_asset(record_id:str,user=Depends(owner)):
+def preview_asset(record_id:str,user=Depends(auth.require_configuration())):
     with db.tx() as conn:
         row=scoped(conn,'assets',record_id,user)
+        if not auth.has_permission(user,'banners_manage' if row['purpose']=='banner' else 'products_manage'):
+            raise db.error(403,'ROLE_FORBIDDEN','عرض الصورة يحتاج صلاحية نوعها.')
     return Response(bytes(row['contents']),media_type=row['mime_type'],headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
 
 
 def banner_fields(conn,body,user,existing=None):
-    keys(body,{'title','body','button_label','destination','desktop_asset_id','mobile_asset_id','branch_ids','active','sort_order','starts_at','ends_at'})
-    row=dict(existing or {'title':'','body':'','button_label':'','destination':{},'desktop_asset_id':None,'mobile_asset_id':None,'branch_ids':[],'active':False,'sort_order':0,'starts_at':None,'ends_at':None}) | body
+    keys(body,{'title','body','button_label','destination','desktop_asset_id','mobile_asset_id','branch_ids','active','sort_order','starts_at','ends_at','cities','rotation_ms'})
+    row={'cities':[], 'rotation_ms':6500} | dict(existing or {'title':'','body':'','button_label':'','destination':{},'desktop_asset_id':None,'mobile_asset_id':None,'branch_ids':[],'active':False,'sort_order':0,'starts_at':None,'ends_at':None}) | body
     for key,limit in [('title',160),('body',320),('button_label',64)]:
         row[key]=text(row[key],limit,key)
     if not row['title'] or type(row['active']) is not bool or type(row['sort_order']) is not int or not 0<=row['sort_order']<=10_000:
         raise db.error(422,'BANNER_INVALID','العنوان والتفعيل والترتيب غير صحيحين.')
     row['branch_ids']=branch_ids(conn,row['branch_ids'],user['brand_id'])
+    if user['role']=='admin':
+        if not user['branch_ids']:
+            raise db.error(403,'BANNER_SCOPE_FORBIDDEN','منح فروع للإدارة شرط إدارة الإعلان.')
+        if existing and (not existing['branch_ids'] or not set(existing['branch_ids']) <= set(user['branch_ids'])):
+            raise db.error(403,'BANNER_SCOPE_FORBIDDEN','الإعلان خارج نطاق فروعك المخولة.')
+        if not row['branch_ids']:
+            row['branch_ids']=user['branch_ids']
+        if not set(row['branch_ids']) <= set(user['branch_ids']):
+            raise db.error(403,'BANNER_SCOPE_FORBIDDEN','اختر الفروع المخولة فقط.')
+    if not isinstance(row['cities'],list) or len(row['cities'])>100 or any(not isinstance(c,str) for c in row['cities']):
+        raise db.error(422,'BANNER_CITIES_INVALID','مدن الإعلان غير صحيحة.')
+    known={catalog.normalize_city(r['city']) for r in conn.execute('SELECT city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
+    row['cities']=list(dict.fromkeys(catalog.normalize_city(c) for c in row['cities']))
+    if set(row['cities'])-known:
+        raise db.error(422,'BANNER_CITIES_INVALID','اختر مدينة مسجلة في فروع البراند.')
+    if type(row['rotation_ms']) is not int or not 4000<=row['rotation_ms']<=90000:
+        raise db.error(422,'BANNER_SPEED_INVALID','مدة ظهور الإعلان بين 4 و90 ثانية.')
     for key in ('desktop_asset_id','mobile_asset_id'):
         if row[key]:
             asset=scoped(conn,'assets',row[key],user)
@@ -433,8 +495,10 @@ def banner_fields(conn,body,user,existing=None):
         elif destination.get('kind')=='category':
             if not conn.execute('SELECT 1 FROM products WHERE category=%s AND brand_id=%s',(destination.get('id'),user['brand_id'])).fetchone():
                 raise db.error(422,'BANNER_DESTINATION_INVALID','التصنيف غير موجود.')
+        elif destination.get('kind')=='link':
+            catalog.safe_campaign_url(destination.get('id'))
         else:
-            raise db.error(422,'BANNER_DESTINATION_INVALID','اختر صنفًا أو تصنيفًا فعليًا داخل المتجر.')
+            raise db.error(422,'BANNER_DESTINATION_INVALID','اختر صنفًا أو تصنيفًا داخل المتجر أو رابط HTTPS صحيحًا.')
     for key in ('starts_at','ends_at'):
         if row[key] is not None:
             try:
@@ -446,46 +510,53 @@ def banner_fields(conn,body,user,existing=None):
                 raise db.error(422,'BANNER_TIME_INVALID','أرسل وقتًا مع المنطقة الزمنية؛ الإدارة تعرض توقيت الرياض.') from None
     if row['starts_at'] and row['ends_at'] and row['ends_at']<=row['starts_at']:
         raise db.error(422,'BANNER_TIME_INVALID','نهاية الإعلان يجب أن تأتي بعد بدايته.')
-    return {key:row[key] for key in ('title','body','button_label','destination','desktop_asset_id','mobile_asset_id','branch_ids','active','sort_order','starts_at','ends_at')}
+    return {key:row[key] for key in ('title','body','button_label','destination','desktop_asset_id','mobile_asset_id','branch_ids','active','sort_order','starts_at','ends_at','cities','rotation_ms')}
 
 
 @router.post('/admin/banners')
-def create_banner(body:dict,user=Depends(owner),idem:str|None=Header(None,alias='Idempotency-Key')):
+def create_banner(body:dict,user=Depends(banner_admin),idem:str|None=Header(None,alias='Idempotency-Key')):
     with db.tx() as conn:
         def perform():
             row=banner_fields(conn,body,user); identifier=db.new_id('banner_')
             conn.execute('INSERT INTO banners(id,brand_id,title,body,button_label,destination,desktop_asset_id,mobile_asset_id,branch_ids,active,sort_order,starts_at,ends_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(identifier,user['brand_id'],row['title'],row['body'],row['button_label'],db.json(row['destination']),row['desktop_asset_id'],row['mobile_asset_id'],db.json(row['branch_ids']),row['active'],row['sort_order'],row['starts_at'],row['ends_at']))
+            conn.execute('UPDATE banners SET cities=%s,rotation_ms=%s WHERE id=%s',(db.json(row['cities']),row['rotation_ms'],identifier))
             db.audit(conn,user['id'],'banner.created','banner',identifier,{'fields':list(body)})
             return {'id':identifier,**row}
         return db.idempotent(conn,user['id'],idem,'banner.create',body,perform)
 
 
 @router.patch('/admin/banners/{record_id}')
-def update_banner(record_id:str,body:dict,user=Depends(owner),idem:str|None=Header(None,alias='Idempotency-Key')):
+def update_banner(record_id:str,body:dict,user=Depends(banner_admin),idem:str|None=Header(None,alias='Idempotency-Key')):
     with db.tx() as conn:
         def perform():
             existing=scoped(conn,'banners',record_id,user); row=banner_fields(conn,body,user,existing)
             conn.execute('UPDATE banners SET title=%s,body=%s,button_label=%s,destination=%s,desktop_asset_id=%s,mobile_asset_id=%s,branch_ids=%s,active=%s,sort_order=%s,starts_at=%s,ends_at=%s,updated_at=now() WHERE id=%s',(row['title'],row['body'],row['button_label'],db.json(row['destination']),row['desktop_asset_id'],row['mobile_asset_id'],db.json(row['branch_ids']),row['active'],row['sort_order'],row['starts_at'],row['ends_at'],record_id))
+            conn.execute('UPDATE banners SET cities=%s,rotation_ms=%s WHERE id=%s',(db.json(row['cities']),row['rotation_ms'],record_id))
             db.audit(conn,user['id'],'banner.updated','banner',record_id,{'fields':list(body)})
             return {'id':record_id,**row}
         return db.idempotent(conn,user['id'],idem,'banner.update:'+record_id,body,perform)
 
 
-def active_banners(conn,brand_id,branch_id):
+def active_banners(conn,brand_id,branch_id,city_name=None):
     if branch_id and not conn.execute('SELECT 1 FROM branches WHERE id=%s AND brand_id=%s',(branch_id,brand_id)).fetchone():
         raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير موجود ضمن البراند.')
-    return conn.execute("SELECT * FROM banners WHERE brand_id=%s AND active AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now()) AND (branch_ids='[]'::jsonb OR branch_ids ? %s) ORDER BY sort_order,created_at LIMIT 20",(brand_id,branch_id or '')).fetchall()
+    if branch_id:
+        city_name=conn.execute('SELECT city FROM branches WHERE id=%s AND brand_id=%s',(branch_id,brand_id)).fetchone()['city']
+    if city_name:
+        city_name=catalog.normalize_city(city_name)
+    return conn.execute("SELECT * FROM banners WHERE brand_id=%s AND active AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now()) AND (branch_ids='[]'::jsonb OR branch_ids ? %s) AND (cities='[]'::jsonb OR cities ? %s) ORDER BY sort_order,created_at LIMIT 20",(brand_id,branch_id or '',city_name or '')).fetchall()
 
 
 @router.get('/banners')
-def public_banners(brand_id:str='kps',branch_id:str|None=None):
+def public_banners(brand_id:str='kps',branch_id:str|None=None,city:str|None=None):
     with db.tx() as conn:
-        rows=active_banners(conn,brand_id,branch_id)
+        rows=active_banners(conn,brand_id,branch_id,city)
         configuration=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand_id,)).fetchone()
         presentation=homepage_presentation_config((configuration or {}).get('settings',{}).get('homepage_presentation'),brand_id=brand_id)
     def asset_url(identifier):
-        return f'/api/banner-assets/{identifier}?brand_id={brand_id}'+(f'&branch_id={branch_id}' if branch_id else '') if identifier else None
-    return {'banners':[{'id':row['id'],'title':row['title'],'body':row['body'],'button_label':row['button_label'],'destination':row['destination'],'desktop_image_url':asset_url(row['desktop_asset_id']),'mobile_image_url':asset_url(row['mobile_asset_id'])} for row in rows],
+        from urllib.parse import urlencode
+        return f'/api/banner-assets/{identifier}?'+urlencode({'brand_id':brand_id,**({'branch_id':branch_id} if branch_id else {}),**({'city':city} if city else {})}) if identifier else None
+    return {'banners':[{'id':row['id'],'title':row['title'],'body':row['body'],'button_label':row['button_label'],'destination':row['destination'],'rotation_ms':row['rotation_ms'],'desktop_image_url':asset_url(row['desktop_asset_id']),'mobile_image_url':asset_url(row['mobile_asset_id'])} for row in rows],
             'presentation':{'ticker_enabled':presentation['ticker_enabled'],
                             'ticker_lines':presentation['ticker_lines'] if presentation['ticker_enabled'] else [],
                             'ticker_seconds':presentation['ticker_seconds'],
@@ -493,9 +564,9 @@ def public_banners(brand_id:str='kps',branch_id:str|None=None):
 
 
 @router.get('/banner-assets/{record_id}')
-def public_banner_asset(record_id:str,brand_id:str='kps',branch_id:str|None=None):
+def public_banner_asset(record_id:str,brand_id:str='kps',branch_id:str|None=None,city:str|None=None):
     with db.tx() as conn:
-        banners=active_banners(conn,brand_id,branch_id)
+        banners=active_banners(conn,brand_id,branch_id,city)
         if not any(record_id in {row['desktop_asset_id'],row['mobile_asset_id']} for row in banners):
             raise db.error(404,'BANNER_ASSET_UNAVAILABLE','الصورة غير متاحة.')
         asset=conn.execute("SELECT contents,mime_type FROM assets WHERE id=%s AND brand_id=%s AND purpose='banner'",(record_id,brand_id)).fetchone()
@@ -533,7 +604,7 @@ def create_branch(body:dict,user=Depends(owner),idem:str|None=Header(None,alias=
 
 
 @router.post('/admin/products')
-def create_product(body:dict,user=Depends(owner),idem:str|None=Header(None,alias='Idempotency-Key')):
+def create_product(body:dict,user=Depends(product_admin),idem:str|None=Header(None,alias='Idempotency-Key')):
     keys(body,{'name','category','price_halalas','source_id','settings'})
     name=text(body.get('name'),200,'اسم الصنف');category=text(body.get('category'),150,'التصنيف')
     price=money(body.get('price_halalas'),'سعر الصنف')

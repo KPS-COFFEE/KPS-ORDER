@@ -6,7 +6,7 @@ import json as jsonlib
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from . import db, auth
+from . import db, auth, service_hours
 
 router = APIRouter(prefix='/api', tags=['operations'])
 RIYADH = ZoneInfo('Asia/Riyadh')
@@ -122,6 +122,41 @@ class ShiftOpen(BaseModel):
     opening_halalas: StrictInt=Field(0,ge=0)
     reason: str=''
 
+
+def delivery_shift_window(c, brand, branches):
+    """Gate fresh staffing; existing tasks and closures never expire by clock.
+
+    Unconfigured legacy/internal brands retain their existing staffing flow.
+    The approved default configures eligible KPS branches without enabling them.
+    """
+    from . import catalog
+    now = service_hours.now_riyadh()
+    windows = {}
+    brand_settings = c.execute('SELECT settings FROM brands WHERE id=%s', (brand,)).fetchone()['settings']
+    if brand_settings.get('services', {}).get('delivery', True) is not True:
+        fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
+    for branch in branches:
+        settings = branch['settings']
+        hours = settings.get('delivery_hours')
+        if not hours:
+            continue
+        if catalog.normalize_city(branch['city']) not in catalog.DELIVERY_CITIES:
+            fail(409, 'هذا الفرع غير مؤهل لشفتات التوصيل.')
+        if settings.get('active', True) is not True or settings.get('delivery_enabled') is not True:
+            fail(409, 'التوصيل موقوف لهذا الفرع؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
+        status = service_hours.hours_status(hours, now)
+        if not status['configured']:
+            fail(503, 'ساعات التوصيل لهذا الفرع غير صحيحة.')
+        if not status['open']:
+            fail(409, service_hours.closed_delivery_message(hours, now))
+        windows[branch['id']] = {'hours': hours, 'window_start': status['current_window_start'],
+                                  'window_end': status['current_window_end']}
+    if not windows:
+        return None, None
+    operational_date = service_hours.delivery_operational_date(now)
+    return operational_date, {'timezone': 'Asia/Riyadh', 'operational_date': operational_date.isoformat(),
+                              'operational_day_start': '16:00', 'branches': windows}
+
 @router.post('/shifts')
 def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','driver')
@@ -139,9 +174,12 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             brand=target.get('brand_id') or user.get('brand_id')
             bids=body.branch_ids or target.get('branch_ids',[])
             if not brand or not bids: fail(422,'يلزم براند وفروع فعلية للشفت')
+            branch_rows=[]
             for bid in bids:
                 b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
                 if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
+                branch_rows.append(b)
+            operational_date, delivery_window = delivery_shift_window(c, brand, branch_rows)
             if body.opening_halalas:
                 roles(user,'owner')
                 if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
@@ -155,9 +193,9 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             sid=uid()
             carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL FOR UPDATE',(target['id'],)).fetchall()
             carried=sum(x['amount_halalas'] for x in carryovers)
-            c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas) VALUES(%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried))
+            c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
             for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
-            db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'carryover_ids':[x['id'] for x in carryovers]})
+            db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
             return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}
         return mutate(c,user,request,'shift.open',body.model_dump(),perform)
 
@@ -582,6 +620,8 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         setting=c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand,)).fetchone()
         config={**cfg['settings'],**(setting['settings'] if setting else {})}
         minutes,configured=day_start(config)
+        # Delivery's day is independent of pickup/car reporting settings.
+        if service=='delivery':minutes,configured=service_hours.DELIVERY_DAY_START_MINUTES,True
         now=datetime.now(RIYADH);day=(now-timedelta(minutes=minutes)).date()
         if period=='yesterday':day-=timedelta(days=1)
         try:

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from . import auth, catalog, db, performance
+from . import auth, catalog, db, performance, service_hours
 
 router = APIRouter(prefix='/api/orders')
 
@@ -77,13 +77,17 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                 customer['risk_reasons']=['similar_recent_unverified_contact_order'] if recent else []
                 customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
             order_id = db.new_id('order_')
+            delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
+            if delivery_day:
+                quote['delivery_operating_day'] = {'date': delivery_day.isoformat(), 'start': '16:00',
+                                                    'timezone': 'Asia/Riyadh'}
             row = conn.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
-                               'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot) '
-                               'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
+                               'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
+                               'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                                (order_id, body.brand_id, body.branch_id, user['id'], body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
-                                db.json(quote), db.json(customer), db.json(performance.capture_policy(conn,body.brand_id,body.branch_id)))).fetchone()
+                                db.json(quote), db.json(customer), db.json(performance.capture_policy(conn,body.brand_id,body.branch_id)), delivery_day)).fetchone()
             db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
             db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': body.branch_id, 'total_halalas': quote['total_halalas']})
             return {'order': customer_order_view(row)}
@@ -158,7 +162,9 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             clock = (config['settings'] if config else {}).get('operational_day_start')
             configured = bool(clock)
             minutes = catalog._minute(clock) if configured else 0
-            day = (datetime.now(catalog.RIYADH) - timedelta(minutes=minutes)).date()
+            if service=='delivery' or user['role'] in {'delivery_manager','delivery_staff','driver'}:
+                minutes,configured=service_hours.DELIVERY_DAY_START_MINUTES,True
+            day = (service_hours.now_riyadh() - timedelta(minutes=minutes)).date()
             if period == 'yesterday':
                 day -= timedelta(days=1)
             if period == 'custom' and (not start or not end):

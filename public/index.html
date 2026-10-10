@@ -13,6 +13,10 @@
 </head>
 <body>
 <a class="skip-link" href="#menu">انتقل إلى المنيو</a>
+<section id="announcement-ticker" class="announcement-ticker" aria-label="العبارات المتحركة" hidden>
+  <div class="announcement-viewport" aria-live="off"><div id="announcement-track" class="announcement-track"></div></div>
+  <button id="ticker-pause" class="ticker-pause" type="button" aria-pressed="false" title="إيقاف الحركة">إيقاف الحركة</button>
+</section>
 <header class="site-header">
   <div class="header-inner">
     <a id="brand-home" class="brand" href="/" aria-label="الطلبات الرئيسية">
@@ -23,23 +27,21 @@
   </div>
 </header>
 <main class="page-shell">
-  <section id="announcement-ticker" class="announcement-ticker" aria-label="العبارات المتحركة" hidden>
-    <div class="announcement-viewport" aria-live="off"><div id="announcement-track" class="announcement-track"></div></div>
-    <button id="ticker-pause" class="ticker-pause" type="button" aria-pressed="false" title="إيقاف الحركة">إيقاف الحركة</button>
-  </section>
   <section id="banner-area" class="banner-area" aria-label="إعلانات البراند">
     <div id="banner-content" class="intro-banner"><div><span class="eyebrow">الطلبات</span><h1>جاري تحميل البراند…</h1><p>تصفح المنيو، ثم حدد الخدمة والفرع المناسب لطلبك.</p></div></div>
     <div id="banner-controls" class="banner-controls" hidden></div>
   </section>
   <div id="site-notice" class="notice" role="status" hidden></div>
   <section class="service-panel panel" aria-labelledby="service-title">
-    <div class="section-heading"><div><span class="eyebrow">قبل أن تختار</span><h2 id="service-title">كيف تستلم طلبك؟</h2></div><div class="branch-summary-actions"><span id="branch-summary" class="muted">حدد الفرع للتحقق من الإتاحة</span><a id="branch-directions" class="button quiet" target="_blank" rel="noopener noreferrer" hidden>الاتجاهات</a></div></div>
+    <div class="section-heading"><div><span class="eyebrow">قبل أن تختار</span><h2 id="service-title">كيف تستلم طلبك؟</h2></div><div class="branch-summary-actions"><span id="branch-summary" class="muted">حدد الفرع للتحقق من الإتاحة</span><a id="branch-directions" class="button quiet" target="_blank" rel="noopener noreferrer" hidden>الاتجاهات إلى الفرع</a></div></div>
     <div class="service-form">
       <fieldset class="service-options"><legend class="sr-only">نوع الخدمة</legend><label class="choice"><input type="radio" name="service" value="delivery"><span><b>توصيل</b><small>إلى موقعك</small></span></label><label class="choice"><input type="radio" name="service" value="pickup" checked><span><b>استلام من الفرع</b><small>جهز طلبك قبل الوصول</small></span></label><label class="choice"><input type="radio" name="service" value="car"><span><b>استلام بالسيارة</b><small>في الفروع المتاحة</small></span></label></fieldset>
-      <label class="field">الفرع<select id="branch-select"><option value="">اختر الفرع</option></select></label>
+      <div class="branch-picker"><label class="field">المدينة<select id="city-select"><option value="">كل المدن</option></select></label><label class="field">الفرع<select id="branch-select" aria-describedby="branch-picker-hint"><option value="">اختر الفرع</option></select></label><p id="branch-picker-hint" class="small muted">يمكنك اختيار المدينة والفرع دون تفعيل الموقع. تظهر حالة الخدمة بجانب الفرع.</p></div>
     </div>
     <div id="service-notice" class="inline-note" role="status"></div>
-    <div id="location-fields" class="location-fields" hidden><label class="field">الحي <span class="muted">مطلوب للتوصيل</span><input id="neighborhood" autocomplete="address-level3" maxlength="120" placeholder="اسم الحي"></label><label class="field">وصف العنوان<input id="address" autocomplete="street-address" maxlength="500" placeholder="الحي، الشارع، رقم المبنى وأي علامة واضحة"></label><div class="row wrap"><button id="locate-button" class="button secondary" type="button">استخدام موقعي الحالي</button><button id="manual-location-button" class="button quiet" type="button">إدخال الموقع يدويًا</button><span id="location-state" class="muted">لم يُحدد الموقع</span></div><div id="manual-location" class="form-grid" hidden><label class="field">خط العرض<input id="latitude" type="number" min="-90" max="90" step="any" inputmode="decimal" dir="ltr"></label><label class="field">خط الطول<input id="longitude" type="number" min="-180" max="180" step="any" inputmode="decimal" dir="ltr"></label><label class="field">رابط Google Maps <span class="muted">اختياري</span><input id="map-url" type="url" dir="ltr" placeholder="https://www.google.com/maps/…"></label><button id="parse-map-url" class="button quiet" type="button">اعتماد دبوس الرابط</button><button id="save-location" class="button secondary" type="button">اعتماد الموقع المدخل</button></div></div>
+    <div class="branch-location-tools"><div class="row wrap"><button id="locate-button" class="button secondary" type="button">استخدام موقعي الحالي</button><button id="manual-location-button" class="button quiet" type="button" aria-controls="manual-location" aria-expanded="false">إدخال الموقع يدويًا</button><button id="clear-location" class="button quiet" type="button" hidden>إلغاء الموقع المحدد</button></div><p id="location-state" class="small muted" role="status">الموقع اختياري لاختيار أقرب فرع؛ ويمكنك اختيار المدينة والفرع يدويًا.</p><div id="manual-location" class="form-grid" hidden><label class="field">خط العرض<input id="latitude" type="number" min="-90" max="90" step="any" inputmode="decimal" dir="ltr"></label><label class="field">خط الطول<input id="longitude" type="number" min="-180" max="180" step="any" inputmode="decimal" dir="ltr"></label><label class="field">رابط Google Maps <span class="muted">اختياري</span><input id="map-url" type="url" dir="ltr" placeholder="https://www.google.com/maps/…"></label><button id="parse-map-url" class="button quiet" type="button">اعتماد دبوس الرابط</button><button id="save-location" class="button secondary" type="button">اعتماد الموقع المدخل</button></div></div>
+    <section id="nearest-panel" class="nearest-panel" aria-labelledby="nearest-title" hidden><h3 id="nearest-title">الفروع المؤهلة الأقرب إليك</h3><p id="nearest-state" class="small muted" role="status"></p><div id="nearest-branches" class="nearest-branches"></div><details id="nearest-excluded" hidden><summary id="nearest-excluded-title">فروع غير مؤهلة للاختيار الحالي</summary><ul id="nearest-excluded-list"></ul></details></section>
+    <div id="location-fields" class="location-fields" hidden><label class="field">الحي <span class="muted">مطلوب للتوصيل</span><input id="neighborhood" autocomplete="address-level3" maxlength="120" placeholder="اسم الحي"></label><label class="field">وصف العنوان<input id="address" autocomplete="street-address" maxlength="500" placeholder="الحي، الشارع، رقم المبنى وأي علامة واضحة"></label></div>
     <div id="car-fields" class="form-grid car-fields" hidden><label class="field">نوع السيارة<input id="car-model" maxlength="60" autocomplete="off" placeholder="نوع وموديل السيارة"></label><label class="field">لون السيارة<input id="car-color" maxlength="40" autocomplete="off"></label><label class="field">رقم اللوحة<input id="car-plate" maxlength="30" autocomplete="off"></label></div>
   </section>
   <div class="store-layout">

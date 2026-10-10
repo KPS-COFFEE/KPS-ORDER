@@ -20,7 +20,36 @@ from . import db
 router = APIRouter(prefix='/api')
 COOKIE = 'kps_session'
 CSRF_COOKIE = 'kps_csrf'
-ROLES = {'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'customer'}
+ROLES = {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'customer'}
+ADMIN_PERMISSIONS = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage'}
+
+
+def validate_admin_permissions(values):
+    if not isinstance(values, list) or len(values) != len(set(str(x) for x in values)) or any(not isinstance(x, str) or x not in ADMIN_PERMISSIONS for x in values):
+        raise db.error(422, 'ADMIN_PERMISSIONS_INVALID', 'اختر صلاحيات الإدارة المحددة فقط.')
+    return values
+
+
+def has_permission(user, permission):
+    return user['role'] == 'owner' or (user['role'] == 'admin' and permission in (user.get('permissions') or []))
+
+
+def require_permission(permission):
+    if permission not in ADMIN_PERMISSIONS:
+        raise ValueError('Unknown admin permission')
+    def dependency(user=Depends(current_user)):
+        if not has_permission(user, permission):
+            raise db.error(403, 'ROLE_FORBIDDEN', 'هذه الصلاحية لم يمنحها المالك لحسابك.')
+        return user
+    return dependency
+
+
+def require_configuration():
+    def dependency(user=Depends(current_user)):
+        if user['role'] != 'owner' and not (user['role'] == 'admin' and set(user.get('permissions') or []) & ADMIN_PERMISSIONS):
+            raise db.error(403, 'ROLE_FORBIDDEN', 'لا توجد صلاحيات إعدادات مخولة لحسابك.')
+        return user
+    return dependency
 IDENTITY_DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')
 
 
@@ -52,7 +81,7 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 
 def public_user(user: dict) -> dict:
-    return {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle')}
+    return {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions')}
 
 
 def secure_cookie() -> bool:
@@ -818,7 +847,8 @@ class StaffInvitationBody(BaseModel):
     branch_ids:list[str]=Field(default_factory=list,max_length=500)
     employee_ref:str|None=Field(default=None,max_length=80)
     vehicle:dict=Field(default_factory=dict)
-    role:Literal['driver','owner','delivery_manager','delivery_staff','branch_manager']='driver'
+    role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager']='driver'
+    permissions:list[str]=Field(default_factory=list,max_length=20)
 
 
 def _vehicle(value):
@@ -829,6 +859,9 @@ def _vehicle(value):
 
 @router.post('/identity/staff/invitations')
 def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','delivery_manager'))):
+    permissions=validate_admin_permissions(body.permissions)
+    if permissions and body.role != 'admin':
+        raise db.error(422, 'ADMIN_ROLE_REQUIRED', 'صلاحيات الإدارة مخصصة لدور أدمن فقط.')
     email=email_delivery.normalize_email(body.email)
     phone=normalize_phone(body.phone)
     name=body.display_name.strip()
@@ -847,7 +880,7 @@ def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','de
         scope=_staff_scope(conn,user,body.branch_ids)
         if body.role!='owner' and not scope:
             raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
-        if body.role in {'owner','delivery_manager'}:
+        if body.role in {'owner','admin','delivery_manager'}:
             require_owner_step_up(conn,user)
         # Serialize identity conflicts without revealing the matched account's attributes.
         conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
@@ -857,8 +890,9 @@ def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','de
         identifier=db.new_id('staff_')
         invitation_state='pending_email' if ready else 'draft'
         row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
+        row=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
         challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
-        db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,{'role':body.role,'branch_ids':scope})
+        db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,{'role':body.role,'branch_ids':scope,'permissions':permissions})
         return {'user':staff_public(conn,row),'challenge_id':challenge,'invitation_status':invitation_state,'delivery_status':'queued' if ready else 'channel_unavailable'}
 
 
@@ -880,12 +914,20 @@ class StaffUpdateBody(BaseModel):
     active:bool|None=None
     employee_ref:str|None=Field(default=None,max_length=80)
     vehicle:dict|None=None
+    permissions:list[str]|None=Field(default=None,max_length=20)
 
 
 @router.patch('/identity/staff/{identifier}')
 def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles('owner','delivery_manager'))):
     with db.tx() as conn:
         row=_staff_record(conn,identifier,user)
+        if body.permissions is not None:
+            if user['role']!='owner' or row['role']!='admin':
+                raise db.error(403,'ADMIN_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الأدمن.')
+            permissions=validate_admin_permissions(body.permissions)
+            require_owner_step_up(conn,user)
+        else:
+            permissions=row.get('permissions') or []
         scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
         active=body.active if body.active is not None else row['active']
         email=email_delivery.normalize_email(body.email) if body.email is not None else row['email']
@@ -918,13 +960,15 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
         if active and row['email_verified_at']:
             status='active'
         output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
+        if body.permissions is not None:
+            output=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
         if email_changed:
             output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
-        if scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone']:
+        if scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone'] or permissions!=(row.get('permissions') or []):
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
             conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
             conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
-        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set)})
+        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),**({'permissions':permissions} if body.permissions is not None else {})})
         return {'user':staff_public(conn,output)}
 
 
@@ -939,7 +983,7 @@ def resend_invitation(identifier:str,user=Depends(require_roles('owner','deliver
         _email_ready(conn,user['brand_id'],testing=True)
         if row['invitation_status'] not in {'pending_email','draft'} or not row['email']:
             raise db.error(409,'INVITATION_NOT_PENDING','لا توجد دعوة معلقة قابلة للإرسال.')
-        if row['role'] in {'owner','delivery_manager'}:
+        if row['role'] in {'owner','admin','delivery_manager'}:
             require_owner_step_up(conn,user)
         conn.execute("UPDATE users SET invitation_status='pending_email' WHERE id=%s",(identifier,))
         challenge=_create_email_token(conn,brand=user['brand_id'],email=row['email'],purpose='add_owner' if row['role']=='owner' else 'invitation',user_id=identifier,created_by=user['id'])

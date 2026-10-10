@@ -12,7 +12,7 @@ from test_browser import _context, _owner_login, _staff, chromium_browser, live_
 
 def test_homepage_presentation_validation_and_safe_defaults():
     default = admin.homepage_presentation_config(brand_id='kps')
-    assert default['ticker_enabled'] and default['ticker_lines'] == ['طلبك، على طريقتك']
+    assert default['ticker_enabled'] and default['ticker_lines'] == ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee']
     assert not default['quote_enabled'] and default['quote_text'] == ''
     assert not admin.homepage_presentation_config(brand_id='another-brand')['ticker_enabled']
     for bad in [
@@ -41,7 +41,7 @@ def test_owner_settings_public_filtered_quote_and_preservation(owner):
     public = client.get('/api/banners').json()
     assert public['presentation']['ticker_enabled'] is True
     assert public['presentation']['quote_text'] == ''
-    assert public['presentation']['ticker_lines'] == ['طلبك، على طريقتك']
+    assert public['presentation']['ticker_lines'] == ['الأماكن والأوقات تجمّلها القهوة دائمًا', 'Speciality Coffee']
 
     changed = {
         'ticker_enabled': True,
@@ -91,7 +91,7 @@ def test_customer_banner_no_watermark_and_owner_rotating_presentation(live_app, 
         'ticker_seconds': 20, 'quote_enabled': False, 'quote_text': 'بيت شعر غير منشور',
     }}
     response = context.request.patch(live_app + '/api/admin/settings',
-                                     headers=owner_headers, data=body)
+                                     headers={**owner_headers, 'Idempotency-Key': 'presentation-settings-' + uuid4().hex}, data=body)
     assert response.status == 200, response.text()
     for i in range(2):
         created = context.request.post(
@@ -110,6 +110,9 @@ def test_customer_banner_no_watermark_and_owner_rotating_presentation(live_app, 
     assert 'is-paused' in (page.locator('#announcement-track').get_attribute('class') or '')
     page.locator('#banner-controls .banner-dot').last.click()
     expect(page.locator('#banner-content')).to_contain_text('إعلان تجربة 2')
+    # Keyboard focus intentionally pauses an interactive banner; move focus
+    # outside it before checking automatic rotation.
+    page.locator('#branch-select').focus()
     page.mouse.move(0, 0)
     page.wait_for_timeout(6800)
     expect(page.locator('#banner-content')).to_contain_text('إعلان تجربة 1')
