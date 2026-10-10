@@ -324,7 +324,9 @@ def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(Non
     if 'guest_operational_confirmation_above_halalas' in body and body['guest_operational_confirmation_above_halalas'] is not None:
         money(body['guest_operational_confirmation_above_halalas'],'حد طلب الاتصال التشغيلي')
     if 'theme' in body:
-        theme=body['theme']; keys(theme,{'accent','background','text','font'})
+        theme=body['theme']; keys(theme,{'accent','background','text','font','profile'})
+        if 'profile' in theme and theme['profile'] not in {'CHARCOAL','ORIGINAL_Light'}:
+            raise db.error(422,'THEME_INVALID','اختر فحمي أو التصميم السابق.')
         for key in {'accent','background','text'} & set(theme):
             if not re.fullmatch(r'#[A-Fa-f0-9]{6}',str(theme[key])):
                 raise db.error(422,'THEME_INVALID','اللون بصيغة آمنة #RRGGBB.')
@@ -334,6 +336,8 @@ def update_settings(body: dict, user=Depends(owner), idem: str | None=Header(Non
         def perform():
             row=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR UPDATE',(user['brand_id'],)).fetchone()
             settings=row['settings']|body
+            if 'theme' in body:
+                settings['theme']=(row['settings'].get('theme') or {})|body['theme']
             conn.execute('UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id=%s',(db.json(settings),user['brand_id']))
             db.audit(conn,user['id'],'settings.updated','brand',user['brand_id'],{'fields':list(body)})
             return {'settings':settings}

@@ -303,7 +303,7 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
         preferences = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
-                           if key in {'accent', 'background', 'text', 'font'}}
+                           if key in {'accent', 'background', 'text', 'font', 'profile'}}
     return {'brand': safe_brand, 'products': [public_product(p, branch) for p in products],
             'legacy_item_mappings': legacy_item_mappings(products),
             'source_verified': bool(products) and all(source_approved(p) for p in products)}
