@@ -5,7 +5,7 @@
   const brandValue=brandParameters.has('brand_id')?brandParameters.get('brand_id'):'kps';
   const requestedBrandId=brandParameters.getAll('brand_id').length<=1&&/^[a-z][a-z0-9_-]{1,59}$/.test(brandValue||'')?brandValue:null;
   const basketStorageKey=`kps-unconfirmed-basket-v2:${requestedBrandId||'invalid'}`;
-  const state = {products: [], branches: [], brand: {id: requestedBrandId||'', name: requestedBrandId==='kps'?'KPS COFFEE':'الطلبات'}, sourceVerified: false, session: {user: null, csrf_token: null}, branchId: '', service: 'pickup', location: null, cart: [], quote: null, quoteError: '', quotePending: false, quoteRevision: 0, category: '', product: null, optionValues: [], banners: [], bannerIndex: 0, conversation: null, chatSequence: 0, chatTimer: null, ordersTimer: null, orders: [], nextOrdersOffset: null, activeOrder: null, challenge: null, afterLogin: null, confirmation: null, conversations: [], contactOrders: [], nextConversationOffset: null};
+  const state = {products: [], branches: [], brand: {id: requestedBrandId||'', name: requestedBrandId==='kps'?'KPS COFFEE':'الطلبات'}, sourceVerified: false, session: {user: null, csrf_token: null}, branchId: '', service: 'pickup', location: null, cart: [], quote: null, quoteError: '', quotePending: false, quoteRevision: 0, category: '', product: null, optionValues: [], banners: [], bannerIndex: 0, bannerTimer: null, presentation: null, tickerPaused: false, conversation: null, chatSequence: 0, chatTimer: null, ordersTimer: null, orders: [], nextOrdersOffset: null, activeOrder: null, challenge: null, afterLogin: null, confirmation: null, conversations: [], contactOrders: [], nextConversationOffset: null};
   state.legacyItemMappings={};
   state.channels={guest:{available:false},email:{available:false},sms:{available:false},whatsapp:{available:false}};
   const pendingKeys = new Map();
@@ -192,8 +192,150 @@
     try {const result=await api(`/api/catalog?${params}`);if(state.branchId!==selected)return;state.products=result.products||[];state.sourceVerified=result.source_verified===true;renderProducts();renderCart();queueQuote();}
     catch(error){if(state.branchId===selected){state.quote=null;state.quoteError=error.message;renderQuote();}}
   }
-  async function loadBanners() {const selected=state.branchId;try{const params=new URLSearchParams({brand_id:state.brand.id||'kps'});if(selected)params.set('branch_id',selected);const result=await api(`/api/banners?${params}`);if(state.branchId!==selected)return;state.banners=result.banners||[];state.bannerIndex=0;renderBanner();}catch{if(state.branchId===selected){state.banners=[];state.bannerIndex=0;renderBanner();}}}
-  function renderBanner() {const banner=state.banners[state.bannerIndex];const container=$('banner-content');const controls=$('banner-controls');controls.replaceChildren();controls.hidden=state.banners.length<2;if(!banner){container.className='intro-banner';container.replaceChildren();const content=node('div');content.append(node('span','eyebrow',state.brand.name),node('h1','',`اطلب مباشرة من ${state.brand.name}`),node('p','','تصفح المنيو، ثم حدد الخدمة والفرع المناسب لطلبك.'));container.append(content);if(requestedBrandId==='kps')container.append(node('span','banner-mark','KPS'));return;}container.className='campaign-banner';container.replaceChildren();const image=safeImage(banner.desktop_image_url||banner.image_url);const mobileImage=safeImage(banner.mobile_image_url||image);if(image){const picture=node('picture');if(mobileImage){const source=node('source');source.media='(max-width: 550px)';source.srcset=mobileImage;picture.append(source);}const img=node('img');img.src=image;img.alt=banner.title||`إعلان ${state.brand.name}`;img.decoding='async';img.addEventListener('error',()=>picture.remove(),{once:true});picture.append(img);container.append(picture);}const content=node('div','campaign-content');const copy=node('div');copy.append(node('h2','',banner.title||state.brand.name));if(banner.body||banner.text)copy.append(node('p','',banner.body||banner.text));content.append(copy);if(banner.destination){const action=node('button','button secondary',banner.button_label||'شاهد التفاصيل');action.type='button';action.addEventListener('click',()=>{const target=banner.destination;if(target.kind==='product'){const targetId=state.legacyItemMappings[target.id]?.product_id||target.id;const p=state.products.find((p)=>p.id===targetId);if(p)openProduct(p);}else if(target.kind==='category'){state.category=target.id||'';renderCategories();renderProducts();$('menu').scrollIntoView({behavior:'smooth'});}else if(target.kind==='menu')$('menu').scrollIntoView({behavior:'smooth'});});content.append(action);}container.append(content);if(state.banners.length>1)for(let index=0;index<state.banners.length;index++){const button=node('button','banner-dot',number.format(index+1));button.type='button';button.setAttribute('aria-label',`الإعلان ${number.format(index+1)}`);button.setAttribute('aria-current',String(index===state.bannerIndex));button.addEventListener('click',()=>{state.bannerIndex=index;renderBanner();});controls.append(button);} }
+
+  const prefersLessMotion=()=>window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function renderTicker() {
+    const area=$('announcement-ticker'),track=$('announcement-track'),control=$('ticker-pause');
+    const config=state.presentation||{};
+    const phrases=Array.isArray(config.ticker_lines)?config.ticker_lines.filter(x=>typeof x==='string'&&x.trim()).slice(0,8):[];
+    area.hidden=!config.ticker_enabled||!phrases.length;
+    track.replaceChildren();
+    if(area.hidden)return;
+    for(let repeat=0;repeat<2;repeat++){
+      const part=node('span','ticker-cycle');
+      if(repeat)part.setAttribute('aria-hidden','true');
+      for(const phrase of phrases){
+        part.append(node('span','ticker-text',phrase));
+        const point=node('span','ticker-separator','•');
+        point.setAttribute('aria-hidden','true');
+        part.append(point);
+      }
+      track.append(part);
+    }
+    const seconds=Number(config.ticker_seconds);
+    track.style.setProperty('--ticker-duration',`${Number.isFinite(seconds)?Math.min(90,Math.max(14,seconds)):28}s`);
+    track.classList.toggle('is-paused',state.tickerPaused||prefersLessMotion());
+    control.textContent=state.tickerPaused?'تشغيل الحركة':'إيقاف الحركة';
+    control.setAttribute('aria-pressed',String(state.tickerPaused));
+    control.disabled=prefersLessMotion();
+    control.title=prefersLessMotion()?'الحركة متوقفة حسب إعداد الجهاز':'';
+  }
+  function stopBannerRotation() {
+    if(state.bannerTimer!==null)clearInterval(state.bannerTimer);
+    state.bannerTimer=null;
+  }
+  function startBannerRotation() {
+    stopBannerRotation();
+    const area=$('banner-area');
+    if(state.banners.length<2||document.hidden||prefersLessMotion()||area.matches(':hover')||area.matches(':focus-within'))return;
+    state.bannerTimer=setInterval(()=>{
+      if(document.hidden||prefersLessMotion()||area.matches(':hover')||area.matches(':focus-within')){stopBannerRotation();return;}
+      state.bannerIndex=(state.bannerIndex+1)%state.banners.length;
+      renderBanner();
+    },6500);
+  }
+  function switchBanner(index) {
+    if(state.banners.length<2)return;
+    state.bannerIndex=(index+state.banners.length)%state.banners.length;
+    renderBanner();
+    startBannerRotation();
+  }
+  async function loadBanners() {
+    const selected=state.branchId;
+    stopBannerRotation();
+    try {
+      const params=new URLSearchParams({brand_id:state.brand.id||'kps'});
+      if(selected)params.set('branch_id',selected);
+      const result=await api(`/api/banners?${params}`);
+      if(state.branchId!==selected)return;
+      state.banners=result.banners||[];
+      state.bannerIndex=0;
+      state.presentation=result.presentation||null;
+      renderTicker();
+      renderBanner();
+      startBannerRotation();
+    } catch {
+      if(state.branchId===selected){
+        state.banners=[];
+        state.bannerIndex=0;
+        state.presentation=null;
+        renderTicker();
+        renderBanner();
+      }
+    }
+  }
+  function renderBanner() {
+    const banner=state.banners[state.bannerIndex];
+    const container=$('banner-content'),controls=$('banner-controls');
+    controls.replaceChildren();
+    controls.hidden=state.banners.length<2;
+    container.replaceChildren();
+    container.setAttribute('aria-live','off');
+    if(!banner){
+      container.className='intro-banner';
+      const content=node('div');
+      content.append(
+        node('span','eyebrow',state.brand.name),
+        node('h1','',`اطلب مباشرة من ${state.brand.name}`),
+        node('p','','تصفح المنيو، ثم حدد الخدمة والفرع المناسب لطلبك.')
+      );
+      // The formerly oversized KPS watermark is removed; the owner may
+      // enable an approved literary phrase in the future without redeploying.
+      if(state.presentation?.quote_text)content.append(node('p','hero-quote',state.presentation.quote_text));
+      container.append(content);
+      return;
+    }
+    container.className='campaign-banner';
+    const image=safeImage(banner.desktop_image_url||banner.image_url);
+    const mobileImage=safeImage(banner.mobile_image_url||image);
+    if(image){
+      const picture=node('picture');
+      if(mobileImage){
+        const source=node('source');
+        source.media='(max-width: 550px)';
+        source.srcset=mobileImage;
+        picture.append(source);
+      }
+      const img=node('img');
+      img.src=image;
+      img.alt=banner.title||`إعلان ${state.brand.name}`;
+      img.decoding='async';
+      img.addEventListener('error',()=>picture.remove(),{once:true});
+      picture.append(img);
+      container.append(picture);
+    }
+    const content=node('div','campaign-content'),copy=node('div');
+    copy.append(node('h2','',banner.title||state.brand.name));
+    if(banner.body||banner.text)copy.append(node('p','',banner.body||banner.text));
+    content.append(copy);
+    if(banner.destination){
+      const action=node('button','button secondary',banner.button_label||'شاهد التفاصيل');
+      action.type='button';
+      action.addEventListener('click',()=>{
+        const target=banner.destination;
+        if(target.kind==='product'){
+          const targetId=state.legacyItemMappings[target.id]?.product_id||target.id;
+          const p=state.products.find((p)=>p.id===targetId);
+          if(p)openProduct(p);
+        } else if(target.kind==='category'){
+          state.category=target.id||'';
+          renderCategories();renderProducts();
+          $('menu').scrollIntoView({behavior:'smooth'});
+        } else if(target.kind==='menu')$('menu').scrollIntoView({behavior:'smooth'});
+      });
+      content.append(action);
+    }
+    container.append(content);
+    if(state.banners.length>1)for(let index=0;index<state.banners.length;index++){
+      const button=node('button','banner-dot',number.format(index+1));
+      button.type='button';
+      button.setAttribute('aria-label',`الإعلان ${number.format(index+1)} من ${number.format(state.banners.length)}`);
+      button.setAttribute('aria-current',String(index===state.bannerIndex));
+      button.addEventListener('click',()=>switchBanner(index));
+      controls.append(button);
+    }
+  }
+
   function saveLocation(lat,lng) {if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){toast('أدخل إحداثيات صحيحة للموقع.');return;}state.location={lat,lng};text('location-state','تم اعتماد موقعك المحدد. سيُتحقق من التغطية على الخادم.');$('latitude').value=String(lat);$('longitude').value=String(lng);queueQuote();}
   function applyTheme(theme={}) {
     const valid=(value)=>typeof value==='string'&&/^#[a-f0-9]{6}$/i.test(value);
@@ -208,7 +350,7 @@
     root.style.setProperty('--font','"Noto Kufi Arabic",Tahoma,Arial,sans-serif');
     window.KPSAppearance?.apply(theme,state.brand.id);
   }
-  function bindEvents() {document.querySelectorAll('[data-close]').forEach((button)=>button.addEventListener('click',()=>closeDialog(button.closest('dialog'))));document.querySelectorAll('dialog').forEach((dialog)=>{dialog.addEventListener('click',(event)=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeDialog(dialog);}});dialog.addEventListener('cancel',()=>{if(dialog.id==='confirm-dialog')clearConfirmation();});dialog.addEventListener('close',()=>{if(dialog.open)return;const focus=focusHistory.get(dialog);if(focus?.isConnected&&focus.getClientRects().length)focus.focus({preventScroll:true});else $('menu').focus({preventScroll:true});if(dialog.id==='chat-dialog')clearTimeout(state.chatTimer);if(dialog.id==='orders-dialog'){clearTimeout(state.ordersTimer);state.activeOrder=null;}if(dialog.id==='confirm-dialog')clearConfirmation();});});$('branch-select').addEventListener('change',()=>changeBranch($('branch-select').value));document.querySelectorAll('input[name=service]').forEach((input)=>input.addEventListener('change',()=>{state.service=input.value;renderService();queueQuote();}));document.querySelectorAll('input[name=payment]').forEach((input)=>input.addEventListener('change',queueQuote));['customer-name','customer-phone','neighborhood','order-notes','address','car-model','car-color','car-plate'].forEach((id)=>$(id).addEventListener('input',queueQuote));$('search').addEventListener('input',renderProducts);$('product-qty').addEventListener('change',renderOptions);$('product-minus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)-1);renderOptions();});$('product-plus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)+1);renderOptions();});$('apply-first-option').addEventListener('click',()=>{const first={...state.optionValues[0]};state.optionValues=state.optionValues.map(()=>({...first}));renderOptions();});$('product-add').addEventListener('click',()=>busy($('product-add'),addProduct));$('checkout-button').addEventListener('click',()=>busy($('checkout-button'),beginCheckout));$('confirm-submit').addEventListener('click',()=>{const action=state.confirmation?.action;if(action)busy($('confirm-submit'),async()=>{try{await action();}catch(error){showError('confirm-error',error.message);}});});$('header-cart').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('mobile-basket').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('account-button').addEventListener('click',()=>{renderAccount();showError('account-error','');openDialog('account-dialog');});$('orders-button').addEventListener('click',()=>openOrders());$('contacts-button').addEventListener('click',openContacts);$('chat-inbox').addEventListener('click',openContacts);$('contact-context-form').addEventListener('submit',startContact);$('contact-order').addEventListener('change',updateContactContext);$('identity-onboarding-form').addEventListener('submit',async event=>{event.preventDefault();await busy($('identity-onboarding-submit'),async()=>{try{if(!state.emailLink)throw new Error('افتح رابط الدعوة مرة أخرى.');const result=await api('/api/identity/email/verify',{method:'POST',data:{...state.emailLink,display_name:$('identity-onboarding-name').value.trim(),phone:$('identity-onboarding-phone').value.trim()}});state.emailLink=null;await establishIdentity(result);}catch(error){showError('account-error',error.message);}});});$('parse-map-url').addEventListener('click',()=>busy($('parse-map-url'),async()=>{try{const result=await api('/api/location/parse-map-url',{method:'POST',data:{url:$('map-url').value.trim()}});saveLocation(result.location.lat,result.location.lng);}catch(error){toast(error.message);}}));$('guest-form').addEventListener('submit',requestGuest);$('email-request-form').addEventListener('submit',requestEmail);['email-login-button','link-email-button'].forEach(id=>$(id).addEventListener('click',()=>{$('email-request-form').hidden=false;$('login-email').focus();}));$('product-image-zoom').addEventListener('click',()=>showImage(state.product));$('product-image').addEventListener('click',()=>showImage(state.product));$('otp-request-form').addEventListener('submit',requestOTP);$('otp-verify-form').addEventListener('submit',verifyOTP);$('change-phone').addEventListener('click',()=>{state.challenge=null;$('otp-request-form').hidden=false;$('otp-verify-form').hidden=true;showError('account-error','');$('phone').focus();});$('logout-button').addEventListener('click',()=>busy($('logout-button'),async()=>{try{await api('/api/auth/logout',{method:'POST',data:{}});state.session={user:null,csrf_token:null};renderAccount();closeDialog('account-dialog');toast('تم تسجيل الخروج.');}catch(error){showError('account-error',error.message);}}));$('manual-location-button').addEventListener('click',()=>{$('manual-location').hidden=!$('manual-location').hidden;if(!$('manual-location').hidden)$('latitude').focus();});$('save-location').addEventListener('click',()=>{if(!$('latitude').value.trim()||!$('longitude').value.trim()){toast('أدخل خط العرض وخط الطول قبل الاعتماد.');return;}saveLocation(Number($('latitude').value),Number($('longitude').value));});$('locate-button').addEventListener('click',()=>{if(!navigator.geolocation){toast('تحديد الموقع غير مدعوم في هذا المتصفح. يمكنك إدخاله يدويًا.');return;}const button=$('locate-button');button.disabled=true;text('location-state','جاري تحديد موقعك بإذنك…');navigator.geolocation.getCurrentPosition((position)=>{button.disabled=false;saveLocation(position.coords.latitude,position.coords.longitude);},()=>{button.disabled=false;text('location-state','تعذر تحديد الموقع. اسمح بالوصول أو أدخله يدويًا.');},{enableHighAccuracy:true,timeout:15000,maximumAge:0});});$('chat-form').addEventListener('submit',sendMessage);$('chat-image').addEventListener('change',()=>text('chat-image-name',$('chat-image').files[0]?.name||''));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('chat-dialog').open)pollChat();});window.addEventListener('online',()=>{toast('عاد الاتصال. نتحقق من حالة الطلبات المحفوظة.');if($('chat-dialog').open)pollChat();if(state.cart.length)queueQuote();});let touchStart=0;$('banner-area').addEventListener('touchstart',(event)=>{touchStart=event.changedTouches[0].clientX;},{passive:true});$('banner-area').addEventListener('touchend',(event)=>{const delta=event.changedTouches[0].clientX-touchStart;if(Math.abs(delta)>50&&state.banners.length>1){state.bannerIndex=(state.bannerIndex+(delta>0?1:-1)+state.banners.length)%state.banners.length;renderBanner();}},{passive:true});}
+  function bindEvents() {const tickerPause=$('ticker-pause');tickerPause.addEventListener('click',()=>{state.tickerPaused=!state.tickerPaused;renderTicker();});$('banner-area').addEventListener('mouseenter',stopBannerRotation);$('banner-area').addEventListener('mouseleave',startBannerRotation);$('banner-area').addEventListener('focusin',stopBannerRotation);$('banner-area').addEventListener('focusout',()=>setTimeout(startBannerRotation,0));$('banner-area').addEventListener('keydown',(event)=>{if(state.banners.length<2||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();switchBanner(state.bannerIndex+(event.key==='ArrowLeft'?1:-1));});document.querySelectorAll('[data-close]').forEach((button)=>button.addEventListener('click',()=>closeDialog(button.closest('dialog'))));document.querySelectorAll('dialog').forEach((dialog)=>{dialog.addEventListener('click',(event)=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeDialog(dialog);}});dialog.addEventListener('cancel',()=>{if(dialog.id==='confirm-dialog')clearConfirmation();});dialog.addEventListener('close',()=>{if(dialog.open)return;const focus=focusHistory.get(dialog);if(focus?.isConnected&&focus.getClientRects().length)focus.focus({preventScroll:true});else $('menu').focus({preventScroll:true});if(dialog.id==='chat-dialog')clearTimeout(state.chatTimer);if(dialog.id==='orders-dialog'){clearTimeout(state.ordersTimer);state.activeOrder=null;}if(dialog.id==='confirm-dialog')clearConfirmation();});});$('branch-select').addEventListener('change',()=>changeBranch($('branch-select').value));document.querySelectorAll('input[name=service]').forEach((input)=>input.addEventListener('change',()=>{state.service=input.value;renderService();queueQuote();}));document.querySelectorAll('input[name=payment]').forEach((input)=>input.addEventListener('change',queueQuote));['customer-name','customer-phone','neighborhood','order-notes','address','car-model','car-color','car-plate'].forEach((id)=>$(id).addEventListener('input',queueQuote));$('search').addEventListener('input',renderProducts);$('product-qty').addEventListener('change',renderOptions);$('product-minus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)-1);renderOptions();});$('product-plus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)+1);renderOptions();});$('apply-first-option').addEventListener('click',()=>{const first={...state.optionValues[0]};state.optionValues=state.optionValues.map(()=>({...first}));renderOptions();});$('product-add').addEventListener('click',()=>busy($('product-add'),addProduct));$('checkout-button').addEventListener('click',()=>busy($('checkout-button'),beginCheckout));$('confirm-submit').addEventListener('click',()=>{const action=state.confirmation?.action;if(action)busy($('confirm-submit'),async()=>{try{await action();}catch(error){showError('confirm-error',error.message);}});});$('header-cart').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('mobile-basket').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('account-button').addEventListener('click',()=>{renderAccount();showError('account-error','');openDialog('account-dialog');});$('orders-button').addEventListener('click',()=>openOrders());$('contacts-button').addEventListener('click',openContacts);$('chat-inbox').addEventListener('click',openContacts);$('contact-context-form').addEventListener('submit',startContact);$('contact-order').addEventListener('change',updateContactContext);$('identity-onboarding-form').addEventListener('submit',async event=>{event.preventDefault();await busy($('identity-onboarding-submit'),async()=>{try{if(!state.emailLink)throw new Error('افتح رابط الدعوة مرة أخرى.');const result=await api('/api/identity/email/verify',{method:'POST',data:{...state.emailLink,display_name:$('identity-onboarding-name').value.trim(),phone:$('identity-onboarding-phone').value.trim()}});state.emailLink=null;await establishIdentity(result);}catch(error){showError('account-error',error.message);}});});$('parse-map-url').addEventListener('click',()=>busy($('parse-map-url'),async()=>{try{const result=await api('/api/location/parse-map-url',{method:'POST',data:{url:$('map-url').value.trim()}});saveLocation(result.location.lat,result.location.lng);}catch(error){toast(error.message);}}));$('guest-form').addEventListener('submit',requestGuest);$('email-request-form').addEventListener('submit',requestEmail);['email-login-button','link-email-button'].forEach(id=>$(id).addEventListener('click',()=>{$('email-request-form').hidden=false;$('login-email').focus();}));$('product-image-zoom').addEventListener('click',()=>showImage(state.product));$('product-image').addEventListener('click',()=>showImage(state.product));$('otp-request-form').addEventListener('submit',requestOTP);$('otp-verify-form').addEventListener('submit',verifyOTP);$('change-phone').addEventListener('click',()=>{state.challenge=null;$('otp-request-form').hidden=false;$('otp-verify-form').hidden=true;showError('account-error','');$('phone').focus();});$('logout-button').addEventListener('click',()=>busy($('logout-button'),async()=>{try{await api('/api/auth/logout',{method:'POST',data:{}});state.session={user:null,csrf_token:null};renderAccount();closeDialog('account-dialog');toast('تم تسجيل الخروج.');}catch(error){showError('account-error',error.message);}}));$('manual-location-button').addEventListener('click',()=>{$('manual-location').hidden=!$('manual-location').hidden;if(!$('manual-location').hidden)$('latitude').focus();});$('save-location').addEventListener('click',()=>{if(!$('latitude').value.trim()||!$('longitude').value.trim()){toast('أدخل خط العرض وخط الطول قبل الاعتماد.');return;}saveLocation(Number($('latitude').value),Number($('longitude').value));});$('locate-button').addEventListener('click',()=>{if(!navigator.geolocation){toast('تحديد الموقع غير مدعوم في هذا المتصفح. يمكنك إدخاله يدويًا.');return;}const button=$('locate-button');button.disabled=true;text('location-state','جاري تحديد موقعك بإذنك…');navigator.geolocation.getCurrentPosition((position)=>{button.disabled=false;saveLocation(position.coords.latitude,position.coords.longitude);},()=>{button.disabled=false;text('location-state','تعذر تحديد الموقع. اسمح بالوصول أو أدخله يدويًا.');},{enableHighAccuracy:true,timeout:15000,maximumAge:0});});$('chat-form').addEventListener('submit',sendMessage);$('chat-image').addEventListener('change',()=>text('chat-image-name',$('chat-image').files[0]?.name||''));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('chat-dialog').open)pollChat();if(document.hidden)stopBannerRotation();else startBannerRotation();});window.addEventListener('online',()=>{toast('عاد الاتصال. نتحقق من حالة الطلبات المحفوظة.');if($('chat-dialog').open)pollChat();if(state.cart.length)queueQuote();});let touchStart=0;$('banner-area').addEventListener('touchstart',(event)=>{touchStart=event.changedTouches[0].clientX;},{passive:true});$('banner-area').addEventListener('touchend',(event)=>{const delta=event.changedTouches[0].clientX-touchStart;if(Math.abs(delta)>50&&state.banners.length>1){switchBanner(state.bannerIndex+(delta>0?1:-1));}},{passive:true});}
   function renderBrand() {
     const name=state.brand.name||'الطلبات';document.title=`${name} | الطلبات`;
     document.querySelector('meta[name=description]').content=`منيو ${name} وطلبات التوصيل والاستلام من الفرع والسيارة`;
