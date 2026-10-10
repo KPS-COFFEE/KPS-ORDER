@@ -238,14 +238,7 @@ class SourceSnapshotContract(unittest.TestCase):
                 settings = branch['settings']
                 self.assertIs(settings['operational_data_verified'], False)
                 self.assertIsNone(branch['coordinates'])
-                # Opening hours are now a distinct, later owner-approved operational policy.
-                # The old source snapshot never supplied them, but the owner did.
-                self.assertEqual(settings.get('opening_hours'), [
-                    {'days':[0,1,2,3,5,6],'start':'00:00','end':'00:00'},
-                    {'days':[4],'start':'00:00','end':'05:30'},
-                    {'days':[4],'start':'12:30','end':'00:00'},
-                ])
-                for key in ('location', 'delivery_hours', 'coverage', 'delivery_fee_halalas', 'minimum_order_halalas'):
+                for key in ('location', 'opening_hours', 'delivery_hours', 'coverage', 'delivery_fee_halalas', 'minimum_order_halalas'):
                     self.assertIsNone(settings.get(key), f'Unknown {key} must not become a fake default')
                 for service in ('pickup', 'car', 'delivery'):
                     self.assertIs(settings[service + '_enabled'], False)

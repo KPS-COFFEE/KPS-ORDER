@@ -30,23 +30,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -73,23 +57,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -116,23 +84,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -159,23 +111,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -202,23 +138,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -245,23 +165,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -288,23 +192,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -331,23 +219,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -374,23 +246,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -417,23 +273,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -460,23 +300,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -503,23 +327,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -546,23 +354,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -589,23 +381,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -632,23 +408,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -675,23 +435,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -718,23 +462,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -761,23 +489,7 @@
         "delivery_enabled": false,
         "delivery_eligible": false,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -804,23 +516,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,
@@ -847,23 +543,7 @@
         "delivery_enabled": false,
         "delivery_eligible": true,
         "location": null,
-        "opening_hours": [
-          {
-            "days": [0, 1, 2, 3, 5, 6],
-            "start": "00:00",
-            "end": "00:00"
-          },
-          {
-            "days": [4],
-            "start": "00:00",
-            "end": "05:30"
-          },
-          {
-            "days": [4],
-            "start": "12:30",
-            "end": "00:00"
-          }
-        ],
+        "opening_hours": null,
         "coverage": null,
         "delivery_fee_halalas": null,
         "minimum_order_halalas": null,

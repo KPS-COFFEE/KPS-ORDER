@@ -14,11 +14,11 @@ def local(value):
     return datetime.fromisoformat(value).replace(tzinfo=service_hours.RIYADH)
 
 
-def test_approved_seed_hours_identical_for_all_20_branches_and_services_still_disabled():
+def test_historical_source_has_unknown_hours_and_services_still_disabled():
     rows=json.loads((Path(__file__).resolve().parents[1]/'data/branches.json').read_text())['branches']
     assert len(rows)==20
     for branch in rows:
-        assert branch['settings']['opening_hours'] == service_hours.DEFAULT_KPS_BRANCH_OPENING_HOURS
+        assert branch['settings']['opening_hours'] is None
         assert branch['settings']['pickup_enabled'] is False
         assert branch['settings']['car_enabled'] is False
         assert branch['settings']['delivery_enabled'] is False
@@ -78,18 +78,19 @@ def test_current_branches_have_hours_without_activation_and_owner_override_survi
                      (db.json(override),))
         conn.execute("UPDATE branches SET settings=jsonb_set(settings,'{opening_hours}','[]'::jsonb) WHERE id='kps-branch-2'")
         conn.execute("UPDATE branches SET settings=jsonb_set(settings,'{opening_hours}','null'::jsonb) WHERE id='kps-branch-3'")
-        # Simulate the first forward migration against imported older branch data.
-        conn.execute("DELETE FROM schema_migrations WHERE version='016_kps_branch_opening_hours.sql'")
+        # Simulate one unevaluated branch; owner-approved overrides remain untouched.
+        conn.execute("DELETE FROM branch_opening_hours_decisions WHERE branch_id='kps-branch-3'")
     db.migrate()
     with db.tx() as conn:
         rows=conn.execute("SELECT id,settings FROM branches WHERE brand_id='kps' ORDER BY branch_no").fetchall()
         assert rows[0]['settings']['opening_hours']==override
         assert rows[1]['settings']['opening_hours']==[]
         assert rows[2]['settings']['opening_hours']==service_hours.DEFAULT_KPS_BRANCH_OPENING_HOURS
-        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_opening_hours'").fetchone()['n']==1
+        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_opening_hours'").fetchone()['n']==21
     db.migrate()
     with db.tx() as conn:
         assert conn.execute("SELECT settings FROM branches WHERE id='kps-branch-2'").fetchone()['settings']['opening_hours']==[]
+        assert conn.execute("SELECT count(*) AS n FROM branch_opening_hours_decisions").fetchone()['n']==20
 
 
 @pytest.mark.postgres
