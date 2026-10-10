@@ -212,7 +212,8 @@ def configuration(user=Depends(auth.require_configuration())):
 
 @router.patch('/admin/branches/{record_id}')
 def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: str | None=Header(None,alias='Idempotency-Key')):
-    keys(body, {'name','city','settings'})
+    keys(body, {'name','city','settings','reason'})
+    reason = text(body.get('reason', ''), 500, 'سبب تعديل الفرع')
     with db.tx() as conn:
         def perform():
             row = scoped(conn,'branches',record_id,user)
@@ -239,7 +240,7 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
             if settings.get('delivery_enabled') and (any(not settings.get(k) for k in ('delivery_hours','coverage','location')) or settings.get('delivery_fee_halalas') is None):
                 raise db.error(422,'DELIVERY_CONFIGURATION_INCOMPLETE','يلزم الموقع والتغطية والساعات والرسوم الفعلية قبل تفعيل التوصيل.')
             conn.execute('UPDATE branches SET name=%s,city=%s,settings=%s,updated_at=now() WHERE id=%s',(name,branch_city,db.json(settings),record_id))
-            db.audit(conn,user['id'],'branch.updated','branch',record_id,{'fields':list(body),'settings_fields':list(changes)})
+            db.audit(conn,user['id'],'branch.updated','branch',record_id,{'fields':list(body),'settings_fields':list(changes),'reason':reason})
             return {'id':record_id,'name':name,'city':branch_city,'settings':settings}
         return db.idempotent(conn,user['id'],idem,'branch.update:'+record_id,body,perform)
 

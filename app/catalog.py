@@ -315,7 +315,9 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
             available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
             item['services'][service] = {'available': available, 'code': code, 'reason': reason}
         result.append(item)
-    return {'branches': result}
+    return {'branches': result,
+            'brand_services': {key: brand_settings.get('services', {}).get(key, True) is True
+                               for key in ('delivery', 'pickup', 'car_pickup')}}
 
 
 @router.get('/products/{product_id}/availability')

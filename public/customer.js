@@ -5,7 +5,7 @@
   const brandValue=brandParameters.has('brand_id')?brandParameters.get('brand_id'):'kps';
   const requestedBrandId=brandParameters.getAll('brand_id').length<=1&&/^[a-z][a-z0-9_-]{1,59}$/.test(brandValue||'')?brandValue:null;
   const basketStorageKey=`kps-unconfirmed-basket-v2:${requestedBrandId||'invalid'}`;
-  const state = {products: [], branches: [], brand: {id: requestedBrandId||'', name: requestedBrandId==='kps'?'KPS COFFEE':'الطلبات'}, sourceVerified: false, session: {user: null, csrf_token: null}, branchId: '', service: 'pickup', location: null, cart: [], quote: null, quoteError: '', quotePending: false, quoteRevision: 0, category: '', product: null, optionValues: [], banners: [], bannerIndex: 0, bannerTimer: null, presentation: null, tickerPaused: false, conversation: null, chatSequence: 0, chatTimer: null, ordersTimer: null, orders: [], nextOrdersOffset: null, activeOrder: null, challenge: null, afterLogin: null, confirmation: null, conversations: [], contactOrders: [], nextConversationOffset: null};
+  const state = {products: [], branches: [], brandServices: {delivery:true,pickup:true,car_pickup:true}, brand: {id: requestedBrandId||'', name: requestedBrandId==='kps'?'KPS COFFEE':'الطلبات'}, sourceVerified: false, session: {user: null, csrf_token: null}, branchId: '', service: 'pickup', location: null, cart: [], quote: null, quoteError: '', quotePending: false, quoteRevision: 0, category: '', product: null, optionValues: [], banners: [], bannerIndex: 0, bannerTimer: null, presentation: null, tickerPaused: false, conversation: null, chatSequence: 0, chatTimer: null, ordersTimer: null, orders: [], nextOrdersOffset: null, activeOrder: null, challenge: null, afterLogin: null, confirmation: null, conversations: [], contactOrders: [], nextConversationOffset: null};
   state.legacyItemMappings={};
   state.channels={guest:{available:false},email:{available:false},sms:{available:false},whatsapp:{available:false}};
   state.cityFilter='';
@@ -193,7 +193,52 @@
     }catch(error){if(revision===nearest.revision&&error.name!=='AbortError')nearest.error=error.message;}
     finally{if(revision===nearest.revision){nearest.pending=false;nearest.controller=null;renderNearestBranches();}}
   }
-  function renderService() { const selected = branch(); text('branch-summary', selected ? `${selected.branch_no} · ${selected.name}` : 'حدد الفرع للتحقق من الإتاحة'); $('location-fields').hidden = state.service !== 'delivery';$('neighborhood').required=state.service==='delivery';$('neighborhood').setAttribute('aria-required',String(state.service==='delivery')); $('car-fields').hidden = state.service !== 'car';const directions=directionsLink(selected);$('branch-directions').hidden=!directions;if(directions)$('branch-directions').href=directions;else $('branch-directions').removeAttribute('href');document.querySelectorAll('input[name=service]').forEach(r=>{const permitted=!selected||!['BRAND_SERVICE_DISABLED','SERVICE_DISABLED','DELIVERY_CITY_NOT_ELIGIBLE'].includes(selected.services?.[r.value]?.code);r.disabled=!permitted;r.closest('label').hidden=!permitted;}); const service = selected?.services?.[state.service]; text('service-notice', selected ? service?.available ? `الخدمة متاحة حسب نطاق الفرع وإعداداته الحالية.${state.service === 'delivery' ? ' سيُتحقق من تغطية موقعك عند مراجعة الطلب.' : ''}` : service?.reason || 'هذه الخدمة لم تُفعّل للفرع بعد.' : 'اختر الفرع. إتاحة كل خدمة تُحدد بصورة مستقلة.'); $('service-notice').classList.toggle('status', service?.available === false); document.querySelectorAll('input[name=service]').forEach((r) => r.checked = r.value === state.service); }
+  function renderService(){
+  const selected=branch();
+  const inputs=[...document.querySelectorAll('input[name=service]')];
+  const permitted=(input)=>{
+    const key=input.value==='car'?'car_pickup':input.value;
+    if(state.brandServices?.[key]===false)return false;
+    return !['BRAND_SERVICE_DISABLED','SERVICE_DISABLED','DELIVERY_CITY_NOT_ELIGIBLE']
+      .includes(selected?.services?.[input.value]?.code);
+  };
+  const visible=inputs.filter(permitted);
+  const switched=visible.length>0&&!visible.some(input=>input.value===state.service);
+  if(switched){
+    // A delivery-only branch must never leave a hidden pickup option selected.
+    state.service=(visible.find(input=>input.value==='delivery')||visible[0]).value;
+  }
+  text('branch-summary',selected?`${selected.branch_no} · ${selected.name}`:'حدد الفرع للتحقق من الإتاحة');
+  $('location-fields').hidden=state.service!=='delivery';
+  $('neighborhood').required=state.service==='delivery';
+  $('neighborhood').setAttribute('aria-required',String(state.service==='delivery'));
+  $('car-fields').hidden=state.service!=='car';
+  const directions=directionsLink(selected);
+  $('branch-directions').hidden=!directions;
+  if(directions)$('branch-directions').href=directions;
+  else $('branch-directions').removeAttribute('href');
+  for(const input of inputs){
+    const allowed=permitted(input);
+    input.disabled=!allowed;
+    input.closest('label').hidden=!allowed;
+    input.checked=allowed&&input.value===state.service;
+  }
+  const service=selected?.services?.[state.service];
+  const none=visible.length===0;
+  text('service-notice',none?
+    (selected?'جميع خدمات الطلبات الجديدة موقوفة لهذا الفرع. اختر فرعًا آخر.':'جميع خدمات الطلبات الجديدة متوقفة حاليًا.'):
+    selected?
+      service?.available?
+        `الخدمة متاحة حسب نطاق الفرع وإعداداته الحالية.${state.service==='delivery'?' سيُتحقق من تغطية موقعك عند مراجعة الطلب.':''}`:
+        service?.reason||'هذه الخدمة لم تُفعّل للفرع بعد.':
+      'اختر الفرع. إتاحة كل خدمة تُحدد بصورة مستقلة.');
+  $('service-notice').classList.toggle('status',none||service?.available===false);
+  if(switched){
+    renderBranches();
+    queueNearestBranches();
+    queueQuote();
+  }
+}
   function renderCategories() { const tabs = $('categories'); tabs.replaceChildren(); const categories = [...new Set(state.products.map((p) => p.category).filter(Boolean))]; for (const category of ['', ...categories]) { const button = node('button','category-tab',category || 'كل المنيو'); button.type='button'; button.setAttribute('aria-current', String(state.category === category)); button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); }); tabs.append(button); } }
   function renderProducts() { const search = $('search').value.trim().toLocaleLowerCase('ar'); const products = state.products.filter((p) => (!state.category || p.category === state.category) && (!search || `${p.name} ${p.category} ${groups(p).flatMap((g)=>(g.values||[]).map((v)=>v.name)).join(' ')}`.toLocaleLowerCase('ar').includes(search))); const container = $('products'); container.replaceChildren(); text('menu-count', `${number.format(state.products.length)} صنفًا${requestedBrandId==='kps'?' · الصور والخيارات من منيو KPS':` · ${state.brand.name}`}`); if (!products.length) { const empty=node('div','empty-state'); empty.append(node('h3','', state.products.length?'لا توجد أصناف مطابقة':'لم تُضف أصناف لهذا البراند بعد.'),node('p','', state.products.length?'جرّب كلمة أخرى أو قسمًا مختلفًا.':'ستظهر هنا الأصناف التي تعتمدها إدارة البراند.')); container.append(empty); return; }
     for (const product of products) { const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',`تفاصيل ${product.name}`); const imageUrl=safeImage(product.image_url); if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=product.name;if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading='lazy'; img.decoding='async'; img.addEventListener('error', () => { img.remove(); imageButton.append(node('span','image-fallback','الصورة غير متاحة حاليًا')); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback','لا توجد صورة للصنف')); imageButton.addEventListener('click',()=>openProduct(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',product.name); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if (restricted(product)) info.append(node('span','pill warning','متوفر في حفر الباطن فقط')); if (groups(product).length) info.append(node('span','pill',isMug(product)?'ألوان لكل كوب':'خيارات لكل وحدة')); const bottom=node('div','product-card-bottom'); bottom.append(node('span','money',money(product.price_halalas))); const add=node('button','product-add-button','＋'); add.type='button'; add.setAttribute('aria-label',`إضافة ${product.name} إلى السلة`); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || 'اختر العدد والخيارات'; add.addEventListener('click',()=>openProduct(product)); bottom.append(add); info.append(bottom); if(imageUrl){const zoom=node('button','image-zoom-button','تكبير الصورة');zoom.type='button';zoom.setAttribute('aria-label',`تكبير صورة ${product.name}`);zoom.addEventListener('click',()=>showImage(product));info.append(zoom);}card.append(imageButton,info); container.append(card); }
@@ -490,7 +535,7 @@
       if(!state.sourceVerified&&state.products.length){showError('catalog-notice',requestedBrandId==='kps'?'بعض الأصناف لا تطابق النسخة المعتمدة أو تحتاج اعتماد تعديلاتها. تبقى الأصناف المعتمدة متاحة حسب الفرع والخدمة.':'الأسعار والخيارات الحالية قيد التحقق؛ لا يُتاح تأكيد طلب قبل اعتمادها.');$('catalog-notice').className='notice';}
       restoreDraft();renderCategories();renderProducts();
     }else{$('products').replaceChildren(node('div','empty-state','تعذر تحميل منيو هذا البراند. حدّث الصفحة للمحاولة مجددًا.'));showError('site-notice',catalogResult.reason.message);}
-    if(branchResult.status==='fulfilled'){state.branches=branchResult.value.branches||[];renderBranches();}else showError('service-notice',branchResult.reason.message);
+    if(branchResult.status==='fulfilled'){state.branches=branchResult.value.branches||[];state.brandServices=branchResult.value.brand_services||state.brandServices;renderBranches();}else showError('service-notice',branchResult.reason.message);
     if(sessionResult.status==='fulfilled')state.session=sessionResult.value;else showError('site-notice','يمكنك تصفح المنيو. تعذر التحقق من جلسة الدخول حاليًا.');
     renderAccount();renderService();renderCart();loadBanners();await verifyEmailLink();
   }
