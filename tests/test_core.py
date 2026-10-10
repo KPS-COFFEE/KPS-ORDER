@@ -44,11 +44,16 @@ def test_initial_khaliya_city_rule_both_original_products(pid, city):
 
 
 def test_city_policy_admin_revision_and_branch_stop_are_independent():
-    product = _product(available_cities=['رفحاء'], availability_policy_version=1)
+    product = _product('other-product', available_cities=['رفحاء'], availability_policy_version=1)
     assert catalog.product_availability(product, _branch(city='رفحا'))[0] is True
     assert catalog.product_availability(product, _branch())[0] is False
     stopped = _product(unavailable_branch_ids=['kps-branch-1'])
     assert catalog.product_availability(stopped, _branch())[0] is False
+    # The final owner instruction keeps both Khaliya source IDs Hafar-only;
+    # other products retain the existing explicit configurable city policy.
+    khaliya = _product(available_cities=['رفحاء'], availability_policy_version=1)
+    assert catalog.product_availability(khaliya, _branch(city='رفحا'))[0] is False
+    assert catalog.product_availability(khaliya, _branch())[0] is True
 
 
 def test_delivery_city_guard_does_not_disable_independent_pickup():
@@ -148,14 +153,14 @@ def _create(client, body=None, key='test-order-0001'):
 
 @pytest.mark.postgres
 class TestPostgreSQLCore:
-    def test_original_twenty_branches_and_preview_prices_are_unverified(self, client):
+    def test_original_twenty_branches_owner_approved_menu_and_unconfigured_operations(self, client):
         branches = client.get('/api/branches').json()['branches']
         assert [branch['branch_no'] for branch in branches] == list(range(1, 21))
         assert len({branch['id'] for branch in branches}) == 20
         assert all(not branch['services']['delivery']['available'] for branch in branches)
         catalog_response = client.get('/api/catalog').json()
-        assert len(catalog_response['products']) == 35
-        assert catalog_response['source_verified'] is False
+        assert len(catalog_response['products']) == 34
+        assert catalog_response['source_verified'] is True
         assert client.get('/ready').json()['ordering_configured'] is False
 
     def test_anonymous_cannot_create_or_read_orders_even_with_typed_phone(self, client):

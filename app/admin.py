@@ -258,6 +258,13 @@ def update_product(record_id: str, body: dict, user=Depends(owner), idem: str | 
             name = text(body.get('name',row['name']),200,'اسم الصنف')
             category = text(body.get('category',row['category']),150,'التصنيف')
             price = money(body.get('price_halalas',row['price_halalas']),'سعر الصنف')
+            updated = dict(row, name=name, category=category, price_halalas=price, settings=settings)
+            if changes.get('source_verified') is True:
+                settings['owner_approved_digest'] = catalog.commercial_digest(updated)
+            elif settings.get('menu_approval') and not catalog.source_approved(updated):
+                settings['source_verified'] = False
+            if 'image_url' in changes:
+                settings['pending_owner_image'] = False
             conn.execute('UPDATE products SET name=%s,category=%s,price_halalas=%s,settings=%s,updated_at=now() WHERE id=%s',(name,category,price,db.json(settings),record_id))
             db.audit(conn,user['id'],'product.updated','product',record_id,{'fields':list(body),'settings_fields':list(changes)})
             return {'id':record_id,'name':name,'category':category,'price_halalas':price,'settings':settings}

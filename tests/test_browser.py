@@ -213,9 +213,9 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
     context, page, errors = _context(chromium_browser, live_app)
     try:
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(35)
+        expect(page.locator('.product-card')).to_have_count(34)
         expect(page.locator('#branch-select option')).to_have_count(21)
-        expect(page.locator('#catalog-notice')).to_contain_text('قيد التحقق')
+        expect(page.locator('#catalog-notice')).not_to_be_visible()  # Final owner approval, branch operating data still unconfigured.
         expect(page.locator('#banner-content')).to_contain_text('اختبار واجهة — بيانات تجريبية')
         _capture(page, 'customer-preserved-source-preview-test-banner')
 
@@ -235,7 +235,7 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
             expect(page.locator('#product-dialog')).not_to_be_visible()
         expect(page.locator('.cart-line')).to_have_count(4)
         expect(page.locator('#checkout-button')).to_be_disabled()
-        _capture(page, 'customer-unconfirmed-cart-source-unverified')
+        _capture(page, 'customer-source-approved-cart-branch-unconfigured')
 
         # Drinks retain flavour language and the original six choices.
         mojito = page.get_by_role('button', name='تفاصيل موهيتو', exact=True)
@@ -245,11 +245,15 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
         page.keyboard.press('Escape')
         expect(mojito).to_be_focused()
 
-        expect(page.get_by_role('button', name='إضافة خلية بيكان إلى السلة', exact=True)).to_be_disabled()
+        expect(page.get_by_role('button', name='إضافة الخلية إلى السلة', exact=True)).to_be_disabled()
         page.locator('#branch-select').select_option('kps-branch-1')
-        for name in ('خلية بيكان', 'خلية كلاسيك'):
-            page.get_by_role('button', name='تفاصيل ' + name, exact=True).click()
+        for variant in ('pecan', 'classic'):
+            page.get_by_role('button', name='تفاصيل الخلية', exact=True).click()
             expect(page.locator('#product-add')).to_be_enabled()
+            expect(page.locator('#product-options select')).to_have_value('')
+            page.locator('#product-add').click()
+            expect(page.locator('#product-error')).to_contain_text('حدد النوع')
+            page.locator('#product-options select').select_option(variant)
             page.locator('#product-add').click()
             expect(page.locator('#product-dialog')).not_to_be_visible()
         branches = context.request.get(live_app + '/api/branches').json()['branches']
@@ -307,7 +311,7 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
     owner_context = None
     try:
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(35)
+        expect(page.locator('.product-card')).to_have_count(34)
         # Persisted general contact uses real HTTP even while this branch is closed
         # for orders. This seeded test session proves UI scope, not SMS delivery.
         page.locator('#contacts-button').click()
@@ -688,7 +692,7 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
     try:
         # Save an actual source-product draft on the default KPS storefront.
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(35)
+        expect(page.locator('.product-card')).to_have_count(34)
         page.locator('.product-image-button').first.click()
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
@@ -727,7 +731,7 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
         page.keyboard.press('Escape')
         assert page.evaluate("localStorage.getItem('kps-unconfirmed-basket-v2:kps')")==kps_draft
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(35)
+        expect(page.locator('.product-card')).to_have_count(34)
         expect(page.locator('.cart-line')).to_have_count(1)
         expect(page.locator('#brand-name')).to_contain_text('KPS')
         expect(page.locator('#brand-logo')).to_be_visible()

@@ -20,7 +20,7 @@ from . import auth, db
 
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
-TABLES = ('brands', 'app_settings', 'branches', 'products', 'users', 'assets', 'banners',
+TABLES = ('brands', 'app_settings', 'branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'assets', 'banners',
           'shifts', 'orders', 'driver_tasks', 'collections', 'refunds', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports',
           'report_corrections', 'conversations', 'chat_attachments',
@@ -52,7 +52,7 @@ def _encode(value) -> bytes:
 def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
-    direct = {'branches', 'products', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications'} | INFRASTRUCTURE_TABLES
@@ -206,7 +206,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str) -> 
                 raise ValueError('Restore refuses existing schemas. Choose a new UUID.')
             conn.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(target_schema)))
             conn.execute(sql.SQL('SET LOCAL search_path TO {}').format(sql.Identifier(target_schema)))
-            db.apply_migrations(conn, seed=False)
+            db.apply_migrations(conn, seed=False, owner_decisions=False)
             actual = {row['table_name'] for row in conn.execute(
                 'SELECT table_name FROM information_schema.tables WHERE table_schema=%s AND table_type=%s',
                 (target_schema, 'BASE TABLE')).fetchall()} - {'schema_migrations'}
@@ -244,6 +244,10 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str) -> 
                     conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM chat_messages),0),1),EXISTS(SELECT 1 FROM chat_messages))", (sequence,))
             if 'orders' in actual:
                 conn.execute("SELECT setval('order_human_number_seq',greatest(coalesce((SELECT max(order_no) FROM orders),0),1),EXISTS(SELECT 1 FROM orders))")
+            if 'shifts' in actual:
+                sequence = conn.execute("SELECT pg_get_serial_sequence('shifts','shift_no') AS name").fetchone()['name']
+                if sequence:
+                    conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(shift_no) FROM shifts),0),1),EXISTS(SELECT 1 FROM shifts))", (sequence,))
             counts = {table: conn.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n']
                       for table in manifest['table_order']}
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:

@@ -77,8 +77,9 @@ def create_snapshot(c,sid,approved_by):
         for key in ('driver_id','collector_id','authorized_by','actor_id','recipient_user_id','confirmed_by','created_by','assigned_by'):
             if record.get(key):user_ids.add(record[key])
     for row in c.execute('SELECT id,display_name FROM users WHERE id=ANY(%s)',(list(user_ids),)).fetchall():snap['display_users'].setdefault(row['id'],row['display_name'] or row['id'])
-    snap['display_branches']={b['id']:{'name':b['name'],'branch_no':b['branch_no'],'city':b['city']} for b in c.execute('SELECT id,name,branch_no,city FROM branches WHERE id=ANY(%s)',(s['branch_ids'],)).fetchall()}
-    snap['driver_reports']=[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'user_id':r['snapshot']['shift']['user_id'],'summary':r['snapshot']['summary'],'closure':r['snapshot']['shift']['submission']} for r in children]
+    snap['display_branches']={b['id']:{'name':b['name'],'branch_no':b['branch_no'],'city':b['city']} for b in c.execute('SELECT id,name,branch_no,city FROM branches WHERE id=ANY(%s)',(list(set(s['branch_ids'])|{o['branch_id'] for o in orders}),)).fetchall()}
+    snap['closure_label']=display_shift_label(s)
+    snap['driver_reports']=[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'shift_no':r['snapshot']['shift'].get('shift_no'),'closure_label':r['snapshot'].get('closure_label') or display_shift_label(r['snapshot']['shift']),'user_id':r['snapshot']['shift']['user_id'],'summary':r['snapshot']['summary'],'closure':r['snapshot']['shift']['submission']} for r in children]
     order_ids=[o['id'] for o in orders]
     snap['conversation_exceptions']=safe(c.execute('SELECT t.*,v.order_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE v.order_id=ANY(%s) ORDER BY t.created_at',(order_ids,)).fetchall())
     rid=uid();c.execute('INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s)',(rid,sid,s['kind'],s['brand_id'],db.json(s['branch_ids']),s['user_id'],db.json(snap)))
@@ -470,7 +471,7 @@ def report_list(offset:int=0,user=Depends(auth.current_user)):
     with db.tx() as c:
         clause='brand_id=%s' if user['role']=='owner' else "brand_id=%s AND (user_id=%s OR snapshot->>'manager_user_id'=%s)"
         p=[user['brand_id']] if user['role']=='owner' else [user['brand_id'],user['id'],user['id'] if user['role']=='delivery_manager' else '']
-        rows=c.execute('SELECT id,shift_id,kind,brand_id,branch_ids,user_id,version,pdf_status,pdf_error,created_at FROM closure_reports WHERE '+clause+' ORDER BY created_at DESC LIMIT 50 OFFSET %s',[*p,offset]).fetchall()
+        rows=c.execute('SELECT id,shift_id,kind,brand_id,branch_ids,user_id,version,pdf_status,pdf_error,created_at,(SELECT shift_no FROM shifts WHERE shifts.id=closure_reports.shift_id) shift_no FROM closure_reports WHERE '+clause+' ORDER BY created_at DESC LIMIT 50 OFFSET %s',[*p,offset]).fetchall()
         if user['role']!='owner':rows=[r for r in rows if set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
         return safe({'reports':rows,'offset':offset,'limit':50})
 
@@ -534,21 +535,44 @@ def v5_stamp(value):
         return stamp.astimezone(ZoneInfo('Asia/Riyadh')).strftime('%Y-%m-%d %H:%M')
     except (TypeError,ValueError):return str(value)
 
+def display_shift_label(shift):
+    """Human reference only; the raw database IDs and financial snapshot stay intact."""
+    prefix='M' if shift.get('kind')=='manager' else 'D' if shift.get('kind')=='driver' else 'S'
+    if shift.get('shift_no') is not None:
+        return f"{prefix}-{int(shift['shift_no']):06d}"
+    value=shift.get('opened_at') or shift.get('created_at')
+    date=str(value or '')[:10].replace('-','')
+    tail=str(shift.get('id') or '').replace('-','')[-8:].upper() or '—'
+    return prefix+'-'+(date+'-' if date else '')+tail
+
+
+def display_order_label(order):
+    return str(order.get('order_no') or order.get('order_reference') or ('طلب '+str(order.get('id') or order.get('order_id') or '').replace('-','')[-8:].upper()))
+
+
 def v5_tables(snap,view='compact'):
     """One presentation data model shared by HTML/PDF/CSV. No live DB reads."""
     shift=snap.get('shift',{});summary=snap.get('summary',{});closure=summary.get('submission') or shift.get('submission') or {}
     users=snap.get('display_users',{});branches=snap.get('display_branches',{})
     name=lambda uid:users.get(uid) or str(uid or 'غير مسجل')
-    branch=lambda bid:branches.get(bid,{}).get('name') or str(bid or 'غير مسجل')
+    def branch(bid):
+        b=branches.get(bid,{})
+        return (str(b['branch_no'])+' · ' if b.get('branch_no') is not None else '')+(b.get('name') or str(bid or 'غير مسجل'))
+    order_names={o.get('id'):display_order_label(o) for o in snap.get('orders',[])}
+    order_name=lambda identifier:order_names.get(identifier) or ('طلب '+str(identifier or '').replace('-','')[-8:].upper())
+    shift_names={shift.get('id'):snap.get('closure_label') or display_shift_label(shift)}
+    shift_names.update({r.get('shift_id'):r.get('closure_label') or display_shift_label({'id':r.get('shift_id'),'shift_no':r.get('shift_no'),'kind':'driver'}) for r in snap.get('driver_reports',[])})
+    shift_name=lambda identifier:shift_names.get(identifier) or display_shift_label({'id':identifier})
     label=lambda value:V5_NAMES.get(value,str(value or 'غير مسجل'))
     tables=[]
     def table(key,title,columns,rows,total=None):
+        if not rows and not total:return
         tables.append({'key':key,'title':title,'columns':columns,'rows':rows,'total':total})
     table('shift','الشفت والاعتماد',['البيان','القيمة'],[
         ['صاحب الشفت',name(shift.get('user_id'))],['التاريخ التشغيلي',snap.get('operational_date','غير مسجل')],
         ['الفترة - وقت الرياض',v5_stamp(shift.get('opened_at'))+' ← '+v5_stamp(shift.get('closed_at'))],
         ['الفروع', ' / '.join(branch(bid) for bid in shift.get('branch_ids',[])) or 'لا توجد'],
-        ['مرجع الشفت / حالة الاعتماد',str(snap.get('reference',''))+' / '+label(shift.get('status'))],
+        ['مرجع الشفت / حالة الاعتماد',(snap.get('closure_label') or display_shift_label(shift))+' / '+label(shift.get('status'))],
         ['المعد / المعتمد',name(snap.get('prepared_by'))+' / '+name(snap.get('approved_by'))],
     ])
     orders=snap.get('orders',[]);tasks=snap.get('tasks',[]);refunds=snap.get('refunds',[])
@@ -568,28 +592,35 @@ def v5_tables(snap,view='compact'):
                 cs.get('completed_orders',child.get('completed_orders','غير مسجل')),
                 v5_money(cs.get('cash_collected_halalas')),v5_money(cs.get('card_collected_halalas')),
                 v5_money(sub.get('expected_halalas')),v5_money(sub.get('handover_halalas')),
-                v5_money(sub.get('difference_halalas')),'معتمد / '+str(child.get('id',''))[-8:]])
+                v5_money(sub.get('difference_halalas')),'معتمد / '+(child.get('closure_label') or display_shift_label({'id':child.get('shift_id'),'shift_no':child.get('shift_no'),'kind':'driver'}))])
         # Footer sums child money only, separately from the manager custody balance.
         amount_keys=['cash_collected_halalas','card_collected_halalas']
         totals=['إجمالي السائقين',sum(r.get('completed_orders',0) for r in driver_summaries)]
         totals += [v5_money(sum(r.get(k,0) for r in driver_summaries)) for k in amount_keys]
         totals += [v5_money(sum((r.get('closure') or {}).get(k,0) for r in snap.get('driver_reports',[]))) for k in ['expected_halalas','handover_halalas','difference_halalas']]
         totals += [str(len(rows))+' سائق']
-        table('drivers','تقفيلات السائقين - تشمل شفتات بلا طلبات',['السائق','عدد','كاش','شبكة','متوقع','مستلم','فرق','حالة/مرجع'],rows,totals)
+        table('drivers','تقفيلات السائقين - تشمل شفتات بلا طلبات',['السائق','عدد','كاش محصل','شبكة','متوقع','تسليم مستلم','فرق','حالة/مرجع'],rows,totals)
     own_events=[r for r in snap.get('custody_events',[]) if r.get('shift_id')==shift.get('id')]
-    extra=sum(r.get('amount_halalas',0) for r in own_events if r.get('kind') in ('transfer_in','direct_receipt'))
+    received_custody=sum(r.get('amount_halalas',0) for r in own_events if r.get('kind')=='transfer_in')
+    driver_shift_ids={r.get('shift_id') for r in snap.get('driver_reports',[])}
+    driver_receipt_ids={r.get('id') for r in snap.get('transfers',[]) if r.get('from_shift_id') in driver_shift_ids and r.get('to_shift_id')==shift.get('id') and r.get('status')=='confirmed'}
+    driver_receipts=sum(r.get('amount_halalas',0) for r in own_events if r.get('kind')=='transfer_in' and r.get('reference_id') in driver_receipt_ids)
+    other_receipts=received_custody-driver_receipts
+    direct_receipts=sum(r.get('amount_halalas',0) for r in own_events if r.get('kind')=='direct_receipt')
     expenses=-sum(r.get('amount_halalas',0) for r in own_events if r.get('kind') in ('expense','refund'))
     previous=-sum(r.get('amount_halalas',0) for r in own_events if r.get('kind')=='transfer_out' and not any(t.get('closure') and t.get('id')==r.get('reference_id') for t in snap.get('transfers',[])))
     adjustment=sum(r.get('amount_halalas',0) for r in own_events if r.get('kind')=='adjustment')
     finance=[['كاش محصل فعليا بعد الباقي',v5_money(summary.get('cash_collected_halalas',0)),'شبكة محصلة',v5_money(summary.get('card_collected_halalas',0))],
-        ['عهدة افتتاحية',v5_money(shift.get('opening_halalas',0)),'استلامات إضافية/سلف',v5_money(extra)],
-        ['مصروفات/ردود نقدية معتمدة',v5_money(expenses),'تسليمات نقدية سابقة',v5_money(previous)],
+        ['عهدة افتتاحية',v5_money(shift.get('opening_halalas',0)),'نقد مستلم من السائقين' if snap.get('kind')=='manager' else 'عهدة نقدية مستلمة',v5_money(driver_receipts if snap.get('kind')=='manager' else received_custody)],
+        ['مصروفات / سلف / ردود نقدية مسجلة',v5_money(expenses),'تسليمات نقدية سابقة',v5_money(previous)],
         ['النقد المتوقع',v5_money(closure.get('expected_halalas')),'النقد المعدود',v5_money(closure.get('counted_halalas'))],
         ['التسليم النهائي المؤكد',v5_money(closure.get('handover_halalas')),'العهدة المتبقية',v5_money(closure.get('retained_halalas'))],
         ['الفرق المعتمد',v5_money(closure.get('difference_halalas')),'صافي التحصيلات - كاش وشبكة',v5_money(summary.get('net_collections_halalas',0))]]
     if adjustment:finance.append(['تسويات معتمدة بإشارتها',v5_money(adjustment),'استردادات الشبكة',v5_money(summary.get('card_refunded_halalas',0))])
     elif summary.get('card_refunded_halalas'):finance.append(['استردادات الشبكة',v5_money(summary['card_refunded_halalas']),'رسوم الطلبات المكتملة',v5_money(summary.get('delivery_fees_halalas',0))])
     if not expenses and not previous:finance.pop(2)
+    if snap.get('kind')=='manager' and other_receipts:finance.insert(2,['عهدة مستلمة من شفتات أخرى',v5_money(other_receipts),'—','—'])
+    if direct_receipts:finance.insert(2,['استلامات نقدية مباشرة مسجلة',v5_money(direct_receipts),'—','—'])
     table('finance','النقد والشبكة والعهدة - جميع المبالغ بالريال',['البيان','المبلغ','البيان','المبلغ'],finance)
     receipt_rows=[]
     for t in snap.get('transfers',[]):
@@ -621,7 +652,7 @@ def v5_tables(snap,view='compact'):
     table('items','الأصناف المنفذة - المبلغ قبل الاسترداد؛ الكمية الصافية مستقلة',['الصنف','الكمية','كمية معادة','صافي الكمية','القيمة قبل الرد'],[[
         a['name'],a['qty'],a['returns'],a['qty']-a['returns'],v5_money(a['gross'])] for a in sorted(by_item.values(),key=lambda a:a['qty']-a['returns'],reverse=True)])
     table('orders','تفاصيل الطلبات - المراجع تفتح التفاصيل المحفوظة',['الطلب','الفرع','النتيجة','الاحتساب','القيمة','وقت التأكيد'],[[
-        o['id'],branch(o.get('branch_id')),label(o.get('delivery_status')),'منفذ' if o.get('fulfilled_in_report') else 'تاريخي فقط',v5_money(o.get('total_halalas')),v5_stamp(o.get('created_at'))] for o in orders])
+        display_order_label(o),branch(o.get('branch_id')),label(o.get('delivery_status')),'منفذ' if o.get('fulfilled_in_report') else 'تاريخي فقط',v5_money(o.get('total_halalas')),v5_stamp(o.get('created_at'))] for o in orders])
     item_details=[]
     for order in orders:
         for item in (order.get('snapshot') or {}).get('items',[]):
@@ -637,19 +668,19 @@ def v5_tables(snap,view='compact'):
                     opts.append(str(group.get('name','خيار'))+': '+' / '.join(choices))
                 if not opts:
                     for key,value in (unit.get('options') or {}).items():opts.append(str(key)+': '+(' / '.join(map(str,value)) if isinstance(value,list) else str(value)))
-                item_details.append([order['id'],item.get('name'),item.get('quantity') if index==1 else '—',v5_money(item.get('line_total_halalas')) if index==1 else '—',('الوحدة '+str(index)+' - ' if unit else '')+(' / '.join(opts) or 'لا خيارات')])
+                item_details.append([display_order_label(order),item.get('name'),item.get('quantity') if index==1 else '—',v5_money(item.get('line_total_halalas')) if index==1 else '—',('الوحدة '+str(index)+' - ' if unit else '')+(' / '.join(opts) or 'لا خيارات')])
     table('order_items','تفاصيل الأصناف والخيارات المحفوظة - قيمة السطر تظهر مرة واحدة',['الطلب','الصنف','الكمية','قيمة السطر','الخيارات لكل وحدة'],item_details)
     table('collections','التحصيلات ومراجع الشبكة - صافي الكاش بعد الباقي',['التحصيل / الطلب','الطريقة','المبلغ','الباقي','مرجع الدفع','وقت التحصيل'],[[
-        str(r.get('id'))+' / '+str(r.get('order_id')),label(r.get('method')),v5_money(r.get('amount_halalas')),v5_money(r.get('change_halalas',0)),r.get('reference') or '—',v5_stamp(r.get('created_at'))] for r in snap.get('collections',[])])
+        str(r.get('id'))+' / '+order_name(r.get('order_id')),label(r.get('method')),v5_money(r.get('amount_halalas')),v5_money(r.get('change_halalas',0)),r.get('reference') or '—',v5_stamp(r.get('created_at'))] for r in snap.get('collections',[])])
     table('refunds','الإلغاءات والاستردادات المعتمدة',['الرد / الطلب','الطريقة','المبلغ','السبب','المخول','الوقت'],[[
-        str(r.get('id'))+' / '+str(r.get('order_id')),label(r.get('method')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',name(r.get('authorized_by')),v5_stamp(r.get('created_at'))] for r in refunds])
+        str(r.get('id'))+' / '+order_name(r.get('order_id')),label(r.get('method')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',name(r.get('authorized_by')),v5_stamp(r.get('created_at'))] for r in refunds])
     table('custody','حركات العهدة - ليست مبيعات جديدة',['الحركة / الشفت','النوع','المبلغ بإشارته','السبب','المرجع'],[[
-        str(r.get('id'))+' / '+str(r.get('shift_id')),label(r.get('kind')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',r.get('reference_id') or '—'] for r in snap.get('custody_events',[])])
+        str(r.get('id'))+' / '+shift_name(r.get('shift_id')),label(r.get('kind')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',r.get('reference_id') or '—'] for r in snap.get('custody_events',[])])
     table('transfers','التسليمات والمستلمون',['المرجع','المبلغ','المستلم','الحالة','مرجع الاستلام'],[[
         r.get('id'),v5_money(r.get('amount_halalas')),name(r.get('confirmed_by') or r.get('recipient_user_id')),label(r.get('status')),r.get('reference') or '—'] for r in snap.get('transfers',[])])
     table('exceptions','مشكلات المهام والشكاوى/تحويلات المحادثات',['المهمة / الطلب','الحالة','السبب / السياق','المسؤول'],[[
-        str(t.get('id'))+' / '+str(t.get('order_id')),label(t.get('status')),t.get('reason'),name(t.get('driver_id'))] for t in tasks if t.get('reason')]+[[
-        str(x.get('id'))+' / '+str(x.get('order_id')),str(x.get('from_route'))+' ← '+str(x.get('to_route')),x.get('reason'),name(x.get('actor_id'))] for x in snap.get('conversation_exceptions',[])])
+        str(t.get('id'))+' / '+order_name(t.get('order_id')),label(t.get('status')),t.get('reason'),name(t.get('driver_id'))] for t in tasks if t.get('reason')]+[[
+        str(x.get('id'))+' / '+order_name(x.get('order_id')),str(x.get('from_route'))+' ← '+str(x.get('to_route')),x.get('reason'),name(x.get('actor_id'))] for x in snap.get('conversation_exceptions',[])])
     timing_rows=[]
     for o in orders:
         p=o.get('performance') or o.get('timing_snapshot') or {};stages={key:value.get('seconds') for key,value in o.get('timings',{}).items()}
@@ -662,7 +693,7 @@ def v5_tables(snap,view='compact'):
         if road is None and task and task.get('picked_up_at') and task.get('delivered_at'):
             from datetime import datetime
             road=(datetime.fromisoformat(task['delivered_at'].replace('Z','+00:00'))-datetime.fromisoformat(task['picked_up_at'].replace('Z','+00:00'))).total_seconds()
-        timing_rows.append([o['id'],duration(stages.get('preparation')),duration(stages.get('driver_wait')),duration(road),
+        timing_rows.append([display_order_label(o),duration(stages.get('preparation')),duration(stages.get('driver_wait')),duration(road),
             str(p.get('label') or 'المعيار غير محدد'),str(policy.get('basis') or p.get('basis') or 'من استلام السائق إلى التسليم')+' / '+str(policy.get('version') or p.get('policy_version') or 'غير محدد')])
     table('timings','الأزمنة المحفوظة بالدقائق:الثواني - لا يعاد تقييم التاريخ',['الطلب','التجهيز','انتظار السائق','التوصيل','التصنيف','الأساس/الإصدار'],timing_rows)
     for key,title in [('linked_corrections','التصحيحات المالية المرتبطة'),('retained_carryovers','العهد المرحلة'),('manager_handovers','تسليم المناوبات')]:
@@ -688,9 +719,9 @@ def make_v5_print_html(snap,view='compact',report_id=None):
     title='تقرير المالك المفصل' if view=='owner' else 'تقفيلة السائق' if snap.get('kind')=='driver' else 'تقفيلة مدير التوصيل'
     sections=[]
     for table in tables:
-        def row(values,tag='td'):
-            return '<tr>'+''.join('<'+tag+' class="num">'+esc(v)+'</'+tag+'>' for v in values)+'</tr>'
-        rows=''.join(row(values) for values in table['rows']) or '<tr><td class="empty" colspan="'+str(len(table['columns']))+'">لا توجد سجلات في اللقطة</td></tr>'
+        def row(values,tag='td',target=None):
+            return '<tr'+(' data-drill-target="'+esc(target)+'"' if target else '')+'>'+''.join('<'+tag+' class="num">'+esc(v)+'</'+tag+'>' for v in values)+'</tr>'
+        rows=''.join(row(values,target='order-'+snap['orders'][index]['id'] if table['key']=='orders' else None) for index,values in enumerate(table['rows'])) or '<tr><td class="empty" colspan="'+str(len(table['columns']))+'">لا توجد سجلات في اللقطة</td></tr>'
         footer='<tfoot>'+row(table['total'])+'</tfoot>' if table.get('total') else ''
         sections.append('<section id="'+esc(table['key'])+'"><h2>'+esc(table['title'])+'</h2><div class="table-wrap '+('wide' if len(table['columns'])>4 else '')+'"><table><thead>'+row(table['columns'],'th')+'</thead><tbody>'+rows+'</tbody>'+footer+'</table></div></section>')
     drill=[]
@@ -707,7 +738,7 @@ def make_v5_print_html(snap,view='compact',report_id=None):
                         parts=[str(k)+': '+', '.join(v) if isinstance(v,list) else str(k)+': '+str(v) for k,v in (unit.get('options') or {}).items()]
                     if parts:options.append('الوحدة '+str(index)+' - '+'; '.join(parts))
                 itemrows.append('<tr><td>'+esc(item.get('name'))+'</td><td>'+esc(item.get('quantity'))+'</td><td>'+esc(v5_money(item.get('line_total_halalas')))+'</td><td>'+esc(' / '.join(options) or 'لا خيارات')+'</td></tr>')
-            drill.append('<details id="order-'+esc(o['id'])+'"><summary>طلب '+esc(o['id'])+' - تفاصيل الأصناف المحفوظة</summary><div class="table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>المبلغ</th><th>الخيارات</th></tr></thead><tbody>'+''.join(itemrows)+'</tbody></table></div></details>')
+            drill.append('<details id="order-'+esc(o['id'])+'"><summary>طلب '+esc(display_order_label(o))+' - تفاصيل الأصناف المحفوظة</summary><div class="table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>المبلغ</th><th>الخيارات</th></tr></thead><tbody>'+''.join(itemrows)+'</tbody></table></div></details>')
     testing=snap.get('test_data') or str(snap.get('brand_name','')).startswith(('اختبار','تجريبي','TEST'))
     test='<p class="test-label">بيانات اختبار فقط - ليست تشغيلًا حقيقيًا</p>' if testing else ''
     actions='<button type="button" data-print-report>طباعة التقرير</button>'
@@ -716,7 +747,7 @@ def make_v5_print_html(snap,view='compact',report_id=None):
         prefix='/api/reports/'+quote(str(report_id),safe='')+'/renderings/v5/'
         actions+='<a href="'+esc(prefix+'pdf')+'">تنزيل PDF المحفوظ</a><a href="'+esc(prefix+'csv')+'">تنزيل CSV المحفوظ</a>'
     actions='<nav class="report-actions screen-only" aria-label="ملفات التقرير">'+actions+'</nav>'
-    return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+' - '+esc(brand_title(snap))+'</title><style>'+V5_CSS+'</style><script src="/report.js" defer></script></head><body><main data-report-template="5" data-report-view="'+esc(view)+'"><header><div class="brand">'+esc(brand_title(snap))+'</div><h1>'+esc(title)+'</h1>'+test+'<p class="meta">قالب 5 · بيانات '+esc(snap.get('schema_version',1))+' · '+esc(snap.get('timezone','Asia/Riyadh'))+' · تقرير '+esc(report_id or snap.get('reference'))+'</p>'+actions+'<p class="meta">اللقطة المعتمدة ثابتة. تسليم العهدة لا يُحسب بيعًا ثانيًا.</p></header>'+''.join(sections)+'<section class="drilldowns screen-only"><h2>الطلبات - عرض التفاصيل</h2>'+''.join(drill)+'</section><footer class="foot">مرجع الشفت '+esc(snap.get('reference'))+' · النسخة المعتمدة محفوظة · جميع المبالغ بالريال السعودي</footer></main></body></html>'
+    return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+' - '+esc(brand_title(snap))+'</title><style>'+V5_CSS+'</style><script src="/report.js" defer></script></head><body><main data-report-template="5" data-report-view="'+esc(view)+'"><header><div class="brand">'+esc(brand_title(snap))+'</div><h1>'+esc(title)+'</h1>'+test+'<p class="meta">قالب 5 · بيانات '+esc(snap.get('schema_version',1))+' · '+esc(snap.get('timezone','Asia/Riyadh'))+' · تقرير '+esc(snap.get('closure_label') or display_shift_label(snap.get('shift',{})))+'</p>'+actions+'<p class="meta">اللقطة المعتمدة ثابتة. تسليم العهدة لا يُحسب بيعًا ثانيًا.</p></header>'+''.join(sections)+'<section class="drilldowns screen-only"><h2>الطلبات - عرض التفاصيل</h2>'+''.join(drill)+'</section><footer class="foot">مرجع الشفت '+esc(snap.get('closure_label') or display_shift_label(snap.get('shift',{})))+' · النسخة المعتمدة محفوظة · جميع المبالغ بالريال السعودي</footer></main></body></html>'
 
 def make_v5_csv(snap,view='compact'):
     # Complete source rows remain available even when the staff print is compact.
@@ -804,7 +835,7 @@ def make_v5_pdf(snap,view='compact'):
     def footer(cv,document):
         cv.saveState();cv.setStrokeColor(colors.HexColor('#d6ddd3'));cv.line(30,29,A4[0]-30,29);cv.setFont('KPSKufi400',9)
         cv.drawRightString(A4[0]-30,14,get_display(arabic_reshaper.reshape('صفحة '+str(document.page)+' · قالب 5 · وقت الرياض')))
-        cv.drawString(30,14,str(snap.get('reference','')));cv.restoreState()
+        cv.drawString(30,14,str(snap.get('closure_label') or display_shift_label(snap.get('shift',{}))));cv.restoreState()
     doc.build(body,onFirstPage=footer,onLaterPages=footer)
     return stream.getvalue()
 

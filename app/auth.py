@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import db
@@ -21,6 +21,7 @@ router = APIRouter(prefix='/api')
 COOKIE = 'kps_session'
 CSRF_COOKIE = 'kps_csrf'
 ROLES = {'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'customer'}
+IDENTITY_DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')
 
 
 def token_hash(token: str) -> str:
@@ -193,10 +194,13 @@ def logout(request: Request, response: Response, user=Depends(current_user)):
 
 
 def normalize_phone(value: str) -> str:
+    value = value.translate(IDENTITY_DIGITS)
     value = re.sub(r'[\s()-]', '', value)
-    if re.fullmatch(r'05\d{8}', value):
+    if re.fullmatch(r'05[0-9]{8}', value):
         value = '+966' + value[1:]
-    if not re.fullmatch(r'\+[1-9]\d{7,14}', value):
+    elif value.startswith('00'):
+        value = '+' + value[2:]
+    if not re.fullmatch(r'\+[1-9][0-9]{7,14}', value):
         raise db.error(422, 'PHONE_INVALID', 'أدخل رقم جوال صحيحًا مع رمز الدولة.')
     return value
 
@@ -464,10 +468,54 @@ def _optional_identity(request, conn):
 
 def _email_ready(conn,brand,testing=False):
     row=_channel(conn,brand,'email')
-    if not email_delivery.configuration()['configured'] or row['state'] not in ({'active','testing'} if testing else {'active'}):
+    if not email_delivery.configuration()['configured'] or row['state'] not in ({'active','testing'} if testing else {'active'}) or (row['state']=='active' and not row['enabled']):
         raise db.error(503,'EMAIL_CHANNEL_UNAVAILABLE','قناة البريد غير مهيأة ومختبرة بعد. يبقى الطلب كضيف متاحًا.')
     if not testing and (not row['enabled'] or not row['delivery_proven_at']):
         raise db.error(503,'EMAIL_CHANNEL_UNAVAILABLE','قناة البريد بانتظار إثبات وصول فعلي.')
+
+
+def _staff_code_hash(identifier, code):
+    # The small numeric code space must not be brute-forced from a stolen database.
+    # Domain-separated HMAC uses the existing secret encrypted-outbox key.
+    key=email_delivery._key()
+    if not key:
+        raise db.error(503,'EMAIL_CHANNEL_UNAVAILABLE','إعداد حماية أكواد البريد غير مكتمل.')
+    return hmac.new(key,b'KPS-STAFF-CODE-V1\x00'+identifier.encode()+b'\x00'+code.encode(),hashlib.sha256).hexdigest()
+
+
+def _staff_context(user):
+    return {'phone':normalize_phone(user['phone']) if user.get('phone') else None,
+            'role':user['role'],'branch_ids':sorted(user.get('branch_ids',[]))}
+
+
+def _invitation_authorized(conn, row, user):
+    inviter=conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id WHERE u.id=%s AND u.active AND b.active',(row['created_by'],)).fetchone()
+    normal=bool(inviter and inviter['brand_id']==row['brand_id'] and inviter['role'] in {'owner','delivery_manager'} and
+                (inviter['role']=='owner' or (user['role']=='driver' and set(user['branch_ids'])<=set(inviter['branch_ids']))))
+    # Preserve the explicit, audited first-owner invitation for a newly provisioned brand.
+    first_owner=bool(inviter and inviter['role']=='owner' and row['purpose']=='add_owner' and user['role']=='owner' and
+        conn.execute("SELECT 1 FROM audit_events WHERE actor_id=%s AND action='brand.created' AND entity_type='brand' AND entity_id=%s AND details->>'owner_user_id'=%s",(inviter['id'],row['brand_id'],user['id'])).fetchone() and
+        not conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role='owner' AND id<>%s",(row['brand_id'],user['id'])).fetchone())
+    return bool((normal or first_owner) and (row['purpose']!='add_owner' or (inviter['role']=='owner' and user['role']=='owner')))
+
+
+def _staff_token_authorized(conn, row, user):
+    if not user or user['role']=='customer' or user['brand_id']!=row['brand_id'] or not user.get('email') or user['email']!=row['email']:
+        return False
+    if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(row['brand_id'],)).fetchone():
+        return False
+    context=row.get('staff_context')
+    if context is not None and context!=_staff_context(user):
+        return False
+    branches=user.get('branch_ids',[])
+    if user['role']!='owner' and not branches:
+        return False
+    if len(set(branches))!=len(branches) or any(not conn.execute('SELECT 1 FROM branches WHERE id=%s AND brand_id=%s',(branch,row['brand_id'])).fetchone() for branch in branches):
+        return False
+    invitation=row['purpose'] in {'invitation','add_owner'}
+    if invitation:
+        return user['invitation_status']=='pending_email' and _invitation_authorized(conn,row,user)
+    return bool(user['active'] and user['invitation_status']=='active' and user['email_verified_at'])
 
 
 def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,created_by=None):
@@ -479,13 +527,20 @@ def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,
     conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE brand_id=%s AND email=%s AND purpose=%s AND consumed_at IS NULL AND revoked_at IS NULL',(brand,email,purpose))
     for row in prior:
         conn.execute("UPDATE email_outbox SET status='cancelled',updated_at=now() WHERE brand_id=%s AND dedupe_key=%s AND status IN ('pending','failed')",(brand,'identity:'+row['id']))
-    conn.execute("INSERT INTO identity_tokens(id,brand_id,user_id,purpose,email,token_hash,session_id,created_by,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,now()+interval '15 minutes')",(identifier,brand,user_id,purpose,email,token_hash(secret),session_id,created_by))
+    numeric=purpose in {'staff_login','invitation','add_owner'}
+    staff=conn.execute('SELECT * FROM users WHERE id=%s',(user_id,)).fetchone() if numeric and user_id else None
+    code=f'{secrets.randbelow(1_000_000):06d}' if numeric and staff else None
+    context=_staff_context(staff) if code else None
+    conn.execute("INSERT INTO identity_tokens(id,brand_id,user_id,purpose,email,token_hash,session_id,created_by,expires_at,code_hash,staff_context) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,now()+interval '15 minutes',%s,%s)",(identifier,brand,user_id,purpose,email,token_hash(secret),session_id,created_by,_staff_code_hash(identifier,code) if code else None,db.json(context) if context else None))
     base=os.getenv('PUBLIC_BASE_URL','').rstrip('/')
     if not base.startswith(('https://','http://')) or (not base.startswith('https://') and os.getenv('APP_ENV') not in {'testing','development'}):
         raise db.error(503,'PUBLIC_ORIGIN_UNCONFIGURED','عنوان البريد الآمن غير مهيأ.')
     link=base+'/#identity_challenge='+identifier+'&identity_token='+secret
+    text='طلب تحقق قصير الصلاحية لمرة واحدة. إذا لم تطلبه فتجاهله.\n'
+    if code:
+        text+='كود التفعيل والدخول: '+code+'\nصالح لمدة 15 دقيقة، ويستخدم مرة واحدة فقط. أدخل الكود في شاشة دخول الموظفين برقم جوالك المسجل.\n'
     mail=email_delivery.enqueue_mail(conn,brand_id=brand,recipient=email,kind='identity',dedupe_key='identity:'+identifier,
-        payload={'subject':'KPS COFFEE — تحقق من البريد', 'text':'طلب تحقق قصير الصلاحية لمرة واحدة. إذا لم تطلبه فتجاهله.\n'+link})
+        payload={'subject':'KPS COFFEE — كود التفعيل والدخول' if code else 'KPS COFFEE — تحقق من البريد', 'text':text+link})
     if not mail:
         raise db.error(503,'EMAIL_CHANNEL_UNAVAILABLE','تعذر حفظ إرسال البريد الآمن.')
     db.audit(conn,created_by,'identity.email.queued','identity_token',identifier,{'purpose':purpose})
@@ -541,6 +596,68 @@ class EmailVerifyBody(BaseModel):
     phone:str|None=Field(default=None,min_length=8,max_length=30)
 
 
+class StaffCodeRequestBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    phone:str=Field(min_length=8,max_length=30)
+    brand_id:str=Field(default='kps',min_length=1,max_length=80)
+
+
+@router.post('/identity/staff/code/request')
+def request_staff_code(body:StaffCodeRequestBody,request:Request):
+    check_origin(request)
+    phone=normalize_phone(body.phone)
+    ip=request.client.host if request.client else 'unknown'
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'staff-code-request:'+body.brand_id+':'+phone,3,600)
+        allowed=db.rate_limit(conn,'staff-code-request-ip:'+ip,20,600) and allowed
+    if not allowed:
+        raise db.error(429,'EMAIL_RATE_LIMIT','انتظر قبل إعادة طلب الكود.')
+    identifier=db.new_id('email_')
+    with db.tx() as conn:
+        # Request bodies cannot select a delivery email or supply grants.
+        _email_ready(conn,body.brand_id,testing=True)
+        if conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
+            matches=conn.execute("SELECT * FROM users WHERE brand_id=%s AND role<>'customer' AND normalized_identity_phone(phone)=%s ORDER BY id",(body.brand_id,phone)).fetchall()
+            if len(matches)==1:
+                user=matches[0]
+                pending=user['invitation_status']=='pending_email'
+                invitation=conn.execute("SELECT * FROM identity_tokens WHERE user_id=%s AND purpose IN ('invitation','add_owner') AND consumed_at IS NULL AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1",(user['id'],)).fetchone() if pending else None
+                purpose=invitation['purpose'] if invitation else 'staff_login'
+                candidate=invitation or {'brand_id':body.brand_id,'email':user.get('email'),'purpose':purpose,'staff_context':_staff_context(user)}
+                if _staff_token_authorized(conn,candidate,user) and (not pending or invitation):
+                    identifier=_create_email_token(conn,brand=body.brand_id,email=user['email'],purpose=purpose,user_id=user['id'],created_by=invitation['created_by'] if invitation else None)
+    return {'accepted':True,'challenge_id':identifier,'expires_in':900,'code_length':6}
+
+
+class StaffCodeVerifyBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    challenge_id:str=Field(min_length=5,max_length=80)
+    code:str=Field(min_length=6,max_length=12)
+    display_name:str|None=Field(default=None,min_length=1,max_length=100)
+
+
+@router.post('/identity/staff/code/verify')
+def verify_staff_code(body:StaffCodeVerifyBody,request:Request,response:Response):
+    check_origin(request)
+    code=body.code.translate(IDENTITY_DIGITS).strip()
+    ip=request.client.host if request.client else 'unknown'
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'staff-code-verify-ip:'+ip,30,600)
+        challenge=conn.execute("UPDATE identity_tokens SET attempts=attempts+1 WHERE id=%s AND purpose IN ('staff_login','invitation','add_owner') AND code_hash IS NOT NULL AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() AND attempts<5 RETURNING *",(body.challenge_id,)).fetchone()
+    if not allowed:
+        raise db.error(429,'EMAIL_RATE_LIMIT','محاولات كثيرة. انتظر قليلًا.')
+    if not re.fullmatch(r'[0-9]{6}',code):
+        raise db.error(422,'STAFF_CODE_INVALID','أدخل كود البريد المكوّن من 6 أرقام.')
+    if not challenge or not hmac.compare_digest(challenge['code_hash'],_staff_code_hash(body.challenge_id,code)):
+        raise db.error(400,'STAFF_CODE_INVALID','الكود منتهي أو غير صحيح أو مستخدم. اطلب كودًا جديدًا.')
+    try:
+        return _accept_email_identity(challenge,request,response,body.display_name)
+    except HTTPException as exc:
+        if exc.status_code==400 and isinstance(exc.detail,dict) and exc.detail.get('code')=='EMAIL_TOKEN_INVALID':
+            raise db.error(400,'STAFF_CODE_INVALID','الكود أو صلاحية الحساب لم يعودا صالحين. اطلب كودًا جديدًا.') from None
+        raise
+
+
 @router.post('/identity/email/verify')
 def email_verify(body:EmailVerifyBody,request:Request,response:Response):
     check_origin(request)
@@ -553,8 +670,13 @@ def email_verify(body:EmailVerifyBody,request:Request,response:Response):
         raise db.error(429,'EMAIL_RATE_LIMIT','محاولات كثيرة. انتظر قليلًا.')
     if not challenge or not hmac.compare_digest(challenge['token_hash'],token_hash(body.token)):
         raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط منتهي أو غير صالح أو مستخدم.')
+    return _accept_email_identity(challenge,request,response,body.display_name,body.phone)
+
+
+def _accept_email_identity(challenge,request,response,display_name=None,phone=None):
+    """One canonical atomic acceptance path for email links and staff numeric codes."""
     with db.tx() as conn:
-        row=conn.execute('SELECT * FROM identity_tokens WHERE id=%s AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE',(body.challenge_id,)).fetchone()
+        row=conn.execute('SELECT * FROM identity_tokens WHERE id=%s AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE',(challenge['id'],)).fetchone()
         if not row:
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط منتهي أو غير صالح أو مستخدم.')
         if row['session_id']:
@@ -567,19 +689,12 @@ def email_verify(body:EmailVerifyBody,request:Request,response:Response):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
         if invitation and (not user or user['invitation_status']!='pending_email' or user['email']!=row['email']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الدعوة ملغاة أو مستهلكة.')
-        if invitation:
-            inviter=conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id WHERE u.id=%s AND u.active AND b.active',(row['created_by'],)).fetchone()
-            normal=bool(inviter and inviter['brand_id']==row['brand_id'] and inviter['role'] in {'owner','delivery_manager'} and (inviter['role']=='owner' or (user['role']=='driver' and set(user['branch_ids'])<=set(inviter['branch_ids']))))
-            # The existing explicitly authorized brand-provisioning route can invite its first owner.
-            # Persisted audit ties the grant to exactly that new brand and principal; no broad cross-brand privilege.
-            first_owner=bool(inviter and inviter['role']=='owner' and row['purpose']=='add_owner' and user['role']=='owner' and
-                conn.execute("SELECT 1 FROM audit_events WHERE actor_id=%s AND action='brand.created' AND entity_type='brand' AND entity_id=%s AND details->>'owner_user_id'=%s",(inviter['id'],row['brand_id'],user['id'])).fetchone() and
-                not conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role='owner' AND id<>%s",(row['brand_id'],user['id'])).fetchone())
-            if not (normal or first_owner) or (row['purpose']=='add_owner' and (inviter['role']!='owner' or user['role']!='owner')):
-                raise db.error(400,'EMAIL_TOKEN_INVALID','الدعوة لم تعد مخولة.')
+        if row['purpose'] in {'staff_login','invitation','add_owner'} and not _staff_token_authorized(conn,row,user):
+            raise db.error(400,'EMAIL_TOKEN_INVALID','الحساب أو الدعوة لم يعودا مخولين.')
         if row['purpose']=='email_login' and user and user['role']!='customer':
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
-        if _channel(conn,row['brand_id'],'email')['state'] not in {'testing','active'}:
+        channel=_channel(conn,row['brand_id'],'email')
+        if channel['state'] not in {'testing','active'} or (channel['state']=='active' and not channel['enabled']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','قناة البريد متوقفة حاليًا.')
         if row['purpose'] in {'staff_login','recovery'} and (not user or not user['email_verified_at'] or user['email']!=row['email']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
@@ -595,15 +710,19 @@ def email_verify(body:EmailVerifyBody,request:Request,response:Response):
         if not user:
             if row['purpose']!='email_login':
                 raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
-            user=conn.execute("INSERT INTO users(id,role,brand_id,display_name,email,email_verified_at,identity_kind,phone) VALUES(%s,'customer',%s,%s,%s,now(),'email_verified',%s) RETURNING *",(db.new_id('customer_'),row['brand_id'],body.display_name or '',row['email'],normalize_phone(body.phone) if body.phone else None)).fetchone()
+            user=conn.execute("INSERT INTO users(id,role,brand_id,display_name,email,email_verified_at,identity_kind,phone) VALUES(%s,'customer',%s,%s,%s,now(),'email_verified',%s) RETURNING *",(db.new_id('customer_'),row['brand_id'],display_name or '',row['email'],normalize_phone(phone) if phone else None)).fetchone()
         else:
-            name=body.display_name.strip() if body.display_name else user['display_name']
-            phone=normalize_phone(body.phone) if body.phone else user['phone']
-            if invitation and (not name or not phone):
+            name=display_name.strip() if display_name else user['display_name']
+            chosen_phone=normalize_phone(phone) if phone else user['phone']
+            if user['role']!='customer' and phone and user.get('phone') and chosen_phone!=normalize_phone(user['phone']):
+                raise db.error(409,'STAFF_PHONE_REGISTERED','استخدم رقم الجوال المسجل؛ تغييره من الإدارة المخولة.')
+            if invitation and (not name or not chosen_phone):
                 raise db.error(422,'STAFF_PROFILE_REQUIRED','أكمل الاسم ورقم الاتصال.')
-            if user.get('phone_verified_at') and phone!=user['phone']:
+            if user.get('phone_verified_at') and chosen_phone!=user['phone']:
                 raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','تغيير الجوال الموثق يتطلب تحققًا مستقلاً.')
-            user=conn.execute("UPDATE users SET email=%s,email_verified_at=now(),identity_kind=%s,display_name=%s,phone=%s,active=true,invitation_status='active',updated_at=now() WHERE id=%s RETURNING *",(row['email'],'email_verified' if user['role']=='customer' else 'staff_email_verified',name,phone,user['id'])).fetchone()
+            if user['role']!='customer' and chosen_phone:
+                _assert_staff_phone_available(conn,user['brand_id'],normalize_phone(chosen_phone),user['id'])
+            user=conn.execute("UPDATE users SET email=%s,email_verified_at=now(),identity_kind=%s,display_name=%s,phone=%s,active=true,invitation_status='active',updated_at=now() WHERE id=%s RETURNING *",(row['email'],'email_verified' if user['role']=='customer' else 'staff_email_verified',name,chosen_phone,user['id'])).fetchone()
         conn.execute('UPDATE identity_tokens SET consumed_at=now() WHERE id=%s',(row['id'],))
         conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s',(row['brand_id'],'email'))
         conn.execute("UPDATE email_outbox SET status='delivered',delivery_at=now(),updated_at=now() WHERE brand_id=%s AND dedupe_key=%s AND status IN ('pending','provider_accepted','sending','failed')",(row['brand_id'],'identity:'+row['id']))
@@ -651,6 +770,12 @@ def _staff_scope(conn,user,branches):
     if user['role']!='owner' and not set(branches)<=set(user.get('branch_ids',[])):
         raise db.error(403,'BRANCH_SCOPE_FORBIDDEN','الفرع خارج نطاق المدير.')
     return branches
+
+
+def _assert_staff_phone_available(conn,brand,phone,exclude=None):
+    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(brand+':staff-phone:'+phone,))
+    if conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role<>'customer' AND normalized_identity_phone(phone)=%s AND (%s::text IS NULL OR id<>%s)",(brand,phone,exclude,exclude)).fetchone():
+        raise db.error(409,'STAFF_IDENTITY_CONFLICT','رقم الجوال مسجل لحساب موظف آخر؛ لا يتم تكرار هوية الموظف.')
 
 
 def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
@@ -728,6 +853,7 @@ def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','de
         conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
         if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s',(user['brand_id'],email)).fetchone():
             raise db.error(409,'STAFF_IDENTITY_CONFLICT','تعذر إنشاء الدعوة. راجع البريد أو الدعوات المخولة.')
+        _assert_staff_phone_available(conn,user['brand_id'],phone)
         identifier=db.new_id('staff_')
         invitation_state='pending_email' if ready else 'draft'
         row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
@@ -785,6 +911,8 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
         phone=normalize_phone(body.phone) if body.phone else row['phone']
         if row['phone_verified_at'] and phone!=row['phone']:
             raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','رقم موثق يحتاج تحققًا مستقلًا لتغييره.')
+        if phone and (body.phone is not None or email_changed):
+            _assert_staff_phone_available(conn,user['brand_id'],normalize_phone(phone),identifier)
         vehicle=_vehicle(body.vehicle) if body.vehicle is not None else row['vehicle']
         status=row['invitation_status'] if active else 'paused' if row['invitation_status']=='active' else row['invitation_status']
         if active and row['email_verified_at']:
@@ -792,7 +920,7 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
         output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
         if email_changed:
             output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
-        if scope!=row['branch_ids'] or active!=row['active'] or email_changed:
+        if scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone']:
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
             conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
             conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))

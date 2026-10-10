@@ -83,7 +83,8 @@ def test_cities_and_branch_availability_policy_are_admin_authorized_not_url_over
     assert r.json()['settings']['availability_policy_version']==1
     with db.tx() as conn:
         row=conn.execute("SELECT * FROM branches WHERE city='رفحاء' LIMIT 1").fetchone()
-    assert client.get('/api/products/kps-33/availability',params={'branch_id':row['id']}).json()['available'] is True
+    # Final owner instruction preserves Khaliya's Hafar-only guard even across legacy admin overrides.
+    assert client.get('/api/products/kps-33/availability',params={'branch_id':row['id']}).json()['available'] is False
     r=mutate('PATCH','/api/admin/products/kps-33',{'settings':{'unavailable_branch_ids':[row['id']]}})
     assert r.status_code==200,r.text
     assert client.get('/api/products/kps-33/availability',params={'branch_id':row['id']}).json()['available'] is False

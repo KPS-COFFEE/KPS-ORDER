@@ -128,9 +128,11 @@ def ready():
         with db.tx() as conn:
             conn.execute('SELECT 1')
             applied = conn.execute('SELECT count(*) AS n FROM schema_migrations').fetchone()['n']
-            products = conn.execute("SELECT count(*) AS n FROM products WHERE settings->>'source_verified'='true'").fetchone()['n']
+            products = sum(catalog.source_approved(product) for product in conn.execute('SELECT * FROM products').fetchall()
+                           if product['settings'].get('purchasable') is not False)
             branches = conn.execute("SELECT count(*) AS n FROM branches WHERE settings->>'operational_data_verified'='true' OR settings->>'ordering_verified'='true'").fetchone()['n']
             identity = auth.channel_readiness(conn, 'kps')
+            preservation = conn.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' AND entity_id=%s ORDER BY created_at DESC LIMIT 1", (revision(),)).fetchone()
         try:
             auth.provider_config()
             otp = True
@@ -139,6 +141,9 @@ def ready():
         return {'status': 'ready', 'revision': revision(), 'database': 'connected', 'applied_migrations': applied,
                 'customer_otp_configured': otp, 'verified_products': products, 'verified_branches': branches,
                 'identity_channels': identity,
+                'data_preservation': {'verified': bool(preservation and preservation['details'].get('verified')),
+                                      'checked_tables': preservation['details'].get('tables_checked', 0) if preservation else 0,
+                                      'revision': revision()},
                 'ordering_configured': bool(any(channel['available'] for channel in identity.values()) and products and branches)}
     except Exception:
         return JSONResponse({'status': 'not_ready', 'revision': revision(), 'database': 'unavailable'}, status_code=503)

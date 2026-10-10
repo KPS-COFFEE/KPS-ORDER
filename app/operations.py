@@ -168,7 +168,7 @@ def shifts(user=Depends(auth.current_user)):
     with db.tx() as c:
         if user['role']=='owner': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
         elif user['role']=='delivery_manager': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s OR s.manager_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY opened_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
-        elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
+        elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
         else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
         rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
         return safe({'shifts':rows,**people_data(c,user)})
@@ -176,7 +176,7 @@ def shifts(user=Depends(auth.current_user)):
 def people_data(c,user):
     users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver') ORDER BY display_name",(user['brand_id'],)).fetchall()
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
-    managers=c.execute("SELECT s.id,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
+    managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
     return {'authorized_receivers':users,'available_manager_shifts':managers}
 
@@ -200,13 +200,13 @@ def day_start(config):
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s)
-        task_rows=c.execute('SELECT t.*,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
+        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             for task in task_rows:
                 if task['status'] in TERMINAL:
                     task['snapshot']=safe(task['snapshot']);task['snapshot'].pop('notes',None);task['snapshot'].pop('note',None)
                     for item in task['snapshot'].get('items',[]):item.pop('note',None)
-        return safe({'shift':s,'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT * FROM shifts WHERE manager_shift_id=%s ORDER BY opened_at',(sid,)).fetchall()})
+        return safe({'shift':s,'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()})
 
 @router.post('/shifts/{sid}/closing')
 def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
@@ -328,8 +328,8 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
 def tasks(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff','driver')
     with db.tx() as c:
-        if user['role']=='driver':rows=c.execute('SELECT t.*,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
-        else:rows=c.execute('SELECT t.*,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC LIMIT 500').fetchall(); rows=[r for r in rows if same_scope(user,r) and (user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[]))]
+        if user['role']=='driver':rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
+        else:rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC LIMIT 500').fetchall(); rows=[r for r in rows if same_scope(user,r) and (user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[]))]
         if user['role']=='driver':
             rows=[r for r in rows if r['branch_id'] in user.get('branch_ids',[])]
             for r in rows:
@@ -607,7 +607,7 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         summary['live_overdue']=c.execute("SELECT count(*) n FROM orders o WHERE o.service='delivery' AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected') AND o.created_at<now()-(%s*interval '1 minute') AND "+where,[late,*params]).fetchone()['n']
         summary['refund_halalas']=int(refs);summary['net_completed_halalas']=int(summary['gross_completed_halalas'])-int(refs)
         items=c.execute("WITH lines AS (SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item WHERE o.completed_at IS NOT NULL AND "+where+" GROUP BY o.id,o.total_halalas,item->>'product_id') SELECT product_id,max(name) name,sum(greatest(quantity-coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r WHERE r.order_id=lines.order_id),0),0)) quantity,sum(gross_halalas) gross_halalas,round(sum(gross_halalas::numeric*greatest(total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=lines.order_id),0),0)/nullif(total_halalas,0))) net_halalas FROM lines GROUP BY product_id ORDER BY quantity DESC LIMIT 10",params).fetchall()
-        branch_top=c.execute("SELECT o.branch_id,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
+        branch_top=c.execute("SELECT o.branch_id,b.branch_no,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.branch_no,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
         timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
         timing['threshold_minutes']=late;timing['threshold_configured']='late_after_minutes' in config
         from .performance import delivery_summary

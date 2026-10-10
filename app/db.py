@@ -13,6 +13,7 @@ from typing import Any, Callable
 import psycopg
 from fastapi import HTTPException
 from psycopg.rows import dict_row
+from psycopg import sql
 from psycopg.types.json import Jsonb
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,10 +99,51 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
 
 def migrate():
     with tx() as conn:
+        conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
+        baseline = preservation_snapshot(conn)
         apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
+        after = preservation_snapshot(conn, baseline)
+        if baseline != after:
+            raise RuntimeError('Release aborted: existing operational data changed during migration.')
+        revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
+        audit(conn, None, 'release.operational_data_preserved', 'runtime', revision,
+              {'verified': bool(baseline), 'tables_checked': len(baseline),
+               'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
 
 
-def apply_migrations(conn, seed=True):
+PRESERVED_TABLES = ('users', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
+                    'orders', 'order_events', 'shifts', 'driver_tasks', 'collections', 'refunds',
+                    'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
+                    'closure_reports', 'report_corrections', 'report_renderings', 'report_notifications',
+                    'closure_drafts', 'conversations', 'chat_messages', 'chat_attachments',
+                    'conversation_reads', 'conversation_transfers')
+
+
+def preservation_snapshot(conn, baseline=None):
+    """Compare existing columns/bytes in the same bounded migration transaction.
+
+    New columns are additive and excluded from an old baseline. Brief shared
+    locks prevent concurrent operational writes from creating a false mismatch.
+    Only counts and opaque hashes enter the private audit, never row contents.
+    Catalog/branch edits are separately guarded by their explicit owner decisions.
+    """
+    available = {row['table_name'] for row in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'").fetchall()}
+    names = [name for name in PRESERVED_TABLES if name in available] if baseline is None else list(baseline)
+    if names:
+        conn.execute(sql.SQL('LOCK TABLE {} IN SHARE MODE').format(sql.SQL(',').join(map(sql.Identifier, names))))
+    result = {}
+    for table in names:
+        columns = baseline[table]['columns'] if baseline is not None else [row['column_name'] for row in conn.execute(
+            'SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s ORDER BY ordinal_position', (table,)).fetchall()]
+        statement = sql.SQL("SELECT count(*)::bigint AS count,md5(coalesce(string_agg(h,'' ORDER BY h),'')) AS digest "
+                            "FROM (SELECT md5(row_to_json(r)::text) AS h FROM (SELECT {} FROM {}) r) fingerprints").format(
+            sql.SQL(',').join(map(sql.Identifier, columns)), sql.Identifier(table))
+        result[table] = dict(conn.execute(statement).fetchone(), columns=columns)
+    return result
+
+
+def apply_migrations(conn, seed=True, owner_decisions=True):
     """Shared migration engine for startup and a separate, empty-schema restore drill."""
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
     conn.execute('CREATE TABLE IF NOT EXISTS schema_migrations(version TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())')
@@ -119,6 +161,33 @@ def apply_migrations(conn, seed=True):
         conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (file.name, checksum))
     if seed:
         seed_initial(conn)
+    # Explicit one-time owner decisions apply to the intended imported identities.
+    # Existing seeds stay immutable; subsequent boots never reset admin edits.
+    if owner_decisions:
+        from . import catalog
+        catalog.apply_final_catalog_approval(conn)
+        apply_owner_display_decisions(conn)
+
+
+def apply_owner_display_decisions(conn):
+    conn.execute("INSERT INTO owner_display_decisions(decision_id,brand_id,branch_id,branch_no,source_id,approved_name) "
+                 "VALUES ('branch-9-owner-final-2026-10-10','kps','kps-branch-9',9,'apex-canonical-branch-no:9',%s) ON CONFLICT DO NOTHING",
+                 ('حفرالباطن - المروج - درايف ثرو',))
+    rows = conn.execute('SELECT * FROM owner_display_decisions WHERE evaluated_at IS NULL FOR UPDATE').fetchall()
+    for decision in rows:
+        branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s FOR UPDATE',
+                              (decision['branch_id'], decision['brand_id'])).fetchone()
+        result = 'skipped_identity_mismatch'
+        if branch and branch['branch_no'] == decision['branch_no'] and branch['source_id'] == decision['source_id']:
+            conn.execute('UPDATE branches SET name=%s,updated_at=now() WHERE id=%s',
+                         (decision['approved_name'], branch['id']))
+            audit(conn, None, 'branch.owner_display_name', 'branch', branch['id'],
+                  {'decision_id': decision['decision_id'], 'branch_no': branch['branch_no'],
+                   'before_name': branch['name'], 'after_name': decision['approved_name'],
+                   'immutable_history_preserved': True})
+            result = 'applied'
+        conn.execute('UPDATE owner_display_decisions SET evaluated_at=now(),result=%s WHERE decision_id=%s',
+                     (result, decision['decision_id']))
 
 
 def seed_initial(conn):

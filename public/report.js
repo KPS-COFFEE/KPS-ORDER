@@ -7,10 +7,11 @@ document.addEventListener('click', async (event) => {
 });
 document.querySelectorAll('#orders tbody tr').forEach((row) => {
   const reference = row.firstElementChild?.textContent;
-  const detail = reference && document.getElementById('order-' + reference);
+  const target = row.dataset.drillTarget || (reference && 'order-' + reference);
+  const detail = target && document.getElementById(target);
   if (!detail) return;
   const link = document.createElement('a');
-  link.href = '#order-' + reference;
+  link.href = '#' + target;
   link.textContent = reference;
   link.addEventListener('click', () => { detail.open = true; });
   row.firstElementChild.replaceChildren(link);

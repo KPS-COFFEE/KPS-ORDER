@@ -184,7 +184,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         contexts['guest'], pages['guest'] = customer_context, customer
         errors.append(customer_errors)
         customer.goto('/')
-        expect(customer.locator('.product-card')).to_have_count(35)
+        expect(customer.locator('.product-card')).to_have_count(34)
         fonts['guest'] = _font_evidence(customer)
         customer.locator('#branch-select').select_option('kps-branch-1')
         expect(customer.locator('#branch-directions')).to_have_attribute('href', __import__('re').compile(r'destination=28\.4001%2C45\.9001'))
@@ -343,7 +343,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             response = context.request.get(base+'/api/reports/'+rid+'/renderings/v5/'+fmt)
             assert response.status == 200 and response.body() == contents
         customer.reload()
-        expect(customer.locator('.product-card')).to_have_count(35)
+        expect(customer.locator('.product-card')).to_have_count(34)
         owner.reload()
         expect(owner.locator('#app-shell')).to_be_visible()
         owner.locator('[data-page=reports]').click()

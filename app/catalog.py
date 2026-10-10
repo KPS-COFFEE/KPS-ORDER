@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 import re
 from datetime import datetime, timedelta
 from typing import Literal
@@ -16,6 +18,126 @@ from . import auth, db
 router = APIRouter(prefix='/api')
 RIYADH = ZoneInfo('Asia/Riyadh')
 DELIVERY_CITIES = {'حفر الباطن', 'الذيبية', 'القيصومة', 'الخفجي', 'رفحاء', 'قبه'}
+
+
+# This owner decision applies once to the exact imported menu, never future edits.
+FINAL_MENU_APPROVAL_ID = 'owner-final-2026-10-10'
+FINAL_MENU_MANIFEST_SHA256 = '57d67963b0ac752a179ffe60ce25f81fe06ab1b6c19a161769bd39fd4cd870f6'
+KHALIYA_SOURCES = {'classic': 'kps-34', 'pecan': 'kps-33'}
+
+
+def commercial_snapshot(product: dict) -> dict:
+    settings = product['settings']
+    return {**{key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')},
+            'source_id': settings.get('source_id', product['id']),
+            'option_groups': settings.get('option_groups') or [], 'variants': settings.get('variants') or []}
+
+
+def commercial_digest(product: dict) -> str:
+    return db.digest(commercial_snapshot(product))
+
+
+def source_approved(product: dict) -> bool:
+    settings = product['settings']
+    if settings.get('source_verified') is not True:
+        return False
+    approval = settings.get('menu_approval')
+    # Legacy explicit owner approvals and other brands keep their existing path.
+    if not approval:
+        return True
+    expected = settings.get('owner_approved_digest') or approval.get('effective_commercial_digest')
+    return expected == commercial_digest(product)
+
+
+def apply_final_catalog_approval(conn):
+    """One-time, content-matched owner approval; called after safe initial import.
+
+    The source manifest hash is pinned independently of the current mutable seed.
+    Every mismatch is recorded and never automatically approved on a later boot.
+    No operational branch settings, history, images or confirmed orders are reset.
+    """
+    manifest_bytes = (db.ROOT / 'data/final_menu_approval.json').read_bytes()
+    if hashlib.sha256(manifest_bytes).hexdigest() != FINAL_MENU_MANIFEST_SHA256:
+        raise RuntimeError('The approved owner menu manifest changed; a new explicit decision is required.')
+    manifest = json.loads(manifest_bytes)
+    for entry in manifest['products']:
+        conn.execute('INSERT INTO catalog_owner_approvals(decision_id,product_id,brand_id,source_commit,source_html_sha256,source_digest,source_snapshot) '
+                     'VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',
+                     (FINAL_MENU_APPROVAL_ID, entry['product_id'], entry['brand_id'], manifest['source_commit'],
+                      manifest['source_html_sha256'], entry['source_digest'], db.json(entry['source_snapshot'])))
+    approvals = conn.execute("SELECT * FROM catalog_owner_approvals WHERE decision_id=%s ORDER BY product_id FOR UPDATE",
+                             (FINAL_MENU_APPROVAL_ID,)).fetchall()
+    for approval in approvals:
+        if approval['evaluated_at'] is not None:
+            continue
+        product = conn.execute('SELECT * FROM products WHERE id=%s AND brand_id=%s FOR UPDATE',
+                               (approval['product_id'], approval['brand_id'])).fetchone()
+        if not product:
+            continue  # Empty-schema restores evaluate only after their rows exist.
+        result = 'skipped_mismatch'
+        if product:
+            snapshot = commercial_snapshot(product) | {key: product['settings'].get(key) for key in ('image_url', 'source_url')}
+            if db.digest(snapshot) == approval['source_digest'] and snapshot == approval['source_snapshot']:
+                settings = product['settings'] | {
+                    'source_verified': True,
+                    'menu_approval': {'decision_id': FINAL_MENU_APPROVAL_ID,
+                                      'source_commit': approval['source_commit'],
+                                      'source_html_sha256': approval['source_html_sha256'],
+                                      'source_digest': approval['source_digest'],
+                                      'effective_commercial_digest': commercial_digest(product)}}
+                conn.execute('UPDATE products SET settings=%s,updated_at=now() WHERE id=%s', (db.json(settings), product['id']))
+                db.audit(conn, None, 'catalog.owner_source_approval', 'product', product['id'],
+                         {'decision_id': FINAL_MENU_APPROVAL_ID, 'source_digest': approval['source_digest']})
+                result = 'approved'
+        conn.execute('UPDATE catalog_owner_approvals SET evaluated_at=now(),result=%s WHERE decision_id=%s AND product_id=%s',
+                     (result, FINAL_MENU_APPROVAL_ID, approval['product_id']))
+    parent_approval = conn.execute('SELECT * FROM catalog_owner_approvals WHERE decision_id=%s AND product_id=%s FOR UPDATE',
+                                   (FINAL_MENU_APPROVAL_ID, 'kps-33')).fetchone()
+    if not parent_approval or parent_approval['transform_evaluated_at'] is not None:
+        return
+    parent = conn.execute("SELECT * FROM products WHERE id='kps-33' AND brand_id='kps' FOR UPDATE").fetchone()
+    classic = conn.execute("SELECT * FROM products WHERE id='kps-34' AND brand_id='kps' FOR UPDATE").fetchone()
+    classic_approval = conn.execute('SELECT result FROM catalog_owner_approvals WHERE decision_id=%s AND product_id=%s',
+                                    (FINAL_MENU_APPROVAL_ID, 'kps-34')).fetchone()
+    if not parent or not classic:
+        return
+    transformed = 'skipped_mismatch'
+    if (parent and classic and parent_approval['result'] == 'approved' and classic_approval
+            and classic_approval['result'] == 'approved' and source_approved(parent) and source_approved(classic)):
+        # Prices derive from the two exact approved source rows; no new price is introduced.
+        settings = parent['settings'] | {'unified_khaliya': True, 'pending_owner_image': False,
+            'image_url': '/assets/khaliya-owner-20261010.webp',
+            'owner_image_approval': {'approved_at': '2026-10-10', 'source_sha256': '4bffccdcf1a7e9667c92176f2f70675978f38704c4a04c05731383447c6547e7',
+                                     'original_url': '/assets/khaliya-owner-20261010.jpeg'},
+            'available_cities': ['حفر الباطن'],
+            'option_groups': [{'code': 'TYPE', 'name': 'اختر النوع', 'type': 'select', 'required': True,
+                'min_select': 1, 'max_select': 1, 'values': [
+                    {'code': 'classic', 'name': 'كلاسيك', 'source_product_id': classic['id'],
+                     'source_price_halalas': classic['price_halalas'],
+                     'price_delta_halalas': classic['price_halalas'] - parent['price_halalas']},
+                    {'code': 'pecan', 'name': 'بيكان', 'source_product_id': parent['id'],
+                     'source_price_halalas': parent['price_halalas'], 'price_delta_halalas': 0}]}]}
+        settings.pop('owner_approved_digest', None)
+        merged = dict(parent, name='الخلية', settings=settings)
+        settings['menu_approval'] = settings['menu_approval'] | {'effective_commercial_digest': commercial_digest(merged),
+                                                              'amendment': 'one-card-required-classic-pecan'}
+        conn.execute('UPDATE products SET name=%s,settings=%s,updated_at=now() WHERE id=%s',
+                     (merged['name'], db.json(settings), parent['id']))
+        archived_settings = classic['settings'] | {'purchasable': False, 'merged_into': parent['id'], 'merged_type': 'classic'}
+        conn.execute('UPDATE products SET settings=%s,updated_at=now() WHERE id=%s', (db.json(archived_settings), classic['id']))
+        db.audit(conn, None, 'catalog.khaliya_unified', 'product', parent['id'],
+                 {'source_products': KHALIYA_SOURCES, 'owner_image': 'received_and_applied', 'source_image_sha256': settings['owner_image_approval']['source_sha256'], 'history_preserved': True})
+        transformed = 'applied'
+    conn.execute('UPDATE catalog_owner_approvals SET transform_evaluated_at=now(),transform_result=%s WHERE decision_id=%s AND product_id=%s',
+                 (transformed, FINAL_MENU_APPROVAL_ID, 'kps-33'))
+
+
+def legacy_item_mappings(products: list[dict]) -> dict:
+    if not any(p['id'] == 'kps-33' and p['settings'].get('unified_khaliya') for p in products):
+        return {}
+    return {source_id: {'product_id': 'kps-33', 'options': {'TYPE': variant},
+                        'original_name': 'خلية كلاسيك' if variant == 'classic' else 'خلية بيكان'}
+            for variant, source_id in KHALIYA_SOURCES.items()}
 
 
 def normalize_city(value: str) -> str:
@@ -127,13 +249,15 @@ def covered(coverage: dict, location: dict) -> bool:
     return inside
 
 
-def product_availability(product: dict, branch: dict | None) -> tuple[bool, str | None]:
+def product_availability(product: dict, branch: dict | None, *, as_variant=False) -> tuple[bool, str | None]:
     settings = product['settings']
+    if settings.get('purchasable') is False and not as_variant:
+        return False, 'هذا الصنف أصبح ضمن الخلية. اختر النوع من البطاقة الموحدة.'
     if settings.get('lifecycle') in {'draft', 'paused'} or settings.get('enabled', True) is not True:
         return False, 'الصنف غير متاح حاليًا.'
     cities = settings.get('available_cities') or []
     # Additional hard guard preserves the explicitly identified original two source records.
-    if product['brand_id'] == 'kps' and product['id'] in {'kps-33', 'kps-34'} and not settings.get('availability_policy_version'):
+    if product['brand_id'] == 'kps' and product['id'] in {'kps-33', 'kps-34'}:
         cities = ['حفر الباطن']
     if cities and not branch:
         return False, 'حدد فرع التنفيذ أولًا للتحقق من توفر الصنف.'
@@ -159,8 +283,8 @@ def public_product(product: dict, branch=None) -> dict:
     result = {key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')}
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
     result.update(option_groups=settings.get('option_groups', []), variants=settings.get('variants', []),
-                  available_cities=settings.get('available_cities', []), enabled=settings.get('enabled', True),
-                  source_verified=settings.get('source_verified') is True, lifecycle=settings.get('lifecycle', 'active' if settings.get('enabled', True) else 'paused'), available=available, unavailable_reason=reason)
+                  available_cities=['حفر الباطن'] if product['brand_id'] == 'kps' and product['id'] in {'kps-33', 'kps-34'} else settings.get('available_cities', []), enabled=settings.get('enabled', True),
+                  source_verified=source_approved(product), pending_owner_image=settings.get('pending_owner_image') is True, unified_khaliya=settings.get('unified_khaliya') is True, lifecycle=settings.get('lifecycle', 'active' if settings.get('enabled', True) else 'paused'), available=available, unavailable_reason=reason)
     return result
 
 
@@ -175,13 +299,14 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
             branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s', (branch_id, brand_id)).fetchone()
             if not branch:
                 raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود.')
-        products = conn.execute("SELECT * FROM products WHERE brand_id=%s AND coalesce(settings->>'lifecycle','active')<>'draft' ORDER BY id", (brand_id,)).fetchall()
+        products = conn.execute("SELECT * FROM products WHERE brand_id=%s AND coalesce(settings->>'lifecycle','active')<>'draft' AND coalesce(settings->>'purchasable','true')<>'false' ORDER BY id", (brand_id,)).fetchall()
         preferences = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
                            if key in {'accent', 'background', 'text', 'font'}}
     return {'brand': safe_brand, 'products': [public_product(p, branch) for p in products],
-            'source_verified': bool(products) and all(p['settings'].get('source_verified') is True for p in products)}
+            'legacy_item_mappings': legacy_item_mappings(products),
+            'source_verified': bool(products) and all(source_approved(p) for p in products)}
 
 
 @router.get('/branches')
@@ -215,7 +340,7 @@ def availability(product_id: str, branch_id: str):
         if not product or not branch or product['brand_id'] != branch['brand_id']:
             raise db.error(404, 'PRODUCT_NOT_FOUND', 'الصنف أو الفرع غير موجود.')
         available, reason = product_availability(product, branch)
-        return {'available': available, 'reason': reason, 'source_verified': product['settings'].get('source_verified') is True}
+        return {'available': available, 'reason': reason, 'source_verified': source_approved(product)}
 
 
 class Location(BaseModel):
@@ -352,14 +477,39 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
         ok, reason = product_availability(product, branch)
         if not ok:
             raise db.error(409, 'PRODUCT_UNAVAILABLE', reason)
-        if product['settings'].get('source_verified') is not True:
+        if not source_approved(product):
             raise db.error(409, 'CATALOG_SOURCE_UNVERIFIED', 'السعر وخيارات هذا الصنف لم تُعتمد من المصدر التشغيلي بعد.')
         amount, units = _price_units(product, item)
         subtotal += amount
-        snapshots.append({'product_id': product['id'], 'source_id': product['settings'].get('source_id', product['id']),
-                          'name': product['name'], 'category': product['category'], 'quantity': item.quantity,
-                          'unit_price_halalas': product['price_halalas'], 'line_total_halalas': amount,
-                          'units': units, 'note': item.note})
+        if product['settings'].get('unified_khaliya'):
+            grouped, checked_sources = {}, set()
+            for unit in units:
+                selected = unit['options'].get('TYPE')
+                selected = selected[0] if isinstance(selected, list) and len(selected) == 1 else selected
+                if selected not in KHALIYA_SOURCES:
+                    raise db.error(422, 'KHALIYA_TYPE_REQUIRED', 'اختر النوع: كلاسيك أو بيكان.')
+                source_id = KHALIYA_SOURCES[selected]
+                # Preserve stock stops configured on the former classic source row.
+                if source_id != product['id'] and source_id not in checked_sources:
+                    variant_source = conn.execute('SELECT * FROM products WHERE id=%s AND brand_id=%s' + lock,
+                                                  (source_id, body.brand_id)).fetchone()
+                    if not variant_source or not product_availability(variant_source, branch, as_variant=True)[0]:
+                        raise db.error(409, 'PRODUCT_VARIANT_UNAVAILABLE', 'نوع الخلية المحدد غير متاح في هذا الفرع.')
+                    checked_sources.add(source_id)
+                unit['source_id'] = source_id
+                grouped.setdefault(selected, []).append(unit)
+            for selected, selected_units in grouped.items():
+                snapshots.append({'product_id': product['id'], 'source_id': KHALIYA_SOURCES[selected], 'variant_code': selected,
+                                  'name': product['name'] + ' — ' + ('كلاسيك' if selected == 'classic' else 'بيكان'),
+                                  'category': product['category'], 'quantity': len(selected_units),
+                                  'unit_price_halalas': selected_units[0]['price_halalas'],
+                                  'line_total_halalas': sum(unit['price_halalas'] for unit in selected_units),
+                                  'units': selected_units, 'note': item.note})
+        else:
+            snapshots.append({'product_id': product['id'], 'source_id': product['settings'].get('source_id', product['id']),
+                              'name': product['name'], 'category': product['category'], 'quantity': item.quantity,
+                              'unit_price_halalas': product['price_halalas'], 'line_total_halalas': amount,
+                              'units': units, 'note': item.note})
     minimum = branch['settings'].get('minimum_order_halalas')
     if body.service == 'delivery' and isinstance(minimum, int) and subtotal < minimum:
         raise db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
