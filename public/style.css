@@ -11,6 +11,9 @@
 .dialog-header>div{min-width:0}.dialog-header h2{min-width:0;overflow-wrap:anywhere}.chat-header-actions{flex-shrink:0}
 
 .brand{min-width:0}.brand-text{overflow-wrap:anywhere;max-width:360px}@media(max-width:550px){.brand-text{max-width:220px}}
+/* A checkout taller than the visible viewport must scroll with the document. */
+.basket.basket-scroll-flow{position:static}
+@media(max-height:740px){.basket{position:static}}
 /* V5: the approved real Noto family, comfortable light surfaces and touch targets. */
 @font-face{font-family:'Noto Kufi Arabic';src:url('/assets/fonts/NotoKufiArabic-Regular.ttf') format('truetype');font-style:normal;font-weight:400;font-display:swap}
 @font-face{font-family:'Noto Kufi Arabic';src:url('/assets/fonts/NotoKufiArabic-SemiBold.ttf') format('truetype');font-style:normal;font-weight:600;font-display:swap}

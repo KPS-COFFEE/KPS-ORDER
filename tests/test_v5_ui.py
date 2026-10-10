@@ -100,6 +100,11 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
             page.set_viewport_size(viewport)
             page.locator('#customer-phone').focus()
             page.locator('#checkout-button').scroll_into_view_if_needed()
+            page.screenshot(path=str(ARTIFACTS / f'TEST_ONLY_v5-checkout-reachability-{viewport["width"]}x{viewport["height"]}.png'))
+            assert page.locator('#basket').evaluate('''basket =>
+                basket.offsetHeight <= (visualViewport?.height||innerHeight)-40 ||
+                getComputedStyle(basket).position === 'static'
+            ''')
             expect(page.locator('#checkout-button')).to_be_in_viewport()
             expect(page.locator('#mobile-basket')).not_to_be_visible()
             assert page.locator('#checkout-button').evaluate('''button => {
