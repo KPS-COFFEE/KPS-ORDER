@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from . import auth, db
+from . import auth, db, email_delivery
 
 router = APIRouter()
 owner = auth.require_roles('owner')
@@ -114,7 +114,7 @@ def _timestamp(value):
         raise db.error(422, 'RECOVERY_EVENT_INVALID', 'بيانات إشعار الاستعادة غير صحيحة.') from None
 
 
-def _record(conn, config, provider_id, event_type, outcome, source, occurred, digest, metadata=None):
+def _record(conn, config, provider_id, event_type, outcome, source, occurred, digest, metadata=None, *, backup_state=True):
     record_id = db.new_id('recovery_')
     inserted = conn.execute('INSERT INTO recovery_events(id,brand_id,database_id,provider_event_id,event_type,outcome,source,request_digest,occurred_at,metadata) '
                             'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(database_id,provider_event_id) DO NOTHING RETURNING id',
@@ -126,7 +126,8 @@ def _record(conn, config, provider_id, event_type, outcome, source, occurred, di
         if previous['request_digest'] != digest:
             raise db.error(409, 'RECOVERY_EVENT_CONFLICT', 'معرف الإشعار مستخدم لبيانات مختلفة.')
         return False
-    conn.execute('INSERT INTO recovery_state(brand_id,database_id,last_success_at,last_failure_at,last_verified_at,verification_source) '
+    if backup_state:
+        conn.execute('INSERT INTO recovery_state(brand_id,database_id,last_success_at,last_failure_at,last_verified_at,verification_source) '
                  'VALUES(%s,%s,%s,%s,now(),%s) ON CONFLICT(brand_id,database_id) DO UPDATE SET '
                  'last_success_at=GREATEST(recovery_state.last_success_at,EXCLUDED.last_success_at),'
                  'last_failure_at=GREATEST(recovery_state.last_failure_at,EXCLUDED.last_failure_at),'
@@ -135,7 +136,8 @@ def _record(conn, config, provider_id, event_type, outcome, source, occurred, di
                   occurred if outcome == 'failed' else None, source))
     if outcome == 'failed':
         code = {'provider_verification_failed': 'PROVIDER_VERIFICATION_FAILED',
-                'provider_recovery_not_available': 'PROVIDER_RECOVERY_UNAVAILABLE'}.get(event_type, 'BACKUP_PROVIDER_FAILURE')
+                'provider_recovery_not_available': 'PROVIDER_RECOVERY_UNAVAILABLE'}.get(event_type,
+                event_type.upper() if source == 'runtime_monitor' else 'BACKUP_PROVIDER_FAILURE')
         # Concurrent polls/webhook retries retain all observations, but only one
         # unacknowledged alert per failure type is created within a 24-hour span.
         lock = 'recovery-alert:' + config['brand_id'] + ':' + config['database_id'] + ':' + code + ':' + event_type
@@ -146,6 +148,70 @@ def _record(conn, config, provider_id, event_type, outcome, source, occurred, di
                      (db.new_id('recovery_alert_'), config['brand_id'], config['database_id'], record_id, code, event_type,
                       config['brand_id'], config['database_id'], code, event_type))
     return True
+
+
+def queue_alert_notifications(conn, config):
+    """One encrypted mail per alert/registered verified owner, atomic and local.
+
+    Configuration and provider acceptance are separate from actual delivery.
+    Existing mail dispatch rechecks the recipient's authority immediately before
+    sending; pending notices remain durable while the channel is unavailable.
+    """
+    conn.execute("INSERT INTO recovery_alert_notifications(id,alert_id,recipient_user_id,brand_id) "
+                 "SELECT 'recovery_notice_'||md5(a.id||':'||u.id),a.id,u.id,a.brand_id "
+                 "FROM recovery_alerts a JOIN users u ON u.brand_id=a.brand_id "
+                 "WHERE a.brand_id=%s AND a.database_id=%s AND a.acknowledged_at IS NULL "
+                 "AND u.role='owner' AND u.active AND u.email_verified_at IS NOT NULL AND u.email IS NOT NULL "
+                 "ON CONFLICT(alert_id,recipient_user_id) DO NOTHING",
+                 (config['brand_id'], config['database_id']))
+    channel = conn.execute("SELECT 1 FROM identity_channels WHERE brand_id=%s AND channel='email' "
+                           "AND enabled AND state='active'", (config['brand_id'],)).fetchone()
+    if not channel or not email_delivery.configuration()['configured']:
+        return 0
+    from urllib.parse import urlsplit
+    base = os.getenv('PUBLIC_BASE_URL', '').rstrip('/')
+    parsed = urlsplit(base)
+    if (parsed.scheme not in {'https', 'http'} or not parsed.netloc or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or (parsed.scheme != 'https' and os.getenv('APP_ENV') != 'testing')):
+        return 0
+    rows = conn.execute("SELECT n.id,n.alert_id,n.recipient_user_id,a.code,a.created_at,u.email "
+                        "FROM recovery_alert_notifications n JOIN recovery_alerts a ON a.id=n.alert_id "
+                        "JOIN users u ON u.id=n.recipient_user_id AND u.brand_id=n.brand_id "
+                        "WHERE n.brand_id=%s AND a.database_id=%s AND n.email_outbox_id IS NULL "
+                        "AND u.role='owner' AND u.active AND u.email_verified_at IS NOT NULL "
+                        "AND a.acknowledged_at IS NULL ORDER BY n.created_at LIMIT 20 FOR UPDATE OF n SKIP LOCKED",
+                        (config['brand_id'], config['database_id'])).fetchall()
+    queued = 0
+    for row in rows:
+        # Event names and IDs are never interpolated from request bodies. Even a
+        # compromised historical row cannot insert a credential or recipient.
+        code = row['code'] if re.fullmatch(r'[A-Z_]{1,80}', row['code']) else 'OPERATIONAL_FAILURE'
+        payload = {'subject': 'KPS ORDER — تنبيه تشغيلي / Operational alert',
+                   'text': 'تنبيه تشغيلي يتطلب المراجعة / Operational alert requires review.\n'
+                           + code + '\n' + row['created_at'].astimezone(timezone.utc).isoformat()
+                           + '\nافتح لوحة المالك بحسابك المصرح / Sign in to the owner panel:\n' + base + '/ops'}
+        mid = email_delivery.enqueue_mail(conn, brand_id=config['brand_id'], recipient=row['email'],
+                                         kind='operations_alert', payload=payload,
+                                         dedupe_key='recovery-alert:' + row['alert_id'] + ':' + row['recipient_user_id'])
+        if mid:
+            conn.execute('UPDATE recovery_alert_notifications SET email_outbox_id=%s WHERE id=%s', (mid, row['id']))
+            queued += 1
+    return queued
+
+
+def alert_delivery_status(conn, config):
+    available = bool(email_delivery.configuration()['configured'] and
+                     conn.execute("SELECT 1 FROM identity_channels WHERE brand_id=%s AND channel='email' AND enabled AND state='active'",
+                                  (config['brand_id'],)).fetchone() and
+                     conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role='owner' AND active AND email_verified_at IS NOT NULL AND email IS NOT NULL",
+                                  (config['brand_id'],)).fetchone())
+    rows = conn.execute("SELECT coalesce(e.status,'waiting_channel') status,count(*)::integer count "
+                        "FROM recovery_alert_notifications n JOIN recovery_alerts a ON a.id=n.alert_id "
+                        "LEFT JOIN email_outbox e ON e.id=n.email_outbox_id WHERE n.brand_id=%s AND a.database_id=%s "
+                        "GROUP BY coalesce(e.status,'waiting_channel')", (config['brand_id'], config['database_id'])).fetchall()
+    states = {row['status']: row['count'] for row in rows}
+    return {'configured': available, 'statuses': states, 'provider_acceptance_proves_inbox_receipt': False,
+            'mail_server_delivery_observed': bool(states.get('delivered')), 'inbox_receipt_verified': False}
 
 
 @router.post('/webhooks/render/recovery')
@@ -176,6 +242,7 @@ async def receive_provider_event(request: Request):
     with db.tx() as conn:
         inserted = _record(conn, config, provider_id, event_type, EVENTS[event_type], 'signed_webhook', occurred,
                            hashlib.sha256(body).hexdigest())
+        queue_alert_notifications(conn, config)
     return {'accepted': True, 'duplicate': not inserted}
 
 
@@ -186,7 +253,7 @@ def _iso(value):
 @router.get('/api/admin/recovery')
 def recovery_status(user=Depends(owner)):
     config = owner_configuration(user)
-    state, alerts, provider_status = None, [], None
+    state, alerts, provider_status, delivery, restore = None, [], None, None, None
     if config['provider_configured']:
         with db.tx() as conn:
             state = conn.execute('SELECT * FROM recovery_state WHERE brand_id=%s AND database_id=%s',
@@ -195,10 +262,14 @@ def recovery_status(user=Depends(owner)):
                                   'WHERE brand_id=%s AND database_id=%s AND acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 100',
                                   (user['brand_id'], config['database_id'])).fetchall()
             latest_api = conn.execute('SELECT metadata FROM recovery_events WHERE brand_id=%s AND database_id=%s '
-                                      "AND source='provider_api' ORDER BY verified_at DESC,id DESC LIMIT 1",
+                                      "AND source IN ('provider_api','provider_dashboard') ORDER BY verified_at DESC,id DESC LIMIT 1",
                                       (user['brand_id'], config['database_id'])).fetchone()
             if latest_api:
                 provider_status = latest_api['metadata'].get('provider_recovery_status')
+            delivery = alert_delivery_status(conn, config)
+            restore = conn.execute("SELECT occurred_at,metadata FROM recovery_events WHERE brand_id=%s AND database_id=%s "
+                                   "AND source='restore_drill' AND event_type='isolated_restore_verified' ORDER BY verified_at DESC LIMIT 1",
+                                   (user['brand_id'], config['database_id'])).fetchone()
     state = state or {}
     blockers = []
     if not config['provider_configured']:
@@ -219,6 +290,8 @@ def recovery_status(user=Depends(owner)):
         blockers.append('PROVIDER_RECOVERY_' + provider_status)
     if alerts:
         blockers.append('UNACKNOWLEDGED_RECOVERY_ALERTS')
+    if not restore:
+        blockers.append('ISOLATED_RESTORE_NOT_YET_VERIFIED')
     status = 'unconfigured' if not config['provider_configured'] else 'unverified'
     if state:
         status = 'attention_required' if blockers else 'observed'
@@ -229,9 +302,13 @@ def recovery_status(user=Depends(owner)):
             'last_verified_at': _iso(state.get('last_verified_at')), 'verification_source': state.get('verification_source', 'none'),
             'retention_days': state.get('retention_days'), 'recoverable_from': _iso(state.get('recoverable_from')),
             'recoverable_until': _iso(state.get('recoverable_until')),
-            'potential_loss_window_seconds': state.get('potential_loss_window_seconds'), 'measured_restore_seconds': None,
+            'potential_loss_window_seconds': state.get('potential_loss_window_seconds'),
+            'measured_restore_seconds': restore['metadata'].get('elapsed_seconds') if restore else None,
+            'last_restore_verified_at': _iso(restore['occurred_at']) if restore else None,
+            'restore_evidence': restore['metadata'] if restore else None,
             'open_alerts': [{**item, 'created_at': _iso(item['created_at'])} for item in alerts], 'blockers': blockers,
-            'external_alert_delivery_configured': False}
+            'external_alert_delivery_configured': bool(delivery and delivery['configured']),
+            'external_alert_delivery': delivery or {'configured': False, 'statuses': {}, 'inbox_receipt_verified': False}}
 
 
 @router.post('/api/admin/recovery/alerts/{alert_id}/ack')
@@ -300,6 +377,7 @@ def poll_provider(config=None, actor_id=None):
             conn.execute('UPDATE recovery_state SET recoverable_from=NULL,recoverable_until=NULL,retention_days=NULL,'
                          'potential_loss_window_seconds=NULL WHERE brand_id=%s AND database_id=%s',
                          (config['brand_id'], config['database_id']))
+            queue_alert_notifications(conn, config)
         raise db.error(503, 'RECOVERY_PROVIDER_UNAVAILABLE', 'تعذر التحقق من حالة النسخ لدى مزود الاستضافة؛ حُفظ تنبيه للمالك.') from None
     latest = parsed['latest_export_at']
     metadata = parsed['metadata']
@@ -314,6 +392,7 @@ def poll_provider(config=None, actor_id=None):
                     'provider_api', now, db.digest(metadata), metadata)
         if actor_id:
             db.audit(conn, actor_id, 'recovery.provider.refreshed', 'recovery', config['database_id'], metadata)
+        queue_alert_notifications(conn, config)
     return metadata
 
 

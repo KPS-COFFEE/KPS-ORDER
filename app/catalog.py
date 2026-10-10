@@ -258,7 +258,45 @@ def product_availability(product: dict, branch: dict | None, *, as_variant=False
         overrides = branch['settings'].get('product_availability') or {}
         if overrides.get(product['id']) is False:
             return False, 'الصنف موقوف مؤقتًا في هذا الفرع.'
+    for group in settings.get('option_groups') or []:
+        if not isinstance(group, dict):
+            continue  # The pricing path diagnoses malformed legacy options.
+        minimum = group.get('min_select', 1 if group.get('required', True) else 0)
+        values = group.get('values') or []
+        if type(minimum) is int and minimum > 0 and isinstance(values, list):
+            if sum(option_value_availability(value, branch)[0] for value in values) < minimum:
+                return False, 'الخيارات اللازمة للصنف غير متاحة حاليًا في هذا الفرع.'
     return True, None
+
+
+def option_value_availability(value: dict, branch=None) -> tuple[bool, str | None]:
+    """One stock policy for independent colors, sizes and flavors everywhere.
+
+    Availability is separate from product enablement and historical order
+    snapshots. A branch stop never pauses other options or other branches.
+    """
+    if not isinstance(value, dict) or value.get('enabled', True) is not True:
+        return False, 'الخيار غير متاح حاليًا.'
+    if branch:
+        allowed = value.get('available_branch_ids')
+        if allowed is not None and branch['id'] not in allowed:
+            return False, 'الخيار غير متاح في هذا الفرع.'
+        if branch['id'] in (value.get('unavailable_branch_ids') or []):
+            return False, 'الخيار موقوف مؤقتًا في هذا الفرع.'
+    return True, None
+
+
+def availability_only_change(previous: dict, updated: dict) -> bool:
+    """A stock edit preserves an existing approval of unchanged commercial terms."""
+    def terms(product):
+        snapshot = commercial_snapshot(product)
+        snapshot['option_groups'] = [
+            dict(group, values=[{k: v for k, v in value.items()
+                                if k not in {'enabled', 'available_branch_ids', 'unavailable_branch_ids'}}
+                               for value in group.get('values', [])])
+            for group in snapshot['option_groups']]
+        return snapshot
+    return terms(previous) == terms(updated)
 
 
 def public_product(product: dict, branch=None) -> dict:
@@ -266,7 +304,14 @@ def public_product(product: dict, branch=None) -> dict:
     available, reason = product_availability(product, branch)
     result = {key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')}
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
-    result.update(option_groups=settings.get('option_groups', []), variants=settings.get('variants', []),
+    groups = []
+    for group in settings.get('option_groups') or []:
+        values = []
+        for value in group.get('values') or []:
+            ok, why = option_value_availability(value, branch)
+            values.append(dict(value, available=ok, unavailable_reason=why))
+        groups.append(dict(group, values=values))
+    result.update(option_groups=groups, variants=settings.get('variants', []),
                   available_cities=['حفر الباطن'] if product['brand_id'] == 'kps' and product['id'] in {'kps-33', 'kps-34'} else settings.get('available_cities', []), enabled=settings.get('enabled', True),
                   source_verified=source_approved(product), pending_owner_image=settings.get('pending_owner_image') is True, unified_khaliya=settings.get('unified_khaliya') is True, lifecycle=settings.get('lifecycle', 'active' if settings.get('enabled', True) else 'paused'), available=available, unavailable_reason=reason)
     return result
@@ -379,7 +424,7 @@ class QuoteBody(BaseModel):
     expected_total_halalas: StrictInt | None = Field(default=None, ge=0, le=10000000)
 
 
-def _price_units(product: dict, item: OrderItem) -> tuple[int, list]:
+def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list]:
     groups = product['settings'].get('option_groups') or []
     if not isinstance(groups, list) or any(not isinstance(group, dict) for group in groups):
         raise db.error(409, 'PRODUCT_OPTIONS_UNCONFIGURED', 'خيارات هذا الصنف بحاجة إلى مراجعة الإدارة.')
@@ -421,6 +466,9 @@ def _price_units(product: dict, item: OrderItem) -> tuple[int, list]:
                 value = values.get(selected_code)
                 if not value or value.get('enabled', True) is not True:
                     raise db.error(422, 'OPTION_VALUE_INVALID', 'الخيار المحدد غير متاح أو غير معتمد.')
+                ok, why = option_value_availability(value, branch)
+                if not ok:
+                    raise db.error(409, 'PRODUCT_VARIANT_UNAVAILABLE', why)
                 delta = value.get('price_delta_halalas', 0)
                 if not isinstance(delta, int) or isinstance(delta, bool):
                     raise db.error(409, 'OPTION_PRICE_UNCONFIGURED', 'سعر الخيار غير مهيأ.')
@@ -467,7 +515,7 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
             raise db.error(409, 'PRODUCT_UNAVAILABLE', reason)
         if not source_approved(product):
             raise db.error(409, 'CATALOG_SOURCE_UNVERIFIED', 'السعر وخيارات هذا الصنف لم تُعتمد من المصدر التشغيلي بعد.')
-        amount, units = _price_units(product, item)
+        amount, units = _price_units(product, item, branch)
         subtotal += amount
         if product['settings'].get('unified_khaliya'):
             grouped, checked_sources = {}, set()
@@ -743,7 +791,7 @@ def _nearest_catalog(conn, brand_id, body):
 
 
 def _option_available(value, branch, product, by_id):
-    if not isinstance(value, dict) or value.get('enabled', True) is not True:
+    if not option_value_availability(value, branch)[0]:
         return False
     source_id = value.get('source_product_id')
     if product['settings'].get('unified_khaliya'):

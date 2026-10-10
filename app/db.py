@@ -116,7 +116,9 @@ PRESERVED_TABLES = ('users', 'sessions', 'identity_tokens', 'otp_challenges', 'e
                     'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
                     'closure_reports', 'report_corrections', 'report_renderings', 'report_notifications',
                     'closure_drafts', 'conversations', 'chat_messages', 'chat_attachments',
-                    'conversation_reads', 'conversation_transfers')
+                    'conversation_reads', 'conversation_transfers',
+                    'recovery_events', 'recovery_state', 'recovery_alerts',
+                    'recovery_monitor_state', 'recovery_alert_notifications')
 
 
 def preservation_snapshot(conn, baseline=None):
@@ -164,11 +166,12 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
     # Explicit one-time owner decisions apply to the intended imported identities.
     # Existing seeds stay immutable; subsequent boots never reset admin edits.
     if owner_decisions:
-        from . import catalog, service_hours
+        from . import branch_locations, catalog, service_hours
         catalog.apply_final_catalog_approval(conn)
         apply_owner_display_decisions(conn)
         service_hours.apply_default_branch_hours(conn)
         service_hours.apply_default_delivery_hours(conn)
+        branch_locations.apply_workbook_matches(conn)
 
 
 def apply_owner_display_decisions(conn):

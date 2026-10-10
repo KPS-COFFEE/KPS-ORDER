@@ -236,8 +236,48 @@ An observed `NOT_AVAILABLE`, signed backup/PITR/WAL failure, or failed provider
 verification creates an appropriately labeled durable owner alert. Repeated
 unacknowledged failures of the same type are grouped within 24 hours while all
 observations remain available. Owner acknowledgment retains the record; it
-does not erase or retroactively fix a failure. External alert delivery is not
-configured or claimed.
+does not erase or retroactively fix a failure. The durable failure queue now
+prepares one encrypted mail per alert and active registered owner with verified
+email, using the existing shared outbox after the brand email channel is active.
+Dispatch rechecks that owner's current role, activity and verified recipient.
+`/api/admin/recovery` reports waiting/pending/provider-accepted/delivered states;
+provider acceptance does not prove inbox receipt. The existing live channel must
+be configured and a failure alert received before calling cloud delivery proven.
+
+The existing web process also runs bounded runtime checks when the independent
+database is bound and `MONITOR_ENABLED` is not `false`. The defaults are 120-second
+checks, a 300-second queued-mail age threshold and a 2000ms DB-latency threshold.
+Optional private settings are `MONITOR_INTERVAL_SECONDS` (60–3600),
+`MONITOR_MAIL_QUEUE_AGE_LIMIT_SECONDS` (60–86400),
+`MONITOR_DATABASE_LATENCY_LIMIT_MS` (100–30000), and
+`MONITOR_DATABASE_STORAGE_LIMIT_BYTES` (leave unset until capacity is observed).
+The owner-only `/api/admin/monitoring` reports DB size/latency, actual cgroup
+memory, process CPU totals, ephemeral disk pressure, aggregate server errors,
+mail failures/backlog and stale backup observations. Successful runtime checks
+never update backup success timestamps. Monitoring creates no paid service.
+An in-process worker cannot send reliable downtime alerts while its service or
+DB is stopped; native Render or another existing independent notification route
+must be configured and exercised. That separate gate remains explicitly
+unverified in the API until external evidence exists.
+
+`tools/portable_backup.py` reuses the full archive engine. `backup --encrypt`
+uses a dedicated 32-byte base64 `KPS_BACKUP_KEY` from private secrets and writes
+an authenticated AES-GCM envelope to an exclusive mode-0600 file. This local
+file is not durable external storage; protected Render logical exports remain
+the existing separate-copy route, with actual retention verified separately.
+The restore tool still accepts local PostgreSQL test databases. For the existing
+Render drill resource only, it also accepts
+`--target-database-id dpg-db50dcdckfvc738gsrhg-a` and its exact INTERNAL hostname
+in `KPS_RESTORE_DATABASE_URL`. Public/external hostnames and the operating DB
+are rejected. It creates a fresh UUID schema and never replaces an existing
+schema. `--assets-output` must name a new directory; copied static images and
+every restored database blob are checked against SHA-256. Primary identifiers,
+record counts and monetary totals are compared to the snapshot after insertion.
+`--evidence-output` writes measured elapsed time, snapshot timestamp/revision and
+opaque identifier hashes to a new private file. `--record` records only a
+verified full drill including restored static assets, with matching runtime
+revision, in the bound source's recovery observations. Export or configuration
+alone never establishes measured recovery success.
 
 Signed provider events can additionally be ingested at
 `https://kps-order-emergency-v4.onrender.com/webhooks/render/recovery` after

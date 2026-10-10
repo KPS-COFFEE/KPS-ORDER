@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import auth, catalog, db, email_delivery, orders
+from . import auth, catalog, db, email_delivery, monitoring, orders
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
@@ -33,6 +33,8 @@ async def lifespan(app):
         from . import recovery
         if recovery.configuration()['poll_configured']:
             background_tasks.append(asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor'))
+        if monitoring.configuration()['runtime_configured']:
+            background_tasks.append(asyncio.create_task(monitoring.poll_loop(), name='operational-monitor'))
         from . import email_delivery, report_notifications
         if email_delivery.configuration()['configured'] and os.getenv('EMAIL_WORKER_ENABLED', 'true').lower() == 'true':
             background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
@@ -87,6 +89,7 @@ async def security(request: Request, call_next):
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     if request.url.path.startswith('/api/') or request.url.path.startswith('/ops'):
         response.headers['Cache-Control'] = 'no-store'
+    monitoring.record_response(response.status_code)
     return response
 
 
@@ -108,7 +111,7 @@ app.include_router(orders.router)
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'performance', 'report_notifications'):
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 

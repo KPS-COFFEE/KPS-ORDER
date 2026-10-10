@@ -66,6 +66,24 @@ def branch_ids(conn, values, brand):
     return values
 
 
+def product_scope(settings, user):
+    if user['role'] != 'admin':
+        return
+    scope = settings.get('available_branch_ids')
+    if not isinstance(scope,list) or not scope or any(not isinstance(value,str) for value in scope) or not set(scope) <= set(user['branch_ids']):
+        raise db.error(403, 'PRODUCT_SCOPE_FORBIDDEN', 'إدارة الصنف خارج فروعك المخولة تحتاج المالك.')
+
+
+def validate_option_scope(conn, groups, user):
+    for group in groups:
+        for value in group['values']:
+            for field in ('available_branch_ids', 'unavailable_branch_ids'):
+                if field in value and value[field] is not None:
+                    scope = branch_ids(conn, value[field], user['brand_id'])
+                    if user['role'] == 'admin' and not set(scope) <= set(user['branch_ids']):
+                        raise db.error(403, 'PRODUCT_SCOPE_FORBIDDEN', 'توفر الخيار خارج فروعك المخولة.')
+
+
 def coordinate(value):
     if not isinstance(value, dict) or set(value) != {'lat', 'lng'}:
         raise db.error(422, 'COORDINATE_INVALID', 'الموقع يحتاج خط عرض وطول فعليين.')
@@ -118,6 +136,12 @@ def validate_options(groups, variants=None):
             money(value.get('price_delta_halalas',0),'فرق سعر الخيار')
             if 'enabled' in value and type(value['enabled']) is not bool:
                 raise db.error(422,'OPTIONS_INVALID','تفعيل قيمة الخيار غير صحيح.')
+            for field in ('available_branch_ids','unavailable_branch_ids'):
+                if field in value and value[field] is not None and (
+                        not isinstance(value[field],list) or len(value[field])>500 or
+                        any(not isinstance(branch,str) for branch in value[field]) or
+                        len(value[field])!=len(set(value[field]))):
+                    raise db.error(422,'BRANCH_SCOPE_INVALID','نطاق توفر الخيار غير صحيح.')
     if variants is not None:
         if not isinstance(variants,list) or len(variants)>100:
             raise db.error(422,'VARIANTS_INVALID','قائمة الألوان غير صحيحة.')
@@ -199,6 +223,10 @@ def configuration(user=Depends(auth.require_configuration())):
         if not auth.has_permission(user, 'products_manage'):
             # Names/categories support the existing banner destination editor.
             result['products'] = [{k:p[k] for k in ('id','name','category')} for p in result['products']] if auth.has_permission(user,'banners_manage') else []
+        else:
+            result['products'] = [p for p in result['products']
+                                  if p['settings'].get('available_branch_ids') and
+                                  set(p['settings']['available_branch_ids']) <= set(user['branch_ids'])]
         if not auth.has_permission(user, 'banners_manage'):
             result['banners'] = []
         else:
@@ -251,6 +279,7 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
     with db.tx() as conn:
         def perform():
             row = scoped(conn,'products',record_id,user)
+            product_scope(row['settings'],user)
             changes = body.get('settings',{})
             keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids'})
             if 'lifecycle' in changes and changes['lifecycle'] not in {'draft','active','paused'}:
@@ -259,7 +288,7 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
                 changes['enabled']=changes['lifecycle']=='active'
             elif 'enabled' in changes:
                 changes['lifecycle']='active' if changes['enabled'] is True else 'paused'
-            if 'available_branch_ids' in changes:
+            if 'available_branch_ids' in changes and changes['available_branch_ids'] is not None:
                 branch_ids(conn,changes['available_branch_ids'],user['brand_id'])
             for key in ('enabled','source_verified'):
                 if key in changes and type(changes[key]) is not bool:
@@ -285,7 +314,11 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
                 if key in changes and (not isinstance(changes[key],list) or len(changes[key])>30):
                     raise db.error(422,'OPTIONS_INVALID','خيارات الصنف غير صحيحة.')
             validate_options(changes.get('option_groups',row['settings'].get('option_groups',[])),changes.get('variants',row['settings'].get('variants',[])))
+            validate_option_scope(conn,changes.get('option_groups',row['settings'].get('option_groups',[])),user)
+            if 'description' in changes:
+                changes['description']=text(changes['description'],2000,'وصف الصنف')
             settings = row['settings'] | changes
+            product_scope(settings,user)
             if settings.get('lifecycle') == 'active' and settings.get('source_verified') is not True:
                 raise db.error(422,'PRODUCT_SOURCE_UNVERIFIED','اعتمد السعر والصورة والخيارات قبل تفعيل الصنف.')
             name = text(body.get('name',row['name']),200,'اسم الصنف')
@@ -293,6 +326,9 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             price = money(body.get('price_halalas',row['price_halalas']),'سعر الصنف')
             updated = dict(row, name=name, category=category, price_halalas=price, settings=settings)
             if changes.get('source_verified') is True:
+                settings['owner_approved_digest'] = catalog.commercial_digest(updated)
+            elif catalog.source_approved(row) and catalog.availability_only_change(row,updated):
+                # Operational stock changes keep the approved price/identity.
                 settings['owner_approved_digest'] = catalog.commercial_digest(updated)
             elif settings.get('menu_approval') and not catalog.source_approved(updated):
                 settings['source_verified'] = False
@@ -329,7 +365,7 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
                 raise db.error(403,'STAFF_ROLE_INVITATION_REQUIRED','تغيير دور الموظف يحتاج مسار دعوة مخول.')
             if role == 'owner' and row['role'] != 'owner':
                 raise db.error(403,'OWNER_INVITATION_REQUIRED','إضافة مالك تحتاج دعوة بريد واعتماد المالك الحالي.')
-            if active and row.get('invitation_status') in {'draft','pending_email','pending_verification'}:
+            if active and (row.get('invitation_status') not in {'active','paused'} or not row.get('email_verified_at')) and not (row['active'] and row.get('identity_kind')=='legacy'):
                 raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','يلزم تحقق الموظف من بريده قبل التفعيل.')
             conn.execute('SELECT id FROM users WHERE brand_id=%s AND role=%s AND active ORDER BY id FOR UPDATE',(user['brand_id'],'owner')).fetchall()
             if row['role']=='owner' and (role!='owner' or not active):
@@ -344,10 +380,13 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
                 raise db.error(409,'OPEN_SHIFT_ROLE_PROTECTED','أغلق أو سلّم مسؤولية الشفت قبل تغيير الدور.')
             hashed = auth.hash_password(body['password']) if body.get('password') else row['password_hash']
             name = text(body.get('display_name',row['display_name']),200,'الاسم')
-            updated = conn.execute('UPDATE users SET display_name=%s,role=%s,branch_ids=%s,active=%s,password_hash=%s,updated_at=now() WHERE id=%s RETURNING id,username,display_name,role,brand_id,branch_ids,phone,active',(name,role,db.json(scope),active,hashed,record_id)).fetchone()
+            status = 'active' if active and row.get('email_verified_at') else 'paused' if not active and row.get('invitation_status')=='active' else row.get('invitation_status')
+            updated = conn.execute('UPDATE users SET display_name=%s,role=%s,branch_ids=%s,active=%s,password_hash=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING id,username,display_name,role,brand_id,branch_ids,phone,active',(name,role,db.json(scope),active,hashed,status,record_id)).fetchone()
             conn.execute('UPDATE users SET permissions=%s WHERE id=%s',(db.json(permissions),record_id))
             updated['permissions']=permissions
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(record_id,))
+            conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL AND revoked_at IS NULL',(record_id,))
+            conn.execute("UPDATE email_outbox SET status='cancelled',updated_at=now() WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(record_id,))
             db.audit(conn,user['id'],'user.updated','user',record_id,{'fields':list(body),**({'permissions':permissions} if 'permissions' in body else {})})
             return updated
         safe_body=body | ({'password':hashlib.sha256(body['password'].encode()).hexdigest()} if 'password' in body else {})
@@ -616,15 +655,21 @@ def create_product(body:dict,user=Depends(product_admin),idem:str|None=Header(No
     settings=body.get('settings',{})
     keys(settings,{'description','option_groups','variants','available_cities','unavailable_branch_ids','available_branch_ids','image_url','image_asset_id'})
     validate_options(settings.get('option_groups',[]),settings.get('variants',[]))
+    product_scope(settings,user)
+    if 'description' in settings:
+        settings['description']=text(settings['description'],2000,'وصف الصنف')
+    if 'available_cities' in settings and (not isinstance(settings['available_cities'],list) or any(not isinstance(x,str) or len(x)>100 for x in settings['available_cities'])):
+        raise db.error(422,'CITY_POLICY_INVALID','سياسة توفر المدن غير صحيحة.')
     with db.tx() as conn:
         def perform():
             identifier=db.new_id('product_');source_id=text(body.get('source_id','admin:'+identifier),200,'مرجع المصدر')
             if conn.execute("SELECT 1 FROM products WHERE brand_id=%s AND settings->>'source_id'=%s",(user['brand_id'],source_id)).fetchone():
                 raise db.error(409,'PRODUCT_SOURCE_EXISTS','الصنف موجود بهذا المرجع؛ حدّث سجله دون إعادة إنشائه.')
-            if 'available_branch_ids' in settings:
+            if 'available_branch_ids' in settings and settings['available_branch_ids'] is not None:
                 branch_ids(conn,settings['available_branch_ids'],user['brand_id'])
             if 'unavailable_branch_ids' in settings:
                 branch_ids(conn,settings['unavailable_branch_ids'],user['brand_id'])
+            validate_option_scope(conn,settings.get('option_groups',[]),user)
             if settings.get('image_asset_id'):
                 asset=scoped(conn,'assets',settings['image_asset_id'],user)
                 if asset['purpose']!='product':

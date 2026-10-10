@@ -160,12 +160,14 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
     return False
 
 
-def establish_session(conn, user: dict, response: Response) -> dict:
+def establish_session(conn, user: dict, response: Response, *, owner_step_up=False) -> dict:
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     expiry = datetime.now(timezone.utc) + timedelta(hours=hours)
-    conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at) VALUES(%s,%s,%s,%s,%s)',
-                 (db.new_id('session_'), token_hash(token), token_hash(csrf), user['id'], expiry))
+    conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at) '
+                 'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END)',
+                 (db.new_id('session_'), token_hash(token), token_hash(csrf), user['id'], expiry,
+                  bool(owner_step_up and user['role'] == 'owner')))
     response.set_cookie(COOKIE, token, max_age=hours * 3600, httponly=True, secure=secure_cookie(), samesite='strict', path='/')
     response.set_cookie(CSRF_COOKIE, csrf, max_age=hours * 3600, httponly=False, secure=secure_cookie(), samesite='strict', path='/')
     db.audit(conn, user['id'], 'session.created', 'user', user['id'])
@@ -514,7 +516,16 @@ def _staff_code_hash(identifier, code):
 
 def _staff_context(user):
     return {'phone':normalize_phone(user['phone']) if user.get('phone') else None,
-            'role':user['role'],'branch_ids':sorted(user.get('branch_ids',[]))}
+            'role':user['role'],'branch_ids':sorted(user.get('branch_ids',[])),
+            'permissions':sorted(user.get('permissions') or [])}
+
+
+def _same_email(left, right):
+    """Compare registered contacts canonically without replacing their owners."""
+    try:
+        return bool(left and right and email_delivery.normalize_email(left) == email_delivery.normalize_email(right))
+    except HTTPException:
+        return False
 
 
 def _invitation_authorized(conn, row, user):
@@ -529,13 +540,22 @@ def _invitation_authorized(conn, row, user):
 
 
 def _staff_token_authorized(conn, row, user):
-    if not user or user['role']=='customer' or user['brand_id']!=row['brand_id'] or not user.get('email') or user['email']!=row['email']:
+    if not user or user['role']=='customer' or user['brand_id']!=row['brand_id'] or not _same_email(user.get('email'),row['email']):
         return False
     if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(row['brand_id'],)).fetchone():
         return False
     context=row.get('staff_context')
-    if context is not None and context!=_staff_context(user):
-        return False
+    if context is not None:
+        try:
+            expected=_staff_context(user)
+        except HTTPException:
+            return False
+        # Earlier tokens did not snapshot delegated grants. Preserve their
+        # unprivileged flows, but require a new token for an admin with grants.
+        if 'permissions' not in context and not expected['permissions']:
+            expected.pop('permissions')
+        if context!=expected:
+            return False
     branches=user.get('branch_ids',[])
     if user['role']!='owner' and not branches:
         return False
@@ -547,7 +567,42 @@ def _staff_token_authorized(conn, row, user):
     return bool(user['active'] and user['invitation_status']=='active' and user['email_verified_at'])
 
 
+def identity_mail_authorized(conn, mail):
+    """Recheck a queued login before disclosing its token to its recipient."""
+    row=conn.execute('SELECT * FROM identity_tokens WHERE id=%s AND consumed_at IS NULL '
+                     'AND revoked_at IS NULL AND expires_at>now()',
+                     (mail['dedupe_key'].removeprefix('identity:'),)).fetchone()
+    if not row or row['brand_id']!=mail['brand_id'] or not _same_email(row['email'],mail['recipient']):
+        return False
+    if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(row['brand_id'],)).fetchone():
+        return False
+    user=conn.execute('SELECT * FROM users WHERE id=%s',(row['user_id'],)).fetchone() if row['user_id'] else None
+    if row['purpose'] in {'staff_login','invitation','add_owner'}:
+        return _staff_token_authorized(conn,row,user)
+    if user and (not user['active'] or user['brand_id']!=row['brand_id']):
+        return False
+    if row['session_id'] and not conn.execute('SELECT 1 FROM sessions WHERE id=%s AND user_id=%s '
+                                            'AND revoked_at IS NULL AND expires_at>now()',
+                                            (row['session_id'],row['user_id'])).fetchone():
+        return False
+    if row['purpose']=='recovery':
+        return bool(user and user['invitation_status']=='active' and user['email_verified_at']
+                    and _same_email(user.get('email'),row['email']))
+    if row['purpose'] in {'customer_link','owner_link'}:
+        role='owner' if row['purpose']=='owner_link' else 'customer'
+        return bool(user and user['role']==role and row['session_id'] and
+                    (not user['email_verified_at'] or _same_email(user.get('email'),row['email'])))
+    if row['purpose']=='email_login':
+        if user:
+            return bool(user['role']=='customer' and user['email_verified_at']
+                        and _same_email(user.get('email'),row['email']))
+        return not conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(btrim(email))=%s',
+                                (row['brand_id'],email_delivery.normalize_email(row['email']))).fetchone()
+    return False
+
+
 def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,created_by=None):
+    email=email_delivery.normalize_email(email)
     conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(brand+':email-token:'+email+':'+purpose,))
     identifier=db.new_id('email_')
     secret=secrets.token_urlsafe(32)
@@ -716,7 +771,7 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         invitation=row['purpose'] in {'invitation','add_owner'}
         if user and ((not user['active'] and not invitation) or user['brand_id']!=row['brand_id']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
-        if invitation and (not user or user['invitation_status']!='pending_email' or user['email']!=row['email']):
+        if invitation and (not user or user['invitation_status']!='pending_email' or not _same_email(user.get('email'),row['email'])):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الدعوة ملغاة أو مستهلكة.')
         if row['purpose'] in {'staff_login','invitation','add_owner'} and not _staff_token_authorized(conn,row,user):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الحساب أو الدعوة لم يعودا مخولين.')
@@ -725,7 +780,7 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         channel=_channel(conn,row['brand_id'],'email')
         if channel['state'] not in {'testing','active'} or (channel['state']=='active' and not channel['enabled']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','قناة البريد متوقفة حاليًا.')
-        if row['purpose'] in {'staff_login','recovery'} and (not user or not user['email_verified_at'] or user['email']!=row['email']):
+        if row['purpose'] in {'staff_login','recovery'} and (not user or not user['email_verified_at'] or not _same_email(user.get('email'),row['email'])):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
         if row['purpose']=='staff_login' and user['role']=='customer':
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
@@ -733,7 +788,7 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
         if row['purpose']=='customer_link' and (not user or user['role']!='customer'):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
-        conflict=conn.execute('SELECT id FROM users WHERE brand_id=%s AND lower(email)=%s',(row['brand_id'],row['email'])).fetchone()
+        conflict=conn.execute('SELECT id FROM users WHERE brand_id=%s AND lower(btrim(email))=%s',(row['brand_id'],email_delivery.normalize_email(row['email']))).fetchone()
         if conflict and (not user or conflict['id']!=user['id']):
             raise db.error(409,'EMAIL_IDENTITY_CONFLICT','البريد مرتبط بحساب آخر. لا يتم دمج الحسابات تلقائيًا.')
         if not user:
@@ -759,15 +814,15 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(user['id'],))
         elif row['session_id']:
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE id=%s',(row['session_id'],))
-        result=establish_session(conn,user,response)
-        if user['role']=='owner':
-            conn.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s AND revoked_at IS NULL',(user['id'],))
+        # Proof belongs only to the session created by this challenge. An
+        # independent older browser session must never inherit this step-up.
+        result=establish_session(conn,user,response,owner_step_up=user['role']=='owner')
         db.audit(conn,user['id'],'identity.email.verified','user',user['id'],{'purpose':row['purpose']})
         return result
 
 
 def require_owner_step_up(conn,user):
-    if user['role']!='owner' or not user.get('session_id') or not conn.execute("SELECT 1 FROM sessions WHERE id=%s AND user_id=%s AND revoked_at IS NULL AND step_up_at>now()-interval '10 minutes'",(user.get('session_id'),user['id'])).fetchone():
+    if user['role']!='owner' or not user.get('session_id') or not conn.execute("SELECT 1 FROM sessions WHERE id=%s AND user_id=%s AND revoked_at IS NULL AND expires_at>now() AND step_up_at>now()-interval '10 minutes'",(user.get('session_id'),user['id'])).fetchone():
         raise db.error(403,'OWNER_STEP_UP_REQUIRED','أعد تحقق المالك قبل دعوة مالك أو مدير إضافي.')
 
 
@@ -859,6 +914,39 @@ def _vehicle(value):
 
 @router.post('/identity/staff/invitations')
 def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','delivery_manager'))):
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'staff-invite:'+user['id'],30,3600)
+    if not allowed:
+        raise db.error(429,'EMAIL_RATE_LIMIT','دعوات كثيرة. انتظر قليلًا.')
+    with db.tx() as conn:
+        return create_staff_invitation(conn,body,user)
+
+
+def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=False,maintenance_provenance=None):
+    """Canonical invitation creation for HTTP and audited internal draft import.
+
+    The maintenance option has no public route. It can only register dormant
+    delivery accounts attributed to the actual active owner. It never issues a
+    token, sends mail, creates a session, or asserts verification. The existing
+    resend/acceptance policies govern all subsequent activation.
+    """
+    if not isinstance(body,StaffInvitationBody):
+        body=StaffInvitationBody.model_validate(body)
+    user=conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id '
+                      'WHERE u.id=%s AND u.active AND b.active', (actor['id'],)).fetchone()
+    if not user or user['role'] not in {'owner','delivery_manager'}:
+        raise db.error(403,'ROLE_FORBIDDEN','إنشاء الدعوة يتطلب مالكًا أو مدير توصيل مخولًا.')
+    if user['brand_id']!=actor.get('brand_id'):
+        raise db.error(403,'BRAND_SCOPE_FORBIDDEN','الدعوة خارج نطاق البراند المخول.')
+    user=dict(user,session_id=actor.get('session_id'))
+    if draft_only:
+        provenance=maintenance_provenance or {}
+        if user['role']!='owner' or body.role not in {'delivery_manager','driver'}:
+            raise db.error(403,'DELIVERY_DRAFT_OWNER_REQUIRED','تسجيل مسودة التوصيل الداخلي للمالك فقط.')
+        if set(provenance)!={'decision_id','source_sha256'} or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,100}',str(provenance.get('decision_id',''))) or not re.fullmatch(r'[a-f0-9]{64}',str(provenance.get('source_sha256',''))):
+            raise db.error(422,'DRAFT_APPROVAL_PROVENANCE_REQUIRED','يلزم مرجع اعتماد وبصمة الملف المعتمد لتسجيل المسودة.')
+    elif maintenance_provenance is not None:
+        raise db.error(422,'DRAFT_APPROVAL_PROVENANCE_REQUIRED','مرجع الصيانة مخصص لتسجيل المسودة فقط.')
     permissions=validate_admin_permissions(body.permissions)
     if permissions and body.role != 'admin':
         raise db.error(422, 'ADMIN_ROLE_REQUIRED', 'صلاحيات الإدارة مخصصة لدور أدمن فقط.')
@@ -870,30 +958,30 @@ def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','de
     if user['role']=='delivery_manager' and body.role!='driver':
         raise db.error(403,'DRIVER_ROLE_ONLY','مدير التوصيل يدعو سائقًا فقط.')
     vehicle=_vehicle(body.vehicle)
-    with db.tx() as conn:
-        allowed=db.rate_limit(conn,'staff-invite:'+user['id'],30,3600)
-    if not allowed:
-        raise db.error(429,'EMAIL_RATE_LIMIT','دعوات كثيرة. انتظر قليلًا.')
-    with db.tx() as conn:
-        email_state=_channel(conn,user['brand_id'],'email')['state']
-        ready=email_delivery.configuration()['configured'] and email_state in {'active','testing'}
-        scope=_staff_scope(conn,user,body.branch_ids)
-        if body.role!='owner' and not scope:
-            raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
-        if body.role in {'owner','admin','delivery_manager'}:
-            require_owner_step_up(conn,user)
-        # Serialize identity conflicts without revealing the matched account's attributes.
-        conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
-        if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s',(user['brand_id'],email)).fetchone():
-            raise db.error(409,'STAFF_IDENTITY_CONFLICT','تعذر إنشاء الدعوة. راجع البريد أو الدعوات المخولة.')
-        _assert_staff_phone_available(conn,user['brand_id'],phone)
-        identifier=db.new_id('staff_')
-        invitation_state='pending_email' if ready else 'draft'
-        row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
-        row=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
-        challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
-        db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,{'role':body.role,'branch_ids':scope,'permissions':permissions})
-        return {'user':staff_public(conn,row),'challenge_id':challenge,'invitation_status':invitation_state,'delivery_status':'queued' if ready else 'channel_unavailable'}
+    channel=_channel(conn,user['brand_id'],'email')
+    ready=not draft_only and email_delivery.configuration()['configured'] and (
+        channel['state']=='testing' or (channel['state']=='active' and channel['enabled']))
+    scope=_staff_scope(conn,user,body.branch_ids)
+    if body.role!='owner' and not scope:
+        raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
+    if body.role in {'owner','admin','delivery_manager'} and not draft_only:
+        require_owner_step_up(conn,user)
+    # Serialize identity conflicts without revealing the matched account's attributes.
+    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
+    if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(btrim(email))=%s',(user['brand_id'],email)).fetchone():
+        raise db.error(409,'STAFF_IDENTITY_CONFLICT','تعذر إنشاء الدعوة. راجع البريد أو الدعوات المخولة.')
+    _assert_staff_phone_available(conn,user['brand_id'],phone)
+    identifier=db.new_id('staff_')
+    invitation_state='pending_email' if ready else 'draft'
+    row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
+    row=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
+    challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
+    details={'role':body.role,'branch_ids':scope,'permissions':permissions}
+    if draft_only:
+        details['owner_decision']=maintenance_provenance
+    db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,details)
+    return {'user':staff_public(conn,row),'challenge_id':challenge,'invitation_status':invitation_state,
+            'delivery_status':'queued' if ready else 'draft_only' if draft_only else 'channel_unavailable'}
 
 
 @router.get('/identity/staff')

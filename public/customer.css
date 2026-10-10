@@ -1,0 +1,8 @@
+/* Customer language follows the same approved theme, spacing and local Noto font. */
+.language-switch{white-space:nowrap;min-width:64px}
+html[lang="en"] body{line-height:1.7}
+html[lang="en"] .brand-text>small{letter-spacing:normal;direction:ltr}
+html[dir="ltr"] .dialog-header,html[dir="ltr"] .field,html[dir="ltr"] .product-content{text-align:start}
+html[dir="ltr"] .order-items{padding-inline-start:20px;padding-inline-end:0}
+#product-title,#product-description,.cart-line-title>span:first-child,.order-card h3{unicode-bidi:plaintext}
+@media(max-width:550px){html[lang="en"] .header-actions .button{font-size:13px;padding-inline:8px}.language-switch{flex:0 1 auto!important}}

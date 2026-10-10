@@ -15,7 +15,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 from app import auth, db, email_delivery
-from app.exports import AUTH_TABLES, build_archive, restore_archive, verify_archive
+from app.exports import AUTH_TABLES, INFRASTRUCTURE_TABLES, build_archive, restore_archive, verify_archive
 from test_operations import ops, delivered, close_driver
 
 
@@ -76,7 +76,7 @@ def test_owner_business_export_preserves_bytea_and_excludes_other_brands_and_cre
     contexts = {row['id']: row for row in json.loads(archive.read('data/conversations.json'))}
     assert contexts[unlinked]['order_id'] is None and contexts[unlinked]['context_service'] == 'pickup'
     assert {row['id'] for row in json.loads(archive.read('data/recovery_events.json'))} == {recovery_event}
-    assert set(manifest['infrastructure_tables']) == {'recovery_events', 'recovery_state', 'recovery_alerts'}
+    assert set(manifest['infrastructure_tables']) == INFRASTRUCTURE_TABLES
     assert set(manifest['excluded_tables']) == AUTH_TABLES
     blob = json.loads(archive.read('data/chat_attachments.json'))[0]['data']['$binary']
     assert archive.read(blob) == picture
@@ -88,7 +88,7 @@ def test_owner_business_export_preserves_bytea_and_excludes_other_brands_and_cre
 
 
 @pytest.mark.postgres
-def test_full_backup_restores_orders_messages_images_closures_reports_without_overwriting_new_orders(ops, monkeypatch):
+def test_full_backup_restores_orders_messages_images_closures_reports_without_overwriting_new_orders(ops, monkeypatch, tmp_path):
     actor, post, order, shifts = ops
     manager, driver = shifts()
     policy = post('manager', '/api/performance/policies', {'province_id':'restore-province', 'province_name':'محافظة اختبار الاستعادة',
@@ -138,8 +138,18 @@ def test_full_backup_restores_orders_messages_images_closures_reports_without_ov
     target = 'kps_restore_' + uuid.uuid4().hex
     base_url = os.environ['TEST_DATABASE_URL']
     try:
-        result = restore_archive(contents, target_url=base_url, target_schema=target)
+        asset_directory = tmp_path / 'private-restored-assets'
+        result = restore_archive(contents, target_url=base_url, target_schema=target, asset_directory=asset_directory)
         assert result['verified'] and result['counts'] == manifest['counts']
+        assert result['elapsed_seconds'] > 0 and result['snapshot_created_at'] == manifest['created_at']
+        assert result['binary_files_verified'] > 0 and set(result['identifier_sha256']) == set(manifest['table_order'])
+        assert result['static_restore_verified'] and result['static_files_restored'] == result['static_files_archived'] > 0
+        import hashlib
+        for name, descriptor in manifest['files'].items():
+            if name.startswith('static/assets/'):
+                restored_file = asset_directory / name.removeprefix('static/assets/')
+                assert hashlib.sha256(restored_file.read_bytes()).hexdigest() == descriptor['sha256']
+                assert restored_file.stat().st_mode & 0o777 == 0o600
         with psycopg.connect(base_url, row_factory=dict_row) as restored:
             restored.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
             assert restored.execute('SELECT total_halalas FROM orders WHERE id=%s', (oid,)).fetchone()['total_halalas'] == 1000

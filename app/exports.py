@@ -6,9 +6,12 @@ import io
 import json
 import os
 import re
+import shutil
+import time
 import zipfile
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import psycopg
 from fastapi import APIRouter, Depends, Response
@@ -20,7 +23,7 @@ from . import auth, db
 
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
-TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'assets', 'banners',
+TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'assets', 'banners',
           'shifts', 'orders', 'driver_tasks', 'collections', 'refunds', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports',
           'report_corrections', 'conversations', 'chat_attachments',
@@ -29,12 +32,15 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'idempotency_keys', 'sessions', 'otp_challenges', 'rate_limits',
           'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
           'performance_provinces', 'performance_province_branches', 'province_performance_policies',
-          'closure_drafts', 'report_renderings', 'report_notifications')
+          'closure_drafts', 'report_renderings', 'report_notifications',
+          'recovery_monitor_state', 'recovery_alert_notifications')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events'}
-INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts'}
+INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
+                         'recovery_monitor_state', 'recovery_alert_notifications'}
 PUBLIC = db.ROOT / 'public' / 'assets'
 MAX_WEB_EXPORT = 64 * 1024 * 1024
+INDEPENDENT_RESTORE_DATABASE_ID = 'dpg-db50dcdckfvc738gsrhg-a'
 
 
 def _plain(value):
@@ -52,7 +58,7 @@ def _encode(value) -> bytes:
 def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
-    direct = {'branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications'} | INFRASTRUCTURE_TABLES
@@ -121,7 +127,7 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                 if table == 'users' and not full:
                     row.pop('password_hash', None)
                     row.pop('username', None)
-                if table == 'report_notifications' and not full:
+                if table in {'report_notifications', 'recovery_alert_notifications'} and not full:
                     # A business export never conveys an authentication-mail capability.
                     row['email_outbox_id'] = None
                 for column, value in list(row.items()):
@@ -187,21 +193,70 @@ def verify_archive(contents: bytes, *, require_full=False):
         raise ValueError('Invalid portable archive.') from None
 
 
-def restore_archive(contents: bytes, *, target_url: str, target_schema: str) -> dict:
-    """Restore only to a NEW isolated local test schema, never over source or production."""
+def _restore_target(target_url, target_database_id=None):
+    try:
+        connection = conninfo_to_dict(target_url)
+    except psycopg.Error:
+        raise ValueError('Invalid private recovery connection configuration.') from None
+    name, host = connection.get('dbname', ''), connection.get('host', '')
+    local = host in {'localhost', '127.0.0.1', '::1', 'postgres'} and (name.startswith('test_') or name.endswith('_test'))
+    # Explicit opt-in to the existing recovery resource's INTERNAL hostname.
+    # An arbitrary remote host, public Render URL or runtime DB is rejected.
+    internal = target_database_id == INDEPENDENT_RESTORE_DATABASE_ID and host == INDEPENDENT_RESTORE_DATABASE_ID
+    if not local and not internal:
+        raise ValueError('Restore requires a local test database or the explicitly bound INTERNAL recovery database.')
+    if connection.get('options'):
+        raise ValueError('Restore URL options are prohibited; tool owns the new schema.')
+    return connection
+
+
+def _restored_evidence(conn, archive, manifest):
+    """Read the inserted target records, then compare IDs and every stored blob."""
+    identity_digests, binary_count = {}, 0
+    for table in manifest['table_order']:
+        source = json.loads(archive.read(f'data/{table}.json'))
+        target = conn.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(table))).fetchall()
+        keys = [row['column_name'] for row in conn.execute(
+            "SELECT a.attname column_name FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey) "
+            "WHERE i.indrelid=%s::regclass AND i.indisprimary ORDER BY a.attname", (table,)).fetchall()]
+        if not keys:
+            raise ValueError('Target table lacks a primary key.')
+        identity = lambda row: _encode({key: row[key] for key in keys})
+        source_ids, target_ids = sorted(identity(row) for row in source), sorted(identity(row) for row in target)
+        if source_ids != target_ids:
+            raise ValueError('Restored primary identifiers differ from snapshot.')
+        identity_digests[table] = hashlib.sha256(b'\n'.join(target_ids)).hexdigest()
+        indexed = {identity(row): row for row in target}
+        for row in source:
+            actual = indexed[identity(row)]
+            for column, value in row.items():
+                if isinstance(value, dict) and '$binary' in value:
+                    restored = bytes(actual[column])
+                    if len(restored) != value['size_bytes'] or hashlib.sha256(restored).hexdigest() != value['sha256']:
+                        raise ValueError('Restored binary checksum mismatch.')
+                    binary_count += 1
+    return identity_digests, binary_count
+
+
+def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
+                    target_database_id: str | None = None, asset_directory: str | Path | None = None) -> dict:
+    """Restore to a NEW isolated test schema; no existing schema is overwritten.
+
+    Remote operation is limited to the pre-existing recovery resource over its
+    private internal hostname. Static files require an explicitly new directory.
+    """
+    started = time.monotonic()
     archive, manifest = verify_archive(contents, require_full=True)
     if not re.fullmatch(r'kps_restore_[a-f0-9]{32}', target_schema):
         raise ValueError('Restore schema must be kps_restore_ plus a new UUID hex value.')
-    connection = conninfo_to_dict(target_url)
-    name = connection.get('dbname', '')
-    if connection.get('host') not in {'localhost', '127.0.0.1', '::1', 'postgres'} or not (name.startswith('test_') or name.endswith('_test')):
-        raise ValueError('Restore requires an explicitly named local PostgreSQL test database.')
-    if connection.get('options'):
-        raise ValueError('Restore URL options are prohibited; tool owns the new schema.')
+    _restore_target(target_url, target_database_id)
     expected = [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
                 for path in sorted((db.ROOT / 'migrations').glob('*.sql'))]
     if manifest['migrations'] != expected:
         raise ValueError('Archive migrations do not match this code. Restore with matching code first.')
+    destination, files_restored = Path(asset_directory) if asset_directory is not None else None, 0
+    if destination and (destination.exists() or destination.is_symlink()):
+        raise ValueError('Static asset restoration refuses existing destinations.')
     with psycopg.connect(target_url, row_factory=dict_row, connect_timeout=10) as conn:
         with conn.transaction():
             if conn.execute('SELECT 1 FROM information_schema.schemata WHERE schema_name=%s', (target_schema,)).fetchone():
@@ -254,7 +309,34 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str) -> 
                       for table in manifest['table_order']}
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:
                 raise ValueError('Restored counts or monetary totals differ from snapshot.')
-    return {'target_schema': target_schema, 'counts': counts, 'totals': manifest['totals'], 'verified': True}
+            identities, binary_count = _restored_evidence(conn, archive, manifest)
+            if destination:
+                # Creation is exclusive. Failure removes only the directory
+                # created by this invocation and rolls back the target schema.
+                destination.mkdir(mode=0o700)
+                try:
+                    for name, descriptor in manifest['files'].items():
+                        if not name.startswith('static/assets/'):
+                            continue
+                        basename = name.removeprefix('static/assets/')
+                        if not re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:jpg|jpeg|png|webp|svg)', basename):
+                            raise ValueError('Unexpected static asset path.')
+                        path = destination / basename
+                        descriptor_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+                        with os.fdopen(descriptor_fd, 'wb') as output:
+                            output.write(archive.read(name))
+                        if hashlib.sha256(path.read_bytes()).hexdigest() != descriptor['sha256']:
+                            raise ValueError('Restored static asset checksum mismatch.')
+                        files_restored += 1
+                except Exception:
+                    shutil.rmtree(destination)
+                    raise
+    return {'target_schema': target_schema, 'counts': counts, 'totals': manifest['totals'], 'verified': True,
+            'snapshot_created_at': manifest['created_at'], 'source_revision': manifest['source_revision'],
+            'identifier_sha256': identities, 'binary_files_verified': binary_count,
+            'static_files_archived': sum(name.startswith('static/assets/') for name in manifest['files']),
+            'static_files_restored': files_restored, 'static_restore_verified': destination is not None,
+            'archive_sha256': hashlib.sha256(contents).hexdigest(), 'elapsed_seconds': round(time.monotonic() - started, 3)}
 
 
 @router.get('/export')

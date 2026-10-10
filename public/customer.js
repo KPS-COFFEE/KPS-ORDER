@@ -1,11 +1,518 @@
 'use strict';
 (() => {
   const $ = (id) => document.getElementById(id);
+
+  const languageStorageKey='kps_customer_lang';
+  let language='ar';
+  try{if(localStorage.getItem(languageStorageKey)==='en')language='en';}catch{}
+  const uiStrings={
+    "error_AUTHENTICATION_REQUIRED":{"ar": "سجّل الدخول للوصول إلى هذه البيانات.", "en": "Sign in to access this information."},
+    "error_ROLE_FORBIDDEN":{"ar": "هذه العملية غير مسموحة لحسابك.", "en": "Your account is not allowed to perform this action."},
+    "error_BRAND_FORBIDDEN":{"ar": "حساب العميل لا يتبع هذا البراند.", "en": "Your customer account belongs to another brand."},
+    "error_CSRF_REJECTED":{"ar": "انتهى التحقق الآمن للطلب. حدّث الصفحة.", "en": "Secure request verification expired. Refresh the page."},
+    "error_ORIGIN_REJECTED":{"ar": "مصدر الطلب غير مسموح.", "en": "This request source is not permitted."},
+    "error_CUSTOMER_DISABLED":{"ar": "هذا الحساب موقوف. تواصل مع الإدارة.", "en": "This account is suspended. Contact the team."},
+    "error_CUSTOMER_REQUIRED":{"ar": "الطلب يتطلب جلسة عميل مخوّلة.", "en": "An authorized customer session is required."},
+    "error_GUEST_ORDERING_PAUSED":{"ar": "الطلب كضيف متوقف حاليًا.", "en": "Guest ordering is currently paused."},
+    "error_GUEST_CONTACT_REQUIRED":{"ar": "أدخل الاسم ورقم الاتصال.", "en": "Enter your name and contact number."},
+    "error_GUEST_NAME_REQUIRED":{"ar": "أدخل الاسم.", "en": "Enter your name."},
+    "error_CUSTOMER_IDENTITY_UNVERIFIED":{"ar": "تحقق من الهوية أو اختر الطلب كضيف.", "en": "Verify your identity or order as a guest."},
+    "error_EMAIL_INVALID":{"ar": "أدخل بريدًا إلكترونيًا صحيحًا.", "en": "Enter a valid email address."},
+    "error_PHONE_INVALID":{"ar": "أدخل رقم جوال صحيحًا مع رمز الدولة.", "en": "Enter a valid phone number including country code."},
+    "error_EMAIL_PROVIDER_UNAVAILABLE":{"ar": "قناة البريد غير مهيأة حاليًا.", "en": "Email verification is currently unavailable."},
+    "error_EMAIL_CHANNEL_UNAVAILABLE":{"ar": "قناة البريد غير مهيأة حاليًا.", "en": "Email verification is currently unavailable."},
+    "error_EMAIL_TOKEN_INVALID":{"ar": "الرابط منتهي أو غير صالح أو مستخدم.", "en": "This link has expired, is invalid or has already been used."},
+    "error_LINK_SESSION_REQUIRED":{"ar": "افتح الرابط من جلسة الحساب الذي طلب ربط البريد.", "en": "Open the link in the session that requested email linking."},
+    "error_EMAIL_IDENTITY_CONFLICT":{"ar": "البريد مرتبط بحساب آخر. لا يتم دمج الحسابات تلقائيًا.", "en": "This email belongs to another account. Accounts are not merged automatically."},
+    "error_STAFF_PHONE_REGISTERED":{"ar": "استخدم رقم الجوال المسجل؛ تغييره من الإدارة المخولة.", "en": "Use your registered phone number. Only authorized administration can change it."},
+    "error_STAFF_PROFILE_REQUIRED":{"ar": "أكمل الاسم ورقم الاتصال.", "en": "Complete your name and contact number."},
+    "error_PHONE_CHANGE_REQUIRES_VERIFICATION":{"ar": "تغيير الجوال الموثق يتطلب تحققًا مستقلاً.", "en": "Changing a verified phone number requires separate verification."},
+    "error_OTP_PROVIDER_UNAVAILABLE":{"ar": "التحقق بالجوال غير مفعّل بعد. يمكنك الطلب كضيف إذا كان متاحًا.", "en": "Phone verification is not available. You can order as a guest when enabled."},
+    "error_OTP_PROVIDER_FAILURE":{"ar": "تعذر الاتصال بمزود التحقق. حاول لاحقًا.", "en": "Unable to reach the verification provider. Try again later."},
+    "error_OTP_CHANNEL_UNAVAILABLE":{"ar": "قناة التحقق غير مهيأة.", "en": "This verification channel is unavailable."},
+    "error_OTP_NOT_SENT":{"ar": "لم يؤكد المزود إرسال رمز التحقق.", "en": "The provider did not confirm sending a verification code."},
+    "error_OTP_EXPIRED":{"ar": "رمز التحقق منتهي أو مستهلك. اطلب رمزًا جديدًا.", "en": "This code has expired or was used. Request a new code."},
+    "error_OTP_INVALID":{"ar": "رمز التحقق غير صحيح.", "en": "The verification code is incorrect."},
+    "error_OTP_ALREADY_USED":{"ar": "تم استخدام طلب التحقق بالفعل.", "en": "This verification request has already been used."},
+    "error_BRAND_NOT_FOUND":{"ar": "البراند غير متاح.", "en": "This brand is unavailable."},
+    "error_BRANCH_NOT_FOUND":{"ar": "الفرع غير موجود.", "en": "This branch is unavailable."},
+    "error_PRODUCT_NOT_FOUND":{"ar": "الصنف غير موجود ضمن هذا البراند.", "en": "This item is unavailable in this brand."},
+    "error_ORDER_NOT_FOUND":{"ar": "الطلب غير موجود ضمن صلاحياتك.", "en": "This order is not available to your account."},
+    "error_BRAND_SERVICE_DISABLED":{"ar": "هذه الخدمة موقوفة من إدارة البراند.", "en": "This service is paused by the brand."},
+    "error_BRANCH_DISABLED":{"ar": "الفرع متوقف عن استقبال الطلبات الجديدة.", "en": "This branch is not accepting new orders."},
+    "error_SERVICE_DISABLED":{"ar": "هذه الخدمة غير مفعلة لهذا الفرع.", "en": "This service is not enabled at this branch."},
+    "error_DELIVERY_CITY_NOT_ELIGIBLE":{"ar": "التوصيل غير متاح من هذا الفرع. اختر الاستلام إن كان متاحًا.", "en": "Delivery is unavailable at this branch. Choose pickup when available."},
+    "error_BRANCH_CONFIGURATION_UNVERIFIED":{"ar": "بيانات تشغيل هذا الفرع لم تُعتمد بعد.", "en": "Operating settings for this branch are awaiting approval."},
+    "error_HOURS_UNCONFIGURED":{"ar": "ساعات استقبال هذا الفرع غير مهيأة.", "en": "Ordering hours for this branch are not configured."},
+    "error_BRANCH_CLOSED":{"ar": "الفرع مغلق الآن لاستقبال الطلبات.", "en": "This branch is currently closed for new orders."},
+    "error_PAYMENT_UNCONFIGURED":{"ar": "طرق الدفع لهذا الفرع غير مهيأة.", "en": "Payment methods for this branch are not configured."},
+    "error_DELIVERY_HOURS_UNCONFIGURED":{"ar": "ساعات التوصيل لهذا الفرع غير مهيأة.", "en": "Delivery hours for this branch are not configured."},
+    "error_DELIVERY_CLOSED":{"ar": "التوصيل مغلق الآن؛ راجع أوقات الخدمة لهذا الفرع.", "en": "Delivery is currently closed. Check the branch service hours."},
+    "error_COVERAGE_UNCONFIGURED":{"ar": "نطاق التوصيل أو موقع الفرع غير مهيأ.", "en": "Delivery coverage or branch location is not configured."},
+    "error_DELIVERY_FEE_UNCONFIGURED":{"ar": "رسوم التوصيل لهذا الفرع غير مهيأة.", "en": "Delivery fees for this branch are not configured."},
+    "error_PRODUCT_OPTIONS_UNCONFIGURED":{"ar": "خيارات هذا الصنف بحاجة إلى مراجعة الإدارة.", "en": "This item’s options need review by the team."},
+    "error_UNIT_OPTIONS_REQUIRED":{"ar": "حدد الخيارات لكل وحدة قبل إضافة الصنف.", "en": "Choose options for every unit before adding the item."},
+    "error_UNIT_OPTIONS_COUNT":{"ar": "عدد اختيارات الوحدات لا يطابق الكمية.", "en": "The number of unit selections does not match the quantity."},
+    "error_UNKNOWN_OPTION_GROUP":{"ar": "تم إرسال مجموعة خيارات غير معتمدة.", "en": "An unapproved option group was selected."},
+    "error_OPTION_SELECTION_INVALID":{"ar": "حدد خيارًا صحيحًا لكل وحدة.", "en": "Choose a valid option for each unit."},
+    "error_OPTION_VALUE_INVALID":{"ar": "الخيار المحدد غير متاح أو غير معتمد.", "en": "The selected option is unavailable or unapproved."},
+    "error_OPTION_PRICE_UNCONFIGURED":{"ar": "سعر الخيار غير مهيأ.", "en": "The selected option’s price is not configured."},
+    "error_PRODUCT_PRICE_INVALID":{"ar": "سعر الصنف غير صالح.", "en": "This item’s price is invalid."},
+    "error_PAYMENT_METHOD_UNAVAILABLE":{"ar": "طريقة الدفع غير متاحة لهذا الفرع.", "en": "This payment method is unavailable at this branch."},
+    "error_DELIVERY_ADDRESS_REQUIRED":{"ar": "حدد موقع وعنوان التوصيل.", "en": "Set your delivery location and address."},
+    "error_DELIVERY_NEIGHBORHOOD_REQUIRED":{"ar": "أدخل اسم حي التوصيل بصورة واضحة.", "en": "Enter a clear delivery neighborhood name."},
+    "error_OUTSIDE_COVERAGE":{"ar": "العنوان خارج نطاق توصيل هذا الفرع.", "en": "This address is outside the branch delivery coverage."},
+    "error_CAR_DETAILS_REQUIRED":{"ar": "أدخل بيانات السيارة قبل تأكيد الطلب.", "en": "Enter your car details before confirming."},
+    "error_ORDER_QUANTITY_LIMIT":{"ar": "الحد الأقصى مئة وحدة في الطلب.", "en": "An order can contain up to 100 units."},
+    "error_PRODUCT_UNAVAILABLE":{"ar": "الصنف غير متاح في هذا الفرع.", "en": "This item is unavailable at this branch."},
+    "error_CATALOG_SOURCE_UNVERIFIED":{"ar": "السعر وخيارات هذا الصنف لم تُعتمد من المصدر التشغيلي بعد.", "en": "This item’s price and options have not been approved."},
+    "error_KHALIYA_TYPE_REQUIRED":{"ar": "اختر النوع: كلاسيك أو بيكان.", "en": "Choose a Khaliya type: Classic or Pecan."},
+    "error_PRODUCT_VARIANT_UNAVAILABLE":{"ar": "نوع أو خيار الصنف المحدد غير متاح في هذا الفرع.", "en": "The selected type or option is unavailable at this branch."},
+    "error_MINIMUM_ORDER_NOT_MET":{"ar": "السلة أقل من الحد الأدنى المعتمد للتوصيل.", "en": "Your basket is below the delivery minimum."},
+    "error_ORDER_VALUE_LIMIT":{"ar": "قيمة الطلب أعلى من الحد المسموح للموقع.", "en": "Your order exceeds the allowed amount."},
+    "error_MAP_URL_NOT_ALLOWED":{"ar": "اختر دبوسًا أو رابط Google Maps معتمدًا.", "en": "Choose a supported Google Maps link or pin."},
+    "error_MAP_PIN_REQUIRED":{"ar": "تعذر استخراج دبوس موثوق من الرابط. حدد الموقع مباشرة.", "en": "A verified pin cannot be extracted from this link. Set your location directly."},
+    "error_COORDINATE_INVALID":{"ar": "الموقع غير صحيح.", "en": "The location coordinates are invalid."},
+    "error_BRANCH_LOCATION_UNVERIFIED":{"ar": "دبوس الفرع غير معتمد.", "en": "The branch map pin has not been verified."},
+    "error_DELIVERY_DUTY_UNAVAILABLE":{"ar": "لا توجد مناوبة توصيل مهيأة لاستقبال الطلبات.", "en": "No delivery shift is available to accept new orders."},
+    "error_PRICE_CHANGED":{"ar": "تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.", "en": "Your order price changed. Review the new total before confirming."},
+    "error_CUSTOMER_PHONE_REQUIRED":{"ar": "أدخل رقم اتصال صحيحًا قبل الطلب.", "en": "Enter a valid contact number before ordering."},
+    "error_SERVICE_INVALID":{"ar": "نوع الخدمة غير صحيح.", "en": "This service type is invalid."},
+    "error_ORDER_VERSION_CONFLICT":{"ar": "تغير الطلب. حدّث الصفحة.", "en": "The order changed. Refresh the page."},
+    "error_ARRIVAL_NOT_APPLICABLE":{"ar": "الوصول يخص طلب سيارة غير منتهٍ.", "en": "Arrival is only available for an active car pickup order."},
+    "error_CONVERSATION_NOT_FOUND":{"ar": "المحادثة غير موجودة ضمن صلاحياتك.", "en": "This conversation is not available to your account."},
+    "error_MESSAGE_TOO_LONG":{"ar": "الرسالة طويلة جدًا.", "en": "This message is too long."},
+    "error_ATTACHMENT_INVALID":{"ar": "الصورة المرفقة غير صالحة.", "en": "This attachment is invalid."},
+    "error_ATTACHMENT_TOO_LARGE":{"ar": "حجم الصورة أكبر من الحد المسموح.", "en": "This photo exceeds the size limit."},
+    "error_OTP_RATE_LIMIT":{"ar": "محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.", "en": "Too many attempts. Wait a little and try again."},
+    "error_EMAIL_RATE_LIMIT":{"ar": "محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.", "en": "Too many attempts. Wait a little and try again."},
+    "error_LOGIN_RATE_LIMIT":{"ar": "محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.", "en": "Too many attempts. Wait a little and try again."},
+    "error_GUEST_RATE_LIMIT":{"ar": "محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.", "en": "Too many attempts. Wait a little and try again."},
+    "error_ORDER_RATE_LIMIT":{"ar": "محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.", "en": "Too many attempts. Wait a little and try again."},
+    "error_CHAT_RATE_LIMIT":{"ar": "محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.", "en": "Too many attempts. Wait a little and try again."},
+    "delivery_reopens":{"ar": "التوصيل مغلق الآن. موعد الفتح التالي {time} بتوقيت الرياض.", "en": "Delivery is closed. Next opening: {time} (Asia/Riyadh)."},
+    "service_payment_summary":{"ar": "{service} · {payment}", "en": "{service} · {payment}"},
+    "type":{"ar": "النوع", "en": "Type"},
+    "flavor":{"ar": "النكهة", "en": "Flavor"},
+    "unavailable_option":{"ar": " — غير متاح", "en": " — Unavailable"},
+
+    "images_and_options_from_the_kps_menu": {ar:" · الصور والخيارات من منيو KPS", en:" · Images and options from the KPS menu"},
+    "your_delivery_coverage_will_be_checked_when_reviewing_the_order": {ar:" سيُتحقق من تغطية موقعك عند مراجعة الطلب.", en:" Your delivery coverage will be checked when reviewing the order."},
+    "via_sms": {ar:" عبر الرسائل النصية", en:" via SMS"},
+    "via_whatsapp": {ar:" عبر واتساب", en:" via WhatsApp"},
+    "in_the_selected_city": {ar:" في المدينة المحددة", en:" in the selected city"},
+    "your_current_selection": {ar:" — اختيارك الحالي", en:" — your current selection"},
+    "0_items": {ar:"0 أصناف", en:"0 items"},
+    "separator": {ar:"، ", en:", "},
+    "enter_valid_location_coordinates": {ar:"أدخل إحداثيات صحيحة للموقع.", en:"Enter valid location coordinates."},
+    "enter_the_recipient_s_name_to_review_your_order": {ar:"أدخل اسم المستلم لمراجعة الطلب.", en:"Enter the recipient's name to review your order."},
+    "enter_a_clear_delivery_neighborhood_name": {ar:"أدخل اسم حي التوصيل بصورة واضحة.", en:"Enter a clear delivery neighborhood name."},
+    "enter_latitude_and_longitude_before_saving": {ar:"أدخل خط العرض وخط الطول قبل الاعتماد.", en:"Enter latitude and longitude before saving."},
+    "enter_your_car_color_and_plate_number": {ar:"أدخل لون السيارة ورقم اللوحة.", en:"Enter your car color and plate number."},
+    "enter_your_delivery_address_description": {ar:"أدخل وصف عنوان التوصيل.", en:"Enter your delivery address description."},
+    "add_items_to_your_basket": {ar:"أضف أصنافًا للسلة", en:"Add items to your basket"},
+    "add_a_preparation_note": {ar:"أضف أي ملاحظة مهمة للتجهيز", en:"Add a preparation note"},
+    "add_a_message_or_photo_before_sending": {ar:"أضف نصًا أو صورة قبل الإرسال.", en:"Add a message or photo before sending."},
+    "menu_categories": {ar:"أقسام المنيو", en:"Menu categories"},
+    "a_color_for_each_mug": {ar:"ألوان لكل كوب", en:"A color for each mug"},
+    "estimated_item_total": {ar:"إجمالي المنتجات المبدئي", en:"Estimated item total"},
+    "enter_location_manually": {ar:"إدخال الموقع يدويًا", en:"Enter location manually"},
+    "if_this_email_is_eligible_you_will_receive_a_secure_single_use_li": {ar:"إذا كان البريد مؤهلًا، سيصلك رابط آمن صالح لمرة واحدة. قبول الطلب لا يؤكد وصول البريد.", en:"If this email is eligible, you will receive a secure single-use link. Acceptance does not confirm email delivery."},
+    "send": {ar:"إرسال", en:"Send"},
+    "send_secure_sign_in_link": {ar:"إرسال رابط الدخول الآمن", en:"Send secure sign-in link"},
+    "send_verification_code": {ar:"إرسال رمز التحقق", en:"Send verification code"},
+    "attach_photo": {ar:"إرفاق صورة", en:"Attach photo"},
+    "add_to_basket": {ar:"إضافة للسلة", en:"Add to basket"},
+    "brand_announcements": {ar:"إعلانات البراند", en:"Brand announcements"},
+    "close_photo": {ar:"إغلاق الصورة", en:"Close photo"},
+    "close_orders": {ar:"إغلاق الطلبات", en:"Close orders"},
+    "close_conversations": {ar:"إغلاق المحادثات", en:"Close conversations"},
+    "close_conversation": {ar:"إغلاق المحادثة", en:"Close conversation"},
+    "close_review": {ar:"إغلاق المراجعة", en:"Close review"},
+    "close_sign_in": {ar:"إغلاق تسجيل الدخول", en:"Close sign in"},
+    "close_product_details": {ar:"إغلاق تفاصيل الصنف", en:"Close product details"},
+    "complete_staff_invitation": {ar:"إكمال دعوة الموظف", en:"Complete staff invitation"},
+    "clear_selected_location": {ar:"إلغاء الموقع المحدد", en:"Clear selected location"},
+    "to_your_location": {ar:"إلى موقعك", en:"To your location"},
+    "pause_motion": {ar:"إيقاف الحركة", en:"Pause motion"},
+    "search_for_an_item": {ar:"ابحث عن صنف…", en:"Search for an item…"},
+    "start_with_your_favorite": {ar:"ابدأ باختيارك المفضل", en:"Start with your favorite"},
+    "start_your_message_here_your_conversation_remains_saved_in_your_a": {ar:"ابدأ رسالتك هنا. تبقى المحادثة محفوظة في حسابك.", en:"Start your message here. Your conversation remains saved in your account."},
+    "choose_the_quantity_then_a_color_for_each_mug": {ar:"اختر العدد ثم حدد اللون لكل كوب قبل الإضافة.", en:"Choose the quantity, then a color for each mug."},
+    "choose_the_quantity_then_a_flavor_for_each_unit": {ar:"اختر العدد ثم حدد النكهة لكل وحدة قبل الإضافة.", en:"Choose the quantity, then a flavor for each unit."},
+    "choose_quantity_and_options": {ar:"اختر العدد والخيارات", en:"Choose quantity and options"},
+    "choose_a_branch": {ar:"اختر الفرع", en:"Choose a branch"},
+    "choose_a_branch_each_service_is_available_independently": {ar:"اختر الفرع. إتاحة كل خدمة تُحدد بصورة مستقلة.", en:"Choose a branch. Each service is available independently."},
+    "choose_a_type": {ar:"اختر النوع", en:"Choose a type"},
+    "choose_a_type_for_each_unit_classic_or_pecan": {ar:"اختر النوع لكل وحدة: كلاسيك أو بيكان.", en:"Choose a type for each unit: Classic or Pecan."},
+    "choose_a_jpg_png_or_webp_image_up_to_5_mb": {ar:"اختر صورة JPG أو PNG أو WebP بحجم لا يتجاوز 5 ميجابايت.", en:"Choose a JPG, PNG or WebP image up to 5 MB."},
+    "card_payment_is_collected_on_arrival_do_not_enter_card_details_he": {ar:"اختيار الشبكة للدفع عند الاستلام. لا تُدخل بيانات بطاقتك هنا.", en:"Card payment is collected on arrival. Do not enter card details here."},
+    "choose_this_branch": {ar:"اختيار هذا الفرع", en:"Choose this branch"},
+    "your_choices": {ar:"اختياراتك", en:"Your choices"},
+    "your_current_branch_is_in_another_city_it_stays_selected_until_yo": {ar:"اختيارك الحالي في مدينة أخرى؛ لن يتغير حتى تختار فرعًا بنفسك.", en:"Your current branch is in another city. It stays selected until you choose a branch."},
+    "optional": {ar:"اختياري", en:"Optional"},
+    "use_my_current_location": {ar:"استخدام موقعي الحالي", en:"Use my current location"},
+    "car_pickup": {ar:"استلام بالسيارة", en:"Car pickup"},
+    "branch_pickup": {ar:"استلام من الفرع", en:"Branch pickup"},
+    "picked_up_by_driver": {ar:"استلم السائق", en:"Picked up by driver"},
+    "neighborhood_name": {ar:"اسم الحي", en:"Neighborhood name"},
+    "recipient_name": {ar:"اسم المستلم", en:"Recipient name"},
+    "your_name": {ar:"اسمك", en:"Your name"},
+    "name_for_collecting_your_order": {ar:"اسمك لاستلام الطلب", en:"Name for collecting your order"},
+    "order_as_a_guest": {ar:"اطلب كضيف", en:"Order as a guest"},
+    "order_directly_without_a_verification_code_or_creating_an_account": {ar:"اطلب مباشرة دون رمز تحقق أو إنشاء حساب.", en:"Order directly without a verification code or creating an account."},
+    "save_entered_location": {ar:"اعتماد الموقع المدخل", en:"Save entered location"},
+    "use_link_s_map_pin": {ar:"اعتماد دبوس الرابط", en:"Use link's map pin"},
+    "open_the_invitation_link_again": {ar:"افتح رابط الدعوة مرة أخرى.", en:"Open the invitation link again."},
+    "write_your_message": {ar:"اكتب رسالتك…", en:"Write your message…"},
+    "current_prices_and_options_are_awaiting_verification_orders_can_b": {ar:"الأسعار والخيارات الحالية قيد التحقق؛ لا يُتاح تأكيد طلب قبل اعتمادها.", en:"Current prices and options are awaiting verification. Orders can be confirmed after approval."},
+    "items_you_add_will_appear_here": {ar:"الأصناف التي تضيفها ستظهر هنا.", en:"Items you add will appear here."},
+    "assignment": {ar:"الإسناد", en:"Assignment"},
+    "directions_to_branch": {ar:"الاتجاهات إلى الفرع", en:"Directions to branch"},
+    "full_name": {ar:"الاسم الكامل", en:"Full name"},
+    "search_menu": {ar:"البحث في المنيو", en:"Search menu"},
+    "email_address": {ar:"البريد الإلكتروني", en:"Email address"},
+    "email_verified_phone_verification_is_separate": {ar:"البريد موثق · توثيق الجوال مستقل", en:"Email verified · Phone verification is separate"},
+    "preparation": {ar:"التجهيز", en:"Preparation"},
+    "phone_verification_is_not_configured_guest_ordering_depends_on_th": {ar:"التحقق بالجوال غير مهيأ. مسار الطلب كضيف متاح حسب إعداد البراند.", en:"Phone verification is not configured. Guest ordering depends on the brand's settings."},
+    "email_verification": {ar:"التحقق من البريد", en:"Email verification"},
+    "verify_and_complete_sign_in": {ar:"التحقق وإكمال الدخول", en:"Verify and complete sign in"},
+    "guest_and_customer_conversations_are_available_here_staff_access_": {ar:"التواصل هنا متاح لجلسة الضيف أو حساب العميل. دخول فريق التشغيل من الرابط أسفل الصفحة.", en:"Guest and customer conversations are available here. Staff access is at the bottom of the page."},
+    "delivery": {ar:"التوصيل", en:"Delivery"},
+    "your_basket_can_contain_up_to_100_units": {ar:"الحد الأقصى مئة وحدة في السلة.", en:"Your basket can contain up to 100 units."},
+    "motion_paused": {ar:"الحركة متوقفة", en:"Motion paused"},
+    "motion_paused_by_device_preference": {ar:"الحركة متوقفة حسب إعداد الجهاز", en:"Motion paused by device preference"},
+    "neighborhood": {ar:"الحي", en:"Neighborhood"},
+    "neighborhood_street_building_number_and_a_clear_landmark": {ar:"الحي، الشارع، رقم المبنى وأي علامة واضحة", en:"Neighborhood, street, building number and a clear landmark"},
+    "service_or_location_is_not_verified": {ar:"الخدمة أو الموقع غير معتمد.", en:"Service or location is not verified."},
+    "service_paused": {ar:"الخدمة متوقفة", en:"Service paused"},
+    "discount": {ar:"الخصم", en:"Discount"},
+    "your_session_belongs_to_another_brand_sign_out_before_signing_in_": {ar:"الدخول الحالي خاص ببراند آخر. سجل الخروج للدخول إلى هذا البراند.", en:"Your session belongs to another brand. Sign out before signing in to this brand."},
+    "sign_in_with_email": {ar:"الدخول بالبريد الإلكتروني", en:"Sign in with email"},
+    "payment": {ar:"الدفع", en:"Payment"},
+    "pay_on_arrival": {ar:"الدفع عند الاستلام", en:"Pay on arrival"},
+    "fees_and_the_final_amount_appear_after_branch_and_service_checks": {ar:"الرسوم والمبلغ النهائي يظهران بعد تحقق الفرع والخدمة.", en:"Fees and the final amount appear after branch and service checks."},
+    "basket": {ar:"السلة", en:"Basket"},
+    "this_item_is_unavailable_at_this_branch": {ar:"الصنف غير متاح في هذا الفرع.", en:"This item is unavailable at this branch."},
+    "images_jpg_png_or_webp_up_to_5_mb": {ar:"الصور: JPG أو PNG أو WebP، بحد أقصى 5 ميجابايت.", en:"Images: JPG, PNG or WebP, up to 5 MB."},
+    "photo_currently_unavailable": {ar:"الصورة غير متاحة حاليًا", en:"Photo currently unavailable"},
+    "the_photo_is_currently_unavailable": {ar:"الصورة غير متاحة حاليًا.", en:"The photo is currently unavailable."},
+    "orders": {ar:"الطلبات", en:"Orders"},
+    "order_homepage": {ar:"الطلبات الرئيسية", en:"Order homepage"},
+    "scrolling_announcements": {ar:"العبارات المتحركة", en:"Scrolling announcements"},
+    "quantity": {ar:"العدد", en:"Quantity"},
+    "back_to_my_orders": {ar:"العودة إلى طلباتي", en:"Back to my orders"},
+    "branch": {ar:"الفرع", en:"Branch"},
+    "selected_branch": {ar:"الفرع المختار", en:"Selected branch"},
+    "relevant_branch": {ar:"الفرع المختص", en:"Relevant branch"},
+    "nearest_eligible_branches": {ar:"الفروع المؤهلة الأقرب إليك", en:"Nearest eligible branches"},
+    "mug": {ar:"الكوب", en:"Mug"},
+    "color": {ar:"اللون", en:"Color"},
+    "amount_due": {ar:"المبلغ المستحق", en:"Amount due"},
+    "city": {ar:"المدينة", en:"City"},
+    "items": {ar:"المنتجات", en:"Items"},
+    "menu": {ar:"المنيو", en:"Menu"},
+    "location_is_optional_for_nearby_suggestions_you_can_choose_a_city": {ar:"الموقع اختياري لاختيار أقرب فرع؛ ويمكنك اختيار المدينة والفرع يدويًا.", en:"Location is optional for nearby suggestions. You can choose a city and branch manually."},
+    "selected_delivery_location": {ar:"الموقع المحدد للتوصيل", en:"Selected delivery location"},
+    "unit": {ar:"الوحدة", en:"Unit"},
+    "wait_for_the_conversation_to_open_before_sending": {ar:"انتظر فتح المحادثة قبل الإرسال.", en:"Wait for the conversation to open before sending."},
+    "skip_to_menu": {ar:"انتقل إلى المنيو", en:"Skip to menu"},
+    "your_session_expired_start_a_new_guest_session_or_sign_in_with_yo": {ar:"انتهت الجلسة. افتح جلسة ضيف جديدة أو ادخل ببريدك الموثق.", en:"Your session expired. Start a new guest session or sign in with your verified email."},
+    "awaiting_assignment": {ar:"بانتظار الإسناد", en:"Awaiting assignment"},
+    "awaiting_collection": {ar:"بانتظار التحصيل", en:"Awaiting collection"},
+    "awaiting_processing": {ar:"بانتظار المعالجة", en:"Awaiting processing"},
+    "awaiting_task_acceptance": {ar:"بانتظار قبول المهمة", en:"Awaiting task acceptance"},
+    "start_a_conversation": {ar:"بدء محادثة", en:"Start a conversation"},
+    "some_items_differ_from_the_approved_source_or_need_approval_appro": {ar:"بعض الأصناف لا تطابق النسخة المعتمدة أو تحتاج اعتماد تعديلاتها. تبقى الأصناف المعتمدة متاحة حسب الفرع والخدمة.", en:"Some items differ from the approved source or need approval. Approved items remain available by branch and service."},
+    "confirm_order": {ar:"تأكيد الطلب", en:"Confirm order"},
+    "this_browser_does_not_support_location_you_can_enter_it_manually": {ar:"تحديد الموقع غير مدعوم في هذا المتصفح. يمكنك إدخاله يدويًا.", en:"This browser does not support location. You can enter it manually."},
+    "verify_your_phone_through_an_available_channel": {ar:"تحقق من رقم جوالك عبر القناة المتاحة.", en:"Verify your phone through an available channel."},
+    "verify_and_sign_in": {ar:"تحقق ودخول", en:"Verify and sign in"},
+    "load_older_orders": {ar:"تحميل طلبات أقدم", en:"Load older orders"},
+    "load_older_conversations": {ar:"تحميل محادثات أقدم", en:"Load older conversations"},
+    "sign_out": {ar:"تسجيل الخروج", en:"Sign out"},
+    "sign_in": {ar:"تسجيل الدخول", en:"Sign in"},
+    "resume_motion": {ar:"تشغيل الحركة", en:"Resume motion"},
+    "browse_the_menu_then_choose_your_service_and_branch": {ar:"تصفح المنيو، ثم حدد الخدمة والفرع المناسب لطلبك.", en:"Browse the menu, then choose your service and branch."},
+    "use_the_first_mug_s_color_for_all": {ar:"تطبيق لون الكوب الأول على الكل", en:"Use the first mug's color for all"},
+    "use_the_first_unit_s_flavor_for_all": {ar:"تطبيق نكهة الوحدة الأولى على الكل", en:"Use the first unit's flavor for all"},
+    "use_the_first_unit_s_type_for_all": {ar:"تطبيق نوع الوحدة الأولى على الكل", en:"Use the first unit's type for all"},
+    "unable_to_complete_this_action_check_your_details_and_try_again": {ar:"تعذر إتمام العملية. راجع البيانات وحاول مرة أخرى.", en:"Unable to complete this action. Check your details and try again."},
+    "unable_to_connect_check_your_internet_and_try_again_this_action_h": {ar:"تعذر الاتصال بالموقع. تحقق من الإنترنت ثم حاول مجددًا؛ لم نؤكد حفظ هذه العملية.", en:"Unable to connect. Check your internet and try again; this action has not been confirmed."},
+    "unable_to_verify_the_final_amount_try_again": {ar:"تعذر التحقق من المبلغ النهائي. حاول مرة أخرى.", en:"Unable to verify the final amount. Try again."},
+    "unable_to_update_your_location_your_previous_location_is_kept_you": {ar:"تعذر تحديث الموقع؛ احتفظنا بالموقع المحدد سابقًا. يمكنك اختيار الفرع يدويًا.", en:"Unable to update your location. Your previous location is kept; you can choose a branch manually."},
+    "unable_to_identify_the_brand_from_this_link": {ar:"تعذر تحديد البراند من هذا الرابط.", en:"Unable to identify the brand from this link."},
+    "unable_to_load_saved_conversations": {ar:"تعذر تحميل المحادثات المحفوظة.", en:"Unable to load saved conversations."},
+    "unable_to_load_part_of_the_page_refresh_to_try_again": {ar:"تعذر تحميل جزء من الصفحة. حدّث الصفحة للمحاولة مجددًا.", en:"Unable to load part of the page. Refresh to try again."},
+    "unable_to_load_this_brand_s_menu_refresh_to_try_again": {ar:"تعذر تحميل منيو هذا البراند. حدّث الصفحة للمحاولة مجددًا.", en:"Unable to load this brand's menu. Refresh to try again."},
+    "unable_to_open_the_order_conversation": {ar:"تعذر فتح محادثة الطلب.", en:"Unable to open the order conversation."},
+    "unable_to_read_the_photo": {ar:"تعذرت قراءة الصورة.", en:"Unable to read the photo."},
+    "changing_branches_will_make_these_items_unavailable_we_will_not_r": {ar:"تغيير الفرع سيجعل هذه الأصناف غير متاحة. لن نحذفها دون موافقتك:", en:"Changing branches will make these items unavailable. We will not remove them without your approval:"},
+    "change_phone_number": {ar:"تغيير رقم الجوال", en:"Change phone number"},
+    "decrease_quantity": {ar:"تقليل العدد", en:"Decrease quantity"},
+    "enlarge_photo": {ar:"تكبير الصورة", en:"Enlarge photo"},
+    "selected_location_cleared_you_can_choose_a_city_and_branch_manual": {ar:"تم إلغاء الموقع المحدد. يمكنك اختيار المدينة والفرع يدويًا.", en:"Selected location cleared. You can choose a city and branch manually."},
+    "location_saved_for_eligible_branch_suggestions_you_choose_the_bra": {ar:"تم اعتماد موقعك لعرض الفروع المؤهلة؛ يبقى اختيار الفرع بيدك.", en:"Location saved for eligible branch suggestions. You choose the branch."},
+    "collected": {ar:"تم التحصيل", en:"Collected"},
+    "email_verified": {ar:"تم التحقق من البريد.", en:"Email verified."},
+    "phone_verified": {ar:"تم التحقق من جوالك", en:"Phone verified"},
+    "delivered": {ar:"تم التسليم", en:"Delivered"},
+    "signed_out": {ar:"تم تسجيل الخروج.", en:"Signed out."},
+    "signed_in": {ar:"تم تسجيل الدخول", en:"Signed in"},
+    "your_arrival_notification_has_been_saved": {ar:"تم حفظ إشعار وصولك للفرع.", en:"Your arrival notification has been saved."},
+    "your_order_is_saved_you_can_follow_its_status_and_conversation": {ar:"تم حفظ طلبك. يمكنك متابعة حالته ومحادثته.", en:"Your order is saved. You can follow its status and conversation."},
+    "saved_khaliya_items_are_linked_to_their_original_types_review_the": {ar:"تم ربط أصناف الخلية المحفوظة بأنواعها الأصلية. راجع النوع والكمية في السلة.", en:"Saved Khaliya items are linked to their original types. Review the type and quantity in your basket."},
+    "a_secure_guest_session_has_been_created": {ar:"تم فتح جلسة ضيف آمنة.", en:"A secure guest session has been created."},
+    "resolved": {ar:"تمت المعالجة", en:"Resolved"},
+    "contact_us": {ar:"تواصل معنا", en:"Contact us"},
+    "delivery_2": {ar:"توصيل", en:"Delivery"},
+    "checking_availability_and_amount": {ar:"جاري التحقق من الإتاحة والمبلغ…", en:"Checking availability and amount…"},
+    "checking_branches_location_service_and_basket_items": {ar:"جاري التحقق من الفروع والموقع والخدمة وأصناف السلة…", en:"Checking branches, location, service and basket items…"},
+    "checking": {ar:"جاري التحقق…", en:"Checking…"},
+    "locating_you_with_your_permission": {ar:"جاري تحديد موقعك بإذنك…", en:"Locating you with your permission…"},
+    "loading_items": {ar:"جاري تحميل الأصناف…", en:"Loading items…"},
+    "loading_brand": {ar:"جاري تحميل البراند…", en:"Loading brand…"},
+    "loading_menu": {ar:"جاري تحميل المنيو…", en:"Loading menu…"},
+    "loading_your_orders": {ar:"جاري تحميل طلباتك…", en:"Loading your orders…"},
+    "loading_your_conversations": {ar:"جاري تحميل محادثاتك…", en:"Loading your conversations…"},
+    "ready": {ar:"جاهز", en:"Ready"},
+    "new": {ar:"جديد", en:"New"},
+    "try_another_search_or_category": {ar:"جرّب كلمة أخرى أو قسمًا مختلفًا.", en:"Try another search or category."},
+    "new_orders_are_currently_paused_for_all_services": {ar:"جميع خدمات الطلبات الجديدة متوقفة حاليًا.", en:"New orders are currently paused for all services."},
+    "new_orders_are_paused_at_this_branch_choose_another_branch": {ar:"جميع خدمات الطلبات الجديدة موقوفة لهذا الفرع. اختر فرعًا آخر.", en:"New orders are paused at this branch. Choose another branch."},
+    "ready_before_you_arrive": {ar:"جهز طلبك قبل الوصول", en:"Ready before you arrive"},
+    "verification_depends_on_the_channel": {ar:"حالة التحقق حسب القناة", en:"Verification depends on the channel"},
+    "choose_a_branch_to_check_availability": {ar:"حدد الفرع للتحقق من الإتاحة", en:"Choose a branch to check availability"},
+    "choose_a_branch_to_check_your_order": {ar:"حدد الفرع للتحقق من طلبك.", en:"Choose a branch to check your order."},
+    "choose_a_branch_and_service_to_start_the_conversation": {ar:"حدد الفرع ونوع الخدمة لبدء المحادثة.", en:"Choose a branch and service to start the conversation."},
+    "choose_a_color_for_mug": {ar:"حدد اللون للكوب", en:"Choose a color for mug"},
+    "choose_a_flavor_for_unit": {ar:"حدد النكهة للوحدة", en:"Choose a flavor for unit"},
+    "choose_a_type_for_unit": {ar:"حدد النوع للوحدة", en:"Choose a type for unit"},
+    "choose_a_branch_to_check_availability_in_hafar_al_batin": {ar:"حدد فرع التنفيذ للتحقق من الإتاحة في حفر الباطن.", en:"Choose a branch to check availability in Hafar Al Batin."},
+    "set_your_delivery_location_to_check_coverage_and_fees": {ar:"حدد موقع التوصيل للتحقق من التغطية والرسوم.", en:"Set your delivery location to check coverage and fees."},
+    "remove": {ar:"حذف", en:"Remove"},
+    "remove_unavailable_items_and_change_branch": {ar:"حذف الأصناف غير المتاحة وتغيير الفرع", en:"Remove unavailable items and change branch"},
+    "staff_account": {ar:"حساب التشغيل", en:"Staff account"},
+    "my_account": {ar:"حسابي", en:"My account"},
+    "longitude": {ar:"خط الطول", en:"Longitude"},
+    "latitude": {ar:"خط العرض", en:"Latitude"},
+    "options_for_each_unit": {ar:"خيارات لكل وحدة", en:"Options for each unit"},
+    "staff_sign_in": {ar:"دخول فريق التشغيل", en:"Staff sign in"},
+    "google_maps_link": {ar:"رابط Google Maps", en:"Google Maps link"},
+    "invalid_brand_link_use_a_link_provided_by_the_brand": {ar:"رابط البراند غير صالح. استخدم رابطًا صادرًا من إدارة البراند.", en:"Invalid brand link. Use a link provided by the brand."},
+    "review_unapproved_items_in_your_basket": {ar:"راجع الأصناف غير المعتمدة في السلة", en:"Review unapproved items in your basket"},
+    "review_items_whose_prices_or_options_have_changed_before_confirmi": {ar:"راجع الصنف الذي تغير سعره أو خياراته في السلة قبل تأكيد الطلب.", en:"Review items whose prices or options have changed before confirming."},
+    "review_the_saved_khaliya_type_and_choose_it_from_the_unified_card": {ar:"راجع نوع الخلية المحفوظ وأعد اختياره من البطاقة الموحدة.", en:"Review the saved Khaliya type and choose it from the unified card."},
+    "link_to_one_of_my_orders": {ar:"ربط بأحد طلباتي", en:"Link to one of my orders"},
+    "link_a_verified_email_to_this_guest_session": {ar:"ربط بريد موثق بجلسة الضيف", en:"Link a verified email to this guest session"},
+    "your_message": {ar:"رسالتك", en:"Your message"},
+    "delivery_fee": {ar:"رسوم التوصيل", en:"Delivery fee"},
+    "contact_number": {ar:"رقم الاتصال", en:"Contact number"},
+    "phone_number": {ar:"رقم الجوال", en:"Phone number"},
+    "plate_number": {ar:"رقم اللوحة", en:"Plate number"},
+    "your_contact_number_is_unverified_and_is_used_for_order_contact_o": {ar:"رقمك غير موثق، ويُستخدم للتواصل بشأن طلبك. الطلبات والمحادثات مرتبطة بجلستك الآمنة.", en:"Your contact number is unverified and is used for order contact. Orders and conversations belong to your secure session."},
+    "verification_code": {ar:"رمز التحقق", en:"Verification code"},
+    "increase_quantity": {ar:"زيادة العدد", en:"Increase quantity"},
+    "items_approved_by_the_brand_will_appear_here": {ar:"ستظهر هنا الأصناف التي تعتمدها إدارة البراند.", en:"Items approved by the brand will appear here."},
+    "order_status_history": {ar:"سجل حالة الطلب", en:"Order status history"},
+    "your_basket": {ar:"سلتك", en:"Your basket"},
+    "one_order_will_be_saved_after_server_confirmation_payment_is_coll": {ar:"سيُحفظ طلب واحد بعد تأكيد الخادم. التحصيل يتم عند الاستلام.", en:"One order will be saved after server confirmation. Payment is collected on arrival."},
+    "handed_to_driver": {ar:"سُلّم للسائق", en:"Handed to driver"},
+    "view_details": {ar:"شاهد التفاصيل", en:"View details"},
+    "card": {ar:"شبكة", en:"Card"},
+    "card_on_arrival": {ar:"شبكة عند الاستلام", en:"Card on arrival"},
+    "item": {ar:"صنف", en:"Item"},
+    "saved_item": {ar:"صنف محفوظ", en:"Saved item"},
+    "product_photo": {ar:"صورة الصنف", en:"Product photo"},
+    "photo_attached_to_conversation": {ar:"صورة مرفقة في المحادثة", en:"Photo attached to conversation"},
+    "guest_unverified_contact_number": {ar:"ضيف — رقم الاتصال غير موثق", en:"Guest · Unverified contact number"},
+    "customer_orders_are_available_to_customer_accounts_staff_access_i": {ar:"طلبات العملاء متاحة لحساب العميل. لوحة فريق التشغيل من رابط أسفل الصفحة.", en:"Customer orders are available to customer accounts. Staff access is at the bottom of the page."},
+    "your_orders_and_conversations_in_one_place": {ar:"طلباتك ومحادثاتك في مكان واحد", en:"Your orders and conversations in one place"},
+    "my_orders": {ar:"طلباتي", en:"My orders"},
+    "order_and_follow_up": {ar:"طلبك ومتابعته", en:"Order and follow up"},
+    "your_order_your_way": {ar:"طلبك، على طريقتك", en:"Your order, your way"},
+    "connection_restored_checking_saved_orders": {ar:"عاد الاتصال. نتحقق من حالة الطلبات المحفوظة.", en:"Connection restored. Checking saved orders."},
+    "item_quantity": {ar:"عدد الصنف", en:"Item quantity"},
+    "view_order_and_conversation": {ar:"عرض الطلب ومحادثته", en:"View order and conversation"},
+    "if_a_guest_session_is_lost_recovery_needs_a_verified_email_or_hel": {ar:"عند ضياع جلسة الضيف، يلزم بريد موثق أو مساعدة الفريق لاسترجاع آمن. رقم الاتصال وحده لا يفتح الطلبات.", en:"If a guest session is lost, recovery needs a verified email or help from the team. A contact number alone does not open orders."},
+    "unassigned": {ar:"غير مسند", en:"Unassigned"},
+    "unverified": {ar:"غير موثق", en:"Unverified"},
+    "open_conversation": {ar:"فتح المحادثة", en:"Open conversation"},
+    "fulfillment_branch": {ar:"فرع التنفيذ", en:"Fulfillment branch"},
+    "branches_ineligible_for_this_selection": {ar:"فروع غير مؤهلة للاختيار الحالي", en:"Branches ineligible for this selection"},
+    "relevant_branch_team": {ar:"فريق الفرع المختص", en:"Relevant branch team"},
+    "on_the_way": {ar:"في الطريق", en:"On the way"},
+    "at_participating_branches": {ar:"في الفروع المتاحة", en:"At participating branches"},
+    "before_you_choose": {ar:"قبل أن تختار", en:"Before you choose"},
+    "preparing": {ar:"قيد التجهيز", en:"Preparing"},
+    "processing": {ar:"قيد المعالجة", en:"Processing"},
+    "cash": {ar:"كاش", en:"Cash"},
+    "a_choice_for_every_mood": {ar:"كل اختيار له مزاج", en:"A choice for every mood"},
+    "all_cities": {ar:"كل المدن", en:"All cities"},
+    "full_menu": {ar:"كل المنيو", en:"Full menu"},
+    "how_would_you_like_to_receive_your_order": {ar:"كيف تستلم طلبك؟", en:"How would you like to receive your order?"},
+    "no_matching_items": {ar:"لا توجد أصناف مطابقة", en:"No matching items"},
+    "no_product_photo": {ar:"لا توجد صورة للصنف", en:"No product photo"},
+    "no_orders_saved_in_your_account_yet": {ar:"لا توجد طلبات محفوظة في حسابك حتى الآن.", en:"No orders saved in your account yet."},
+    "no_conversations_saved_in_your_account_yet": {ar:"لا توجد محادثات محفوظة في حسابك حتى الآن.", en:"No conversations saved in your account yet."},
+    "not_applicable": {ar:"لا ينطبق", en:"Not applicable"},
+    "no_items_have_been_added_for_this_brand_yet": {ar:"لم تُضف أصناف لهذا البراند بعد.", en:"No items have been added for this brand yet."},
+    "a_secure_session_was_not_created_try_again": {ar:"لم تُنشأ جلسة دخول آمنة. حاول مجددًا.", en:"A secure session was not created. Try again."},
+    "the_server_did_not_confirm_a_secure_session": {ar:"لم يؤكد الخادم إنشاء جلسة آمنة.", en:"The server did not confirm a secure session."},
+    "the_server_did_not_confirm_the_photo_was_saved": {ar:"لم يؤكد الخادم حفظ الصورة.", en:"The server did not confirm the photo was saved."},
+    "the_server_did_not_confirm_your_order_check_my_orders_before_retr": {ar:"لم يؤكد الخادم حفظ الطلب. راجع طلباتي قبل إعادة المحاولة.", en:"The server did not confirm your order. Check My orders before retrying."},
+    "the_server_did_not_confirm_opening_the_conversation": {ar:"لم يؤكد الخادم فتح المحادثة.", en:"The server did not confirm opening the conversation."},
+    "the_verification_provider_did_not_confirm_sending_the_code": {ar:"لم يؤكد مزود التحقق إرسال الرمز.", en:"The verification provider did not confirm sending the code."},
+    "uncollected": {ar:"لم يُحصّل", en:"Uncollected"},
+    "location_permission_was_denied_or_your_location_is_unavailable_ch": {ar:"لم يُسمح بتحديد موقعك أو تعذر الوصول إليه. اختر المدينة والفرع يدويًا، أو أدخل دبوس الموقع بنفسك.", en:"Location permission was denied or your location is unavailable. Choose a city and branch manually or enter your map pin."},
+    "car_color": {ar:"لون السيارة", en:"Car color"},
+    "saved_order_amount": {ar:"مبلغ الطلب المحفوظ", en:"Saved order amount"},
+    "available_only_in_hafar_al_batin": {ar:"متوفر في حفر الباطن فقط", en:"Available only in Hafar Al Batin"},
+    "available_only_in_hafar_al_batin_choose_an_eligible_branch": {ar:"متوفر في حفر الباطن فقط؛ اختر فرعًا مؤهلًا.", en:"Available only in Hafar Al Batin. Choose an eligible branch."},
+    "your_conversations_are_saved_in_your_account_choose_a_service_and": {ar:"محادثاتك محفوظة في حسابك. حدد الخدمة والفرع للتواصل مع الفريق المختص، ويمكنك ربط المحادثة بأحد طلباتك.", en:"Your conversations are saved in your account. Choose a service and branch to contact the right team; you can link an order."},
+    "my_conversations": {ar:"محادثاتي", en:"My conversations"},
+    "order_conversation": {ar:"محادثة الطلب", en:"Order conversation"},
+    "conversation_without_an_order": {ar:"محادثة دون طلب", en:"Conversation without an order"},
+    "too_many_attempts_wait_a_little_and_try_again": {ar:"محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.", en:"Too many attempts. Wait a little and try again."},
+    "paid": {ar:"مدفوع", en:"Paid"},
+    "partially_paid": {ar:"مدفوع جزئيًا", en:"Partially paid"},
+    "delivery_manager_and_team": {ar:"مدير وفريق التوصيل", en:"Delivery manager and team"},
+    "review_order": {ar:"مراجعة الطلب", en:"Review order"},
+    "review_branch_change": {ar:"مراجعة تغيير الفرع", en:"Review branch change"},
+    "review_and_confirm_order": {ar:"مراجعة وتأكيد الطلب", en:"Review and confirm order"},
+    "rejected": {ar:"مرفوض", en:"Rejected"},
+    "approximate_geographic_distance_not_road_distance": {ar:"مسافة جغرافية تقريبية؛ ليست مسافة الطريق.", en:"Approximate geographic distance, not road distance."},
+    "refunded": {ar:"مسترد", en:"Refunded"},
+    "partially_refunded": {ar:"مسترد جزئيًا", en:"Partially refunded"},
+    "received": {ar:"مستلم", en:"Received"},
+    "assigned": {ar:"مسند", en:"Assigned"},
+    "required_for_delivery": {ar:"مطلوب للتوصيل", en:"Required for delivery"},
+    "open": {ar:"مفتوحة", en:"Open"},
+    "accepted": {ar:"مقبول", en:"Accepted"},
+    "completed": {ar:"مكتمل", en:"Completed"},
+    "item_notes": {ar:"ملاحظات على الصنف", en:"Item notes"},
+    "order_notes": {ar:"ملاحظات على الطلب", en:"Order notes"},
+    "cancelled": {ar:"ملغي", en:"Cancelled"},
+    "menu_delivery_branch_pickup_and_car_pickup_orders": {ar:"منيو وطلبات التوصيل والاستلام من الفرع والسيارة", en:"Menu, delivery, branch pickup and car pickup orders"},
+    "service_type": {ar:"نوع الخدمة", en:"Service type"},
+    "car_model": {ar:"نوع السيارة", en:"Car model"},
+    "car_make_and_model": {ar:"نوع وموديل السيارة", en:"Car make and model"},
+    "this_item_is_temporarily_unavailable": {ar:"هذا الصنف غير متاح مؤقتًا.", en:"This item is temporarily unavailable."},
+    "this_service_has_not_been_enabled_at_this_branch": {ar:"هذه الخدمة لم تُفعّل للفرع بعد.", en:"This service has not been enabled at this branch."},
+    "the_brand_does_not_match_this_link": {ar:"هوية البراند لا تطابق الرابط.", en:"The brand does not match this link."},
+    "address_description": {ar:"وصف العنوان", en:"Address description"},
+    "i_have_arrived_at_the_branch": {ar:"وصلت إلى الفرع", en:"I have arrived at the branch"},
+    "sign_in_again_for_secure_verification": {ar:"يلزم تجديد الدخول للتحقق الآمن.", en:"Sign in again for secure verification."},
+    "a_customer_or_guest_session_is_required_to_confirm_an_order_staff": {ar:"يلزم دخول عميل أو جلسة ضيف لتأكيد الطلب. حساب فريق التشغيل مخصص للتشغيل.", en:"A customer or guest session is required to confirm an order. Staff accounts are for operations."},
+    "close_this_window_to_keep_your_current_branch_and_basket": {ar:"يمكنك إغلاق هذه النافذة للاحتفاظ بالفرع والسلة الحاليين.", en:"Close this window to keep your current branch and basket."},
+    "choose_a_city_and_branch_without_location_access_ineligible_branc": {ar:"يمكنك اختيار المدينة والفرع دون تفعيل الموقع. الفروع غير المؤهلة ظاهرة للاطلاع ولا يمكن تأكيد طلب فيها.", en:"Choose a city and branch without location access. Ineligible branches can be viewed but cannot accept an order."},
+    "choose_a_city_and_branch_without_location_access_service_status_a": {ar:"يمكنك اختيار المدينة والفرع دون تفعيل الموقع. تظهر حالة الخدمة بجانب الفرع.", en:"Choose a city and branch without location access. Service status appears beside each branch."},
+    "you_can_ask_about_a_service_even_when_new_orders_are_paused_at_th": {ar:"يمكنك التواصل بخصوص الخدمة حتى إن كان استقبال الطلبات متوقفًا حاليًا في الفرع.", en:"You can ask about a service even when new orders are paused at the branch."},
+    "order_as_a_guest_without_an_email_or_code_your_orders_are_kept_in": {ar:"يمكنك الطلب كضيف دون بريد أو رمز. تُحفظ طلباتك في جلسة آمنة على هذا الجهاز.", en:"Order as a guest without an email or code. Your orders are kept in a secure session on this device."},
+    "you_can_browse_the_menu_your_sign_in_session_could_not_be_checked": {ar:"يمكنك تصفح المنيو. تعذر التحقق من جلسة الدخول حاليًا.", en:"You can browse the menu. Your sign-in session could not be checked."},
+    "0_sar": {ar:"{0} ر.س", en:"{0} SAR"},
+    "unavailable_0": {ar:" — غير متاح: {0}", en:" — Unavailable: {0}"},
+    "0_you_can_choose_a_city_and_branch_manually": {ar:"{0} يمكنك اختيار المدينة والفرع يدويًا.", en:"{0} You can choose a city and branch manually."},
+    "0_ranked_for_1_and_basket_items": {ar:"{0} الترتيب حسب {1} وأصناف السلة.", en:"{0} Ranked for {1} and basket items."},
+    "no_verified_eligible_branches_for_this_selection_0_review_your_ci": {ar:"لا توجد فروع مؤهلة موثقة الموقع لهذا الاختيار{0}. يمكنك مراجعة المدينة والخدمة أو اختيار الفرع يدويًا للاطلاع.", en:"No verified eligible branches for this selection{0}. Review your city and service, or select a branch manually to view it."},
+    "0_km": {ar:"{0} كم", en:"{0} km"},
+    "0_m": {ar:"{0} م", en:"{0} m"},
+    "0_approximate_geographic_distance": {ar:"{0} · مسافة جغرافية تقريبية", en:"{0} · Approximate geographic distance"},
+    "branches_ineligible_for_this_selection_0": {ar:"فروع غير مؤهلة للاختيار الحالي ({0})", en:"Branches ineligible for this selection ({0})"},
+    "service_is_available_under_the_current_branch_settings_0": {ar:"الخدمة متاحة حسب نطاق الفرع وإعداداته الحالية.{0}", en:"Service is available under the current branch settings.{0}"},
+    "0_items_1": {ar:"{0} صنفًا{1}", en:"{0} items{1}"},
+    "details_of_0": {ar:"تفاصيل {0}", en:"Details of {0}"},
+    "add_0_to_basket": {ar:"إضافة {0} إلى السلة", en:"Add {0} to basket"},
+    "enlarge_photo_of_0": {ar:"تكبير صورة {0}", en:"Enlarge photo of {0}"},
+    "0_items_2": {ar:"{0} أصناف", en:"{0} items"},
+    "your_basket_0_items": {ar:"سلتك · {0} أصناف", en:"Your basket · {0} items"},
+    "previously_saved_item_0_type_and_quantity_retained": {ar:"صنف محفوظ سابقًا: {0} · النوع والكمية محفوظان", en:"Previously saved item: {0} · Type and quantity retained"},
+    "note_0": {ar:"ملاحظة: {0}", en:"Note: {0}"},
+    "decrease_quantity_of_0": {ar:"تقليل كمية {0}", en:"Decrease quantity of {0}"},
+    "increase_quantity_of_0": {ar:"زيادة كمية {0}", en:"Increase quantity of {0}"},
+    "remove_0_1": {ar:"حذف {0}{1}", en:"Remove {0}{1}"},
+    "choose_0": {ar:"اختر {0}", en:"Choose {0}"},
+    "0_1_before_adding": {ar:"{0} {1} قبل الإضافة.", en:"{0} {1} before adding."},
+    "added_0_to_basket": {ar:"أضيف {0} إلى السلة", en:"Added {0} to basket"},
+    "a_verification_code_was_sent_to_the_number_ending_in_0_1": {ar:"أُرسل رمز التحقق إلى الرقم المنتهي بـ{0}{1}.", en:"A verification code was sent to the number ending in {0}{1}."},
+    "order_0": {ar:"طلب {0}", en:"Order {0}"},
+    "order_notes_0": {ar:"ملاحظات الطلب: {0}", en:"Order notes: {0}"},
+    "order_0_1": {ar:"طلب {0} · {1}", en:"Order {0} · {1}"},
+    "order_conversation_0": {ar:"محادثة طلب {0}", en:"Order conversation {0}"},
+    "0_new_messages": {ar:"{0} رسائل جديدة", en:"{0} new messages"},
+    "order_directly_from_0": {ar:"اطلب مباشرة من {0}", en:"Order directly from {0}"},
+    "announcement_for_0": {ar:"إعلان {0}", en:"Announcement for {0}"},
+    "announcement_0_of_1": {ar:"الإعلان {0} من {1}", en:"Announcement {0} of {1}"},
+    "0_orders": {ar:"{0} | الطلبات", en:"{0} | Orders"},
+    "0_menu_delivery_branch_pickup_and_car_pickup_orders": {ar:"منيو {0} وطلبات التوصيل والاستلام من الفرع والسيارة", en:"{0} menu, delivery, branch pickup and car pickup orders"},
+    "0_home": {ar:"{0} الرئيسية", en:"{0} home"},
+    "0_announcements": {ar:"إعلانات {0}", en:"{0} announcements"},
+  };
+  const localizedBindings=new Map();
+  class LocalizedText {
+    constructor(code,params={}){this.code=code;this.params=params;}
+    toString(){
+      const entry=uiStrings[this.code];
+      const template=entry?.[language]||entry?.ar||'';
+      return template.replace(/\{(\w+)\}/g,(_,name)=>{
+        let value=this.params[name];
+        if(typeof value==='function')value=value();
+        return String(value??'');
+      });
+    }
+  }
+  const t=(code,params)=>new LocalizedText(code,params);
+  let bindingCleanupPending=false;
+  function setText(element,content){
+    if(content instanceof LocalizedText)localizedBindings.set(element,content);
+    else localizedBindings.delete(element);
+    element.textContent=String(content??'');
+    if(!bindingCleanupPending){bindingCleanupPending=true;queueMicrotask(()=>{
+      bindingCleanupPending=false;
+      for(const element of localizedBindings.keys())if(!element.isConnected)localizedBindings.delete(element);
+    });}
+  }
+  const sourceText=(record,field='name')=>language==='en'&&(record?.[field+'_en']||record?.translations?.en?.[field])||record?.[field]||'';
+  function knownMessage(message){
+    if(message instanceof LocalizedText)return message;
+    const entry=Object.entries(uiStrings).find(([,value])=>value.ar===message||value.en===message);
+    return entry?t(entry[0]):message;
+  }
+
+  function errorMessage(error){return error?.localizedMessage||knownMessage(error?.message||error||'');}
+  function serverReason(record,fallback='error_PRODUCT_UNAVAILABLE',schedule){
+    if(language==='ar')return record?.reason||record?.unavailable_reason||t(fallback);
+    if(record?.code==='DELIVERY_CLOSED'&&schedule?.next_open_at)return t('delivery_reopens',{time:()=>dateTime(schedule.next_open_at)});
+    return uiStrings['error_'+record?.code]?t('error_'+record.code):t(fallback);
+  }
+  function groupLabel(group){
+    if(language==='en'){
+      const supplied=group?.name_en||group?.translations?.en?.name;
+      if(supplied)return supplied;
+      const label={TYPE:'type',COLOR:'color',FLAVOR:'flavor'}[group?.code];
+      if(label)return t(label);
+    }
+    return group?.name||'';
+  }
+  function applyStaticLanguage(){
+    document.documentElement.lang=language;
+    document.documentElement.dir=language==='en'?'ltr':'rtl';
+    for(const element of document.querySelectorAll('[data-i18n]'))element.textContent=String(t(element.dataset.i18n));
+    for(const attribute of ['aria-label','title','placeholder','content'])for(const element of document.querySelectorAll('[data-i18n-'+attribute+']'))element.setAttribute(attribute,String(t(element.getAttribute('data-i18n-'+attribute))));
+    for(const [element,message] of localizedBindings){
+      if(element.isConnected)element.textContent=String(message);
+      else localizedBindings.delete(element);
+    }
+    const toggle=$('customer-language');
+    toggle.textContent=language==='ar'?'English':'العربية';
+    toggle.lang=language==='ar'?'en':'ar';
+    toggle.setAttribute('aria-label',language==='ar'?'Switch to English':'التبديل إلى العربية');
+  }
   const brandParameters=new URLSearchParams(location.search);
   const brandValue=brandParameters.has('brand_id')?brandParameters.get('brand_id'):'kps';
   const requestedBrandId=brandParameters.getAll('brand_id').length<=1&&/^[a-z][a-z0-9_-]{1,59}$/.test(brandValue||'')?brandValue:null;
   const basketStorageKey=`kps-unconfirmed-basket-v2:${requestedBrandId||'invalid'}`;
-  const state = {products: [], branches: [], brandServices: {delivery:true,pickup:true,car_pickup:true}, brand: {id: requestedBrandId||'', name: requestedBrandId==='kps'?'KPS COFFEE':'الطلبات'}, sourceVerified: false, session: {user: null, csrf_token: null}, branchId: '', service: 'pickup', location: null, cart: [], quote: null, quoteError: '', quotePending: false, quoteRevision: 0, category: '', product: null, optionValues: [], banners: [], bannerIndex: 0, bannerTimer: null, presentation: null, tickerPaused: false, conversation: null, chatSequence: 0, chatTimer: null, ordersTimer: null, orders: [], nextOrdersOffset: null, activeOrder: null, challenge: null, afterLogin: null, confirmation: null, conversations: [], contactOrders: [], nextConversationOffset: null};
+  const state = {products: [], branches: [], brandServices: {delivery:true,pickup:true,car_pickup:true}, brand: {id: requestedBrandId||'', name: requestedBrandId==='kps'?'KPS COFFEE':t("orders")}, sourceVerified: false, session: {user: null, csrf_token: null}, branchId: '', service: 'pickup', location: null, cart: [], quote: null, quoteError: '', quotePending: false, quoteRevision: 0, category: '', product: null, optionValues: [], banners: [], bannerIndex: 0, bannerTimer: null, presentation: null, tickerPaused: false, conversation: null, chatSequence: 0, chatTimer: null, ordersTimer: null, orders: [], nextOrdersOffset: null, activeOrder: null, challenge: null, afterLogin: null, confirmation: null, conversations: [], contactOrders: [], nextConversationOffset: null};
   state.legacyItemMappings={};
   state.channels={guest:{available:false},email:{available:false},sms:{available:false},whatsapp:{available:false}};
   state.cityFilter='';
@@ -13,9 +520,10 @@
   state.bannerRevision=0;
   const pendingKeys = new Map();
   const focusHistory = new WeakMap();
-  const currency = new Intl.NumberFormat('ar-SA', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  const number = new Intl.NumberFormat('ar-SA');
-  const money = (halalas) => `${currency.format(Number(halalas || 0) / 100)} ر.س`;
+  const locale=()=>language==='en'?'en-SA':'ar-SA';
+  const currency = {format:value=>new Intl.NumberFormat(locale(), {minimumFractionDigits:2,maximumFractionDigits:2}).format(value)};
+  const number = {format:value=>new Intl.NumberFormat(locale()).format(value)};
+  const money = (halalas) => t("0_sar",{"0":()=>(currency.format(Number(halalas || 0) / 100))});
   const key = () => globalThis.crypto?.randomUUID?.() || `kps-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const stableKey = (operation, payload) => {
     const signature = `${requestedBrandId}:${state.session.user?.id || 'guest'}:${operation}:${JSON.stringify(payload)}`;
@@ -26,9 +534,9 @@
     return {signature,value:pendingKeys.get(signature),storageKey};
   };
   function releaseKey(idem){pendingKeys.delete(idem.signature);try{sessionStorage.removeItem(idem.storageKey);}catch{}}
-  const node = (tag, cls, content) => { const el = document.createElement(tag); if (cls) el.className = cls; if (content != null) el.textContent = String(content); return el; };
-  const text = (id, content) => { $(id).textContent = content; };
-  const showError = (id, content) => { const el = $(id); el.textContent = content || ''; el.hidden = !content; };
+  const node = (tag, cls, content) => { const el = document.createElement(tag); if (cls) el.className = cls; if (content != null) setText(el,content); return el; };
+  const text = (id, content) => { setText($(id),content); };
+  const showError = (id, content) => { const el = $(id); setText(el,knownMessage(content||'')); el.hidden = !content; };
   const safeImage = (url) => { if(typeof url!=='string'||!url.trim())return ''; try { const parsed = new URL(url, location.origin); return parsed.origin === location.origin && !parsed.pathname.startsWith('/api/admin') ? parsed.pathname + parsed.search : ''; } catch { return ''; } };
   const city = (name) => String(name || '').replace(/\s/g, '').replace('رفحا', 'رفحاء').replace('رفحاءء', 'رفحاء').replace('قبة','قبه');
   const branch = () => state.branches.find((entry) => entry.id === state.branchId);
@@ -36,12 +544,12 @@
   const groups = (product) => product.option_groups || product.settings?.option_groups || [];
   const isMug = (product) => ['kps-30', 'kps-31'].includes(product.source_id || product.id) || groups(product).some((g) => g.code === 'COLOR');
   const isKhaliya = (product) => product.unified_khaliya === true;
-  const cartLineName = (product, options={}) => isKhaliya(product||{}) ? `${product.name} — ${((groups(product).find((g)=>g.code==='TYPE')?.values)||[]).find((v)=>v.code===options.TYPE)?.name||'اختر النوع'}` : product?.name || 'صنف محفوظ';
-  const optionLabel = (product, options) => groups(product).map((g) => { const v = (g.values || []).find((entry) => (entry.code || entry.id) === options[g.code]); return v ? `${g.name}: ${v.name}` : ''; }).filter(Boolean).join(' · ');
-  const serviceName = (value) => ({delivery: 'توصيل', pickup: 'استلام من الفرع', car: 'استلام بالسيارة'}[value] || value);
+  const cartLineName = (product, options={}) => isKhaliya(product||{}) ? `${sourceText(product)} — ${((groups(product).find((g)=>g.code==='TYPE')?.values)||[]).find((v)=>v.code===options.TYPE)?.name||t("choose_a_type")}` : sourceText(product) || t("saved_item");
+  const optionLabel = (product, options) => groups(product).map((g) => { const v = (g.values || []).find((entry) => (entry.code || entry.id) === options[g.code]); return v ? `${groupLabel(g)}: ${sourceText(v)}` : ''; }).filter(Boolean).join(' · ');
+  const serviceName = (value) => ({delivery: t("delivery_2"), pickup: t("branch_pickup"), car: t("car_pickup")}[value] || value);
   const validNeighborhood = value => typeof value==='string'&&!value.includes('\0')&&(value.trim().match(/[\p{L}\p{N}]/gu)||[]).length>=2;
-  const statusName = (value) => ({new:'جديد', pending:'بانتظار المعالجة', accepted:'مقبول', preparing:'قيد التجهيز', ready:'جاهز', handed_over:'تم التسليم', handed_to_driver:'سُلّم للسائق', pending_assignment:'بانتظار الإسناد', assigned:'مسند', collected:'تم التحصيل', unpaid:'لم يُحصّل', paid:'مدفوع', partially_paid:'مدفوع جزئيًا', delivered:'تم التسليم', completed:'مكتمل', cancelled:'ملغي', rejected:'مرفوض', out_for_delivery:'في الطريق', picked_up:'استلم السائق', not_assigned:'غير مسند', unassigned:'غير مسند', refunded:'مسترد', partially_refunded:'مسترد جزئيًا', not_required:'لا ينطبق',not_applicable:'لا ينطبق', pending_acceptance:'بانتظار قبول المهمة', received:'مستلم', awaiting_payment:'بانتظار التحصيل'}[value] || 'قيد المعالجة');
-  const dateTime = (value) => { if (!value) return ''; try { return new Intl.DateTimeFormat('ar-SA', {dateStyle:'short', timeStyle:'short', timeZone:'Asia/Riyadh'}).format(new Date(value)); } catch { return ''; } };
+  const statusName = (value) => ({new:t("new"), pending:t("awaiting_processing"), accepted:t("accepted"), preparing:t("preparing"), ready:t("ready"), handed_over:t("delivered"), handed_to_driver:t("handed_to_driver"), pending_assignment:t("awaiting_assignment"), assigned:t("assigned"), collected:t("collected"), unpaid:t("uncollected"), paid:t("paid"), partially_paid:t("partially_paid"), delivered:t("delivered"), completed:t("completed"), cancelled:t("cancelled"), rejected:t("rejected"), out_for_delivery:t("on_the_way"), picked_up:t("picked_up_by_driver"), not_assigned:t("unassigned"), unassigned:t("unassigned"), refunded:t("refunded"), partially_refunded:t("partially_refunded"), not_required:t("not_applicable"),not_applicable:t("not_applicable"), pending_acceptance:t("awaiting_task_acceptance"), received:t("received"), awaiting_payment:t("awaiting_collection")}[value] || t("processing"));
+  const dateTime = (value) => { if (!value) return ''; try { return new Intl.DateTimeFormat(locale(), {dateStyle:'short', timeStyle:'short', timeZone:'Asia/Riyadh'}).format(new Date(value)); } catch { return ''; } };
   function toast(message) { text('toast', message); $('toast').hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { $('toast').hidden = true; }, 3400); }
   function openDialog(id) { const dialog = $(id); if (dialog.open) return; focusHistory.set(dialog, document.activeElement); dialog.showModal(); }
   function clearConfirmation() { const pending=state.confirmation; state.confirmation=null; if(pending?.cancel)pending.cancel(); }
@@ -52,18 +560,22 @@
     if (method !== 'GET' && method !== 'HEAD') { if (state.session.csrf_token) headers['X-CSRF-Token'] = state.session.csrf_token; headers['Idempotency-Key'] = idempotency || key(); }
     let response;
     try { response = await fetch(path, {method, credentials: 'same-origin', headers, body: data === undefined ? undefined : JSON.stringify(data), signal, cache: 'no-store'}); }
-    catch (cause) { if (cause.name === 'AbortError') throw cause; const error = new Error('تعذر الاتصال بالموقع. تحقق من الإنترنت ثم حاول مجددًا؛ لم نؤكد حفظ هذه العملية.'); error.code = 'NETWORK'; throw error; }
+    catch (cause) { if (cause.name === 'AbortError') throw cause; const error = new Error(t("unable_to_connect_check_your_internet_and_try_again_this_action_h")); error.code = 'NETWORK'; throw error; }
     let body; try { body = await response.json(); } catch { body = {}; }
     if (!response.ok) {
       const detail = body.error || body.detail || body;
-      const error = new Error(typeof detail.message === 'string' ? detail.message : typeof detail === 'string' && /[\u0600-\u06FF]/.test(detail) ? detail : response.status === 401 ? 'انتهت الجلسة. افتح جلسة ضيف جديدة أو ادخل ببريدك الموثق.' : response.status === 429 ? 'محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.' : 'تعذر إتمام العملية. راجع البيانات وحاول مرة أخرى.');
-      error.code = detail.code || body.code || String(response.status); error.status = response.status; error.details = detail;
+      const code=detail?.code||body.code||String(response.status);
+      const fallback=response.status===401?'your_session_expired_start_a_new_guest_session_or_sign_in_with_yo':response.status===429?'too_many_attempts_wait_a_little_and_try_again':'unable_to_complete_this_action_check_your_details_and_try_again';
+      const localized=language==='ar'&&typeof detail?.message==='string'?knownMessage(detail.message):uiStrings['error_'+code]?t('error_'+code):t(fallback);
+      const error = new Error(String(localized));
+      error.localizedMessage=localized;
+      error.code = code; error.status = response.status; error.details = detail;
       if (response.status === 401) { state.session = {user: null, csrf_token: null}; renderAccount(); }
       throw error;
     }
     return body;
   }
-  async function busy(button, fn) { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.setAttribute('aria-busy', 'true'); try { return await fn(); } finally { button.disabled = false; button.removeAttribute('aria-busy'); button.textContent = original; if(button.id==='checkout-button')renderQuote(); } }
+  async function busy(button, fn) { if (button.disabled) return; const original = localizedBindings.get(button)||(button.dataset.i18n?t(button.dataset.i18n):button.textContent); button.disabled = true; button.setAttribute('aria-busy', 'true'); try { return await fn(); } finally { button.disabled = false; button.removeAttribute('aria-busy'); setText(button,original); if(button.id==='checkout-button')renderQuote(); } }
   function persistDraft() { try { localStorage.setItem(basketStorageKey, JSON.stringify({brandId: state.brand.id, cart: state.cart.map(({productId, quantity, options, note, restoredName}) => ({productId, quantity, options, note, restoredName}))})); } catch {} }
   function restoreDraft() {
     try {
@@ -78,7 +590,7 @@
           options:remapped?{...mapping.options}:options,note:typeof item.note==='string'?item.note.slice(0,300):'',
           restoredName:remapped?mapping.original_name:typeof item.restoredName==='string'?item.restoredName.slice(0,100):'',rowId:key()};
       }).filter((item)=>state.products.some((product)=>product.id===item.productId)||state.legacyItemMappings[item.productId]);
-      if(state.cart.some((item)=>item.restoredName))toast('تم ربط أصناف الخلية المحفوظة بأنواعها الأصلية. راجع النوع والكمية في السلة.');
+      if(state.cart.some((item)=>item.restoredName))toast(t("saved_khaliya_items_are_linked_to_their_original_types_review_the"));
     } catch {}
   }
   function syncMobileBasket() {const basket=$('basket'),viewport=window.visualViewport,height=viewport?.height||innerHeight,top=viewport?.offsetTop||0;basket.classList.toggle('basket-scroll-flow',basket.offsetHeight>height-40);const rect=basket.getBoundingClientRect(),visible=rect.bottom>top&&rect.top<top+height;$('mobile-basket').hidden=!state.cart.length||visible;}
@@ -94,40 +606,40 @@
     // Unrecognized old selections remain visible and blocked, never silently discarded or repriced as a different type.
     const value=groups(parent).find((group)=>group.code==='TYPE')?.values?.find((entry)=>entry.code===mapping.options.TYPE);
     return {...parent,id:line.productId,name:mapping.original_name,price_halalas:parent.price_halalas+Number(value?.price_delta_halalas||0),
-      enabled:false,source_verified:false,unified_khaliya:false,option_groups:[],unavailable_reason:'راجع نوع الخلية المحفوظ وأعد اختياره من البطاقة الموحدة.'};
+      enabled:false,source_verified:false,unified_khaliya:false,option_groups:[],unavailable_reason:t("review_the_saved_khaliya_type_and_choose_it_from_the_unified_card")};
   }
   function linePrice(line) { const product = productFor(line); const extra = groups(product || {}).reduce((sum,g) => sum + Number((g.values || []).find((v) => (v.code || v.id) === line.options[g.code])?.price_delta_halalas || 0), 0); return Number(product?.price_halalas || 0) + extra; }
   function draftSubtotal() { return state.cart.reduce((sum, line) => sum + linePrice(line) * line.quantity, 0); }
-  function eligibleForProduct(product, target=branch()) { if (product.enabled === false) return {ok:false, reason:'هذا الصنف غير متاح مؤقتًا.'}; if (restricted(product)) { if (!target) return {ok:false, reason:'حدد فرع التنفيذ للتحقق من الإتاحة في حفر الباطن.'}; if (!product.available_cities.some((c) => city(c) === city(target.city))) return {ok:false, reason:'متوفر في حفر الباطن فقط؛ اختر فرعًا مؤهلًا.'}; } if (state.branchId && product.available === false && product.unavailable_reason && !/تحقق|مهيأ|مصدر|سعر/.test(product.unavailable_reason)) return {ok:false, reason:product.unavailable_reason}; return {ok:true, reason:''}; }
+  function eligibleForProduct(product, target=branch()) { if (product.enabled === false) return {ok:false, reason:t("this_item_is_temporarily_unavailable")}; if (restricted(product)) { if (!target) return {ok:false, reason:t("choose_a_branch_to_check_availability_in_hafar_al_batin")}; if (!product.available_cities.some((c) => city(c) === city(target.city))) return {ok:false, reason:t("available_only_in_hafar_al_batin_choose_an_eligible_branch")}; } if (state.branchId && product.available === false && product.unavailable_reason && !/تحقق|مهيأ|مصدر|سعر/.test(product.unavailable_reason)) return {ok:false, reason:serverReason(product)}; return {ok:true, reason:''}; }
   function catalogReady() { return state.cart.length > 0 && state.cart.every((line) => productFor(line)?.source_verified === true); }
-  function renderAccount() { const user=state.session.user,authenticated=Boolean(user&&state.session.csrf_token);text('account-button',user?(user.role==='customer'?'حسابي':'حساب التشغيل'):'اطلب كضيف');$('account-other-brand').hidden=!user||user.brand_id===requestedBrandId;$('account-profile').hidden=!authenticated;$('guest-form').hidden=authenticated||!state.channels.guest?.available;$('email-login-button').hidden=authenticated||!state.channels.email?.available;$('email-request-form').hidden=true;$('otp-request-form').hidden=authenticated||!(state.channels.sms?.available||state.channels.whatsapp?.available);$('otp-verify-form').hidden=true;$('otp-unavailable').hidden=true;$('link-email-button').hidden=!authenticated||user.role!=='customer'||user.identity_kind!=='guest'||!state.channels.email?.available;if(user){text('profile-label',user.display_name||'تم تسجيل الدخول');text('identity-label',user.identity_kind==='guest'?'ضيف — رقم الاتصال غير موثق':user.email_verified_at?'البريد موثق · توثيق الجوال مستقل':'حالة التحقق حسب القناة');if(user.brand_id===requestedBrandId){if(!$('customer-name').value)$('customer-name').value=user.display_name||'';if(!$('customer-phone').value)$('customer-phone').value=user.phone||'';}}$('guest-name').value=$('customer-name').value;$('guest-phone').value=$('customer-phone').value; }
-  async function establishIdentity(result) {if(!result.user||!result.csrf_token)throw new Error('لم يؤكد الخادم إنشاء جلسة آمنة.');state.session=result;renderAccount();closeDialog('account-dialog');if(result.user.role!=='customer'){location.assign('/ops.html');return;}queueQuote();const callback=state.afterLogin;state.afterLogin=null;if(callback)await callback();}
-  async function requestGuest(event){event.preventDefault();await busy($('guest-submit'),async()=>{try{const data={display_name:$('guest-name').value.trim(),phone:$('guest-phone').value.trim(),brand_id:requestedBrandId};if($('guest-email').value.trim())data.email=$('guest-email').value.trim();await establishIdentity(await api('/api/identity/guest',{method:'POST',data}));toast('تم فتح جلسة ضيف آمنة.');}catch(error){showError('account-error',error.message);}});}
-  async function requestEmail(event){event.preventDefault();await busy($('email-request-submit'),async()=>{try{await api('/api/identity/email/request',{method:'POST',data:{email:$('login-email').value.trim(),brand_id:requestedBrandId,purpose:state.session.user?.identity_kind==='guest'?'customer_link':'email_login'}});text('email-request-state','إذا كان البريد مؤهلًا، سيصلك رابط آمن صالح لمرة واحدة. قبول الطلب لا يؤكد وصول البريد.');}catch(error){showError('account-error',error.message);}});}
-  async function verifyEmailLink(){const fragment=new URLSearchParams(location.hash.slice(1));if(!fragment.has('identity_challenge')||!fragment.has('identity_token'))return;history.replaceState(null,'',location.pathname+location.search);state.emailLink={challenge_id:fragment.get('identity_challenge'),token:fragment.get('identity_token')};try{const result=await api('/api/identity/email/verify',{method:'POST',data:state.emailLink});state.emailLink=null;await establishIdentity(result);toast('تم التحقق من البريد.');}catch(error){showError('account-error',error.message);if(error.code==='STAFF_PROFILE_REQUIRED'){$('guest-form').hidden=true;$('email-login-button').hidden=true;$('identity-onboarding-form').hidden=false;}$('account-title').textContent='التحقق من البريد';openDialog('account-dialog');}}
+  function renderAccount() { const user=state.session.user,authenticated=Boolean(user&&state.session.csrf_token);text('account-button',user?(user.role==='customer'?t("my_account"):t("staff_account")):t("order_as_a_guest"));$('account-other-brand').hidden=!user||user.brand_id===requestedBrandId;$('account-profile').hidden=!authenticated;$('guest-form').hidden=authenticated||!state.channels.guest?.available;$('email-login-button').hidden=authenticated||!state.channels.email?.available;$('email-request-form').hidden=true;$('otp-request-form').hidden=authenticated||!(state.channels.sms?.available||state.channels.whatsapp?.available);$('otp-verify-form').hidden=true;$('otp-unavailable').hidden=true;$('link-email-button').hidden=!authenticated||user.role!=='customer'||user.identity_kind!=='guest'||!state.channels.email?.available;if(user){text('profile-label',user.display_name||t("signed_in"));text('identity-label',user.identity_kind==='guest'?t("guest_unverified_contact_number"):user.email_verified_at?t("email_verified_phone_verification_is_separate"):t("verification_depends_on_the_channel"));if(user.brand_id===requestedBrandId){if(!$('customer-name').value)$('customer-name').value=user.display_name||'';if(!$('customer-phone').value)$('customer-phone').value=user.phone||'';}}$('guest-name').value=$('customer-name').value;$('guest-phone').value=$('customer-phone').value; }
+  async function establishIdentity(result) {if(!result.user||!result.csrf_token)throw new Error(t("the_server_did_not_confirm_a_secure_session"));state.session=result;renderAccount();closeDialog('account-dialog');if(result.user.role!=='customer'){location.assign('/ops.html');return;}queueQuote();const callback=state.afterLogin;state.afterLogin=null;if(callback)await callback();}
+  async function requestGuest(event){event.preventDefault();await busy($('guest-submit'),async()=>{try{const data={display_name:$('guest-name').value.trim(),phone:$('guest-phone').value.trim(),brand_id:requestedBrandId};if($('guest-email').value.trim())data.email=$('guest-email').value.trim();await establishIdentity(await api('/api/identity/guest',{method:'POST',data}));toast(t("a_secure_guest_session_has_been_created"));}catch(error){showError('account-error',errorMessage(error));}});}
+  async function requestEmail(event){event.preventDefault();await busy($('email-request-submit'),async()=>{try{await api('/api/identity/email/request',{method:'POST',data:{email:$('login-email').value.trim(),brand_id:requestedBrandId,purpose:state.session.user?.identity_kind==='guest'?'customer_link':'email_login'}});text('email-request-state',t("if_this_email_is_eligible_you_will_receive_a_secure_single_use_li"));}catch(error){showError('account-error',errorMessage(error));}});}
+  async function verifyEmailLink(){const fragment=new URLSearchParams(location.hash.slice(1));if(!fragment.has('identity_challenge')||!fragment.has('identity_token'))return;history.replaceState(null,'',location.pathname+location.search);state.emailLink={challenge_id:fragment.get('identity_challenge'),token:fragment.get('identity_token')};try{const result=await api('/api/identity/email/verify',{method:'POST',data:state.emailLink});state.emailLink=null;await establishIdentity(result);toast(t("email_verified"));}catch(error){showError('account-error',errorMessage(error));if(error.code==='STAFF_PROFILE_REQUIRED'){$('guest-form').hidden=true;$('email-login-button').hidden=true;$('identity-onboarding-form').hidden=false;}text('account-title',t("email_verification"));openDialog('account-dialog');}}
   function directionsLink(b){if(!b)return '';const raw=b.directions_url;if(typeof raw!=='string')return '';try{const u=new URL(raw);return u.protocol==='https:'&&['www.google.com','google.com','maps.google.com','maps.app.goo.gl','goo.gl'].includes(u.hostname)?u.href:'';}catch{return '';}}
-  function showImage(product){const url=safeImage(product?.image_url);if(!url){toast('الصورة غير متاحة حاليًا.');return;}$('image-full').src=url;$('image-full').alt=product.name;text('image-title',product.name);openDialog('image-dialog');}
+  function showImage(product){const url=safeImage(product?.image_url);if(!url){toast(t("the_photo_is_currently_unavailable"));return;}$('image-full').src=url;$('image-full').alt=sourceText(product);text('image-title',sourceText(product));openDialog('image-dialog');}
   function renderBranches() {
     const cities=new Map();
     for(const b of state.branches)if(b.city&&!cities.has(city(b.city)))cities.set(city(b.city),b.city);
     const citySelect=$('city-select');
-    citySelect.replaceChildren(new Option('كل المدن',''));
+    citySelect.replaceChildren(new Option(t("all_cities"),''));
     for(const [value,label] of cities)citySelect.append(new Option(label,value));
     citySelect.value=state.cityFilter;
     const select=$('branch-select');
-    select.replaceChildren(new Option('اختر الفرع',''));
+    select.replaceChildren(new Option(t("choose_a_branch"),''));
     for(const b of state.branches){
       // An existing choice remains visible when the city filter changes.
       if(state.cityFilter&&city(b.city)!==state.cityFilter&&b.id!==state.branchId)continue;
       const service=b.services?.[state.service];
-      const status=service?.available===false?` — غير متاح: ${service.reason||'الخدمة متوقفة'}`:'';
-      const current=state.cityFilter&&city(b.city)!==state.cityFilter?' — اختيارك الحالي':'';
-      select.append(new Option(`${b.branch_no} · ${b.name} · ${b.city}${status}${current}`,b.id));
+      const status=service?.available===false?t("unavailable_0",{"0":()=>(serverReason(service,'service_paused',b.delivery_schedule))}):'';
+      const current=state.cityFilter&&city(b.city)!==state.cityFilter?t("your_current_selection"):'';
+      select.append(new Option(`${b.branch_no} · ${sourceText(b)} · ${b.city}${status}${current}`,b.id));
     }
     select.value=state.branchId;
     text('branch-picker-hint',state.branchId&&state.cityFilter&&city(branch()?.city)!==state.cityFilter?
-      'اختيارك الحالي في مدينة أخرى؛ لن يتغير حتى تختار فرعًا بنفسك.':
-      'يمكنك اختيار المدينة والفرع دون تفعيل الموقع. الفروع غير المؤهلة ظاهرة للاطلاع ولا يمكن تأكيد طلب فيها.');
+      t("your_current_branch_is_in_another_city_it_stays_selected_until_yo"):
+      t("choose_a_city_and_branch_without_location_access_ineligible_branc"));
   }
   function renderNearestBranches() {
     const nearest=state.nearest,panel=$('nearest-panel'),list=$('nearest-branches'),excluded=$('nearest-excluded-list');
@@ -135,33 +647,33 @@
     list.replaceChildren();excluded.replaceChildren();
     $('nearest-excluded').hidden=true;
     if(panel.hidden)return;
-    if(nearest.pending){text('nearest-state','جاري التحقق من الفروع والموقع والخدمة وأصناف السلة…');panel.setAttribute('aria-busy','true');return;}
+    if(nearest.pending){text('nearest-state',t("checking_branches_location_service_and_basket_items"));panel.setAttribute('aria-busy','true');return;}
     panel.removeAttribute('aria-busy');
-    if(nearest.error){text('nearest-state',`${nearest.error} يمكنك اختيار المدينة والفرع يدويًا.`);return;}
+    if(nearest.error){text('nearest-state',t("0_you_can_choose_a_city_and_branch_manually",{"0":()=>(nearest.error)}));return;}
     const eligible=nearest.branches.filter(b=>!state.cityFilter||city(b.city)===state.cityFilter);
     text('nearest-state',eligible.length?
-      `${nearest.distanceLabel||'مسافة جغرافية تقريبية؛ ليست مسافة الطريق.'} الترتيب حسب ${serviceName(state.service)} وأصناف السلة.`:
-      `لا توجد فروع مؤهلة موثقة الموقع لهذا الاختيار${state.cityFilter?' في المدينة المحددة':''}. يمكنك مراجعة المدينة والخدمة أو اختيار الفرع يدويًا للاطلاع.`);
+      t("0_ranked_for_1_and_basket_items",{"0":()=>((language==='ar'?nearest.distanceLabel:'')||t("approximate_geographic_distance_not_road_distance")),"1":()=>(serviceName(state.service))}):
+      t("no_verified_eligible_branches_for_this_selection_0_review_your_ci",{"0":()=>(state.cityFilter?t("in_the_selected_city"):'')}));
     for(const b of eligible){
       const card=node('article','nearest-branch-card');
       card.dataset.branchId=b.id;
       const content=node('div');
-      content.append(node('h3','',`${b.branch_no} · ${b.name}`),node('p','small muted',b.city));
+      content.append(node('h3','',`${b.branch_no} · ${sourceText(b)}`),node('p','small muted',b.city));
       const meters=Number(b.direct_distance_meters);
       if(Number.isFinite(meters)&&meters>=0){
-        const distance=meters>=1000?`${new Intl.NumberFormat('ar-SA',{maximumFractionDigits:1}).format(meters/1000)} كم`:`${number.format(Math.round(meters))} م`;
-        content.append(node('p','branch-distance',`${distance} · مسافة جغرافية تقريبية`));
+        const distance=meters>=1000?t("0_km",{"0":()=>(new Intl.NumberFormat(locale(),{maximumFractionDigits:1}).format(meters/1000))}):t("0_m",{"0":()=>(number.format(Math.round(meters)))});
+        content.append(node('p','branch-distance',t("0_approximate_geographic_distance",{"0":()=>(distance)})));
       }
       card.append(content);
-      const choose=node('button',`button ${b.id===state.branchId?'secondary':'primary'}`,b.id===state.branchId?'الفرع المختار':'اختيار هذا الفرع');
+      const choose=node('button',`button ${b.id===state.branchId?'secondary':'primary'}`,b.id===state.branchId?t("selected_branch"):t("choose_this_branch"));
       choose.type='button';choose.dataset.branchId=b.id;choose.setAttribute('aria-pressed',String(b.id===state.branchId));
       choose.addEventListener('click',()=>changeBranch(b.id));card.append(choose);list.append(card);
     }
     const excludedBranches=nearest.excluded.filter(b=>!state.cityFilter||city(b.city)===state.cityFilter);
     if(excludedBranches.length){
       $('nearest-excluded').hidden=false;
-      text('nearest-excluded-title',`فروع غير مؤهلة للاختيار الحالي (${number.format(excludedBranches.length)})`);
-      for(const b of excludedBranches)excluded.append(node('li','small',`${b.branch_no} · ${b.name}: ${b.reason||'الخدمة أو الموقع غير معتمد.'}`));
+      text('nearest-excluded-title',t("branches_ineligible_for_this_selection_0",{"0":()=>(number.format(excludedBranches.length))}));
+      for(const b of excludedBranches)excluded.append(node('li','small',`${b.branch_no} · ${sourceText(b)}: ${serverReason(b,'service_or_location_is_not_verified',b.delivery_schedule)}`));
     }
   }
   function queueNearestBranches() {
@@ -190,7 +702,7 @@
         if(existing){if(row.services)existing.services=row.services;if(row.delivery_schedule)existing.delivery_schedule=row.delivery_schedule;existing.directions_url=row.directions_url||null;existing.location_verified=row.location_verified===true;}
       }
       renderBranches();renderService();
-    }catch(error){if(revision===nearest.revision&&error.name!=='AbortError')nearest.error=error.message;}
+    }catch(error){if(revision===nearest.revision&&error.name!=='AbortError')nearest.error=errorMessage(error);}
     finally{if(revision===nearest.revision){nearest.pending=false;nearest.controller=null;renderNearestBranches();}}
   }
   function renderService(){
@@ -208,7 +720,7 @@
     // A delivery-only branch must never leave a hidden pickup option selected.
     state.service=(visible.find(input=>input.value==='delivery')||visible[0]).value;
   }
-  text('branch-summary',selected?`${selected.branch_no} · ${selected.name}`:'حدد الفرع للتحقق من الإتاحة');
+  text('branch-summary',selected?`${selected.branch_no} · ${sourceText(selected)}`:t("choose_a_branch_to_check_availability"));
   $('location-fields').hidden=state.service!=='delivery';
   $('neighborhood').required=state.service==='delivery';
   $('neighborhood').setAttribute('aria-required',String(state.service==='delivery'));
@@ -226,12 +738,12 @@
   const service=selected?.services?.[state.service];
   const none=visible.length===0;
   text('service-notice',none?
-    (selected?'جميع خدمات الطلبات الجديدة موقوفة لهذا الفرع. اختر فرعًا آخر.':'جميع خدمات الطلبات الجديدة متوقفة حاليًا.'):
+    (selected?t("new_orders_are_paused_at_this_branch_choose_another_branch"):t("new_orders_are_currently_paused_for_all_services")):
     selected?
       service?.available?
-        `الخدمة متاحة حسب نطاق الفرع وإعداداته الحالية.${state.service==='delivery'?' سيُتحقق من تغطية موقعك عند مراجعة الطلب.':''}`:
-        service?.reason||'هذه الخدمة لم تُفعّل للفرع بعد.':
-      'اختر الفرع. إتاحة كل خدمة تُحدد بصورة مستقلة.');
+        t("service_is_available_under_the_current_branch_settings_0",{"0":()=>(state.service==='delivery'?t("your_delivery_coverage_will_be_checked_when_reviewing_the_order"):'')}):
+        serverReason(service,'this_service_has_not_been_enabled_at_this_branch',selected?.delivery_schedule):
+      t("choose_a_branch_each_service_is_available_independently"));
   $('service-notice').classList.toggle('status',none||service?.available===false);
   if(switched){
     renderBranches();
@@ -239,91 +751,91 @@
     queueQuote();
   }
 }
-  function renderCategories() { const tabs = $('categories'); tabs.replaceChildren(); const categories = [...new Set(state.products.map((p) => p.category).filter(Boolean))]; for (const category of ['', ...categories]) { const button = node('button','category-tab',category || 'كل المنيو'); button.type='button'; button.setAttribute('aria-current', String(state.category === category)); button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); }); tabs.append(button); } }
-  function renderProducts() { const search = $('search').value.trim().toLocaleLowerCase('ar'); const products = state.products.filter((p) => (!state.category || p.category === state.category) && (!search || `${p.name} ${p.category} ${groups(p).flatMap((g)=>(g.values||[]).map((v)=>v.name)).join(' ')}`.toLocaleLowerCase('ar').includes(search))); const container = $('products'); container.replaceChildren(); text('menu-count', `${number.format(state.products.length)} صنفًا${requestedBrandId==='kps'?' · الصور والخيارات من منيو KPS':` · ${state.brand.name}`}`); if (!products.length) { const empty=node('div','empty-state'); empty.append(node('h3','', state.products.length?'لا توجد أصناف مطابقة':'لم تُضف أصناف لهذا البراند بعد.'),node('p','', state.products.length?'جرّب كلمة أخرى أو قسمًا مختلفًا.':'ستظهر هنا الأصناف التي تعتمدها إدارة البراند.')); container.append(empty); return; }
-    for (const product of products) { const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',`تفاصيل ${product.name}`); const imageUrl=safeImage(product.image_url); if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=product.name;if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading='lazy'; img.decoding='async'; img.addEventListener('error', () => { img.remove(); imageButton.append(node('span','image-fallback','الصورة غير متاحة حاليًا')); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback','لا توجد صورة للصنف')); imageButton.addEventListener('click',()=>openProduct(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',product.name); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if (restricted(product)) info.append(node('span','pill warning','متوفر في حفر الباطن فقط')); if (groups(product).length) info.append(node('span','pill',isMug(product)?'ألوان لكل كوب':'خيارات لكل وحدة')); const bottom=node('div','product-card-bottom'); bottom.append(node('span','money',money(product.price_halalas))); const add=node('button','product-add-button','＋'); add.type='button'; add.setAttribute('aria-label',`إضافة ${product.name} إلى السلة`); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || 'اختر العدد والخيارات'; add.addEventListener('click',()=>openProduct(product)); bottom.append(add); info.append(bottom); if(imageUrl){const zoom=node('button','image-zoom-button','تكبير الصورة');zoom.type='button';zoom.setAttribute('aria-label',`تكبير صورة ${product.name}`);zoom.addEventListener('click',()=>showImage(product));info.append(zoom);}card.append(imageButton,info); container.append(card); }
+  function renderCategories() { const tabs = $('categories'); tabs.replaceChildren(); const categories = [...new Set(state.products.map((p) => p.category).filter(Boolean))]; for (const category of ['', ...categories]) { const button = node('button','category-tab',(category?sourceText(state.products.find(p=>p.category===category),'category'):t("full_menu"))); button.type='button'; button.setAttribute('aria-current', String(state.category === category)); button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); }); tabs.append(button); } }
+  function renderProducts() { const search = $('search').value.trim().toLocaleLowerCase(language); const products = state.products.filter((p) => (!state.category || p.category === state.category) && (!search || `${p.name||''} ${sourceText(p)} ${p.category} ${p.category_en||''} ${groups(p).flatMap((g)=>(g.values||[]).map((v)=>sourceText(v))).join(' ')}`.toLocaleLowerCase(language).includes(search))); const container = $('products'); container.replaceChildren(); text('menu-count', t("0_items_1",{"0":()=>(number.format(state.products.length)),"1":()=>(requestedBrandId==='kps'?t("images_and_options_from_the_kps_menu"):` · ${sourceText(state.brand)}`)})); if (!products.length) { const empty=node('div','empty-state'); empty.append(node('h3','', state.products.length?t("no_matching_items"):t("no_items_have_been_added_for_this_brand_yet")),node('p','', state.products.length?t("try_another_search_or_category"):t("items_approved_by_the_brand_will_appear_here"))); container.append(empty); return; }
+    for (const product of products) { const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',t("details_of_0",{"0":()=>(sourceText(product))})); const imageUrl=safeImage(product.image_url); if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=sourceText(product);if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading='lazy'; img.decoding='async'; img.addEventListener('error', () => { img.remove(); imageButton.append(node('span','image-fallback',t("photo_currently_unavailable"))); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback',t("no_product_photo"))); imageButton.addEventListener('click',()=>openProduct(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',sourceText(product)); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if (restricted(product)) info.append(node('span','pill warning',t("available_only_in_hafar_al_batin"))); if (groups(product).length) info.append(node('span','pill',isMug(product)?t("a_color_for_each_mug"):t("options_for_each_unit"))); const bottom=node('div','product-card-bottom'); bottom.append(node('span','money',money(product.price_halalas))); const add=node('button','product-add-button','＋'); add.type='button'; add.setAttribute('aria-label',t("add_0_to_basket",{"0":()=>(sourceText(product))})); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || t("choose_quantity_and_options"); add.addEventListener('click',()=>openProduct(product)); bottom.append(add); info.append(bottom); if(imageUrl){const zoom=node('button','image-zoom-button',t("enlarge_photo"));zoom.type='button';zoom.setAttribute('aria-label',t("enlarge_photo_of_0",{"0":()=>(sourceText(product))}));zoom.addEventListener('click',()=>showImage(product));info.append(zoom);}card.append(imageButton,info); container.append(card); }
   }
-  function renderCart() { const container=$('cart-lines'); container.replaceChildren(); const count=state.cart.reduce((sum,line)=>sum+line.quantity,0); text('header-count',number.format(count)); text('basket-count',`${number.format(count)} أصناف`); text('mobile-basket-count',`سلتك · ${number.format(count)} أصناف`); text('mobile-basket-total',money(state.quote?.total_halalas ?? draftSubtotal())); $('basket-details').hidden=!count;syncMobileBasket();
-    if (!count) { const empty=node('div','empty-state'); empty.append(node('span','empty-symbol','＋'),node('h3','','ابدأ باختيارك المفضل'),node('p','','الأصناف التي تضيفها ستظهر هنا.')); container.append(empty); }
-    for (const line of state.cart) { const product=productFor(line); const row=node('div','cart-line'); const title=node('div','cart-line-title'); title.append(node('span','',cartLineName(product,line.options)),node('span','money',money(linePrice(line)*line.quantity))); row.append(title); const label=optionLabel(product || {},line.options); if(label&&!isKhaliya(product||{})) row.append(node('small','',label)); if(line.restoredName)row.append(node('small','',`صنف محفوظ سابقًا: ${line.restoredName} · النوع والكمية محفوظان`)); if(line.note) row.append(node('small','',`ملاحظة: ${line.note}`)); const eligible=eligibleForProduct(product || {}); if(!eligible.ok) row.append(node('small','status error',eligible.reason)); const controls=node('div','cart-line-controls'); const stepper=node('div','stepper'); const minus=node('button','','−'); minus.type='button'; minus.setAttribute('aria-label',`تقليل كمية ${product?.name}`); minus.addEventListener('click',()=>updateQuantity(line.rowId,-1)); const plus=node('button','','＋'); plus.type='button'; plus.disabled=line.quantity>=30; plus.setAttribute('aria-label',`زيادة كمية ${product?.name}`); plus.addEventListener('click',()=>updateQuantity(line.rowId,1)); stepper.append(minus,node('span','',number.format(line.quantity)),plus); const remove=node('button','remove-line','حذف'); remove.type='button'; remove.setAttribute('aria-label',`حذف ${product?.name}${label?' '+label:''}`); remove.addEventListener('click',()=>{state.cart=state.cart.filter((item)=>item.rowId!==line.rowId); cartChanged();}); controls.append(stepper,remove); row.append(controls); container.append(row); }
+  function renderCart() { const container=$('cart-lines'); container.replaceChildren(); const count=state.cart.reduce((sum,line)=>sum+line.quantity,0); text('header-count',number.format(count)); text('basket-count',t("0_items_2",{"0":()=>(number.format(count))})); text('mobile-basket-count',t("your_basket_0_items",{"0":()=>(number.format(count))})); text('mobile-basket-total',money(state.quote?.total_halalas ?? draftSubtotal())); $('basket-details').hidden=!count;syncMobileBasket();
+    if (!count) { const empty=node('div','empty-state'); empty.append(node('span','empty-symbol','＋'),node('h3','',t("start_with_your_favorite")),node('p','',t("items_you_add_will_appear_here"))); container.append(empty); }
+    for (const line of state.cart) { const product=productFor(line); const row=node('div','cart-line'); const title=node('div','cart-line-title'); title.append(node('span','',cartLineName(product,line.options)),node('span','money',money(linePrice(line)*line.quantity))); row.append(title); const label=optionLabel(product || {},line.options); if(label&&!isKhaliya(product||{})) row.append(node('small','',label)); if(line.restoredName)row.append(node('small','',t("previously_saved_item_0_type_and_quantity_retained",{"0":()=>(line.restoredName)}))); if(line.note) row.append(node('small','',t("note_0",{"0":()=>(line.note)}))); const eligible=eligibleForProduct(product || {}); if(!eligible.ok) row.append(node('small','status error',eligible.reason)); const controls=node('div','cart-line-controls'); const stepper=node('div','stepper'); const minus=node('button','','−'); minus.type='button'; minus.setAttribute('aria-label',t("decrease_quantity_of_0",{"0":()=>(sourceText(product))})); minus.addEventListener('click',()=>updateQuantity(line.rowId,-1)); const plus=node('button','','＋'); plus.type='button'; plus.disabled=line.quantity>=30; plus.setAttribute('aria-label',t("increase_quantity_of_0",{"0":()=>(sourceText(product))})); plus.addEventListener('click',()=>updateQuantity(line.rowId,1)); stepper.append(minus,node('span','',number.format(line.quantity)),plus); const remove=node('button','remove-line',t("remove")); remove.type='button'; remove.setAttribute('aria-label',t("remove_0_1",{"0":()=>(sourceText(product)),"1":()=>(label?' '+label:'')})); remove.addEventListener('click',()=>{state.cart=state.cart.filter((item)=>item.rowId!==line.rowId); cartChanged();}); controls.append(stepper,remove); row.append(controls); container.append(row); }
     renderQuote();
   }
-  function renderQuote() { const summary=$('quote-summary'); summary.replaceChildren(); const row=(label,amount,cls='')=>{const entry=node('div',`quote-row ${cls}`); entry.append(node('span','',label),node('span','money',money(amount))); summary.append(entry);}; row('المنتجات',state.quote?.subtotal_halalas ?? draftSubtotal()); if(state.quote) {row('رسوم التوصيل',state.quote.delivery_fee_halalas || 0); if(Number.isInteger(state.quote.discount_halalas)&&state.quote.discount_halalas>0) row('الخصم',-state.quote.discount_halalas); row('المبلغ المستحق',state.quote.total_halalas,'grand');} else {row('إجمالي المنتجات المبدئي',draftSubtotal(),'grand');summary.append(node('p','small muted',state.quotePending?'جاري التحقق من الإتاحة والمبلغ…':'الرسوم والمبلغ النهائي يظهران بعد تحقق الفرع والخدمة.'));} showError('basket-error',state.quoteError); $('checkout-button').disabled=!state.cart.length||state.quotePending||!state.quote||!catalogReady(); text('checkout-button',state.quotePending?'جاري التحقق…':!state.cart.length?'أضف أصنافًا للسلة':!catalogReady()?'راجع الأصناف غير المعتمدة في السلة':'مراجعة وتأكيد الطلب'); }
+  function renderQuote() { const summary=$('quote-summary'); summary.replaceChildren(); const row=(label,amount,cls='')=>{const entry=node('div',`quote-row ${cls}`); entry.append(node('span','',label),node('span','money',money(amount))); summary.append(entry);}; row(t("items"),state.quote?.subtotal_halalas ?? draftSubtotal()); if(state.quote) {row(t("delivery_fee"),state.quote.delivery_fee_halalas || 0); if(Number.isInteger(state.quote.discount_halalas)&&state.quote.discount_halalas>0) row(t("discount"),-state.quote.discount_halalas); row(t("amount_due"),state.quote.total_halalas,'grand');} else {row(t("estimated_item_total"),draftSubtotal(),'grand');summary.append(node('p','small muted',state.quotePending?t("checking_availability_and_amount"):t("fees_and_the_final_amount_appear_after_branch_and_service_checks")));} showError('basket-error',state.quoteError); $('checkout-button').disabled=!state.cart.length||state.quotePending||!state.quote||!catalogReady(); text('checkout-button',state.quotePending?t("checking"):!state.cart.length?t("add_items_to_your_basket"):!catalogReady()?t("review_unapproved_items_in_your_basket"):t("review_and_confirm_order")); }
   function updateQuantity(id,delta) { const row=state.cart.find((line)=>line.rowId===id); if(!row) return; if(row.quantity+delta<1) state.cart=state.cart.filter((line)=>line.rowId!==id); else row.quantity=Math.min(30,row.quantity+delta); cartChanged(); }
   function cartChanged() { state.quote=null; persistDraft(); renderCart(); queueQuote(); queueNearestBranches(); }
   function orderBody(cart=state.cart,branchId=state.branchId) { const customer={name:$('customer-name').value.trim() || state.session.user?.display_name || ''};const contactPhone=$('customer-phone').value.trim()||state.session.user?.phone;if(contactPhone)customer.phone=contactPhone; if(state.service==='delivery') {if(state.location) customer.location=state.location; customer.address=$('address').value.trim();customer.neighborhood=$('neighborhood').value.trim();} if(state.service==='car') customer.car={model:$('car-model').value.trim(),color:$('car-color').value.trim(),plate:$('car-plate').value.trim()}; return {brand_id:state.brand.id||'kps',branch_id:branchId,service:state.service,payment_method:document.querySelector('input[name=payment]:checked')?.value||'cash',items:cart.map((line)=>({product_id:line.productId,quantity:line.quantity,...(groups(productFor(line)||{}).length?{units:Array.from({length:line.quantity},()=>({options:line.options}))}:{}),note:line.note||''})),customer,notes:$('order-notes').value.trim()}; }
-  function queueQuote() { clearTimeout(queueQuote.timer); state.quote=null; state.quoteError=''; state.quotePending=false; state.quoteRevision++; renderQuote(); if(!state.cart.length) return; if(!$('customer-name').value.trim()&&!state.session.user?.display_name) {state.quoteError='أدخل اسم المستلم لمراجعة الطلب.';renderQuote();return;} if(!state.branchId) {state.quoteError='حدد الفرع للتحقق من طلبك.';renderQuote();return;} if(state.service==='delivery'&&!state.location) {state.quoteError='حدد موقع التوصيل للتحقق من التغطية والرسوم.';renderQuote();return;} if(state.service==='delivery'&&!$('address').value.trim()){state.quoteError='أدخل وصف عنوان التوصيل.';renderQuote();return;} if(state.service==='delivery'&&!validNeighborhood($('neighborhood').value)){state.quoteError='أدخل اسم حي التوصيل بصورة واضحة.';renderQuote();return;} if(state.service==='car'&&(!$('car-plate').value.trim()||!$('car-color').value.trim())){state.quoteError='أدخل لون السيارة ورقم اللوحة.';renderQuote();return;} queueQuote.timer=setTimeout(()=>refreshQuote(),350); }
-  async function refreshQuote() { const revision=++state.quoteRevision; state.quotePending=true; state.quoteError=''; renderQuote(); try {const payload=orderBody();delete payload.notes;const result=await api('/api/quote',{method:'POST',data:payload}); if(revision!==state.quoteRevision) return; state.quote=result.quote; if(!state.quote || !Number.isInteger(state.quote.total_halalas)) throw new Error('تعذر التحقق من المبلغ النهائي. حاول مرة أخرى.');} catch(error) {if(revision!==state.quoteRevision)return;state.quote=null;state.quoteError=error.message;} finally {if(revision===state.quoteRevision){state.quotePending=false;renderQuote();}} }
-  function openProduct(product) { state.product=product; state.optionValues=[{}]; $('product-qty').value='1'; text('product-title',product.name); text('product-price',money(product.price_halalas)); const image=safeImage(product.image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=product.name;$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!product.description; text('product-description',product.description||''); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason); text('product-add','إضافة للسلة'); $('product-notes').value=''; showError('product-error',''); renderOptions(); openDialog('product-dialog'); }
-  function renderOptions() { const product=state.product; if(!product)return; const quantity=Math.max(1,Math.min(30,Math.floor(Number($('product-qty').value)||1))); $('product-qty').value=String(quantity); while(state.optionValues.length<quantity)state.optionValues.push({}); state.optionValues.length=quantity; const optionGroups=groups(product); const container=$('product-options');container.replaceChildren(); $('product-option-hint').hidden=!optionGroups.length; text('product-option-hint',isMug(product)?'اختر العدد ثم حدد اللون لكل كوب قبل الإضافة.':isKhaliya(product)?'اختر النوع لكل وحدة: كلاسيك أو بيكان.':optionGroups.length?'اختر العدد ثم حدد النكهة لكل وحدة قبل الإضافة.':''); $('apply-first-option').hidden=optionGroups.length===0||quantity<2; text('apply-first-option',isMug(product)?'تطبيق لون الكوب الأول على الكل':isKhaliya(product)?'تطبيق نوع الوحدة الأولى على الكل':'تطبيق نكهة الوحدة الأولى على الكل'); for(let index=0;index<quantity&&optionGroups.length;index++){const unit=node('div','option-unit');unit.append(node('h3','',`${isMug(product)?'الكوب':'الوحدة'} ${number.format(index+1)}`));for(const group of optionGroups){const label=node('label','field',group.name);const select=node('select');select.setAttribute('aria-label',`${group.name} ${number.format(index+1)}`); select.append(new Option(isKhaliya(product)?'اختر النوع':`اختر ${isMug(product)?'اللون':group.name}`,''));for(const value of group.values||[])select.append(new Option(value.name,value.code||value.id));select.value=state.optionValues[index][group.code]||'';select.required=group.required!==false;select.addEventListener('change',()=>{state.optionValues[index][group.code]=select.value;showError('product-error','');});label.append(select);unit.append(label);}container.append(unit);} $('product-minus').disabled=quantity<=1;$('product-plus').disabled=quantity>=30; }
-  async function addProduct() { const product=state.product;const eligibility=eligibleForProduct(product);if(!eligibility.ok){showError('product-error',eligibility.reason);return;}const quantity=Number($('product-qty').value);if(state.cart.reduce((sum,line)=>sum+line.quantity,0)+quantity>100){showError('product-error','الحد الأقصى مئة وحدة في السلة.');return;}if(state.branchId){try{const result=await api(`/api/products/${encodeURIComponent(product.id)}/availability?branch_id=${encodeURIComponent(state.branchId)}`);if(result.available!==true){showError('product-error',result.reason||'الصنف غير متاح في هذا الفرع.');return;}}catch(error){showError('product-error',error.message);return;}}const optionGroups=groups(product);for(let index=0;index<quantity;index++)for(const group of optionGroups){const selected=state.optionValues[index]?.[group.code];if(group.required!==false&&!(group.values||[]).some((v)=>(v.code||v.id)===selected)){showError('product-error',`${isMug(product)?'حدد اللون للكوب':isKhaliya(product)?'حدد النوع للوحدة':'حدد النكهة للوحدة'} ${number.format(index+1)} قبل الإضافة.`);$('product-options').querySelectorAll('.option-unit')[index]?.querySelector('select')?.focus();return;}}const note=$('product-notes').value.trim();const proposed=state.cart.map((line)=>({...line}));for(let index=0;index<quantity;index++){const options=optionGroups.length?{...state.optionValues[index]}:{};const signature=JSON.stringify(options);const current=proposed.find((line)=>line.productId===product.id&&JSON.stringify(line.options)===signature&&line.note===note);if(current&&current.quantity<30)current.quantity++;else proposed.push({productId:product.id,quantity:1,options,note,rowId:key()});} if(catalogReady()&&state.branchId&&($('customer-name').value.trim()||state.session.user?.display_name)&&(state.service!=='delivery'||state.location&&$('address').value.trim()&&validNeighborhood($('neighborhood').value))&&(state.service!=='car'||$('car-color').value.trim()&&$('car-plate').value.trim())){try{const payload=orderBody(proposed);delete payload.notes;await api('/api/quote',{method:'POST',data:payload});}catch(error){showError('product-error',error.message);return;}}state.cart=proposed;cartChanged();closeDialog('product-dialog');toast(`أضيف ${product.name} إلى السلة`); }
+  function queueQuote() { clearTimeout(queueQuote.timer); state.quote=null; state.quoteError=''; state.quotePending=false; state.quoteRevision++; renderQuote(); if(!state.cart.length) return; if(!$('customer-name').value.trim()&&!state.session.user?.display_name) {state.quoteError=t("enter_the_recipient_s_name_to_review_your_order");renderQuote();return;} if(!state.branchId) {state.quoteError=t("choose_a_branch_to_check_your_order");renderQuote();return;} if(state.service==='delivery'&&!state.location) {state.quoteError=t("set_your_delivery_location_to_check_coverage_and_fees");renderQuote();return;} if(state.service==='delivery'&&!$('address').value.trim()){state.quoteError=t("enter_your_delivery_address_description");renderQuote();return;} if(state.service==='delivery'&&!validNeighborhood($('neighborhood').value)){state.quoteError=t("enter_a_clear_delivery_neighborhood_name");renderQuote();return;} if(state.service==='car'&&(!$('car-plate').value.trim()||!$('car-color').value.trim())){state.quoteError=t("enter_your_car_color_and_plate_number");renderQuote();return;} queueQuote.timer=setTimeout(()=>refreshQuote(),350); }
+  async function refreshQuote() { const revision=++state.quoteRevision; state.quotePending=true; state.quoteError=''; renderQuote(); try {const payload=orderBody();delete payload.notes;const result=await api('/api/quote',{method:'POST',data:payload}); if(revision!==state.quoteRevision) return; state.quote=result.quote; if(!state.quote || !Number.isInteger(state.quote.total_halalas)) throw new Error(t("unable_to_verify_the_final_amount_try_again"));} catch(error) {if(revision!==state.quoteRevision)return;state.quote=null;state.quoteError=errorMessage(error);} finally {if(revision===state.quoteRevision){state.quotePending=false;renderQuote();}} }
+  function openProduct(product) { state.product=product; state.optionValues=[{}]; $('product-qty').value='1'; text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(product.image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!sourceText(product,'description'); text('product-description',sourceText(product,'description')||''); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason); text('product-add',t("add_to_basket")); $('product-notes').value=''; showError('product-error',''); renderOptions(); openDialog('product-dialog'); }
+  function renderOptions() { const product=state.product; if(!product)return; const quantity=Math.max(1,Math.min(30,Math.floor(Number($('product-qty').value)||1))); $('product-qty').value=String(quantity); while(state.optionValues.length<quantity)state.optionValues.push({}); state.optionValues.length=quantity; const optionGroups=groups(product); const container=$('product-options');container.replaceChildren(); $('product-option-hint').hidden=!optionGroups.length; text('product-option-hint',isMug(product)?t("choose_the_quantity_then_a_color_for_each_mug"):isKhaliya(product)?t("choose_a_type_for_each_unit_classic_or_pecan"):optionGroups.length?t("choose_the_quantity_then_a_flavor_for_each_unit"):''); $('apply-first-option').hidden=optionGroups.length===0||quantity<2; text('apply-first-option',isMug(product)?t("use_the_first_mug_s_color_for_all"):isKhaliya(product)?t("use_the_first_unit_s_type_for_all"):t("use_the_first_unit_s_flavor_for_all")); for(let index=0;index<quantity&&optionGroups.length;index++){const unit=node('div','option-unit');unit.append(node('h3','',`${isMug(product)?t("mug"):t("unit")} ${number.format(index+1)}`));for(const group of optionGroups){const label=node('label','field',groupLabel(group));const select=node('select');select.setAttribute('aria-label',`${groupLabel(group)} ${number.format(index+1)}`); select.append(new Option(isKhaliya(product)?t("choose_a_type"):t("choose_0",{"0":()=>(isMug(product)?t("color"):groupLabel(group))}),''));for(const value of group.values||[]){const available=value.enabled!==false&&value.available!==false;const option=new Option(String(sourceText(value))+(available?'':String(t('unavailable_option'))),value.code||value.id);option.disabled=!available;select.append(option);}select.value=state.optionValues[index][group.code]||'';select.required=group.required!==false;select.addEventListener('change',()=>{state.optionValues[index][group.code]=select.value;showError('product-error','');});label.append(select);unit.append(label);}container.append(unit);} $('product-minus').disabled=quantity<=1;$('product-plus').disabled=quantity>=30; }
+  async function addProduct() { const product=state.product;const eligibility=eligibleForProduct(product);if(!eligibility.ok){showError('product-error',eligibility.reason);return;}const quantity=Number($('product-qty').value);if(state.cart.reduce((sum,line)=>sum+line.quantity,0)+quantity>100){showError('product-error',t("your_basket_can_contain_up_to_100_units"));return;}if(state.branchId){try{const result=await api(`/api/products/${encodeURIComponent(product.id)}/availability?branch_id=${encodeURIComponent(state.branchId)}`);if(result.available!==true){showError('product-error',serverReason(result,'this_item_is_unavailable_at_this_branch'));return;}}catch(error){showError('product-error',errorMessage(error));return;}}const optionGroups=groups(product);for(let index=0;index<quantity;index++)for(const group of optionGroups){const selected=state.optionValues[index]?.[group.code];if(group.required!==false&&!(group.values||[]).some((v)=>(v.code||v.id)===selected&&v.enabled!==false&&v.available!==false)){showError('product-error',t("0_1_before_adding",{"0":()=>(isMug(product)?t("choose_a_color_for_mug"):isKhaliya(product)?t("choose_a_type_for_unit"):t("choose_a_flavor_for_unit")),"1":()=>(number.format(index+1))}));$('product-options').querySelectorAll('.option-unit')[index]?.querySelector('select')?.focus();return;}}const note=$('product-notes').value.trim();const proposed=state.cart.map((line)=>({...line}));for(let index=0;index<quantity;index++){const options=optionGroups.length?{...state.optionValues[index]}:{};const signature=JSON.stringify(options);const current=proposed.find((line)=>line.productId===product.id&&JSON.stringify(line.options)===signature&&line.note===note);if(current&&current.quantity<30)current.quantity++;else proposed.push({productId:product.id,quantity:1,options,note,rowId:key()});} if(catalogReady()&&state.branchId&&($('customer-name').value.trim()||state.session.user?.display_name)&&(state.service!=='delivery'||state.location&&$('address').value.trim()&&validNeighborhood($('neighborhood').value))&&(state.service!=='car'||$('car-color').value.trim()&&$('car-plate').value.trim())){try{const payload=orderBody(proposed);delete payload.notes;await api('/api/quote',{method:'POST',data:payload});}catch(error){showError('product-error',errorMessage(error));return;}}state.cart=proposed;cartChanged();closeDialog('product-dialog');toast(t("added_0_to_basket",{"0":()=>(sourceText(product))})); }
   function confirmAction({title, content, label, action, cancel}) { state.confirmation={action,cancel}; text('confirm-title',title);$('confirm-content').replaceChildren(content);showError('confirm-error','');text('confirm-submit',label);$('confirm-submit').disabled=false;openDialog('confirm-dialog'); }
-  function changeBranch(newId) { if(newId===state.branchId)return;const previous=state.branchId;const target=state.branches.find((b)=>b.id===newId);const invalid=state.cart.filter((line)=>{const p=productFor(line);return restricted(p||{})&&(!target||!p.available_cities.some((c)=>city(c)===city(target.city)));});if(invalid.length){const content=node('div');content.append(node('p','','تغيير الفرع سيجعل هذه الأصناف غير متاحة. لن نحذفها دون موافقتك:'));const list=node('ul');invalid.forEach((line)=>list.append(node('li','',`${productFor(line)?.name} × ${number.format(line.quantity)}`)));content.append(list,node('p','small muted','يمكنك إغلاق هذه النافذة للاحتفاظ بالفرع والسلة الحاليين.'));$('branch-select').value=previous;confirmAction({title:'مراجعة تغيير الفرع',content,label:'حذف الأصناف غير المتاحة وتغيير الفرع',action:async()=>{const ids=new Set(invalid.map((i)=>i.rowId));state.cart=state.cart.filter((line)=>!ids.has(line.rowId));state.branchId=newId;renderBranches();renderService();renderProducts();cartChanged();loadBranchCatalog();loadBanners();closeDialog('confirm-dialog');}});return;}state.branchId=newId;renderBranches();renderService();renderNearestBranches();renderProducts();queueQuote();loadBranchCatalog();loadBanners(); }
-  async function beginCheckout() { if(state.session.user&&state.session.user.brand_id!==requestedBrandId){requireCustomer(beginCheckout);return;}if(!catalogReady()){showError('basket-error','راجع الصنف الذي تغير سعره أو خياراته في السلة قبل تأكيد الطلب.');return;}if(!state.session.user){state.afterLogin=beginCheckout;renderAccount();showError('account-error','');openDialog('account-dialog');return;}if(state.session.user.role!=='customer'){showError('basket-error','يلزم دخول عميل أو جلسة ضيف لتأكيد الطلب. حساب فريق التشغيل مخصص للتشغيل.');return;}if(!state.session.csrf_token){state.afterLogin=beginCheckout;showError('account-error','يلزم تجديد الدخول للتحقق الآمن.');openDialog('account-dialog');return;}await refreshQuote();if(!state.quote)return;const payload=orderBody();const quoted=state.quote;const content=node('div');content.append(node('h3','',branch()?.name||''),node('p','muted',`${serviceName(state.service)} · ${payload.payment_method==='cash'?'كاش':'شبكة عند الاستلام'}`));const list=node('ul','order-items');state.cart.forEach((line)=>{const p=productFor(line);const li=node('li','',`${cartLineName(p,line.options)} × ${number.format(line.quantity)}${optionLabel(p||{},line.options)?' · '+optionLabel(p||{},line.options):''}`);list.append(li);});content.append(list);if(state.service==='delivery')content.append(node('p','small',payload.customer.address||'الموقع المحدد للتوصيل'));if(state.service==='car')content.append(node('p','small',`${payload.customer.car.model} · ${payload.customer.car.color} · ${payload.customer.car.plate}`));const total=node('div','quote-row grand');total.append(node('strong','','المبلغ المستحق'),node('strong','money',money(quoted.total_halalas)));content.append(total,node('p','small muted','سيُحفظ طلب واحد بعد تأكيد الخادم. التحصيل يتم عند الاستلام.'));payload.expected_total_halalas=quoted.total_halalas;const idem=stableKey('create-order',payload);confirmAction({title:'مراجعة الطلب',content,label:'تأكيد الطلب',action:async()=>{const result=await api('/api/orders',{method:'POST',data:payload,idempotency:idem.value});if(!result.order?.id)throw new Error('لم يؤكد الخادم حفظ الطلب. راجع طلباتي قبل إعادة المحاولة.');state.cart=[];state.quote=null;persistDraft();renderCart();queueNearestBranches();releaseKey(idem);closeDialog('confirm-dialog');toast('تم حفظ طلبك. يمكنك متابعة حالته ومحادثته.');await openOrders(result.order.id);}}); }
-  async function requestOTP(event) { event.preventDefault();showError('account-error','');const payload={phone:$('phone').value.trim(),brand_id:state.brand.id||'kps'};await busy($('send-otp'),async()=>{try{const result=await api('/api/auth/otp/request',{method:'POST',data:payload});if(!result.challenge_id)throw new Error('لم يؤكد مزود التحقق إرسال الرمز.');state.challenge=result.challenge_id;$('otp-request-form').hidden=true;$('otp-verify-form').hidden=false;$('otp-unavailable').hidden=true;const masked=payload.phone.slice(-4);text('otp-info',`أُرسل رمز التحقق إلى الرقم المنتهي بـ${masked}${result.channel==='whatsapp'?' عبر واتساب':' عبر الرسائل النصية'}.`);$('otp-code').value='';$('otp-code').focus();}catch(error){showError('account-error',error.message);$('otp-unavailable').hidden=error.code!=='OTP_PROVIDER_UNAVAILABLE';}}); }
-  async function verifyOTP(event) { event.preventDefault();showError('account-error','');await busy($('verify-otp'),async()=>{try{const result=await api('/api/auth/otp/verify',{method:'POST',data:{challenge_id:state.challenge,code:$('otp-code').value.trim(),display_name:$('customer-name').value.trim()}});if(!result.user||!result.csrf_token)throw new Error('لم تُنشأ جلسة دخول آمنة. حاول مجددًا.');state.session=result;state.challenge=null;renderAccount();closeDialog('account-dialog');toast('تم التحقق من جوالك');const callback=state.afterLogin;state.afterLogin=null;if(callback)await callback();}catch(error){showError('account-error',error.message);}}); }
-  async function openOrders(orderId) { if(state.session.user&&state.session.user.brand_id!==requestedBrandId){requireCustomer(()=>openOrders(orderId));return;}if(!state.session.user){state.afterLogin=()=>openOrders(orderId);renderAccount();showError('account-error','');openDialog('account-dialog');return;}if(state.session.user.role!=='customer'){toast('طلبات العملاء متاحة لحساب العميل. لوحة فريق التشغيل من رابط أسفل الصفحة.');return;}openDialog('orders-dialog');showError('orders-error','');$('order-detail').hidden=true;$('orders-list').hidden=false;$('orders-list').replaceChildren(node('div','empty-state','جاري تحميل طلباتك…'));try{const result=await api('/api/orders?limit=30');state.orders=result.orders||[];state.nextOrdersOffset=result.next_offset;renderOrders(state.orders);scheduleOrdersPoll();if(orderId)await showOrder(orderId);}catch(error){showError('orders-error',error.message);$('orders-list').replaceChildren();} }
-  function orderBranchLabel(order) { const saved=order.snapshot||{};const current=state.branches.find((b)=>b.id===order.branch_id);const no=saved.branch_no||order.branch_no||current?.branch_no;return `${no?`${no} · `:''}${saved.branch_name||order.branch_name||current?.name||'فرع التنفيذ'}`; }
+  function changeBranch(newId) { if(newId===state.branchId)return;const previous=state.branchId;const target=state.branches.find((b)=>b.id===newId);const invalid=state.cart.filter((line)=>{const p=productFor(line);return restricted(p||{})&&(!target||!p.available_cities.some((c)=>city(c)===city(target.city)));});if(invalid.length){const content=node('div');content.append(node('p','',t("changing_branches_will_make_these_items_unavailable_we_will_not_r")));const list=node('ul');invalid.forEach((line)=>list.append(node('li','',`${productFor(line)?.name} × ${number.format(line.quantity)}`)));content.append(list,node('p','small muted',t("close_this_window_to_keep_your_current_branch_and_basket")));$('branch-select').value=previous;confirmAction({title:t("review_branch_change"),content,label:t("remove_unavailable_items_and_change_branch"),action:async()=>{const ids=new Set(invalid.map((i)=>i.rowId));state.cart=state.cart.filter((line)=>!ids.has(line.rowId));state.branchId=newId;renderBranches();renderService();renderProducts();cartChanged();loadBranchCatalog();loadBanners();closeDialog('confirm-dialog');}});return;}state.branchId=newId;renderBranches();renderService();renderNearestBranches();renderProducts();queueQuote();loadBranchCatalog();loadBanners(); }
+  async function beginCheckout() { if(state.session.user&&state.session.user.brand_id!==requestedBrandId){requireCustomer(beginCheckout);return;}if(!catalogReady()){showError('basket-error',t("review_items_whose_prices_or_options_have_changed_before_confirmi"));return;}if(!state.session.user){state.afterLogin=beginCheckout;renderAccount();showError('account-error','');openDialog('account-dialog');return;}if(state.session.user.role!=='customer'){showError('basket-error',t("a_customer_or_guest_session_is_required_to_confirm_an_order_staff"));return;}if(!state.session.csrf_token){state.afterLogin=beginCheckout;showError('account-error',t("sign_in_again_for_secure_verification"));openDialog('account-dialog');return;}await refreshQuote();if(!state.quote)return;const payload=orderBody();const quoted=state.quote;const content=node('div');content.append(node('h3','',branch()?.name||''),node('p','muted',t('service_payment_summary',{service:()=>serviceName(state.service),payment:()=>payload.payment_method==='cash'?t('cash'):t('card_on_arrival')})));const list=node('ul','order-items');state.cart.forEach((line)=>{const p=productFor(line);const li=node('li','',`${cartLineName(p,line.options)} × ${number.format(line.quantity)}${optionLabel(p||{},line.options)?' · '+optionLabel(p||{},line.options):''}`);list.append(li);});content.append(list);if(state.service==='delivery')content.append(node('p','small',payload.customer.address||t("selected_delivery_location")));if(state.service==='car')content.append(node('p','small',`${payload.customer.car.model} · ${payload.customer.car.color} · ${payload.customer.car.plate}`));const total=node('div','quote-row grand');total.append(node('strong','',t("amount_due")),node('strong','money',money(quoted.total_halalas)));content.append(total,node('p','small muted',t("one_order_will_be_saved_after_server_confirmation_payment_is_coll")));payload.expected_total_halalas=quoted.total_halalas;const idem=stableKey('create-order',payload);confirmAction({title:t("review_order"),content,label:t("confirm_order"),action:async()=>{const result=await api('/api/orders',{method:'POST',data:payload,idempotency:idem.value});if(!result.order?.id)throw new Error(t("the_server_did_not_confirm_your_order_check_my_orders_before_retr"));state.cart=[];state.quote=null;persistDraft();renderCart();queueNearestBranches();releaseKey(idem);closeDialog('confirm-dialog');toast(t("your_order_is_saved_you_can_follow_its_status_and_conversation"));await openOrders(result.order.id);}}); }
+  async function requestOTP(event) { event.preventDefault();showError('account-error','');const payload={phone:$('phone').value.trim(),brand_id:state.brand.id||'kps'};await busy($('send-otp'),async()=>{try{const result=await api('/api/auth/otp/request',{method:'POST',data:payload});if(!result.challenge_id)throw new Error(t("the_verification_provider_did_not_confirm_sending_the_code"));state.challenge=result.challenge_id;$('otp-request-form').hidden=true;$('otp-verify-form').hidden=false;$('otp-unavailable').hidden=true;const masked=payload.phone.slice(-4);text('otp-info',t("a_verification_code_was_sent_to_the_number_ending_in_0_1",{"0":()=>(masked),"1":()=>(result.channel==='whatsapp'?t("via_whatsapp"):t("via_sms"))}));$('otp-code').value='';$('otp-code').focus();}catch(error){showError('account-error',errorMessage(error));$('otp-unavailable').hidden=error.code!=='OTP_PROVIDER_UNAVAILABLE';}}); }
+  async function verifyOTP(event) { event.preventDefault();showError('account-error','');await busy($('verify-otp'),async()=>{try{const result=await api('/api/auth/otp/verify',{method:'POST',data:{challenge_id:state.challenge,code:$('otp-code').value.trim(),display_name:$('customer-name').value.trim()}});if(!result.user||!result.csrf_token)throw new Error(t("a_secure_session_was_not_created_try_again"));state.session=result;state.challenge=null;renderAccount();closeDialog('account-dialog');toast(t("phone_verified"));const callback=state.afterLogin;state.afterLogin=null;if(callback)await callback();}catch(error){showError('account-error',errorMessage(error));}}); }
+  async function openOrders(orderId) { if(state.session.user&&state.session.user.brand_id!==requestedBrandId){requireCustomer(()=>openOrders(orderId));return;}if(!state.session.user){state.afterLogin=()=>openOrders(orderId);renderAccount();showError('account-error','');openDialog('account-dialog');return;}if(state.session.user.role!=='customer'){toast(t("customer_orders_are_available_to_customer_accounts_staff_access_i"));return;}openDialog('orders-dialog');showError('orders-error','');$('order-detail').hidden=true;$('orders-list').hidden=false;$('orders-list').replaceChildren(node('div','empty-state',t("loading_your_orders")));try{const result=await api('/api/orders?limit=30');state.orders=result.orders||[];state.nextOrdersOffset=result.next_offset;renderOrders(state.orders);scheduleOrdersPoll();if(orderId)await showOrder(orderId);}catch(error){showError('orders-error',errorMessage(error));$('orders-list').replaceChildren();} }
+  function orderBranchLabel(order) { const saved=order.snapshot||{};const current=state.branches.find((b)=>b.id===order.branch_id);const no=saved.branch_no||order.branch_no||current?.branch_no;return `${no?`${no} · `:''}${saved.branch_name||order.branch_name||current?.name||t("fulfillment_branch")}`; }
   function conversationOrderLabel(conversation) { const order=state.orders.find((o)=>o.id===conversation.order_id)||state.contactOrders.find((o)=>o.id===conversation.order_id);return conversation.order_no||order?.order_no||order?.number||conversation.order_id; }
-  function renderOrders(orders) { const container=$('orders-list');container.replaceChildren();if(!orders.length){container.append(node('div','empty-state','لا توجد طلبات محفوظة في حسابك حتى الآن.'));return;}for(const order of orders){const card=node('article','order-card');card.append(node('h3','',`طلب ${order.number||order.order_no||order.id}`));const summary=node('div','row wrap');summary.append(node('span','pill',serviceName(order.service)),node('span','pill',statusName(order.status||order.preparation_status)),node('strong','money',money(order.total_halalas||order.snapshot?.total_halalas)));card.append(summary,node('p','small',orderBranchLabel(order)),node('p','small muted',dateTime(order.created_at)));const button=node('button','button secondary','عرض الطلب ومحادثته');button.type='button';button.addEventListener('click',()=>showOrder(order.id));card.append(button);container.append(card);} if(state.nextOrdersOffset!=null){const more=node('button','button secondary full','تحميل طلبات أقدم');more.type='button';more.addEventListener('click',()=>busy(more,async()=>{try{const result=await api(`/api/orders?limit=30&offset=${state.nextOrdersOffset}`);state.orders.push(...(result.orders||[]).filter((o)=>!state.orders.some((existing)=>existing.id===o.id)));state.nextOrdersOffset=result.next_offset;renderOrders(state.orders);}catch(error){showError('orders-error',error.message);}}));container.append(more);} }
-  function scheduleOrdersPoll(){clearTimeout(state.ordersTimer);if(!$('orders-dialog').open)return;state.ordersTimer=setTimeout(async()=>{if(!$('orders-dialog').open)return;try{if(!document.hidden){const scroll=$('orders-dialog').querySelector('.dialog-scroll').scrollTop;if(state.activeOrder)await showOrder(state.activeOrder.id,true);else{const result=await api('/api/orders?limit=30');const recent=result.orders||[];const older=state.orders.filter((order)=>!recent.some((r)=>r.id===order.id));state.orders=[...recent,...older];renderOrders(state.orders);}$('orders-dialog').querySelector('.dialog-scroll').scrollTop=scroll;}}catch(error){showError('orders-error',error.message);}finally{scheduleOrdersPoll();}},8000);}
-  async function showOrder(id,quiet=false) { showError('orders-error','');try{const result=await api(`/api/orders/${encodeURIComponent(id)}`);state.activeOrder=result.order;renderOrderDetail(result.order,result.events||[]);if(!quiet){$('orders-list').hidden=true;$('order-detail').hidden=false;}}catch(error){showError('orders-error',error.message);} }
-  function renderOrderDetail(order,events) { if(!order)return;const container=$('order-detail');container.replaceChildren();const back=node('button','button quiet','العودة إلى طلباتي');back.type='button';back.addEventListener('click',()=>{state.activeOrder=null;openOrders();});container.append(back,node('h3','',`طلب ${order.number||order.order_no||order.id}`),node('p','small muted',dateTime(order.created_at)));const statuses=node('div','order-status-grid');[['التجهيز',order.preparation_status],['التوصيل',order.delivery_status||order.fulfillment_status],['الإسناد',order.assignment_status],['الدفع',order.payment_status]].forEach(([label,value])=>{const status=node('div');status.append(node('span','',label),node('b','',statusName(value)));statuses.append(status);});container.append(statuses);const snapshot=order.snapshot||{};const orderBranch=state.branches.find((b)=>b.id===order.branch_id);container.append(node('p','small',`${orderBranchLabel(order)} · ${serviceName(order.service)}`));const list=node('ul','order-items');for(const item of order.items||snapshot.items||[]){const line=node('li');line.append(node('strong','',`${item.name||item.product_name||'صنف'} × ${number.format(item.quantity||item.qty||1)}`));if(item.note)line.append(node('p','small muted',item.note));for(const unit of item.units||[]){const label=unit.option_label||unit.options_label||Object.values(unit.option_snapshot||{}).map((g)=>`${g.name}: ${(g.choices||[]).map((v)=>v.name).join('، ')}`).join(' · ');if(label)line.append(node('p','small muted',label));}list.append(line);}container.append(list);if(snapshot.notes)container.append(node('p','small muted',`ملاحظات الطلب: ${snapshot.notes}`));const total=node('div','quote-row grand');total.append(node('strong','','مبلغ الطلب المحفوظ'),node('strong','money',money(order.total_halalas??snapshot.total_halalas)));container.append(total);const actions=node('div','row wrap');const chat=node('button','button primary','محادثة الطلب');chat.type='button';chat.addEventListener('click',()=>openChat(order));actions.append(chat);if(order.service==='car'&&!['completed','delivered','cancelled','rejected'].includes(order.status||order.preparation_status)&&!order.arrival_at){const arrived=node('button','button secondary','وصلت إلى الفرع');arrived.type='button';arrived.addEventListener('click',()=>busy(arrived,async()=>{try{const payload={version:order.version};const idem=stableKey(`arrival-${order.id}`,payload);await api(`/api/orders/${encodeURIComponent(order.id)}/arrival`,{method:'POST',data:payload,idempotency:idem.value});releaseKey(idem);toast('تم حفظ إشعار وصولك للفرع.');await showOrder(order.id,true);}catch(error){showError('orders-error',error.message);}}));actions.append(arrived);}container.append(actions);if(events.length){const details=node('details');details.append(node('summary','','سجل حالة الطلب'));const history=node('ul','order-items');events.forEach((event)=>history.append(node('li','small',`${dateTime(event.created_at)} · ${event.message||event.label||statusName(event.status||String(event.event_type||'').split('.').at(-1))}`)));details.append(history);container.append(details);} }
+  function renderOrders(orders) { const container=$('orders-list');container.replaceChildren();if(!orders.length){container.append(node('div','empty-state',t("no_orders_saved_in_your_account_yet")));return;}for(const order of orders){const card=node('article','order-card');card.append(node('h3','',t("order_0",{"0":()=>(order.number||order.order_no||order.id)})));const summary=node('div','row wrap');summary.append(node('span','pill',serviceName(order.service)),node('span','pill',statusName(order.status||order.preparation_status)),node('strong','money',money(order.total_halalas||order.snapshot?.total_halalas)));card.append(summary,node('p','small',orderBranchLabel(order)),node('p','small muted',dateTime(order.created_at)));const button=node('button','button secondary',t("view_order_and_conversation"));button.type='button';button.addEventListener('click',()=>showOrder(order.id));card.append(button);container.append(card);} if(state.nextOrdersOffset!=null){const more=node('button','button secondary full',t("load_older_orders"));more.type='button';more.addEventListener('click',()=>busy(more,async()=>{try{const result=await api(`/api/orders?limit=30&offset=${state.nextOrdersOffset}`);state.orders.push(...(result.orders||[]).filter((o)=>!state.orders.some((existing)=>existing.id===o.id)));state.nextOrdersOffset=result.next_offset;renderOrders(state.orders);}catch(error){showError('orders-error',errorMessage(error));}}));container.append(more);} }
+  function scheduleOrdersPoll(){clearTimeout(state.ordersTimer);if(!$('orders-dialog').open)return;state.ordersTimer=setTimeout(async()=>{if(!$('orders-dialog').open)return;try{if(!document.hidden){const scroll=$('orders-dialog').querySelector('.dialog-scroll').scrollTop;if(state.activeOrder)await showOrder(state.activeOrder.id,true);else{const result=await api('/api/orders?limit=30');const recent=result.orders||[];const older=state.orders.filter((order)=>!recent.some((r)=>r.id===order.id));state.orders=[...recent,...older];renderOrders(state.orders);}$('orders-dialog').querySelector('.dialog-scroll').scrollTop=scroll;}}catch(error){showError('orders-error',errorMessage(error));}finally{scheduleOrdersPoll();}},8000);}
+  async function showOrder(id,quiet=false) { showError('orders-error','');try{const result=await api(`/api/orders/${encodeURIComponent(id)}`);state.activeOrder=result.order;state.activeOrderEvents=result.events||[];renderOrderDetail(result.order,state.activeOrderEvents);if(!quiet){$('orders-list').hidden=true;$('order-detail').hidden=false;}}catch(error){showError('orders-error',errorMessage(error));} }
+  function renderOrderDetail(order,events) { if(!order)return;const container=$('order-detail');container.replaceChildren();const back=node('button','button quiet',t("back_to_my_orders"));back.type='button';back.addEventListener('click',()=>{state.activeOrder=null;openOrders();});container.append(back,node('h3','',t("order_0",{"0":()=>(order.number||order.order_no||order.id)})),node('p','small muted',dateTime(order.created_at)));const statuses=node('div','order-status-grid');[[t("preparation"),order.preparation_status],[t("delivery"),order.delivery_status||order.fulfillment_status],[t("assignment"),order.assignment_status],[t("payment"),order.payment_status]].forEach(([label,value])=>{const status=node('div');status.append(node('span','',label),node('b','',statusName(value)));statuses.append(status);});container.append(statuses);const snapshot=order.snapshot||{};const orderBranch=state.branches.find((b)=>b.id===order.branch_id);container.append(node('p','small',`${orderBranchLabel(order)} · ${serviceName(order.service)}`));const list=node('ul','order-items');for(const item of order.items||snapshot.items||[]){const line=node('li');line.append(node('strong','',`${item.name||item.product_name||t("item")} × ${number.format(item.quantity||item.qty||1)}`));if(item.note)line.append(node('p','small muted',item.note));for(const unit of item.units||[]){const label=unit.option_label||unit.options_label||Object.values(unit.option_snapshot||{}).map((g)=>`${groupLabel(g)}: ${(g.choices||[]).map((v)=>sourceText(v)).join(t("separator"))}`).join(' · ');if(label)line.append(node('p','small muted',label));}list.append(line);}container.append(list);if(snapshot.notes)container.append(node('p','small muted',t("order_notes_0",{"0":()=>(snapshot.notes)})));const total=node('div','quote-row grand');total.append(node('strong','',t("saved_order_amount")),node('strong','money',money(order.total_halalas??snapshot.total_halalas)));container.append(total);const actions=node('div','row wrap');const chat=node('button','button primary',t("order_conversation"));chat.type='button';chat.addEventListener('click',()=>openChat(order));actions.append(chat);if(order.service==='car'&&!['completed','delivered','cancelled','rejected'].includes(order.status||order.preparation_status)&&!order.arrival_at){const arrived=node('button','button secondary',t("i_have_arrived_at_the_branch"));arrived.type='button';arrived.addEventListener('click',()=>busy(arrived,async()=>{try{const payload={version:order.version};const idem=stableKey(`arrival-${order.id}`,payload);await api(`/api/orders/${encodeURIComponent(order.id)}/arrival`,{method:'POST',data:payload,idempotency:idem.value});releaseKey(idem);toast(t("your_arrival_notification_has_been_saved"));await showOrder(order.id,true);}catch(error){showError('orders-error',errorMessage(error));}}));actions.append(arrived);}container.append(actions);if(events.length){const details=node('details');details.append(node('summary','',t("order_status_history")));const history=node('ul','order-items');events.forEach((event)=>history.append(node('li','small',`${dateTime(event.created_at)} · ${event.message||event.label||statusName(event.status||String(event.event_type||'').split('.').at(-1))}`)));details.append(history);container.append(details);} }
   function requireCustomer(callback) {
     if(!state.session.user||!state.session.csrf_token){state.afterLogin=callback;renderAccount();showError('account-error','');openDialog('account-dialog');return false;}
-    if(state.session.user.brand_id!==requestedBrandId){state.afterLogin=callback;renderAccount();showError('account-error','الدخول الحالي خاص ببراند آخر. سجل الخروج للدخول إلى هذا البراند.');openDialog('account-dialog');return false;}
-    if(state.session.user.role!=='customer'){toast('التواصل هنا متاح لجلسة الضيف أو حساب العميل. دخول فريق التشغيل من الرابط أسفل الصفحة.');return false;}
+    if(state.session.user.brand_id!==requestedBrandId){state.afterLogin=callback;renderAccount();showError('account-error',t("your_session_belongs_to_another_brand_sign_out_before_signing_in_"));openDialog('account-dialog');return false;}
+    if(state.session.user.role!=='customer'){toast(t("guest_and_customer_conversations_are_available_here_staff_access_"));return false;}
     return true;
   }
   async function openContacts() {
     if(!requireCustomer(openContacts))return;
     closeDialog('chat-dialog');closeDialog('orders-dialog');openDialog('contacts-dialog');showError('contacts-error','');
-    $('contacts-list').replaceChildren(node('div','empty-state','جاري تحميل محادثاتك…'));
-    const select=$('contact-branch');select.replaceChildren(new Option('اختر الفرع',''));state.branches.forEach((b)=>select.append(new Option(`${b.branch_no} · ${b.name}`,b.id)));select.value=state.branchId;
-    $('contact-service').value=state.service;$('contact-order').replaceChildren(new Option('محادثة دون طلب',''));updateContactContext();
+    $('contacts-list').replaceChildren(node('div','empty-state',t("loading_your_conversations")));
+    const select=$('contact-branch');select.replaceChildren(new Option(t("choose_a_branch"),''));state.branches.forEach((b)=>select.append(new Option(`${b.branch_no} · ${sourceText(b)}`,b.id)));select.value=state.branchId;
+    $('contact-service').value=state.service;$('contact-order').replaceChildren(new Option(t("conversation_without_an_order"),''));updateContactContext();
     const results=await Promise.allSettled([api('/api/conversations'),api('/api/orders?limit=30')]);
     if(!$('contacts-dialog').open)return;
     if(results[0].status==='fulfilled'){state.conversations=results[0].value.conversations||[];state.nextConversationOffset=state.conversations.length===50?50:null;renderContacts();}
-    else{$('contacts-list').replaceChildren(node('p','small muted','تعذر تحميل المحادثات المحفوظة.'));showError('contacts-error',results[0].reason.message);}
-    if(results[1].status==='fulfilled'){state.contactOrders=results[1].value.orders||[];state.contactOrders.forEach((order)=>$('contact-order').append(new Option(`طلب ${order.number||order.order_no||order.id} · ${serviceName(order.service)}`,order.id)));}
-    else{state.contactOrders=[];showError('contacts-error',results[1].reason.message);}
+    else{$('contacts-list').replaceChildren(node('p','small muted',t("unable_to_load_saved_conversations")));showError('contacts-error',errorMessage(results[0].reason));}
+    if(results[1].status==='fulfilled'){state.contactOrders=results[1].value.orders||[];state.contactOrders.forEach((order)=>$('contact-order').append(new Option(t("order_0_1",{"0":()=>(order.number||order.order_no||order.id),"1":()=>(serviceName(order.service))}),order.id)));}
+    else{state.contactOrders=[];showError('contacts-error',errorMessage(results[1].reason));}
   }
   function renderContacts() {
     const list=$('contacts-list');list.replaceChildren();
-    if(!state.conversations.length)list.append(node('p','small muted','لا توجد محادثات محفوظة في حسابك حتى الآن.'));
-    state.conversations.forEach((conversation)=>{const card=node('article','order-card');const label=conversation.order_id?`محادثة طلب ${conversationOrderLabel(conversation)}`:'محادثة دون طلب';card.append(node('h3','',label),node('p','small muted',`${conversation.branch_name||state.branches.find((b)=>b.id===conversation.branch_id)?.name||'الفرع المختص'} · ${serviceName(conversation.service||conversation.context_service||'')}`));const summary=node('div','row wrap');summary.append(node('span','pill',({open:'مفتوحة',in_progress:'قيد المعالجة',resolved:'تمت المعالجة'}[conversation.status]||'مفتوحة')));if(conversation.unread_count>0)summary.append(node('span','pill warning',`${number.format(conversation.unread_count)} رسائل جديدة`));card.append(summary);const button=node('button','button secondary','فتح المحادثة');button.type='button';button.dataset.conversationId=conversation.id;button.addEventListener('click',()=>showConversation(conversation));card.append(button);list.append(card);});
-    if(state.nextConversationOffset!==null){const more=node('button','button secondary full','تحميل محادثات أقدم');more.type='button';more.addEventListener('click',()=>busy(more,async()=>{try{const result=await api(`/api/conversations?offset=${state.nextConversationOffset}`);const rows=result.conversations||[];state.conversations.push(...rows.filter((row)=>!state.conversations.some((entry)=>entry.id===row.id)));state.nextConversationOffset=rows.length===50?state.nextConversationOffset+50:null;renderContacts();}catch(error){showError('contacts-error',error.message);}}));list.append(more);}
+    if(!state.conversations.length)list.append(node('p','small muted',t("no_conversations_saved_in_your_account_yet")));
+    state.conversations.forEach((conversation)=>{const card=node('article','order-card');const label=conversation.order_id?t("order_conversation_0",{"0":()=>(conversationOrderLabel(conversation))}):t("conversation_without_an_order");card.append(node('h3','',label),node('p','small muted',`${conversation.branch_name||state.branches.find((b)=>b.id===conversation.branch_id)?.name||t("relevant_branch")} · ${serviceName(conversation.service||conversation.context_service||'')}`));const summary=node('div','row wrap');summary.append(node('span','pill',({open:t("open"),in_progress:t("processing"),resolved:t("resolved")}[conversation.status]||t("open"))));if(conversation.unread_count>0)summary.append(node('span','pill warning',t("0_new_messages",{"0":()=>(number.format(conversation.unread_count))})));card.append(summary);const button=node('button','button secondary',t("open_conversation"));button.type='button';button.dataset.conversationId=conversation.id;button.addEventListener('click',()=>showConversation(conversation));card.append(button);list.append(card);});
+    if(state.nextConversationOffset!==null){const more=node('button','button secondary full',t("load_older_conversations"));more.type='button';more.addEventListener('click',()=>busy(more,async()=>{try{const result=await api(`/api/conversations?offset=${state.nextConversationOffset}`);const rows=result.conversations||[];state.conversations.push(...rows.filter((row)=>!state.conversations.some((entry)=>entry.id===row.id)));state.nextConversationOffset=rows.length===50?state.nextConversationOffset+50:null;renderContacts();}catch(error){showError('contacts-error',errorMessage(error));}}));list.append(more);}
   }
   function updateContactContext() { const linked=Boolean($('contact-order').value);$('contact-context-fields').hidden=linked;$('contact-branch').required=!linked;$('contact-service').required=!linked; }
   async function startContact(event) {
     event.preventDefault();if(!requireCustomer(openContacts))return;
     const ownOrder=state.contactOrders.find((order)=>order.id===$('contact-order').value);
     const payload=ownOrder?{order_id:ownOrder.id}:{branch_id:$('contact-branch').value,service:$('contact-service').value};
-    if(!ownOrder&&!payload.branch_id){showError('contacts-error','حدد الفرع ونوع الخدمة لبدء المحادثة.');return;}
-    await busy($('contact-start'),async()=>{try{const idem=stableKey('start-conversation',payload);const result=await api('/api/conversations',{method:'POST',data:payload,idempotency:idem.value});const conversation=result.conversation||result;if(!conversation.id)throw new Error('لم يؤكد الخادم فتح المحادثة.');releaseKey(idem);await showConversation({...conversation,order_no:ownOrder?.order_no||ownOrder?.number,service:ownOrder?.service||payload.service});}catch(error){showError('contacts-error',error.message);}});
+    if(!ownOrder&&!payload.branch_id){showError('contacts-error',t("choose_a_branch_and_service_to_start_the_conversation"));return;}
+    await busy($('contact-start'),async()=>{try{const idem=stableKey('start-conversation',payload);const result=await api('/api/conversations',{method:'POST',data:payload,idempotency:idem.value});const conversation=result.conversation||result;if(!conversation.id)throw new Error(t("the_server_did_not_confirm_opening_the_conversation"));releaseKey(idem);await showConversation({...conversation,order_no:ownOrder?.order_no||ownOrder?.number,service:ownOrder?.service||payload.service});}catch(error){showError('contacts-error',errorMessage(error));}});
   }
   async function showConversation(conversation) {
     if(!requireCustomer(openContacts))return;
     clearTimeout(state.chatTimer);state.conversation=conversation;state.chatSequence=0;
-    text('chat-title',conversation.order_id?`محادثة طلب ${conversationOrderLabel(conversation)}`:'محادثة دون طلب');text('chat-route',`${conversation.route==='delivery'?'مدير وفريق التوصيل':'فريق الفرع المختص'} · ${serviceName(conversation.service||conversation.context_service||'')}`);
+    text('chat-title',conversation.order_id?t("order_conversation_0",{"0":()=>(conversationOrderLabel(conversation))}):t("conversation_without_an_order"));text('chat-route',`${conversation.route==='delivery'?t("delivery_manager_and_team"):t("relevant_branch_team")} · ${serviceName(conversation.service||conversation.context_service||'')}`);
     $('chat-messages').replaceChildren();$('chat-text').value='';$('chat-image').value='';text('chat-image-name','');showError('chat-error','');
     closeDialog('orders-dialog');closeDialog('contacts-dialog');openDialog('chat-dialog');await pollChat();
   }
   async function openChat(order) {
     if(!requireCustomer(()=>openChat(order)))return;
     const payload={order_id:order.id};const idem=stableKey('start-conversation',payload);
-    try{const result=await api('/api/conversations',{method:'POST',data:payload,idempotency:idem.value});const conversation=result.conversation||result;if(!conversation.id)throw new Error('تعذر فتح محادثة الطلب.');releaseKey(idem);await showConversation({...conversation,order_no:order.order_no||order.number,service:order.service});}
-    catch(error){showError('orders-error',error.message);}
+    try{const result=await api('/api/conversations',{method:'POST',data:payload,idempotency:idem.value});const conversation=result.conversation||result;if(!conversation.id)throw new Error(t("unable_to_open_the_order_conversation"));releaseKey(idem);await showConversation({...conversation,order_no:order.order_no||order.number,service:order.service});}
+    catch(error){showError('orders-error',errorMessage(error));}
   }
-  async function pollChat() { if(!$('chat-dialog').open||!state.conversation?.id)return;const id=state.conversation.id;try{const result=await api(`/api/conversations/${encodeURIComponent(id)}/messages?after=${state.chatSequence}`);if(state.conversation?.id!==id)return;const container=$('chat-messages');const nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<80;if((result.messages||[]).length)container.querySelector('.chat-empty')?.remove();for(const message of result.messages||[]){if(message.seq<=state.chatSequence)continue;const bubble=node('div',`chat-bubble${message.sender_id===state.session.user?.id?' mine':''}`);if(message.text)bubble.append(node('p','',message.text));if(message.attachment_id){const url=safeImage(message.attachment_url||message.attachment?.url||`/api/chat-attachments/${encodeURIComponent(message.attachment_id)}`);if(url){const img=node('img');img.src=url;img.alt='صورة مرفقة في المحادثة';img.loading='lazy';const link=node('a');link.href=url;link.target='_blank';link.rel='noopener';link.append(img);bubble.append(link);}}bubble.append(node('small','',dateTime(message.created_at)));container.append(bubble);state.chatSequence=Math.max(state.chatSequence,message.seq||0);}if(!container.children.length)container.append(node('p','small muted chat-empty','ابدأ رسالتك هنا. تبقى المحادثة محفوظة في حسابك.'));if(nearBottom)container.scrollTop=container.scrollHeight;if(state.chatSequence>0)await api(`/api/conversations/${encodeURIComponent(id)}/read`,{method:'POST',data:{through_seq:state.chatSequence}});showError('chat-error','');}catch(error){showError('chat-error',error.message);}finally{clearTimeout(state.chatTimer);if($('chat-dialog').open&&state.conversation?.id===id)state.chatTimer=setTimeout(pollChat,5000);} }
-  const readFile = (file) => new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('تعذرت قراءة الصورة.'));reader.readAsDataURL(file);});
-  async function sendMessage(event) {event.preventDefault();if(!state.conversation?.id){showError('chat-error','انتظر فتح المحادثة قبل الإرسال.');return;}const message=$('chat-text').value.trim();const file=$('chat-image').files[0];if(!message&&!file){showError('chat-error','أضف نصًا أو صورة قبل الإرسال.');return;}if(file&&(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>5*1024*1024)){showError('chat-error','اختر صورة JPG أو PNG أو WebP بحجم لا يتجاوز 5 ميجابايت.');return;}await busy($('send-message'),async()=>{try{let attachmentId=null;if(file){const upload={data_base64:await readFile(file),content_type:file.type};const uploadKey=stableKey(`chat-upload-${state.conversation.id}`,{name:file.name,size:file.size,lastModified:file.lastModified});const uploaded=await api(`/api/conversations/${encodeURIComponent(state.conversation.id)}/attachments`,{method:'POST',data:upload,idempotency:uploadKey.value});attachmentId=uploaded.id||uploaded.attachment?.id;if(!attachmentId)throw new Error('لم يؤكد الخادم حفظ الصورة.');}const payload={text:message,attachment_id:attachmentId};const idem=stableKey(`chat-message-${state.conversation.id}`,payload);await api(`/api/conversations/${encodeURIComponent(state.conversation.id)}/messages`,{method:'POST',data:payload,idempotency:idem.value});releaseKey(idem);$('chat-text').value='';$('chat-image').value='';text('chat-image-name','');showError('chat-error','');await pollChat();}catch(error){showError('chat-error',error.message);}});}
+  async function pollChat() { if(!$('chat-dialog').open||!state.conversation?.id)return;const id=state.conversation.id;try{const result=await api(`/api/conversations/${encodeURIComponent(id)}/messages?after=${state.chatSequence}`);if(state.conversation?.id!==id)return;const container=$('chat-messages');const nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<80;if((result.messages||[]).length)container.querySelector('.chat-empty')?.remove();for(const message of result.messages||[]){if(message.seq<=state.chatSequence)continue;const bubble=node('div',`chat-bubble${message.sender_id===state.session.user?.id?' mine':''}`);if(message.text)bubble.append(node('p','',message.text));if(message.attachment_id){const url=safeImage(message.attachment_url||message.attachment?.url||`/api/chat-attachments/${encodeURIComponent(message.attachment_id)}`);if(url){const img=node('img');img.src=url;img.alt=t("photo_attached_to_conversation");img.loading='lazy';const link=node('a');link.href=url;link.target='_blank';link.rel='noopener';link.append(img);bubble.append(link);}}const timestamp=node('small','',dateTime(message.created_at));timestamp.dataset.datetime=message.created_at;bubble.append(timestamp);container.append(bubble);state.chatSequence=Math.max(state.chatSequence,message.seq||0);}if(!container.children.length)container.append(node('p','small muted chat-empty',t("start_your_message_here_your_conversation_remains_saved_in_your_a")));if(nearBottom)container.scrollTop=container.scrollHeight;if(state.chatSequence>0)await api(`/api/conversations/${encodeURIComponent(id)}/read`,{method:'POST',data:{through_seq:state.chatSequence}});showError('chat-error','');}catch(error){showError('chat-error',errorMessage(error));}finally{clearTimeout(state.chatTimer);if($('chat-dialog').open&&state.conversation?.id===id)state.chatTimer=setTimeout(pollChat,5000);} }
+  const readFile = (file) => new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error(t("unable_to_read_the_photo")));reader.readAsDataURL(file);});
+  async function sendMessage(event) {event.preventDefault();if(!state.conversation?.id){showError('chat-error',t("wait_for_the_conversation_to_open_before_sending"));return;}const message=$('chat-text').value.trim();const file=$('chat-image').files[0];if(!message&&!file){showError('chat-error',t("add_a_message_or_photo_before_sending"));return;}if(file&&(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>5*1024*1024)){showError('chat-error',t("choose_a_jpg_png_or_webp_image_up_to_5_mb"));return;}await busy($('send-message'),async()=>{try{let attachmentId=null;if(file){const upload={data_base64:await readFile(file),content_type:file.type};const uploadKey=stableKey(`chat-upload-${state.conversation.id}`,{name:file.name,size:file.size,lastModified:file.lastModified});const uploaded=await api(`/api/conversations/${encodeURIComponent(state.conversation.id)}/attachments`,{method:'POST',data:upload,idempotency:uploadKey.value});attachmentId=uploaded.id||uploaded.attachment?.id;if(!attachmentId)throw new Error(t("the_server_did_not_confirm_the_photo_was_saved"));}const payload={text:message,attachment_id:attachmentId};const idem=stableKey(`chat-message-${state.conversation.id}`,payload);await api(`/api/conversations/${encodeURIComponent(state.conversation.id)}/messages`,{method:'POST',data:payload,idempotency:idem.value});releaseKey(idem);$('chat-text').value='';$('chat-image').value='';text('chat-image-name','');showError('chat-error','');await pollChat();}catch(error){showError('chat-error',errorMessage(error));}});}
   async function loadBranchCatalog() {
     const selected=state.branchId;
     const params=new URLSearchParams({brand_id:state.brand.id||'kps'});
     if(selected)params.set('branch_id',selected);
     try {const result=await api(`/api/catalog?${params}`);if(state.branchId!==selected)return;state.products=result.products||[];state.sourceVerified=result.source_verified===true;renderProducts();renderCart();queueQuote();}
-    catch(error){if(state.branchId===selected){state.quote=null;state.quoteError=error.message;renderQuote();}}
+    catch(error){if(state.branchId===selected){state.quote=null;state.quoteError=errorMessage(error);renderQuote();}}
   }
 
   const motionPreference=window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -331,10 +843,10 @@
   function updateTickerMotion() {
     const track=$('announcement-track'),control=$('ticker-pause'),reduced=prefersLessMotion();
     track.classList.toggle('is-paused',state.tickerPaused||reduced);
-    control.textContent=reduced?'الحركة متوقفة':state.tickerPaused?'تشغيل الحركة':'إيقاف الحركة';
+    setText(control,reduced?t("motion_paused"):state.tickerPaused?t("resume_motion"):t("pause_motion"));
     control.setAttribute('aria-pressed',String(state.tickerPaused||reduced));
     control.disabled=reduced;
-    control.title=reduced?'الحركة متوقفة حسب إعداد الجهاز':'';
+    control.title=reduced?t("motion_paused_by_device_preference"):'';
   }
   function renderTicker() {
     const area=$('announcement-ticker'),track=$('announcement-track');
@@ -423,9 +935,9 @@
       container.className='intro-banner';
       const content=node('div');
       content.append(
-        node('span','eyebrow',state.brand.name),
-        node('h1','',`اطلب مباشرة من ${state.brand.name}`),
-        node('p','','تصفح المنيو، ثم حدد الخدمة والفرع المناسب لطلبك.')
+        node('span','eyebrow',sourceText(state.brand)),
+        node('h1','',t("order_directly_from_0",{"0":()=>(sourceText(state.brand))})),
+        node('p','',t("browse_the_menu_then_choose_your_service_and_branch"))
       );
       // The formerly oversized KPS watermark is removed; the owner may
       // enable an approved literary phrase in the future without redeploying.
@@ -446,14 +958,14 @@
       }
       const img=node('img');
       img.src=image;
-      img.alt=banner.title||`إعلان ${state.brand.name}`;
+      img.alt=banner.title||t("announcement_for_0",{"0":()=>(sourceText(state.brand))});
       img.decoding='async';
       img.addEventListener('error',()=>picture.remove(),{once:true});
       picture.append(img);
       container.append(picture);
     }
     const content=node('div','campaign-content'),copy=node('div');
-    copy.append(node('h2','',banner.title||state.brand.name));
+    copy.append(node('h2','',banner.title||sourceText(state.brand)));
     if(banner.body||banner.text)copy.append(node('p','',banner.body||banner.text));
     content.append(copy);
     if(banner.destination){
@@ -462,7 +974,7 @@
       if(target.kind==='link'){
         try{const url=new URL(target.id);if(url.protocol==='https:'&&!url.username&&!url.password)campaignLink=url.href;}catch{}
       }
-      const action=node(campaignLink?'a':'button','button secondary',banner.button_label||'شاهد التفاصيل');
+      const action=node(campaignLink?'a':'button','button secondary',banner.button_label||t("view_details"));
       if(campaignLink){action.href=campaignLink;action.target='_blank';action.rel='noopener noreferrer';}
       else action.type='button';
       action.addEventListener('click',()=>{
@@ -482,14 +994,14 @@
     if(state.banners.length>1)for(let index=0;index<state.banners.length;index++){
       const button=node('button','banner-dot',number.format(index+1));
       button.type='button';
-      button.setAttribute('aria-label',`الإعلان ${number.format(index+1)} من ${number.format(state.banners.length)}`);
+      button.setAttribute('aria-label',t("announcement_0_of_1",{"0":()=>(number.format(index+1)),"1":()=>(number.format(state.banners.length))}));
       button.setAttribute('aria-current',String(index===state.bannerIndex));
       button.addEventListener('click',()=>switchBanner(index));
       controls.append(button);
     }
   }
 
-  function saveLocation(lat,lng) {if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){toast('أدخل إحداثيات صحيحة للموقع.');return;}state.location={lat,lng};text('location-state','تم اعتماد موقعك لعرض الفروع المؤهلة؛ يبقى اختيار الفرع بيدك.');$('latitude').value=String(lat);$('longitude').value=String(lng);$('clear-location').hidden=false;queueQuote();queueNearestBranches();}
+  function saveLocation(lat,lng) {if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){toast(t("enter_valid_location_coordinates"));return;}state.location={lat,lng};text('location-state',t("location_saved_for_eligible_branch_suggestions_you_choose_the_bra"));$('latitude').value=String(lat);$('longitude').value=String(lng);$('clear-location').hidden=false;queueQuote();queueNearestBranches();}
   function applyTheme(theme={}) {
     const valid=(value)=>typeof value==='string'&&/^#[a-f0-9]{6}$/i.test(value);
     const lum=(value)=>{const rgb=[1,3,5].map((start)=>parseInt(value.slice(start,start+2),16)/255).map((c)=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4);return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];};
@@ -503,7 +1015,34 @@
     root.style.setProperty('--font','"Noto Kufi Arabic",Tahoma,Arial,sans-serif');
     window.KPSAppearance?.apply(theme,state.brand.id);
   }
-  function bindEvents() {const tickerPause=$('ticker-pause');tickerPause.addEventListener('click',()=>{state.tickerPaused=!state.tickerPaused;updateTickerMotion();});$('banner-area').addEventListener('mouseenter',stopBannerRotation);$('banner-area').addEventListener('mouseleave',startBannerRotation);$('banner-area').addEventListener('focusin',stopBannerRotation);$('banner-area').addEventListener('focusout',()=>setTimeout(startBannerRotation,0));$('banner-area').addEventListener('keydown',(event)=>{if(state.banners.length<2||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();switchBanner(state.bannerIndex+(event.key==='ArrowLeft'?1:-1));});document.querySelectorAll('[data-close]').forEach((button)=>button.addEventListener('click',()=>closeDialog(button.closest('dialog'))));document.querySelectorAll('dialog').forEach((dialog)=>{dialog.addEventListener('click',(event)=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeDialog(dialog);}});dialog.addEventListener('cancel',()=>{if(dialog.id==='confirm-dialog')clearConfirmation();});dialog.addEventListener('close',()=>{if(dialog.open)return;const focus=focusHistory.get(dialog);if(focus?.isConnected&&focus.getClientRects().length)focus.focus({preventScroll:true});else $('menu').focus({preventScroll:true});if(dialog.id==='chat-dialog')clearTimeout(state.chatTimer);if(dialog.id==='orders-dialog'){clearTimeout(state.ordersTimer);state.activeOrder=null;}if(dialog.id==='confirm-dialog')clearConfirmation();});});$('city-select').addEventListener('change',()=>{state.cityFilter=$('city-select').value;renderBranches();queueNearestBranches();loadBanners();});$('branch-select').addEventListener('change',()=>changeBranch($('branch-select').value));document.querySelectorAll('input[name=service]').forEach((input)=>input.addEventListener('change',()=>{state.service=input.value;renderBranches();renderService();queueQuote();queueNearestBranches();}));document.querySelectorAll('input[name=payment]').forEach((input)=>input.addEventListener('change',queueQuote));['customer-name','customer-phone','neighborhood','order-notes','address','car-model','car-color','car-plate'].forEach((id)=>$(id).addEventListener('input',queueQuote));$('search').addEventListener('input',renderProducts);$('product-qty').addEventListener('change',renderOptions);$('product-minus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)-1);renderOptions();});$('product-plus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)+1);renderOptions();});$('apply-first-option').addEventListener('click',()=>{const first={...state.optionValues[0]};state.optionValues=state.optionValues.map(()=>({...first}));renderOptions();});$('product-add').addEventListener('click',()=>busy($('product-add'),addProduct));$('checkout-button').addEventListener('click',()=>busy($('checkout-button'),beginCheckout));$('confirm-submit').addEventListener('click',()=>{const action=state.confirmation?.action;if(action)busy($('confirm-submit'),async()=>{try{await action();}catch(error){showError('confirm-error',error.message);}});});$('header-cart').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('mobile-basket').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('account-button').addEventListener('click',()=>{renderAccount();showError('account-error','');openDialog('account-dialog');});$('orders-button').addEventListener('click',()=>openOrders());$('contacts-button').addEventListener('click',openContacts);$('chat-inbox').addEventListener('click',openContacts);$('contact-context-form').addEventListener('submit',startContact);$('contact-order').addEventListener('change',updateContactContext);$('identity-onboarding-form').addEventListener('submit',async event=>{event.preventDefault();await busy($('identity-onboarding-submit'),async()=>{try{if(!state.emailLink)throw new Error('افتح رابط الدعوة مرة أخرى.');const result=await api('/api/identity/email/verify',{method:'POST',data:{...state.emailLink,display_name:$('identity-onboarding-name').value.trim(),phone:$('identity-onboarding-phone').value.trim()}});state.emailLink=null;await establishIdentity(result);}catch(error){showError('account-error',error.message);}});});$('parse-map-url').addEventListener('click',()=>busy($('parse-map-url'),async()=>{try{const result=await api('/api/location/parse-map-url',{method:'POST',data:{url:$('map-url').value.trim()}});saveLocation(result.location.lat,result.location.lng);}catch(error){toast(error.message);}}));$('guest-form').addEventListener('submit',requestGuest);$('email-request-form').addEventListener('submit',requestEmail);['email-login-button','link-email-button'].forEach(id=>$(id).addEventListener('click',()=>{$('email-request-form').hidden=false;$('login-email').focus();}));$('product-image-zoom').addEventListener('click',()=>showImage(state.product));$('product-image').addEventListener('click',()=>showImage(state.product));$('otp-request-form').addEventListener('submit',requestOTP);$('otp-verify-form').addEventListener('submit',verifyOTP);$('change-phone').addEventListener('click',()=>{state.challenge=null;$('otp-request-form').hidden=false;$('otp-verify-form').hidden=true;showError('account-error','');$('phone').focus();});$('logout-button').addEventListener('click',()=>busy($('logout-button'),async()=>{try{await api('/api/auth/logout',{method:'POST',data:{}});state.session={user:null,csrf_token:null};renderAccount();closeDialog('account-dialog');toast('تم تسجيل الخروج.');}catch(error){showError('account-error',error.message);}}));$('manual-location-button').addEventListener('click',()=>{$('manual-location').hidden=!$('manual-location').hidden;$('manual-location-button').setAttribute('aria-expanded',String(!$('manual-location').hidden));if(!$('manual-location').hidden)$('latitude').focus();});$('save-location').addEventListener('click',()=>{if(!$('latitude').value.trim()||!$('longitude').value.trim()){toast('أدخل خط العرض وخط الطول قبل الاعتماد.');return;}saveLocation(Number($('latitude').value),Number($('longitude').value));});$('clear-location').addEventListener('click',()=>{state.location=null;$('latitude').value='';$('longitude').value='';$('clear-location').hidden=true;text('location-state','تم إلغاء الموقع المحدد. يمكنك اختيار المدينة والفرع يدويًا.');queueQuote();queueNearestBranches();});$('locate-button').addEventListener('click',()=>{if(!navigator.geolocation){toast('تحديد الموقع غير مدعوم في هذا المتصفح. يمكنك إدخاله يدويًا.');return;}const button=$('locate-button');button.disabled=true;text('location-state','جاري تحديد موقعك بإذنك…');navigator.geolocation.getCurrentPosition((position)=>{button.disabled=false;saveLocation(position.coords.latitude,position.coords.longitude);},()=>{button.disabled=false;text('location-state',state.location?'تعذر تحديث الموقع؛ احتفظنا بالموقع المحدد سابقًا. يمكنك اختيار الفرع يدويًا.':'لم يُسمح بتحديد موقعك أو تعذر الوصول إليه. اختر المدينة والفرع يدويًا، أو أدخل دبوس الموقع بنفسك.');$('city-select').focus();},{enableHighAccuracy:true,timeout:15000,maximumAge:0});});$('chat-form').addEventListener('submit',sendMessage);$('chat-image').addEventListener('change',()=>text('chat-image-name',$('chat-image').files[0]?.name||''));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('chat-dialog').open)pollChat();if(document.hidden)stopBannerRotation();else startBannerRotation();});window.addEventListener('online',()=>{toast('عاد الاتصال. نتحقق من حالة الطلبات المحفوظة.');if($('chat-dialog').open)pollChat();if(state.cart.length)queueQuote();});let touchStart=0;$('banner-area').addEventListener('touchstart',(event)=>{touchStart=event.changedTouches[0].clientX;},{passive:true});$('banner-area').addEventListener('touchend',(event)=>{const delta=event.changedTouches[0].clientX-touchStart;if(Math.abs(delta)>50&&state.banners.length>1){switchBanner(state.bannerIndex+(delta>0?1:-1));}},{passive:true});}
+
+  function changeLanguage(){
+    language=language==='ar'?'en':'ar';
+    try{localStorage.setItem(languageStorageKey,language);}catch{}
+    applyStaticLanguage();renderBrand();renderBranches();renderService();renderCategories();renderProducts();renderCart();renderNearestBranches();
+    if(state.product&&$('product-dialog').open){
+      text('product-title',sourceText(state.product));
+      text('product-description',sourceText(state.product,'description'));
+      $('product-image').alt=String(sourceText(state.product));
+      renderOptions();
+    }
+    if($('orders-dialog').open){
+      if(state.activeOrder)renderOrderDetail(state.activeOrder,state.activeOrderEvents||[]);
+      else renderOrders(state.orders);
+    }
+    const selectedContactBranch=$('contact-branch').value,selectedContactOrder=$('contact-order').value;
+    $('contact-branch').replaceChildren(new Option(String(t('choose_a_branch')),''));
+    for(const b of state.branches)$('contact-branch').append(new Option(`${b.branch_no} · ${sourceText(b)}`,b.id));
+    $('contact-branch').value=selectedContactBranch;
+    $('contact-order').replaceChildren(new Option(String(t('conversation_without_an_order')),''));
+    for(const order of state.contactOrders)$('contact-order').append(new Option(String(t('order_0_1',{'0':()=>order.number||order.order_no||order.id,'1':()=>serviceName(order.service)})),order.id));
+    $('contact-order').value=selectedContactOrder;
+    if($('contacts-dialog').open)renderContacts();
+    if(state.conversation&&$('chat-dialog').open)text('chat-route',`${state.conversation.route==='delivery'?t('delivery_manager_and_team'):t('relevant_branch_team')} · ${serviceName(state.conversation.service||state.conversation.context_service||'')}`);
+    for(const element of document.querySelectorAll('[data-datetime]'))element.textContent=dateTime(element.dataset.datetime);
+    syncMobileBasket();
+  }
+  function bindEvents() {$('customer-language').addEventListener('click',changeLanguage);const tickerPause=$('ticker-pause');tickerPause.addEventListener('click',()=>{state.tickerPaused=!state.tickerPaused;updateTickerMotion();});$('banner-area').addEventListener('mouseenter',stopBannerRotation);$('banner-area').addEventListener('mouseleave',startBannerRotation);$('banner-area').addEventListener('focusin',stopBannerRotation);$('banner-area').addEventListener('focusout',()=>setTimeout(startBannerRotation,0));$('banner-area').addEventListener('keydown',(event)=>{if(state.banners.length<2||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();switchBanner(state.bannerIndex+(event.key==='ArrowLeft'?1:-1));});document.querySelectorAll('[data-close]').forEach((button)=>button.addEventListener('click',()=>closeDialog(button.closest('dialog'))));document.querySelectorAll('dialog').forEach((dialog)=>{dialog.addEventListener('click',(event)=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeDialog(dialog);}});dialog.addEventListener('cancel',()=>{if(dialog.id==='confirm-dialog')clearConfirmation();});dialog.addEventListener('close',()=>{if(dialog.open)return;const focus=focusHistory.get(dialog);if(focus?.isConnected&&focus.getClientRects().length)focus.focus({preventScroll:true});else $('menu').focus({preventScroll:true});if(dialog.id==='chat-dialog')clearTimeout(state.chatTimer);if(dialog.id==='orders-dialog'){clearTimeout(state.ordersTimer);state.activeOrder=null;}if(dialog.id==='confirm-dialog')clearConfirmation();});});$('city-select').addEventListener('change',()=>{state.cityFilter=$('city-select').value;renderBranches();queueNearestBranches();loadBanners();});$('branch-select').addEventListener('change',()=>changeBranch($('branch-select').value));document.querySelectorAll('input[name=service]').forEach((input)=>input.addEventListener('change',()=>{state.service=input.value;renderBranches();renderService();queueQuote();queueNearestBranches();}));document.querySelectorAll('input[name=payment]').forEach((input)=>input.addEventListener('change',queueQuote));['customer-name','customer-phone','neighborhood','order-notes','address','car-model','car-color','car-plate'].forEach((id)=>$(id).addEventListener('input',queueQuote));$('search').addEventListener('input',renderProducts);$('product-qty').addEventListener('change',renderOptions);$('product-minus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)-1);renderOptions();});$('product-plus').addEventListener('click',()=>{$('product-qty').value=String(Number($('product-qty').value)+1);renderOptions();});$('apply-first-option').addEventListener('click',()=>{const first={...state.optionValues[0]};state.optionValues=state.optionValues.map(()=>({...first}));renderOptions();});$('product-add').addEventListener('click',()=>busy($('product-add'),addProduct));$('checkout-button').addEventListener('click',()=>busy($('checkout-button'),beginCheckout));$('confirm-submit').addEventListener('click',()=>{const action=state.confirmation?.action;if(action)busy($('confirm-submit'),async()=>{try{await action();}catch(error){showError('confirm-error',errorMessage(error));}});});$('header-cart').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('mobile-basket').addEventListener('click',()=>$('basket').scrollIntoView({behavior:'smooth'}));$('account-button').addEventListener('click',()=>{renderAccount();showError('account-error','');openDialog('account-dialog');});$('orders-button').addEventListener('click',()=>openOrders());$('contacts-button').addEventListener('click',openContacts);$('chat-inbox').addEventListener('click',openContacts);$('contact-context-form').addEventListener('submit',startContact);$('contact-order').addEventListener('change',updateContactContext);$('identity-onboarding-form').addEventListener('submit',async event=>{event.preventDefault();await busy($('identity-onboarding-submit'),async()=>{try{if(!state.emailLink)throw new Error(t("open_the_invitation_link_again"));const result=await api('/api/identity/email/verify',{method:'POST',data:{...state.emailLink,display_name:$('identity-onboarding-name').value.trim(),phone:$('identity-onboarding-phone').value.trim()}});state.emailLink=null;await establishIdentity(result);}catch(error){showError('account-error',errorMessage(error));}});});$('parse-map-url').addEventListener('click',()=>busy($('parse-map-url'),async()=>{try{const result=await api('/api/location/parse-map-url',{method:'POST',data:{url:$('map-url').value.trim()}});saveLocation(result.location.lat,result.location.lng);}catch(error){toast(errorMessage(error));}}));$('guest-form').addEventListener('submit',requestGuest);$('email-request-form').addEventListener('submit',requestEmail);['email-login-button','link-email-button'].forEach(id=>$(id).addEventListener('click',()=>{$('email-request-form').hidden=false;$('login-email').focus();}));$('product-image-zoom').addEventListener('click',()=>showImage(state.product));$('product-image').addEventListener('click',()=>showImage(state.product));$('otp-request-form').addEventListener('submit',requestOTP);$('otp-verify-form').addEventListener('submit',verifyOTP);$('change-phone').addEventListener('click',()=>{state.challenge=null;$('otp-request-form').hidden=false;$('otp-verify-form').hidden=true;showError('account-error','');$('phone').focus();});$('logout-button').addEventListener('click',()=>busy($('logout-button'),async()=>{try{await api('/api/auth/logout',{method:'POST',data:{}});state.session={user:null,csrf_token:null};renderAccount();closeDialog('account-dialog');toast(t("signed_out"));}catch(error){showError('account-error',errorMessage(error));}}));$('manual-location-button').addEventListener('click',()=>{$('manual-location').hidden=!$('manual-location').hidden;$('manual-location-button').setAttribute('aria-expanded',String(!$('manual-location').hidden));if(!$('manual-location').hidden)$('latitude').focus();});$('save-location').addEventListener('click',()=>{if(!$('latitude').value.trim()||!$('longitude').value.trim()){toast(t("enter_latitude_and_longitude_before_saving"));return;}saveLocation(Number($('latitude').value),Number($('longitude').value));});$('clear-location').addEventListener('click',()=>{state.location=null;$('latitude').value='';$('longitude').value='';$('clear-location').hidden=true;text('location-state',t("selected_location_cleared_you_can_choose_a_city_and_branch_manual"));queueQuote();queueNearestBranches();});$('locate-button').addEventListener('click',()=>{if(!navigator.geolocation){toast(t("this_browser_does_not_support_location_you_can_enter_it_manually"));return;}const button=$('locate-button');button.disabled=true;text('location-state',t("locating_you_with_your_permission"));navigator.geolocation.getCurrentPosition((position)=>{button.disabled=false;saveLocation(position.coords.latitude,position.coords.longitude);},()=>{button.disabled=false;text('location-state',state.location?t("unable_to_update_your_location_your_previous_location_is_kept_you"):t("location_permission_was_denied_or_your_location_is_unavailable_ch"));$('city-select').focus();},{enableHighAccuracy:true,timeout:15000,maximumAge:0});});$('chat-form').addEventListener('submit',sendMessage);$('chat-image').addEventListener('change',()=>text('chat-image-name',$('chat-image').files[0]?.name||''));document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('chat-dialog').open)pollChat();if(document.hidden)stopBannerRotation();else startBannerRotation();});window.addEventListener('online',()=>{toast(t("connection_restored_checking_saved_orders"));if($('chat-dialog').open)pollChat();if(state.cart.length)queueQuote();});let touchStart=0;$('banner-area').addEventListener('touchstart',(event)=>{touchStart=event.changedTouches[0].clientX;},{passive:true});$('banner-area').addEventListener('touchend',(event)=>{const delta=event.changedTouches[0].clientX-touchStart;if(Math.abs(delta)>50&&state.banners.length>1){switchBanner(state.bannerIndex+(delta>0?1:-1));}},{passive:true});}
   function onMotionPreferenceChange() {updateTickerMotion();if(prefersLessMotion())stopBannerRotation();else startBannerRotation();}
   if(motionPreference.addEventListener)motionPreference.addEventListener('change',onMotionPreferenceChange);
   else if(motionPreference.addListener)motionPreference.addListener(onMotionPreferenceChange);
@@ -512,32 +1051,32 @@
   // Re-measure text when the existing local Noto font finishes loading.
   if(document.fonts)document.fonts.ready.then(renderTicker);
   function renderBrand() {
-    const name=state.brand.name||'الطلبات';document.title=`${name} | الطلبات`;
-    document.querySelector('meta[name=description]').content=`منيو ${name} وطلبات التوصيل والاستلام من الفرع والسيارة`;
-    $('brand-home').href=requestedBrandId&&requestedBrandId!=='kps'?`/?brand_id=${encodeURIComponent(requestedBrandId)}`:'/';$('brand-home').setAttribute('aria-label',`${name} الرئيسية`);
+    const name=sourceText(state.brand)||t("orders");document.title=t("0_orders",{"0":()=>(name)});
+    document.querySelector('meta[name=description]').content=t("0_menu_delivery_branch_pickup_and_car_pickup_orders",{"0":()=>(name)});
+    $('brand-home').href=requestedBrandId&&requestedBrandId!=='kps'?`/?brand_id=${encodeURIComponent(requestedBrandId)}`:'/';$('brand-home').setAttribute('aria-label',t("0_home",{"0":()=>(name)}));
     const label=$('brand-name');label.replaceChildren();label.dir=requestedBrandId==='kps'?'ltr':'auto';
     if(requestedBrandId==='kps'){label.append(document.createTextNode('KPS '),node('span','','COFFEE'));}else label.append(document.createTextNode(name));
-    label.append(node('small','','طلبك، على طريقتك'));text('footer-brand',name);$('banner-area').setAttribute('aria-label',`إعلانات ${name}`);
+    label.append(node('small','',t("your_order_your_way")));text('footer-brand',name);$('banner-area').setAttribute('aria-label',t("0_announcements",{"0":()=>(name)}));
     const logo=safeImage(state.brand.logo_url||(requestedBrandId==='kps'?'/assets/kps-logo-fb911a7b4bb4.png':''));
     $('brand-logo').alt=name;$('brand-logo').hidden=!logo;if(logo){$('brand-logo').src=logo;$('brand-logo').addEventListener('error',()=>{$('brand-logo').hidden=true;},{once:true});}else $('brand-logo').removeAttribute('src');
     renderBanner();
   }
   async function init() {
-    bindEvents();renderBrand();
-    if(!requestedBrandId){showError('site-notice','رابط البراند غير صالح. استخدم رابطًا صادرًا من إدارة البراند.');$('products').replaceChildren(node('div','empty-state','تعذر تحديد البراند من هذا الرابط.'));['account-button','orders-button','contacts-button','branch-select','city-select','locate-button','manual-location-button','save-location','parse-map-url'].forEach((id)=>$(id).disabled=true);return;}
+    applyStaticLanguage();bindEvents();renderBrand();
+    if(!requestedBrandId){showError('site-notice',t("invalid_brand_link_use_a_link_provided_by_the_brand"));$('products').replaceChildren(node('div','empty-state',t("unable_to_identify_the_brand_from_this_link")));['account-button','orders-button','contacts-button','branch-select','city-select','locate-button','manual-location-button','save-location','parse-map-url'].forEach((id)=>$(id).disabled=true);return;}
     const params=new URLSearchParams({brand_id:requestedBrandId});
     const results=await Promise.allSettled([api(`/api/catalog?${params}`),api(`/api/branches?${params}`),api('/api/session'),api(`/api/identity/channels?${params}`)]);
     const [catalogResult,branchResult,sessionResult,channelResult]=results;if(channelResult.status==='fulfilled')state.channels=channelResult.value.channels||channelResult.value;
     if(catalogResult.status==='fulfilled'){
       const data=catalogResult.value;
-      if(data.brand?.id!==requestedBrandId)throw new Error('هوية البراند لا تطابق الرابط.');
+      if(data.brand?.id!==requestedBrandId)throw new Error(t("the_brand_does_not_match_this_link"));
       state.products=data.products||[];state.legacyItemMappings=data.legacy_item_mappings||{};state.brand=data.brand;renderBrand();applyTheme(state.brand.theme);state.sourceVerified=data.source_verified===true||data.metadata?.runtime_verified===true;
-      if(!state.sourceVerified&&state.products.length){showError('catalog-notice',requestedBrandId==='kps'?'بعض الأصناف لا تطابق النسخة المعتمدة أو تحتاج اعتماد تعديلاتها. تبقى الأصناف المعتمدة متاحة حسب الفرع والخدمة.':'الأسعار والخيارات الحالية قيد التحقق؛ لا يُتاح تأكيد طلب قبل اعتمادها.');$('catalog-notice').className='notice';}
+      if(!state.sourceVerified&&state.products.length){showError('catalog-notice',requestedBrandId==='kps'?t("some_items_differ_from_the_approved_source_or_need_approval_appro"):t("current_prices_and_options_are_awaiting_verification_orders_can_b"));$('catalog-notice').className='notice';}
       restoreDraft();renderCategories();renderProducts();
-    }else{$('products').replaceChildren(node('div','empty-state','تعذر تحميل منيو هذا البراند. حدّث الصفحة للمحاولة مجددًا.'));showError('site-notice',catalogResult.reason.message);}
-    if(branchResult.status==='fulfilled'){state.branches=branchResult.value.branches||[];state.brandServices=branchResult.value.brand_services||state.brandServices;renderBranches();}else showError('service-notice',branchResult.reason.message);
-    if(sessionResult.status==='fulfilled')state.session=sessionResult.value;else showError('site-notice','يمكنك تصفح المنيو. تعذر التحقق من جلسة الدخول حاليًا.');
+    }else{$('products').replaceChildren(node('div','empty-state',t("unable_to_load_this_brand_s_menu_refresh_to_try_again")));showError('site-notice',errorMessage(catalogResult.reason));}
+    if(branchResult.status==='fulfilled'){state.branches=branchResult.value.branches||[];state.brandServices=branchResult.value.brand_services||state.brandServices;renderBranches();}else showError('service-notice',errorMessage(branchResult.reason));
+    if(sessionResult.status==='fulfilled')state.session=sessionResult.value;else showError('site-notice',t("you_can_browse_the_menu_your_sign_in_session_could_not_be_checked"));
     renderAccount();renderService();renderCart();loadBanners();await verifyEmailLink();
   }
-  init().catch(()=>showError('site-notice','تعذر تحميل جزء من الصفحة. حدّث الصفحة للمحاولة مجددًا.'));
+  init().catch(()=>showError('site-notice',t("unable_to_load_part_of_the_page_refresh_to_try_again")));
 })();
