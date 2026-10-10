@@ -45,7 +45,7 @@ jobs:
       SESSION_COOKIE_SECURE: "false"
       OTP_PROVIDER: disabled
       INITIAL_CATALOG_IMPORT: "true"
-      RUNTIME_REVISION: ${{ github.sha }}
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       PYTHONDONTWRITEBYTECODE: "1"
       # Browser tests must launch real Chromium against the isolated app/DB.
       # No provider credentials or intercepted API responses are used.

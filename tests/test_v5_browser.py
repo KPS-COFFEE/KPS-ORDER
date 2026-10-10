@@ -287,6 +287,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
         _submit_modal(owner, check=['confirmed'])
         owner.locator('[data-page=reports]').click()
+        expect(owner.locator('#navigation [data-page=reports]')).to_have_attribute('aria-current','page')
         expect(owner.locator('.owner-notifications')).to_be_visible()
         expect(owner.locator('.owner-notifications')).to_contain_text('معتمد نهائيًا')
         expect(owner.locator('.owner-notifications')).to_contain_text('بانتظار قناة البريد')
@@ -346,6 +347,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         owner.reload()
         expect(owner.locator('#app-shell')).to_be_visible()
         owner.locator('[data-page=reports]').click()
+        expect(owner.locator('#navigation [data-page=reports]')).to_have_attribute('aria-current','page')
         expect(owner.locator('.owner-notifications')).to_contain_text('معتمد نهائيًا')
         _capture(owner, 'v5-owner-reports-after-real-http-restart')
         assert not any(errors), errors

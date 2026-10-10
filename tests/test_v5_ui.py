@@ -76,7 +76,10 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
         # Add an original source item without options or restricted cities.
         catalog = context.request.get(live_app + '/api/catalog?branch_id=kps-branch-1').json()['products']
         product = next(p for p in catalog if not p.get('option_groups') and not p.get('available_cities'))
-        page.get_by_role('button', name='تفاصيل ' + product['name'], exact=True).click()
+        card = page.locator(f'.product-card[data-product-id="{product["id"]}"]')
+        expect(card).to_have_count(1)
+        card.locator('.product-image-button').click()
+        expect(page.locator('#product-title')).to_have_text(product['name'])
         page.locator('#product-add').click()
         expect(page.locator('.cart-line')).to_have_count(1)
         page.locator('#customer-name').fill('عميل اختبار واجهة V5 فقط')
