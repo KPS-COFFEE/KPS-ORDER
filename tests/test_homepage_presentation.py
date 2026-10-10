@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app import admin, db
 from test_admin import owner
-from test_browser import _context, _owner_login, _staff, chromium_browser, live_app
+from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
 
 
 def test_homepage_presentation_validation_and_safe_defaults():
