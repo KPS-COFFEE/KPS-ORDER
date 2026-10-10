@@ -36,7 +36,7 @@ def v5_live_app(database, tmp_path, monkeypatch):
     monkeypatch.setenv('REPORT_WORKER_ENABLED', 'false')
     with db.tx() as conn:
         conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='email'")
-    yield from original_live_app.__wrapped__(database, tmp_path)
+    yield from original_live_app.__wrapped__(database, tmp_path, None)
 
 
 def _font_evidence(page):

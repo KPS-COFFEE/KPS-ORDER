@@ -75,7 +75,7 @@ class TestV5Identity:
         order=first.json()['order']
         assert order['customer_id']==user['id'] and order['customer']['phone_verified'] is False
         assert _create(client,_body(service),key='guest-service-'+service).json()['order']['id']==order['id']
-        assert client.post('/api/shifts/open',json={'kind':'manager','branch_ids':['kps-branch-1']},headers={'Idempotency-Key':'guest-forbidden-shift'}).status_code==403
+        assert client.post('/api/shifts',json={'kind':'manager','branch_ids':['kps-branch-1']},headers={'Idempotency-Key':'guest-forbidden-shift'}).status_code==403
         assert client.get('/api/admin/config').status_code==403
 
     def test_same_unverified_phone_never_joins_known_or_other_guest(self,client):

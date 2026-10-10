@@ -56,7 +56,7 @@ def v5(client):
         for bid,no,city,lat in [('v5-a',1,'حفر الباطن',28),('v5-b',9,'حفر الباطن',28.1),('v5-c',2,'الدمام',28.01)]:
             cfg=settings|{'location':{'lat':lat,'lng':45},'delivery_enabled':city=='حفر الباطن'}
             c.execute('INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES(%s,%s,%s,%s,%s,%s,%s)',(bid,no,'TEST:'+bid,'v5-test','TEST '+bid,city,db.json(cfg)))
-        for who,role,scope in [('owner','owner',[]),('manager','delivery_manager',['v5-a','v5-b']),('limited','delivery_manager',['v5-a']),('driver','driver',['v5-a','v5-b']),('customer','customer',[])]:
+        for who,role,scope in [('owner','owner',[]),('manager','delivery_manager',['v5-a','v5-b']),('limited','delivery_manager',['v5-a']),('branch','branch_manager',['v5-a']),('driver','driver',['v5-a','v5-b']),('customer','customer',[])]:
             c.execute('INSERT INTO users(id,display_name,role,brand_id,branch_ids,phone) VALUES(%s,%s,%s,%s,%s,%s)',('v5-'+who,'TEST '+who,role,'v5-test',db.json(scope),'+966500000000'))
         c.execute("INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES('v5-product','v5-test','TEST coffee','TEST',1000,%s)",(db.json({'enabled':True,'source_verified':True}),))
     def actor(who):
@@ -64,7 +64,7 @@ def v5(client):
         client.app.dependency_overrides[auth.current_user]=lambda:user
         return client
     def call(who,method,path,body=None,key=None):
-        return actor(who).request(method,path,json=body,headers={'Idempotency-Key':key or uuid4().hex})
+        return actor(who).request(method,path,json={} if body is None and method not in ('GET','HEAD') else body,headers={'Idempotency-Key':key or uuid4().hex})
     def body(service='pickup',branch='v5-a'):
         return {'brand_id':'v5-test','branch_id':branch,'service':service,'payment_method':'cash',
                 'items':[{'product_id':'v5-product','quantity':1}],
@@ -187,7 +187,8 @@ def test_concurrent_numbers_cancel_and_filters_do_not_renumber(v5):
     with db.tx() as c:c.execute("UPDATE orders SET preparation_status='cancelled' WHERE order_no=%s",(numbers[0],))
     filtered=actor('owner').get('/api/orders',params={'search':str(numbers[0]),'sort':'oldest'}).json()['orders']
     assert len(filtered)==1 and filtered[0]['order_no']==numbers[0]
-    live=actor('manager').get('/api/orders',params={'status':'active','limit':5,'neighborhood':'TEST'}).json()
+    assert actor('manager').get('/api/orders',params={'status':'active','neighborhood':'TEST'}).json()['orders']==[]
+    live=actor('branch').get('/api/orders',params={'status':'active','limit':5,'neighborhood':'TEST'}).json()
     assert len(live['orders'])==5 and live['next_offset']==5
     assert all(r['preparation_status']!='cancelled' for r in live['orders'])
 
