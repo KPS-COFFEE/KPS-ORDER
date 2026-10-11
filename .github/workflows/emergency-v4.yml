@@ -89,7 +89,7 @@ jobs:
               'public/ops.js', 'tests/test_owner_driver_activation.py',
               'tests/test_owner_staff_management.py',
           }
-          focused = 'app/auth.py' in changed and changed <= identity_files
+          focused = bool(changed & {'app/auth.py', 'tests/test_owner_staff_management.py'}) and changed <= identity_files
           operation_files = {
               'Dockerfile',
               'app/auth.py', 'app/admin.py', 'app/operations.py', 'app/main.py',

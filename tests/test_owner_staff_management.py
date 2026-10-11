@@ -81,13 +81,11 @@ def test_pause_and_role_change_block_open_shift(ops):
     shifts()
     with db.tx() as conn:
         row=conn.execute("SELECT u.id FROM users u JOIN shifts s ON s.user_id=u.id WHERE u.role='driver' AND s.status='open' LIMIT 1").fetchone()
-        owners=conn.execute("SELECT id FROM users WHERE role='owner'").fetchall()
-        for owner in owners:
-            conn.execute("UPDATE sessions SET step_up_at=now() WHERE user_id=%s",(owner['id'],))
-    # Fixture actor creates sessions lazily; authenticate before setting step-up.
     client=actor('owner')
-    with db.tx() as conn:
-        conn.execute("UPDATE sessions SET step_up_at=now() WHERE user_id IN (SELECT id FROM users WHERE role='owner')")
+    client.app.dependency_overrides.clear()
+    owner=_make_user('owner',brand='ops-brand',username='ops-control-owner',password=PASSWORD)
+    _authenticate(client,owner)
+    assert client.post('/api/identity/step-up',json={'password':PASSWORD}).status_code==200
     for action in ('pause','archive','reinvite'):
         result=client.post('/api/identity/staff/'+row['id']+'/manage',json={'action':action,'reason':'Blocked while working'})
         assert result.status_code==409,result.text
