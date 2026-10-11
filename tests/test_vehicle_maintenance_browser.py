@@ -38,7 +38,7 @@ def test_driver_fault_form_and_restricted_admin_maintenance_journey(live_app, ch
         modal.get_by_role('button', name='إرسال البلاغ' if language == 'ar' else 'Submit report', exact=True).click()
         expect(modal).not_to_be_visible()
         expect(page.locator('[data-vehicle-report]')).to_have_count(1)
-        expect(page.get_by_text('الفرامل / Brakes', exact=True)).to_be_visible()
+        expect(page.get_by_role('heading', name='الفرامل / Brakes', exact=True)).to_be_visible()
         expect(page.locator('[data-action=maintenance-status]')).to_have_count(0)
         expect(page.locator('[data-vehicle-report] script')).to_have_count(0)
         _capture(page, 'TEST_ONLY_vehicle_driver_reports_' + language)

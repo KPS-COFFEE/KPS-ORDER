@@ -74,6 +74,11 @@ jobs:
             node --check "$script"
           done
           git diff --check
+      - name: Run scoped bilingual vehicle maintenance acceptance
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py
+          --junitxml=test-results/vehicle-maintenance.xml
       - name: Run focused launch, access and delivery-hours checks
         run: >-
           python -m pytest -q --strict-markers
@@ -83,7 +88,6 @@ jobs:
           tests/test_identity_closure.py tests/test_owner_closure.py
           tests/test_branch_location_import.py tests/test_monitoring.py
           tests/test_owner_closure_browser.py tests/test_customer_language.py
-          tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py
           --junitxml=test-results/launch-focused.xml
       - name: Run isolated PostgreSQL 18 and source regression
         run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
