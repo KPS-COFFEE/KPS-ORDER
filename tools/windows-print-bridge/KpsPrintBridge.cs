@@ -104,35 +104,53 @@ class KpsPrintBridge {
             }return bitmap;
         }
     }
+    // All dimensions are hundredths of an inch. The Graphics origin is the
+    // printer's printable origin, not the physical paper corner.
+    static RectangleF ContentBounds(RectangleF page, RectangleF printable, float hardX, float hardY) {
+        var physical=RectangleF.Intersect(page,printable);
+        if(physical.Width<=16 || physical.Height<=16)throw new Exception("Printer reports an invalid printable area.");
+        return new RectangleF(physical.Left-hardX+8,physical.Top-hardY+8,physical.Width-16,physical.Height-16);
+    }
+    static StringFormat LineFormat(bool ar,bool center) {
+        var format=new StringFormat();
+        if(ar)format.FormatFlags=StringFormatFlags.DirectionRightToLeft;
+        format.Alignment=center?StringAlignment.Center:StringAlignment.Near;
+        return format;
+    }
+    static float LineHeight(Graphics graphics,Dictionary<string,object> line,Font font,float width,bool ar) {
+        using(var format=LineFormat(ar,Bool(line,"center")))
+            return graphics.MeasureString(Str(line,"text"),font,(int)Math.Floor(width),format).Height+3;
+    }
     static void Print(Dictionary<string,object> job) {
         var payload=Obj(job["payload"]);var lines=Lines(payload);bool ar=Str(payload,"language")=="ar";
         int width=Convert.ToInt32(job["paper_mm"])==58?228:315;
         using(var document=new PrintDocument()) using(var regular=new Font("Arial",10)) using(var bold=new Font("Arial",11,FontStyle.Bold)) using(var logo=Logo()) {
             document.PrinterSettings.PrinterName=Printer;document.PrinterSettings.Copies=1;
             document.PrintController=new StandardPrintController();document.DocumentName="KPS "+Str(job,"id");
+            document.OriginAtMargins=false;
             document.DefaultPageSettings.Margins=new Margins(8,8,8,8);
-            // Determine the actual wrapped content height, not a fixed receipt.
-            float height=100;
-            using(var graphics=document.PrinterSettings.CreateMeasurementGraphics()) {
-                foreach(var line in lines)height+=graphics.MeasureString(Str(line,"text"),Bool(line,"bold")?bold:regular,width-32).Height+5;
+            document.DefaultPageSettings.PaperSize=new PaperSize("KPS thermal roll",width,1169);
+            var settings=document.DefaultPageSettings;
+            var measured=ContentBounds(new RectangleF(0,0,width,1169),settings.PrintableArea,settings.HardMarginX,settings.HardMarginY);
+            // Use the driver's printable width (e.g. 72.1mm on an 80mm roll),
+            // and the same RTL measurement used for drawing.
+            float height=88+settings.HardMarginY;
+            using(var graphics=document.PrinterSettings.CreateMeasurementGraphics(settings)) {
+                foreach(var line in lines)height+=LineHeight(graphics,line,Bool(line,"bold")?bold:regular,measured.Width,ar);
             }
-            document.DefaultPageSettings.PaperSize=new PaperSize("KPS thermal roll",width,(int)Math.Min(30000,Math.Ceiling(height)));
+            settings.PaperSize=new PaperSize("KPS thermal roll",width,(int)Math.Min(30000,Math.Ceiling(height)));
             int index=0;bool first=true;
             document.PrintPage+=(sender,e)=> {
-                float left=e.MarginBounds.Left,top=e.MarginBounds.Top;
-                float available=Math.Min(width-24,e.MarginBounds.Width);
+                var bounds=ContentBounds(e.PageBounds,e.PageSettings.PrintableArea,e.PageSettings.HardMarginX,e.PageSettings.HardMarginY);
+                float left=bounds.Left,top=bounds.Top,available=bounds.Width;
                 if(first) {e.Graphics.DrawImage(logo,left+(available-60)/2,top,60,60);top+=64;first=false;}
                 while(index<lines.Count) {
                     var line=lines[index];var font=Bool(line,"bold")?bold:regular;
-                    using(var format=new StringFormat()) {
-                        if(ar)format.FormatFlags=StringFormatFlags.DirectionRightToLeft;
-                        format.Alignment=Bool(line,"center")?StringAlignment.Center:StringAlignment.Near;
-                        // Measure on the actual driver surface and paginate without clipping.
-                        float lineHeight=e.Graphics.MeasureString(Str(line,"text"),font,(int)available,format).Height+5;
-                        if(top+lineHeight>e.MarginBounds.Bottom && top>e.MarginBounds.Top) {e.HasMorePages=true;return;}
+                    float lineHeight=LineHeight(e.Graphics,line,font,available,ar);
+                    if(top+lineHeight>bounds.Bottom && top>bounds.Top) {e.HasMorePages=true;return;}
+                    using(var format=LineFormat(ar,Bool(line,"center")))
                         e.Graphics.DrawString(Str(line,"text"),font,Brushes.Black,new RectangleF(left,top,available,lineHeight),format);
-                        top+=lineHeight;index++;
-                    }
+                    top+=lineHeight;index++;
                 }e.HasMorePages=false;
             };
             document.Print(); // Only successful spool submission, never proof of paper.
@@ -142,6 +160,11 @@ class KpsPrintBridge {
         if(args.Length>0 && args[0]=="--self-test") {
             var fixture=Obj(Json.DeserializeObject("{\"lines\":[{\"text\":\"KPS قهوة\",\"bold\":true,\"center\":true}]}"));
             if(Lines(fixture).Count!=1) return 1;
+            // 80mm roll, 72.1mm printable width and asymmetric driver offsets.
+            var area=ContentBounds(new RectangleF(0,0,315,800),new RectangleF(12,5,284,790),12,5);
+            if(Math.Abs(area.Left-8)>0.01 || Math.Abs(area.Right-276)>0.01 || area.Bottom>790)return 2;
+            var narrow=ContentBounds(new RectangleF(0,0,228,600),new RectangleF(10,4,208,590),10,4);
+            if(narrow.Width!=192 || narrow.Left<0 || narrow.Right>208)return 3;
             using(var logo=Logo()) {if(logo.Width<1)return 1;}
             Console.WriteLine("Bridge compile, JSON and logo checks passed; no printer used.");return 0;
         }
