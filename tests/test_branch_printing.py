@@ -161,3 +161,32 @@ def test_printer_only_admin_has_no_other_operational_access(ops):
         conn.execute("UPDATE users SET permissions='[]' WHERE id='ops-printeradmin'")
     assert actor('printeradmin').get('/api/printing/devices').status_code==403
     assert actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pending['pairing_code'],'printer_name':'Revoked permission'}).status_code==403
+
+
+@pytest.mark.postgres
+def test_both_receipts_are_atomic_ordered_and_replay_safe(ops):
+    actor,post,order,shifts=ops
+    oid=order('pickup')
+    pair=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Two receipts'})
+    client=actor('customer')
+    token=client.post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Synthetic'}).json()['token']
+    approve_test_device(actor,post,pair['id'],token)
+    body={'device_id':pair['id'],'kind':'both'}
+    result=post('manager','/api/printing/orders/'+oid,body,key='both-replay')
+    assert len(result['ids'])==2
+    assert post('manager','/api/printing/orders/'+oid,body,key='both-replay')==result
+    headers={'Authorization':'Bearer '+token}
+    for identifier,kind in zip(result['ids'],['order','preparation']):
+        job=client.post('/api/printing/bridge/next',json={},headers=headers).json()['job']
+        assert job['id']==identifier and job['payload']['kind']==kind
+        assert any('ر.س' in line['text'] for line in job['payload']['lines']) == (kind=='order')
+        assert client.post('/api/printing/bridge/jobs/'+identifier+'/ack',json={'status':'submitted'},headers=headers).status_code==200
+    assert client.post('/api/printing/bridge/next',json={},headers=headers).json()['job'] is None
+    post('manager','/api/printing/orders/'+oid,body,status=409)
+    # An existing preparation receipt must roll back the first insert in a pair.
+    second=order('pickup')
+    post('manager','/api/printing/orders/'+second,{'device_id':pair['id'],'kind':'preparation'})
+    post('manager','/api/printing/orders/'+second,body,status=409)
+    with db.tx() as conn:
+        rows=conn.execute('SELECT kind FROM branch_print_jobs WHERE order_id=%s',(second,)).fetchall()
+        assert [row['kind'] for row in rows]==['preparation']

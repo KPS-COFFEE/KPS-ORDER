@@ -177,17 +177,23 @@ def receipt(order, branch, kind, language):
     def amount(value): return f'{int(value or 0)/100:.2f} '+('ر.س' if ar else 'SAR')
     add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True)
     add(('فاتورة تحضير الطلب' if ar else 'Preparation receipt') if kind=='preparation' else ('فاتورة طلب' if ar else 'Order receipt'),True,True)
+    add('رقم الطلب' if ar else 'Order number',False,True)
     add(snap.get('order_reference') or order['order_no'],True,True)
     add(branch['name'],False,True)
-    add(order['created_at'].astimezone(ZoneInfo('Asia/Riyadh')).strftime('%Y-%m-%d %H:%M'),False,True)
+    local=order['created_at'].astimezone(ZoneInfo('Asia/Riyadh'))
+    add(('التاريخ: ' if ar else 'Date: ')+local.strftime('%Y-%m-%d'),False,True)
+    add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M')+(' — الرياض' if ar else ' — Riyadh'),False,True)
+    add('────────────────────',False,True)
     for item in snap.get('items',[]):
-        add(f"{item['quantity']} × {item['name']}"+(('  '+amount(item.get('line_total_halalas'))) if kind=='order' else ''),True)
+        add(item['name'],True)
+        add(('الكمية: ' if ar else 'Quantity: ')+str(item['quantity'])+((' | '+amount(item.get('line_total_halalas'))) if kind=='order' else ''),kind=='preparation')
         for i,unit in enumerate(item.get('units',[]),1):
             for option in (unit.get('option_snapshot') or {}).values():
                 choices=', '.join(str(x.get('name',x.get('code',''))) for x in option.get('choices',[]))
                 if choices: add(f"{i}: {option.get('name','')} — {choices}")
-        if item.get('note'): add(item['note'],True)
-    if order.get('notes') or snap.get('notes'):add(order.get('notes') or snap['notes'],True)
+        if item.get('note'): add(('ملاحظة: ' if ar else 'Note: ')+item['note'],True)
+        add('────────────────────',False,True)
+    if order.get('notes') or snap.get('notes'):add(('ملاحظات الطلب: ' if ar else 'Order notes: ')+(order.get('notes') or snap['notes']),True)
     if kind=='order':
         for key,label,en in [('subtotal_halalas','الأصناف','Subtotal'),('discount_halalas','الخصم','Discount'),('delivery_fee_halalas','التوصيل','Delivery'),('total_halalas','الإجمالي','Total')]:
             value=order.get(key,snap.get(key,0))
@@ -195,7 +201,9 @@ def receipt(order, branch, kind, language):
             add((label if ar else en)+': '+amount(value),key=='total_halalas')
         methods={'cash':('كاش','Cash'),'card':('شبكة','Card'),'split':('كاش وشبكة','Cash and card')}
         add(('الدفع: ' if ar else 'Payment: ')+methods.get(order['payment_method'],(order['payment_method'],)*2)[0 if ar else 1])
-        add(('محصل' if ar else 'Paid') if order['payment_status']=='paid' else ('راجع حالة التحصيل: ' if ar else 'Collection status: ')+order['payment_status'])
+        statuses={'paid':('تم التحصيل','Paid'),'unpaid':('لم يتم التحصيل','Unpaid'),'partially_refunded':('مسترد جزئيًا','Partially refunded'),'refunded':('مسترد','Refunded')}
+        add(('حالة التحصيل: ' if ar else 'Collection: ')+statuses.get(order['payment_status'],('راجع حالة التحصيل بالنظام','Check collection status in system'))[0 if ar else 1],True)
+        add('────────────────────',False,True)
         add('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice',False,True)
     return {'language':language,'kind':kind,'lines':lines}
 
@@ -203,7 +211,7 @@ def receipt(order, branch, kind, language):
 class JobBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     device_id:str
-    kind:Literal['order','preparation']='order'
+    kind:Literal['order','preparation','both']='order'
     language:Literal['ar','en']='ar'
     reprint_reason:str=Field(default='',max_length=300)
 
@@ -221,15 +229,18 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         if not device['approved_at']:
             raise db.error(409,'PRINT_TEST_REQUIRED','اختبر الطابعة وأكد خروج الورقة قبل اعتماد طباعة الطلبات.')
         def perform():
-            previous=conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s AND kind=%s AND status<>'cancelled' LIMIT 1",(order_id,body.kind)).fetchone()
-            if previous and not body.reprint_reason.strip():raise db.error(409,'PRINT_REPRINT_REASON','سبق إرسال هذه الفاتورة؛ تحقق من الطابعة وأدخل سبب إعادة الطباعة لمنع التكرار.')
-            identifier=db.new_id('print_');payload=receipt(order,branch,body.kind,body.language)
-            if destination['id'] != branch['id']:
-                payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})
-            if previous:payload['lines'].insert(0,{'text':'إعادة طباعة / REPRINT','bold':True,'center':True})
-            conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(identifier,user['brand_id'],device['branch_id'],body.device_id,order_id,body.kind,db.json(payload),user['id'],body.reprint_reason))
-            db.audit(conn,user['id'],'printer.job.queued','print_job',identifier,{'order_id':order_id,'order_branch_id':order['branch_id'],'destination_branch_id':device['branch_id'],'device_id':body.device_id,'kind':body.kind,'reprint_reason':body.reprint_reason})
-            return {'id':identifier,'status':'queued'}
+            identifiers=[]
+            for kind in (('order','preparation') if body.kind=='both' else (body.kind,)):
+                previous=conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s AND kind=%s AND status<>'cancelled' LIMIT 1",(order_id,kind)).fetchone()
+                if previous and not body.reprint_reason.strip():raise db.error(409,'PRINT_REPRINT_REASON','سبق إرسال هذه الفاتورة؛ تحقق من الطابعة وأدخل سبب إعادة الطباعة لمنع التكرار.')
+                identifier=db.new_id('print_');payload=receipt(order,branch,kind,body.language)
+                if destination['id'] != branch['id']:
+                    payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})
+                if previous:payload['lines'].insert(0,{'text':'إعادة طباعة / REPRINT','bold':True,'center':True})
+                conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason,created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp())',(identifier,user['brand_id'],device['branch_id'],body.device_id,order_id,kind,db.json(payload),user['id'],body.reprint_reason))
+                db.audit(conn,user['id'],'printer.job.queued','print_job',identifier,{'order_id':order_id,'order_branch_id':order['branch_id'],'destination_branch_id':device['branch_id'],'device_id':body.device_id,'kind':kind,'reprint_reason':body.reprint_reason})
+                identifiers.append(identifier)
+            return {'id':identifiers[0],'ids':identifiers,'status':'queued'}
         return db.idempotent(conn,user['id'],idem,'printer.enqueue',{'order_id':order_id,**body.model_dump()},perform)
 
 
