@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from . import auth, db
+from . import auth, db, print_translations
 
 router = APIRouter(prefix='/api/printing', tags=['branch-printing'])
 operators = auth.require_roles('owner', 'delivery_manager')
@@ -169,7 +169,7 @@ def approve_printer(identifier:str,body:AcceptBody,user=Depends(printer_admin)):
         return {'approved':True}
 
 
-def receipt(order, branch, kind, language):
+def receipt(order, branch, kind, language, translations=None):
     ar = language=='ar'
     snap=order['snapshot']; lines=[]
     def add(text,bold=False,center=False,role='',label='',value=''):
@@ -188,15 +188,18 @@ def receipt(order, branch, kind, language):
     add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M')+(' — الرياض' if ar else ' — Riyadh'),False,True)
     add('────────────────────',False,True)
     for item in snap.get('items',[]):
-        add(item['name'],True,role='item')
+        labels=(translations or {}).get(item.get('product_id'),{})
+        def translated(name):
+            return name if ar else (labels.get(name) or print_translations.DEFAULTS.get(name) or name)
+        add(translated(item['name']),True,role='item')
         if kind=='order':
             row(('الكمية: ' if ar else 'Quantity: ')+str(item['quantity']),amount(item.get('line_total_halalas')))
         else:
             row('الكمية' if ar else 'Quantity',str(item['quantity']),True)
         for i,unit in enumerate(item.get('units',[]),1):
             for option in (unit.get('option_snapshot') or {}).values():
-                choices=', '.join(str(x.get('name',x.get('code',''))) for x in option.get('choices',[]))
-                if choices: add(f"{i}: {option.get('name','')} — {choices}")
+                choices=', '.join(translated(str(x.get('name',x.get('code','')))) for x in option.get('choices',[]))
+                if choices: add(f"{i}: {translated(option.get('name',''))} — {choices}")
         if item.get('note'): add(('ملاحظة: ' if ar else 'Note: ')+item['note'],True)
         add('────────────────────',False,True)
     if order.get('notes') or snap.get('notes'):add(('ملاحظات الطلب: ' if ar else 'Order notes: ')+(order.get('notes') or snap['notes']),True)
@@ -234,12 +237,15 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         destination=scope(conn,user,device['branch_id'])
         if not device['approved_at']:
             raise db.error(409,'PRINT_TEST_REQUIRED','اختبر الطابعة وأكد خروج الورقة قبل اعتماد طباعة الطلبات.')
+        products=conn.execute('SELECT id,name,settings FROM products WHERE brand_id=%s AND id=ANY(%s)',
+                              (user['brand_id'],[i.get('product_id') for i in order['snapshot'].get('items',[]) if i.get('product_id')])).fetchall()
+        translations={p['id']:((p['settings'].get('print_labels_en') or {}) | print_translations.labels(p)) for p in products}
         def perform():
             identifiers=[]
             for kind in (('order','preparation') if body.kind=='both' else (body.kind,)):
                 previous=conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s AND kind=%s AND status<>'cancelled' LIMIT 1",(order_id,kind)).fetchone()
                 if previous and not body.reprint_reason.strip():raise db.error(409,'PRINT_REPRINT_REASON','سبق إرسال هذه الفاتورة؛ تحقق من الطابعة وأدخل سبب إعادة الطباعة لمنع التكرار.')
-                identifier=db.new_id('print_');payload=receipt(order,branch,kind,body.language)
+                identifier=db.new_id('print_');payload=receipt(order,branch,kind,body.language,translations)
                 if destination['id'] != branch['id']:
                     payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})
                 if previous:payload['lines'].insert(0,{'text':('إعادة طباعة' if body.language=='ar' else 'REPRINT'),'bold':True,'center':True})

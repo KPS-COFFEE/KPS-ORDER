@@ -9,7 +9,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Header, Response, UploadFile
 from PIL import Image, UnidentifiedImageError
-from . import auth, db, catalog, email_delivery, service_hours
+from . import auth, db, catalog, email_delivery, service_hours, print_translations
 
 router = APIRouter(prefix='/api')
 owner = auth.require_roles('owner')
@@ -238,6 +238,9 @@ def configuration(user=Depends(auth.require_configuration())):
         result['brand'] = {k:result['brand'][k] for k in ('id','name')}
         if auth.has_permission(user, 'brand_services_manage'):
             result['brand']['settings'] = {'services': brand_services}
+    for product in result['products']:
+        if 'settings' in product:
+            product['print_labels_en']=print_translations.labels(product)
     return result
 
 
@@ -284,7 +287,9 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             row = scoped(conn,'products',record_id,user)
             product_scope(row['settings'],user)
             changes = body.get('settings',{})
-            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids'})
+            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids','print_labels_en'})
+            if 'print_labels_en' in changes:
+                changes['print_labels_en']=print_translations.validate(changes['print_labels_en'])
             if 'lifecycle' in changes and changes['lifecycle'] not in {'draft','active','paused'}:
                 raise db.error(422,'PRODUCT_LIFECYCLE_INVALID','حالة الصنف مسودة أو مفعل أو موقوف.')
             if 'lifecycle' in changes:

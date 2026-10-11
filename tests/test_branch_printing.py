@@ -190,3 +190,27 @@ def test_both_receipts_are_atomic_ordered_and_replay_safe(ops):
     with db.tx() as conn:
         rows=conn.execute('SELECT kind FROM branch_print_jobs WHERE order_id=%s',(second,)).fetchall()
         assert [row['kind'] for row in rows]==['preparation']
+
+
+@pytest.mark.postgres
+def test_product_print_translation_edit_is_scoped_and_used_in_queue(ops):
+    actor,post,order,shifts=ops
+    with db.tx() as conn:
+        conn.execute("INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES('ops-product','ops-brand','قهوة تجربة','Test',1000,%s)",
+                     (db.json({'enabled':False,'lifecycle':'draft'}),))
+    oid=order('pickup')
+    body={'settings':{'print_labels_en':{'قهوة تجربة':'Test Coffee'}}}
+    assert actor('driver').patch('/api/admin/products/ops-product',json=body).status_code==403
+    assert actor('other').patch('/api/admin/products/ops-product',json=body).status_code==404
+    response=actor('owner').patch('/api/admin/products/ops-product',json=body)
+    assert response.status_code==200,response.text
+    assert actor('owner').patch('/api/admin/products/ops-product',json={'settings':{'print_labels_en':{'x':[]}}}).status_code==422
+    pair=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Translation test'})
+    paired=actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Test'}).json()
+    approve_test_device(actor,post,pair['id'],paired['token'])
+    post('manager','/api/printing/orders/'+oid,{'device_id':pair['id'],'kind':'both'})
+    job=actor('customer').post('/api/printing/bridge/next',json={},headers={'Authorization':'Bearer '+paired['token']}).json()['job']
+    assert job['payload']['language']=='en'
+    assert any(line['text']=='Test Coffee' for line in job['payload']['lines'])
+    with db.tx() as conn:
+        assert conn.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()['snapshot']['items'][0]['name']=='قهوة تجربة'

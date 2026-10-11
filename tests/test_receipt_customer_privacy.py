@@ -57,3 +57,21 @@ for(const lang of ['ar','en']) for(const prep of [false,true]) {
     # Operational detail and driver views intentionally retain the authorized name.
     assert "dataItem(tr('العميل','Customer'),o.customer_name" in source
     assert "${esc(o.customer_name)}</p>" in source
+
+
+def test_english_menu_translation_and_override_keep_arabic_snapshot():
+    order={'snapshot':{'items':[{'product_id':'kps-30','name':'كوب حراري','quantity':1,
+        'line_total_halalas':1800,'units':[{'option_snapshot':{'COLOR':{'name':'لون الكوب الحراري',
+        'choices':[{'name':'أزرق','code':'BLUE'}]}}}]}]},'order_no':1,
+        'created_at':datetime.now(timezone.utc),'payment_method':'card','payment_status':'unpaid'}
+    original=copy.deepcopy(order)
+    for kind in ['order','preparation']:
+        payload=receipt(order,{'name':'Branch'},kind,'en')
+        text=' '.join(line['text'] for line in payload['lines'])
+        assert 'Thermal Cup' in text and 'Thermal Cup Color — Blue' in text
+        changed=receipt(order,{'name':'Branch'},kind,'en',{'kps-30':{'كوب حراري':'Travel Mug','أزرق':'Navy Blue'}})
+        text=' '.join(line['text'] for line in changed['lines'])
+        assert 'Travel Mug' in text and 'Navy Blue' in text
+        arabic=receipt(order,{'name':'Branch'},kind,'ar',{'kps-30':{'كوب حراري':'Travel Mug'}})
+        assert any(line['text']=='كوب حراري' for line in arabic['lines'])
+    assert order==original

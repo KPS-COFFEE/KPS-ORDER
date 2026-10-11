@@ -280,6 +280,10 @@
     $('#modal').addEventListener('close',()=>{if(objectUrl)URL.revokeObjectURL(objectUrl);},{once:true});
     preview();
   }
+  function printTranslationEditor(p) {
+    const names=[p.name,...(p.settings?.option_groups||[]).flatMap(g=>[g.name,...(g.values||[]).map(v=>v.name)])];
+    return `<fieldset class="full"><legend>${esc(tr('ترجمة الطباعة الإنجليزية','English print translations'))}</legend><div class="form-columns">${[...new Set(names)].map(name=>field(name,`print_translation:${name}`,p.print_labels_en?.[name]||p.settings?.print_labels_en?.[name]||'',{dir:'ltr',maxlength:300})).join('')}</div><p class="muted">${esc(tr('يمكن تعديل الترجمة دون تغيير الاسم العربي أو السعر.','Edit translations without changing Arabic names or prices.'))}</p></fieldset>`;
+  }
   function editProduct(id) {
     const p=state.config.products.find(x=>x.id===id),s=p.settings||{};
     modal(tr('تعديل الصنف والتوفر','Edit item and availability'),`<form class="form-columns" id="product-editor">
@@ -298,9 +302,11 @@
       ${branchChecks('unavailable',s.unavailable_branch_ids||[])}
       <p class="full muted small-text">${esc(tr('الفروع المحددة أعلاه: الصنف موقوف فيها مؤقتًا.','Branches selected above: item temporarily unavailable in those branches.'))}</p>
       ${optionGroupEditor(s.option_groups||[])}
+      ${printTranslationEditor(p)}
       ${formEnd(tr('حفظ الصنف','Save item'))}
     </form>`,async(fd,form)=>{
       const settings={lifecycle:fd.get('lifecycle'),enabled:fd.has('enabled')&&fd.get('lifecycle')==='active',source_verified:fd.has('source_verified'),description:fd.get('description'),available_branch_ids:getProductScope(fd),available_cities:String(fd.get('cities')).split(/[,،]/).map(x=>x.trim()).filter(Boolean),unavailable_branch_ids:checkedBranches(fd,'unavailable'),option_groups:getGroups(fd,form)};
+      settings.print_labels_en={...(s.print_labels_en||{}),...Object.fromEntries([...fd.entries()].filter(([k])=>k.startsWith('print_translation:')).map(([k,v])=>[k.slice(18),v]))};
       if(cityPolicyWidened(s.available_cities||[],settings.available_cities)&&!fd.has('confirm_policy_widen'))throw new Error(tr('توسيع نطاق المدن يحتاج تأكيد اعتمادك كمالك. سياسة الإطلاق للخلية: حفر الباطن فقط.','Widening cities requires your explicit owner approval. Launch policy for Khaliya is Hafar Al Batin only.'));
       if(fd.get('image_url'))settings.image_url=fd.get('image_url');
       const image=fd.get('product_image');
