@@ -94,7 +94,7 @@ def test_pause_and_role_change_block_open_shift(ops):
 from tests.test_operations import ops
 
 import os
-from test_browser import _context, _owner_login, _staff, chromium_browser, live_app
+from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated Chromium only')

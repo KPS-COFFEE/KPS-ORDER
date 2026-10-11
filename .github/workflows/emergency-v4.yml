@@ -102,8 +102,10 @@ jobs:
               'tools/windows-print-bridge/Start.cmd', 'tools/windows-print-bridge/README.txt',
               '.github/workflows/emergency-v4.yml',
           }
+          staff_tests = bool(changed) and 'tests/test_owner_staff_management.py' in changed and changed <= {'tests/test_owner_staff_management.py', '.github/workflows/emergency-v4.yml'}
           operations = bool(changed) and changed <= operation_files and not focused
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('staff_tests_only=' + str(staff_tests).lower() + '\n')
               output.write('identity_only=' + str(focused).lower() + '\n')
               output.write('operations_only=' + str(operations).lower() + '\n')
           print('Identity/access regression' if focused else 'Full regression')
@@ -152,7 +154,7 @@ jobs:
         if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
       - name: Run focused identity, sessions, ownership and browser regression
-        if: steps.scope.outputs.identity_only == 'true'
+        if: steps.scope.outputs.identity_only == 'true' && steps.scope.outputs.staff_tests_only != 'true'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_guest_session_policy.py tests/test_core.py
@@ -161,6 +163,9 @@ jobs:
           tests/test_identity_closure.py tests/test_owner_closure.py
           tests/test_browser.py tests/test_staff_invitation_browser.py
           --junitxml=test-results/identity-focused.xml
+      - name: Run focused owner staff lifecycle and browser checks
+        if: steps.scope.outputs.staff_tests_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_owner_staff_management.py --junitxml=test-results/staff-focused.xml
       - name: Run affected driver, permissions, printing, receipt and restore checks
         if: steps.scope.outputs.operations_only == 'true'
         run: >-
