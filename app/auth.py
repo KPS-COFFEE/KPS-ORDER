@@ -59,9 +59,9 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def hash_password(password: str) -> str:
-    if not isinstance(password, str) or not 12 <= len(password) <= 200:
-        raise db.error(422, 'PASSWORD_LENGTH', 'كلمة المرور يجب أن تكون بين 12 و200 حرف.')
+def hash_password(password: str, *, min_length: int = 12) -> str:
+    if not isinstance(password, str) or not min_length <= len(password) <= 200:
+        raise db.error(422, 'PASSWORD_LENGTH', f'كلمة المرور يجب أن تكون بين {min_length} و200 حرف.')
     salt = secrets.token_bytes(16)
     derived = hashlib.scrypt(password.encode(), salt=salt, n=32768, r=8, p=3, maxmem=64 * 1024 * 1024)
     return 'scrypt$32768$8$3$' + base64.b64encode(salt).decode() + '$' + base64.b64encode(derived).decode()
@@ -1064,7 +1064,7 @@ def create_additional_password_owner(body:AdditionalOwnerBody,user=Depends(requi
         if conn.execute('SELECT 1 FROM users WHERE lower(username)=lower(%s)',(username,)).fetchone():
             raise db.error(409,'USERNAME_UNAVAILABLE','اسم المستخدم مستخدم بالفعل؛ اختر اسمًا آخر. لم يتغير أي حساب.')
         identifier=db.new_id('owner_')
-        row=conn.execute("INSERT INTO users(id,username,display_name,password_hash,role,brand_id,active,invitation_status,identity_kind) VALUES(%s,%s,%s,%s,'owner',%s,true,'active','staff_password') RETURNING *",(identifier,username,name,hash_password(body.password),user['brand_id'])).fetchone()
+        row=conn.execute("INSERT INTO users(id,username,display_name,password_hash,role,brand_id,active,invitation_status,identity_kind) VALUES(%s,%s,%s,%s,'owner',%s,true,'active','staff_password') RETURNING *",(identifier,username,name,hash_password(body.password,min_length=8),user['brand_id'])).fetchone()
         db.audit(conn,user['id'],'owner.password_account.created','user',identifier,{'reason':body.reason.strip(),'username':username,'role':'owner'})
         return {'user':public_user(row),'username':username}
 

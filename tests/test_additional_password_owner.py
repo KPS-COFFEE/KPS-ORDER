@@ -8,6 +8,12 @@ from test_browser import _context, _owner_login, _staff, chromium_browser, live_
 PATH='/api/identity/owners/password'
 NEW_PASSWORD='Test8!Aa'
 
+def test_eight_character_hashing_is_explicit_and_preserves_default_policy():
+    assert auth.verify_password(NEW_PASSWORD,auth.hash_password(NEW_PASSWORD,min_length=8))
+    with pytest.raises(Exception) as rejected:
+        auth.hash_password(NEW_PASSWORD)
+    assert rejected.value.status_code==422
+
 def body(**overrides):
     return dict(display_name='عبدالله',username='KPS',password=NEW_PASSWORD,
                 password_confirmation=NEW_PASSWORD,reason='Explicit full owner grant',**overrides)
