@@ -220,7 +220,7 @@
   });
   document.addEventListener('reset',e=>{
     if(!e.target.matches('.staff-branch-form'))return;
-    const form=e.target;queueMicrotask(()=>{form.querySelector('output').textContent=form.querySelectorAll('input[type=checkbox]:checked').length;form.querySelector('.form-error').textContent='';form.querySelector('details').open=false;});
+    const form=e.target;setTimeout(()=>{form.querySelector('output').textContent=form.querySelectorAll('input[type=checkbox]:checked').length;form.querySelector('.form-error').textContent='';form.querySelector('details').open=false;});
   });
   document.addEventListener('submit',async e=>{
     const form=e.target;if(!form.matches('.staff-branch-form'))return;e.preventDefault();
