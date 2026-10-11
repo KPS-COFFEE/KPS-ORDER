@@ -893,6 +893,8 @@ def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
     removed=set(row.get('branch_ids',[]))-set(new_scope)
     if (not new_active) and conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(row['id'],)).fetchone():
         raise db.error(409,'STAFF_OPEN_SHIFT','أغلق الشفت وسلّم العهدة قبل إيقاف الحساب.')
+    if (not new_active) and conn.execute("SELECT 1 FROM driver_tasks WHERE driver_id=%s AND status NOT IN ('delivered','cancelled','transferred','reassigned')",(row['id'],)).fetchone():
+        raise db.error(409,'STAFF_OPEN_TASKS','أعد إسناد مهام الموظف قبل إيقاف حسابه.')
     if removed and conn.execute("SELECT 1 FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')",(row['id'],list(removed))).fetchone():
         raise db.error(409,'STAFF_OPEN_TASKS','أعد إسناد المهام مع قبول التسليم قبل سحب فرع السائق.')
     if removed and row['role'] in {'driver','delivery_manager','delivery_staff'}:
@@ -902,7 +904,7 @@ def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
 
 def _staff_record(conn,identifier,user):
     row=conn.execute("SELECT * FROM users WHERE id=%s AND brand_id=%s AND role<>'customer' FOR UPDATE",(identifier,user['brand_id'])).fetchone()
-    if not row or (user['role']!='owner' and (row['role']!='driver' or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):
+    if not row or (user['role']!='owner' and (row['invitation_status']=='archived' or row['role']!='driver' or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):
         raise db.error(404,'STAFF_NOT_FOUND','السجل غير موجود ضمن صلاحياتك.')
     return row
 
@@ -1029,7 +1031,7 @@ def staff_list(user=Depends(require_roles('owner','delivery_manager'))):
     with db.tx() as conn:
         rows=conn.execute("SELECT * FROM users WHERE brand_id=%s AND role<>'customer' ORDER BY role,display_name LIMIT 500",(user['brand_id'],)).fetchall()
         if user['role']=='delivery_manager':
-            rows=[r for r in rows if r['role']=='driver' and set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
+            rows=[r for r in rows if r['invitation_status']!='archived' and r['role']=='driver' and set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
         return {'users':[staff_public(conn,row) for row in rows]}
 
 
@@ -1045,6 +1047,8 @@ def owner_activate_driver(identifier:str,body:OwnerDriverActivationBody,user=Dep
         row=conn.execute('SELECT * FROM users WHERE id=%s AND brand_id=%s FOR UPDATE',(identifier,user['brand_id'])).fetchone()
         if not row or row['role']!='driver':
             raise db.error(404,'DRIVER_NOT_FOUND','حساب السائق غير موجود ضمن البراند.')
+        if row['invitation_status']=='archived':
+            raise db.error(409,'STAFF_ARCHIVED','استعد الموظف المحذوف أولًا.')
         if not body.reason.strip() or not row['email'] or not row['phone'] or not row['branch_ids']:
             raise db.error(422,'STAFF_PROFILE_REQUIRED','أكمل البريد والجوال والفروع وسبب التفعيل أولًا.')
         _staff_scope(conn,user,row['branch_ids'])
@@ -1067,21 +1071,34 @@ class StaffUpdateBody(BaseModel):
     employee_ref:str|None=Field(default=None,max_length=80)
     vehicle:dict|None=None
     permissions:list[str]|None=Field(default=None,max_length=20)
+    role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager']|None=None
+    reason:str|None=Field(default=None,min_length=3,max_length=500)
 
 
 @router.patch('/identity/staff/{identifier}')
 def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles('owner','delivery_manager'))):
     with db.tx() as conn:
         row=_staff_record(conn,identifier,user)
+        if row['invitation_status']=='archived':
+            raise db.error(409,'STAFF_ARCHIVED','استعد الموظف المحذوف قبل تعديل بياناته.')
+        role=body.role if body.role is not None else row['role']
+        role_changed=role!=row['role']
+        if role_changed:
+            require_owner_step_up(conn,user)
+            if identifier==user['id'] or not (body.reason or '').strip():
+                raise db.error(409,'STAFF_ROLE_CHANGE_BLOCKED','لا تغير دور حسابك الحالي، وسجل سبب تغيير دور الموظف.')
+            ensure_safe_staff_scope_change(conn,row,[],False)
         if body.permissions is not None:
-            if user['role']!='owner' or row['role']!='admin':
+            if user['role']!='owner' or role!='admin':
                 raise db.error(403,'ADMIN_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الأدمن.')
             permissions=validate_admin_permissions(body.permissions)
             require_owner_step_up(conn,user)
         else:
-            permissions=row.get('permissions') or []
+            permissions=(row.get('permissions') or []) if role=='admin' else []
         scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
         active=body.active if body.active is not None else row['active']
+        if role_changed and not row['email_verified_at']:
+            active=False
         email=email_delivery.normalize_email(body.email) if body.email is not None else row['email']
         email_changed=email!=row['email']
         if email_changed:
@@ -1112,16 +1129,57 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
         if active and row['email_verified_at']:
             status='active'
         output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
-        if body.permissions is not None:
+        if body.permissions is not None or role_changed:
             output=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
+        if role_changed:
+            output=conn.execute('UPDATE users SET role=%s WHERE id=%s RETURNING *',(role,identifier)).fetchone()
+            if not row['email_verified_at']:
+                output=conn.execute("UPDATE users SET invitation_status='draft' WHERE id=%s RETURNING *",(identifier,)).fetchone()
         if email_changed:
             output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
-        if scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone'] or permissions!=(row.get('permissions') or []):
+        if role_changed or scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone'] or permissions!=(row.get('permissions') or []):
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
             conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
             conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
-        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),**({'permissions':permissions} if body.permissions is not None else {})})
+        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {})})
         return {'user':staff_public(conn,output)}
+
+
+class StaffLifecycleBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    action:Literal['pause','archive','restore','reinvite']
+    reason:str=Field(min_length=3,max_length=500)
+
+
+@router.post('/identity/staff/{identifier}/manage')
+def manage_staff(identifier:str,body:StaffLifecycleBody,user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        require_owner_step_up(conn,user)
+        row=_staff_record(conn,identifier,user)
+        if identifier==user['id'] or not body.reason.strip():
+            raise db.error(409,'STAFF_SELF_CHANGE_BLOCKED','استخدم حساب مالك آخر لإيقاف حسابك وسجل السبب.')
+        archived=row['invitation_status']=='archived'
+        if body.action=='restore' and not archived:
+            raise db.error(409,'STAFF_NOT_ARCHIVED','الموظف غير محذوف.')
+        if archived and body.action not in {'restore','archive'}:
+            raise db.error(409,'STAFF_ARCHIVED','استعد الموظف المحذوف أولًا.')
+        ensure_safe_staff_scope_change(conn,row,[],False)
+        # Archive only the account; operational and financial history is retained.
+        state={'pause':'paused','archive':'archived','restore':'paused','reinvite':'pending_email'}[body.action]
+        if body.action=='reinvite':
+            if not row['email'] or not row['phone'] or (row['role']!='owner' and not row['branch_ids']):
+                raise db.error(422,'STAFF_PROFILE_REQUIRED','أكمل البريد والجوال والفروع قبل الدعوة.')
+            _email_ready(conn,user['brand_id'],testing=True)
+            if not db.rate_limit(conn,'invite-resend:'+identifier,3,600):
+                raise db.error(429,'EMAIL_RATE_LIMIT','انتظر قبل إعادة الدعوة.')
+        output=conn.execute('UPDATE users SET active=false,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(state,identifier)).fetchone()
+        conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
+        conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL AND revoked_at IS NULL',(identifier,))
+        conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
+        if body.action=='reinvite':
+            _create_email_token(conn,brand=user['brand_id'],email=row['email'],purpose='add_owner' if row['role']=='owner' else 'invitation',user_id=identifier,created_by=user['id'])
+        db.audit(conn,user['id'],'staff.'+body.action,'user',identifier,{'reason':body.reason.strip(),'previous_status':row['invitation_status']})
+        return {'user':staff_public(conn,output),**({'delivery_status':'queued'} if body.action=='reinvite' else {})}
 
 
 @router.post('/identity/staff/{identifier}/resend')
