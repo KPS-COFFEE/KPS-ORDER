@@ -141,3 +141,23 @@ def test_physical_acceptance_scope_and_retest_gate(ops):
     post('manager','/api/printing/devices/'+device+'/approve',{'job_id':test['id'],'paper_confirmed':True},status=409)
     approve_test_device(actor,post,device,token)
     assert actor('customer').post('/api/printing/bridge/next',json={},headers=headers).json()['job']['id']==queued['id']
+
+
+@pytest.mark.postgres
+def test_printer_only_admin_has_no_other_operational_access(ops):
+    actor,post,order,_=ops
+    with db.tx() as conn:
+        conn.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions) VALUES('ops-printeradmin','Printer technician','admin','ops-brand',%s,%s)",(db.json(['ops-branch']),db.json(['branch_printers_manage'])))
+    for path in ('/api/orders','/api/admin/config','/api/identity/staff'):
+        assert actor('printeradmin').get(path).status_code==403
+    pair=post('printeradmin','/api/printing/devices',{'branch_id':'ops-branch','label':'Scoped setup'})
+    post('printeradmin','/api/printing/devices',{'branch_id':'ops-branch-other','label':'Forbidden'},status=404)
+    assert actor('printeradmin').get('/api/printing/windows-bridge.zip').status_code==200
+    token=actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Synthetic printer'}).json()['token']
+    approve_test_device(actor,post,pair['id'],token,who='printeradmin')
+    post('printeradmin','/api/printing/orders/'+order(),{'device_id':pair['id']},status=403)
+    pending=post('printeradmin','/api/printing/devices',{'branch_id':'ops-branch','label':'Pending','reason':'Replace'})
+    with db.tx() as conn:
+        conn.execute("UPDATE users SET permissions='[]' WHERE id='ops-printeradmin'")
+    assert actor('printeradmin').get('/api/printing/devices').status_code==403
+    assert actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pending['pairing_code'],'printer_name':'Revoked permission'}).status_code==403

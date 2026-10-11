@@ -15,6 +15,17 @@ router = APIRouter(prefix='/api/printing', tags=['branch-printing'])
 operators = auth.require_roles('owner', 'delivery_manager')
 
 
+def can_manage_printers(user):
+    return user['role'] in {'owner','delivery_manager'} or auth.has_permission(user,'branch_printers_manage')
+
+
+def printer_admin(user=Depends(auth.current_user)):
+    if not can_manage_printers(user):
+        raise db.error(403,'ROLE_FORBIDDEN','إدارة الطابعات تتطلب صلاحية يمنحها المالك.')
+    return user
+
+
+
 def scope(conn, user, branch_id):
     branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',
                           (branch_id, user['brand_id'])).fetchone()
@@ -32,7 +43,7 @@ class PairBody(BaseModel):
 
 
 @router.post('/devices')
-def pair_device(body: PairBody, user=Depends(operators)):
+def pair_device(body: PairBody, user=Depends(printer_admin)):
     code = secrets.token_urlsafe(24)
     with db.tx() as conn:
         scope(conn, user, body.branch_id)
@@ -63,7 +74,7 @@ def redeem(body: RedeemBody, request: Request):
         if not device:
             raise db.error(401,'PRINT_PAIR_INVALID','رمز الربط غير صالح أو مستخدم أو منتهي.')
         creator = conn.execute('SELECT * FROM users WHERE id=%s AND active',(device['created_by'],)).fetchone()
-        if not creator or creator['role'] not in {'owner','delivery_manager'}:
+        if not creator or not can_manage_printers(creator):
             raise db.error(403,'PRINT_PAIR_REVOKED','صلاحية منشئ الربط غير سارية.')
         scope(conn,creator,device['branch_id'])
         token = secrets.token_urlsafe(32)
@@ -86,7 +97,7 @@ def bridge(request: Request):
 
 
 @router.get('/devices')
-def devices(user=Depends(operators)):
+def devices(user=Depends(printer_admin)):
     with db.tx() as conn:
         rows = conn.execute('SELECT id,branch_id,label,printer_name,paper_mm,last_seen_at,revoked_at,approved_at FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',(user['brand_id'],)).fetchall()
         return {'devices':[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]}
@@ -98,7 +109,7 @@ class ChangeBody(BaseModel):
 
 
 @router.post('/devices/{identifier}/revoke')
-def revoke(identifier: str, body: ChangeBody, user=Depends(operators)):
+def revoke(identifier: str, body: ChangeBody, user=Depends(printer_admin)):
     if not body.reason.strip():
         raise db.error(422, 'PRINT_CHANGE_REASON', 'سبب تعديل ربط الطابعة مطلوب.')
     with db.tx() as conn:
@@ -121,7 +132,7 @@ def managed_device(conn, user, identifier):
 
 
 @router.post('/devices/{identifier}/test')
-def test_printer(identifier:str,user=Depends(operators),idem:str|None=Header(None,alias='Idempotency-Key')):
+def test_printer(identifier:str,user=Depends(printer_admin),idem:str|None=Header(None,alias='Idempotency-Key')):
     with db.tx() as conn:
         device,branch=managed_device(conn,user,identifier)
         def perform():
@@ -146,7 +157,7 @@ class AcceptBody(BaseModel):
 
 
 @router.post('/devices/{identifier}/approve')
-def approve_printer(identifier:str,body:AcceptBody,user=Depends(operators)):
+def approve_printer(identifier:str,body:AcceptBody,user=Depends(printer_admin)):
     with db.tx() as conn:
         device,branch=managed_device(conn,user,identifier)
         job=conn.execute("SELECT status FROM branch_print_jobs WHERE id=%s AND device_id=%s AND kind='test'",(body.job_id,identifier)).fetchone()
@@ -223,7 +234,7 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
 
 
 @router.get('/jobs')
-def jobs(user=Depends(operators)):
+def jobs(user=Depends(printer_admin)):
     with db.tx() as conn:
         rows=conn.execute('SELECT id,branch_id,device_id,order_id,kind,status,created_at,claimed_at,finished_at,reprint_reason FROM branch_print_jobs WHERE brand_id=%s ORDER BY created_at DESC LIMIT 100',(user['brand_id'],)).fetchall()
         return {'jobs':[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]}
@@ -257,7 +268,7 @@ def acknowledge(identifier:str,body:AckBody,device=Depends(bridge)):
 
 
 @router.get('/windows-bridge.zip')
-def download_bridge(user=Depends(operators)):
+def download_bridge(user=Depends(printer_admin)):
     output=io.BytesIO()
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as bundle:
         for name in ('KpsPrintBridge.cs','Start.cmd','README.txt'):
