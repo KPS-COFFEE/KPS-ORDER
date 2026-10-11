@@ -172,6 +172,7 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
         service_hours.apply_default_branch_hours(conn)
         service_hours.apply_default_delivery_hours(conn)
         branch_locations.apply_workbook_matches(conn)
+        branch_locations.apply_owner_confirmed_matches(conn)
 
 
 def apply_owner_display_decisions(conn):

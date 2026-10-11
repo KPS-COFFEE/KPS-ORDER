@@ -1,5 +1,18 @@
 # KPS ORDER — Google Maps branch evidence
 
+## Owner confirmation — 11 October 2026
+
+At 12:25:37 Asia/Riyadh the project owner explicitly confirmed the six workbook
+assignments (4, 9, 11, 12, 13, 14), acknowledging the displayed naming differences.
+The original workbook evidence and its twenty decisions remain unchanged.
+Six new, one-time decisions publish the approved exact Place IDs to the existing
+rows, preserving any intervening owner edits and rejecting duplicate bindings.
+All twenty assignments are now approved; the six additional assignments do not
+claim independently observed coordinates, route distance or ETA. The fourteen
+previous independently verified destination pins remain unchanged. Ordering,
+service flags, hours, menu, branch identities and operational data are untouched.
+The following original investigation is retained as historical source evidence.
+
 The owner-supplied `KPS_Google_Business_Consolidation.xlsx`, sheet `03-Existing Matches`, supersedes the earlier public-search investigation. The workbook contains **20 existing Google Business Profiles** with **20 distinct Place IDs**, not missing links or new branches. Its SHA-256 is `c748eeb39586fe2e024005165c160a20e2017722ffa1b93db5b7c216b73f3e66`. The original workbook is not uploaded to this repository; `data/branch_google_matches.json` retains only public branch evidence.
 
 Workbook labels were matched explicitly to the existing operational `branch_no` identities in `data/branches.json`. Excel row order and `KPS-00n` business codes were not used as branch numbers. In particular, workbook row 6 is the candidate for operational branch 9, while row 7 is operational branch 5.

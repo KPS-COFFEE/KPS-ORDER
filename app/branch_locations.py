@@ -15,6 +15,8 @@ from . import db
 WORKBOOK_SHA256 = 'c748eeb39586fe2e024005165c160a20e2017722ffa1b93db5b7c216b73f3e66'
 DECISION_ID = 'kps-branch-maps-owner-final-2026-10-10'
 PENDING_BRANCHES = frozenset({4, 9, 11, 12, 13, 14})
+OWNER_CONFIRMATION_ID = 'kps-branch-maps-owner-confirmation-2026-10-11'
+OWNER_CONFIRMED_AT = '2026-10-11T12:25:37+03:00'
 # These labels, rather than workbook row indices or KPS-00n business codes,
 # connect the provided sheet to the existing canonical identities.
 LABEL_BRANCH_NUMBERS = {
@@ -168,5 +170,76 @@ def apply_workbook_matches(conn):
                                   'source_sha256': WORKBOOK_SHA256, 'place_id': match['place_id'],
                                   'coordinates_imported': location is not None, 'services_activated': False})
                         result = 'applied'
+        conn.execute('UPDATE owner_branch_location_decisions SET result=%s,evaluated_at=now() WHERE decision_id=%s',
+                     (result, decision))
+
+
+def apply_owner_confirmed_matches(conn):
+    """Append the owner's six explicit confirmations; never rewrite source evidence.
+
+    This approves identity/Place-ID assignments, not coordinates, travel times,
+    coverage or ordering. Later owner edits/removals always remain authoritative.
+    """
+    conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832617,))
+    for match in workbook_matches():
+        if match['branch_no'] not in PENDING_BRANCHES:
+            continue
+        decision = f"{OWNER_CONFIRMATION_ID}:branch:{match['branch_no']}"
+        evidence = dict(match, owner_confirmation={
+            'confirmed_at': OWNER_CONFIRMED_AT,
+            'authority': 'project_owner_explicit_confirmation',
+            'scope': 'existing_workbook_place_id_to_operational_branch_number',
+            'source_disagreement_acknowledged': True,
+            'coordinates_verified': False,
+        })
+        conn.execute(
+            'INSERT INTO owner_branch_location_decisions '
+            '(decision_id,brand_id,branch_id,branch_no,source_id,workbook_sha256,evidence) '
+            'VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',
+            (decision, match['brand_id'], match['branch_id'], match['branch_no'],
+             match['source_id'], WORKBOOK_SHA256, db.json(evidence)),
+        )
+        recorded = conn.execute(
+            'SELECT * FROM owner_branch_location_decisions WHERE decision_id=%s FOR UPDATE',
+            (decision,),
+        ).fetchone()
+        if recorded['evidence'] != evidence or recorded['workbook_sha256'] != WORKBOOK_SHA256:
+            raise RuntimeError('Owner Maps confirmation evidence changed.')
+        if recorded['evaluated_at'] is not None:
+            continue
+        branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s FOR UPDATE',
+                              (match['branch_id'], match['brand_id'])).fetchone()
+        result = 'skipped_identity_mismatch'
+        if (branch and all(branch[key] == match[key] for key in ('branch_no', 'source_id'))
+                and branch['city'] == match['canonical_city']):
+            result = 'preserved_owner_location'
+            if not _owner_location_present(branch['settings']):
+                duplicate = conn.execute(
+                    "SELECT id FROM branches WHERE id<>%s AND brand_id=%s "
+                    "AND settings->>'place_id'=%s LIMIT 1",
+                    (branch['id'], branch['brand_id'], match['place_id']),
+                ).fetchone()
+                result = 'skipped_existing_place_binding'
+                if not duplicate:
+                    patch = {
+                        'place_id': match['place_id'], 'map_url': match['map_url'],
+                        'map_url_verified': True,
+                        'map_binding_source': {
+                            'file': 'KPS_Google_Business_Consolidation.xlsx',
+                            'sheet': '03-Existing Matches', 'row': match['source_row'],
+                            'sha256': WORKBOOK_SHA256, 'internal_label': match['internal_label'],
+                            'owner_confirmation_id': decision,
+                            'owner_confirmed_at': OWNER_CONFIRMED_AT,
+                            'independent_google_destination_verified': False,
+                        },
+                    }
+                    conn.execute('UPDATE branches SET settings=settings || %s,updated_at=now() WHERE id=%s',
+                                 (db.json(patch), branch['id']))
+                    db.audit(conn, None, 'branch.owner_confirmed_maps_binding', 'branch', branch['id'],
+                             {'decision_id': decision, 'branch_no': branch['branch_no'],
+                              'source_sha256': WORKBOOK_SHA256, 'place_id': match['place_id'],
+                              'coordinates_imported': False, 'services_activated': False,
+                              'owner_confirmed_at': OWNER_CONFIRMED_AT})
+                    result = 'applied'
         conn.execute('UPDATE owner_branch_location_decisions SET result=%s,evaluated_at=now() WHERE decision_id=%s',
                      (result, decision))

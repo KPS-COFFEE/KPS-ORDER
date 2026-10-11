@@ -201,5 +201,53 @@ def test_restart_preserves_later_owner_edits_and_does_not_duplicate_audits(unbou
             assert catalog.location_verified(edited)
             query = parse_qs(urlsplit(catalog.directions_url(edited)).query)
             assert query == {'api': ['1'], 'destination': ['28.3986693,45.9836647'], 'travelmode': ['driving']}
-        assert conn.execute('SELECT count(*) AS n FROM owner_branch_location_decisions').fetchone()['n'] == 20
+        assert conn.execute('SELECT count(*) AS n FROM owner_branch_location_decisions').fetchone()['n'] == 26
         assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_workbook_maps_binding'").fetchone()['n'] == before
+
+
+@pytest.mark.postgres
+def test_owner_confirmation_publishes_six_exact_places_without_fabricating_pins(unbound_branches):
+    with db.tx() as conn:
+        branch_locations.apply_workbook_matches(conn)
+        before = conn.execute("SELECT * FROM branches WHERE brand_id='kps' ORDER BY branch_no").fetchall()
+        branch_locations.apply_owner_confirmed_matches(conn)
+        after = conn.execute("SELECT * FROM branches WHERE brand_id='kps' ORDER BY branch_no").fetchall()
+        assert [b['id'] for b in before] == [b['id'] for b in after]
+        for old, branch in zip(before, after):
+            query = parse_qs(urlsplit(catalog.directions_url(branch)).query)
+            assert query['destination_place_id'] == [EXPECTED_PLACE_IDS[branch['branch_no']]]
+            if branch['branch_no'] in branch_locations.PENDING_BRANCHES:
+                assert not catalog.location_verified(branch)
+                assert branch['settings']['location'] is None
+                assert all(branch['settings'][key] == value for key, value in old['settings'].items())
+            else:
+                assert branch == old
+            assert not any(branch['settings'][key] for key in ('pickup_enabled', 'car_enabled', 'delivery_enabled'))
+        original = conn.execute('SELECT * FROM owner_branch_location_decisions WHERE decision_id LIKE %s',
+                                (branch_locations.DECISION_ID + ':%',)).fetchall()
+        assert sum(d['result'] == 'requires_owner_confirmation' for d in original) == 6
+        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_confirmed_maps_binding'").fetchone()['n'] == 6
+        branch_locations.apply_owner_confirmed_matches(conn)
+        assert conn.execute('SELECT count(*) AS n FROM owner_branch_location_decisions').fetchone()['n'] == 26
+        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_confirmed_maps_binding'").fetchone()['n'] == 6
+        conn.execute("UPDATE branches SET settings=settings || %s WHERE id='kps-branch-9'",
+                     (db.json({'place_id': None, 'map_url': None, 'map_url_verified': False}),))
+        branch_locations.apply_owner_confirmed_matches(conn)
+        nine = conn.execute("SELECT * FROM branches WHERE id='kps-branch-9'").fetchone()
+        assert catalog.directions_url(nine) is None
+
+
+@pytest.mark.postgres
+def test_owner_confirmation_preserves_conflicting_edits_and_rejects_duplicate_places(unbound_branches):
+    with db.tx() as conn:
+        conn.execute("UPDATE branches SET settings=settings || %s WHERE id='kps-branch-4'",
+                     (db.json({'place_id': None, 'map_url_verified': False}),))
+        conn.execute("UPDATE branches SET settings=settings || %s WHERE id='kps-branch-20'",
+                     (db.json({'place_id': EXPECTED_PLACE_IDS[9]}),))
+        conn.execute("UPDATE branches SET source_id='wrong-source' WHERE id='kps-branch-11'")
+        branch_locations.apply_owner_confirmed_matches(conn)
+        decisions = {d['branch_no']: d['result'] for d in conn.execute(
+            'SELECT * FROM owner_branch_location_decisions').fetchall()}
+        assert decisions[4] == 'preserved_owner_location'
+        assert decisions[9] == 'skipped_existing_place_binding'
+        assert decisions[11] == 'skipped_identity_mismatch'
