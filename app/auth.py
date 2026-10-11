@@ -1044,8 +1044,8 @@ class AdditionalOwnerBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     display_name:str=Field(min_length=1,max_length=100)
     username:str=Field(min_length=3,max_length=150)
-    password:str=Field(min_length=12,max_length=200,repr=False)
-    password_confirmation:str=Field(min_length=12,max_length=200,repr=False)
+    password:str=Field(min_length=8,max_length=200,repr=False)
+    password_confirmation:str=Field(min_length=8,max_length=200,repr=False)
     reason:str=Field(min_length=3,max_length=500)
 
 

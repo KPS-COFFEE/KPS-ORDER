@@ -6,7 +6,7 @@ from tests.test_core import _authenticate, _make_user
 from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail, PASSWORD
 
 PATH='/api/identity/owners/password'
-NEW_PASSWORD='SyntheticAdditional!Owner2026'
+NEW_PASSWORD='Test8!Aa'
 
 def body(**overrides):
     return dict(display_name='عبدالله',username='KPS',password=NEW_PASSWORD,
@@ -47,7 +47,7 @@ def test_nonowners_and_invalid_passwords_are_rejected(client):
         _authenticate(client,_make_user(role))
         assert client.post(PATH,json=body()).status_code==403
     owner_login(client);client.post('/api/identity/step-up',json={'password':PASSWORD})
-    for changed in ({'password_confirmation':'DifferentPassword!'}, {'username':'bad name'}, {'display_name':' '}, {'reason':'   '}, {'password':'short'}):
+    for changed in ({'password_confirmation':'DifferentPassword!'}, {'username':'bad name'}, {'display_name':' '}, {'reason':'   '}, {'password':'Test7!A','password_confirmation':'Test7!A'}):
         payload=body();payload.update(changed)
         response=client.post(PATH,json=payload)
         assert response.status_code==422,response.text
