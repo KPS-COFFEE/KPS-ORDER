@@ -132,7 +132,7 @@ def make_print_html(snap):
     }
     names={
         'driver':'سائق','manager':'مدير توصيل','delivery':'توصيل','pickup':'استلام من الفرع','car':'استلام بالسيارة',
-        'cash':'كاش','card':'شبكة','open':'مفتوح','closing':'قيد التقفيل','submitted':'مقدم للاعتماد','closed':'مقفل',
+        'cash':'كاش','card':'شبكة','split':'كاش وشبكة','open':'مفتوح','closing':'قيد التقفيل','submitted':'مقدم للاعتماد','closed':'مقفل',
         'new':'جديد','accepted':'مقبول','preparing':'قيد التجهيز','ready':'جاهز','handed_over':'سُلّم من الفرع',
         'completed':'مكتمل','pending':'بانتظار التأكيد','assigned':'مسند','picked_up':'مستلم من الفرع',
         'problem':'مشكلة مسجلة','delivered':'تم التسليم','cancelled':'ملغى','transferred':'محول',
@@ -521,7 +521,7 @@ TEMPLATE_VERSION = 5
 
 V5_NAMES = {
     'driver':'سائق','manager':'مدير التوصيل','closed':'معتمد نهائيا','submitted':'بانتظار الاعتماد',
-    'delivery':'توصيل','pickup':'استلام من الفرع','car':'استلام بالسيارة','cash':'كاش','card':'شبكة',
+    'delivery':'توصيل','pickup':'استلام من الفرع','car':'استلام بالسيارة','cash':'كاش','card':'شبكة','split':'كاش وشبكة',
     'delivered':'مكتمل','cancelled':'ملغى','transferred':'محول','problem':'مشكلة',
     'confirmed':'مؤكد','pending':'بانتظار التأكيد','refunded':'مرتجع','partially_refunded':'مرتجع جزئي',
     'collection':'تحصيل','refund':'رد نقدي','transfer_in':'عهدة مستلمة','transfer_out':'عهدة مسلمة',

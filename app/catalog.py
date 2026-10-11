@@ -417,7 +417,7 @@ class QuoteBody(BaseModel):
     brand_id: str = Field(default='kps', min_length=1, max_length=80)
     branch_id: str = Field(min_length=1, max_length=80)
     service: Literal['pickup', 'car', 'delivery']
-    payment_method: Literal['cash', 'card']
+    payment_method: Literal['cash', 'card', 'split']
     items: list[OrderItem] = Field(min_length=1, max_length=50)
     customer: CustomerInfo
     notes: str = Field(default='', max_length=1000)
@@ -491,7 +491,8 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     available, code, reason = branch_service(branch, body.service, brand_settings=brand['settings'])
     if not available:
         raise db.error(409, code, reason)
-    if body.payment_method not in branch['settings']['payment_methods']:
+    required_methods={'cash','card'} if body.payment_method=='split' else {body.payment_method}
+    if not required_methods.issubset(branch['settings']['payment_methods']):
         raise db.error(409, 'PAYMENT_METHOD_UNAVAILABLE', 'طريقة الدفع غير متاحة لهذا الفرع.')
     if body.service == 'delivery':
         if not body.customer.location or not body.customer.address.strip():

@@ -455,6 +455,8 @@ class Collection(BaseModel):
     amount_halalas:StrictInt=Field(gt=0)
     tendered_halalas:StrictInt|None=Field(None,ge=0)
     reference:str=Field('',max_length=200)
+    cash_halalas:StrictInt|None=Field(None,gt=0)
+    card_halalas:StrictInt|None=Field(None,gt=0)
 
 @router.post('/orders/{oid}/collect')
 def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_user)):
@@ -463,9 +465,17 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             if o['payment_status']!='unpaid' or o['preparation_status'] in ('cancelled','rejected'):fail(409,'الطلب غير قابل للتحصيل')
-            if body.method not in ('cash','card') or body.amount_halalas!=o['total_halalas']:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح')
-            if body.method=='card' and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
-            if body.method=='cash' and (body.tendered_halalas is None or body.tendered_halalas<body.amount_halalas):fail(422,'المبلغ النقدي المسلم غير كاف')
+            if body.method not in ('cash','card','split') or body.amount_halalas!=o['total_halalas']:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح')
+            if body.method=='split':
+                if body.cash_halalas is None or body.card_halalas is None or body.cash_halalas+body.card_halalas!=body.amount_halalas:
+                    fail(422,'مجموع الكاش والشبكة يجب أن يساوي قيمة الطلب، وكل جزء أكبر من صفر')
+                parts=[('cash',body.cash_halalas),('card',body.card_halalas)]
+            else:
+                if body.cash_halalas is not None or body.card_halalas is not None:fail(422,'مبالغ التقسيم مخصصة للكاش والشبكة معًا')
+                parts=[(body.method,body.amount_halalas)]
+            cash=next((amount for method,amount in parts if method=='cash'),0)
+            if any(method=='card' for method,_ in parts) and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
+            if cash and (body.tendered_halalas is None or body.tendered_halalas<cash):fail(422,'المبلغ النقدي المسلم غير كاف')
             sid=None
             if o['service']=='delivery':
                 if user['role']!='driver':fail(403,'التحصيل من السائق المكلف فقط')
@@ -475,12 +485,15 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
                 if s['status'] not in ('open','closing'):fail(409,'الشفت لا يسمح بالتحصيل')
                 sid=s['id']
             else:roles(user,'branch_manager','owner')
-            cid=uid();change=(body.tendered_halalas-body.amount_halalas) if body.method=='cash' else 0
-            c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],body.method,body.amount_halalas,body.tendered_halalas,change,body.reference))
-            if sid and body.method=='cash':event(c,sid,body.amount_halalas,'collection',cid,user['id'],'تحصيل نقدي صافي بعد الباقي')
+            change=body.tendered_halalas-cash if cash else 0
+            ids=[]
+            for method,amount in parts:
+                cid=uid();ids.append(cid)
+                c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],method,amount,body.tendered_halalas if method=='cash' else None,change if method=='cash' else 0,body.reference.strip() if method=='card' else ''))
+                if sid and method=='cash':event(c,sid,amount,'collection',cid,user['id'],'تحصيل نقدي صافي بعد الباقي')
             c.execute("UPDATE orders SET payment_status='paid',payment_method=%s,version=version+1 WHERE id=%s",(body.method,oid))
-            db.audit(c,user['id'],'order.collect','order',oid,{'collection_id':cid,'amount_halalas':body.amount_halalas,'method':body.method,'change_halalas':change})
-            return {'collection_id':cid,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
+            db.audit(c,user['id'],'order.collect','order',oid,{'collection_ids':ids,'amount_halalas':body.amount_halalas,'method':body.method,'cash_halalas':cash,'card_halalas':body.amount_halalas-cash,'change_halalas':change})
+            return {'collection_id':ids[0],'collection_ids':ids,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
         return mutate(c,user,request,'order.collect:'+oid,body.model_dump(),perform)
 
 class Refund(BaseModel):
@@ -496,9 +509,10 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
-            col=c.execute('SELECT * FROM collections WHERE order_id=%s',(oid,)).fetchone()
+            col=c.execute('SELECT * FROM collections WHERE order_id=%s AND method=%s',(oid,body.method)).fetchone()
             prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']
-            if not col or body.method!=col['method'] or body.amount_halalas+prior>col['amount_halalas']:fail(422,'مبلغ أو وسيلة الاسترداد غير صالح')
+            method_prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s AND method=%s',(oid,body.method)).fetchone()['n']
+            if not col or body.amount_halalas+method_prior>col['amount_halalas']:fail(422,'مبلغ أو وسيلة الاسترداد غير صالح')
             lines={}
             for x in o['snapshot']['items']:lines[x['product_id']]=lines.get(x['product_id'],0)+x['quantity']
             for pid,q in body.line_quantities.items():
@@ -512,7 +526,7 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             elif o['service']=='delivery' and body.method=='cash':fail(409,'يلزم شفت عهدة للاسترداد النقدي')
             rid=uid();c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,col['id'],oid,sid,body.method,body.amount_halalas,db.json(body.line_quantities),body.reason,user['id']))
             if sid and body.method=='cash':event(c,sid,-body.amount_halalas,'refund',rid,user['id'],body.reason)
-            status='refunded' if body.amount_halalas+prior==col['amount_halalas'] else 'partially_refunded'
+            status='refunded' if body.amount_halalas+prior==o['total_halalas'] else 'partially_refunded'
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',(status,oid))
             db.audit(c,user['id'],'order.refund','order',oid,{'refund_id':rid,**body.model_dump()})
             return {'refund_id':rid,'payment_status':status}
