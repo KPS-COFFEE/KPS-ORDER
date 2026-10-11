@@ -39,3 +39,22 @@ def validate(value):
     ):
         raise db.error(422,'PRINT_TRANSLATIONS_INVALID','أدخل ترجمات نصية صحيحة للأصناف والخيارات.')
     return {k:v.strip() for k,v in value.items()}
+
+
+def for_order(conn,order):
+    """Use the same scoped labels in browser receipts and branch print jobs."""
+    items=order['snapshot'].get('items',[])
+    products=conn.execute('SELECT id,name,settings FROM products WHERE brand_id=%s AND id=ANY(%s)',
+                          (order['brand_id'],[i.get('product_id') for i in items if i.get('product_id')])).fetchall()
+    configured={p['id']:((p['settings'].get('print_labels_en') or {}) | labels(p)) for p in products}
+    result={}
+    for item in items:
+        names=[item['name']]
+        for unit in item.get('units',[]):
+            for group in (unit.get('option_snapshot') or {}).values():
+                names.append(group.get('name',''))
+                names.extend(c.get('name',c.get('code','')) for c in group.get('choices',[]))
+        saved=configured.get(item.get('product_id'),{})
+        target=result.setdefault(item.get('product_id',''),{})
+        target.update({name:saved.get(name) or DEFAULTS.get(name) or name for name in names})
+    return result

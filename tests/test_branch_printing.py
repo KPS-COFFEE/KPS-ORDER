@@ -205,6 +205,9 @@ def test_product_print_translation_edit_is_scoped_and_used_in_queue(ops):
     assert actor('other').patch('/api/admin/products/ops-product',json=body,headers={'Idempotency-Key':str(uuid4())}).status_code==404
     response=actor('owner').patch('/api/admin/products/ops-product',json=body,headers={'Idempotency-Key':str(uuid4())})
     assert response.status_code==200,response.text
+    detail=actor('owner').get('/api/orders/'+oid).json()['order']
+    assert detail['print_labels_en']['ops-product']['قهوة تجربة']=='Test Coffee'
+    assert actor('other').get('/api/orders/'+oid).status_code==404
     assert actor('owner').patch('/api/admin/products/ops-product',json={'settings':{'print_labels_en':{'x':[]}}},headers={'Idempotency-Key':str(uuid4())}).status_code==422
     pair=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Translation test'})
     paired=actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Test'}).json()

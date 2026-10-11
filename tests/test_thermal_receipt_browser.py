@@ -15,6 +15,7 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
     items = [{'name': f'TEST {i} صنف طويل مع إضافات كثيرة', 'quantity': 2,
               'line_total_halalas': 2000, 'note': '<img src=x onerror=alert(1)> بدون سكر',
               'units': [{'option_snapshot': {'milk': {'name': 'الحليب', 'choices': [{'name': 'شوفان'}]}}}]} for i in range(40)]
+    items[0]['name']='كوكيز شوكليت'
     snapshot = {'items': items, 'branch_name': 'TEST branch', 'order_reference': 'HFR1-261011-10000', 'notes': 'TEST LAST NOTE'}
     with db.tx() as c:
         c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'pickup','ready','not_applicable','split',80000,0,80000,%s,%s)", (oid, customer, db.json(snapshot), db.json({'name': 'TEST customer'})))
@@ -35,7 +36,10 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
             expect(receipt.locator('.receipt-item')).to_have_count(41)
             expect(receipt.locator('.reference')).to_have_text('HFR1-261011-10000')
             expect(receipt.locator('.receipt-item img')).to_have_count(0)
-            expect(receipt.locator('h1')).to_have_text('كبز قهوة مختصة' if language == 'ar' else 'KPS COFFEE')
+            expect(receipt.locator('h1')).to_have_text('KPS COFFEE')
+            expect(receipt.locator('html')).to_have_attribute('lang','en')
+            expect(receipt.locator('.receipt-item').first).to_contain_text('Chocolate Cookies')
+            expect(page.locator('html')).to_have_attribute('lang',language)
             receipt.locator('.receipt-logo').evaluate('(img)=>img.decode()')
             assert receipt.locator('.receipt-logo').evaluate('(img)=>img.naturalWidth') == 1181
             expect(receipt.locator('.options').first).to_contain_text('شوفان')

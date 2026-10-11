@@ -41,16 +41,26 @@ const location = {origin:'https://example.test'};
 const o={customer_name:'PRIVATE CUSTOMER NAME',customer:{name:'PRIVATE CUSTOMER NAME'},
  order_reference:'HFR2-261011-10001',branch_name:'Branch',items:[],created_at:'2026-10-11',
  service:'delivery',preparation_status:'new',payment_method:'cash',payment_status:'unpaid'};
+o.items=[{product_id:'p1',name:'كوب حراري',quantity:1,units:[{option_snapshot:{COLOR:{name:'اللون',choices:[{name:'أزرق'}]}}}]}];
+o.print_labels_en={p1:{'كوب حراري':'Travel Mug','اللون':'Color','أزرق':'Blue'}};
 const before=JSON.stringify(o);
 for(const lang of ['ar','en']) for(const prep of [false,true]) {
  state.lang=lang;
- const html=receiptHTML(o,prep);
+ const html=receiptHTML(o,prep,lang);
  assert(!html.includes('PRIVATE CUSTOMER NAME'));
  assert(!html.includes('>العميل<')&&!html.includes('>Customer<'));
  assert(html.includes('HFR2-261011-10001'));
+ assert(html.includes(lang==='en'?'Travel Mug':'كوب حراري'));
+ assert(html.includes(lang==='en'?'Color: Blue':'اللون: أزرق'));
+ if(lang==='en')assert(!html.includes('كوب حراري'));
  const anonymous={...o};delete anonymous.customer_name;delete anonymous.customer;
- assert.equal(html,receiptHTML(anonymous,prep)); // No blank row or reserved space.
+ assert.equal(html,receiptHTML(anonymous,prep,lang)); // No blank row or reserved space.
  assert.equal(JSON.stringify(o),before);
+ state.lang='ar';const englishDefault=receiptHTML(o,prep);
+ assert(englishDefault.includes('lang="en"'));
+ assert(englishDefault.includes('Travel Mug'));
+ assert(englishDefault.includes('Payment method')||prep);
+ assert.equal(state.lang,'ar');
 }
 '''
     subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True)

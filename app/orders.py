@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from . import auth, catalog, db, performance, service_hours, order_numbering
+from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations
 
 router = APIRouter(prefix='/api/orders')
 
@@ -201,6 +201,7 @@ def get_order(order_id: str, user=Depends(auth.current_user)):
         events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
         if user['role']!='customer':
             performance.enrich_orders(conn,[row])
+            row['print_labels_en']=print_translations.for_order(conn,row)
         else:
             row=customer_order_view(row)
     return {'order': row, 'events': events}

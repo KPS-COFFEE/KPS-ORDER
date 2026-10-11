@@ -237,9 +237,7 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         destination=scope(conn,user,device['branch_id'])
         if not device['approved_at']:
             raise db.error(409,'PRINT_TEST_REQUIRED','اختبر الطابعة وأكد خروج الورقة قبل اعتماد طباعة الطلبات.')
-        products=conn.execute('SELECT id,name,settings FROM products WHERE brand_id=%s AND id=ANY(%s)',
-                              (user['brand_id'],[i.get('product_id') for i in order['snapshot'].get('items',[]) if i.get('product_id')])).fetchall()
-        translations={p['id']:((p['settings'].get('print_labels_en') or {}) | print_translations.labels(p)) for p in products}
+        translations=print_translations.for_order(conn,order)
         def perform():
             identifiers=[]
             for kind in (('order','preparation') if body.kind=='both' else (body.kind,)):
