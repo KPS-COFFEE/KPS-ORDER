@@ -21,7 +21,8 @@ router = APIRouter(prefix='/api')
 COOKIE = 'kps_session'
 CSRF_COOKIE = 'kps_csrf'
 ROLES = {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'customer'}
-ADMIN_PERMISSIONS = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage'}
+CONFIGURATION_PERMISSIONS = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage'}
+ADMIN_PERMISSIONS = CONFIGURATION_PERMISSIONS | {'vehicle_maintenance_manage'}
 
 
 def validate_admin_permissions(values):
@@ -46,7 +47,7 @@ def require_permission(permission):
 
 def require_configuration():
     def dependency(user=Depends(current_user)):
-        if user['role'] != 'owner' and not (user['role'] == 'admin' and set(user.get('permissions') or []) & ADMIN_PERMISSIONS):
+        if user['role'] != 'owner' and not (user['role'] == 'admin' and set(user.get('permissions') or []) & CONFIGURATION_PERMISSIONS):
             raise db.error(403, 'ROLE_FORBIDDEN', 'لا توجد صلاحيات إعدادات مخولة لحسابك.')
         return user
     return dependency

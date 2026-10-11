@@ -33,7 +33,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
           'performance_provinces', 'performance_province_branches', 'province_performance_policies',
           'closure_drafts', 'report_renderings', 'report_notifications',
-          'recovery_monitor_state', 'recovery_alert_notifications')
+          'recovery_monitor_state', 'recovery_alert_notifications', 'vehicle_reports', 'vehicle_report_events')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -61,7 +61,7 @@ def _scoped_sql(table, brand):
     direct = {'branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
-              'report_notifications'} | INFRASTRUCTURE_TABLES
+              'report_notifications', 'vehicle_reports'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
@@ -74,6 +74,8 @@ def _scoped_sql(table, brand):
         return 'from_shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
     if table == 'custody_events':
         return 'shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
+    if table == 'vehicle_report_events':
+        return 'report_id IN (SELECT id FROM vehicle_reports WHERE brand_id=%s)', (brand,)
     if table in {'report_corrections', 'report_renderings'}:
         return 'report_id IN (SELECT id FROM closure_reports WHERE brand_id=%s)', (brand,)
     if table == 'closure_drafts':

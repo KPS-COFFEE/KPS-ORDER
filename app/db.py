@@ -118,7 +118,8 @@ PRESERVED_TABLES = ('users', 'sessions', 'identity_tokens', 'otp_challenges', 'e
                     'closure_drafts', 'conversations', 'chat_messages', 'chat_attachments',
                     'conversation_reads', 'conversation_transfers',
                     'recovery_events', 'recovery_state', 'recovery_alerts',
-                    'recovery_monitor_state', 'recovery_alert_notifications')
+                    'recovery_monitor_state', 'recovery_alert_notifications',
+                    'vehicle_reports', 'vehicle_report_events')
 
 
 def preservation_snapshot(conn, baseline=None):
