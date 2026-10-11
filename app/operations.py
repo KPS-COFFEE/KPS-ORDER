@@ -395,7 +395,16 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
             allowed={'assigned':('accepted','problem'),'accepted':('picked_up','problem'),'picked_up':('delivered','problem'),'problem':('accepted','picked_up','cancelled')}
             if body.status not in allowed.get(t['status'],()):fail(409,'انتقال حالة غير صالح')
-            if body.status=='picked_up' and o['preparation_status']!='handed_over':fail(409,'يلزم تأكيد تسليم الفرع للسائق')
+            if o['preparation_status'] in ('cancelled','rejected') and body.status in ('accepted','picked_up','delivered'):
+                fail(409,'الطلب ملغى أو مرفوض')
+            if body.status=='picked_up' and o['preparation_status']!='handed_over':
+                if o['snapshot'].get('delivery_workflow')!='manager_dispatch':
+                    fail(409,'يلزم تأكيد تسليم الفرع للسائق')
+                if user['role']!='driver' or t['driver_id']!=user['id']:
+                    fail(403,'تأكيد الاستلام الفعلي من السائق المكلف فقط')
+                c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(o['id'],))
+                db.event(c,o['id'],user['id'],'preparation.handed_over',
+                         {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch'})
             if body.status=='delivered' and (o['payment_status']!='paid' or not body.proof.strip()):fail(409,'يلزم تحصيل فعلي ودليل تسليم')
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':

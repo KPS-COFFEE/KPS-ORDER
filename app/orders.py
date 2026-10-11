@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from . import auth, catalog, db, performance, service_hours
+from . import auth, catalog, db, performance, service_hours, order_numbering
 
 router = APIRouter(prefix='/api/orders')
 
@@ -76,6 +76,9 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                 customer['risk_alert']=bool(recent)
                 customer['risk_reasons']=['similar_recent_unverified_contact_order'] if recent else []
                 customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
+            config = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (body.brand_id,)).fetchone()
+            quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
+            quote['order_reference'] = order_numbering.allocate(conn, body.branch_id)
             order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
@@ -144,8 +147,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         conditions.append("EXISTS(SELECT 1 FROM driver_tasks td WHERE td.order_id=o.id AND td.driver_id=%s AND td.status<>'transferred')")
         params.append(driver_id)
     if search:
-        conditions.append('(o.order_no::text=%s OR o.id=%s)')
-        params.extend([search.strip(),search.strip()])
+        conditions.append("(o.order_no::text=%s OR o.id=%s OR o.snapshot->>'order_reference'=%s)")
+        params.extend([search.strip(),search.strip(),search.strip()])
     sort = sort or ('newest' if user['role']=='customer' else 'active_oldest')
     if sort not in {'newest','oldest','active_oldest'}:
         raise db.error(422,'ORDER_SORT_INVALID','ترتيب الطلبات غير صحيح.')

@@ -553,7 +553,7 @@ def display_shift_label(shift):
 
 
 def display_order_label(order):
-    return str(order.get('order_no') or order.get('order_reference') or ('طلب '+str(order.get('id') or order.get('order_id') or '').replace('-','')[-8:].upper()))
+    return str((order.get('snapshot') or {}).get('order_reference') or order.get('order_reference') or order.get('order_no') or ('طلب '+str(order.get('id') or order.get('order_id') or '').replace('-','')[-8:].upper()))
 
 
 def v5_tables(snap,view='compact'):

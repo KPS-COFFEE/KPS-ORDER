@@ -430,7 +430,9 @@ def homepage_presentation_config(existing=None, changes=None, brand_id=None):
 def update_settings(body: dict, user=Depends(appearance_admin), idem: str | None=Header(None,alias='Idempotency-Key')):
     if user['role']=='admin' and set(body)-{'theme','homepage_presentation'}:
         raise db.error(403,'ROLE_FORBIDDEN','إعدادات التشغيل الحساسة للمالك فقط.')
-    keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas','homepage_presentation'})
+    keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas','homepage_presentation','delivery_workflow'})
+    if 'delivery_workflow' in body and body['delivery_workflow'] not in ('manager_dispatch','branch_fulfillment'):
+        raise db.error(422,'DELIVERY_WORKFLOW_INVALID','اختر وضع تشغيل التوصيل المعتمد.')
     if 'operational_day_start' in body and not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',str(body['operational_day_start'])):
         raise db.error(422,'OPERATIONAL_DAY_INVALID','وقت بداية اليوم التشغيلي بصيغة HH:MM.')
     if 'late_after_minutes' in body and (type(body['late_after_minutes']) is not int or not 1<=body['late_after_minutes']<=1440):
