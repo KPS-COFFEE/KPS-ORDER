@@ -4,6 +4,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 import json as jsonlib
 from uuid import uuid4
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from . import db, auth, service_hours, shift_vehicle
@@ -412,6 +413,7 @@ class TaskTransition(BaseModel):
     status:str
     proof:str=Field('',max_length=2000)
     reason:str=Field('',max_length=2000)
+    contact_method:Literal['call','message']|None=None
 
 @router.post('/tasks/{tid}/transition')
 def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(auth.current_user)):
@@ -425,6 +427,9 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             s=lock_shift(c,t['shift_id']);shift_access(c,user,s)
             if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
             allowed={'assigned':('accepted','problem'),'accepted':('picked_up','problem'),'picked_up':('delivered','problem'),'problem':('accepted','picked_up','cancelled')}
+            if body.contact_method:
+                if body.status!='problem':fail(422,'محاولة التواصل ترفع للمدير كبلاغ فقط')
+                if t['status']=='problem':allowed['problem']=('problem',)
             if body.status not in allowed.get(t['status'],()):fail(409,'انتقال حالة غير صالح')
             if o['preparation_status'] in ('cancelled','rejected') and body.status in ('accepted','picked_up','delivered'):
                 fail(409,'الطلب ملغى أو مرفوض')
@@ -447,9 +452,24 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
             if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
             db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status']})
+            if body.contact_method:
+                db.event(c,t['order_id'],user['id'],'customer.no_answer',{'task_id':tid,'method':body.contact_method,'reason':body.reason})
             db.audit(c,user['id'],'task.transition','task',tid,body.model_dump())
             return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
         return mutate(c,user,request,'task.transition:'+tid,body.model_dump(),perform)
+
+@router.get('/operations/alerts')
+def operational_alerts(user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager','delivery_staff')
+    with db.tx() as c:
+        scope="o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))"
+        params=(user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))
+        rows=c.execute("SELECT o.id,o.order_no,o.snapshot->>'order_reference' AS order_reference,o.branch_id,o.created_at FROM orders o WHERE "+scope+" AND o.service='delivery' AND o.preparation_status NOT IN ('cancelled','rejected','completed') AND o.delivery_status NOT IN ('delivered','cancelled') AND NOT EXISTS (SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id AND t.status NOT IN ('cancelled','transferred','reassigned')) ORDER BY o.created_at LIMIT 100",params).fetchall()
+        problems=c.execute("SELECT o.id,o.order_no,o.snapshot->>'order_reference' AS order_reference,t.id AS task_id,t.reason FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE "+scope+" AND t.status='problem' ORDER BY t.created_at LIMIT 100",params).fetchall()
+        printing=[]
+        if user['role'] in ('owner','delivery_manager'):
+            printing=c.execute("SELECT p.id,p.order_id,p.status,p.branch_id FROM branch_print_jobs p WHERE p.brand_id=%s AND (%s OR p.branch_id=ANY(%s)) AND (p.status='uncertain' OR (p.status IN ('queued','claimed') AND p.created_at<now()-interval '2 minutes')) ORDER BY p.created_at LIMIT 100",params).fetchall()
+        return safe({'unassigned':rows,'problems':problems,'printing':printing})
 
 class TaskHandover(BaseModel): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
 
