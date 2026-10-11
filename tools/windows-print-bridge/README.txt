@@ -41,3 +41,8 @@ Only an owner or delivery manager can create/revoke a pairing. Replacing a
 registration or revoking it requires a recorded reason. Branch staff cannot open
 printer administration. A selected remote print destination does not transfer
 fulfillment ownership of the order. The customer branch is selected by default.
+
+Before operational use, the manager sends Test print from Branch printers.
+Verify the physical output at the correct branch (logo, Arabic, English, roll
+width and margins), then confirm paper output in the portal. Windows submission
+alone never approves a printer. Orders remain gated until this confirmation.

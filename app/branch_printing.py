@@ -7,7 +7,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from . import auth, db
 
@@ -88,7 +88,7 @@ def bridge(request: Request):
 @router.get('/devices')
 def devices(user=Depends(operators)):
     with db.tx() as conn:
-        rows = conn.execute('SELECT id,branch_id,label,printer_name,paper_mm,last_seen_at,revoked_at FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',(user['brand_id'],)).fetchall()
+        rows = conn.execute('SELECT id,branch_id,label,printer_name,paper_mm,last_seen_at,revoked_at,approved_at FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',(user['brand_id'],)).fetchall()
         return {'devices':[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]}
 
 
@@ -109,6 +109,53 @@ def revoke(identifier: str, body: ChangeBody, user=Depends(operators)):
         conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE device_id=%s AND status='queued'",(identifier,))
         db.audit(conn,user['id'],'printer.revoked','printer',identifier,{'reason':body.reason.strip()})
         return {'revoked':True}
+
+
+
+def managed_device(conn, user, identifier):
+    device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(identifier,user['brand_id'])).fetchone()
+    if not device:
+        raise db.error(404,'PRINT_DEVICE_NOT_FOUND','الطابعة غير مربوطة أو غير متاحة.')
+    branch=scope(conn,user,device['branch_id'])
+    return device,branch
+
+
+@router.post('/devices/{identifier}/test')
+def test_printer(identifier:str,user=Depends(operators),idem:str|None=Header(None,alias='Idempotency-Key')):
+    with db.tx() as conn:
+        device,branch=managed_device(conn,user,identifier)
+        def perform():
+            job_id=db.new_id('print_')
+            lines=[{'text':text,'bold':True,'center':True} for text in (
+                'اختبار الطباعة / PRINT TEST',branch['name'],device['label'],
+                str(device['paper_mm'])+' mm', 'قهوة عربية — 1234567890',
+                'Arabic / English — check logo and margins',
+                'ليست فاتورة طلب / NOT AN ORDER',job_id)]
+            conn.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,kind,payload,requested_by) VALUES(%s,%s,%s,%s,'test',%s,%s)",
+                         (job_id,user['brand_id'],device['branch_id'],identifier,db.json({'language':'ar','kind':'test','lines':lines}),user['id']))
+            conn.execute('UPDATE branch_print_devices SET acceptance_job_id=%s,approved_at=NULL,approved_by=NULL WHERE id=%s',(job_id,identifier))
+            db.audit(conn,user['id'],'printer.test.queued','printer',identifier,{'job_id':job_id})
+            return {'id':job_id,'status':'queued'}
+        return db.idempotent(conn,user['id'],idem,'printer.test',{'device_id':identifier},perform)
+
+
+class AcceptBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    job_id:str
+    paper_confirmed:StrictBool
+
+
+@router.post('/devices/{identifier}/approve')
+def approve_printer(identifier:str,body:AcceptBody,user=Depends(operators)):
+    with db.tx() as conn:
+        device,branch=managed_device(conn,user,identifier)
+        job=conn.execute("SELECT status FROM branch_print_jobs WHERE id=%s AND device_id=%s AND kind='test'",(body.job_id,identifier)).fetchone()
+        if not body.paper_confirmed or body.job_id!=device['acceptance_job_id'] or not job or job['status']!='submitted':
+            raise db.error(409,'PRINT_TEST_NOT_CONFIRMED','انتظر إرسال الاختبار وتأكد من خروج الورقة وصحة الشعار والعربية والمقاس.')
+        if not device['approved_at']:
+            conn.execute('UPDATE branch_print_devices SET approved_at=now(),approved_by=%s WHERE id=%s',(user['id'],identifier))
+            db.audit(conn,user['id'],'printer.test.approved','printer',identifier,{'job_id':body.job_id,'physical_output_confirmed_by_operator':True})
+        return {'approved':True}
 
 
 def receipt(order, branch, kind, language):
@@ -160,6 +207,8 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(body.device_id,user['brand_id'])).fetchone()
         if not device:raise db.error(409,'PRINT_NOT_PAIRED','اربط طابعة هذا الفرع أولًا.')
         destination=scope(conn,user,device['branch_id'])
+        if not device['approved_at']:
+            raise db.error(409,'PRINT_TEST_REQUIRED','اختبر الطابعة وأكد خروج الورقة قبل اعتماد طباعة الطلبات.')
         def perform():
             previous=conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s AND kind=%s AND status<>'cancelled' LIMIT 1",(order_id,body.kind)).fetchone()
             if previous and not body.reprint_reason.strip():raise db.error(409,'PRINT_REPRINT_REASON','سبق إرسال هذه الفاتورة؛ تحقق من الطابعة وأدخل سبب إعادة الطباعة لمنع التكرار.')
@@ -183,10 +232,10 @@ def jobs(user=Depends(operators)):
 @router.post('/bridge/next')
 def claim(device=Depends(bridge)):
     with db.tx() as conn:
-        live=conn.execute('SELECT id FROM branch_print_devices WHERE id=%s AND revoked_at IS NULL FOR UPDATE',(device['id'],)).fetchone()
+        live=conn.execute('SELECT id,approved_at FROM branch_print_devices WHERE id=%s AND revoked_at IS NULL FOR UPDATE',(device['id'],)).fetchone()
         if not live:raise db.error(401,'PRINT_DEVICE_AUTH','ألغي ربط الجهاز.')
         conn.execute('UPDATE branch_print_devices SET last_seen_at=now() WHERE id=%s',(device['id'],))
-        row=conn.execute("SELECT * FROM branch_print_jobs WHERE device_id=%s AND status='queued' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",(device['id'],)).fetchone()
+        row=conn.execute("SELECT * FROM branch_print_jobs WHERE device_id=%s AND status='queued' AND (kind='test' OR %s) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",(device['id'],bool(live['approved_at']))).fetchone()
         if not row:return {'job':None}
         conn.execute("UPDATE branch_print_jobs SET status='claimed',claimed_at=now() WHERE id=%s",(row['id'],))
         return {'job':{'id':row['id'],'payload':row['payload'],'paper_mm':device['paper_mm']}}

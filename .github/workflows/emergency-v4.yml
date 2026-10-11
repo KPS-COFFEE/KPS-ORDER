@@ -93,6 +93,7 @@ jobs:
               'Dockerfile',
               'app/auth.py', 'app/admin.py', 'app/operations.py', 'app/main.py',
               'app/exports.py', 'app/branch_printing.py', 'migrations/024_branch_printing.sql',
+              'migrations/025_printer_acceptance.sql',
               'public/ops.js', 'public/customer.js', 'public/index.html',
               'tests/test_branch_printing.py', 'tests/test_launch_admin.py',
               'tests/test_receipt_customer_privacy.py', 'tests/test_thermal_receipt_browser.py',

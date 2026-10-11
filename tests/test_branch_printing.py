@@ -5,6 +5,18 @@ from app import auth, db
 from test_operations import ops
 
 
+def approve_test_device(actor, post, device, token, who='manager'):
+    job=post(who,'/api/printing/devices/'+device+'/test')
+    post(who,'/api/printing/devices/'+device+'/approve',{'job_id':job['id'],'paper_confirmed':True},status=409)
+    headers={'Authorization':'Bearer '+token}
+    result=actor('customer').post('/api/printing/bridge/next',json={},headers=headers)
+    assert result.json()['job']['id']==job['id']
+    assert result.json()['job']['payload']['kind']=='test'
+    assert actor('customer').post('/api/printing/bridge/jobs/'+job['id']+'/ack',json={'status':'submitted'},headers=headers).status_code==200
+    post(who,'/api/printing/devices/'+device+'/approve',{'job_id':job['id'],'paper_confirmed':False},status=409)
+    post(who,'/api/printing/devices/'+device+'/approve',{'job_id':job['id'],'paper_confirmed':True})
+
+
 @pytest.mark.postgres
 def test_branch_print_device_queue_isolation_and_no_automatic_reprint(ops):
     actor,post,order,shifts=ops
@@ -17,6 +29,8 @@ def test_branch_print_device_queue_isolation_and_no_automatic_reprint(ops):
     token=result.json()['token']
     assert client.post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Duplicate'}).status_code==401
     device=pair['id'];body={'device_id':device,'kind':'order'}
+    post('manager','/api/printing/orders/'+oid,body,status=409)
+    approve_test_device(actor,post,device,token)
     job=post('manager','/api/printing/orders/'+oid,body,key='print-stable-replay')
     assert post('manager','/api/printing/orders/'+oid,body,key='print-stable-replay')==job
     post('manager','/api/printing/orders/'+oid,body,status=409)
@@ -77,6 +91,7 @@ def test_manager_selects_destination_and_settings_are_locked(ops):
     result = actor('customer').post('/api/printing/bridge/pair', json={'pairing_code':pair['pairing_code'],'printer_name':'Test second printer'})
     assert result.status_code == 200
     token = result.json()['token']
+    approve_test_device(actor,post,pair['id'],token,who='owner')
     oid = order()
     body = {'device_id':pair['id']}
     post('manager', '/api/printing/orders/'+oid, body, status=404)
@@ -102,3 +117,27 @@ def test_manager_selects_destination_and_settings_are_locked(ops):
     with db.tx() as conn:
         event = conn.execute("SELECT details FROM audit_events WHERE action='printer.revoked' AND entity_id=%s",(pair['id'],)).fetchone()
         assert event['details']['reason'] == 'Replace faulty computer'
+
+
+@pytest.mark.postgres
+def test_physical_acceptance_scope_and_retest_gate(ops):
+    actor,post,order,_=ops
+    paired=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Acceptance'})
+    token=actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':paired['pairing_code'],'printer_name':'Synthetic'}).json()['token']
+    device=paired['id'];oid=order();body={'device_id':device}
+    for who in ('branch','driver'):
+        post(who,'/api/printing/devices/'+device+'/test',status=403)
+        post(who,'/api/printing/devices/'+device+'/approve',{'job_id':'other','paper_confirmed':True},status=403)
+    post('other','/api/printing/devices/'+device+'/test',status=404)
+    approve_test_device(actor,post,device,token)
+    queued=post('manager','/api/printing/orders/'+oid,body)
+    test=post('manager','/api/printing/devices/'+device+'/test',key='test-replay')
+    assert post('manager','/api/printing/devices/'+device+'/test',key='test-replay')==test
+    post('manager','/api/printing/orders/'+order(),body,status=409)
+    headers={'Authorization':'Bearer '+token}
+    received=actor('customer').post('/api/printing/bridge/next',json={},headers=headers).json()['job']
+    assert received['id']==test['id']  # pending orders stay gated during retest
+    actor('customer').post('/api/printing/bridge/jobs/'+test['id']+'/ack',json={'status':'uncertain'},headers=headers)
+    post('manager','/api/printing/devices/'+device+'/approve',{'job_id':test['id'],'paper_confirmed':True},status=409)
+    approve_test_device(actor,post,device,token)
+    assert actor('customer').post('/api/printing/bridge/next',json={},headers=headers).json()['job']['id']==queued['id']
