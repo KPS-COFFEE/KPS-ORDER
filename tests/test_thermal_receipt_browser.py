@@ -30,6 +30,8 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
             with page.expect_popup() as popup:
                 page.locator(f'[data-action="print-{kind}"][data-id="{oid}"]').click()
             receipt = popup.value
+            expect(receipt.locator('body')).not_to_contain_text('TEST customer')
+            expect(receipt.locator('.receipt-meta')).not_to_contain_text('العميل' if language == 'ar' else 'Customer')
             expect(receipt.locator('.receipt-item')).to_have_count(41)
             expect(receipt.locator('.reference')).to_have_text('HFR1-261011-10000')
             expect(receipt.locator('.receipt-item img')).to_have_count(0)

@@ -172,7 +172,8 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
             if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
-            if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(target['id'],)).fetchone(): fail(409,'يوجد شفت مفتوح')
+            if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(target['id'],)).fetchone():
+                raise db.error(409,'SHIFT_ALREADY_OPEN','لديك شفت مفتوح بالفعل. انتقل إلى مهام التوصيل أو الشفتات بدل فتح شفت جديد.')
             brand=target.get('brand_id') or user.get('brand_id')
             bids=body.branch_ids or target.get('branch_ids',[])
             if not brand or not bids: fail(422,'يلزم براند وفروع فعلية للشفت')
@@ -186,8 +187,11 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 roles(user,'owner')
                 if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
             if body.kind=='driver':
+                if not body.manager_shift_id:
+                    raise db.error(409,'MANAGER_SHIFT_REQUIRED','اختر شفت مدير التوصيل المفتوح. إذا لم يظهر، اطلب من المدير فتح شفت يغطي جميع فروعك المعتمدة.')
                 manager=lock_shift(c,body.manager_shift_id)
-                if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']): fail(409,'يلزم شفت مدير مخول مفتوح')
+                if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']):
+                    raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي جميع فروعك. مدير التوصيل هو من يعدّل نطاق التغطية.')
                 manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
                 if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (manager_user['role']!='owner' and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
                 if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
@@ -218,6 +222,8 @@ def people_data(c,user):
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
     managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
+    if user['role']=='driver':
+        managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])]
     return {'authorized_receivers':users,'available_manager_shifts':managers}
 
 @router.get('/operations/people')

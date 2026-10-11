@@ -234,7 +234,10 @@ def configuration(user=Depends(auth.require_configuration())):
             result['banners'] = [b for b in result['banners']
                                  if b['branch_ids'] and set(b['branch_ids']) <= allowed_branches]
         result['settings'] = {k:v for k,v in result['settings'].items() if k in {'theme','homepage_presentation'}} if auth.has_permission(user,'appearance_manage') else {}
+        brand_services = result['brand']['settings'].get('services', {})
         result['brand'] = {k:result['brand'][k] for k in ('id','name')}
+        if auth.has_permission(user, 'brand_services_manage'):
+            result['brand']['settings'] = {'services': brand_services}
     return result
 
 
@@ -720,7 +723,7 @@ def create_brand(body:dict,user=Depends(owner),idem:str|None=Header(None,alias='
 
 
 @router.patch('/admin/brand-services')
-def brand_services(body: dict, user=Depends(owner), idem: str | None=Header(None,alias='Idempotency-Key')):
+def brand_services(body: dict, user=Depends(auth.require_permission('brand_services_manage')), idem: str | None=Header(None,alias='Idempotency-Key')):
     keys(body, {'services', 'reason'})
     services = body.get('services')
     keys(services, {'delivery', 'pickup', 'car_pickup'})

@@ -22,7 +22,7 @@ COOKIE = 'kps_session'
 CSRF_COOKIE = 'kps_csrf'
 GUEST_SESSION_SECONDS = 30 * 24 * 3600
 ROLES = {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'customer'}
-CONFIGURATION_PERMISSIONS = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage'}
+CONFIGURATION_PERMISSIONS = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage', 'brand_services_manage'}
 ADMIN_PERMISSIONS = CONFIGURATION_PERMISSIONS | {'vehicle_maintenance_manage'}
 
 
@@ -927,9 +927,27 @@ class StaffInvitationBody(BaseModel):
 
 
 def _vehicle(value):
-    if set(value)-{'type','plate','description'} or any(not isinstance(v,str) or len(v)>150 or '\x00' in v for v in value.values()):
+    if set(value)-{'type','plate','description','owned_by_kps','odometer_km'} or any(not isinstance(v,str) or len(v)>150 or '\x00' in v for k,v in value.items() if k in {'type','plate','description'}):
         raise db.error(422,'VEHICLE_INVALID','بيانات المركبة غير صحيحة.')
+    if 'owned_by_kps' in value and type(value['owned_by_kps']) is not bool:
+        raise db.error(422,'VEHICLE_INVALID','حدد هل المركبة تابعة لكبز.')
+    if 'odometer_km' in value and (type(value['odometer_km']) is not int or not 0<=value['odometer_km']<=10000000):
+        raise db.error(422,'VEHICLE_INVALID','قراءة العداد غير صحيحة.')
     return value
+
+
+@router.put('/identity/driver/vehicle')
+def register_driver_vehicle(body: dict, user=Depends(require_roles('driver'))):
+    vehicle = _vehicle(body)
+    if not str(vehicle.get('plate','')).strip() or 'owned_by_kps' not in vehicle:
+        raise db.error(422,'VEHICLE_REQUIRED','أدخل لوحة المركبة وحدد هل هي تابعة لكبز.')
+    with db.tx() as conn:
+        previous = conn.execute('SELECT vehicle FROM users WHERE id=%s FOR UPDATE',(user['id'],)).fetchone()['vehicle'] or {}
+        if previous.get('plate'):
+            raise db.error(409,'VEHICLE_MANAGER_ONLY','بيانات مركبتك مسجلة؛ تعديلها متاح لمدير التوصيل فقط.')
+        conn.execute('UPDATE users SET vehicle=%s,updated_at=now() WHERE id=%s',(db.json(vehicle),user['id']))
+        db.audit(conn,user['id'],'driver.vehicle.registered','user',user['id'],{'vehicle':vehicle})
+        return {'vehicle':vehicle}
 
 
 @router.post('/identity/staff/invitations')

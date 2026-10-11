@@ -15,6 +15,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-print-bridge:
+    if: github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile Windows bridge and check logo and JSON
+        shell: pwsh
+        run: |
+          Set-Location tools/windows-print-bridge
+          Copy-Item ../../public/assets/kps-receipt-logo.png logo.png
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /out:KpsPrintBridge.exe /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll KpsPrintBridge.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./KpsPrintBridge.exe --self-test
+          exit $LASTEXITCODE
   independent-postgres-regression:
     # pull_request branch filters target branches. This gate restricts execution
     # to the emergency source branch without changing legacy integrations.
@@ -70,8 +88,20 @@ jobs:
               'tests/test_v5_identity.py', '.github/workflows/emergency-v4.yml',
           }
           focused = 'app/auth.py' in changed and changed <= identity_files
+          operation_files = {
+              'app/auth.py', 'app/admin.py', 'app/operations.py', 'app/main.py',
+              'app/exports.py', 'app/branch_printing.py', 'migrations/024_branch_printing.sql',
+              'public/ops.js', 'public/customer.js', 'public/index.html',
+              'tests/test_branch_printing.py', 'tests/test_launch_admin.py',
+              'tests/test_receipt_customer_privacy.py', 'tests/test_thermal_receipt_browser.py',
+              'tools/windows-print-bridge/KpsPrintBridge.cs',
+              'tools/windows-print-bridge/Start.cmd', 'tools/windows-print-bridge/README.txt',
+              '.github/workflows/emergency-v4.yml',
+          }
+          operations = bool(changed) and changed <= operation_files and not focused
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('identity_only=' + str(focused).lower() + '\n')
+              output.write('operations_only=' + str(operations).lower() + '\n')
           print('Identity/access regression' if focused else 'Full regression')
           PY
       - uses: actions/setup-python@v5
@@ -94,16 +124,16 @@ jobs:
           done
           git diff --check
       - name: Run temporary dispatch and numbering acceptance
-        if: steps.scope.outputs.identity_only != 'true'
+        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py tests/test_driver_configuration_lock.py tests/test_driver_configuration_browser.py --junitxml=test-results/dispatch-numbering.xml
       - name: Run scoped bilingual vehicle maintenance acceptance
-        if: steps.scope.outputs.identity_only != 'true'
+        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py
           --junitxml=test-results/vehicle-maintenance.xml
       - name: Run focused launch, access and delivery-hours checks
-        if: steps.scope.outputs.identity_only != 'true'
+        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_launch_admin.py tests/test_launch_branches.py
@@ -115,7 +145,7 @@ jobs:
           tests/test_staff_invitation_browser.py
           --junitxml=test-results/launch-focused.xml
       - name: Run isolated PostgreSQL 18 and source regression
-        if: steps.scope.outputs.identity_only != 'true'
+        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
       - name: Run focused identity, sessions, ownership and browser regression
         if: steps.scope.outputs.identity_only == 'true'
@@ -126,6 +156,16 @@ jobs:
           tests/test_identity_closure.py tests/test_owner_closure.py
           tests/test_browser.py tests/test_staff_invitation_browser.py
           --junitxml=test-results/identity-focused.xml
+      - name: Run affected driver, permissions, printing, receipt and restore checks
+        if: steps.scope.outputs.operations_only == 'true'
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_branch_printing.py tests/test_receipt_customer_privacy.py
+          tests/test_thermal_receipt_browser.py tests/test_driver_configuration_lock.py
+          tests/test_driver_configuration_browser.py tests/test_operations.py
+          tests/test_launch_admin.py tests/test_launch_branches.py tests/test_launch_browser.py
+          tests/test_backup.py tests/test_v5_identity.py tests/test_dispatch_numbering.py
+          --junitxml=test-results/operations-focused.xml
       - name: Retain synthetic test results
         if: always()
         uses: actions/upload-artifact@v4

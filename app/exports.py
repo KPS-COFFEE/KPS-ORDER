@@ -33,9 +33,10 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
           'performance_provinces', 'performance_province_branches', 'province_performance_policies',
           'closure_drafts', 'report_renderings', 'report_notifications',
-          'recovery_monitor_state', 'recovery_alert_notifications', 'vehicle_reports', 'vehicle_report_events')
+          'recovery_monitor_state', 'recovery_alert_notifications', 'vehicle_reports', 'vehicle_report_events',
+          'branch_print_devices', 'branch_print_jobs')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
-               'identity_tokens', 'email_outbox', 'email_webhook_events'}
+               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
                          'recovery_monitor_state', 'recovery_alert_notifications'}
 PUBLIC = db.ROOT / 'public' / 'assets'
@@ -61,7 +62,7 @@ def _scoped_sql(table, brand):
     direct = {'branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
-              'report_notifications', 'vehicle_reports'} | INFRASTRUCTURE_TABLES
+              'report_notifications', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
@@ -297,6 +298,12 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                         sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, row)),
                         sql.SQL(',').join(sql.Placeholder() for _ in row))
                     conn.execute(statement, values)
+            # Restores preserve history, never replay physical printing or
+            # reactivate device credentials copied from an older snapshot.
+            if 'branch_print_devices' in actual:
+                conn.execute("UPDATE branch_print_devices SET revoked_at=coalesce(revoked_at,now()),token_hash=NULL,pair_hash=NULL,pair_expires_at=NULL")
+                conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE status='queued'")
+                conn.execute("UPDATE branch_print_jobs SET status='uncertain',finished_at=now() WHERE status='claimed'")
             if 'chat_messages' in actual:
                 sequence = conn.execute("SELECT pg_get_serial_sequence('chat_messages','seq') AS name").fetchone()['name']
                 if sequence:

@@ -55,6 +55,21 @@ def test_administrator_permissions_are_explicit_and_cannot_name_owner_capabiliti
 
 
 @pytest.mark.postgres
+def test_global_services_require_explicit_owner_delegation(owner):
+    client, mutate = owner
+    body = {'services': {'delivery': True, 'pickup': False, 'car_pickup': False}, 'reason': 'Synthetic service policy test'}
+    for permissions, role in [(['branches_manage'], 'admin'), (['brand_services_manage'], 'driver')]:
+        _login(client, _administrator(permissions, role=role))
+        assert mutate('PATCH', '/api/admin/brand-services', body).status_code == 403
+    _login(client, _administrator(['brand_services_manage']))
+    result = mutate('PATCH', '/api/admin/brand-services', body)
+    assert result.status_code == 200, result.text
+    config = client.get('/api/admin/config').json()
+    assert config['brand']['settings']['services']['pickup'] is False
+    assert config['users'] == []
+
+
+@pytest.mark.postgres
 def test_delegated_branch_administrator_is_scoped_and_cannot_gain_owner_access(owner):
     client, mutate = owner
     identifier = _administrator(['branches_manage'])
