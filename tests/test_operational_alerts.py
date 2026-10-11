@@ -2,7 +2,7 @@
 import pytest
 from app import db
 from tests.test_operations import ops
-from test_browser import _context, _owner_login, _staff, chromium_browser, live_app
+from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
 
 @pytest.mark.postgres
 def test_unassigned_contact_attempts_and_scope(ops):
@@ -72,6 +72,7 @@ def test_alert_sound_requires_gesture_repeats_and_stops(live_app,chromium_browse
         expect(page.locator('[data-action=alert-sound]')).to_contain_text('Sound enabled' if language=='en' else 'الصوت مفعل')
         assert page.evaluate('window.testBeeps')==1
         page.clock.run_for(31000)
+        page.wait_for_function('window.testBeeps >= 2')
         assert page.evaluate('window.testBeeps')>=2
         pending.clear();page.clock.run_for(16000)
         expect(page.locator('#operational-alerts')).not_to_contain_text('123')
