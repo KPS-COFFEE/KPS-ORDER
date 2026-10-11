@@ -102,7 +102,7 @@ jobs:
               'tools/windows-print-bridge/Start.cmd', 'tools/windows-print-bridge/README.txt',
               '.github/workflows/emergency-v4.yml',
           }
-          staff_tests = bool(changed) and changed <= {'tests/test_owner_staff_management.py', '.github/workflows/emergency-v4.yml'}
+          staff_tests = bool(changed) and changed <= {'tests/test_owner_staff_management.py', 'public/ops.js', 'public/ops.css', '.github/workflows/emergency-v4.yml'}
           password_owner = 'tests/test_additional_password_owner.py' in changed and changed <= {'app/auth.py','public/ops.js','tests/test_additional_password_owner.py','.github/workflows/emergency-v4.yml'}
           focused = focused or staff_tests or password_owner
           operations = bool(changed) and changed <= operation_files and not focused

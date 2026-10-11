@@ -119,3 +119,48 @@ def test_owner_employee_actions_in_browser(live_app,chromium_browser):
         expect(page.locator(f'[data-action=edit-staff][data-id="{target["id"]}"]')).to_be_visible()
         assert not errors
     finally:context.close()
+
+@pytest.mark.postgres
+@pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated Chromium only')
+def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
+    from playwright.sync_api import expect
+    owner=_staff();target=_staff('driver')
+    context,page,errors=_context(chromium_browser,live_app)
+    _owner_login(context,live_app,owner)
+    try:
+        page.goto(live_app+'/ops')
+        page.locator('#navigation [data-page=admin]').click()
+        page.locator('[data-action=admin-tab][data-tab=users]').click()
+        form=page.locator(f'.staff-branch-form[data-staff-id="{target["id"]}"]')
+        expect(form.locator('output')).to_have_text('1')
+        expect(form.locator('.staff-branch-options')).not_to_be_visible()
+        form.locator('summary').click()
+        second=form.locator('input[type=checkbox]:not(:checked)').first
+        branch=second.get_attribute('name').split(':',1)[1]
+        second.check()
+        expect(form.locator('output')).to_have_text('2')
+        with db.tx() as conn:
+            assert conn.execute('SELECT branch_ids FROM users WHERE id=%s',(target['id'],)).fetchone()['branch_ids']==['kps-branch-1']
+        form.locator('button[type=reset]').click()
+        expect(form.locator('output')).to_have_text('1')
+        form.locator('summary').click()
+        form.locator(f'input[name="scope:{branch}"]').check()
+        form.locator('[name=reason]').fill('Synthetic branch assignment')
+        form.locator('button[type=submit]').click()
+        expect(form.locator('details')).not_to_have_attribute('open','')
+        expect(form.locator('output')).to_have_text('2')
+        with db.tx() as conn:
+            row=conn.execute('SELECT branch_ids,role,active FROM users WHERE id=%s',(target['id'],)).fetchone()
+            assert set(row['branch_ids'])=={'kps-branch-1',branch}
+            assert row['role']=='driver' and row['active']
+        for width in (390,1280):
+            page.set_viewport_size({'width':width,'height':900})
+            form.scroll_into_view_if_needed()
+            expect(form.locator('summary')).to_be_visible()
+            expect(form.locator('output')).to_have_text('2')
+        page.locator(f'[data-action=edit-staff][data-id="{target["id"]}"]').click()
+        expect(page.locator('#modal .staff-branch-picker output')).to_have_text('2')
+        page.locator('#modal .staff-branch-picker summary').click()
+        expect(page.locator('#modal .staff-branch-options input:checked')).to_have_count(2)
+        assert not errors
+    finally:context.close()
