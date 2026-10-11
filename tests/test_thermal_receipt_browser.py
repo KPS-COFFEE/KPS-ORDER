@@ -32,7 +32,10 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
             receipt = popup.value
             expect(receipt.locator('.receipt-item')).to_have_count(41)
             expect(receipt.locator('.reference')).to_have_text('HFR1-261011-10000')
-            expect(receipt.locator('img')).to_have_count(0)
+            expect(receipt.locator('.receipt-item img')).to_have_count(0)
+            expect(receipt.locator('h1')).to_have_text('كبز قهوة مختصة' if language == 'ar' else 'KPS COFFEE')
+            receipt.locator('.receipt-logo').evaluate('(img)=>img.decode()')
+            assert receipt.locator('.receipt-logo').evaluate('(img)=>img.naturalWidth') == 1181
             expect(receipt.locator('.options').first).to_contain_text('شوفان')
             expect(receipt.locator('.totals')).to_have_count(1 if kind == 'order' else 0)
             for width in ('80', '58'):
