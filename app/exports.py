@@ -24,7 +24,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'assets', 'banners',
-          'shifts', 'orders', 'driver_tasks', 'collections', 'refunds', 'custody_transfers',
+          'order_daily_counters', 'shifts', 'orders', 'driver_tasks', 'collections', 'refunds', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
@@ -66,7 +66,7 @@ def _scoped_sql(table, brand):
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
         return 'brand_id=%s', (brand,)
-    if table in {'delivery_hours_decisions','branch_opening_hours_decisions'}:
+    if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
     if table in {'driver_tasks', 'collections', 'refunds', 'order_events'}:
         return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
