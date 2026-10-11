@@ -160,6 +160,8 @@ def delivery_shift_window(c, brand, branches):
 @router.post('/shifts')
 def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','driver')
+    if user['role']=='driver' and body.branch_ids and set(body.branch_ids)!=set(user.get('branch_ids',[])):
+        fail(403,'فروع السائق يحددها مدير التوصيل؛ لا يمكن تغيير نطاق الشفت')
     with db.tx() as c:
         def perform():
             target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
@@ -801,7 +803,7 @@ class AvailabilityUpdate(BaseModel):
 
 @router.post('/shifts/{sid}/availability')
 def set_shift_availability(sid:str,body:AvailabilityUpdate,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager','driver')
+    roles(user,'owner','delivery_manager')
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,s)
         if s['kind']!='driver' or s['status']!='open':fail(409,'التوفر يخص شفت سائق مفتوح فقط')

@@ -75,7 +75,7 @@ jobs:
           done
           git diff --check
       - name: Run temporary dispatch and numbering acceptance
-        run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py --junitxml=test-results/dispatch-numbering.xml
+        run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py tests/test_driver_configuration_lock.py tests/test_driver_configuration_browser.py --junitxml=test-results/dispatch-numbering.xml
       - name: Run scoped bilingual vehicle maintenance acceptance
         run: >-
           python -m pytest -q --strict-markers

@@ -46,6 +46,7 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
                 assert abs(dimensions['width'] - int(width)*96/25.4) < 2
                 assert dimensions['scroll'] <= dimensions['width']
                 assert dimensions['height'] > 1500
+                assert receipt.locator('.receipt header').evaluate('(e)=>e.offsetHeight') < 230
                 expect(receipt.locator('.receipt-item').last).to_contain_text('TEST LAST NOTE')
                 receipt.emulate_media(media='screen')
             receipt.close()
