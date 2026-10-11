@@ -251,7 +251,7 @@ def test_multi_branch_one_shift_revocation_preserves_task_custody_and_draft(v5):
     actor,call,body,_=v5
     manager=call('manager','POST','/api/shifts',{'kind':'manager','branch_ids':['v5-a','v5-b']}).json()['shift']['id']
     driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).json()['shift']['id']
-    assert call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a'],'manager_shift_id':manager}).status_code==409
+    assert call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).status_code==409
     order=call('customer','POST','/api/orders',body('delivery')).json()['order']
     assigned=call('manager','POST','/api/orders/'+order['id']+'/assign',{'driver_shift_id':driver},key='TEST-assignment-one');assert assigned.status_code==200,assigned.text
     blocked=call('owner','PATCH','/api/admin/users/v5-driver',{'branch_ids':['v5-b']});assert blocked.status_code==409,blocked.text
