@@ -22,6 +22,7 @@ def test_split_collection_and_change_in_browser(live_app, chromium_browser, lang
         page.get_by_role('button', name='الطلبات', exact=True).click()
         if language == 'en':
             page.get_by_role('button', name='English', exact=True).click()
+        page.locator(f'[data-action="order-detail"][data-id="{oid}"]').click()
         page.locator(f'[data-action="collect"][data-id="{oid}"]').click()
         modal = page.locator('#modal')
         modal.locator('select[name=method]').select_option('split')
