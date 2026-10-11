@@ -165,7 +165,7 @@ jobs:
           --junitxml=test-results/identity-focused.xml
       - name: Run focused owner staff lifecycle and browser checks
         if: steps.scope.outputs.staff_tests_only == 'true'
-        run: python -m pytest -q --strict-markers tests/test_owner_staff_management.py --junitxml=test-results/staff-focused.xml
+        run: python -m pytest -q --strict-markers tests/test_owner_staff_management.py tests/test_branch_printing.py --junitxml=test-results/staff-focused.xml
       - name: Run affected driver, permissions, printing, receipt and restore checks
         if: steps.scope.outputs.operations_only == 'true'
         run: >-
