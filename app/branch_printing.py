@@ -172,21 +172,27 @@ def approve_printer(identifier:str,body:AcceptBody,user=Depends(printer_admin)):
 def receipt(order, branch, kind, language):
     ar = language=='ar'
     snap=order['snapshot']; lines=[]
-    def add(text,bold=False,center=False):
-        lines.append({'text':str(text),'bold':bold,'center':center})
+    def add(text,bold=False,center=False,role='',label='',value=''):
+        lines.append({'text':str(text),'bold':bold,'center':center,
+                      'role':role,'label':label,'value':value})
+    def row(label,value,bold=False):
+        add(label+': '+value,bold,role='row',label=label,value=value)
     def amount(value): return f'{int(value or 0)/100:.2f} '+('ر.س' if ar else 'SAR')
-    add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True)
+    add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True,role='brand')
     add(('فاتورة تحضير الطلب' if ar else 'Preparation receipt') if kind=='preparation' else ('فاتورة طلب' if ar else 'Order receipt'),True,True)
-    add('رقم الطلب' if ar else 'Order number',False,True)
-    add(snap.get('order_reference') or order['order_no'],True,True)
+    add('رقم الطلب' if ar else 'Order number',False,True,role='caption')
+    add(snap.get('order_reference') or order['order_no'],True,True,role='reference')
     add(branch['name'],False,True)
     local=order['created_at'].astimezone(ZoneInfo('Asia/Riyadh'))
     add(('التاريخ: ' if ar else 'Date: ')+local.strftime('%Y-%m-%d'),False,True)
     add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M')+(' — الرياض' if ar else ' — Riyadh'),False,True)
     add('────────────────────',False,True)
     for item in snap.get('items',[]):
-        add(item['name'],True)
-        add(('الكمية: ' if ar else 'Quantity: ')+str(item['quantity'])+((' | '+amount(item.get('line_total_halalas'))) if kind=='order' else ''),kind=='preparation')
+        add(item['name'],True,role='item')
+        if kind=='order':
+            row(('الكمية: ' if ar else 'Quantity: ')+str(item['quantity']),amount(item.get('line_total_halalas')))
+        else:
+            row('الكمية' if ar else 'Quantity',str(item['quantity']),True)
         for i,unit in enumerate(item.get('units',[]),1):
             for option in (unit.get('option_snapshot') or {}).values():
                 choices=', '.join(str(x.get('name',x.get('code',''))) for x in option.get('choices',[]))
@@ -198,13 +204,13 @@ def receipt(order, branch, kind, language):
         for key,label,en in [('subtotal_halalas','الأصناف','Subtotal'),('discount_halalas','الخصم','Discount'),('delivery_fee_halalas','التوصيل','Delivery'),('total_halalas','الإجمالي','Total')]:
             value=order.get(key,snap.get(key,0))
             if key=='discount_halalas' and not value:continue
-            add((label if ar else en)+': '+amount(value),key=='total_halalas')
+            row(label if ar else en,amount(value),key=='total_halalas')
         methods={'cash':('كاش','Cash'),'card':('شبكة','Card'),'split':('كاش وشبكة','Cash and card')}
-        add(('الدفع: ' if ar else 'Payment: ')+methods.get(order['payment_method'],(order['payment_method'],)*2)[0 if ar else 1])
+        row('الدفع' if ar else 'Payment',methods.get(order['payment_method'],(order['payment_method'],)*2)[0 if ar else 1])
         statuses={'paid':('تم التحصيل','Paid'),'unpaid':('لم يتم التحصيل','Unpaid'),'partially_refunded':('مسترد جزئيًا','Partially refunded'),'refunded':('مسترد','Refunded')}
-        add(('حالة التحصيل: ' if ar else 'Collection: ')+statuses.get(order['payment_status'],('راجع حالة التحصيل بالنظام','Check collection status in system'))[0 if ar else 1],True)
+        row('حالة التحصيل' if ar else 'Collection',statuses.get(order['payment_status'],('راجع حالة التحصيل بالنظام','Check collection status in system'))[0 if ar else 1],True)
         add('────────────────────',False,True)
-        add('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice',False,True)
+        add('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice',False,True,role='caption')
     return {'language':language,'kind':kind,'lines':lines}
 
 

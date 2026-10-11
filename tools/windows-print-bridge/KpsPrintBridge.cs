@@ -85,6 +85,7 @@ class KpsPrintBridge {
         using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
             key.SetValue("KPS Print Bridge", "\""+System.Reflection.Assembly.GetExecutingAssembly().Location+"\"");
         }
+        Console.WriteLine("Receipt layout: PAPER-FIT-20261012 (balanced columns / printable width).");
         Console.WriteLine("Printer: "+Printer+". Keep this window open. Ctrl+C stops the bridge.");
     }
     static List<Dictionary<string,object>> Lines(Dictionary<string,object> payload) {
@@ -117,14 +118,46 @@ class KpsPrintBridge {
         format.Alignment=center?StringAlignment.Center:StringAlignment.Near;
         return format;
     }
+    static bool IsRule(Dictionary<string,object> line) {
+        string text=Str(line,"text").Trim();
+        return text.Length>0 && text.Trim('─').Length==0;
+    }
+    static Font LineFont(Dictionary<string,object> line,Font regular,Font bold,Font caption,Font heading) {
+        string role=Str(line,"role");
+        if(role=="caption")return caption;
+        if(role=="reference" || role=="item")return heading;
+        return Bool(line,"bold")?bold:regular;
+    }
+    static float TextHeight(Graphics graphics,string text,Font font,float width,bool ar) {
+        using(var format=LineFormat(ar,false))
+            return graphics.MeasureString(text,font,(int)Math.Floor(width),format).Height;
+    }
     static float LineHeight(Graphics graphics,Dictionary<string,object> line,Font font,float width,bool ar) {
-        using(var format=LineFormat(ar,Bool(line,"center")))
-            return graphics.MeasureString(Str(line,"text"),font,(int)Math.Floor(width),format).Height+3;
+        if(IsRule(line))return 12;
+        if(Str(line,"role")=="row") {
+            return Math.Max(TextHeight(graphics,Str(line,"label"),font,width*0.44f-4,ar),
+                TextHeight(graphics,Str(line,"value"),font,width*0.56f-4,ar))+4;
+        }
+        return TextHeight(graphics,Str(line,"text"),font,width,ar)+3;
+    }
+    static void DrawLine(Graphics graphics,Dictionary<string,object> line,Font font,RectangleF box,bool ar) {
+        if(IsRule(line)) {graphics.DrawLine(Pens.Black,box.Left,box.Top+6,box.Right,box.Top+6);return;}
+        if(Str(line,"role")=="row") {
+            float labelWidth=box.Width*0.44f-4,valueWidth=box.Width*0.56f-4;
+            var labelBox=new RectangleF(ar?box.Right-labelWidth:box.Left,box.Top,labelWidth,box.Height);
+            var valueBox=new RectangleF(ar?box.Left:box.Right-valueWidth,box.Top,valueWidth,box.Height);
+            using(var labelFormat=LineFormat(ar,false)) using(var valueFormat=LineFormat(ar,false)) {
+                valueFormat.Alignment=StringAlignment.Far;
+                graphics.DrawString(Str(line,"label"),font,Brushes.Black,labelBox,labelFormat);
+                graphics.DrawString(Str(line,"value"),font,Brushes.Black,valueBox,valueFormat);
+            }
+        } else using(var format=LineFormat(ar,Bool(line,"center")))
+            graphics.DrawString(Str(line,"text"),font,Brushes.Black,box,format);
     }
     static void Print(Dictionary<string,object> job) {
         var payload=Obj(job["payload"]);var lines=Lines(payload);bool ar=Str(payload,"language")=="ar";
         int width=Convert.ToInt32(job["paper_mm"])==58?228:315;
-        using(var document=new PrintDocument()) using(var regular=new Font("Arial",10)) using(var bold=new Font("Arial",11,FontStyle.Bold)) using(var logo=Logo()) {
+        using(var document=new PrintDocument()) using(var regular=new Font("Arial",11)) using(var bold=new Font("Arial",12,FontStyle.Bold)) using(var caption=new Font("Arial",9)) using(var heading=new Font("Arial",13,FontStyle.Bold)) using(var logo=Logo()) {
             document.PrinterSettings.PrinterName=Printer;document.PrinterSettings.Copies=1;
             document.PrintController=new StandardPrintController();document.DocumentName="KPS "+Str(job,"id");
             document.OriginAtMargins=false;
@@ -136,7 +169,7 @@ class KpsPrintBridge {
             // and the same RTL measurement used for drawing.
             float height=88+settings.HardMarginY;
             using(var graphics=document.PrinterSettings.CreateMeasurementGraphics(settings)) {
-                foreach(var line in lines)height+=LineHeight(graphics,line,Bool(line,"bold")?bold:regular,measured.Width,ar);
+                foreach(var line in lines)height+=LineHeight(graphics,line,LineFont(line,regular,bold,caption,heading),measured.Width,ar);
             }
             settings.PaperSize=new PaperSize("KPS thermal roll",width,(int)Math.Min(30000,Math.Ceiling(height)));
             int index=0;bool first=true;
@@ -145,11 +178,10 @@ class KpsPrintBridge {
                 float left=bounds.Left,top=bounds.Top,available=bounds.Width;
                 if(first) {e.Graphics.DrawImage(logo,left+(available-60)/2,top,60,60);top+=64;first=false;}
                 while(index<lines.Count) {
-                    var line=lines[index];var font=Bool(line,"bold")?bold:regular;
+                    var line=lines[index];var font=LineFont(line,regular,bold,caption,heading);
                     float lineHeight=LineHeight(e.Graphics,line,font,available,ar);
                     if(top+lineHeight>bounds.Bottom && top>bounds.Top) {e.HasMorePages=true;return;}
-                    using(var format=LineFormat(ar,Bool(line,"center")))
-                        e.Graphics.DrawString(Str(line,"text"),font,Brushes.Black,new RectangleF(left,top,available,lineHeight),format);
+                    DrawLine(e.Graphics,line,font,new RectangleF(left,top,available,lineHeight),ar);
                     top+=lineHeight;index++;
                 }e.HasMorePages=false;
             };
