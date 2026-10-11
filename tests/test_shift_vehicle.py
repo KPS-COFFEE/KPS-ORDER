@@ -122,7 +122,7 @@ def test_two_hundred_tasks_use_three_compact_columns(live_app,chromium_browser):
         c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES('layout-shift','driver',%s,'kps','[\"kps-branch-1\"]')",(driver['id'],))
         for i in range(200):
             oid='layout-order-'+str(i)
-            c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','ready','assigned','cash',1000,1000,%s,'{}')",(oid,customer['id'],db.json({'items':[{'name':'Test coffee','quantity':1,'line_total_halalas':1000}]})))
+            c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','ready','assigned','cash',1000,0,1000,%s,'{}')",(oid,customer['id'],db.json({'items':[{'name':'Test coffee','quantity':1,'line_total_halalas':1000}]})))
             c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by) VALUES(%s,%s,%s,'layout-shift',%s)",('layout-task-'+str(i),oid,driver['id'],owner['id']))
     context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,owner)
     try:
