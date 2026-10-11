@@ -1040,6 +1040,35 @@ class OwnerDriverActivationBody(BaseModel):
     reason:str=Field(min_length=3,max_length=500)
 
 
+class AdditionalOwnerBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    display_name:str=Field(min_length=1,max_length=100)
+    username:str=Field(min_length=3,max_length=150)
+    password:str=Field(min_length=12,max_length=200,repr=False)
+    password_confirmation:str=Field(min_length=12,max_length=200,repr=False)
+    reason:str=Field(min_length=3,max_length=500)
+
+
+@router.post('/identity/owners/password')
+def create_additional_password_owner(body:AdditionalOwnerBody,user=Depends(require_roles('owner'))):
+    """Explicit full-owner grant with step-up; never overwrite an existing account."""
+    with db.tx() as conn:
+        require_owner_step_up(conn,user)
+        username=body.username.strip()
+        name=body.display_name.strip()
+        if not re.fullmatch(r'[A-Za-z0-9_.@+-]{3,150}',username) or not name or '\x00' in name or not body.reason.strip():
+            raise db.error(422,'OWNER_PROFILE_INVALID','أدخل الاسم واسم مستخدم صحيحًا وسبب الإضافة.')
+        if body.password!=body.password_confirmation:
+            raise db.error(422,'PASSWORD_CONFIRMATION','كلمتا المرور غير متطابقتين.')
+        conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('staff-username:'+username.casefold(),))
+        if conn.execute('SELECT 1 FROM users WHERE lower(username)=lower(%s)',(username,)).fetchone():
+            raise db.error(409,'USERNAME_UNAVAILABLE','اسم المستخدم مستخدم بالفعل؛ اختر اسمًا آخر. لم يتغير أي حساب.')
+        identifier=db.new_id('owner_')
+        row=conn.execute("INSERT INTO users(id,username,display_name,password_hash,role,brand_id,active,invitation_status,identity_kind) VALUES(%s,%s,%s,%s,'owner',%s,true,'active','staff_password') RETURNING *",(identifier,username,name,hash_password(body.password),user['brand_id'])).fetchone()
+        db.audit(conn,user['id'],'owner.password_account.created','user',identifier,{'reason':body.reason.strip(),'username':username,'role':'owner'})
+        return {'user':public_user(row),'username':username}
+
+
 @router.post('/identity/staff/{identifier}/owner-activate')
 def owner_activate_driver(identifier:str,body:OwnerDriverActivationBody,user=Depends(require_roles('owner'))):
     with db.tx() as conn:
