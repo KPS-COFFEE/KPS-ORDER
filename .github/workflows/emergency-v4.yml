@@ -89,6 +89,7 @@ jobs:
           }
           focused = 'app/auth.py' in changed and changed <= identity_files
           operation_files = {
+              'Dockerfile',
               'app/auth.py', 'app/admin.py', 'app/operations.py', 'app/main.py',
               'app/exports.py', 'app/branch_printing.py', 'migrations/024_branch_printing.sql',
               'public/ops.js', 'public/customer.js', 'public/index.html',
