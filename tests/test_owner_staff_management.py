@@ -110,12 +110,14 @@ def test_owner_employee_actions_in_browser(live_app,chromium_browser):
         page.locator('[data-action=admin-tab][data-tab=users]').click()
         for action in ('pause','archive','restore'):
             if action=='restore':page.locator('details summary').filter(has_text='الموظفون المحذوفون').click()
+            if action!='restore':page.locator(f'.staff-branch-form[data-staff-id="{target["id"]}"]').locator('xpath=ancestor::tr').locator('.staff-actions summary').click()
             page.locator(f'[data-action=manage-staff][data-operation={action}][data-id="{target["id"]}"]').click()
             modal=page.locator('#modal')
             modal.locator('[name=reason]').fill('Synthetic owner action test')
             modal.locator('[name=password]').fill(BROWSER_PASSWORD)
             modal.locator('button[type=submit]').click()
             expect(modal).not_to_be_visible()
+        page.locator(f'.staff-branch-form[data-staff-id="{target["id"]}"]').locator('xpath=ancestor::tr').locator('.staff-actions summary').click()
         expect(page.locator(f'[data-action=edit-staff][data-id="{target["id"]}"]')).to_be_visible()
         assert not errors
     finally:context.close()
@@ -158,6 +160,7 @@ def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
             form.scroll_into_view_if_needed()
             expect(form.locator('summary')).to_be_visible()
             expect(form.locator('output')).to_have_text('2')
+        form.locator('xpath=ancestor::tr').locator('.staff-actions summary').click()
         page.locator(f'[data-action=edit-staff][data-id="{target["id"]}"]').click()
         expect(page.locator('#modal .staff-branch-picker output')).to_have_text('2')
         page.locator('#modal .staff-branch-picker summary').click()

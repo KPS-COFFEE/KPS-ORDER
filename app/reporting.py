@@ -635,6 +635,19 @@ def v5_tables(snap,view='compact'):
     if not receipt_rows:receipt_rows=[['لا تسليم نقدي مطلوب' if closure.get('handover_halalas')==0 else 'غير مسجل','—','—']]
     table('approval','الاستلام والاعتماد',['المستلم','المرجع','التأكيد'],receipt_rows)
     if shift.get('exception_reason'):table('exception','الاستثناء المعتمد',['السبب','المعتمد'],[[shift['exception_reason'],name(snap.get('approved_by'))]])
+    log=shift.get('vehicle_log') or {}
+    if log:
+        from .shift_vehicle import summary as vehicle_summary, CHECKS
+        vehicle=vehicle_summary(log);begin=log.get('start') or {};end=log.get('end') or {}
+        table('vehicle','المركبة والمسافة والبنزين',['البيان','القيمة'],[
+            ['لوحة المركبة',(log.get('vehicle') or {}).get('plate','غير مسجلة')],
+            ['عداد البداية (كم)',begin.get('odometer_km','غير مسجل')],['عداد النهاية (كم)',end.get('odometer_km','غير مسجل')],
+            ['المسافة المقطوعة (كم)',vehicle['distance_km'] if vehicle['distance_km'] is not None else 'غير متاحة'],
+            ['بنزين البداية %',begin.get('fuel_percent','غير مسجل')],['بنزين النهاية %',end.get('fuel_percent','غير مسجل')],
+            ['إجمالي التعبئة (لتر)',vehicle['fuel_liters']],['عدد التعبئات',vehicle['refuel_count']]])
+        status=lambda v:'سليم' if v=='ok' else 'يحتاج متابعة' if v=='issue' else 'غير مسجل'
+        table('inspections','الفحص اليومي للمركبة',['البند','بداية الشفت','نهاية الشفت'],[[label,status(begin.get('checks',{}).get(key)),status(end.get('checks',{}).get(key))] for key,label in CHECKS.items()]+[['ملاحظات',begin.get('notes',''),end.get('notes','')]])
+        table('refuels','سجل تعبئة البنزين',['الوقت - الرياض','لتر','العداد (كم)','ملاحظات'],[[v5_stamp(r['recorded_at']),r['liters'],r['odometer_km'],r.get('notes','')] for r in log.get('refuels',[])])
     if view!='owner':return tables
     by_branch={};by_item={};collection_branches={o['id']:o.get('branch_id') for o in orders}
     for o in orders:

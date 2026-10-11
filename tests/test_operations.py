@@ -119,6 +119,19 @@ def ops(client):
         with db.tx() as c:c.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s)',(oid,'ops-brand','ops-branch','ops-customer',service,'ready','pending' if service=='delivery' else 'not_applicable','cash',total,total,db.json(snap),db.json({'name':'اختبار'})))
         return oid
     def post(who,path,body=None,key=None,status=200):
+        # Successful journeys submit explicit synthetic readings; missing-data tests use the client directly.
+        body=dict(body or {})
+        if status==200 and (path=='/api/shifts' and body.get('kind')=='driver' or path.endswith('/submit')):
+            from app.shift_vehicle import CHECKS
+            km=1000
+            with db.tx() as c:
+                if path.endswith('/submit'):
+                    row=c.execute('SELECT vehicle_log FROM shifts WHERE id=%s',(path.split('/')[3],)).fetchone()
+                    km=(row['vehicle_log'].get('start',{}).get('odometer_km',1000) if row else 1000)+25
+                else:
+                    row=c.execute("SELECT vehicle_log FROM shifts WHERE user_id=%s AND vehicle_log->'end' IS NOT NULL ORDER BY opened_at DESC LIMIT 1",(body.get('user_id') or 'ops-'+who,)).fetchone()
+                    if row:km=max(km,row['vehicle_log']['end']['odometer_km'])
+            body.setdefault('vehicle_inspection',{'odometer_km':km,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS},'notes':''})
         r=actor(who).post(path,json=body or {},headers={'Idempotency-Key':key or uuid4().hex})
         assert r.status_code==status,r.text
         return r.json()

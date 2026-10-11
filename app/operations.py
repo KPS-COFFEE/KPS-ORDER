@@ -6,7 +6,7 @@ import json as jsonlib
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from . import db, auth, service_hours
+from . import db, auth, service_hours, shift_vehicle
 
 router = APIRouter(prefix='/api', tags=['operations'])
 RIYADH = ZoneInfo('Asia/Riyadh')
@@ -115,6 +115,7 @@ def authorize_replay(c,user,operation,body,result):
         if not row or not same_scope(user,row) or (user['role']!='owner' and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
 
 class ShiftOpen(BaseModel):
+    vehicle_inspection: shift_vehicle.Inspection|None=None
     kind: str
     branch_ids: list[str] = Field(default_factory=list)
     manager_shift_id: str|None=None
@@ -200,6 +201,9 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL FOR UPDATE',(target['id'],)).fetchall()
             carried=sum(x['amount_halalas'] for x in carryovers)
             c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
+            if body.kind=='driver':
+                vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
+                c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
             for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
             db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
             return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}
@@ -252,7 +256,24 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
                 if task['status'] in TERMINAL:
                     task['snapshot']=safe(task['snapshot']);task['snapshot'].pop('notes',None);task['snapshot'].pop('note',None)
                     for item in task['snapshot'].get('items',[]):item.pop('note',None)
-        return safe({'shift':s,'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()})
+        return safe({'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()})
+
+@router.post('/shifts/{sid}/refuel')
+def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
+    with db.tx() as c:
+        def perform():
+            s=lock_shift(c,sid);shift_access(c,user,s)
+            if s['kind']!='driver' or s['status'] not in ('open','closing'):fail(409,'تسجيل الوقود متاح لشفت سائق مفتوح أو تحت التقفيلة فقط')
+            if user['role'] not in ('driver','owner','delivery_manager'):fail(403,'الصلاحية غير كافية')
+            log=dict(s.get('vehicle_log') or {})
+            floor=max([log.get('start',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
+            if body.odometer_km<floor:fail(422,'قراءة العداد أقل من آخر قراءة مسجلة')
+            entry={**shift_vehicle.stamp(c,user,body),'id':uid()}
+            log['refuels']=[*log.get('refuels',[]),entry]
+            c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
+            db.audit(c,user['id'],'shift.refuel','shift',sid,entry)
+            return {'shift_id':sid,'refuel':entry,'vehicle_summary':shift_vehicle.summary(log)}
+        return mutate(c,user,request,'shift.refuel:'+sid,body.model_dump(mode='json'),perform)
 
 @router.post('/shifts/{sid}/closing')
 def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
@@ -266,6 +287,7 @@ def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
         return mutate(c,user,request,'shift.closing:'+sid,{},perform)
 
 class ClosureSubmit(BaseModel):
+    vehicle_inspection: shift_vehicle.Inspection|None=None
     counted_halalas: StrictInt=Field(ge=0)
     handover_halalas: StrictInt=Field(ge=0)
     retained_halalas: StrictInt=Field(0,ge=0)
@@ -281,7 +303,8 @@ def submit_close(sid:str,body:ClosureSubmit,request:Request,user=Depends(auth.cu
             if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'توجد شفتات سائقين غير مقفلة، تشمل شفتات بلا طلبات')
             if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone(): fail(409,'توجد تسليمات غير مؤكدة')
             if body.counted_halalas!=body.handover_halalas+body.retained_halalas: fail(422,'المعدود يجب أن يساوي التسليم مع المحتفظ به')
-            values=body.model_dump();values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
+            if s['kind']=='driver':shift_vehicle.finish(c,user,s,body.vehicle_inspection)
+            values=body.model_dump(exclude={'vehicle_inspection'});values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
             c.execute("UPDATE shifts SET status='submitted',submission=%s,submitted_at=now() WHERE id=%s",(db.json(values),sid))
             db.audit(c,user['id'],'shift.submit','shift',sid,values)
             return {'shift_id':sid,'status':'submitted','submission':values}
