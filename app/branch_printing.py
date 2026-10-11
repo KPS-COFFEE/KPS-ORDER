@@ -28,6 +28,7 @@ class PairBody(BaseModel):
     branch_id: str
     label: str = Field(min_length=1, max_length=100)
     paper_mm: Literal[58,80] = 80
+    reason: str = Field(default="", max_length=300)
 
 
 @router.post('/devices')
@@ -35,10 +36,13 @@ def pair_device(body: PairBody, user=Depends(operators)):
     code = secrets.token_urlsafe(24)
     with db.tx() as conn:
         scope(conn, user, body.branch_id)
+        existing = conn.execute("SELECT id FROM branch_print_devices WHERE branch_id=%s LIMIT 1", (body.branch_id,)).fetchone()
+        if existing and not body.reason.strip():
+            raise db.error(422, "PRINT_CHANGE_REASON", "سبب تعديل ربط الطابعة مطلوب.")
         identifier = db.new_id('printer_')
         conn.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,pair_hash,pair_expires_at,paper_mm,created_by) VALUES(%s,%s,%s,%s,%s,now()+interval '10 minutes',%s,%s)",
                      (identifier,user['brand_id'],body.branch_id,body.label,auth.token_hash(code),body.paper_mm,user['id']))
-        db.audit(conn,user['id'],'printer.pair.created','printer',identifier,{'branch_id':body.branch_id})
+        db.audit(conn,user['id'],'printer.pair.created','printer',identifier,{'branch_id':body.branch_id,'reason':body.reason.strip()})
     return {'id':identifier,'pairing_code':code,'expires_in_seconds':600}
 
 
@@ -88,15 +92,22 @@ def devices(user=Depends(operators)):
         return {'devices':[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]}
 
 
+class ChangeBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reason: str = Field(min_length=1, max_length=300)
+
+
 @router.post('/devices/{identifier}/revoke')
-def revoke(identifier: str, user=Depends(operators)):
+def revoke(identifier: str, body: ChangeBody, user=Depends(operators)):
+    if not body.reason.strip():
+        raise db.error(422, 'PRINT_CHANGE_REASON', 'سبب تعديل ربط الطابعة مطلوب.')
     with db.tx() as conn:
         row=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s FOR UPDATE',(identifier,user['brand_id'])).fetchone()
         if not row: raise db.error(404,'PRINT_DEVICE_NOT_FOUND','الجهاز غير موجود.')
         scope(conn,user,row['branch_id'])
         conn.execute('UPDATE branch_print_devices SET revoked_at=now(),token_hash=NULL,pair_hash=NULL WHERE id=%s',(identifier,))
         conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE device_id=%s AND status='queued'",(identifier,))
-        db.audit(conn,user['id'],'printer.revoked','printer',identifier)
+        db.audit(conn,user['id'],'printer.revoked','printer',identifier,{'reason':body.reason.strip()})
         return {'revoked':True}
 
 
@@ -146,15 +157,18 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         order=conn.execute('SELECT * FROM orders WHERE id=%s AND brand_id=%s FOR UPDATE',(order_id,user['brand_id'])).fetchone()
         if not order:raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود.')
         branch=scope(conn,user,order['branch_id'])
-        device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND branch_id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(body.device_id,order['branch_id'],user['brand_id'])).fetchone()
+        device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(body.device_id,user['brand_id'])).fetchone()
         if not device:raise db.error(409,'PRINT_NOT_PAIRED','اربط طابعة هذا الفرع أولًا.')
+        destination=scope(conn,user,device['branch_id'])
         def perform():
             previous=conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s AND kind=%s AND status<>'cancelled' LIMIT 1",(order_id,body.kind)).fetchone()
             if previous and not body.reprint_reason.strip():raise db.error(409,'PRINT_REPRINT_REASON','سبق إرسال هذه الفاتورة؛ تحقق من الطابعة وأدخل سبب إعادة الطباعة لمنع التكرار.')
             identifier=db.new_id('print_');payload=receipt(order,branch,body.kind,body.language)
+            if destination['id'] != branch['id']:
+                payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})
             if previous:payload['lines'].insert(0,{'text':'إعادة طباعة / REPRINT','bold':True,'center':True})
-            conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(identifier,user['brand_id'],order['branch_id'],body.device_id,order_id,body.kind,db.json(payload),user['id'],body.reprint_reason))
-            db.audit(conn,user['id'],'printer.job.queued','print_job',identifier,{'order_id':order_id,'device_id':body.device_id,'kind':body.kind,'reprint_reason':body.reprint_reason})
+            conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(identifier,user['brand_id'],device['branch_id'],body.device_id,order_id,body.kind,db.json(payload),user['id'],body.reprint_reason))
+            db.audit(conn,user['id'],'printer.job.queued','print_job',identifier,{'order_id':order_id,'order_branch_id':order['branch_id'],'destination_branch_id':device['branch_id'],'device_id':body.device_id,'kind':body.kind,'reprint_reason':body.reprint_reason})
             return {'id':identifier,'status':'queued'}
         return db.idempotent(conn,user['id'],idem,'printer.enqueue',{'order_id':order_id,**body.model_dump()},perform)
 

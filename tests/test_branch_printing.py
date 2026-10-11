@@ -39,7 +39,7 @@ def test_branch_print_device_queue_isolation_and_no_automatic_reprint(ops):
     with db.tx() as conn:
         assert conn.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='ready'
         assert conn.execute('SELECT token_hash FROM branch_print_devices WHERE id=%s',(device,)).fetchone()['token_hash']==auth.token_hash(token)
-    post('manager','/api/printing/devices/'+device+'/revoke',{})
+    post('manager','/api/printing/devices/'+device+'/revoke',{'reason':'Replace branch computer'})
     assert actor('customer').post('/api/printing/bridge/next',json={},headers=headers).status_code==401
     assert actor('customer').get('/api/printing/windows-bridge.zip').status_code==403
     bundle=actor('manager').get('/api/printing/windows-bridge.zip')
@@ -66,3 +66,39 @@ def test_driver_sees_only_fully_covering_manager_and_clear_missing_selection(ops
     with db.tx() as conn:
         conn.execute("UPDATE users SET branch_ids=%s WHERE id='ops-driver'",(db.json(['ops-branch','extra-scope']),))
     assert actor('driver').get('/api/shifts/current').json()['available_manager_shifts']==[]
+
+
+@pytest.mark.postgres
+def test_manager_selects_destination_and_settings_are_locked(ops):
+    actor, post, order, _ = ops
+    with db.tx() as conn:
+        conn.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-second',2,'second-source','ops-brand','Second branch','Test','{}')")
+    pair = post('owner', '/api/printing/devices', {'branch_id':'ops-second','label':'Second'})
+    result = actor('customer').post('/api/printing/bridge/pair', json={'pairing_code':pair['pairing_code'],'printer_name':'Test second printer'})
+    assert result.status_code == 200
+    token = result.json()['token']
+    oid = order()
+    body = {'device_id':pair['id']}
+    post('manager', '/api/printing/orders/'+oid, body, status=404)
+    for who in ('branch','driver','customer'):
+        assert actor(who).get('/api/printing/devices').status_code == 403
+        post(who, '/api/printing/devices', {'branch_id':'ops-branch','label':'Forbidden'}, status=403)
+    with db.tx() as conn:
+        conn.execute("UPDATE users SET branch_ids=%s WHERE id='ops-manager'", (db.json(['ops-branch','ops-second']),))
+    job = post('manager', '/api/printing/orders/'+oid, body, key='destination-job')
+    assert post('manager', '/api/printing/orders/'+oid, body, key='destination-job') == job
+    post('manager', '/api/printing/orders/'+oid, body, status=409)
+    claimed = actor('customer').post('/api/printing/bridge/next', json={}, headers={'Authorization':'Bearer '+token}).json()['job']
+    assert claimed['id'] == job['id']
+    assert 'Second branch' in str(claimed['payload'])
+    with db.tx() as conn:
+        assert conn.execute('SELECT branch_id FROM orders WHERE id=%s',(oid,)).fetchone()['branch_id'] == 'ops-branch'
+        assert conn.execute('SELECT branch_id FROM branch_print_jobs WHERE id=%s',(job['id'],)).fetchone()['branch_id'] == 'ops-second'
+    post('manager','/api/printing/devices',{'branch_id':'ops-second','label':'Replacement'},status=422)
+    for reason in ({}, {'reason':'  '}):
+        post('manager','/api/printing/devices/'+pair['id']+'/revoke',reason,status=422)
+    post('branch','/api/printing/devices/'+pair['id']+'/revoke',{'reason':'Unauthorized'},status=403)
+    post('manager','/api/printing/devices/'+pair['id']+'/revoke',{'reason':'Replace faulty computer'})
+    with db.tx() as conn:
+        event = conn.execute("SELECT details FROM audit_events WHERE action='printer.revoked' AND entity_id=%s",(pair['id'],)).fetchone()
+        assert event['details']['reason'] == 'Replace faulty computer'

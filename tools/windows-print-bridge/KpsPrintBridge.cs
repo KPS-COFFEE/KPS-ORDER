@@ -80,6 +80,11 @@ class KpsPrintBridge {
         }
         var settings=new PrinterSettings {PrinterName=Printer};
         if(!settings.IsValid)throw new Exception("The paired Windows printer is not installed for this Windows user.");
+        // Resume the paired device on the next sign-in of this Windows user.
+        // No machine-wide privileges or changes to printer drivers are needed.
+        using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
+            key.SetValue("KPS Print Bridge", "\""+System.Reflection.Assembly.GetExecutingAssembly().Location+"\"");
+        }
         Console.WriteLine("Printer: "+Printer+". Keep this window open. Ctrl+C stops the bridge.");
     }
     static List<Dictionary<string,object>> Lines(Dictionary<string,object> payload) {

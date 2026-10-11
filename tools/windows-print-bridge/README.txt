@@ -7,7 +7,8 @@ KPS Windows Print Bridge
    .NET Framework; it does not install a printer or change printer/network settings.
 5. Select the EXISTING installed Windows printer by number. Enter the pairing code.
 6. Keep the bridge window open and this Windows user signed in. The computer must
-   remain awake and online. Start.cmd resumes the same registration after restart.
+   remain awake and online. The bridge registers automatic startup for this Windows user. Keep the extracted
+   folder in its permanent location. Start.cmd also resumes the same registration.
 
 No inbound port, public printer IP, admin password or remote-desktop access required.
 One bridge process per Windows account. The device key is encrypted with Windows
@@ -35,3 +36,8 @@ Select the printer and enter a NEW pairing code. Old print journals are kept.
 Restoring a server backup revokes printer devices and cancels pending prints;
 pair again after the manager reviews the Windows print queue.
 
+
+Only an owner or delivery manager can create/revoke a pairing. Replacing a
+registration or revoking it requires a recorded reason. Branch staff cannot open
+printer administration. A selected remote print destination does not transfer
+fulfillment ownership of the order. The customer branch is selected by default.
