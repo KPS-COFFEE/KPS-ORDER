@@ -36,6 +36,40 @@ def test_reviewed_workbook_mapping_is_by_label_not_row_order_or_business_code():
     assert all(catalog.safe_map_url(row['map_url']) == row['map_url'] for row in rows)
 
 
+def test_owner_approved_destination_pins_are_distinct_and_do_not_replace_workbook_evidence():
+    approved = branch_locations.owner_confirmed_matches()
+    assert {m['branch_no'] for m in approved} == {4, 9, 11, 12, 13, 14}
+    assert all(m['confirmed_match'] for m in approved)
+    assert all(branch_locations._destination_location(m) for m in approved)
+    assert all(m['place_id'] == EXPECTED_PLACE_IDS[m['branch_no']] for m in approved)
+    nine = next(m for m in approved if m['branch_no'] == 9)
+    one = branch_locations.workbook_matches()[0]
+    assert nine['destination_evidence']['location'] != one['destination_evidence']['location']
+    assert sum(m['confirmed_match'] for m in branch_locations.workbook_matches()) == 14
+
+
+@pytest.mark.parametrize('tamper', ['authority', 'place', 'camera', 'coordinates', 'duplicate_branch'])
+def test_owner_confirmation_destination_tampering_fails_closed(monkeypatch, tamper):
+    document = json.loads((db.ROOT / 'data/branch_google_owner_confirmation.json').read_text())
+    if tamper == 'authority':
+        document['confirmed_at'] = 'unapproved'
+    elif tamper == 'place':
+        document['destination_pins'][1]['place_id'] = EXPECTED_PLACE_IDS[1]
+    elif tamper == 'camera':
+        document['destination_pins'][0]['destination_pin_data'] = '@28.4546052,45.9600236,16z'
+    elif tamper == 'coordinates':
+        document['destination_pins'][0]['location']['lat'] = 28
+    else:
+        document['destination_pins'][1]['branch_no'] = 4
+    original = json.loads
+    def load(value):
+        result = original(value)
+        return deepcopy(document) if isinstance(result, dict) and 'destination_pins' in result else result
+    monkeypatch.setattr(branch_locations.json, 'loads', load)
+    with pytest.raises(RuntimeError):
+        branch_locations.owner_confirmed_matches()
+
+
 @pytest.mark.parametrize('tamper', ['source', 'label', 'identity', 'city', 'uncertainty', 'duplicate_place', 'url',
                                     'destination_place', 'destination_camera', 'destination_coordinates'])
 def test_changed_source_or_unconfirmed_evidence_fails_closed(monkeypatch, tamper):
@@ -206,8 +240,9 @@ def test_restart_preserves_later_owner_edits_and_does_not_duplicate_audits(unbou
 
 
 @pytest.mark.postgres
-def test_owner_confirmation_publishes_six_exact_places_without_fabricating_pins(unbound_branches):
+def test_owner_confirmation_publishes_six_exact_places_and_verified_destination_pins(unbound_branches):
     with db.tx() as conn:
+        audit_before = conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_confirmed_maps_binding'").fetchone()['n']
         branch_locations.apply_workbook_matches(conn)
         before = conn.execute("SELECT * FROM branches WHERE brand_id='kps' ORDER BY branch_no").fetchall()
         branch_locations.apply_owner_confirmed_matches(conn)
@@ -217,21 +252,24 @@ def test_owner_confirmation_publishes_six_exact_places_without_fabricating_pins(
             query = parse_qs(urlsplit(catalog.directions_url(branch)).query)
             assert query['destination_place_id'] == [EXPECTED_PLACE_IDS[branch['branch_no']]]
             if branch['branch_no'] in branch_locations.PENDING_BRANCHES:
-                assert not catalog.location_verified(branch)
-                assert branch['settings']['location'] is None
-                assert all(branch['settings'][key] == value for key, value in old['settings'].items())
+                assert catalog.location_verified(branch)
+                approved = next(m for m in branch_locations.owner_confirmed_matches() if m['branch_no'] == branch['branch_no'])
+                assert branch['settings']['location'] == approved['destination_evidence']['location']
+                assert all(branch['settings'][key] == value for key, value in old['settings'].items()
+                           if key not in ('location', 'location_verified', 'location_source'))
             else:
                 assert branch == old
             assert not any(branch['settings'][key] for key in ('pickup_enabled', 'car_enabled', 'delivery_enabled'))
         original = conn.execute('SELECT * FROM owner_branch_location_decisions WHERE decision_id LIKE %s',
                                 (branch_locations.DECISION_ID + ':%',)).fetchall()
         assert sum(d['result'] == 'requires_owner_confirmation' for d in original) == 6
-        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_confirmed_maps_binding'").fetchone()['n'] == 6
+        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_confirmed_maps_binding'").fetchone()['n'] == audit_before + 6
         branch_locations.apply_owner_confirmed_matches(conn)
         assert conn.execute('SELECT count(*) AS n FROM owner_branch_location_decisions').fetchone()['n'] == 26
-        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_confirmed_maps_binding'").fetchone()['n'] == 6
+        assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='branch.owner_confirmed_maps_binding'").fetchone()['n'] == audit_before + 6
         conn.execute("UPDATE branches SET settings=settings || %s WHERE id='kps-branch-9'",
-                     (db.json({'place_id': None, 'map_url': None, 'map_url_verified': False}),))
+                     (db.json({'place_id': None, 'map_url': None, 'map_url_verified': False,
+                               'location': None, 'location_verified': False}),))
         branch_locations.apply_owner_confirmed_matches(conn)
         nine = conn.execute("SELECT * FROM branches WHERE id='kps-branch-9'").fetchone()
         assert catalog.directions_url(nine) is None

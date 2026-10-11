@@ -7,9 +7,12 @@ assignments (4, 9, 11, 12, 13, 14), acknowledging the displayed naming differenc
 The original workbook evidence and its twenty decisions remain unchanged.
 Six new, one-time decisions publish the approved exact Place IDs to the existing
 rows, preserving any intervening owner edits and rejecting duplicate bindings.
-All twenty assignments are now approved; the six additional assignments do not
-claim independently observed coordinates, route distance or ETA. The fourteen
-previous independently verified destination pins remain unchanged. Ordering,
+All twenty assignments are now approved. The six additional exact Place-ID
+directions were individually opened in signed-out Google Maps. Their destination
+names and `!1s...!2m2!1d...!2d...` pins are retained separately in
+`data/branch_google_owner_confirmation.json`; no origin or viewport coordinates
+are retained. All twenty destination pins are now independently observed, but
+no route distance or ETA is claimed. The fourteen previous pins remain unchanged. Ordering,
 service flags, hours, menu, branch identities and operational data are untouched.
 The following original investigation is retained as historical source evidence.
 

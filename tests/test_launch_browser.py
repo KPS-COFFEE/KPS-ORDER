@@ -203,7 +203,7 @@ def test_customer_geolocation_ranks_eligible_branches_filters_cart_delivery_and_
         expect(page.locator('#car-fields')).to_be_visible()
         expect(directions).to_be_visible()
         page.locator('#branch-select').select_option('kps-branch-9')
-        expect(directions).to_have_attribute('href', 'https://www.google.com/maps/dir/?api=1&destination=28.42%2C45.92&travelmode=driving')
+        expect(directions).to_have_attribute('href', 'https://www.google.com/maps/dir/?api=1&destination=28.42%2C45.92&destination_place_id=ChIJZdnl4lI51z8RDyi016qRLCA&travelmode=driving')
         # Required location does not force selection or hide manual controls.
         page.locator('#branch-select').select_option('kps-branch-1')
         page.locator('input[name=service][value=pickup]').check()

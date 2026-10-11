@@ -174,23 +174,49 @@ def apply_workbook_matches(conn):
                      (result, decision))
 
 
+def owner_confirmed_matches():
+    document = json.loads((db.ROOT / 'data/branch_google_owner_confirmation.json').read_text())
+    if (document.get('decision_id') != OWNER_CONFIRMATION_ID
+            or document.get('confirmed_at') != OWNER_CONFIRMED_AT
+            or document.get('source_sha256') != WORKBOOK_SHA256):
+        raise RuntimeError('Owner Maps confirmation provenance changed.')
+    pins = document['destination_pins']
+    if len(pins) != 6 or {p.get('branch_no') for p in pins} != PENDING_BRANCHES:
+        raise RuntimeError('Owner Maps confirmation must contain the exact six branches.')
+    original = {m['branch_no']: m for m in workbook_matches()}
+    matches = []
+    for pin in pins:
+        match = dict(original[pin['branch_no']], confirmed_match=True)
+        if pin['place_id'] != match['place_id']:
+            raise RuntimeError('Owner Maps confirmation changed the approved Place ID.')
+        match['destination_evidence'] = dict(
+            pin, source='google_maps_direction_destination',
+            verification_method='actual_google_maps_directions_page_destination_data',
+            source_url='https://www.google.com/maps/dir/?api=1&destination=KPS%20COFFEE'
+                       f"&destination_place_id={pin['place_id']}&travelmode=driving",
+            verified_on='2026-10-11',
+        )
+        _destination_location(match)
+        matches.append(match)
+    return matches
+
+
 def apply_owner_confirmed_matches(conn):
     """Append the owner's six explicit confirmations; never rewrite source evidence.
 
-    This approves identity/Place-ID assignments, not coordinates, travel times,
-    coverage or ordering. Later owner edits/removals always remain authoritative.
+    Separately observed destination pins, not camera/origin coordinates, support
+    proximity. No travel times, coverage or ordering are approved by this action.
+    Later owner edits/removals always remain authoritative.
     """
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832617,))
-    for match in workbook_matches():
-        if match['branch_no'] not in PENDING_BRANCHES:
-            continue
+    for match in owner_confirmed_matches():
         decision = f"{OWNER_CONFIRMATION_ID}:branch:{match['branch_no']}"
         evidence = dict(match, owner_confirmation={
             'confirmed_at': OWNER_CONFIRMED_AT,
             'authority': 'project_owner_explicit_confirmation',
             'scope': 'existing_workbook_place_id_to_operational_branch_number',
             'source_disagreement_acknowledged': True,
-            'coordinates_verified': False,
+            'coordinates_verified': True,
         })
         conn.execute(
             'INSERT INTO owner_branch_location_decisions '
@@ -230,15 +256,18 @@ def apply_owner_confirmed_matches(conn):
                             'sha256': WORKBOOK_SHA256, 'internal_label': match['internal_label'],
                             'owner_confirmation_id': decision,
                             'owner_confirmed_at': OWNER_CONFIRMED_AT,
-                            'independent_google_destination_verified': False,
+                            'independent_google_destination_verified': True,
                         },
+                        'location': _destination_location(match),
+                        'location_verified': True,
+                        'location_source': match['destination_evidence']['source_url'],
                     }
                     conn.execute('UPDATE branches SET settings=settings || %s,updated_at=now() WHERE id=%s',
                                  (db.json(patch), branch['id']))
                     db.audit(conn, None, 'branch.owner_confirmed_maps_binding', 'branch', branch['id'],
                              {'decision_id': decision, 'branch_no': branch['branch_no'],
                               'source_sha256': WORKBOOK_SHA256, 'place_id': match['place_id'],
-                              'coordinates_imported': False, 'services_activated': False,
+                              'coordinates_imported': True, 'services_activated': False,
                               'owner_confirmed_at': OWNER_CONFIRMED_AT})
                     result = 'applied'
         conn.execute('UPDATE owner_branch_location_decisions SET result=%s,evaluated_at=now() WHERE decision_id=%s',
