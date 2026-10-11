@@ -584,7 +584,8 @@ def _staff_token_authorized(conn, row, user):
     invitation=row['purpose'] in {'invitation','add_owner'}
     if invitation:
         return user['invitation_status']=='pending_email' and _invitation_authorized(conn,row,user)
-    return bool(user['active'] and user['invitation_status']=='active' and user['email_verified_at'])
+    return bool(user['active'] and user['invitation_status']=='active' and
+                (user['email_verified_at'] or (user['role']=='driver' and user.get('identity_kind')=='staff_owner_approved')))
 
 
 def identity_mail_authorized(conn, mail):
@@ -800,7 +801,8 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         channel=_channel(conn,row['brand_id'],'email')
         if channel['state'] not in {'testing','active'} or (channel['state']=='active' and not channel['enabled']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','قناة البريد متوقفة حاليًا.')
-        if row['purpose'] in {'staff_login','recovery'} and (not user or not user['email_verified_at'] or not _same_email(user.get('email'),row['email'])):
+        owner_approved_driver = bool(user and row['purpose']=='staff_login' and user['role']=='driver' and user.get('identity_kind')=='staff_owner_approved')
+        if row['purpose'] in {'staff_login','recovery'} and (not user or (not user['email_verified_at'] and not owner_approved_driver) or not _same_email(user.get('email'),row['email'])):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
         if row['purpose']=='staff_login' and user['role']=='customer':
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
@@ -1031,6 +1033,30 @@ def staff_list(user=Depends(require_roles('owner','delivery_manager'))):
         return {'users':[staff_public(conn,row) for row in rows]}
 
 
+class OwnerDriverActivationBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    reason:str=Field(min_length=3,max_length=500)
+
+
+@router.post('/identity/staff/{identifier}/owner-activate')
+def owner_activate_driver(identifier:str,body:OwnerDriverActivationBody,user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        require_owner_step_up(conn,user)
+        row=conn.execute('SELECT * FROM users WHERE id=%s AND brand_id=%s FOR UPDATE',(identifier,user['brand_id'])).fetchone()
+        if not row or row['role']!='driver':
+            raise db.error(404,'DRIVER_NOT_FOUND','حساب السائق غير موجود ضمن البراند.')
+        if not body.reason.strip() or not row['email'] or not row['phone'] or not row['branch_ids']:
+            raise db.error(422,'STAFF_PROFILE_REQUIRED','أكمل البريد والجوال والفروع وسبب التفعيل أولًا.')
+        _staff_scope(conn,user,row['branch_ids'])
+        if row['active'] and row['invitation_status']=='active':
+            return {'user':staff_public(conn,row),'already_active':True}
+        output=conn.execute("UPDATE users SET active=true,invitation_status='active',identity_kind=CASE WHEN email_verified_at IS NULL THEN 'staff_owner_approved' ELSE identity_kind END,updated_at=now() WHERE id=%s RETURNING *",(identifier,)).fetchone()
+        conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL AND revoked_at IS NULL',(identifier,))
+        conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s AND revoked_at IS NOT NULL) AND status IN ('pending','failed')",(identifier,))
+        db.audit(conn,user['id'],'driver.owner_activated','user',identifier,{'reason':body.reason.strip(),'email_verified':bool(row['email_verified_at'])})
+        return {'user':staff_public(conn,output),'sign_in':'registered_email_code','email_verification_unchanged':True}
+
+
 class StaffUpdateBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     email:str|None=Field(default=None,min_length=3,max_length=254)
@@ -1070,7 +1096,7 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             active=False
         if active and (row['invitation_status'] not in {'active','paused'} or not row['email_verified_at']):
             # Legacy active staff remain during migration, but cannot be activated by bypassing proof.
-            if not (row['active'] and row['identity_kind']=='legacy'):
+            if not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
                 raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
         ensure_safe_staff_scope_change(conn,row,scope,active)
         name=body.display_name.strip() if body.display_name is not None else row['display_name']

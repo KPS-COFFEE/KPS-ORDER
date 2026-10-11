@@ -86,6 +86,7 @@ jobs:
           identity_files = {
               'app/auth.py', 'tests/test_guest_session_policy.py',
               'tests/test_v5_identity.py', '.github/workflows/emergency-v4.yml',
+              'public/ops.js', 'tests/test_owner_driver_activation.py',
           }
           focused = 'app/auth.py' in changed and changed <= identity_files
           operation_files = {
@@ -153,6 +154,7 @@ jobs:
         run: >-
           python -m pytest -q --strict-markers
           tests/test_guest_session_policy.py tests/test_core.py
+          tests/test_owner_driver_activation.py
           tests/test_v5_identity.py tests/test_final_identity.py
           tests/test_identity_closure.py tests/test_owner_closure.py
           tests/test_browser.py tests/test_staff_invitation_browser.py
