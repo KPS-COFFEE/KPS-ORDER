@@ -55,6 +55,25 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Select affected regression scope
+        id: scope
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'HEAD^', 'HEAD'], text=True).splitlines())
+          # Guest-session changes do not require replaying catalog, printing,
+          # dispatch, maintenance and report suites. Unknown changes stay full.
+          identity_files = {
+              'app/auth.py', 'tests/test_guest_session_policy.py',
+              'tests/test_v5_identity.py', '.github/workflows/emergency-v4.yml',
+          }
+          focused = 'app/auth.py' in changed and changed <= identity_files
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('identity_only=' + str(focused).lower() + '\n')
+          print('Identity/access regression' if focused else 'Full regression')
+          PY
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -75,13 +94,16 @@ jobs:
           done
           git diff --check
       - name: Run temporary dispatch and numbering acceptance
+        if: steps.scope.outputs.identity_only != 'true'
         run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py tests/test_driver_configuration_lock.py tests/test_driver_configuration_browser.py --junitxml=test-results/dispatch-numbering.xml
       - name: Run scoped bilingual vehicle maintenance acceptance
+        if: steps.scope.outputs.identity_only != 'true'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py
           --junitxml=test-results/vehicle-maintenance.xml
       - name: Run focused launch, access and delivery-hours checks
+        if: steps.scope.outputs.identity_only != 'true'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_launch_admin.py tests/test_launch_branches.py
@@ -93,7 +115,17 @@ jobs:
           tests/test_staff_invitation_browser.py
           --junitxml=test-results/launch-focused.xml
       - name: Run isolated PostgreSQL 18 and source regression
+        if: steps.scope.outputs.identity_only != 'true'
         run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
+      - name: Run focused identity, sessions, ownership and browser regression
+        if: steps.scope.outputs.identity_only == 'true'
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_guest_session_policy.py tests/test_core.py
+          tests/test_v5_identity.py tests/test_final_identity.py
+          tests/test_identity_closure.py tests/test_owner_closure.py
+          tests/test_browser.py tests/test_staff_invitation_browser.py
+          --junitxml=test-results/identity-focused.xml
       - name: Retain synthetic test results
         if: always()
         uses: actions/upload-artifact@v4

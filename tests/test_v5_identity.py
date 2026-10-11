@@ -59,6 +59,28 @@ def test_email_validation_and_no_implicit_sender_configuration(monkeypatch):
 
 @pytest.mark.postgres
 class TestV5Identity:
+    def test_guest_returns_without_login_but_expired_or_revoked_cookie_cannot_recover(self,client):
+        user = _guest(client)
+        with db.tx() as conn:
+            row = conn.execute('SELECT * FROM sessions WHERE user_id=%s', (user['id'],)).fetchone()
+            conn.execute("UPDATE sessions SET expires_at=now()+interval '1 hour' WHERE id=%s", (row['id'],))
+        result = client.get('/api/session')
+        assert result.json()['user']['id'] == user['id']
+        assert 'Max-Age=2592000' in result.headers['set-cookie']
+        with db.tx() as conn:
+            assert conn.execute("SELECT expires_at>now()+interval '29 days' AS remembered FROM sessions WHERE id=%s", (row['id'],)).fetchone()['remembered']
+            assert conn.execute('SELECT count(*) AS n FROM users WHERE id=%s', (user['id'],)).fetchone()['n'] == 1
+        cookies = dict(client.cookies)
+        assert client.post('/api/auth/logout', json={}).status_code == 200
+        client.cookies.update(cookies)
+        assert client.get('/api/session').json()['user'] is None
+        assert client.get('/api/orders').status_code == 401
+        another = _guest(client)
+        assert another['id'] != user['id']
+        with db.tx() as conn:
+            conn.execute("UPDATE sessions SET expires_at=now()-interval '1 minute' WHERE user_id=%s", (another['id'],))
+        assert client.get('/api/session').json()['user'] is None
+
     @pytest.mark.parametrize('service',['pickup','car','delivery'])
     def test_guest_completes_services_with_no_messaging_provider(self,client,service):
         _prepare_catalog()

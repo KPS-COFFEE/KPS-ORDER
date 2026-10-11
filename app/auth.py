@@ -20,6 +20,7 @@ from . import db
 router = APIRouter(prefix='/api')
 COOKIE = 'kps_session'
 CSRF_COOKIE = 'kps_csrf'
+GUEST_SESSION_SECONDS = 30 * 24 * 3600
 ROLES = {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'customer'}
 CONFIGURATION_PERMISSIONS = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage'}
 ADMIN_PERMISSIONS = CONFIGURATION_PERMISSIONS | {'vehicle_maintenance_manage'}
@@ -164,6 +165,11 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
 def establish_session(conn, user: dict, response: Response, *, owner_step_up=False) -> dict:
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
+    # An unverified contact number is never a recovery credential. Remember a
+    # guest only through this browser's random, HttpOnly session cookie.
+    # Keep staff/verified identity session policies unchanged.
+    if user['role'] == 'customer' and user.get('identity_kind') == 'guest':
+        hours = GUEST_SESSION_SECONDS // 3600
     expiry = datetime.now(timezone.utc) + timedelta(hours=hours)
     conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at) '
                  'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END)',
@@ -188,6 +194,19 @@ def session(request: Request, response: Response):
     if not csrf or not hmac.compare_digest(token_hash(csrf), user['csrf_hash']):
         # Do not reconstruct secret CSRF tokens from their hashes.
         return {'user': public_user(user), 'csrf_token': None, 'reauthentication_required': True}
+    if user['role'] == 'customer' and user.get('identity_kind') == 'guest':
+        # Refresh only an already valid browser session, never by phone lookup.
+        # This also upgrades existing short-lived guests without another login.
+        with db.tx() as conn:
+            renewed = conn.execute(
+                "UPDATE sessions SET expires_at=now()+interval '30 days' "
+                "WHERE id=%s AND revoked_at IS NULL AND expires_at>now() RETURNING id",
+                (user['session_id'],)).fetchone()
+        if renewed:
+            response.set_cookie(COOKIE, request.cookies[COOKIE], max_age=GUEST_SESSION_SECONDS,
+                                httponly=True, secure=secure_cookie(), samesite='strict', path='/')
+            response.set_cookie(CSRF_COOKIE, csrf, max_age=GUEST_SESSION_SECONDS,
+                                httponly=False, secure=secure_cookie(), samesite='strict', path='/')
     return {'user': public_user(user), 'csrf_token': csrf}
 
 
