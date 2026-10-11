@@ -218,7 +218,7 @@ class JobBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     device_id:str
     kind:Literal['order','preparation','both']='order'
-    language:Literal['ar','en']='ar'
+    language:Literal['ar','en']='en'
     reprint_reason:str=Field(default='',max_length=300)
 
 
@@ -242,7 +242,7 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
                 identifier=db.new_id('print_');payload=receipt(order,branch,kind,body.language)
                 if destination['id'] != branch['id']:
                     payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})
-                if previous:payload['lines'].insert(0,{'text':'إعادة طباعة / REPRINT','bold':True,'center':True})
+                if previous:payload['lines'].insert(0,{'text':('إعادة طباعة' if body.language=='ar' else 'REPRINT'),'bold':True,'center':True})
                 conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason,created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp())',(identifier,user['brand_id'],device['branch_id'],body.device_id,order_id,kind,db.json(payload),user['id'],body.reprint_reason))
                 db.audit(conn,user['id'],'printer.job.queued','print_job',identifier,{'order_id':order_id,'order_branch_id':order['branch_id'],'destination_branch_id':device['branch_id'],'device_id':body.device_id,'kind':kind,'reprint_reason':body.reprint_reason})
                 identifiers.append(identifier)
