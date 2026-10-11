@@ -1,4 +1,4 @@
-"""Real database coverage for temporary dispatch and immutable daily references."""
+"""Real database coverage for temporary dispatch and immutable continuous references."""
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -50,27 +50,29 @@ def test_temporary_delivery_without_branch_actions_and_full_mode_preserved(v5):
         assert c.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()['snapshot']==order['snapshot']
 
 
-def test_references_riyadh_midnight_branch_independence_and_concurrency(v5):
+def test_references_operating_day_continuous_sequence_and_concurrency(v5):
     def allocate(branch,stamp):
         with db.tx() as c:return order_numbering.allocate(c,branch,stamp)
-    before=datetime(2026,10,11,20,59,59,tzinfo=timezone.utc)
-    after=datetime(2026,10,11,21,0,0,tzinfo=timezone.utc)
-    assert allocate('v5-a',before)=='HFR1-261011-0001'
-    assert allocate('v5-b',before)=='HFR9-261011-0001'
-    assert allocate('v5-a',after)=='HFR1-261012-0001'
+    before=datetime(2026,10,11,12,59,59,tzinfo=timezone.utc)
+    after=datetime(2026,10,11,13,0,0,tzinfo=timezone.utc)
+    assert allocate('v5-a',before)=='HFR1-261010-0001'
+    assert allocate('v5-b',before)=='HFR9-261010-0001'
+    assert allocate('v5-a',after)=='HFR1-261011-0002'
+    assert allocate('v5-a',datetime(2026,10,11,21,tzinfo=timezone.utc))=='HFR1-261011-0003'
+    assert allocate('v5-a',datetime(2026,10,12,13,tzinfo=timezone.utc))=='HFR1-261012-0004'
     with ThreadPoolExecutor(max_workers=6) as pool:
         numbers=list(pool.map(lambda _:allocate('v5-a',after),range(12)))
     assert len(set(numbers))==12
-    assert {int(n.rsplit('-',1)[1]) for n in numbers}==set(range(2,14))
+    assert {int(n.rsplit('-',1)[1]) for n in numbers}==set(range(5,17))
 
 
 def test_reference_rollback_and_no_four_digit_truncation(v5):
-    stamp=datetime(2026,10,11,12,tzinfo=timezone.utc)
+    stamp=datetime(2026,10,11,13,tzinfo=timezone.utc)
     with pytest.raises(RuntimeError):
         with db.tx() as c:
             assert order_numbering.allocate(c,'v5-a',stamp).endswith('-0001')
             raise RuntimeError('TEST rollback')
     with db.tx() as c:
         assert order_numbering.allocate(c,'v5-a',stamp).endswith('-0001')
-        c.execute("UPDATE order_daily_counters SET last_number=9999 WHERE branch_id='v5-a'")
+        c.execute("UPDATE order_branch_counters SET last_number=9999 WHERE branch_id='v5-a'")
         assert order_numbering.allocate(c,'v5-a',stamp)=='HFR1-261011-10000'
