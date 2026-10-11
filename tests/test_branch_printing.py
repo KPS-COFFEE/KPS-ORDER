@@ -179,7 +179,8 @@ def test_both_receipts_are_atomic_ordered_and_replay_safe(ops):
     for identifier,kind in zip(result['ids'],['order','preparation']):
         job=client.post('/api/printing/bridge/next',json={},headers=headers).json()['job']
         assert job['id']==identifier and job['payload']['kind']==kind
-        assert any('ر.س' in line['text'] for line in job['payload']['lines']) == (kind=='order')
+        assert job['payload']['language']=='en'
+        assert any('SAR' in line['text'] for line in job['payload']['lines']) == (kind=='order')
         assert client.post('/api/printing/bridge/jobs/'+identifier+'/ack',json={'status':'submitted'},headers=headers).status_code==200
     assert client.post('/api/printing/bridge/next',json={},headers=headers).json()['job'] is None
     post('manager','/api/printing/orders/'+oid,body,status=409)
@@ -200,11 +201,11 @@ def test_product_print_translation_edit_is_scoped_and_used_in_queue(ops):
                      (db.json({'enabled':False,'lifecycle':'draft'}),))
     oid=order('pickup')
     body={'settings':{'print_labels_en':{'قهوة تجربة':'Test Coffee'}}}
-    assert actor('driver').patch('/api/admin/products/ops-product',json=body).status_code==403
-    assert actor('other').patch('/api/admin/products/ops-product',json=body).status_code==404
-    response=actor('owner').patch('/api/admin/products/ops-product',json=body)
+    assert actor('driver').patch('/api/admin/products/ops-product',json=body,headers={'Idempotency-Key':str(uuid4())}).status_code==403
+    assert actor('other').patch('/api/admin/products/ops-product',json=body,headers={'Idempotency-Key':str(uuid4())}).status_code==404
+    response=actor('owner').patch('/api/admin/products/ops-product',json=body,headers={'Idempotency-Key':str(uuid4())})
     assert response.status_code==200,response.text
-    assert actor('owner').patch('/api/admin/products/ops-product',json={'settings':{'print_labels_en':{'x':[]}}}).status_code==422
+    assert actor('owner').patch('/api/admin/products/ops-product',json={'settings':{'print_labels_en':{'x':[]}}},headers={'Idempotency-Key':str(uuid4())}).status_code==422
     pair=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Translation test'})
     paired=actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Test'}).json()
     approve_test_device(actor,post,pair['id'],paired['token'])
