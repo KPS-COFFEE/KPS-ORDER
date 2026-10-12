@@ -628,10 +628,18 @@ def v5_tables(snap,view='compact'):
     if snap.get('kind')=='manager' and other_receipts:finance.insert(2,['عهدة مستلمة من شفتات أخرى',v5_money(other_receipts),'—','—'])
     if direct_receipts:finance.insert(2,['استلامات نقدية مباشرة مسجلة',v5_money(direct_receipts),'—','—'])
     table('finance','النقد والشبكة والعهدة - جميع المبالغ بالريال',['البيان','المبلغ','البيان','المبلغ'],finance)
+    difference=closure.get('difference_halalas',0) or 0
+    table('reconciliation','نتيجة المطابقة',['الحالة','الفرق بالريال'],[['عجز' if difference<0 else 'فائض' if difference>0 else 'متوافق',v5_money(difference)]])
+    if snap.get('kind')=='driver':
+        terminal=closure.get('payment_terminal') or {}
+        table('payment-terminal','جهاز الشبكة المسند للسائق',['البيان','القيمة'],[
+            ['المزود',terminal.get('provider') or 'غير مسجل'],['رقم الجهاز',terminal.get('terminal_id') or 'غير مسجل'],
+            ['الرقم التسلسلي',terminal.get('serial_number') or 'غير مسجل'],['الطراز',terminal.get('model') or 'غير مسجل'],['بيانات إضافية',terminal.get('notes') or '—']])
     receipt_rows=[]
     for t in snap.get('transfers',[]):
         if t.get('from_shift_id')==shift.get('id') and t.get('closure'):
-            receipt_rows.append([name(t.get('confirmed_by') or t.get('recipient_user_id')),str(t.get('reference') or 'غير مسجل'),label(t.get('status'))])
+            destination=(snap.get('display_branches',{}).get(t.get('receiving_branch_id')) or {}).get('name') if t.get('receiving_branch_id') else None
+            receipt_rows.append([name(t.get('confirmed_by') or t.get('recipient_user_id'))+(' / '+destination if destination else ''),str(t.get('reference') or 'غير مسجل'),label(t.get('status'))])
     if not receipt_rows:receipt_rows=[['لا تسليم نقدي مطلوب' if closure.get('handover_halalas')==0 else 'غير مسجل','—','—']]
     table('approval','الاستلام والاعتماد',['المستلم','المرجع','التأكيد'],receipt_rows)
     if shift.get('exception_reason'):table('exception','الاستثناء المعتمد',['السبب','المعتمد'],[[shift['exception_reason'],name(snap.get('approved_by'))]])
