@@ -35,7 +35,9 @@ async def lifespan(app):
             background_tasks.append(asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor'))
         if monitoring.configuration()['runtime_configured']:
             background_tasks.append(asyncio.create_task(monitoring.poll_loop(), name='operational-monitor'))
-        from . import email_delivery, report_notifications
+        from . import email_delivery, report_notifications, order_support
+        if os.getenv('APP_ENV')!='testing':
+            background_tasks.append(asyncio.create_task(order_support.poll_loop(), name='delivery-photo-cleanup'))
         if email_delivery.configuration()['configured'] and os.getenv('EMAIL_WORKER_ENABLED', 'true').lower() == 'true':
             background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
         if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
@@ -114,7 +116,7 @@ app.include_router(orders.router)
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles'):
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'order_support'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 

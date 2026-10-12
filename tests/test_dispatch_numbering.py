@@ -34,11 +34,14 @@ def test_temporary_delivery_without_branch_actions_and_full_mode_preserved(v5):
     tid=call('manager','POST',f'/api/orders/{oid}/assign',{'driver_shift_id':sid}).json()['task']['id']
     assert call('driver','POST',f'/api/tasks/{tid}/transition',{'status':'accepted'}).status_code==200
     assert call('owner','POST',f'/api/tasks/{tid}/transition',{'status':'picked_up'}).status_code==403
-    r=call('driver','POST',f'/api/tasks/{tid}/transition',{'status':'picked_up'})
+    from test_order_support import image_body
+    pickup=call('driver','POST',f'/api/tasks/{tid}/photos',image_body('picked_up')).json()['id']
+    r=call('driver','POST',f'/api/tasks/{tid}/transition',{'status':'picked_up','photo_id':pickup})
     assert r.status_code==200,r.text
     assert call('driver','POST',f'/api/tasks/{tid}/transition',{'status':'delivered','proof':'TEST'}).status_code==409
     assert call('driver','POST',f'/api/orders/{oid}/collect',{'method':'cash','amount_halalas':1200,'tendered_halalas':1200}).status_code==200
-    assert call('driver','POST',f'/api/tasks/{tid}/transition',{'status':'delivered','proof':'TEST ONLY'}).status_code==200
+    delivery=call('driver','POST',f'/api/tasks/{tid}/photos',image_body('delivered')).json()['id']
+    assert call('driver','POST',f'/api/tasks/{tid}/transition',{'status':'delivered','proof':'TEST ONLY','photo_id':delivery}).status_code==200
     full=call('customer','POST','/api/orders',body('delivery')).json()['order']
     assert full['snapshot']['delivery_workflow']=='branch_fulfillment'
     task=call('manager','POST',f"/api/orders/{full['id']}/assign",{'driver_shift_id':sid}).json()['task']['id']

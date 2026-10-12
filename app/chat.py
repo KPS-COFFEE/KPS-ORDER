@@ -19,6 +19,10 @@ def allowed(user,row):
     return user['role']=='branch_manager'
 
 def conversation(c,user,cid,lock=False):
+    if lock:
+        initial=c.execute('SELECT * FROM conversations WHERE id=%s',(cid,)).fetchone()
+        if not initial or not allowed(user,initial):fail(404,'المحادثة غير موجودة')
+        if initial['order_id']:c.execute('SELECT id FROM orders WHERE id=%s FOR UPDATE',(initial['order_id'],)).fetchone()
     row=c.execute('SELECT * FROM conversations WHERE id=%s'+(' FOR UPDATE' if lock else ''),(cid,)).fetchone()
     if not row or not allowed(user,row):fail(404,'المحادثة غير موجودة')
     if row['order_id']:
@@ -107,7 +111,9 @@ def messages(cid:str,after:int=0,user=Depends(auth.current_user)):
         rows=c.execute('SELECT m.*,u.display_name sender FROM chat_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=%s AND m.seq>%s ORDER BY m.seq LIMIT 100',(cid,after)).fetchall()
         for r in rows:r['attachment_url']='/api/chat-attachments/'+r['attachment_id'] if r['attachment_id'] else None
         transfers=c.execute('SELECT * FROM conversation_transfers WHERE conversation_id=%s ORDER BY created_at',(cid,)).fetchall()
-        return safe({'conversation':v,'messages':rows,'transfers':transfers})
+        from .order_support import STATES,CATEGORIES
+        tickets=c.execute('SELECT ticket_no,category,status FROM support_tickets WHERE conversation_id=%s ORDER BY ticket_no',(cid,)).fetchall()
+        return safe({'conversation':v,'messages':rows,'transfers':transfers,'tickets':[{'reference':'TKT-'+str(t['ticket_no']).zfill(6),'status':t['status'],'status_label':STATES[t['status']],'category_label':CATEGORIES[t['category']]} for t in tickets]})
 
 class Message(BaseModel):
     text:str=Field('',max_length=4000)
@@ -215,7 +221,10 @@ def status(cid:str,body:Status,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','branch_manager','delivery_manager','delivery_staff')
     with db.tx() as c:
         def perform():
-            conversation(c,user,cid,True)
+            v=conversation(c,user,cid,True)
+            if body.status=='resolved' and v['order_id']:
+                from .order_support import next_cleanup
+                c.execute('UPDATE delivery_photos SET expires_at=greatest(expires_at,%s) WHERE order_id=%s AND data IS NOT NULL',(next_cleanup(),v['order_id']))
             if body.status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             c.execute('UPDATE conversations SET status=%s WHERE id=%s',(body.status,cid));db.audit(c,user['id'],'chat.status','conversation',cid,body.model_dump())
             return {'status':body.status}

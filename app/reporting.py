@@ -88,6 +88,9 @@ def create_snapshot(c,sid,approved_by):
     snap['driver_reports']=[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'shift_no':r['snapshot']['shift'].get('shift_no'),'closure_label':r['snapshot'].get('closure_label') or display_shift_label(r['snapshot']['shift']),'user_id':r['snapshot']['shift']['user_id'],'summary':r['snapshot']['summary'],'closure':r['snapshot']['shift']['submission']} for r in children]
     order_ids=[o['id'] for o in orders]
     snap['conversation_exceptions']=safe(c.execute('SELECT t.*,v.order_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE v.order_id=ANY(%s) ORDER BY t.created_at',(order_ids,)).fetchall())
+    if s['kind']=='manager':
+        from .order_support import report_tickets
+        snap['support_tickets']=safe(report_tickets(c,s['brand_id'],s['branch_ids'],s['opened_at'],s['closed_at']))
     rid=uid();c.execute('INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s)',(rid,sid,s['kind'],s['brand_id'],db.json(s['branch_ids']),s['user_id'],db.json(snap)))
     queue_v5_renderings(c,rid,snap)
     if s['kind']=='manager':
@@ -656,6 +659,9 @@ def v5_tables(snap,view='compact'):
         status=lambda v:'سليم' if v=='ok' else 'يحتاج متابعة' if v=='issue' else 'غير مسجل'
         table('inspections','الفحص اليومي للمركبة',['البند','بداية الشفت','نهاية الشفت'],[[label,status(begin.get('checks',{}).get(key)),status(end.get('checks',{}).get(key))] for key,label in CHECKS.items()]+[['ملاحظات',begin.get('notes',''),end.get('notes','')]])
         table('refuels','سجل تعبئة البنزين',['الوقت - الرياض','لتر','العداد (كم)','ملاحظات'],[[v5_stamp(r['recorded_at']),r['liters'],r['odometer_km'],r.get('notes','')] for r in log.get('refuels',[])])
+    if snap.get('support_tickets'):
+        from .order_support import CATEGORIES,STATES
+        table('support-tickets','تذاكر المتابعة والمشكلات',['التذكرة','الطلب','الفرع','التصنيف','الحالة','الملاحظة / الحل'],[[t['reference'],t['order_reference'],branch(t['branch_id']),CATEGORIES.get(t['category'],t['category']),STATES.get(t['status'],t['status']),t['note']+' / '+t.get('resolution','')] for t in snap['support_tickets']])
     if view!='owner':return tables
     by_branch={};by_item={};collection_branches={o['id']:o.get('branch_id') for o in orders}
     for o in orders:

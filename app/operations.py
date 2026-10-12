@@ -78,6 +78,13 @@ def history_result_access(c,user,oid):
 def authorize_replay(c,user,operation,body,result):
     # Replay protection never extends withdrawn authorization. Validate current
     # resources, not the scope frozen in a formerly successful response.
+    if operation.startswith('ticket.'):
+        oid=body.get('order_id')
+        if not oid:
+            ticket=c.execute('SELECT order_id FROM support_tickets WHERE id=%s',(result.get('id'),)).fetchone()
+            oid=ticket['order_id'] if ticket else None
+        if not oid:fail(404,'التذكرة غير متاحة')
+        history_result_access(c,user,oid)
     sid=result.get('shift_id') or (result.get('shift') or {}).get('id')
     if operation.startswith('cash.event:'):sid=operation.split(':',1)[1]
     if sid:shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone())
@@ -413,6 +420,7 @@ def tasks(user=Depends(auth.current_user)):
         return safe({'tasks':rows})
 
 class TaskTransition(BaseModel):
+    photo_id:str|None=None
     status:str
     proof:str=Field('',max_length=2000)
     reason:str=Field('',max_length=2000)
@@ -444,17 +452,23 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
                 c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(o['id'],))
                 db.event(c,o['id'],user['id'],'preparation.handed_over',
                          {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch'})
-            if body.status=='delivered' and (o['payment_status']!='paid' or not body.proof.strip()):fail(409,'يلزم تحصيل فعلي ودليل تسليم')
+            if body.status=='delivered' and o['payment_status']!='paid':fail(409,'يلزم تحصيل فعلي ودليل تسليم')
+            if body.status in ('picked_up','delivered'):
+                from .order_support import require_photo
+                require_photo(c,t,user,body.status,body.photo_id)
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
                 if o['payment_status'] in ('paid','partially_refunded'):fail(409,'يلزم استرداد كامل قبل الإلغاء')
+            if t['status']=='problem' and body.status!='problem':
+                from .order_support import next_cleanup
+                c.execute('UPDATE delivery_photos SET expires_at=greatest(expires_at,%s) WHERE order_id=%s AND data IS NOT NULL',(next_cleanup(),o['id']))
             timestamp={'accepted':'accepted_at','picked_up':'picked_up_at','delivered':'delivered_at'}.get(body.status)
             sql="UPDATE driver_tasks SET status=%s,proof=%s,reason=%s" + (f',{timestamp}=coalesce({timestamp},now())' if timestamp else '')+' WHERE id=%s'
             c.execute(sql,(body.status,body.proof,body.reason,tid))
             c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
             if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
-            db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status']})
+            db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status'],'photo_id':body.photo_id})
             if body.contact_method:
                 db.event(c,t['order_id'],user['id'],'customer.no_answer',{'task_id':tid,'method':body.contact_method,'reason':body.reason})
             db.audit(c,user['id'],'task.transition','task',tid,body.model_dump())

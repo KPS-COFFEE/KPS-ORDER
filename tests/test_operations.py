@@ -132,6 +132,11 @@ def ops(client):
                     row=c.execute("SELECT vehicle_log FROM shifts WHERE user_id=%s AND vehicle_log->'end' IS NOT NULL ORDER BY opened_at DESC LIMIT 1",(body.get('user_id') or 'ops-'+who,)).fetchone()
                     if row:km=max(km,row['vehicle_log']['end']['odometer_km'])
             body.setdefault('vehicle_inspection',{'odometer_km':km,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS},'notes':''})
+        if status==200 and path.endswith('/transition') and body.get('status') in ('picked_up','delivered') and not body.get('photo_id'):
+            image=io.BytesIO();Image.new('RGB',(12,12),'white').save(image,'PNG')
+            photo=actor(who).post(path.removesuffix('/transition')+'/photos',json={'stage':body['status'],'data_base64':base64.b64encode(image.getvalue()).decode(),'content_type':'image/png'},headers={'Idempotency-Key':'photo-'+key if key else uuid4().hex})
+            assert photo.status_code==200,photo.text
+            body['photo_id']=photo.json()['id']
         r=actor(who).post(path,json=body or {},headers={'Idempotency-Key':key or uuid4().hex})
         assert r.status_code==status,r.text
         return r.json()
