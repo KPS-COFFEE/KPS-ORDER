@@ -169,7 +169,7 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None) ->
     if settings.get('active', True) is not True:
         return False, 'BRANCH_DISABLED', 'الفرع متوقف عن استقبال الطلبات الجديدة.'
     if service == 'delivery' and normalize_city(branch['city']) not in DELIVERY_CITIES:
-        return False, 'DELIVERY_CITY_NOT_ELIGIBLE', 'التوصيل غير متاح من هذا الفرع. اختر الاستلام إن كان متاحًا.'
+        return False, 'DELIVERY_CITY_NOT_ELIGIBLE', 'هذا الفرع غير مشمول بخدمة التوصيل حاليًا.'
     if settings.get(service + '_enabled') is not True:
         return False, 'SERVICE_DISABLED', 'هذه الخدمة غير مفعلة لهذا الفرع.'
     if not (settings.get('operational_data_verified') is True or settings.get('ordering_verified') is True):
@@ -200,6 +200,21 @@ def valid_location(location) -> bool:
     if isinstance(lat, bool) or isinstance(lng, bool):
         return False
     return isinstance(lat, (int, float)) and isinstance(lng, (int, float)) and math.isfinite(lat) and math.isfinite(lng) and -90 <= lat <= 90 and -180 <= lng <= 180
+
+
+def coverage_configured(coverage) -> bool:
+    """Distinguish an unknown boundary from a known, out-of-range address."""
+    if not isinstance(coverage, dict):
+        return False
+    if coverage.get('type') == 'radius':
+        radius = coverage.get('radius_meters')
+        return (valid_location(coverage.get('center')) and isinstance(radius, (int, float))
+                and not isinstance(radius, bool) and math.isfinite(radius) and radius > 0)
+    points = coverage.get('coordinates')
+    return (coverage.get('type') == 'polygon' and isinstance(points, list)
+            and 3 <= len(points) <= 1000
+            and all(isinstance(p, list) and len(p) == 2
+                    and valid_location({'lng': p[0], 'lat': p[1]}) for p in points))
 
 
 def covered(coverage: dict, location: dict) -> bool:
@@ -849,8 +864,11 @@ def rank_nearest_branches(rows, point, service, brand_settings, products=(), by_
         available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
         if available and not location_verified(branch):
             available, code, reason = False, 'BRANCH_LOCATION_UNVERIFIED', 'دبوس الفرع غير معتمد.'
-        if available and service == 'delivery' and not covered(branch['settings'].get('coverage'), point):
-            available, code, reason = False, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق خدمة الفرع.'
+        # Geographic exclusion takes precedence over temporary service/stock
+        # states, but missing boundaries must never masquerade as known ones.
+        coverage = branch['settings'].get('coverage')
+        if service == 'delivery' and coverage_configured(coverage) and not covered(coverage, point):
+            available, code, reason = False, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق توصيل هذا الفرع.'
         missing = _nearest_unavailable_products(products, by_id or {}, selected or {}, branch)
         if available and missing:
             available, code, reason = False, 'PRODUCT_UNAVAILABLE', 'بعض أصناف أو خيارات السلة غير متاحة في الفرع.'

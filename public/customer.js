@@ -43,7 +43,7 @@
     "error_BRAND_SERVICE_DISABLED":{"ar": "هذه الخدمة موقوفة من إدارة البراند.", "en": "This service is paused by the brand."},
     "error_BRANCH_DISABLED":{"ar": "الفرع متوقف عن استقبال الطلبات الجديدة.", "en": "This branch is not accepting new orders."},
     "error_SERVICE_DISABLED":{"ar": "هذه الخدمة غير مفعلة لهذا الفرع.", "en": "This service is not enabled at this branch."},
-    "error_DELIVERY_CITY_NOT_ELIGIBLE":{"ar": "التوصيل غير متاح من هذا الفرع. اختر الاستلام إن كان متاحًا.", "en": "Delivery is unavailable at this branch. Choose pickup when available."},
+    "error_DELIVERY_CITY_NOT_ELIGIBLE":{"ar": "هذا الفرع غير مشمول بخدمة التوصيل حاليًا.", "en": "This branch is not currently included in the delivery service."},
     "error_BRANCH_CONFIGURATION_UNVERIFIED":{"ar": "بيانات تشغيل هذا الفرع لم تُعتمد بعد.", "en": "Operating settings for this branch are awaiting approval."},
     "error_HOURS_UNCONFIGURED":{"ar": "ساعات استقبال هذا الفرع غير مهيأة.", "en": "Ordering hours for this branch are not configured."},
     "error_BRANCH_CLOSED":{"ar": "الفرع مغلق الآن لاستقبال الطلبات.", "en": "This branch is currently closed for new orders."},

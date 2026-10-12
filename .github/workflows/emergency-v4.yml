@@ -108,9 +108,11 @@ jobs:
           vehicle_shift = vehicle_shift or (bool(changed) and changed <= {'public/ops.js','public/ops.css','public/ops.html','tests/test_dispatch_numbering.py','.github/workflows/emergency-v4.yml'})
           alerts = 'tests/test_operational_alerts.py' in changed and changed <= {'app/operations.py','app/catalog.py','public/ops.js','tests/test_operational_alerts.py','.github/workflows/emergency-v4.yml'}
           images = 'tests/test_image_previews.py' in changed and changed <= {'.gitignore','Dockerfile','app/image_previews.py','app/main.py','app/admin.py','public/customer.js','tests/test_image_previews.py','.github/workflows/emergency-v4.yml'}
-          focused = focused or staff_tests or password_owner or vehicle_shift or alerts or images
+          coverage = 'tests/test_coverage_reasons.py' in changed and changed <= {'app/catalog.py','public/customer.js','tests/test_coverage_reasons.py','.github/workflows/emergency-v4.yml'}
+          focused = focused or staff_tests or password_owner or vehicle_shift or alerts or images or coverage
           operations = bool(changed) and changed <= operation_files and not focused
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('coverage_only=' + str(coverage).lower() + '\n')
               output.write('images_only=' + str(images).lower() + '\n')
               output.write('alerts_only=' + str(alerts).lower() + '\n')
               output.write('vehicle_shift_only=' + str(vehicle_shift).lower() + '\n')
@@ -164,7 +166,7 @@ jobs:
         if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
       - name: Run focused identity, sessions, ownership and browser regression
-        if: steps.scope.outputs.identity_only == 'true' && steps.scope.outputs.staff_tests_only != 'true' && steps.scope.outputs.password_owner_only != 'true' && steps.scope.outputs.vehicle_shift_only != 'true' && steps.scope.outputs.alerts_only != 'true' && steps.scope.outputs.images_only != 'true'
+        if: steps.scope.outputs.identity_only == 'true' && steps.scope.outputs.staff_tests_only != 'true' && steps.scope.outputs.password_owner_only != 'true' && steps.scope.outputs.vehicle_shift_only != 'true' && steps.scope.outputs.alerts_only != 'true' && steps.scope.outputs.images_only != 'true' && steps.scope.outputs.coverage_only != 'true'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_guest_session_policy.py tests/test_core.py
@@ -173,6 +175,9 @@ jobs:
           tests/test_identity_closure.py tests/test_owner_closure.py
           tests/test_browser.py tests/test_staff_invitation_browser.py
           --junitxml=test-results/identity-focused.xml
+      - name: Check geographic exclusion reasons, branch scope and checkout coverage
+        if: steps.scope.outputs.coverage_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_coverage_reasons.py tests/test_launch_branches.py tests/test_core.py --junitxml=test-results/coverage-reasons.xml
       - name: Check driver inspections, fuel, reports and compact staff UI
         if: steps.scope.outputs.vehicle_shift_only == 'true'
         run: python -m pytest -q --strict-markers tests/test_shift_vehicle.py tests/test_operations.py tests/test_owner_staff_management.py tests/test_dispatch_numbering.py --junitxml=test-results/shift-vehicle.xml
