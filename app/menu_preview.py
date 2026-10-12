@@ -68,6 +68,13 @@ def preview_data(request:Request,response:Response,user=Depends(preview_access))
         lookup={p['id']:p for p in raw}
         for product in result['products']:
             original=lookup[product['id']]
+            from . import print_translations
+            translated=print_translations.labels(original)
+            product.setdefault('name_en',translated.get(original['name'],''))
+            product.setdefault('category_en',{'☕ الأكواب الحرارية':'☕ Thermal cups','☕ المشروبات':'☕ Drinks','✨ جديدنا':'✨ New arrivals','⭐ الأكثر مبيعاً':'⭐ Best sellers','🍪 السناكس والحلويات':'🍪 Snacks & desserts','🍹 المنعشات':'🍹 Refreshments','📦 بوكسات الضيافة':'📦 Sharing boxes','🥤 الملحقات':'🥤 Extras'}.get(original['category'],''))
+            for group in product['option_groups']:
+                group.setdefault('name_en',translated.get(group.get('name'),''))
+                for value in group['values']: value.setdefault('name_en',translated.get(value.get('name'),''))
             global_product=dict(original,id='generic:'+original['id'],settings=original['settings']|{'available_cities':[]})
             product['globally_available'],_=catalog.product_availability(global_product,None)
         branches=conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no',(user['brand_id'],)).fetchall()

@@ -80,7 +80,11 @@ def test_catalog_prices_categories_options_global_and_branch_availability(owner)
     assert preview['preview'] and preview['public_activation_enabled'] is False
     assert len(preview['products'])==34
     for p,q in zip(preview['products'],canonical['products']):
-        assert {k:v for k,v in p.items() if k!='globally_available'}==q
+        def commercial(value):
+            if isinstance(value,dict):return {k:commercial(v) for k,v in value.items() if k not in {'globally_available','name_en','category_en','description_en'}}
+            if isinstance(value,list):return [commercial(v) for v in value]
+            return value
+        assert commercial(p)==commercial(q)
     pid=preview['products'][0]['id']
     with db.tx() as c:_prepare_branch(c)
     assert mutate('PATCH','/api/admin/products/'+pid,{'settings':{'enabled':False}}).status_code==200
