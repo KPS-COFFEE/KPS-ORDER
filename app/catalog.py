@@ -29,6 +29,28 @@ FINAL_MENU_MANIFEST_SHA256 = '57d67963b0ac752a179ffe60ce25f81fe06ab1b6c19a161769
 KHALIYA_SOURCES = {'classic': 'kps-34', 'pecan': 'kps-33'}
 
 
+def is_khaliya(product):
+    return product['brand_id'] == 'kps' and product['id'] in KHALIYA_SOURCES.values()
+
+
+def khaliya_branch(conn, lock=''):
+    # Canonical branch number plus brand/city; never trust a customer-supplied target.
+    return conn.execute("SELECT * FROM branches WHERE brand_id='kps' AND branch_no=2" + lock).fetchone()
+
+
+def is_khaliya_branch(branch):
+    return (branch and branch['brand_id'] == 'kps' and branch.get('branch_no') == 2
+            and normalize_city(branch['city']) == 'حفر الباطن')
+
+
+def customer_quote_view(quote):
+    result = dict(quote)
+    routing = result.pop('internal_routing', None)
+    if routing:
+        result.update(routing['selected_branch'])
+    return result
+
+
 def commercial_snapshot(product: dict) -> dict:
     settings = product['settings']
     return {**{key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')},
@@ -248,7 +270,7 @@ def covered(coverage: dict, location: dict) -> bool:
     return inside
 
 
-def product_availability(product: dict, branch: dict | None, *, as_variant=False) -> tuple[bool, str | None]:
+def product_availability(product: dict, branch: dict | None, *, as_variant=False, service=None) -> tuple[bool, str | None]:
     settings = product['settings']
     if settings.get('purchasable') is False and not as_variant:
         return False, 'هذا الصنف أصبح ضمن الخلية. اختر النوع من البطاقة الموحدة.'
@@ -265,6 +287,8 @@ def product_availability(product: dict, branch: dict | None, *, as_variant=False
             return False, 'الصنف لا يتبع براند الفرع.'
         if cities and normalize_city(branch['city']) not in {normalize_city(city) for city in cities}:
             return False, 'متوفر في حفر الباطن فقط' if {normalize_city(c) for c in cities} == {'حفر الباطن'} else 'الصنف غير متاح في مدينة الفرع.'
+        if is_khaliya(product) and service in {'pickup', 'car'} and not is_khaliya_branch(branch):
+            return False, 'الخلية متوفرة للاستلام من فرع 2 فقط.'
         branch_ids = settings.get('available_branch_ids')
         if branch_ids is not None and branch['id'] not in branch_ids:
             return False, 'الصنف غير متاح في هذا الفرع.'
@@ -314,9 +338,9 @@ def availability_only_change(previous: dict, updated: dict) -> bool:
     return terms(previous) == terms(updated)
 
 
-def public_product(product: dict, branch=None) -> dict:
+def public_product(product: dict, branch=None, service=None) -> dict:
     settings = product['settings']
-    available, reason = product_availability(product, branch)
+    available, reason = product_availability(product, branch, service=service)
     result = {key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')}
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
     groups = []
@@ -333,7 +357,8 @@ def public_product(product: dict, branch=None) -> dict:
 
 
 @router.get('/catalog')
-def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str | None = Query(default=None, max_length=80)):
+def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str | None = Query(default=None, max_length=80),
+            service: Literal['pickup', 'car', 'delivery'] | None = Query(default=None)):
     with db.tx() as conn:
         brand = conn.execute('SELECT id,name,settings FROM brands WHERE id=%s AND active', (brand_id,)).fetchone()
         if not brand:
@@ -345,10 +370,34 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
                 raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود.')
         products = conn.execute("SELECT * FROM products WHERE brand_id=%s AND coalesce(settings->>'lifecycle','active')<>'draft' AND coalesce(settings->>'purchasable','true')<>'false' ORDER BY id", (brand_id,)).fetchall()
         preferences = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
+        target = khaliya_branch(conn) if branch and brand_id == 'kps' and service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن' else None
+        classic = conn.execute("SELECT * FROM products WHERE id='kps-34' AND brand_id='kps'").fetchone() if brand_id == 'kps' else None
+        public_products = []
+        for product in products:
+            effective = target if target and is_khaliya(product) else branch
+            item = public_product(product, effective, service)
+            if branch and is_khaliya(product) and service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
+                if not is_khaliya_branch(target):
+                    item.update(available=False, unavailable_reason='الخلية غير متاحة حاليًا.')
+                else:
+                    ready, _, why = branch_service(target, service, brand_settings=brand['settings'])
+                    if not ready:
+                        item.update(available=False, unavailable_reason='الخلية غير متاحة حاليًا.')
+            # Both pickup and delivery preserve the original classic stock control.
+            if is_khaliya(product) and effective:
+                for group in item['option_groups']:
+                    for value in group['values']:
+                        if value.get('code') == 'classic' and (not classic or not product_availability(classic, effective, as_variant=True)[0]):
+                            value.update(available=False, unavailable_reason='الخيار غير متاح حاليًا.')
+                    minimum = group.get('min_select', 1 if group.get('required', True) else 0)
+                    if type(minimum) is int and sum(value['available'] for value in group['values']) < minimum and item['available']:
+                        item.update(available=False, unavailable_reason='الخلية غير متاحة حاليًا.')
+            public_products.append(item)
+
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
                            if key in {'accent', 'background', 'text', 'font', 'profile'}}
-    return {'brand': safe_brand, 'products': [public_product(p, branch) for p in products],
+    return {'brand': safe_brand, 'products': public_products,
             'legacy_item_mappings': legacy_item_mappings(products),
             'source_verified': bool(products) and all(source_approved(p) for p in products)}
 
@@ -506,8 +555,17 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     available, code, reason = branch_service(branch, body.service, brand_settings=brand['settings'])
     if not available:
         raise db.error(409, code, reason)
+    selected_branch = branch
+    contains_khaliya = body.brand_id == 'kps' and any(item.product_id in KHALIYA_SOURCES.values() for item in body.items)
+    if contains_khaliya and body.service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
+        branch = khaliya_branch(conn, lock)
+        if not is_khaliya_branch(branch):
+            raise db.error(409, 'PRODUCT_UNAVAILABLE', 'الخلية غير متاحة حاليًا.')
+        ready, code, reason = branch_service(branch, body.service, brand_settings=brand['settings'])
+        if not ready:
+            raise db.error(409, code, reason)
     required_methods={'cash','card'} if body.payment_method=='split' else {body.payment_method}
-    if not required_methods.issubset(branch['settings']['payment_methods']):
+    if not all(required_methods.issubset(b['settings']['payment_methods']) for b in (selected_branch, branch)):
         raise db.error(409, 'PAYMENT_METHOD_UNAVAILABLE', 'طريقة الدفع غير متاحة لهذا الفرع.')
     if body.service == 'delivery':
         if not body.customer.location or not body.customer.address.strip():
@@ -515,7 +573,7 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
         neighborhood = body.customer.neighborhood.strip()
         if '\x00' in neighborhood or sum(character.isalnum() for character in neighborhood) < 2:
             raise db.error(422, 'DELIVERY_NEIGHBORHOOD_REQUIRED', 'أدخل اسم حي التوصيل بصورة واضحة.')
-        if not covered(branch['settings']['coverage'], body.customer.location.model_dump()):
+        if not covered(selected_branch['settings']['coverage'], body.customer.location.model_dump()):
             raise db.error(409, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق توصيل هذا الفرع.')
     if body.service == 'car' and not body.customer.car:
         raise db.error(422, 'CAR_DETAILS_REQUIRED', 'أدخل بيانات السيارة قبل تأكيد الطلب.')
@@ -526,7 +584,7 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
         product = conn.execute('SELECT * FROM products WHERE id=%s AND brand_id=%s' + lock, (item.product_id, body.brand_id)).fetchone()
         if not product:
             raise db.error(422, 'PRODUCT_NOT_FOUND', 'أحد الأصناف لا يتبع هذا البراند أو غير موجود.')
-        ok, reason = product_availability(product, branch)
+        ok, reason = product_availability(product, branch, service=body.service)
         if not ok:
             raise db.error(409, 'PRODUCT_UNAVAILABLE', reason)
         if not source_approved(product):
@@ -562,24 +620,32 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
                               'name': product['name'], 'category': product['category'], 'quantity': item.quantity,
                               'unit_price_halalas': product['price_halalas'], 'line_total_halalas': amount,
                               'units': units, 'note': item.note})
-    minimum = branch['settings'].get('minimum_order_halalas')
+    minimum = max((b['settings'].get('minimum_order_halalas') for b in (selected_branch, branch)
+                   if type(b['settings'].get('minimum_order_halalas')) is int), default=0)
     if body.service == 'delivery' and isinstance(minimum, int) and subtotal < minimum:
         raise db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
-    fee = branch['settings']['delivery_fee_halalas'] if body.service == 'delivery' else 0
+    fee = selected_branch['settings']['delivery_fee_halalas'] if body.service == 'delivery' else 0
     if subtotal + fee > 10000000:
         raise db.error(422, 'ORDER_VALUE_LIMIT', 'قيمة الطلب أعلى من الحد المسموح للموقع.')
-    return {'brand_id': body.brand_id, 'branch_id': body.branch_id, 'branch_no': branch['branch_no'], 'branch_name': branch['name'],
+    result = {'brand_id': body.brand_id, 'branch_id': branch['id'], 'branch_no': branch['branch_no'], 'branch_name': branch['name'],
             'branch_city': branch['city'], 'branch_location': branch['settings'].get('location'),
             'service': body.service, 'payment_method': body.payment_method, 'items': snapshots,
             'subtotal_halalas': subtotal, 'delivery_fee_halalas': fee, 'total_halalas': subtotal + fee,
             'discount_halalas': 0, 'tax': {'status': 'not_configured', 'amount_halalas': None},
             'notes': body.notes, 'currency': 'SAR', 'priced_at': datetime.now(RIYADH).isoformat()}
+    if selected_branch['id'] != branch['id']:
+        result['internal_routing'] = {'reason': 'khaliya_branch_2', 'selected_branch': {
+            'branch_id': selected_branch['id'], 'branch_no': selected_branch['branch_no'],
+            'branch_name': selected_branch['name'], 'branch_city': selected_branch['city'],
+            'branch_location': selected_branch['settings'].get('location')}}
+    return result
+
 
 
 @router.post('/quote')
 def quote(body: QuoteBody):
     with db.tx() as conn:
-        return {'quote': quote_order(conn, body)}
+        return {'quote': customer_quote_view(quote_order(conn, body))}
 
 
 class AvailabilityBody(BaseModel):
@@ -820,10 +886,10 @@ def _option_available(value, branch, product, by_id):
     return bool(source and source_approved(source) and product_availability(source, branch, as_variant=True)[0])
 
 
-def _nearest_unavailable_products(products, by_id, selected, branch):
+def _nearest_unavailable_products(products, by_id, selected, branch, service=None):
     missing = []
     for product in products:
-        ok, why = product_availability(product, branch)
+        ok, why = product_availability(product, branch, service=service)
         code = 'PRODUCT_UNAVAILABLE'
         if ok and not source_approved(product):
             ok, why, code = False, 'بيانات سعر وخيارات الصنف لم تعتمد.', 'CATALOG_SOURCE_UNVERIFIED'
@@ -860,6 +926,8 @@ def rank_nearest_branches(rows, point, service, brand_settings, products=(), by_
     """One qualification path for the public store and scoped delivery desk."""
     eligible, excluded = [], []
     now = service_hours.now_riyadh()
+    target = next((row for row in rows if is_khaliya_branch(row)), None)
+    contains_khaliya = any(is_khaliya(product) for product in products)
     for branch in rows:
         available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
         if available and not location_verified(branch):
@@ -869,7 +937,16 @@ def rank_nearest_branches(rows, point, service, brand_settings, products=(), by_
         coverage = branch['settings'].get('coverage')
         if service == 'delivery' and coverage_configured(coverage) and not covered(coverage, point):
             available, code, reason = False, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق توصيل هذا الفرع.'
-        missing = _nearest_unavailable_products(products, by_id or {}, selected or {}, branch)
+        execution = branch
+        if service == 'delivery' and contains_khaliya and normalize_city(branch['city']) == 'حفر الباطن':
+            if not target:
+                available, code, reason = False, 'PRODUCT_UNAVAILABLE', 'الخلية غير متاحة حاليًا.'
+            else:
+                execution = target
+                ready, target_code, target_reason = branch_service(target, service, now=now, brand_settings=brand_settings)
+                if available and not ready:
+                    available, code, reason = False, target_code, target_reason
+        missing = _nearest_unavailable_products(products, by_id or {}, selected or {}, execution, service)
         if available and missing:
             available, code, reason = False, 'PRODUCT_UNAVAILABLE', 'بعض أصناف أو خيارات السلة غير متاحة في الفرع.'
         item = {key: branch[key] for key in ('id', 'branch_no', 'name', 'city')}

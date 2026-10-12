@@ -246,7 +246,7 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
         expect(mojito).to_be_focused()
 
         expect(page.get_by_role('button', name='إضافة الخلية إلى السلة', exact=True)).to_be_disabled()
-        page.locator('#branch-select').select_option('kps-branch-1')
+        page.locator('#branch-select').select_option('kps-branch-2')
         for variant in ('pecan', 'classic'):
             page.get_by_role('button', name='تفاصيل الخلية', exact=True).click()
             expect(page.locator('#product-add')).to_be_enabled()

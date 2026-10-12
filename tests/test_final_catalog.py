@@ -19,7 +19,7 @@ OWNER_IMAGE_SHA256 = '4bffccdcf1a7e9667c92176f2f70675978f38704c4a04c05731383447c
 
 def _body(**changes):
     return catalog.QuoteBody.model_validate({
-        'brand_id': 'kps', 'branch_id': 'kps-branch-1', 'service': 'pickup', 'payment_method': 'cash',
+        'brand_id': 'kps', 'branch_id': 'kps-branch-2', 'service': 'pickup', 'payment_method': 'cash',
         'items': [{'product_id': 'kps-33', 'quantity': 3,
                    'units': [{'options': {'TYPE': 'classic'}}, {'options': {'TYPE': 'pecan'}},
                              {'options': {'TYPE': 'classic'}}]}],
@@ -27,7 +27,7 @@ def _body(**changes):
 
 
 def _prepare_branch(conn):
-    conn.execute("UPDATE branches SET settings=settings||%s WHERE id='kps-branch-1'", (db.json({
+    conn.execute("UPDATE branches SET settings=settings||%s WHERE id='kps-branch-2'", (db.json({
         'ordering_verified': True, 'pickup_enabled': True, 'active': True,
         'opening_hours': [{'days': list(range(7)), 'start': '00:00', 'end': '00:00'}],
         'payment_methods': ['cash']}),))
@@ -45,7 +45,7 @@ def test_owner_image_is_exact_original_and_web_copy_is_present():
 
 @pytest.mark.postgres
 def test_final_catalog_one_card_exact_types_image_source_approval_and_no_branch_invention(client):
-    result = client.get('/api/catalog?branch_id=kps-branch-1').json()
+    result = client.get('/api/catalog?branch_id=kps-branch-2').json()
     assert result['source_verified'] is True
     assert len(result['products']) == 34
     assert not any(p['id'] == 'kps-34' for p in result['products'])
@@ -102,7 +102,7 @@ def test_final_stale_api_never_silently_selects_or_changes_a_type(database, item
 def test_final_server_hafar_guard_even_when_old_admin_override_exists(database):
     with db.tx() as conn:
         _prepare_branch(conn)
-        conn.execute("UPDATE branches SET city='رفحاء' WHERE id='kps-branch-1'")
+        conn.execute("UPDATE branches SET city='رفحاء' WHERE id='kps-branch-2'")
         conn.execute("UPDATE products SET settings=settings||%s WHERE id IN ('kps-33','kps-34')",
                      (db.json({'availability_policy_version': 99, 'available_cities': ['رفحاء']}),))
         with pytest.raises(HTTPException) as failure:
@@ -116,7 +116,7 @@ def test_final_classic_source_stock_stop_is_still_enforced(database):
     with db.tx() as conn:
         _prepare_branch(conn)
         conn.execute("UPDATE products SET settings=settings||%s WHERE id='kps-34'",
-                     (db.json({'unavailable_branch_ids': ['kps-branch-1']}),))
+                     (db.json({'unavailable_branch_ids': ['kps-branch-2']}),))
         with pytest.raises(HTTPException) as failure:
             catalog.quote_order(conn, _body())
         assert failure.value.detail['code'] == 'PRODUCT_VARIANT_UNAVAILABLE'
@@ -197,7 +197,7 @@ def test_final_real_browser_stale_cart_mapping_one_image_and_required_type(live_
             page.set_viewport_size({'width': width, 'height': 900})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             page.screenshot(path=str(artifacts / f'final-khaliya-single-card-{width}.png'))
-        page.locator('#branch-select').select_option('kps-branch-1')
+        page.locator('#branch-select').select_option('kps-branch-2')
         page.get_by_role('button', name='تفاصيل الخلية', exact=True).click()
         expect(page.locator('#product-options select')).to_have_value('')
         expect(page.locator('#product-options label')).to_contain_text('اختر النوع')

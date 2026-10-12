@@ -22,6 +22,13 @@ def scoped_order(conn, order_id, user, lock=False):
 def customer_order_view(row):
     result=dict(row)
     result.pop('performance_snapshot',None)
+    result['snapshot'] = catalog.customer_quote_view(row['snapshot'])
+    if row['snapshot'].get('internal_routing'):
+        result['branch_id'] = result['snapshot']['branch_id']
+        if 'branch_name' in result:
+            result['branch_name'] = result['snapshot']['branch_name']
+        if 'branch_no' in result:
+            result['branch_no'] = result['snapshot']['branch_no']
     result['customer']={key:value for key,value in row['customer'].items()
                         if key not in {'risk_alert','risk_reasons','requires_operational_confirmation'}}
     return result
@@ -53,10 +60,11 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             if request and not db.rate_limit(conn,'order-ip:'+(request.client.host if request.client else 'unknown'),200,600):
                 raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
             quote = catalog.quote_order(conn, body, for_update=True)
+            execution_branch_id = quote['branch_id']
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
             if body.service == 'delivery':
-                _ensure_manager_duty(conn, body.brand_id, body.branch_id)
+                _ensure_manager_duty(conn, body.brand_id, execution_branch_id)
             customer = body.customer.model_dump(exclude_none=True)
             if body.service == 'delivery':
                 customer['neighborhood'] = customer['neighborhood'].strip()
@@ -70,7 +78,7 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                 for flag in ('phone_verified','phone_sms_verified','phone_whatsapp_verified'):customer[flag]=False
             if user.get('identity_kind') == 'guest':
                 recent=conn.execute("SELECT 1 FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1",
-                                    (body.brand_id,body.branch_id,customer['phone'],db.json(quote['items']))).fetchone()
+                                    (body.brand_id,execution_branch_id,customer['phone'],db.json(quote['items']))).fetchone()
                 config=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(body.brand_id,)).fetchone()
                 threshold=(config['settings'] if config else {}).get('guest_operational_confirmation_above_halalas')
                 customer['risk_alert']=bool(recent)
@@ -78,8 +86,8 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                 customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
             config = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (body.brand_id,)).fetchone()
             quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
-            quote['order_reference'] = order_numbering.allocate(conn, body.branch_id)
-            quote['receipt_profile'] = invoice_profiles.capture(conn, body.brand_id, body.branch_id)
+            quote['order_reference'] = order_numbering.allocate(conn, execution_branch_id)
+            quote['receipt_profile'] = invoice_profiles.capture(conn, body.brand_id, execution_branch_id)
             order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
@@ -88,12 +96,12 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             row = conn.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
                                'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
                                'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
-                               (order_id, body.brand_id, body.branch_id, user['id'], body.service,
+                               (order_id, body.brand_id, execution_branch_id, user['id'], body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
-                                db.json(quote), db.json(customer), db.json(performance.capture_policy(conn,body.brand_id,body.branch_id)), delivery_day)).fetchone()
+                                db.json(quote), db.json(customer), db.json(performance.capture_policy(conn,body.brand_id,execution_branch_id)), delivery_day)).fetchone()
             db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
-            db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': body.branch_id, 'total_halalas': quote['total_halalas']})
+            db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': execution_branch_id, 'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'), 'total_halalas': quote['total_halalas']})
             return {'order': customer_order_view(row)}
         return db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform)
 

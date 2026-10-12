@@ -11,6 +11,17 @@ from .operations import uid,safe,fail,roles,mutate
 
 router=APIRouter(prefix='/api',tags=['chat'])
 
+def customer_conversation_view(conn, row):
+    result = dict(row)
+    if row.get('order_id'):
+        order = conn.execute('SELECT snapshot FROM orders WHERE id=%s', (row['order_id'],)).fetchone()
+        routing = (order['snapshot'] if order else {}).get('internal_routing')
+        if routing:
+            selected = routing['selected_branch']
+            result.update({key: selected[key] for key in ('branch_id', 'branch_name', 'branch_no')})
+    return result
+
+
 def allowed(user,row):
     if user['role']=='owner':return user['brand_id']==row['brand_id']
     if user['role']=='customer':return row['customer_id']==user['id'] and row['brand_id']==user['brand_id']
@@ -67,7 +78,10 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
             cid=uid();c.execute('INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service) VALUES(%s,%s,%s,%s,%s,%s,%s)',(cid,order_id,brand_id,branch_id,customer_id,route,service))
             db.audit(c,user['id'],'chat.create','conversation',cid,{'order_id':order_id,'service':service,'branch_id':branch_id,'route':route})
             return {'conversation':c.execute('SELECT * FROM conversations WHERE id=%s',(cid,)).fetchone()}
-        return mutate(c,user,request,'chat.create',body.model_dump(),perform)
+        result = mutate(c,user,request,'chat.create',body.model_dump(),perform)
+        if user['role'] == 'customer':
+            result = dict(result, conversation=customer_conversation_view(c, result['conversation']))
+        return result
 
 @router.get('/conversations')
 def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
@@ -81,6 +95,8 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
             if status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             scope+=' AND v.status=%s';p.append(status)
         rows=c.execute('SELECT v.*,o.order_no,o.snapshot->>\'order_reference\' order_reference,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id JOIN branches b ON b.id=v.branch_id WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
+        if user['role'] == 'customer':
+            rows = [customer_conversation_view(c, row) for row in rows]
         return safe({'conversations':rows,'offset':offset,'limit':50})
 
 @router.get('/conversations/alerts')
@@ -113,6 +129,8 @@ def messages(cid:str,after:int=0,user=Depends(auth.current_user)):
         transfers=c.execute('SELECT * FROM conversation_transfers WHERE conversation_id=%s ORDER BY created_at',(cid,)).fetchall()
         from .order_support import STATES,CATEGORIES
         tickets=c.execute('SELECT ticket_no,category,status FROM support_tickets WHERE conversation_id=%s ORDER BY ticket_no',(cid,)).fetchall()
+        if user['role'] == 'customer':
+            v = customer_conversation_view(c, v)
         return safe({'conversation':v,'messages':rows,'transfers':transfers,'tickets':[{'reference':'TKT-'+str(t['ticket_no']).zfill(6),'status':t['status'],'status_label':STATES[t['status']],'category_label':CATEGORIES[t['category']]} for t in tickets]})
 
 class Message(BaseModel):
