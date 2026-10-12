@@ -91,3 +91,22 @@ def test_concurrent_same_key_and_distinct_true_intent_keep_exactly_one_effect_ea
     conflict = client.post('/api/orders', json=body | {'notes': 'different request'}, headers={'Idempotency-Key': shared_key})
     assert conflict.status_code == 409 and conflict.json()['detail']['code'] == 'IDEMPOTENCY_CONFLICT'
     assert effects(user_id) == {'counter': 2, 'orders': 2, 'events': 2, 'audits': 2, 'keys': 2}
+
+
+@pytest.mark.parametrize('last_number,expected_suffix', [(0, '-0001'), (9999, '-10000')])
+def test_checkout_atomic_numbering_preserves_padding_and_committed_snapshot(pipeline_checkout, last_number, expected_suffix):
+    client, user_id, body = pipeline_checkout
+    if last_number:
+        with db.tx() as conn:
+            conn.execute('INSERT INTO order_branch_counters(branch_id,last_number) VALUES(%s,%s)', (BRANCH, last_number))
+    key = uuid4().hex
+    response = client.post('/api/orders', json=body, headers={'Idempotency-Key': key})
+    assert response.status_code == 200, response.text
+    order = response.json()['order']
+    reference = order['snapshot']['order_reference']
+    assert reference.startswith('HFR1-') and reference.endswith(expected_suffix)
+    with db.tx() as conn:
+        stored = conn.execute('SELECT snapshot FROM orders WHERE id=%s', (order['id'],)).fetchone()
+        assert stored['snapshot']['order_reference'] == reference
+    assert client.post('/api/orders', json=body, headers={'Idempotency-Key': key}).json() == response.json()
+    assert effects(user_id) == {'counter': last_number + 1, 'orders': 1, 'events': 1, 'audits': 1, 'keys': 1}

@@ -95,16 +95,23 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             if delivery_day:
                 quote['delivery_operating_day'] = {'date': delivery_day.isoformat(), 'start': '16:00',
                                                     'timezone': 'Asia/Riyadh'}
-            quote['order_reference'] = order_numbering.allocate(conn, execution_branch_id)
-            row = conn.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
+            # Allocate the canonical number and insert in one database command.
+            # No Python round trip holds the counter before saving the order.
+            # These branch fields come from the quote's authoritative SHARE read.
+            prefix = order_numbering.reference_prefix({'city': quote['branch_city'], 'branch_no': quote['branch_no']})
+            order_query = conn.execute('WITH next_number AS (' + order_numbering.NEXT_NUMBER_SQL + ') '
+                               'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
                                'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
-                               'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
-                               (order_id, body.brand_id, execution_branch_id, user['id'], body.service,
+                               "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
+                               "to_jsonb(%s::text || lpad(last_number::text,greatest(4,length(last_number::text)),'0'))),"
+                               '%s,%s,%s FROM next_number RETURNING *',
+                               (execution_branch_id, order_id, body.brand_id, execution_branch_id, user['id'], body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
-                                db.json(quote), db.json(customer), db.json(performance_snapshot), delivery_day)).fetchone()
+                                db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day))
             db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
             db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': execution_branch_id, 'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'), 'total_halalas': quote['total_halalas']})
+            row = order_query.fetchone()
             return {'order': customer_order_view(row)}
         return db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform,
                              pipeline_writes=True)

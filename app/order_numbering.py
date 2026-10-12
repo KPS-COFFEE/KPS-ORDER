@@ -7,11 +7,18 @@ CITY_CODES = {'حفر الباطن':'HFR', 'حفرالباطن':'HFR', 'الخف
               'الأرطاوية':'ART', 'الزلفي':'ZLF', 'المجمعة':'MJM',
               'عنيزة':'ONZ', 'حائل':'HIL', 'شعبة نصاب':'SHB'}
 
-def allocate(conn, branch_id, moment=None):
+NEXT_NUMBER_SQL = ('INSERT INTO order_branch_counters(branch_id,last_number) VALUES(%s,1) '
+                   'ON CONFLICT(branch_id) DO UPDATE SET last_number=order_branch_counters.last_number+1 '
+                   'RETURNING last_number')
+
+
+def reference_prefix(branch, moment=None):
     day = service_hours.delivery_operational_date(moment)
+    return CITY_CODES.get(branch['city'], 'BR') + str(branch['branch_no']) + f'-{day:%y%m%d}-'
+
+
+def allocate(conn, branch_id, moment=None):
     branch = conn.execute('SELECT city,branch_no FROM branches WHERE id=%s', (branch_id,)).fetchone()
-    seq = conn.execute('INSERT INTO order_branch_counters(branch_id,last_number) VALUES(%s,1) '
-                       'ON CONFLICT(branch_id) DO UPDATE SET last_number=order_branch_counters.last_number+1 '
-                       'RETURNING last_number', (branch_id,)).fetchone()['last_number']
-    prefix = CITY_CODES.get(branch['city'], 'BR') + str(branch['branch_no'])
-    return f'{prefix}-{day:%y%m%d}-{seq:04d}'
+    prefix = reference_prefix(branch, moment)
+    seq = conn.execute(NEXT_NUMBER_SQL, (branch_id,)).fetchone()['last_number']
+    return f'{prefix}{seq:04d}'
