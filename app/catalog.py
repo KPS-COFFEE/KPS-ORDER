@@ -326,6 +326,12 @@ def public_product(product: dict, branch=None) -> dict:
             ok, why = option_value_availability(value, branch)
             values.append(dict(value, available=ok, unavailable_reason=why))
         groups.append(dict(group, values=values))
+    from . import print_translations
+    translated=print_translations.labels(product)
+    result.update(name_en=settings.get('name_en') or translated.get(product['name'],''), category_en=settings.get('category_en'), description_en=settings.get('description_en'))
+    for group in groups:
+        group.setdefault('name_en',translated.get(group.get('name'),''))
+        for value in group['values']: value.setdefault('name_en',translated.get(value.get('name'),''))
     result.update(option_groups=groups, variants=settings.get('variants', []),
                   available_cities=['حفر الباطن'] if product['brand_id'] == 'kps' and product['id'] in {'kps-33', 'kps-34'} else settings.get('available_cities', []), enabled=settings.get('enabled', True),
                   source_verified=source_approved(product), pending_owner_image=settings.get('pending_owner_image') is True, unified_khaliya=settings.get('unified_khaliya') is True, lifecycle=settings.get('lifecycle', 'active' if settings.get('enabled', True) else 'paused'), available=available, unavailable_reason=reason)

@@ -1,0 +1,66 @@
+name: KPS Private Menu Acceptance
+"on":
+  push:
+    branches: [agent/kps-menu-private-preview]
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: menu-private-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  private-menu-postgres-chromium:
+    if: github.ref_name == 'agent/kps-menu-private-preview' || github.head_ref == 'agent/kps-menu-private-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+          POSTGRES_DB: test_kps_order
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      APP_ENV: testing
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      PUBLIC_BASE_URL: http://testserver
+      APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
+      SESSION_COOKIE_SECURE: 'false'
+      TEST_BROWSER: '1'
+      OTP_PROVIDER: disabled
+      INITIAL_CATALOG_IMPORT: 'true'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Syntax and preservation
+        run: |
+          git diff --check
+          node --check public/menu-preview.js
+          node --check public/menu-analytics.js
+          python -m compileall -q app
+      - name: Focused private menu acceptance on PostgreSQL 18 and real Chromium
+        run: python -m pytest -q --strict-markers tests/test_menu_preview.py tests/test_menu_preview_browser.py --junitxml=test-results/menu.xml
+      - name: Full existing ordering regression
+        run: python -m pytest -q --strict-markers --junitxml=test-results/full.xml
+      - name: Save screenshots and exact revision test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-menu-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            test-results
+            browser-artifacts
+          retention-days: 14
