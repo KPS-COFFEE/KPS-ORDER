@@ -1,11 +1,8 @@
 """Actual receipt and closure are atomic, scoped and safe to retry."""
-from concurrent.futures import ThreadPoolExecutor
-from uuid import uuid4
-
 import pytest
 from app import db, operations
 from tests.test_operations import ops, delivered
-from tests.test_hardening_operations import request, principal, outcome
+from tests.test_hardening_operations import request, principal, race
 
 pytestmark=pytest.mark.postgres
 
@@ -69,9 +66,47 @@ def test_different_keys_race_cannot_repeat_financial_effects(ops):
     manager,driver=shifts()
     user=principal('manager')
     body=operations.DriverClose(counted_halalas=0,received_halalas=0,confirmed=True,exception_reason='TEST unavailable')
-    def close(_):return outcome(lambda:operations.simple_driver_close(driver,body,request(uuid4().hex),user))
-    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(close,range(2)))
+    results=race([
+        lambda:operations.simple_driver_close(driver,body,request('TEST-race-a'),user),
+        lambda:operations.simple_driver_close(driver,body,request('TEST-race-b'),user),
+    ])
     assert sorted(r[0] for r in results)==[200,409]
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==1
         assert c.execute("SELECT count(*) n FROM custody_events WHERE shift_id=%s AND kind='transfer_in'",(manager,)).fetchone()['n']==1
+
+def test_failed_approval_does_not_confirm_or_move_cash(ops):
+    actor,post,order,shifts=ops
+    manager,driver=shifts();delivered(post,order,driver)
+    post('driver',f'/api/shifts/{driver}/closing')
+    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':900,'handover_halalas':900})
+    tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':900,'reference':'TEST atomic receipt','closure':True})['transfer']['id']
+    post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':900,'confirmed':True},status=422)
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='submitted'
+        t=c.execute('SELECT * FROM custody_transfers WHERE id=%s',(tid,)).fetchone()
+        assert t['status']=='pending' and t['confirmed_by'] is None
+        assert c.execute('SELECT count(*) n FROM custody_events WHERE reference_id=%s',(tid,)).fetchone()['n']==0
+
+def test_retained_cash_requires_explicit_reason_and_keeps_count(ops):
+    actor,post,order,shifts=ops
+    manager,driver=shifts();delivered(post,order,driver)
+    post('driver',f'/api/shifts/{driver}/closing')
+    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200})
+    url=f'/api/shifts/{driver}/driver-close'
+    post('manager',url,{'received_halalas':800,'confirmed':True},status=422)
+    post('manager',url,{'received_halalas':800,'counted_halalas':800,'confirmed':True,'exception_reason':'TEST retained'},status=422)
+    post('manager',url,{'received_halalas':800,'confirmed':True,'exception_reason':'TEST authorized retained cash'})
+    with db.tx() as c:
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
+        assert s['submission']['counted_halalas']==1000
+        assert s['submission']['retained_halalas']==200
+        assert c.execute('SELECT amount_halalas FROM retained_carryovers WHERE from_shift_id=%s',(driver,)).fetchone()['amount_halalas']==200
+
+def test_another_manager_cannot_close_or_claim_receipt(ops):
+    actor,post,order,shifts=ops
+    manager,driver=shifts()
+    with db.tx() as c:c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('ops-manager2','TEST other manager','delivery_manager','ops-brand','[\"ops-branch\"]')")
+    post('manager2',f'/api/shifts/{driver}/driver-close',{'received_halalas':0,'counted_halalas':0,'confirmed':True,'exception_reason':'TEST unavailable'},status=403)
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='open'
