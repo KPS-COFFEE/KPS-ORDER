@@ -35,9 +35,11 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'closure_drafts', 'report_renderings', 'report_notifications',
           'recovery_monitor_state', 'recovery_alert_notifications', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
-          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months')
+          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months',
+          'menu_sessions', 'menu_events', 'menu_handoffs', 'menu_order_attribution', 'menu_link_imports')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
-               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices'}
+               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
+               'menu_sessions', 'menu_events', 'menu_handoffs', 'menu_order_attribution'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
                          'recovery_monitor_state', 'recovery_alert_notifications'}
 PUBLIC = db.ROOT / 'public' / 'assets'
@@ -64,7 +66,7 @@ def _scoped_sql(table, brand):
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
-              'accounting_reviews', 'accounting_cases', 'accounting_months'} | INFRASTRUCTURE_TABLES
+              'accounting_reviews', 'accounting_cases', 'accounting_months', 'menu_sessions', 'menu_link_imports'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
@@ -73,6 +75,10 @@ def _scoped_sql(table, brand):
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
     if table in {'driver_tasks', 'collections', 'refunds', 'order_events', 'support_tickets', 'delivery_photos'}:
         return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
+    if table in {'menu_events','menu_handoffs'}:
+        return 'session_id IN (SELECT id FROM menu_sessions WHERE brand_id=%s)', (brand,)
+    if table == 'menu_order_attribution':
+        return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s) AND session_id IN (SELECT id FROM menu_sessions WHERE brand_id=%s)', (brand,brand)
     if table == 'support_ticket_events':
         return 'ticket_id IN (SELECT id FROM support_tickets WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
     if table in {'accounting_case_events','accounting_case_files'}:

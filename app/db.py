@@ -167,13 +167,14 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
     # Explicit one-time owner decisions apply to the intended imported identities.
     # Existing seeds stay immutable; subsequent boots never reset admin edits.
     if owner_decisions:
-        from . import branch_locations, catalog, service_hours
+        from . import branch_locations, catalog, service_hours, customer_information
         catalog.apply_final_catalog_approval(conn)
         apply_owner_display_decisions(conn)
         service_hours.apply_default_branch_hours(conn)
         service_hours.apply_default_delivery_hours(conn)
         branch_locations.apply_workbook_matches(conn)
         branch_locations.apply_owner_confirmed_matches(conn)
+        customer_information.import_approved_links(conn)
 
 
 def apply_owner_display_decisions(conn):

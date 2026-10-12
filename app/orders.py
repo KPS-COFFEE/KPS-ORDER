@@ -92,6 +92,8 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
                                 db.json(quote), db.json(customer), db.json(performance.capture_policy(conn,body.brand_id,body.branch_id)), delivery_day)).fetchone()
+            from .menu_preview import attribute_order
+            attribute_order(conn,request,row)
             db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
             db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': body.branch_id, 'total_halalas': quote['total_halalas']})
             return {'order': customer_order_view(row)}

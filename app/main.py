@@ -83,7 +83,7 @@ async def security(request: Request, call_next):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'same-origin'
     response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()' if request.url.path.startswith(('/menu/','/api/menu/')) else 'camera=(), microphone=(), geolocation=(self)'
     response.headers['Content-Security-Policy'] = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                                                    "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
                                                    "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
@@ -116,7 +116,7 @@ app.include_router(orders.router)
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'order_support', 'accounting'):
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'order_support', 'accounting', 'menu_preview'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
@@ -158,11 +158,14 @@ def ready():
 
 
 @app.get('/')
-def customer_page():
+def customer_page(request: Request):
     path = PUBLIC / 'index.html'
     if not path.is_file():
         return JSONResponse({'detail': {'code': 'UI_UNAVAILABLE', 'message': 'واجهة المتجر قيد الإعداد.'}}, status_code=503)
-    return FileResponse(path, media_type='text/html', headers={'Cache-Control': 'no-cache'})
+    from .menu_preview import adopt_handoff
+    response=FileResponse(path, media_type='text/html', headers={'Cache-Control': 'no-cache'})
+    adopt_handoff(request,response)
+    return response
 
 
 @app.get('/ops')

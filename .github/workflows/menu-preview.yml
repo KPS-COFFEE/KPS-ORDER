@@ -1,0 +1,134 @@
+name: KPS Private Menu Acceptance
+"on":
+  push:
+    branches: [agent/kps-menu-private-preview]
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: menu-private-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  private-menu-postgres-chromium:
+    if: github.ref_name == 'agent/kps-menu-private-preview' || github.head_ref == 'agent/kps-menu-private-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+          POSTGRES_DB: test_kps_order
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      APP_ENV: testing
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      PUBLIC_BASE_URL: http://testserver
+      APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
+      SESSION_COOKIE_SECURE: 'false'
+      TEST_BROWSER: '1'
+      OTP_PROVIDER: disabled
+      INITIAL_CATALOG_IMPORT: 'true'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Syntax and preservation
+        run: |
+          git diff --check
+          node --check public/menu-preview.js
+          node --check public/menu-analytics.js
+          python -m compileall -q app
+      - name: Focused private menu acceptance on PostgreSQL 18 and real Chromium
+        run: python -m pytest -q --strict-markers tests/test_menu_preview.py tests/test_menu_preview_browser.py --junitxml=test-results/menu.xml
+      - name: Full existing ordering regression
+        run: python -m pytest -q --strict-markers --junitxml=test-results/full.xml
+      - name: Save screenshots and exact revision test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-menu-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            test-results
+            test-artifacts/*.png
+            test-artifacts/*.json
+          retention-days: 14
+  baseline-failure-comparison:
+    if: github.ref_name == 'agent/kps-menu-private-preview' || github.head_ref == 'agent/kps-menu-private-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+          POSTGRES_DB: test_kps_order
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      APP_ENV: testing
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      PUBLIC_BASE_URL: http://testserver
+      APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
+      SESSION_COOKIE_SECURE: 'false'
+      TEST_BROWSER: '1'
+      OTP_PROVIDER: disabled
+      INITIAL_CATALOG_IMPORT: 'true'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 93e1329b7aa546954fe6af2a0470cc1d382ed42f
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Compare identical failing acceptance cases on unchanged parent
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_appearance.py::test_appearance_real_customer_owner_rollback_and_all_staff_pages
+          tests/test_appearance.py::test_appearance_charcoal_full_guest_order_driver_collection_and_closures
+          tests/test_backup.py::test_owner_business_export_preserves_bytea_and_excludes_other_brands_and_credentials
+          tests/test_backup.py::test_full_backup_restores_orders_messages_images_closures_reports_without_overwriting_new_orders
+          tests/test_backup.py::test_backup_tamper_count_mismatch_and_migration_mismatch_are_rejected
+          tests/test_browser.py::test_real_all_staff_roles_driver_manager_closures_and_saved_report_files
+          tests/test_customer_language.py::test_customer_language_guest_car_order_arrival_chat_and_persistence[390]
+          tests/test_customer_language.py::test_customer_language_guest_car_order_arrival_chat_and_persistence[1280]
+          tests/test_delivery_hours.py::test_delivery_dates_windows_and_cleared_owner_hours_survive_export_restore
+          tests/test_final_catalog.py::test_final_real_browser_stale_cart_mapping_one_image_and_required_type
+          tests/test_homepage_presentation.py::test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activation
+          tests/test_split_payment.py::test_delivery_split_only_cash_enters_custody
+          tests/test_staff_invitation_browser.py::test_privileged_resend_requires_password_without_changing_staff_access[ar]
+          tests/test_staff_invitation_browser.py::test_privileged_resend_requires_password_without_changing_staff_access[en]
+          tests/test_v5_browser.py::test_v5_guest_email_invited_driver_one_collection_final_owner_report
+          tests/test_v5_operations.py::test_dashboard_uses_frozen_province_policy_and_rejected_orders_are_excluded
+          tests/test_v5_operations.py::test_phases_use_events_not_order_age_and_completed_values_freeze
+          tests/test_v5_operations.py::test_multi_branch_one_shift_revocation_preserves_task_custody_and_draft
+          tests/test_v5_operations.py::test_zero_task_driver_shift_still_blocks_manager_until_approved
+          tests/test_v5_reports.py::test_v5_driver_and_small_manager_readable_single_a4_large_has_every_row
+          tests/test_vehicle_maintenance.py::test_owner_can_filter_and_export_maintenance_without_cross_brand_leak
+          --junitxml=test-results/baseline-comparison.xml
+      - name: Save baseline comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: menu-baseline-comparison
+          path: test-results/baseline-comparison.xml
+

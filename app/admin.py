@@ -9,7 +9,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Header, Response, UploadFile
 from PIL import Image, UnidentifiedImageError
-from . import auth, db, catalog, email_delivery, service_hours, print_translations
+from . import auth, db, catalog, email_delivery, service_hours, print_translations, customer_information
 
 router = APIRouter(prefix='/api')
 owner = auth.require_roles('owner')
@@ -158,9 +158,11 @@ def validate_options(groups, variants=None):
 
 
 def validate_branch_settings(settings, branch_city):
-    allowed = {'active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
+    allowed = {'customer_information','active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
                'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
     keys(settings, allowed)
+    if 'customer_information' in settings:
+        customer_information.validate_information(settings['customer_information'])
     for field in ('active','pickup_enabled','car_enabled','delivery_enabled','ordering_verified','operational_data_verified','location_verified','map_url_verified'):
         if field in settings and type(settings[field]) is not bool:
             raise db.error(422, 'BOOLEAN_INVALID', 'إعداد التفعيل يجب أن يكون صحيحًا أو خطأ.')
@@ -255,6 +257,9 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
             branch_city = text(body.get('city',row['city']),100,'المدينة')
             changes = body.get('settings',{})
             validate_branch_settings(changes,branch_city)
+            if 'customer_information' in changes:
+                changes['customer_information']=(row['settings'].get('customer_information') or {})|changes['customer_information']
+                customer_information.validate_information(changes['customer_information'])
             settings = row['settings'] | changes
             if 'map_url' in changes and changes['map_url'] is None:
                 settings['map_url_verified'] = False
@@ -287,7 +292,9 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             row = scoped(conn,'products',record_id,user)
             product_scope(row['settings'],user)
             changes = body.get('settings',{})
-            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids','print_labels_en'})
+            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids','print_labels_en','name_en','category_en','description_en'})
+            for field in ('name_en','category_en','description_en'):
+                if field in changes: changes[field]=text(changes[field],2000,field)
             if 'print_labels_en' in changes:
                 changes['print_labels_en']=print_translations.validate(changes['print_labels_en'])
             if 'lifecycle' in changes and changes['lifecycle'] not in {'draft','active','paused'}:
@@ -663,7 +670,10 @@ def create_product(body:dict,user=Depends(product_admin),idem:str|None=Header(No
     if not name or not category:
         raise db.error(422,'PRODUCT_IDENTITY_REQUIRED','اسم الصنف وتصنيفه مطلوبان.')
     settings=body.get('settings',{})
-    keys(settings,{'description','option_groups','variants','available_cities','unavailable_branch_ids','available_branch_ids','image_url','image_asset_id'})
+    keys(settings,{'description','option_groups','variants','available_cities','unavailable_branch_ids','available_branch_ids','image_url','image_asset_id','print_labels_en','name_en','category_en','description_en'})
+    if 'print_labels_en' in settings: settings['print_labels_en']=print_translations.validate(settings['print_labels_en'])
+    for field in ('name_en','category_en','description_en'):
+        if field in settings: settings[field]=text(settings[field],2000,field)
     validate_options(settings.get('option_groups',[]),settings.get('variants',[]))
     product_scope(settings,user)
     if 'description' in settings:
