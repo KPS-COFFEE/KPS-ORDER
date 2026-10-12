@@ -194,3 +194,22 @@ def test_order_attribution_is_durable_brand_scoped_idempotent_and_truthful(owner
     assert m['visit_to_completed_order_rate']==1 and m['order_branches'][0]['created_order_completion_rate']==1
     assert m['top_ordered_products'][0]['product_id']=='kps-01'
     assert client.get('/api/menu/analytics?preview=false').json()['completed_orders']==0
+
+
+@pytest.mark.postgres
+def test_preview_brand_scope_admin_branch_scope_and_links_authorization(owner):
+    client,mutate=owner
+    before=client.get('/api/menu/preview').json()
+    with db.tx() as c:
+        c.execute("INSERT INTO brands(id,name) VALUES('menu-other-brand','TEST ONLY other brand')")
+        c.execute("INSERT INTO app_settings(brand_id) VALUES('menu-other-brand')")
+        c.execute("UPDATE users SET brand_id='menu-other-brand' WHERE id='admin-test-owner'")
+    other=client.get('/api/menu/preview').json()
+    assert other['products']==[] and other['branches']==[] and other['customer_links']==[]
+    assert mutate('PATCH','/api/admin/branches/kps-branch-1',{'settings':{'customer_information':{'opening_information':'INVALID SCOPE'}}}).status_code==404
+    assert client.get('/api/menu/analytics').json()['metrics']=={}
+    with db.tx() as c:c.execute("UPDATE users SET brand_id='kps',role='admin',permissions='[\"products_manage\",\"branches_manage\"]',branch_ids='[\"kps-branch-1\"]' WHERE id='admin-test-owner'")
+    assert mutate('PATCH','/api/admin/branches/kps-branch-2',{'settings':{'customer_information':{'opening_information':'INVALID SCOPE'}}}).status_code==404
+    assert client.patch('/api/menu/customer-links',json={'links':[]}).status_code==403
+    assert client.get('/api/menu/analytics').status_code==403
+    assert client.get('/api/menu/preview').json()['customer_links']==before['customer_links']

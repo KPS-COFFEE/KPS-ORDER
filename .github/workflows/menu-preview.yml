@@ -62,5 +62,6 @@ jobs:
           name: private-menu-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             test-results
-            browser-artifacts
+            test-artifacts/*.png
+            test-artifacts/*.json
           retention-days: 14

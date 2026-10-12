@@ -328,7 +328,7 @@ def public_product(product: dict, branch=None) -> dict:
         groups.append(dict(group, values=values))
     from . import print_translations
     translated=print_translations.labels(product)
-    result.update(name_en=settings.get('name_en') or translated.get(product['name'],''), category_en=settings.get('category_en'), description_en=settings.get('description_en'))
+    result.update(name_en=settings.get('name_en') or translated.get(product['name'],''), category_en=settings.get('category_en') or {'☕ الأكواب الحرارية':'☕ Thermal cups','☕ المشروبات':'☕ Drinks','✨ جديدنا':'✨ New arrivals','⭐ الأكثر مبيعاً':'⭐ Best sellers','🍪 السناكس والحلويات':'🍪 Snacks & desserts','🍹 المنعشات':'🍹 Refreshments','📦 بوكسات الضيافة':'📦 Sharing boxes','🥤 الملحقات':'🥤 Extras'}.get(product['category'],''), description_en=settings.get('description_en'))
     for group in groups:
         group.setdefault('name_en',translated.get(group.get('name'),''))
         for value in group['values']: value.setdefault('name_en',translated.get(value.get('name'),''))
