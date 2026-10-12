@@ -17,9 +17,24 @@ def test_messages_arrive_without_replacing_composer_or_scrolling(live_app,chromi
         c.execute("INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route) VALUES(%s,%s,'kps','kps-branch-1',%s,'delivery')",(cid,oid,customer))
         for n in range(35):c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text) VALUES(%s,%s,%s,%s)',(str(uuid4()),cid,customer,'TEST ONLY history '+str(n)))
     context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,staff)
+    # Legacy orders have an order_no but no public reference in their snapshot.
+    with db.tx() as c:
+        if role=='owner':c.execute("UPDATE orders SET snapshot=snapshot-'order_reference' WHERE id=%s",(oid,))
+        order=c.execute("SELECT order_no,snapshot->>'order_reference' reference FROM orders WHERE id=%s",(oid,)).fetchone()
+    expected_title=order['reference'] or str(order['order_no'])
     try:
-        page.goto(live_app+'/ops');page.locator('#navigation [data-page=chat]').click()
+        page.goto(live_app+'/ops')
+        if role=='delivery_manager':page.get_by_role('button',name='English',exact=True).click()
+        page.locator('#navigation [data-page=chat]').click()
         page.locator('.conversation[data-id="'+cid+'"]').click()
+        card=page.locator('.conversation[data-id="'+cid+'"]')
+        expect(card.locator('strong')).to_have_text(expected_title)
+        expect(page.locator('#chat-detail h2')).to_have_text(expected_title)
+        for width in (1366,390):
+            page.set_viewport_size({'width':width,'height':900})
+            assert card.evaluate('(e)=>e.scrollWidth<=e.clientWidth')
+            _capture(page,f'TEST_ONLY_chat_title_{role}_{width}')
+        page.set_viewport_size({'width':1366,'height':900})
         text=page.locator('#message-form textarea');expect(text).to_be_visible()
         text.fill('TEST ONLY draft must stay')
         image=io.BytesIO();Image.new('RGB',(10,10),'white').save(image,'PNG')
@@ -28,6 +43,7 @@ def test_messages_arrive_without_replacing_composer_or_scrolling(live_app,chromi
         page.evaluate("""() => {window.testComposer=document.querySelector('#message-form');window.testMessages=document.querySelector('#messages');window.testAlerts=document.querySelector('#operational-alerts');const details=window.testAlerts.querySelector('details');if(details)details.open=false;window.testAlertDetails=details;window.testMessages.scrollTop=12;}""")
         with db.tx() as c:c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text) VALUES(%s,%s,%s,%s)',(str(uuid4()),cid,customer,'TEST ONLY live incoming'))
         expect(page.locator('#messages')).to_contain_text('TEST ONLY live incoming',timeout=12000)
+        expect(card.locator('strong')).to_have_text(expected_title)
         assert page.evaluate("document.querySelector('#message-form')===window.testComposer")
         expect(text).to_have_value('TEST ONLY draft must stay')
         assert page.locator('#message-form input[type=file]').evaluate('(e)=>e.files[0].name')=='test-only.png'

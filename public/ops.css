@@ -54,3 +54,12 @@
 /* Also cover test approval and print history, without changing other screens. */
 #printer-live th, #printer-live td { overflow-wrap: normal; word-break: normal; }
 #printer-live th, #printer-live button { white-space: nowrap; }
+/* Chat titles use the public order reference and stay inside their card. */
+.chat-layout > *, .conversation-list, .conversation { min-width: 0; }
+.conversation strong, #chat-detail .toolbar h2 {
+  max-width: 100%; white-space: normal; word-break: normal;
+  overflow-wrap: break-word; unicode-bidi: plaintext;
+}
+.conversation strong { font-size: 16px; line-height: 1.6; }
+.conversation small { display: block; white-space: normal; overflow-wrap: break-word; }
+#chat-detail .toolbar h2 { min-width: 0; }
