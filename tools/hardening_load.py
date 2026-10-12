@@ -410,6 +410,7 @@ class Workload:
         self.confirmed = []
         self.active, self.peak_active = 0, 0
         self.completed_users = 0
+        self.transport_retries = []
 
     async def request(self, client, method, path, **kwargs):
         started = time.perf_counter()
@@ -431,10 +432,56 @@ class Workload:
             if not recorded:
                 self.requests.append({'endpoint': path.split('?')[0], 'method': method,
                                       'latency_ms': (time.perf_counter() - started) * 1000, 'status': 0})
-            self.errors.append({'endpoint': path.split('?')[0], 'type': type(exc).__name__, 'message': str(exc)[:180]})
+            failure = {'endpoint': path.split('?')[0], 'type': type(exc).__name__,
+                       'message': '' if isinstance(exc, httpx.TransportError) else str(exc)[:180]}
+            if isinstance(exc, httpx.TransportError):
+                causes, seen, cause = [], set(), exc
+                while cause is not None and id(cause) not in seen and len(causes) < 8:
+                    seen.add(id(cause))
+                    entry = {'type': type(cause).__name__}
+                    if isinstance(cause, OSError) and isinstance(cause.errno, int):
+                        entry['errno'] = cause.errno
+                    causes.append(entry)
+                    cause = cause.__cause__ or cause.__context__
+                failure['transport_causes'] = causes
+            self.errors.append(failure)
             raise
         finally:
             self.active -= 1
+
+    async def submit_order_pair(self, client, body, key):
+        # Settle both transmissions before retrying or closing the client.
+        # A lost response must not abort the other in-flight acknowledgement.
+        results = await asyncio.gather(*[self.request(client, 'POST', '/api/orders', json=body,
+            headers={'Idempotency-Key': key}) for _ in range(2)], return_exceptions=True)
+        # A settled authorization/domain or invalid response is definitive:
+        # fail the pair without sending another request for its sibling.
+        for result in results:
+            if isinstance(result, httpx.TransportError):
+                continue
+            if isinstance(result, BaseException):
+                raise result
+            result['order']
+        for index, result in enumerate(results):
+            if not isinstance(result, httpx.TransportError):
+                continue
+            recovery = {'initial_error_type': type(result).__name__, 'attempts': 1, 'recovered': False}
+            self.transport_retries.append(recovery)
+            try:
+                # Exactly one retry per ambiguous transmission, with the same
+                # browser principal/cookies, body and business-intent key.
+                results[index] = await self.request(client, 'POST', '/api/orders', json=body,
+                                                    headers={'Idempotency-Key': key})
+                recovery['recovered'] = True
+            except Exception as exc:
+                results[index] = exc
+                recovery['retry_error_type'] = type(exc).__name__
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        if results[0]['order'] != results[1]['order']:
+            raise AssertionError('Same-key transmissions returned inconsistent business order responses.')
+        return results
 
     async def user(self, index, barrier):
         # Actual socket source addresses exercise rate controls unchanged. No
@@ -468,13 +515,13 @@ class Workload:
                     body['expected_total_halalas'] = quote['total_halalas']
                     key = uuid.uuid4().hex
                     # Two concurrent transmissions of one customer intent.
-                    results = await asyncio.gather(*[self.request(client, 'POST', '/api/orders', json=body,
-                                      headers={'Idempotency-Key': key}) for _ in range(2)])
+                    results = await self.submit_order_pair(client, body, key)
                     first, replay = [result['order'] for result in results]
                     if first['id'] != replay['id']:
                         raise AssertionError('Same-key retry created distinct business orders.')
-                    if first['total_halalas'] != quote['total_halalas'] or first['snapshot']['items'] != quote['items']:
-                        raise AssertionError('Order differs from server-priced basket.')
+                    for acknowledgement in (first, replay):
+                        if acknowledgement['total_halalas'] != quote['total_halalas'] or acknowledgement['snapshot']['items'] != quote['items']:
+                            raise AssertionError('Order differs from server-priced basket.')
                     read = (await self.request(client, 'GET', '/api/orders/' + first['id']))['order']
                     if read['id'] != first['id'] or read['total_halalas'] != first['total_halalas']:
                         raise AssertionError('Confirmed order could not be read consistently.')
@@ -502,7 +549,11 @@ class Workload:
                         'error_rate': len(self.errors) / max(1, len(self.requests)),
                         'error_count': len(self.errors), 'error_samples': self.errors[:20],
                         'completed_users': self.completed_users, 'peak_in_flight_http_requests': self.peak_active,
-                        'statuses': dict(Counter(str(row['status']) for row in self.requests))})
+                        'statuses': dict(Counter(str(row['status']) for row in self.requests)),
+                        'transport_retry_attempts': len(self.transport_retries),
+                        'transport_retry_recovered': sum(row['recovered'] for row in self.transport_retries),
+                        'transport_retry_failed': sum(not row['recovered'] for row in self.transport_retries),
+                        'transport_retry_samples': self.transport_retries[:20]})
         metrics['by_endpoint'] = {}
         for key in sorted({(row['method'], row['endpoint']) for row in self.requests}):
             rows = [row for row in self.requests if (row['method'], row['endpoint']) == key]
@@ -820,6 +871,7 @@ def main():
         'methodology': {'workers': args.workers, 'rounds_per_user': args.rounds, 'requested_levels': levels,
             'real_guest_identity': True, 'real_HTTP': True, 'real_PostgreSQL': True,
             'concurrent_same_key_order_transmissions': 2, 'source_address_strategy': 'distinct actual 127.20.x.x socket IPs',
+            'transport_recovery': 'Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.',
             'traffic': 'Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle',
             'scope': 'closed-loop simultaneous bursts; no think time, not an open-loop sustained production soak',
             'safety': 'UUID test schema, synthetic customers, disabled providers/background delivery, localhost HTTP only'},

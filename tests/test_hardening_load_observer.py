@@ -7,10 +7,14 @@ import json
 import hashlib
 import os
 import signal
+import asyncio
+import errno
+
+import httpx
 
 import pytest
 
-from tools.hardening_load import (Sampler, exact_owned_pool_names, owned_process_pids,
+from tools.hardening_load import (Sampler, Workload, exact_owned_pool_names, owned_process_pids,
                                  parse_docker_stat_frame, process_start_ticks,
                                  process_tree_metrics, startup_worker_pids, stop_app)
 
@@ -128,3 +132,101 @@ def test_missing_worker_fails_identity_proof_even_while_supervisor_remains(obser
         time.sleep(.01)
     assert process_start_ticks(process.pid) is not None
     assert not observer.workers_are_live(process_tree_metrics(process.pid))
+
+
+def test_lost_response_waits_for_healthy_sibling_and_retries_the_exact_authenticated_intent():
+    async def scenario():
+        observed, healthy_finished = [], asyncio.Event()
+        body, key = {'notes': 'TEST unchanged body', 'items': [{'quantity': 1}]}, 'TEST-unchanged-key'
+        saved = {'order': {'id': 'TEST committed order', 'total_halalas': 1250}}
+        async def transport(request):
+            observed.append((request.content, request.headers['idempotency-key'], request.headers['cookie'],
+                             request.headers['x-csrf-token']))
+            if len(observed) == 1:
+                try:
+                    raise ConnectionResetError(errno.ECONNRESET, 'TEST unsafe transport details')
+                except ConnectionResetError as cause:
+                    raise httpx.ReadError('TEST unsafe transport details', request=request) from cause
+            if len(observed) == 2:
+                await asyncio.sleep(.03)
+                healthy_finished.set()
+            else:
+                assert healthy_finished.is_set(), 'Retry occurred before the healthy acknowledgement settled.'
+            return httpx.Response(200, json=saved)
+        workload = Workload('http://testserver', 'TEST', 1, 1, 5)
+        async with httpx.AsyncClient(base_url='http://testserver', transport=httpx.MockTransport(transport),
+                cookies={'kps_session': 'TEST browser principal'}, headers={'X-CSRF-Token': 'TEST csrf'}) as client:
+            result = await workload.submit_order_pair(client, body, key)
+        assert result == [saved, saved]
+        assert len(observed) == 3 and all(request == observed[0] for request in observed)
+        assert json.loads(observed[0][0]) == body and observed[0][1] == key
+        assert [row['status'] for row in workload.requests].count(0) == 1
+        assert [row['status'] for row in workload.requests].count(200) == 2
+        assert len(workload.errors) == 1 and workload.errors[0]['type'] == 'ReadError'
+        assert any(cause.get('errno') == errno.ECONNRESET for cause in workload.errors[0]['transport_causes'])
+        assert 'unsafe transport details' not in json.dumps(workload.errors)
+        assert workload.transport_retries == [{'initial_error_type': 'ReadError', 'attempts': 1, 'recovered': True}]
+        assert all(row['latency_ms'] >= 0 for row in workload.requests) and workload.active == 0
+    asyncio.run(scenario())
+
+
+def test_permanent_transport_loss_preserves_every_failure_and_propagates_after_bounded_retries():
+    async def scenario():
+        requests = []
+        async def transport(request):
+            requests.append((request.content, request.headers['idempotency-key'], request.headers['cookie']))
+            raise httpx.ReadError('TEST permanent response loss', request=request)
+        workload = Workload('http://testserver', 'TEST', 1, 1, 5)
+        async with httpx.AsyncClient(base_url='http://testserver', transport=httpx.MockTransport(transport),
+                                    cookies={'kps_session': 'TEST same principal'}) as client:
+            with pytest.raises(httpx.ReadError):
+                await workload.submit_order_pair(client, {'notes': 'TEST same body'}, 'TEST-same-intent-key')
+        assert len(requests) == 4 and all(request == requests[0] for request in requests)
+        assert len(workload.requests) == len(workload.errors) == 4
+        assert all(row['status'] == 0 for row in workload.requests)
+        assert len(workload.transport_retries) == 2 and not any(row['recovered'] for row in workload.transport_retries)
+        assert workload.active == 0
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('status,body,error', [
+    (401, {'detail': {'code': 'AUTHENTICATION_REQUIRED'}}, RuntimeError),
+    (403, {'detail': {'code': 'CSRF_REJECTED'}}, RuntimeError),
+    (409, {'detail': {'code': 'IDEMPOTENCY_CONFLICT'}}, RuntimeError),
+    (200, {'unexpected': 'invalid business response'}, KeyError),
+])
+def test_authorization_domain_and_invalid_business_responses_are_never_retried(status, body, error):
+    async def scenario():
+        calls = []
+        async def transport(request):
+            calls.append(request)
+            return httpx.Response(status, json=body)
+        workload = Workload('http://testserver', 'TEST', 1, 1, 5)
+        async with httpx.AsyncClient(base_url='http://testserver', transport=httpx.MockTransport(transport)) as client:
+            with pytest.raises(error):
+                await workload.submit_order_pair(client, {'notes': 'TEST body'}, 'TEST-stable-intent-key')
+        assert len(calls) == 2 and workload.transport_retries == []
+        assert len(workload.requests) == 2 and all(row['status'] == status for row in workload.requests)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('status,body,error', [
+    (403, {'detail': {'code': 'CSRF_REJECTED'}}, RuntimeError),
+    (200, {'unexpected': 'invalid business response'}, KeyError),
+])
+def test_definitive_failure_blocks_retry_even_when_the_other_transmission_loses_transport(status, body, error):
+    async def scenario():
+        calls = []
+        async def transport(request):
+            calls.append(request)
+            if len(calls) == 1:
+                raise httpx.ReadError('TEST sibling lost response', request=request)
+            return httpx.Response(status, json=body)
+        workload = Workload('http://testserver', 'TEST', 1, 1, 5)
+        async with httpx.AsyncClient(base_url='http://testserver', transport=httpx.MockTransport(transport)) as client:
+            with pytest.raises(error):
+                await workload.submit_order_pair(client, {'notes': 'TEST body'}, 'TEST-same-intent-key')
+        assert len(calls) == 2 and workload.transport_retries == []
+        assert len(workload.requests) == 2 and any(row['status'] == 0 for row in workload.requests)
+        assert any(row['type'] == 'ReadError' for row in workload.errors)
+    asyncio.run(scenario())
