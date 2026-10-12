@@ -79,6 +79,26 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
         rows=c.execute('SELECT v.*,o.order_no,o.snapshot->>\'order_reference\' order_reference,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id JOIN branches b ON b.id=v.branch_id WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
         return safe({'conversations':rows,'offset':offset,'limit':50})
 
+@router.get('/conversations/alerts')
+def reply_alerts(user=Depends(auth.current_user)):
+    """Reading/claiming/resolving is not a reply. Scope matches the inbox."""
+    roles(user,'owner','delivery_manager','delivery_staff','branch_manager')
+    if user['role']=='owner':
+        scope='v.brand_id=%s';params=[user['brand_id']]
+    else:
+        scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s'
+        params=[user['brand_id'],user.get('branch_ids',[]),
+                'branch' if user['role']=='branch_manager' else 'delivery']
+    with db.tx() as c:
+        rows=c.execute('''SELECT v.id,v.order_id,v.branch_id,last.seq
+            FROM conversations v
+            JOIN LATERAL (SELECT m.seq,m.sender_id FROM chat_messages m
+                WHERE m.conversation_id=v.id ORDER BY m.seq DESC LIMIT 1) last ON true
+            WHERE '''+scope+''' AND last.sender_id=v.customer_id
+            ORDER BY last.seq LIMIT 100''',params).fetchall()
+        return safe({'awaiting_reply':rows})
+
+
 @router.get('/conversations/{cid}/messages')
 def messages(cid:str,after:int=0,user=Depends(auth.current_user)):
     if after<0:fail(422,'مرجع غير صالح')
