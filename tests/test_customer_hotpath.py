@@ -2,12 +2,28 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import hashlib
+import psycopg
 
 import pytest
 
 from app import db
 
 pytestmark = pytest.mark.postgres
+
+
+@pytest.mark.parametrize('failure', ['sql', 'python'])
+def test_pipelined_transaction_never_commits_after_a_queued_failure(database, failure):
+    brand = 'TEST-hotpath-rollback-' + failure
+    with pytest.raises(psycopg.errors.DivisionByZero if failure == 'sql' else RuntimeError):
+        with db.tx(pipeline=True) as conn:
+            conn.execute('INSERT INTO brands(id,name) VALUES(%s,%s)', (brand, 'TEST queued write'))
+            if failure == 'sql':
+                conn.execute('SELECT 1/0')
+            else:
+                raise RuntimeError('TEST cancelled operation')
+    with db.tx(pipeline=True) as conn:
+        assert conn.execute('SELECT id FROM brands WHERE id=%s', (brand,)).fetchone() is None
+        assert conn.execute('SHOW statement_timeout').fetchone()['statement_timeout'] == '15s'
 
 
 def test_rate_counter_keeps_exact_limit_under_concurrency_and_rolls_back(database):

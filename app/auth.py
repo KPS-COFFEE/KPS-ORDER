@@ -115,7 +115,7 @@ def _find_session(conn, request: Request):
 
 
 def current_user(request: Request) -> dict:
-    with db.tx() as conn:
+    with db.tx(pipeline=True) as conn:
         user = _find_session(conn, request)
     if not user:
         raise db.error(401, 'AUTHENTICATION_REQUIRED', 'سجّل الدخول للوصول إلى هذه البيانات.')

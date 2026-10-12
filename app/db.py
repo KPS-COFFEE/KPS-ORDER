@@ -101,16 +101,22 @@ def error(status: int, code: str, message: str) -> HTTPException:
 
 
 @contextmanager
-def tx():
+def tx(*, pipeline: bool = False):
     url = os.environ.get('DATABASE_URL', '')
     if not url.startswith(('postgres://', 'postgresql://')):
         raise RuntimeError('A PostgreSQL DATABASE_URL is required; no temporary storage fallback exists.')
     pool = _pool_for_url(url)
     try:
         with pool.connection(timeout=POOL_CHECKOUT_SECONDS) as conn:
-            with conn.transaction():
-                conn.execute("SET LOCAL statement_timeout = '15000ms'")
-                yield conn
+            # Opted-in short HTTP reads batch BEGIN/timeout with the first
+            # query and flush COMMIT before leaving the connection context.
+            # A pipeline error escapes through that context's rollback path;
+            # no success is returned before the database acknowledges it.
+            # Migrations, COPY and all other callers retain the default.
+            with conn.pipeline() if pipeline else nullcontext():
+                with conn.transaction():
+                    conn.execute("SET LOCAL statement_timeout = '15000ms'")
+                    yield conn
     except (PoolClosed, PoolTimeout, TooManyRequests) as exc:
         # Preserve the existing sanitized database-unavailable HTTP contract.
         raise psycopg.OperationalError('Database connection capacity is unavailable.') from exc

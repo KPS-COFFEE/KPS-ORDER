@@ -216,7 +216,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
 
 @router.get('/{order_id}')
 def get_order(order_id: str, user=Depends(auth.current_user)):
-    with db.tx() as conn:
+    with db.tx(pipeline=user['role'] == 'customer') as conn:
         row = scoped_order(conn, order_id, user)
         events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
         if user['role']!='customer':
