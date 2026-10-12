@@ -163,6 +163,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         email = 'synthetic-driver-' + secrets.token_hex(5) + '@example.test'
         for name, value in {'display_name': 'سائق اختبار V5 فقط', 'email': email, 'phone': '0500000022'}.items():
             manager.locator(f'#modal-body [name={name}]').fill(value)
+        manager.locator('#modal-body .staff-branch-dropdown summary').click()
         manager.locator('#modal-body [name="scope:kps-branch-1"]').check()
         manager.locator('#modal-body [name="scope:kps-branch-9"]').check()
         _capture(manager, 'v5-manager-two-branch-driver-invitation')

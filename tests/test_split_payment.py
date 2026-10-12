@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 import pytest
-from app import db
+from app import db, shift_vehicle
 from test_v5_operations import v5
 
 pytestmark = pytest.mark.postgres
@@ -83,7 +83,12 @@ def test_simultaneous_collection_only_one_wins(v5):
 def test_delivery_split_only_cash_enters_custody(v5):
     _, call, body, _ = v5
     manager = call('manager', 'POST', '/api/shifts', {'kind': 'manager', 'branch_ids': ['v5-a']}).json()['shift']['id']
-    driver = call('manager', 'POST', '/api/shifts', {'kind': 'driver', 'user_id': 'v5-driver', 'branch_ids': ['v5-a'], 'manager_shift_id': manager}).json()['shift']['id']
+    inspection = {'odometer_km': 1000, 'fuel_percent': 75,
+                  'checks': {item: 'ok' for item in shift_vehicle.CHECKS}, 'notes': ''}
+    opened = call('manager', 'POST', '/api/shifts', {'kind': 'driver', 'user_id': 'v5-driver',
+                  'branch_ids': ['v5-a'], 'manager_shift_id': manager, 'vehicle_inspection': inspection})
+    assert opened.status_code == 200, opened.text
+    driver = opened.json()['shift']['id']
     oid = call('customer', 'POST', '/api/orders', body('delivery') | {'payment_method': 'split'}).json()['order']['id']
     tid = call('manager', 'POST', f'/api/orders/{oid}/assign', {'driver_shift_id': driver}).json()['task']['id']
     data = split_body() | {'amount_halalas': 1200, 'card_halalas': 800}

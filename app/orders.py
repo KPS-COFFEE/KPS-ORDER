@@ -76,30 +76,33 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             customer.update(auth.identity_snapshot(user))
             if supplied_phone and customer['phone'] != user.get('phone'):
                 for flag in ('phone_verified','phone_sms_verified','phone_whatsapp_verified'):customer[flag]=False
+            config = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (body.brand_id,)).fetchone()
             if user.get('identity_kind') == 'guest':
                 recent=conn.execute("SELECT 1 FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1",
                                     (body.brand_id,execution_branch_id,customer['phone'],db.json(quote['items']))).fetchone()
-                config=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(body.brand_id,)).fetchone()
                 threshold=(config['settings'] if config else {}).get('guest_operational_confirmation_above_halalas')
                 customer['risk_alert']=bool(recent)
                 customer['risk_reasons']=['similar_recent_unverified_contact_order'] if recent else []
                 customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
-            config = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (body.brand_id,)).fetchone()
             quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
-            quote['order_reference'] = order_numbering.allocate(conn, execution_branch_id)
+            # Read immutable receipt/policy snapshots before the per-branch
+            # counter. The allocation remains in this same atomic transaction,
+            # while its mandatory serial section contains only durable writes.
             quote['receipt_profile'] = invoice_profiles.capture(conn, body.brand_id, execution_branch_id)
+            performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id)
             order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
                 quote['delivery_operating_day'] = {'date': delivery_day.isoformat(), 'start': '16:00',
                                                     'timezone': 'Asia/Riyadh'}
+            quote['order_reference'] = order_numbering.allocate(conn, execution_branch_id)
             row = conn.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
                                'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
                                'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                                (order_id, body.brand_id, execution_branch_id, user['id'], body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
-                                db.json(quote), db.json(customer), db.json(performance.capture_policy(conn,body.brand_id,execution_branch_id)), delivery_day)).fetchone()
+                                db.json(quote), db.json(customer), db.json(performance_snapshot), delivery_day)).fetchone()
             db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
             db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': execution_branch_id, 'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'), 'total_halalas': quote['total_halalas']})
             return {'order': customer_order_view(row)}

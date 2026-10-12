@@ -108,6 +108,50 @@ def parse_docker_stat_frame(line):
     return {'cpu_percent_one_core': cpu, 'memory_bytes': memory}
 
 
+def summarize_wait_observations(samples):
+    totals = {}
+    blockers = {}
+    for sample in samples:
+        for group in sample.get('database_activity_groups', []):
+            label = ':'.join(str(group[key] or 'none') for key in ('state', 'wait_type', 'wait_event', 'query_class'))
+            aggregate = totals.setdefault(label, {'observed_connection_samples': 0, 'peak_connections': 0,
+                                                  'max_observed_query_age_ms': 0})
+            aggregate['observed_connection_samples'] += group['connections']
+            aggregate['peak_connections'] = max(aggregate['peak_connections'], group['connections'])
+            aggregate['max_observed_query_age_ms'] = max(aggregate['max_observed_query_age_ms'], group['max_query_age_ms'])
+        for group in sample.get('blocking_query_groups', []):
+            label = group['waiting_query_class'] + ' -> ' + group['blocking_query_class']
+            aggregate = blockers.setdefault(label, {'observed_blocking_pairs': 0, 'peak_blocking_pairs': 0})
+            aggregate['observed_blocking_pairs'] += group['blocking_pairs']
+            aggregate['peak_blocking_pairs'] = max(aggregate['peak_blocking_pairs'], group['blocking_pairs'])
+    return {'activity_groups': totals, 'blocking_groups': blockers,
+        'method': 'Read-only pg_stat_activity/pg_blocking_pids; fixed query classes, no SQL text or parameters stored.',
+        'timing_limit': 'Query age includes lock waits; sampled ages are not per-statement execution timings.'}
+
+
+# Classification happens inside PostgreSQL. Only fixed category names leave
+# the database; customer values and SQL text are never written to artifacts.
+ACTIVITY_CTE = """
+WITH activity AS (
+ SELECT pid,state,wait_event_type,wait_event,query_start,
+        CASE WHEN query LIKE '%%pg_advisory_xact_lock%%' THEN 'idempotency_advisory'
+             WHEN query LIKE '%%order_branch_counters%%' THEN 'receipt_counter'
+             WHEN query LIKE 'INSERT INTO rate_limits%%' THEN 'rate_limit'
+             WHEN query LIKE '%%idempotency_keys%%' THEN 'idempotency_store'
+             WHEN query LIKE 'INSERT INTO orders%%' THEN 'order_insert'
+             WHEN query LIKE 'INSERT INTO order_events%%' THEN 'order_event'
+             WHEN query LIKE 'INSERT INTO audit_events%%' THEN 'audit_event'
+             WHEN query LIKE '%%identity_channels%%' THEN 'channel_lookup'
+             WHEN query LIKE '%%app_settings%%' THEN 'settings_lookup'
+             WHEN query LIKE '%%performance_provinces%%' OR query LIKE '%%province_performance_policies%%' THEN 'performance_policy'
+             WHEN query LIKE '%%FOR SHARE%%' THEN 'quote_or_duty_read_lock'
+             WHEN query LIKE 'COMMIT%%' THEN 'commit'
+             ELSE 'other' END query_class
+ FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
+)
+""".replace('%%', '%')
+
+
 class Sampler:
     def __init__(self, db_url, app_pid, container=None):
         self.db_url, self.app_pid, self.container = db_url, app_pid, container
@@ -144,6 +188,21 @@ class Sampler:
                         "count(*) FILTER(WHERE wait_event_type='Lock')::int AS lock_waits, "
                         "count(*) FILTER(WHERE state='idle in transaction')::int AS idle_in_transaction "
                         "FROM pg_stat_activity WHERE datname=current_database()").fetchone()
+                    row['database_activity_groups'] = conn.execute(ACTIVITY_CTE + """
+                        SELECT state,wait_event_type AS wait_type,wait_event,query_class,count(*)::int connections,
+                               round(max(greatest(0,extract(epoch FROM (clock_timestamp()-query_start))*1000))::numeric,3)::float8 max_query_age_ms
+                        FROM activity WHERE state<>'idle'
+                        GROUP BY state,wait_event_type,wait_event,query_class
+                    """).fetchall()
+                    row['blocking_query_groups'] = conn.execute(ACTIVITY_CTE + """
+                        SELECT waiting.query_class waiting_query_class,blocking.query_class blocking_query_class,
+                               count(*)::int blocking_pairs
+                        FROM activity waiting
+                        CROSS JOIN LATERAL unnest(pg_blocking_pids(waiting.pid)) AS blocker(pid)
+                        JOIN activity blocking ON blocking.pid=blocker.pid
+                        WHERE waiting.wait_event_type='Lock'
+                        GROUP BY waiting.query_class,blocking.query_class
+                    """).fetchall()
                     metrics = proc_metrics(self.app_pid)
                     if metrics:
                         row['app_rss_bytes'] = metrics[1]
@@ -194,6 +253,7 @@ class Sampler:
         if self.samples and 'app_cpu_seconds' in self.samples[-1]:
             summary['app_cpu_seconds'] = round(self.samples[-1]['app_cpu_seconds'] - self.samples[0]['app_cpu_seconds'], 3)
         summary['samples'] = self.samples
+        summary['wait_diagnostics'] = summarize_wait_observations(self.samples)
         summary['postgresql_container'] = {
             'provided': bool(self.container), 'sample_count': len(self.docker_samples),
             'peak_cpu_percent_one_core': max((s['cpu_percent_one_core'] for s in self.docker_samples), default=None),

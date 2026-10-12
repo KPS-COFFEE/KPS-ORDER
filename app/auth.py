@@ -422,10 +422,19 @@ def _channel(conn, brand, channel):
     return row or {'state':'unconfigured','enabled':False,'delivery_proven_at':None}
 
 
+def _guest_channel_available(conn, brand):
+    # Guest checkout has no external identity provider. Read its current gate
+    # directly instead of probing all optional channels on every order/replay.
+    row = _channel(conn, brand, 'guest')
+    return bool(row['enabled'] and row['state'] == 'active')
+
+
 def channel_readiness(conn, brand):
+    channels = {row['channel']: row for row in conn.execute(
+        'SELECT * FROM identity_channels WHERE brand_id=%s', (brand,)).fetchall()}
     rows = {}
     for channel in ('guest','email','sms','whatsapp'):
-        row = _channel(conn,brand,channel)
+        row = channels.get(channel) or {'state':'unconfigured','enabled':False,'delivery_proven_at':None}
         configured = True if channel=='guest' else email_delivery.configuration()['configured'] if channel=='email' else False
         if channel in {'sms','whatsapp'}:
             try:
@@ -445,7 +454,7 @@ def assert_customer_order_eligible(conn, user):
     if user['role']!='customer' or not user.get('active',True):
         raise db.error(403,'CUSTOMER_REQUIRED','الطلب يتطلب جلسة عميل مخوّلة.')
     if user.get('identity_kind')=='guest':
-        if not channel_readiness(conn,user['brand_id'])['guest']['available']:
+        if not _guest_channel_available(conn,user['brand_id']):
             raise db.error(403,'GUEST_ORDERING_PAUSED','الطلب كضيف متوقف حاليًا.')
         if not user.get('display_name') or not user.get('phone'):
             raise db.error(422,'GUEST_CONTACT_REQUIRED','أدخل الاسم ورقم الاتصال.')
@@ -496,7 +505,7 @@ def guest_session(body:GuestBody,request:Request,response:Response):
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
             raise db.error(404,'BRAND_NOT_FOUND','البراند غير متاح.')
-        if not channel_readiness(conn,body.brand_id)['guest']['available']:
+        if not _guest_channel_available(conn,body.brand_id):
             raise db.error(403,'GUEST_ORDERING_PAUSED','الطلب كضيف متوقف حاليًا.')
         existing = _find_session(conn,request)
         if existing:

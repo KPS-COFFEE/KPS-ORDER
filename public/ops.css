@@ -65,3 +65,6 @@
 #chat-detail .toolbar h2 { min-width: 0; }
 .shift-card .card-head{flex-wrap:wrap}
 .shift-card .card-head>.pill{flex-shrink:1;max-width:100%;white-space:normal}
+/* Tablet sidebars leave less room for heading actions than the viewport width.
+   Wrap controls within the main column while keeping labels and text readable. */
+.page-heading{flex-wrap:wrap}.page-heading>div{flex:1 1 220px;min-width:0}.page-heading>button,.page-heading>.button{max-width:100%;white-space:normal}

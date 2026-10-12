@@ -300,7 +300,7 @@ jobs:
   complete-release-regression:
     name: independent-postgres-regression
     needs: independent-postgres-regression
-    if: always() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')
+    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

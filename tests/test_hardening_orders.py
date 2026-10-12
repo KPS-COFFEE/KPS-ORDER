@@ -9,6 +9,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -302,3 +303,41 @@ def test_quote_and_order_malicious_text_returns_422_without_database_effect(chec
         assert client.post('/api/quote', content=encoded,
                            headers={'Content-Type': 'application/json'}).status_code == 422
     assert counts(user['id']) == {'orders': 0, 'created_events': 0, 'created_audits': 0, 'keys': 0}
+
+
+@pytest.mark.postgres
+def test_guest_gate_and_bulk_readiness_are_fresh_single_reads_with_matching_policy(checkout):
+    _, guest = checkout
+
+    class CountIdentityReads:
+        """Count real SQL round trips; every query executes on PostgreSQL."""
+        def __init__(self, conn):
+            self.conn, self.reads = conn, 0
+
+        def execute(self, statement, params=None):
+            if 'FROM identity_channels' in statement:
+                self.reads += 1
+            return self.conn.execute(statement, params)
+
+    with db.tx() as conn:
+        user = conn.execute('SELECT * FROM users WHERE id=%s', (guest['id'],)).fetchone()
+        reader = CountIdentityReads(conn)
+        for state, enabled, allowed in [('active', True, True), ('paused', True, False),
+                                        ('active', False, False), ('active', True, True)]:
+            conn.execute("UPDATE identity_channels SET state=%s,enabled=%s WHERE brand_id=%s AND channel='guest'",
+                         (state, enabled, user['brand_id']))
+            before = reader.reads
+            readiness = auth.channel_readiness(reader, user['brand_id'])
+            assert reader.reads == before + 1
+            assert readiness['guest']['available'] is allowed
+            assert readiness['email']['state'] == 'unconfigured'
+            assert readiness['email']['available'] is False
+            before = reader.reads
+            if allowed:
+                auth.assert_customer_order_eligible(reader, user)
+            else:
+                with pytest.raises(HTTPException) as failure:
+                    auth.assert_customer_order_eligible(reader, user)
+                assert failure.value.status_code == 403
+                assert failure.value.detail['code'] == 'GUEST_ORDERING_PAUSED'
+            assert reader.reads == before + 1

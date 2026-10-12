@@ -565,6 +565,15 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         driver.locator('#navigation [data-page=tasks]').click()
         accept=driver.locator('[data-action=task-transition][data-status=accepted]')
         expect(accept).to_be_visible()
+        # Let two real background polls complete. Re-rendered headings must
+        # retain each action once, including the optional vehicle registration.
+        for _ in range(2):
+            with driver.expect_response(lambda response:response.url==live_app+'/api/tasks' and response.status==200,timeout=20000):
+                expect(driver.locator('#page-heading [data-action=maintenance-create]')).to_have_count(1)
+                expect(driver.locator('#page-heading [data-action=register-vehicle]')).to_have_count(1)
+            expect(driver.locator('#content')).to_have_attribute('aria-busy','false')
+            expect(driver.locator('#page-heading [data-action=maintenance-create]')).to_have_count(1)
+            expect(driver.locator('#page-heading [data-action=register-vehicle]')).to_have_count(1)
         _capture(driver,'driver-assigned-synthetic-task')
         accept.click()
         expect(driver.locator('[data-action=task-transition][data-status=picked_up]')).to_be_visible()

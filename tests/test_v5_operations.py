@@ -5,7 +5,12 @@ from uuid import uuid4
 import math
 import pytest
 from fastapi import HTTPException
-from app import admin, auth, catalog, db, performance
+from app import admin, auth, catalog, db, performance, shift_vehicle
+
+
+def synthetic_vehicle_inspection(odometer_km=1000):
+    return {'odometer_km': odometer_km, 'fuel_percent': 75,
+            'checks': {item: 'ok' for item in shift_vehicle.CHECKS}, 'notes': ''}
 
 
 @pytest.mark.parametrize('limits',[(1200,1800),(600,900)])
@@ -35,7 +40,7 @@ def test_dashboard_uses_frozen_province_policy_and_rejected_orders_are_excluded(
             'metric':'delivery','t1_seconds':1200,'t2_seconds':1800,'effective_at':'2026-01-01T00:00:00+03:00'}
     assert call('manager','POST','/api/performance/policies',policy).status_code==200
     manager=call('manager','POST','/api/shifts',{'kind':'manager','branch_ids':['v5-a','v5-b']}).json()['shift']['id']
-    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).json()['shift']['id']
+    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager,'vehicle_inspection':synthetic_vehicle_inspection()}).json()['shift']['id']
     original=call('customer','POST','/api/orders',body('delivery')).json()['order']
     oid=original['id']
     task=call('manager','POST','/api/orders/'+oid+'/assign',{'driver_shift_id':driver}).json()['task']['id']
@@ -69,7 +74,7 @@ def test_dashboard_uses_frozen_province_policy_and_rejected_orders_are_excluded(
     assert frozen['valid']==1 and frozen['excluded']==1 and frozen['average_seconds']==1801
     assert dash['delivery_time']['delayed']==1 and dash['delivery_time']['valid']==1
     assert call('driver','POST','/api/shifts/'+driver+'/closing').status_code==200
-    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'counted_halalas':1200,'handover_halalas':1200}).status_code==200
+    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'counted_halalas':1200,'handover_halalas':1200,'vehicle_inspection':synthetic_vehicle_inspection(1025)}).status_code==200
     transfer=call('driver','POST','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,
                   'amount_halalas':1200,'reference':'TEST-policy-bag','closure':True}).json()['transfer']['id']
     assert call('manager','POST','/api/custody/'+transfer+'/confirm').status_code==200
@@ -212,7 +217,7 @@ def test_policy_version_snapshots_boundaries_scope_and_history(v5):
 def test_phases_use_events_not_order_age_and_completed_values_freeze(v5):
     actor,call,body,_=v5
     manager=call('manager','POST','/api/shifts',{'kind':'manager','branch_ids':['v5-a','v5-b']}).json()['shift']['id']
-    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).json()['shift']['id']
+    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager,'vehicle_inspection':synthetic_vehicle_inspection()}).json()['shift']['id']
     r=call('customer','POST','/api/orders',body('delivery'));assert r.status_code==200,r.text
     order=r.json()['order'];oid=order['id']
     live=actor('manager').get('/api/orders/'+oid).json()['order'];assert live['timings']['delivery']['seconds'] is None
@@ -250,7 +255,7 @@ def test_concurrent_numbers_cancel_and_filters_do_not_renumber(v5):
 def test_multi_branch_one_shift_revocation_preserves_task_custody_and_draft(v5):
     actor,call,body,_=v5
     manager=call('manager','POST','/api/shifts',{'kind':'manager','branch_ids':['v5-a','v5-b']}).json()['shift']['id']
-    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).json()['shift']['id']
+    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager,'vehicle_inspection':synthetic_vehicle_inspection()}).json()['shift']['id']
     assert call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).status_code==409
     order=call('customer','POST','/api/orders',body('delivery')).json()['order']
     assigned=call('manager','POST','/api/orders/'+order['id']+'/assign',{'driver_shift_id':driver},key='TEST-assignment-one');assert assigned.status_code==200,assigned.text
@@ -306,11 +311,11 @@ def test_map_viewport_is_not_accepted_as_destination_and_precise_pin_parses():
 def test_zero_task_driver_shift_still_blocks_manager_until_approved(v5):
     _,call,_,_=v5
     manager=call('manager','POST','/api/shifts',{'kind':'manager','branch_ids':['v5-a','v5-b']}).json()['shift']['id']
-    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager}).json()['shift']['id']
+    driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager,'vehicle_inspection':synthetic_vehicle_inspection()}).json()['shift']['id']
     assert call('manager','POST','/api/shifts/'+manager+'/closing').status_code==200
     assert call('manager','POST','/api/shifts/'+manager+'/submit',{'counted_halalas':0,'handover_halalas':0}).status_code==409
     assert call('driver','POST','/api/shifts/'+driver+'/closing').status_code==200
-    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'counted_halalas':0,'handover_halalas':0}).status_code==200
+    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':synthetic_vehicle_inspection()}).status_code==200
     tid=call('driver','POST','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':0,'reference':'TEST-empty','closure':True}).json()['transfer']['id']
     assert call('manager','POST','/api/custody/'+tid+'/confirm').status_code==200
     approved=call('manager','POST','/api/shifts/'+driver+'/approve');assert approved.status_code==200,approved.text
