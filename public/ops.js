@@ -562,7 +562,7 @@
     const reasonRequired=delegated||Boolean(sub.difference_halalas||sub.retained_halalas);
     modal(delegated?tr('إقفال بالنيابة عن السائق','Close on behalf of driver'):tr('اعتماد تقفيلة السائق','Approve driver closure'),`<form id="simple-driver-close-form" class="stack">
       <p><strong>${esc(s.display_name||state.shifts?.find(x=>x.id===id)?.display_name||tr('السائق','Driver'))}</strong> · ${esc(shiftLabel(s))}</p>
-      <dl class="data-grid">${dataItem(tr('النقد المتوقع','Expected cash'),money(expected))}${!delegated?dataItem(tr('النقد الذي عده السائق','Driver counted cash'),money(sub.counted_halalas)):''}${!delegated?dataItem(tr('الفرق','Difference'),money(sub.difference_halalas),'difference'):''}</dl>
+      <dl class="data-grid">${dataItem(tr('النقد المتوقع','Expected cash'),money(expected))}${!delegated?dataItem(tr('النقد الذي عده السائق','Driver counted cash'),money(sub.counted_halalas)):''}${!delegated?dataItem(tr('الفرق','Difference'),money(sub.difference_halalas),'difference'):''}${!delegated&&sub.retained_halalas?dataItem(tr('النقد الباقي مع السائق','Cash retained by driver'),money(sub.retained_halalas)):''}</dl>
       ${tasks.length?notice(tr(`باقي ${tasks.length} طلب غير منتهٍ. أنهِ الطلبات أو سلّمها قبل الإقفال.`,`${tasks.length} unresolved tasks. Complete or hand over the tasks before closing.`),'warn'):''}
       ${delegated?amountField(tr('النقد المعدود فعليًا','Actual counted cash'),'counted',null):''}
       ${amountField(tr('النقد المستلم فعليًا من السائق','Cash actually received from driver'),'received',delegated?null:sub.handover_halalas)}
