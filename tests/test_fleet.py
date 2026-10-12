@@ -7,6 +7,8 @@ from app import db,auth
 from app.shift_vehicle import CHECKS
 from test_operations import ops
 
+pytestmark = pytest.mark.postgres
+
 
 def seed(c,sid,plate,day,driver='ops-driver',km=210,liters=21,full=True,state='closed',brand='ops-brand',bids=None,exception=False,inspection_issue=False):
     opened=datetime(2026,10,day,16,tzinfo=timezone.utc);ended=datetime(2026,10,day,20,tzinfo=timezone.utc)

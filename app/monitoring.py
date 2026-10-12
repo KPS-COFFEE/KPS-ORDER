@@ -12,7 +12,8 @@ import resource
 import shutil
 import threading
 import time
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -23,6 +24,62 @@ router = APIRouter()
 logger = logging.getLogger('kps_order')
 _request_lock = threading.Lock()
 _requests = {'requests': 0, 'server_errors': 0}
+_worker_nonce = uuid.uuid4().hex
+
+
+def _worker_id():
+    return 'runtime_' + str(os.getpid()) + '_' + _worker_nonce
+
+
+def _take_requests():
+    with _request_lock:
+        responses = dict(_requests)
+        _requests.update(requests=0, server_errors=0)
+    return responses
+
+
+def _restore_requests(responses):
+    with _request_lock:
+        _requests['requests'] += responses['requests']
+        _requests['server_errors'] += responses['server_errors'] + 1
+
+
+def _publication_tick(conn, seconds):
+    return conn.execute('WITH tick AS (SELECT clock_timestamp() observed_at) '
+                        'SELECT observed_at,to_timestamp(floor(extract(epoch FROM observed_at)/%s)*%s) window_start FROM tick',
+                        (seconds, seconds)).fetchone()
+
+
+def _publish_requests(conn, config, worker_id, responses):
+    """Serialize additive interval publication and canonical state per scope.
+
+    A manual refresh cannot erase a worker's earlier subthreshold errors. The
+    next fixed server-clock interval starts at zero, and expired worker pulses
+    are discarded. This table contains numeric telemetry, never request data.
+    """
+    conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',
+                 ('runtime-monitor-publication:' + config['brand_id'] + ':' + config['database_id'],))
+    seconds = config['runtime_interval_seconds']
+    tick = _publication_tick(conn, seconds)
+    conn.execute('DELETE FROM recovery_worker_observations WHERE brand_id=%s AND database_id=%s '
+                 'AND (window_start<>%s OR window_seconds<>%s)',
+                 (config['brand_id'], config['database_id'], tick['window_start'], seconds))
+    conn.execute('INSERT INTO recovery_worker_observations(brand_id,database_id,worker_id,window_start,window_seconds,checked_at,requests,server_errors) '
+                 'VALUES(%s,%s,%s,%s,%s,%s,%s,%s) '
+                 'ON CONFLICT(brand_id,database_id,worker_id,window_start,window_seconds) DO UPDATE SET '
+                 'checked_at=EXCLUDED.checked_at,requests=recovery_worker_observations.requests+EXCLUDED.requests,'
+                 'server_errors=recovery_worker_observations.server_errors+EXCLUDED.server_errors',
+                 (config['brand_id'], config['database_id'], worker_id, tick['window_start'], seconds,
+                  tick['observed_at'], responses['requests'], responses['server_errors']))
+    total = conn.execute('SELECT count(*)::integer observed_workers,coalesce(sum(requests),0)::bigint requests,'
+                         'coalesce(sum(server_errors),0)::bigint server_errors '
+                         'FROM recovery_worker_observations WHERE brand_id=%s AND database_id=%s '
+                         'AND window_start=%s AND window_seconds=%s',
+                         (config['brand_id'], config['database_id'], tick['window_start'], seconds)).fetchone()
+    return {**total, 'http_counter_scope': 'all_workers_in_current_interval',
+            'http_counter_window': {'mode': 'fixed_interval', 'clock': 'postgresql', 'seconds': seconds,
+                                    'start': tick['window_start'].isoformat(),
+                                    'end': (tick['window_start'] + timedelta(seconds=seconds)).isoformat()}}
 
 
 def record_response(status_code):
@@ -77,13 +134,15 @@ def check_once():
         return {'configured': False, 'checked': False}
     started = time.monotonic()
     metrics = _runtime_resources()
-    with _request_lock:
-        responses = dict(_requests)
-        _requests.update(requests=0, server_errors=0)
-    metrics.update(responses)
+    responses = _take_requests()
+    worker_id = _worker_id()
+    # Container/DB/queue readings are shared measurements. Process CPU/memory
+    # are explicitly this publisher's values, not a sum of multiple workers.
+    metrics['process_resource_scope'] = 'publishing_worker'
     failures = []
     try:
         with db.tx() as conn:
+            metrics.update(_publish_requests(conn, config, worker_id, responses))
             # Size and queue counters are within the private DB; provider plan
             # capacity is operator-configured and clearly labeled as such.
             metrics['database_size_bytes'] = conn.execute('SELECT pg_database_size(current_database()) n').fetchone()['n']
@@ -100,7 +159,7 @@ def check_once():
             metrics['backup_observation_age_seconds'] = int((datetime.now(timezone.utc) - backup_time).total_seconds()) if backup_time else None
             metrics['database_storage_limit_bytes'] = config['database_storage_limit_bytes'] or None
             metrics['database_storage_capacity_source'] = 'private_operator_configuration' if config['database_storage_limit_bytes'] else 'unverified'
-            if responses['server_errors'] >= 3:
+            if metrics['server_errors'] >= 3:
                 failures.append('runtime_server_errors')
             if metrics['database_latency_ms'] > config['database_latency_limit_ms']:
                 failures.append('runtime_database_latency')
@@ -136,9 +195,7 @@ def check_once():
     except Exception:
         # Preserve only aggregate counters until the database reconnects. The
         # independent provider must detect a full outage; no false inbox proof.
-        with _request_lock:
-            _requests['requests'] += responses['requests']
-            _requests['server_errors'] += responses['server_errors'] + 1
+        _restore_requests(responses)
         logger.warning('runtime_monitor_database_unavailable')
         return {'configured': True, 'checked': False, 'database': 'unavailable',
                 'out_of_process_alert_delivery_verified': False}

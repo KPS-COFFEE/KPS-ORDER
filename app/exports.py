@@ -33,13 +33,13 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
           'performance_provinces', 'performance_province_branches', 'province_performance_policies',
           'closure_drafts', 'report_renderings', 'report_notifications',
-          'recovery_monitor_state', 'recovery_alert_notifications', 'vehicle_reports', 'vehicle_report_events',
+          'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
           'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
-                         'recovery_monitor_state', 'recovery_alert_notifications'}
+                         'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations'}
 PUBLIC = db.ROOT / 'public' / 'assets'
 MAX_WEB_EXPORT = 64 * 1024 * 1024
 INDEPENDENT_RESTORE_DATABASE_ID = 'dpg-db50dcdckfvc738gsrhg-a'
@@ -266,6 +266,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     if manifest['migrations'] != expected:
         raise ValueError('Archive migrations do not match this code. Restore with matching code first.')
     destination, files_restored = Path(asset_directory) if asset_directory is not None else None, 0
+    discarded_worker_pulses = 0
+    discarded_monitor_states = 0
     if destination and (destination.exists() or destination.is_symlink()):
         raise ValueError('Static asset restoration refuses existing destinations.')
     with psycopg.connect(target_url, row_factory=dict_row, connect_timeout=10) as conn:
@@ -334,6 +336,18 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:
                 raise ValueError('Restored counts or monetary totals differ from snapshot.')
             identities, binary_count = _restored_evidence(conn, archive, manifest)
+            # Verify archived counts/identifiers first, then retire only this
+            # newly restored schema's ephemeral runtime pulses. Historical
+            # provider backup observations and owner alerts stay preserved.
+            if 'recovery_worker_observations' in actual:
+                discarded_worker_pulses = counts['recovery_worker_observations']
+                discarded_monitor_states = counts.get('recovery_monitor_state', 0)
+                conn.execute('DELETE FROM recovery_worker_observations')
+                conn.execute('DELETE FROM recovery_monitor_state')
+                if discarded_worker_pulses or discarded_monitor_states:
+                    db.audit(conn, None, 'restore.ephemeral_worker_observations_discarded', 'runtime', target_schema,
+                             {'tables': {'recovery_worker_observations': discarded_worker_pulses,
+                                         'recovery_monitor_state': discarded_monitor_states}})
             if destination:
                 # Creation is exclusive. Failure removes only the directory
                 # created by this invocation and rolls back the target schema.
@@ -360,6 +374,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             'identifier_sha256': identities, 'binary_files_verified': binary_count,
             'static_files_archived': sum(name.startswith('static/assets/') for name in manifest['files']),
             'static_files_restored': files_restored, 'static_restore_verified': destination is not None,
+            'ephemeral_worker_observations_discarded': discarded_worker_pulses,
+            'ephemeral_monitor_state_discarded': discarded_monitor_states,
             'archive_sha256': hashlib.sha256(contents).hexdigest(), 'elapsed_seconds': round(time.monotonic() - started, 3)}
 
 

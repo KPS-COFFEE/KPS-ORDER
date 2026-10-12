@@ -5,7 +5,7 @@ Run with TEST_DATABASE_URL=postgresql://...@127.0.0.1:5432/test_hardening
 python tools/hardening_load.py --output test-artifacts/hardening-load.json
 
 Every run creates its own UUID schema in an explicitly named local test DB.
-It starts one real Uvicorn worker, preserves application authorization/rate
+It starts one real Uvicorn worker by default (two only by explicit comparison), preserves application authorization/rate
 limits, and represents customers using distinct actual loopback source IPs.
 The gate is a local engineering criterion, not a production capacity SLA.
 """
@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -74,15 +75,116 @@ def distribution(values):
     return {name: percentile(values, p) for name, p in [('p50_ms', .5), ('p95_ms', .95), ('p99_ms', .99)]}
 
 
+def _namespace_pid(proc_path):
+    try:
+        if os.readlink(proc_path / 'ns/pid') != os.readlink('/proc/self/ns/pid'):
+            return None
+        line = next(line for line in (proc_path / 'status').read_text().splitlines() if line.startswith('NSpid:'))
+        return int(line.split()[-1])
+    except (OSError, ValueError, StopIteration):
+        return None
+
+
+def _proc_path(pid):
+    direct = Path(f'/proc/{pid}')
+    if _namespace_pid(direct) == pid:
+        return direct
+    # Some isolated executors mount an ancestor's /proc. Resolve only entries
+    # in our own PID namespace, keeping all public/DB/process-control IDs local.
+    for path in Path('/proc').glob('[0-9]*'):
+        if _namespace_pid(path) == pid:
+            return path
+    return None
+
+
 def proc_metrics(pid):
     """Linux worker CPU/memory without adding a runtime dependency."""
     try:
-        stat = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
-        rss = int(Path(f'/proc/{pid}/statm').read_text().split()[1]) * os.sysconf('SC_PAGE_SIZE')
+        proc_path = _proc_path(pid)
+        if proc_path is None:
+            return None
+        stat = (proc_path / 'stat').read_text().rsplit(')', 1)[1].split()
+        rss = int((proc_path / 'statm').read_text().split()[1]) * os.sysconf('SC_PAGE_SIZE')
         seconds = (int(stat[11]) + int(stat[12])) / os.sysconf('SC_CLK_TCK')
         return seconds, rss
     except (OSError, ValueError, IndexError):
         return None
+
+
+def process_start_ticks(pid):
+    try:
+        proc_path = _proc_path(pid)
+        if proc_path is None:
+            return None
+        stat = (proc_path / 'stat').read_text().rsplit(')', 1)[1].split()
+        return None if stat[0] == 'Z' else int(stat[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def owned_process_pids(root_pid):
+    """Only the launched process and actual /proc descendants, never name matches."""
+    found, pending = set(), [root_pid]
+    while pending:
+        pid = pending.pop()
+        proc_path = _proc_path(pid)
+        if pid in found or proc_path is None:
+            continue
+        found.add(pid)
+        fallback_needed = False
+        try:
+            for task in (proc_path / 'task').iterdir():
+                try:
+                    for value in (task / 'children').read_text().split():
+                        local_pid = _namespace_pid(Path('/proc') / value)
+                        if local_pid is None:
+                            # The children file can use reader-namespace IDs
+                            # even when the mounted /proc paths use ancestor IDs.
+                            local_path = _proc_path(int(value))
+                            local_pid = _namespace_pid(local_path) if local_path is not None else None
+                        if local_pid is not None:
+                            pending.append(local_pid)
+                except (OSError, ValueError):
+                    fallback_needed = True
+                    continue
+        except OSError:
+            fallback_needed = True
+        if fallback_needed:
+            # CONFIG_CHECKPOINT_RESTORE can omit task/children. Read PPid from
+            # /proc status instead, still requiring our exact PID namespace.
+            for candidate in Path('/proc').glob('[0-9]*'):
+                local_pid = _namespace_pid(candidate)
+                if local_pid is None:
+                    continue
+                try:
+                    parent = next(line for line in (candidate / 'status').read_text().splitlines() if line.startswith('PPid:'))
+                    if int(parent.split()[1]) == int(proc_path.name):
+                        pending.append(local_pid)
+                except (OSError, ValueError, StopIteration):
+                    continue
+    return found
+
+
+def process_tree_metrics(root_pid):
+    rows = {}
+    for pid in owned_process_pids(root_pid):
+        metric = proc_metrics(pid)
+        if metric:
+            rows[pid] = {'cpu_seconds': metric[0], 'rss_bytes': metric[1]}
+    return {'cpu_seconds': sum(row['cpu_seconds'] for row in rows.values()),
+            'summed_rss_bytes': sum(row['rss_bytes'] for row in rows.values()),
+            'processes': rows}
+
+
+def exact_owned_pool_names(root_pid, db_url):
+    suffix = hashlib.sha256(db_url.encode()).hexdigest()[:12]
+    return {pid: f'kps_order_pool_{pid}_{suffix}' for pid in owned_process_pids(root_pid)}
+
+
+def startup_worker_pids(log_contents, root_pid):
+    owned = owned_process_pids(root_pid)
+    return sorted({int(value) for value in re.findall(r'Started server process \[(\d+)\]', log_contents)
+                   if int(value) in owned})
 
 
 ANSI_CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
@@ -153,7 +255,7 @@ WITH activity AS (
 
 
 class Sampler:
-    def __init__(self, db_url, app_pid, container=None):
+    def __init__(self, db_url, app_pid, container=None, worker_pids=None):
         self.db_url, self.app_pid, self.container = db_url, app_pid, container
         self.stop = threading.Event()
         self.samples = []
@@ -163,6 +265,11 @@ class Sampler:
         self.docker_thread = None
         self.docker_samples = []
         self.cleanup_actions = []
+        self.expected_workers = {pid: process_start_ticks(pid) for pid in (worker_pids or [app_pid])}
+
+    def workers_are_live(self, metrics):
+        return all(start is not None and pid in metrics['processes'] and process_start_ticks(pid) == start
+                   for pid, start in self.expected_workers.items())
 
     def read_docker(self):
         try:
@@ -203,13 +310,21 @@ class Sampler:
                         WHERE waiting.wait_event_type='Lock'
                         GROUP BY waiting.query_class,blocking.query_class
                     """).fetchall()
-                    metrics = proc_metrics(self.app_pid)
-                    if metrics:
-                        row['app_rss_bytes'] = metrics[1]
-                        row['app_cpu_seconds'] = metrics[0]
+                    metrics = process_tree_metrics(self.app_pid)
+                    if metrics['processes'] and self.workers_are_live(metrics):
+                        row['app_rss_bytes'] = metrics['summed_rss_bytes']
+                        row['app_cpu_seconds'] = metrics['cpu_seconds']
+                        row['app_process_metrics'] = metrics['processes']
                         if previous:
-                            row['app_cpu_percent_one_core'] = round(100 * (metrics[0] - previous[1]) / (now - previous[0]), 2)
-                        previous = now, metrics[0]
+                            if set(metrics['processes']) != previous[2]:
+                                self.errors['application_process_tree:changed_during_stage'] += 1
+                            elif metrics['cpu_seconds'] >= previous[1]:
+                                row['app_cpu_percent_one_core'] = round(100 * (metrics['cpu_seconds'] - previous[1]) / (now - previous[0]), 2)
+                            else:
+                                self.errors['application_process_tree:cpu_counter_regressed'] += 1
+                        previous = now, metrics['cpu_seconds'], set(metrics['processes'])
+                    else:
+                        self.errors['application_workers:missing_or_replaced'] += 1
                     row['monotonic_seconds'] = now
                     self.samples.append(row)
                     self.stop.wait(.25)
@@ -250,9 +365,12 @@ class Sampler:
         for key in ('connections', 'lock_waits', 'idle_in_transaction', 'app_rss_bytes', 'app_cpu_percent_one_core'):
             values = [row[key] for row in self.samples if key in row]
             summary['peak_' + key] = max(values) if values else None
-        if self.samples and 'app_cpu_seconds' in self.samples[-1]:
-            summary['app_cpu_seconds'] = round(self.samples[-1]['app_cpu_seconds'] - self.samples[0]['app_cpu_seconds'], 3)
+        cpu_samples = [row for row in self.samples if 'app_cpu_seconds' in row]
+        if cpu_samples:
+            summary['app_cpu_seconds'] = round(cpu_samples[-1]['app_cpu_seconds'] - cpu_samples[0]['app_cpu_seconds'], 3)
         summary['samples'] = self.samples
+        summary['process_measurement_scope'] = 'Launched Uvicorn process and owned descendants; CPU sum, summed RSS includes shared pages per process.'
+        summary['expected_worker_start_ticks'] = self.expected_workers
         summary['wait_diagnostics'] = summarize_wait_observations(self.samples)
         summary['postgresql_container'] = {
             'provided': bool(self.container), 'sample_count': len(self.docker_samples),
@@ -442,11 +560,12 @@ def reconcile(db_url, workload):
             'passed': not failures}
 
 
-def start_app(env, port, log_path):
+def start_app(env, port, log_path, workers=1):
     log = log_path.open('a')
+    offset = log_path.stat().st_size
     process = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1',
-                                '--port', str(port), '--workers', '1', '--no-access-log'], cwd=ROOT, env=env,
-                               stdout=log, stderr=subprocess.STDOUT)
+                                '--port', str(port), '--workers', str(workers), '--no-access-log'], cwd=ROOT, env=env,
+                               stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     origin = f'http://127.0.0.1:{port}'
     started = time.perf_counter()
     try:
@@ -457,26 +576,58 @@ def start_app(env, port, log_path):
                 try:
                     response = client.get(origin + '/ready')
                     if response.status_code == 200:
-                        return process, log, round(time.perf_counter() - started, 3)
+                        with log_path.open() as observed:
+                            observed.seek(offset)
+                            contents = observed.read()
+                        worker_pids = startup_worker_pids(contents, process.pid)
+                        if len(worker_pids) == workers and contents.count('Application startup complete.') >= workers:
+                            return process, log, round(time.perf_counter() - started, 3), worker_pids
                 except httpx.HTTPError:
                     pass
                 time.sleep(.1)
         raise RuntimeError('Isolated application readiness timed out.')
     except Exception:
-        process.terminate()
-        process.wait(timeout=10)
-        log.close()
+        stop_app(process, log)
         raise
 
 
 def stop_app(process, log):
+    identities = {pid: process_start_ticks(pid) for pid in owned_process_pids(process.pid)}
     if process.poll() is None:
         process.terminate()
         try:
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
-            process.kill()
+            # Popen created a dedicated session; the group belongs solely to
+            # this isolated app, including both comparison workers/helpers.
+            os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
+    # A supervisor may exit before a child completes shutdown. The group can
+    # be signaled only while a captured, still-identical descendant remains
+    # in the new session created for this invocation.
+    def remaining_owned():
+        result = []
+        for pid, start in identities.items():
+            if start is not None and process_start_ticks(pid) == start:
+                try:
+                    if os.getsid(pid) == process.pid:
+                        result.append(pid)
+                except ProcessLookupError:
+                    pass
+        return result
+    if remaining_owned():
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + 2
+        while remaining_owned() and time.monotonic() < deadline:
+            time.sleep(.05)
+        if remaining_owned():
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
     log.close()
 
 
@@ -574,7 +725,10 @@ def database_fault_drills(db_url, base_url, origin, container, app_pid):
         capacity['configured_max_connections'] = maximum
         if maximum > 200:
             raise RuntimeError('Safety cap refuses to occupy more than 200 database connections.')
-        app_name = f'kps_order_pool_{app_pid}_' + hashlib.sha256(db_url.encode()).hexdigest()[:12]
+        owned_names = exact_owned_pool_names(app_pid, db_url)
+        if not owned_names:
+            raise RuntimeError('Isolated application process ownership could not be verified.')
+        capacity['owned_application_process_pids'] = sorted(owned_names)
         capacity['terminated_isolated_app_pool_backends'] = 0
         # Idle pooled sockets can still execute at global connection capacity.
         # Fill every remaining slot, terminate only this isolated application's
@@ -588,7 +742,7 @@ def database_fault_drills(db_url, base_url, origin, container, app_pid):
                     capacity['exhaustion_reached'] = True
                     break
             app_backends = control.execute("SELECT pid FROM pg_stat_activity WHERE datname=current_database() "
-                                           "AND application_name=%s", (app_name,)).fetchall()
+                                           "AND application_name=ANY(%s)", (list(owned_names.values()),)).fetchall()
             if app_backends:
                 for (pid,) in app_backends:
                     control.execute('SELECT pg_terminate_backend(%s)', (pid,))
@@ -644,6 +798,8 @@ def main():
     parser.add_argument('--p99-ms', type=float, default=10000)
     parser.add_argument('--max-error-rate', type=float, default=.01)
     parser.add_argument('--database-container', help='Optional local Docker PG service ID for container CPU/RAM samples.')
+    parser.add_argument('--workers', type=int, choices=(1, 2), default=1,
+                        help='Isolated comparison only; one mirrors runtime, two does not change deployment defaults.')
     args = parser.parse_args()
     levels = [int(item) for item in args.levels.split(',')]
     if not levels or min(levels) < 1 or max(levels) > 500 or not 1 <= args.rounds <= 5:
@@ -661,7 +817,7 @@ def main():
             ['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()),
         'gate': {'p95_ms_max': args.p95_ms, 'p99_ms_max': args.p99_ms, 'unexpected_error_rate_max': args.max_error_rate,
                  'data_invariant_failures_max': 0, 'deadlocks_max': 0, 'all_requested_levels_required': True},
-        'methodology': {'workers': 1, 'rounds_per_user': args.rounds, 'requested_levels': levels,
+        'methodology': {'workers': args.workers, 'rounds_per_user': args.rounds, 'requested_levels': levels,
             'real_guest_identity': True, 'real_HTTP': True, 'real_PostgreSQL': True,
             'concurrent_same_key_order_transmissions': 2, 'source_address_strategy': 'distinct actual 127.20.x.x socket IPs',
             'traffic': 'Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle',
@@ -671,10 +827,11 @@ def main():
             'cpu_quota': Path('/sys/fs/cgroup/cpu.max').read_text().strip() if Path('/sys/fs/cgroup/cpu.max').exists() else 'unavailable',
             'memory_limit_bytes': Path('/sys/fs/cgroup/memory.max').read_text().strip() if Path('/sys/fs/cgroup/memory.max').exists() else 'unavailable'},
         'comparability_limits': [
-            'Single Uvicorn worker mirrors Docker CMD. Local CPU/RAM and local DB/network differ from deployed Render resources.',
+            'One worker mirrors Docker CMD; two workers are an explicit isolated comparison only. Local CPU/RAM and DB/network differ from deployed Render resources.',
             'Repository Blueprint specifies 0.5 CPU / 512 MiB; these measurements do not certify its production 500-user capacity.',
             'DB connection/lock metrics sample every 250 ms; transient peaks below the interval may be missed.',
-            'App CPU/RSS are /proc worker metrics; PostgreSQL container CPU/RAM require separately captured Docker stats.',
+            'App CPU/RSS aggregate the owned process tree; summed RSS counts shared pages in each process and is not unique physical memory.',
+            'Load generator, app and PostgreSQL share the CI runner; this is not a remote-client benchmark or production hardware certification.',
             'No customer/production data, payments, physical printers or external notification providers are exercised.']}
     schema = 'kps_load_' + uuid.uuid4().hex
     isolated = schema_url(base, schema)
@@ -704,13 +861,14 @@ def main():
         configure_synthetic_data()
         from app import db
         db.close_pools(isolated)
-        process, log, report['startup_seconds'] = start_app(env, port, args.output.parent / 'load-app.log')
+        process, log, report['startup_seconds'], worker_pids = start_app(env, port, args.output.parent / 'load-app.log', args.workers)
+        report['methodology']['verified_startup_worker_pids'] = worker_pids
         origin = f'http://127.0.0.1:{port}'
         for concurrency in levels:
             marker = f'load-{uuid.uuid4().hex}-{concurrency}'
             with psycopg.connect(isolated, row_factory=dict_row) as conn:
                 before = conn.execute('SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()').fetchone()['deadlocks']
-            sampler = Sampler(isolated, process.pid, args.database_container)
+            sampler = Sampler(isolated, process.pid, args.database_container, worker_pids)
             sampler.begin()
             workload = Workload(origin, marker, concurrency, args.rounds, args.request_timeout)
             workloads.append(workload)
@@ -758,17 +916,19 @@ def main():
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
         stop_app(process, log)
         process = log = None
-        process, log, recovery_seconds = start_app(env, port, args.output.parent / 'load-app.log')
+        process, log, recovery_seconds, restarted_worker_pids = start_app(env, port, args.output.parent / 'load-app.log', args.workers)
         recovery_checks = [reconcile(isolated, workload) for workload in workloads]
         report['recovery'] = {'process_restart_to_ready_seconds': recovery_seconds,
             'confirmed_orders_preserved': all(check['passed'] for check in recovery_checks),
+            'verified_restarted_worker_pids': restarted_worker_pids,
+            'worker_count_matches': len(restarted_worker_pids) == args.workers,
             'post_restart_reconciliation': recovery_checks}
         with httpx.Client(base_url=origin, timeout=10) as client:
             ready = client.get('/ready').json()
             report['recovery']['revision_matches'] = ready['revision'] == report['head']
             report['recovery']['migration_preservation_verified'] = ready['data_preservation']['verified']
         fault_drills_ok = not args.database_container or report['database_fault_drills'].get('passed') is True
-        if all(stage['passed'] for stage in report['stages']) and len(report['stages']) == len(levels) and report['recovery']['revision_matches'] and report['recovery']['migration_preservation_verified'] and report['recovery']['confirmed_orders_preserved'] and fault_drills_ok:
+        if all(stage['passed'] for stage in report['stages']) and len(report['stages']) == len(levels) and report['recovery']['revision_matches'] and report['recovery']['migration_preservation_verified'] and report['recovery']['confirmed_orders_preserved'] and report['recovery']['worker_count_matches'] and fault_drills_ok:
             report['status'] = 'PASS_LOCAL_ENGINEERING_GATE'
             report['reason'] = 'All requested load levels and PostgreSQL business invariants passed; production hardware/provider validation remains separate.'
     except Exception as exc:
