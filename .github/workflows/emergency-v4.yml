@@ -159,6 +159,13 @@ jobs:
             node --check "$script"
           done
           git diff --check
+      - name: Run financial, retry, printing and recovery hardening acceptance
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_hardening_operations.py tests/test_hardening_orders.py
+          tests/test_hardening_printing.py tests/test_hardening_recovery.py
+          tests/test_hardening_staff_browser.py tests/test_hardening_load_observer.py
+          --junitxml=test-results/hardening-focused.xml
       - name: Run temporary dispatch and numbering acceptance
         if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py tests/test_driver_configuration_lock.py tests/test_driver_configuration_browser.py --junitxml=test-results/dispatch-numbering.xml

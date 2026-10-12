@@ -94,6 +94,7 @@ class Sampler:
         self.docker_process = None
         self.docker_thread = None
         self.docker_samples = []
+        self.cleanup_actions = []
 
     def read_docker(self):
         try:
@@ -114,7 +115,8 @@ class Sampler:
     def run(self):
         previous = None
         try:
-            with psycopg.connect(self.db_url, autocommit=True, row_factory=dict_row) as conn:
+            with psycopg.connect(self.db_url, autocommit=True, row_factory=dict_row, connect_timeout=5) as conn:
+                conn.execute("SET statement_timeout='3000ms'")
                 while not self.stop.is_set():
                     now = time.perf_counter()
                     row = conn.execute("SELECT count(*) FILTER(WHERE pid<>pg_backend_pid())::int AS connections, "
@@ -143,13 +145,28 @@ class Sampler:
     def finish(self):
         self.stop.set()
         if self.docker_process and self.docker_process.poll() is None:
-            self.docker_process.terminate()
-            self.docker_process.wait(timeout=5)
+            try:
+                self.docker_process.terminate()
+                try:
+                    self.docker_process.wait(timeout=2)
+                    self.cleanup_actions.append('docker_stats_terminated')
+                except subprocess.TimeoutExpired:
+                    # Docker's interactive stats command can ignore SIGTERM.
+                    # Terminate only this observation process, never the DB.
+                    self.docker_process.kill()
+                    self.docker_process.wait(timeout=2)
+                    self.cleanup_actions.append('docker_stats_killed_after_sigterm_timeout')
+            except Exception as exc:
+                self.errors['docker_cleanup:' + type(exc).__name__] += 1
         if self.docker_thread:
-            self.docker_thread.join(timeout=5)
+            self.docker_thread.join(timeout=3)
+            if self.docker_thread.is_alive():
+                self.errors['docker_cleanup:reader_thread_timeout'] += 1
         self.thread.join(timeout=5)
+        if self.thread.is_alive():
+            self.errors['postgresql_sampler:thread_timeout'] += 1
         summary = {'sample_interval_seconds': .25, 'sample_count': len(self.samples),
-                   'sample_errors': dict(self.errors)}
+                   'sample_errors': dict(self.errors), 'cleanup_actions': self.cleanup_actions}
         for key in ('connections', 'lock_waits', 'idle_in_transaction', 'app_rss_bytes', 'app_cpu_percent_one_core'):
             values = [row[key] for row in self.samples if key in row]
             summary['peak_' + key] = max(values) if values else None
@@ -554,7 +571,7 @@ def main():
             'No customer/production data, payments, physical printers or external notification providers are exercised.']}
     schema = 'kps_load_' + uuid.uuid4().hex
     isolated = schema_url(base, schema)
-    process = log = None
+    process = log = sampler = None
     workloads = []
     previous_env = dict(os.environ)
     try:
@@ -589,8 +606,17 @@ def main():
             workload = Workload(origin, marker, concurrency, args.rounds, args.request_timeout)
             workloads.append(workload)
             metrics = asyncio.run(workload.run())
-            resources = sampler.finish()
+            # Persist actual workload results before observation cleanup or
+            # reconciliation can fail, so diagnostics are never masked.
+            stage = {'concurrent_users': concurrency, 'metrics': metrics, 'passed': False,
+                     'gate_failure_reasons': ['Observation/reconciliation not yet completed.']}
+            report['stages'].append(stage)
+            args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
             integrity = reconcile(isolated, workload)
+            stage['database_integrity'] = integrity
+            args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+            resources = sampler.finish()
+            sampler = None
             with psycopg.connect(isolated, row_factory=dict_row) as conn:
                 after = conn.execute('SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()').fetchone()['deadlocks']
             violations = list(integrity['failure_reasons'])
@@ -604,10 +630,8 @@ def main():
                 violations.append('PostgreSQL deadlocks increased.')
             if resources['sample_errors'] or not resources['sample_count']:
                 violations.append('Resource/connection/lock monitoring failed.')
-            stage = {'concurrent_users': concurrency, 'metrics': metrics, 'database_integrity': integrity,
-                     'resources': resources, 'deadlocks_delta': after - before, 'passed': not violations,
-                     'gate_failure_reasons': violations}
-            report['stages'].append(stage)
+            stage.update({'resources': resources, 'deadlocks_delta': after - before,
+                          'passed': not violations, 'gate_failure_reasons': violations})
             args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
             print(json.dumps({'concurrent_users': concurrency, 'passed': stage['passed'], 'p95_ms': metrics['p95_ms'],
                               'p99_ms': metrics['p99_ms'], 'persisted_orders': integrity['persisted_orders'],
@@ -645,6 +669,10 @@ def main():
         report['reason'] = 'Isolated load run did not complete.'
         print('Load gate failed: ' + type(exc).__name__, flush=True)
     finally:
+        if sampler:
+            # Cleanup is best effort but its failures remain a failed gate.
+            # Workload metrics already written above survive this path.
+            report['interrupted_observer_cleanup'] = sampler.finish()
         if process:
             stop_app(process, log)
         os.environ.clear()
