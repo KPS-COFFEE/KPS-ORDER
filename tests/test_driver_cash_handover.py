@@ -95,5 +95,8 @@ def test_branch_receipt_replay_cannot_bypass_revoked_scope(ops):
     post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
     tid=post('driver','/api/custody',{'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'REPLAY-BAG','closure':True})['transfer']['id']
     post('branch',f'/api/custody/{tid}/confirm',key='receipt-once')
+    with db.tx() as c:
+        receipt=c.execute('SELECT confirmed_by FROM custody_transfers WHERE id=%s',(tid,)).fetchone()
+        assert receipt['confirmed_by']=='ops-branch'
     with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-branch'")
     post('branch',f'/api/custody/{tid}/confirm',key='receipt-once',status=403)

@@ -135,7 +135,6 @@ jobs:
       - name: Install pinned application and test requirements
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - name: Install Chromium and required system libraries
-        if: steps.scope.outputs.driver_cash_only != 'true'
         run: python -m playwright install --with-deps chromium
       - name: Check Python and browser script syntax
         shell: bash
