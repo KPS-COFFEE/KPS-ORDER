@@ -53,7 +53,8 @@ def contract(data,lang):
 
 def render(data,format,lang):
     keys,rows,totals=presentation(data,lang)
-    title=('المحاسبة — ' if lang=='ar' else 'Accounting — ')+data['group']
+    titles={'daily':('إجمالي يوم التشغيل','Operational day totals'),'branch':('مبيعات الفروع','Branch sales'),'items':('مبيعات الأصناف','Item sales'),'driver':('مبيعات السائقين','Driver sales'),'driver_daily':('عداد السائق اليومي','Daily driver counter'),'deficits':('العجز والزيادة','Shortages and surpluses'),'actions':('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments'),'cases':('ملاحظات المركبات والطلبات','Vehicle and order incidents')}
+    title=('المحاسبة - ' if lang=='ar' else 'Accounting - ')+titles[data['group']][lang=='en']
     headers=[LABELS[k][lang=='en'] for k in keys]
     summary={keys[0]:'الإجمالي / Total',**totals}
     values=[[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k), (int,float)) else r.get(k,'') for k in keys] for r in [*rows,summary]]

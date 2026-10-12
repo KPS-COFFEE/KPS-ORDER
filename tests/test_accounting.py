@@ -29,8 +29,7 @@ def accountant():
 @pytest.mark.postgres
 def test_reports_split_payments_refund_and_scope(ops):
     actor,post,order,shifts=ops;accountant();oid=order('pickup')
-    post('branch',f'/api/orders/{oid}/collect',{'method':'cash','amount_halalas':400,'tendered_halalas':400})
-    post('branch',f'/api/orders/{oid}/collect',{'method':'card','amount_halalas':600,'reference':'TEST SPLIT'})
+    post('branch',f'/api/orders/{oid}/collect',{'method':'split','amount_halalas':1000,'cash_halalas':400,'card_halalas':600,'tendered_halalas':400,'reference':'TEST SPLIT'})
     with db.tx() as c:c.execute("UPDATE orders SET completed_at=now(),preparation_status='completed' WHERE id=%s",(oid,))
     url='/api/accounting/reports'
     r=actor('accountant').get(url);assert r.status_code==200,r.text
@@ -84,8 +83,8 @@ def test_variance_operational_date_review_and_month_snapshot(ops):
     d=actor('accountant').get(url).json();assert d['rows'][0]['day']=='2026-09-12' and d['totals']['shortage']==150
     month={'month':'2026-09','note':'TEST monthly review'}
     post('accountant','/api/accounting/months',month,status=409)
-    post('accountant','/api/accounting/reviews/ac-report',{'note':'TEST reviewed'},key='review')
-    post('accountant','/api/accounting/reviews/ac-report',{'note':'TEST reviewed'},key='review')
+    post('accountant','/api/accounting/reviews/ac-report',{'note':'TEST reviewed'},key='review-test-key')
+    post('accountant','/api/accounting/reviews/ac-report',{'note':'TEST reviewed'},key='review-test-key')
     post('accountant','/api/accounting/reviews/ac-report',{'note':'TEST second'},status=409)
     d=actor('accountant').get(url).json();assert d['totals']['approved_shortage']==150
     mid=post('accountant','/api/accounting/months',month)['id']
