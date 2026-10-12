@@ -185,10 +185,16 @@ def test_order_attribution_is_durable_brand_scoped_idempotent_and_truthful(owner
     assert client.post('/api/orders',json=body,headers=headers).json()['order']['id']==oid
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM menu_order_attribution WHERE order_id=%s',(oid,)).fetchone()['n']==1
-        # Synthetic completion is labelled fixture-only; no real customer/provider is touched.
-        c.execute("UPDATE orders SET preparation_status='completed',payment_status='paid',completed_at=now() WHERE id=%s",(oid,))
     client.cookies.clear()
     login=client.post('/api/auth/login',json={'username':'admin-test-owner','password':'TestOnly!PrivatePassword1'});assert login.status_code==200
+    client.headers['X-CSRF-Token']=login.json()['csrf_token']
+    total=r.json()['order']['total_halalas']
+    collected=client.post(f'/api/orders/{oid}/collect',json={'method':'cash','amount_halalas':total,'tendered_halalas':total},headers={'Idempotency-Key':'menu-test-payment'})
+    assert collected.status_code==200,collected.text
+    for status in ('accepted','preparing','ready','completed'):
+        version=client.get(f'/api/orders/{oid}').json()['order']['version']
+        done=client.post(f'/api/orders/{oid}/preparation',json={'status':status,'version':version},headers={'Idempotency-Key':'menu-test-'+status})
+        assert done.status_code==200,done.text
     m=client.get('/api/menu/analytics').json()
     assert m['completed_orders']==1 and m['gross_revenue_halalas']==r.json()['order']['total_halalas']
     assert m['visit_to_completed_order_rate']==1 and m['order_branches'][0]['created_order_completion_rate']==1
