@@ -51,7 +51,7 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
         expect(page.locator('#modal')).not_to_be_visible(timeout=20000)
         card=page.locator('article').filter(has=page.locator('[data-action=shift-detail][data-id="'+sid+'"]'))
         expect(card).to_contain_text('متوافق')
-        _capture(page,'TEST_ONLY_manager_driver_closure_'+str(delegated),390)
+        _capture(page,'TEST_ONLY_manager_driver_closure_'+str(delegated))
         if delegated:
             _owner_login(ctx,live_app,owner);page.reload()
             expect(page.locator('#operational-alerts')).to_contain_text('تقفيلات باستثناء',timeout=15000)

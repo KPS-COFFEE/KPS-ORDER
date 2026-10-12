@@ -102,7 +102,10 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         form=fill_check(1025,50)
         form.locator('[name=reference]').fill('TEST-ZERO-CASH')
         form.locator('[name=recipient_user_id]').select_option(manager['id'])
+        form.locator('[name=confirm_closure]').check()
         form.locator('button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        page.locator('[data-action=shift-detail][data-id="'+sid+'"]').click()
         expect(page.locator('#closure-form')).to_have_count(0)
         expect(page.locator('#modal .vehicle-shift-summary')).to_be_visible()
         with db.tx() as c:
