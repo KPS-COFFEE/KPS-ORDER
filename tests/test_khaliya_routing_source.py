@@ -1,5 +1,6 @@
 """Pure routing/pricing tests. SQL persistence is covered separately in PostgreSQL acceptance."""
 from copy import deepcopy
+from contextlib import nullcontext
 import pytest
 from fastapi import HTTPException
 from app import catalog, orders
@@ -26,6 +27,9 @@ class Rows:
 
 class CatalogConnection:
     def __init__(self,branches,products):self.branches=branches;self.products=products
+    def pipeline(self):
+        # Pure routing double; real PostgreSQL tests cover protocol and locks.
+        return nullcontext()
     def execute(self,sql,args=None):
         if 'FROM brands' in sql:return Rows({'id':'kps','settings':{}})
         if "branch_no=2" in sql:return Rows(self.branches.get('kps-branch-2'))
