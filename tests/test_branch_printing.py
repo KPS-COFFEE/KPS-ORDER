@@ -218,3 +218,37 @@ def test_product_print_translation_edit_is_scoped_and_used_in_queue(ops):
     assert any(line['text']=='Test Coffee' for line in job['payload']['lines'])
     with db.tx() as conn:
         assert conn.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()['snapshot']['items'][0]['name']=='قهوة تجربة'
+
+
+@pytest.mark.postgres
+def test_guided_setup_is_branch_bound_private_and_reports_real_connectivity(ops):
+    import base64
+    import io
+    import json
+    import zipfile
+    actor, post, _, _ = ops
+    body={'branch_id':'ops-branch','label':'Guided test','reason':'Replace synthetic setup'}
+    post('driver','/api/printing/setup',body,status=403)
+    post('other','/api/printing/setup',body,status=404)
+    package=post('manager','/api/printing/setup',body)
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(package['bundle']))) as bundle:
+        config=json.loads(bundle.read('setup.json'))
+        assert config['branch_id']=='ops-branch'
+        assert {'Start.cmd','KpsPrintBridge.cs','logo.png'} <= set(bundle.namelist())
+    def device():
+        return next(x for x in actor('manager').get('/api/printing/devices').json()['devices'] if x['id']==package['id'])
+    assert device()['connection_status']=='pending'
+    redemption={'pairing_code':config['pairing_code'],'printer_name':'Synthetic Windows printer'}
+    response=actor('customer').post('/api/printing/bridge/pair',json=redemption)
+    assert response.status_code==200
+    assert device()['connection_status']=='online' and not device()['approved_at']
+    assert actor('customer').post('/api/printing/bridge/pair',json=redemption).status_code==401
+    with db.tx() as conn:
+        conn.execute("UPDATE branch_print_devices SET last_seen_at=now()-interval '2 minutes' WHERE id=%s",(package['id'],))
+    assert device()['connection_status']=='offline'
+    token=response.json()['token']
+    actor('customer').post('/api/printing/bridge/next',json={},headers={'Authorization':'Bearer '+token})
+    assert device()['connection_status']=='online'
+    post('manager','/api/printing/devices/'+package['id']+'/revoke',{'reason':'Reset synthetic pairing'})
+    assert device()['connection_status']=='revoked'
+    assert actor('customer').post('/api/printing/bridge/next',json={},headers={'Authorization':'Bearer '+token}).status_code==401

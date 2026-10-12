@@ -12,6 +12,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+using System.Windows.Forms;
 
 class KpsPrintBridge {
     const string Origin = "https://kps-order-emergency-v4.onrender.com";
@@ -63,20 +64,42 @@ class KpsPrintBridge {
     }
     static void Configure() {
         Directory.CreateDirectory(DataDir);string config=Path.Combine(DataDir,"device.bin");
-        if(File.Exists(config)) {
+        string setupPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"setup.json");
+        if(File.Exists(config) && !File.Exists(setupPath)) {
             byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(config),null,DataProtectionScope.CurrentUser);
             var saved=Obj(Json.DeserializeObject(Encoding.UTF8.GetString(plain)));
             Token=Str(saved,"token");Printer=Str(saved,"printer_name");
         } else {
             var printers=PrinterSettings.InstalledPrinters;
             if(printers.Count==0)throw new Exception("No installed Windows printers.");
-            for(int i=0;i<printers.Count;i++)Console.WriteLine((i+1)+": "+printers[i]);
-            Console.Write("Choose the existing branch printer number: ");int selected;
-            if(!Int32.TryParse(Console.ReadLine(),out selected)||selected<1||selected>printers.Count)throw new Exception("Invalid printer selection.");
-            Printer=printers[selected-1];Console.Write("Pairing code from KPS manager: ");string code=Console.ReadLine().Trim();
-            var paired=Api("bridge/pair",new {pairing_code=code,printer_name=Printer});Token=Str(paired,"token");
+            var setup=File.Exists(setupPath)?Obj(Json.DeserializeObject(File.ReadAllText(setupPath,Encoding.UTF8))):new Dictionary<string,object>();
+            Application.EnableVisualStyles();
+            using(var form=new Form {Text="KPS — ربط طابعة الفرع / Printer setup",Width=600,Height=340,StartPosition=FormStartPosition.CenterScreen,RightToLeft=RightToLeft.Yes,Font=new Font("Tahoma",11),FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false}) {
+                var title=new Label {Text="الفرع / Branch: "+Str(setup,"branch_name"),Left=20,Top=20,Width=540,Height=45};
+                var list=new ComboBox {Left=20,Top=95,Width=540,DropDownStyle=ComboBoxStyle.DropDownList,RightToLeft=RightToLeft.No};
+                foreach(string printer in printers)list.Items.Add(printer);
+                var hint=new Label {Text="اختر الطابعة المعرفة على هذا الكمبيوتر / Select printer",Left=20,Top=65,Width=540,Height=25};
+                var codeBox=new TextBox {Left=20,Top=140,Width=540,Text=Str(setup,"pairing_code"),Visible=!setup.ContainsKey("pairing_code"),RightToLeft=RightToLeft.No};
+                var status=new Label {Left=20,Top=180,Width=540,Height=45,Text=File.Exists(config)?"سيستبدل ربط هذا الكمبيوتر بعد نجاح الربط الجديد / Replace this computer's connection":""};
+                var connect=new Button {Text="ربط / Connect",Left=200,Top=240,Width=170,Height=40};
+                form.Controls.AddRange(new Control[]{title,hint,list,codeBox,status,connect});
+                connect.Click+=delegate {
+                    if(list.SelectedIndex<0){status.Text="اختر الطابعة أولاً / Select a printer first";return;}
+                    connect.Enabled=false;status.Text="جاري الربط / Connecting…";form.Refresh();
+                    try {
+                        Printer=Convert.ToString(list.SelectedItem);Token=null;
+                        var paired=Api("bridge/pair",new {pairing_code=codeBox.Text.Trim(),printer_name=Printer});Token=Str(paired,"token");
+                        form.DialogResult=DialogResult.OK;form.Close();
+                    }catch(WebException error){var response=error.Response as HttpWebResponse;status.Text=response!=null && response.StatusCode==HttpStatusCode.Unauthorized?"انتهى رمز الربط؛ نزّل إعداد الفرع مجدداً / Download fresh branch setup":"تعذر الاتصال؛ تحقق من الإنترنت والصلاحية / Check connection and permission";connect.Enabled=true;}
+                };
+                if(form.ShowDialog()!=DialogResult.OK)throw new Exception("Setup cancelled; previous connection unchanged.");
+            }
             byte[] encrypted=ProtectedData.Protect(Encoding.UTF8.GetBytes(Json.Serialize(new {token=Token,printer_name=Printer})),null,DataProtectionScope.CurrentUser);
-            using(var file=new FileStream(config,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {file.Write(encrypted,0,encrypted.Length);file.Flush(true);}
+            string pending=config+".new";
+            using(var file=new FileStream(pending,FileMode.Create,FileAccess.Write,FileShare.None)) {file.Write(encrypted,0,encrypted.Length);file.Flush(true);}
+            if(File.Exists(config))File.Replace(pending,config,null);else File.Move(pending,config);
+            if(File.Exists(setupPath))File.Delete(setupPath);
+            MessageBox.Show("تم الربط. ارجع للموقع لطباعة صفحة اختبار ثم اعتماد الطابعة.\nConnected. Return to the website to print a test and approve.","KPS",MessageBoxButtons.OK,MessageBoxIcon.Information);
         }
         var settings=new PrinterSettings {PrinterName=Printer};
         if(!settings.IsValid)throw new Exception("The paired Windows printer is not installed for this Windows user.");
@@ -202,6 +225,7 @@ class KpsPrintBridge {
             document.Print(); // Only successful spool submission, never proof of paper.
         }
     }
+    [STAThread]
     static int Main(string[] args) {
         if(args.Length>0 && args[0]=="--self-test") {
             var fixture=Obj(Json.DeserializeObject("{\"lines\":[{\"text\":\"KPS قهوة\",\"bold\":true,\"center\":true}]}"));
@@ -224,7 +248,7 @@ class KpsPrintBridge {
         }
         bool created;
         using(var mutex=new Mutex(true,"Local\\KPSBranchPrintBridge",out created)) {
-            if(!created){Console.WriteLine("A bridge is already running for this Windows session.");return 1;}
+            if(!created){MessageBox.Show("أغلق نافذة برنامج الطباعة السابقة ثم افتح الإعداد مجدداً.\nClose the previous bridge window, then reopen setup.","KPS");return 1;}
             try {
                 if(args.Length>0 && args[0]=="--re-pair") {
                     string config=Path.Combine(DataDir,"device.bin");

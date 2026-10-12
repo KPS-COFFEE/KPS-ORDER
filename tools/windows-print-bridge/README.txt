@@ -1,14 +1,22 @@
 KPS Windows Print Bridge
 
-1. Extract the ZIP into a permanent folder on the branch Windows computer.
-2. Confirm the existing thermal printer prints a Windows test page.
-3. In KPS Operations, open Branch printers, create a pairing code for this branch.
-4. Double-click Start.cmd. It compiles the included source locally using Windows
-   .NET Framework; it does not install a printer or change printer/network settings.
-5. Select the EXISTING installed Windows printer by number. Enter the pairing code.
+1. In KPS > Printer management, select the correct branch and Download branch setup.
+2. On that branch's Windows computer, close the old bridge window, extract the
+   downloaded ZIP into a permanent folder, then double-click Start.cmd.
+3. The setup window shows the branch name. Select the installed thermal printer
+   from its dropdown and click Connect. No console command or code copying needed.
+   The setup package expires after 10 minutes and is single-use; download a fresh
+   package if expired. It contains a secret: do not share it outside that branch.
+4. Return to KPS. The status refreshes automatically. Click Print test page.
+5. Check the physical paper, branch, logo, Arabic and margins, then click Approve.
 6. Keep the bridge window open and this Windows user signed in. The computer must
-   remain awake and online. The bridge registers automatic startup for this Windows user. Keep the extracted
-   folder in its permanent location. Start.cmd also resumes the same registration.
+   remain awake and online. The bridge registers automatic startup for this user.
+   Keep the extracted folder in its permanent location.
+
+The portal shows connection status and system notes. A missed heartbeat indicates
+no connection; it does not prove sleep, power loss or an internet outage. Approval
+is separate from live connectivity. A previously approved offline printer is not
+shown as online. Historic print journals are preserved during replacement.
 
 No inbound port, public printer IP, admin password or remote-desktop access required.
 One bridge process per Windows account. The device key is encrypted with Windows
@@ -37,7 +45,7 @@ Restoring a server backup revokes printer devices and cancels pending prints;
 pair again after the manager reviews the Windows print queue.
 
 
-Only an owner or delivery manager can create/revoke a pairing. Replacing a
+An owner, delivery manager or explicitly authorized printer administrator can create/revoke a pairing. Replacing a
 registration or revoking it requires a recorded reason. Branch staff cannot open
 printer administration. A selected remote print destination does not transfer
 fulfillment ownership of the order. The customer branch is selected by default.

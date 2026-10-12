@@ -1,5 +1,7 @@
 """Branch-bound outbound print queues. Spool submission is not proof of paper output."""
 import io
+import base64
+import json
 import secrets
 import zipfile
 from datetime import datetime, timezone
@@ -99,8 +101,30 @@ def bridge(request: Request):
 @router.get('/devices')
 def devices(user=Depends(printer_admin)):
     with db.tx() as conn:
-        rows = conn.execute('SELECT id,branch_id,label,printer_name,paper_mm,last_seen_at,revoked_at,approved_at FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',(user['brand_id'],)).fetchall()
-        return {'devices':[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]}
+        rows = conn.execute('SELECT id,branch_id,label,printer_name,paper_mm,last_seen_at,revoked_at,approved_at,acceptance_job_id FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',(user['brand_id'],)).fetchall()
+        visible=[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]
+        for row in visible:
+            row['connection_status']=connection_status(row)
+        return {'devices':visible}
+
+
+def connection_status(row):
+    if row['revoked_at']: return 'revoked'
+    if not row['printer_name']: return 'pending'
+    if not row['last_seen_at'] or (datetime.now(timezone.utc)-row['last_seen_at']).total_seconds()>45:
+        return 'offline'
+    return 'online'
+
+
+@router.post('/setup')
+def guided_setup(body: PairBody, response: Response, user=Depends(printer_admin)):
+    # The setup secret is short-lived and branch-bound, never placed in a URL.
+    with db.tx() as conn:
+        branch=scope(conn,user,body.branch_id)
+    pair=pair_device(body,user)
+    config={'pairing_code':pair['pairing_code'],'branch_name':branch['name'],'branch_id':body.branch_id}
+    response.headers['Cache-Control']='no-store'
+    return {'id':pair['id'],'bundle':base64.b64encode(bridge_bundle(config)).decode('ascii')}
 
 
 class ChangeBody(BaseModel):
@@ -293,9 +317,15 @@ def acknowledge(identifier:str,body:AckBody,device=Depends(bridge)):
 
 @router.get('/windows-bridge.zip')
 def download_bridge(user=Depends(printer_admin)):
+    return Response(bridge_bundle(),media_type='application/zip',headers={'Content-Disposition':'attachment; filename="KPS-Windows-Print-Bridge.zip"','Cache-Control':'no-store'})
+
+
+def bridge_bundle(setup=None):
     output=io.BytesIO()
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as bundle:
         for name in ('KpsPrintBridge.cs','Start.cmd','README.txt'):
             bundle.write(db.ROOT/'tools'/'windows-print-bridge'/name,name)
         bundle.write(db.ROOT/'public'/'assets'/'kps-receipt-logo.png','logo.png')
-    return Response(output.getvalue(),media_type='application/zip',headers={'Content-Disposition':'attachment; filename="KPS-Windows-Print-Bridge.zip"'})
+        if setup:
+            bundle.writestr('setup.json',json.dumps(setup,ensure_ascii=False))
+    return output.getvalue()
