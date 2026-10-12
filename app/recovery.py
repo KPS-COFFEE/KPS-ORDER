@@ -136,7 +136,10 @@ def _record(conn, config, provider_id, event_type, outcome, source, occurred, di
                   occurred if outcome == 'failed' else None, source))
     if outcome == 'failed':
         code = {'provider_verification_failed': 'PROVIDER_VERIFICATION_FAILED',
-                'provider_recovery_not_available': 'PROVIDER_RECOVERY_UNAVAILABLE'}.get(event_type,
+                'provider_recovery_not_available': 'PROVIDER_RECOVERY_UNAVAILABLE',
+                'portable_backup_failed': 'PORTABLE_BACKUP_FAILED',
+                'portable_archive_verification_failed': 'PORTABLE_ARCHIVE_VERIFICATION_FAILED',
+                'isolated_restore_failed': 'ISOLATED_RESTORE_FAILED'}.get(event_type,
                 event_type.upper() if source == 'runtime_monitor' else 'BACKUP_PROVIDER_FAILURE')
         # Concurrent polls/webhook retries retain all observations, but only one
         # unacknowledged alert per failure type is created within a 24-hour span.

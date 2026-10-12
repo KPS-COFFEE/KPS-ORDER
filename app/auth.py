@@ -13,7 +13,7 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import db
 
@@ -469,6 +469,13 @@ class GuestBody(BaseModel):
     phone: str = Field(min_length=8,max_length=30)
     brand_id: str = Field(default='kps',min_length=1,max_length=80)
     email: str | None = Field(default=None,max_length=254)
+
+    @field_validator('*')
+    @classmethod
+    def persistable_guest_text(cls, value):
+        if isinstance(value, str) and '\x00' in value:
+            raise ValueError('Text must not contain a NUL character.')
+        return value
 
 
 @router.post('/identity/guest')

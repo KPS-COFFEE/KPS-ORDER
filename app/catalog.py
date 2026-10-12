@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, parse_qs, urlencode, unquote
 
 from fastapi import APIRouter, Depends, Header, Query
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from . import auth, db, service_hours
 from .service_hours import closed_delivery_message, hours_status
@@ -440,20 +440,50 @@ def availability(product_id: str, branch_id: str):
         return {'available': available, 'reason': reason, 'source_verified': source_approved(product)}
 
 
-class Location(BaseModel):
+class _CheckoutModel(BaseModel):
+    """Reject text PostgreSQL cannot persist before a checkout transaction starts."""
     model_config = ConfigDict(extra='forbid')
-    lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
-    lng: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+    @field_validator('*', check_fields=False)
+    @classmethod
+    def persistable_text(cls, value):
+        def check(item):
+            if isinstance(item, str):
+                if '\x00' in item:
+                    raise ValueError('Text must not contain a NUL character.')
+            elif isinstance(item, dict):
+                for key, child in item.items():
+                    check(key)
+                    check(child)
+            elif isinstance(item, (list, tuple)):
+                for child in item:
+                    check(child)
+        check(value)
+        return value
 
 
-class Car(BaseModel):
+class Location(_CheckoutModel):
+    model_config = ConfigDict(extra='forbid')
+    lat: float = Field(ge=-90, le=90, allow_inf_nan=False, strict=True)
+    lng: float = Field(ge=-180, le=180, allow_inf_nan=False, strict=True)
+
+
+class Car(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
     plate: str = Field(min_length=1, max_length=30)
     color: str = Field(min_length=1, max_length=40)
     model: str = Field(default='', max_length=60)
 
+    @field_validator('plate', 'color')
+    @classmethod
+    def car_identification_required(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError('Car plate and color are required.')
+        return value
 
-class CustomerInfo(BaseModel):
+
+class CustomerInfo(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=100)
     phone: str | None = Field(default=None, min_length=8, max_length=30)
@@ -462,13 +492,21 @@ class CustomerInfo(BaseModel):
     location: Location | None = None
     car: Car | None = None
 
+    @field_validator('name')
+    @classmethod
+    def customer_name_required(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError('Customer name is required.')
+        return value
 
-class Unit(BaseModel):
+
+class Unit(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
     options: dict[str, str | list[str]] = Field(default_factory=dict, max_length=15)
 
 
-class OrderItem(BaseModel):
+class OrderItem(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
     product_id: str = Field(min_length=1, max_length=80)
     quantity: StrictInt = Field(ge=1, le=50)
@@ -476,7 +514,7 @@ class OrderItem(BaseModel):
     note: str = Field(default='', max_length=300)
 
 
-class QuoteBody(BaseModel):
+class QuoteBody(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
     brand_id: str = Field(default='kps', min_length=1, max_length=80)
     branch_id: str = Field(min_length=1, max_length=80)

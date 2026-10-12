@@ -45,22 +45,32 @@ class KpsPrintBridge {
         return Path.Combine(DataDir,id+".json");
     }
     static void Ack(string id,string status) {Api("bridge/jobs/"+id+"/ack",new {status=status});}
-    static void RecoverAcknowledgements() {
-        foreach(string path in Directory.GetFiles(DataDir,"print_*.json")) {
-            var record=Obj(Json.DeserializeObject(File.ReadAllText(path,Encoding.UTF8)));
-            string status=Str(record,"status");if(status=="acknowledged")continue;
-            string id=Path.GetFileNameWithoutExtension(path);
-            string outcome=status=="submitted" ? "submitted" : "uncertain";
-            try { Ack(id,outcome); }
-            catch(WebException error) {
-                var response=error.Response as HttpWebResponse;
-                if(response==null || response.StatusCode!=HttpStatusCode.NotFound)throw;
-                // A restored database or newly paired device may not own this
-                // historic job. Preserve the journal; NEVER print it again.
-                outcome="server_job_unavailable";
-            }
-            Durable(path,Json.Serialize(new {status="acknowledged",outcome=outcome}));
+    static string RecordedOutcome(Dictionary<string,object> record) {
+        return Str(record,"status")=="submitted" ||
+            (Str(record,"status")=="acknowledged" && Str(record,"outcome")=="submitted") ? "submitted" : "uncertain";
+    }
+    static void AcknowledgeRecord(string path,Action<string,string> acknowledge,bool replay=false) {
+        var record=Obj(Json.DeserializeObject(File.ReadAllText(path,Encoding.UTF8)));
+        if(Str(record,"status")=="acknowledged" && !replay)return;
+        string id=Path.GetFileNameWithoutExtension(path),outcome=RecordedOutcome(record);
+        try { acknowledge(id,outcome); }
+        catch(WebException error) {
+            var response=error.Response as HttpWebResponse;
+            if(response==null || response.StatusCode!=HttpStatusCode.NotFound)throw;
+            // A restored database or newly paired device may not own this
+            // historic job. Preserve the journal; NEVER print it again.
+            outcome="server_job_unavailable";
         }
+        Durable(path,Json.Serialize(new {status="acknowledged",outcome=outcome}));
+    }
+    static void RecoverAcknowledgements() {
+        foreach(string path in Directory.GetFiles(DataDir,"print_*.json"))AcknowledgeRecord(path,Ack);
+    }
+    static void DispatchOnce(Dictionary<string,object> job,string path,Action<Dictionary<string,object>> submit) {
+        if(File.Exists(path))return;
+        Durable(path,"{\"status\":\"started\"}");
+        try {submit(job);Durable(path,"{\"status\":\"submitted\"}");}
+        catch {Durable(path,"{\"status\":\"uncertain\"}");Console.WriteLine("Print uncertain. Check the Windows queue before requesting a reprint.");}
     }
     static void Configure() {
         Directory.CreateDirectory(DataDir);string config=Path.Combine(DataDir,"device.bin");
@@ -244,7 +254,52 @@ class KpsPrintBridge {
                 DrawLine(graphics,qrLine,font,new RectangleF(0,0,290,290),false);
                 if(bitmap.GetPixel(145,145).R!=0 || bitmap.GetPixel(5,5).R!=255)return 5;
             }
-            Console.WriteLine("Bridge compile, JSON and logo checks passed; no printer used.");return 0;
+            // Exercise the actual durable journal and lost-ACK recovery without
+            // opening a printer or contacting the server. Only this temp path is used.
+            string testDir=Path.Combine(Path.GetTempPath(),"KPS-Print-Self-Test-"+Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(testDir);
+            try {
+                string id="print_"+new string('a',32),path=Path.Combine(testDir,id+".json");
+                var job=new Dictionary<string,object>{{"id",id}};int submissions=0,acks=0;
+                Action<Dictionary<string,object>> submit=delegate(Dictionary<string,object> ignored) {
+                    if(Str(Obj(Json.DeserializeObject(File.ReadAllText(path,Encoding.UTF8))),"status")!="started")
+                        throw new Exception("Journal was not durable before spool dispatch.");
+                    submissions++;
+                };
+                DispatchOnce(job,path,submit);
+                if(submissions!=1 || RecordedOutcome(Obj(Json.DeserializeObject(File.ReadAllText(path,Encoding.UTF8))))!="submitted")return 6;
+                bool lostAck=false;
+                try {AcknowledgeRecord(path,delegate(string jobId,string outcome) {throw new IOException("Simulated lost ACK");});}
+                catch(IOException) {lostAck=true;}
+                if(!lostAck || Str(Obj(Json.DeserializeObject(File.ReadAllText(path,Encoding.UTF8))),"status")!="submitted")return 7;
+                DispatchOnce(job,path,submit);
+                Action<string,string> acknowledge=delegate(string jobId,string outcome) {
+                    if(jobId!=id || outcome!="submitted")throw new Exception("Recovered ACK changed a submitted outcome.");
+                    acks++;
+                };
+                AcknowledgeRecord(path,acknowledge);AcknowledgeRecord(path,acknowledge);
+                DispatchOnce(job,path,submit);AcknowledgeRecord(path,acknowledge,true);
+                if(submissions!=1 || acks!=2)return 8;
+                string failedId="print_"+new string('b',32),failedPath=Path.Combine(testDir,failedId+".json");
+                int failedSubmissions=0;
+                Action<Dictionary<string,object>> fail=delegate(Dictionary<string,object> ignored) {
+                    failedSubmissions++;throw new IOException("Simulated ambiguous spool failure");
+                };
+                DispatchOnce(new Dictionary<string,object>{{"id",failedId}},failedPath,fail);
+                DispatchOnce(new Dictionary<string,object>{{"id",failedId}},failedPath,fail);
+                if(failedSubmissions!=1)return 9;
+                AcknowledgeRecord(failedPath,delegate(string jobId,string outcome) {
+                    if(jobId!=failedId || outcome!="uncertain")throw new Exception("Failed spool must remain uncertain.");
+                });
+                string crashId="print_"+new string('c',32),crashPath=Path.Combine(testDir,crashId+".json");
+                Durable(crashPath,"{\"status\":\"started\"}");
+                DispatchOnce(new Dictionary<string,object>{{"id",crashId}},crashPath,fail);
+                if(failedSubmissions!=1)return 10;
+                AcknowledgeRecord(crashPath,delegate(string jobId,string outcome) {
+                    if(jobId!=crashId || outcome!="uncertain")throw new Exception("Interrupted spool must remain uncertain.");
+                });
+            } finally {Directory.Delete(testDir,true);}
+            Console.WriteLine("Bridge compile, JSON, logo, durable dispatch and lost-ACK recovery checks passed; no printer used.");return 0;
         }
         bool created;
         using(var mutex=new Mutex(true,"Local\\KPSBranchPrintBridge",out created)) {
@@ -260,11 +315,10 @@ class KpsPrintBridge {
                         RecoverAcknowledgements();var response=Api("bridge/next",new {});
                         if(response["job"]!=null) {
                             var job=Obj(response["job"]);string id=Str(job,"id"),path=JobPath(id);
-                            if(File.Exists(path)) {Ack(id,"uncertain");continue;}
-                            Durable(path,"{\"status\":\"started\"}");
-                            try {Print(job);Durable(path,"{\"status\":\"submitted\"}");}
-                            catch {Durable(path,"{\"status\":\"uncertain\"}");Console.WriteLine("Print uncertain. Check the Windows queue before requesting a reprint.");}
-                            RecoverAcknowledgements();
+                            DispatchOnce(job,path,Print);
+                            // A duplicate delivery must replay its durable outcome,
+                            // including submitted; it must not downgrade to uncertain.
+                            AcknowledgeRecord(path,Ack,true);
                         }
                     }catch(WebException ex) {
                         var response=ex.Response as HttpWebResponse;

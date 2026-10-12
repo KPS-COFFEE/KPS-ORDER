@@ -38,7 +38,7 @@ jobs:
     # to the emergency source branch without changing legacy integrations.
     if: github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:18
@@ -68,6 +68,7 @@ jobs:
       # Browser tests must launch real Chromium against the isolated app/DB.
       # No provider credentials or intercepted API responses are used.
       TEST_BROWSER: "1"
+      RELEASE_FULL_CI: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -119,6 +120,10 @@ jobs:
           accounting = bool(changed & {'app/accounting.py','app/accounting_export.py','tests/test_accounting.py','tests/test_accounting_browser.py','public/assets/accounting.js'}) and changed <= accounting_files
           focused = accounting or chat_refresh or support or focused or staff_tests or password_owner or vehicle_shift or alerts or images or coverage or driver_cash or printer_setup
           operations = bool(changed) and changed <= operation_files and not focused
+          # Release certification must execute the complete suite on every
+          # candidate, even when its last commit contains only a narrow fix.
+          if os.getenv('RELEASE_FULL_CI') == '1':
+              accounting = chat_refresh = support = printer_setup = driver_cash = coverage = images = alerts = vehicle_shift = staff_tests = password_owner = focused = operations = False
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('accounting_only=' + str(accounting).lower() + '\n')
               output.write('chat_refresh_only=' + str(chat_refresh).lower() + '\n')

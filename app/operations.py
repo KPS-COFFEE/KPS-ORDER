@@ -6,12 +6,34 @@ import json as jsonlib
 from uuid import uuid4
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 from . import db, auth, service_hours, shift_vehicle
 
 router = APIRouter(prefix='/api', tags=['operations'])
 RIYADH = ZoneInfo('Asia/Riyadh')
 TERMINAL = ('delivered', 'cancelled', 'transferred')
+MAX_HALALAS = 9223372036854775807
+
+
+class OperationBody(BaseModel):
+    # Required reasons and handover references must contain actual text. Reject
+    # PostgreSQL-invalid NULs at the API boundary instead of failing after work
+    # has started inside a financial transaction.
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator('*', mode='before')
+    @classmethod
+    def valid_text(cls, value):
+        def has_nul(item):
+            if isinstance(item, str):
+                return '\x00' in item
+            if isinstance(item, dict):
+                return any(has_nul(key) or has_nul(item) for key, item in item.items())
+            if isinstance(item, (list, tuple)):
+                return any(has_nul(item) for item in item)
+            return False
+        if has_nul(value):raise ValueError('Invalid text')
+        return value
 
 
 def uid(): return uuid4().hex
@@ -57,7 +79,11 @@ def available_balance(c,s):
 def unresolved(c, sid):
     return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(sid,)).fetchone()['n']
 
+def valid_cash_amount(amount):
+    if not -MAX_HALALAS-1<=amount<=MAX_HALALAS:fail(422,'المبلغ النقدي يتجاوز النطاق المدعوم')
+
 def event(c,sid,amount,kind,ref,actor,reason):
+    valid_cash_amount(amount)
     c.execute('INSERT INTO custody_events(id,shift_id,amount_halalas,kind,reference_id,actor_id,reason) VALUES(%s,%s,%s,%s,%s,%s,%s)',(uid(),sid,amount,kind,ref,actor,reason))
 
 def mutate(c,user,request,operation,body,perform):
@@ -123,13 +149,13 @@ def authorize_replay(c,user,operation,body,result):
         row=c.execute('SELECT h.*,s.brand_id,s.branch_ids,s.user_id source_user,t.user_id target_user FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE h.id=%s',(result['handover_id'],)).fetchone()
         if not row or not same_scope(user,row) or (user['role']!='owner' and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
 
-class ShiftOpen(BaseModel):
+class ShiftOpen(OperationBody):
     vehicle_inspection: shift_vehicle.Inspection|None=None
     kind: str
     branch_ids: list[str] = Field(default_factory=list)
     manager_shift_id: str|None=None
     user_id: str|None=None
-    opening_halalas: StrictInt=Field(0,ge=0)
+    opening_halalas: StrictInt=Field(0,ge=0,le=MAX_HALALAS)
     reason: str=''
 
 
@@ -209,6 +235,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             sid=uid()
             carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL FOR UPDATE',(target['id'],)).fetchall()
             carried=sum(x['amount_halalas'] for x in carryovers)
+            valid_cash_amount(body.opening_halalas+carried)
             c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
             if body.kind=='driver':
                 vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
@@ -299,19 +326,19 @@ def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
             return {'shift_id':sid,'status':'closing','unresolved_tasks':unresolved(c,sid),'expected_halalas':balance(c,s)}
         return mutate(c,user,request,'shift.closing:'+sid,{},perform)
 
-class ClosureHandover(BaseModel):
+class ClosureHandover(OperationBody):
     recipient_user_id: str
     to_shift_id: str|None=None
     receiving_branch_id: str|None=None
     reference: str=Field(min_length=1,max_length=200)
 
-class ClosureSubmit(BaseModel):
+class ClosureSubmit(OperationBody):
     handover: ClosureHandover|None=None
     exception_reason: str=Field(default="",max_length=2000)
     vehicle_inspection: shift_vehicle.Inspection|None=None
-    counted_halalas: StrictInt=Field(ge=0)
-    handover_halalas: StrictInt=Field(ge=0)
-    retained_halalas: StrictInt=Field(0,ge=0)
+    counted_halalas: StrictInt=Field(ge=0,le=MAX_HALALAS)
+    handover_halalas: StrictInt=Field(ge=0,le=MAX_HALALAS)
+    retained_halalas: StrictInt=Field(0,ge=0,le=MAX_HALALAS)
 
 @router.post('/shifts/{sid}/submit')
 def submit_close(sid:str,body:ClosureSubmit,request:Request,user=Depends(auth.current_user)):
@@ -346,9 +373,9 @@ def submit_close(sid:str,body:ClosureSubmit,request:Request,user=Depends(auth.cu
             return {'shift_id':sid,'status':'submitted','submission':values}
         return mutate(c,user,request,'shift.submit:'+sid,body.model_dump(),perform)
 
-class Review(BaseModel):
-    exception_reason: str|None=None
-    reason: str=''
+class Review(OperationBody):
+    exception_reason: str|None=Field(None,max_length=2000)
+    reason: str=Field('',max_length=2000)
 
 @router.post('/shifts/{sid}/return')
 def return_close(sid:str,body:Review,request:Request,user=Depends(auth.current_user)):
@@ -410,7 +437,7 @@ def eligible_driver_shift(c,s,order):
     if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (principal['role']!='owner' and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
     return manager
 
-class Assignment(BaseModel): driver_shift_id:str
+class Assignment(OperationBody): driver_shift_id:str
 
 @router.post('/orders/{oid}/assign')
 def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_user)):
@@ -450,7 +477,7 @@ def tasks(user=Depends(auth.current_user)):
                     for item in r['snapshot'].get('items',[]):item.pop('note',None)
         return safe({'tasks':rows})
 
-class TaskTransition(BaseModel):
+class TaskTransition(OperationBody):
     photo_id:str|None=None
     status:str
     proof:str=Field('',max_length=2000)
@@ -522,7 +549,7 @@ def operational_alerts(user=Depends(auth.current_user)):
             exceptions=c.execute("SELECT n.id,n.report_id FROM report_notifications n JOIN closure_reports r ON r.id=n.report_id WHERE n.recipient_user_id=%s AND n.brand_id=%s AND n.read_at IS NULL AND r.snapshot->'shift'->'submission'->'closure_exception' IS NOT NULL ORDER BY n.created_at DESC LIMIT 50",(user['id'],user['brand_id'])).fetchall()
         return safe({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions})
 
-class TaskHandover(BaseModel): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
+class TaskHandover(OperationBody): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
 
 @router.post('/tasks/{tid}/handover')
 def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.current_user)):
@@ -555,19 +582,22 @@ def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)
             to=lock_shift(c,t['transfer_shift_id']);shift_access(c,user,to)
             if to['user_id']!=user['id'] or to['status']!='open':fail(409,'الشفت غير متاح')
             order=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone();eligible_driver_shift(c,to,order)
-            status=t['status']; c.execute("UPDATE driver_tasks SET status='transferred' WHERE id=%s",(tid,));newid=uid()
-            c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at) VALUES(%s,%s,%s,%s,%s,%s,now(),%s)',(newid,t['order_id'],user['id'],to['id'],status if status=='picked_up' else 'accepted',t['transfer_requested_by'],t['picked_up_at']))
+            status='picked_up' if t['status']=='picked_up' else 'accepted'
+            c.execute("UPDATE driver_tasks SET status='transferred' WHERE id=%s",(tid,));newid=uid()
+            c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at) VALUES(%s,%s,%s,%s,%s,%s,now(),%s)',(newid,t['order_id'],user['id'],to['id'],status,t['transfer_requested_by'],t['picked_up_at']))
+            c.execute('UPDATE orders SET delivery_status=%s,version=version+1 WHERE id=%s',(status,t['order_id']))
+            db.event(c,t['order_id'],user['id'],'task.handover.accepted',{'previous_task_id':tid,'task_id':newid,'driver_id':user['id'],'previous':t['status'],'status':status})
             db.audit(c,user['id'],'task.handover.accept','task',tid,{'new_task_id':newid})
             return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(newid,)).fetchone()}
         return mutate(c,user,request,'task.handover.accept:'+tid,{},perform)
 
-class Collection(BaseModel):
+class Collection(OperationBody):
     method:str
-    amount_halalas:StrictInt=Field(gt=0)
-    tendered_halalas:StrictInt|None=Field(None,ge=0)
+    amount_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
+    tendered_halalas:StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     reference:str=Field('',max_length=200)
-    cash_halalas:StrictInt|None=Field(None,gt=0)
-    card_halalas:StrictInt|None=Field(None,gt=0)
+    cash_halalas:StrictInt|None=Field(None,gt=0,le=MAX_HALALAS)
+    card_halalas:StrictInt|None=Field(None,gt=0,le=MAX_HALALAS)
 
 @router.post('/orders/{oid}/collect')
 def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_user)):
@@ -594,6 +624,7 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
                 if not t:fail(409,'استلم المهمة من الفرع أولا')
                 s=lock_shift(c,t['shift_id'])
                 if s['status'] not in ('open','closing'):fail(409,'الشفت لا يسمح بالتحصيل')
+                valid_cash_amount(balance(c,s)+cash)
                 sid=s['id']
             else:roles(user,'branch_manager','owner')
             change=body.tendered_halalas-cash if cash else 0
@@ -607,8 +638,8 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             return {'collection_id':ids[0],'collection_ids':ids,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
         return mutate(c,user,request,'order.collect:'+oid,body.model_dump(),perform)
 
-class Refund(BaseModel):
-    amount_halalas:StrictInt=Field(gt=0)
+class Refund(OperationBody):
+    amount_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
     method:str
     reason:str=Field(min_length=1,max_length=2000)
     line_quantities:dict[str,StrictInt]=Field(default_factory=dict)
@@ -643,7 +674,7 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             return {'refund_id':rid,'payment_status':status}
         return mutate(c,user,request,'order.refund:'+oid,body.model_dump(),perform)
 
-class PaymentTerminal(BaseModel):
+class PaymentTerminal(OperationBody):
     provider:str=Field('',max_length=100)
     terminal_id:str=Field('',max_length=100)
     serial_number:str=Field('',max_length=100)
@@ -684,11 +715,11 @@ def set_payment_terminal(driver_id:str,body:PaymentTerminal,request:Request,user
         return mutate(c,user,request,'driver.payment_terminal:'+driver_id,body.model_dump(),perform)
 
 
-class Custody(BaseModel):
+class Custody(OperationBody):
     from_shift_id:str
     to_shift_id:str|None=None
     recipient_user_id:str|None=None
-    amount_halalas:StrictInt=Field(ge=0)
+    amount_halalas:StrictInt=Field(ge=0,le=MAX_HALALAS)
     reference:str=Field(min_length=1,max_length=200)
     closure:bool=False
     receiving_branch_id:str|None=None
@@ -762,6 +793,7 @@ def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user)):
             ids=sorted(set([t['from_shift_id']]+([t['to_shift_id']] if t['to_shift_id'] else [])))
             ss={i:lock_shift(c,i) for i in ids}
             if ss[t['from_shift_id']]['status']=='closed' or (t['to_shift_id'] and ss[t['to_shift_id']]['status'] not in ('open','closing')):fail(409,'شفت مقفل')
+            if t['to_shift_id']:valid_cash_amount(balance(c,ss[t['to_shift_id']])+t['amount_halalas'])
             c.execute("UPDATE custody_transfers SET status='confirmed',confirmed_by=%s,confirmed_at=now() WHERE id=%s",(user['id'],cid))
             event(c,t['from_shift_id'],-t['amount_halalas'],'transfer_out',cid,user['id'],t['reference'])
             if t['to_shift_id']:event(c,t['to_shift_id'],t['amount_halalas'],'transfer_in',cid,user['id'],t['reference'])
@@ -769,10 +801,10 @@ def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user)):
             return {'transfer_id':cid,'status':'confirmed'}
         return mutate(c,user,request,'custody.confirm:'+cid,{},perform)
 
-class AuthorizedCash(BaseModel):
+class AuthorizedCash(OperationBody):
     corrects_report_id:str|None=None
     kind:str
-    amount_halalas:StrictInt
+    amount_halalas:StrictInt=Field(ge=-MAX_HALALAS-1,le=MAX_HALALAS)
     reason:str=Field(min_length=1,max_length=2000)
     reference:str=Field(min_length=1,max_length=200)
 
@@ -786,6 +818,7 @@ def authorized_cash(sid:str,body:AuthorizedCash,request:Request,user=Depends(aut
             if body.kind not in ('expense','direct_receipt','adjustment') or not body.amount_halalas:fail(422,'نوع القيد غير صالح')
             if body.kind=='expense' and body.amount_halalas>=0 or body.kind=='direct_receipt' and body.amount_halalas<=0:fail(422,'إشارة المبلغ غير صحيحة')
             if available_balance(c,s)+body.amount_halalas<0:fail(409,'العهدة غير كافية')
+            valid_cash_amount(balance(c,s)+body.amount_halalas)
             eid=uid();event(c,sid,body.amount_halalas,body.kind,eid,user['id'],body.reason+' / '+body.reference)
             if body.corrects_report_id:
                 from .reporting import report
@@ -849,7 +882,7 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         shift_rows=c.execute("SELECT status,count(*) count,coalesce(sum((submission->>'difference_halalas')::bigint),0) difference_halalas FROM shifts WHERE brand_id=%s AND opened_at<%s AND coalesce(closed_at,%s)>=%s AND (%s OR branch_ids ?| %s) GROUP BY status",(brand,hi,hi,lo,user['role']=='owner',[branch_id] if branch_id else user.get('branch_ids',[]))).fetchall()
         return safe({'period':{'start':lo,'end':hi,'timezone':'Asia/Riyadh','operational_day_start_minutes':minutes,'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ الفترة الحالية يوم تقويمي بتوقيت الرياض'},'summary':summary,'top_items':items,'top_branches':branch_top,'delivery_time':timing,'delivery_performance':frozen_performance,'collections':collected,'shifts':shift_rows,'definitions_url':'/docs/metrics'})
 
-class ManagerHandover(BaseModel):
+class ManagerHandover(OperationBody):
     target_manager_shift_id:str
     reason:str=Field(min_length=1,max_length=2000)
 
@@ -912,11 +945,11 @@ def driver_roster(user=Depends(auth.current_user)):
         return safe({'drivers':visible})
 
 
-class ClosureDraft(BaseModel):
+class ClosureDraft(OperationBody):
     model_config=ConfigDict(extra='forbid')
-    counted_halalas:StrictInt=Field(ge=0)
-    handover_halalas:StrictInt=Field(ge=0)
-    retained_halalas:StrictInt|None=Field(None,ge=0)
+    counted_halalas:StrictInt=Field(ge=0,le=MAX_HALALAS)
+    handover_halalas:StrictInt=Field(ge=0,le=MAX_HALALAS)
+    retained_halalas:StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     notes:str=Field('',max_length=1000)
     reference:str=Field('',max_length=200)
     recipient_user_id:str|None=Field(None,max_length=80)
@@ -958,7 +991,7 @@ def save_closure_draft(sid:str,body:ClosureDraft,request:Request,user=Depends(au
         return mutate(c,user,request,'shift.draft:'+sid,body.model_dump(),perform)
 
 
-class AvailabilityUpdate(BaseModel):
+class AvailabilityUpdate(OperationBody):
     model_config=ConfigDict(extra='forbid')
     available:bool
 

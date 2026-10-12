@@ -69,6 +69,30 @@ def record_drill(result):
                          'restore_drill', datetime.now(timezone.utc), db.digest(result), result, backup_state=False)
 
 
+def record_failure(action):
+    """Persist a sanitized local-tool failure through the existing owner queue.
+
+    Local snapshots and restore drills are separate from provider backup truth.
+    A disconnected source cannot persist its own alert, so retain an explicit
+    private scheduler failure without claiming an external notification arrived.
+    """
+    events = {'backup': 'portable_backup_failed', 'verify': 'portable_archive_verification_failed',
+              'restore-drill': 'isolated_restore_failed'}
+    config = recovery.configuration()
+    if action not in events or not config['provider_configured']:
+        return False
+    try:
+        with db.tx() as conn:
+            recovery._record(conn, config, db.new_id('portable_failure_'), events[action], 'failed',
+                             'portable_backup', datetime.now(timezone.utc), db.digest({'action': action}),
+                             {'action': action}, backup_state=False)
+            recovery.queue_alert_notifications(conn, config)
+        return True
+    except Exception:
+        print('Failure alert could not be persisted; independent scheduler monitoring is required.', file=sys.stderr)
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description='Private backup / separate PostgreSQL restore drill')
     actions = parser.add_subparsers(dest='action', required=True)
@@ -85,6 +109,14 @@ def main():
     restore.add_argument('--evidence-output', default=None, help='New private file for measured restore evidence')
     restore.add_argument('--record', action='store_true', help='Record verified full restore evidence in the bound source DB')
     args = parser.parse_args()
+    try:
+        execute(args)
+    except Exception:
+        record_failure(args.action)
+        raise
+
+
+def execute(args):
     if args.action == 'backup':
         with db.tx() as conn:
             conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')

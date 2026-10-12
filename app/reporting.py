@@ -863,7 +863,11 @@ def make_v5_pdf(snap,view='compact'):
         if table['key']=='drivers':weights=[1.5,.6,.8,.8,.8,.8,.5,1.3]
         widths=[doc.width*w/sum(weights) for w in weights]
         rendered=Table(rows,colWidths=widths,repeatRows=2,hAlign='RIGHT',splitByRow=1)
-        cmds=[('SPAN',(0,0),(-1,0)),('BACKGROUND',(0,1),(-1,1),colors.HexColor('#f1f3ee')),('GRID',(0,1),(-1,-1),.35,colors.HexColor('#d6ddd3')),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5),('TOPPADDING',(0,0),(-1,-1),3),('BOTTOMPADDING',(0,0),(-1,-1),3)]
+        # Compact staff closures keep the same readable type and line spacing.
+        # Use less empty cell padding so the added terminal/receipt metadata does
+        # not force an otherwise small closure onto a nearly empty second page.
+        vertical_padding=1 if view=='compact' else 3
+        cmds=[('SPAN',(0,0),(-1,0)),('BACKGROUND',(0,1),(-1,1),colors.HexColor('#f1f3ee')),('GRID',(0,1),(-1,-1),.35,colors.HexColor('#d6ddd3')),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5),('TOPPADDING',(0,0),(-1,-1),vertical_padding),('BOTTOMPADDING',(0,0),(-1,-1),vertical_padding)]
         if table.get('total'):cmds.append(('BACKGROUND',(0,-1),(-1,-1),colors.HexColor('#fff0e3')))
         rendered.setStyle(TableStyle(cmds));body += [rendered]
     def footer(cv,document):

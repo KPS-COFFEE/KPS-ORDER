@@ -42,6 +42,9 @@ def test_privileged_resend_requires_password_without_changing_staff_access(live_
                 conn.execute('UPDATE sessions SET step_up_at=NULL WHERE user_id=%s', (owner['id'],))
                 before = conn.execute('SELECT role,email,phone,branch_ids,permissions,active,email_verified_at FROM users WHERE id=%s', (target['id'],)).fetchone()
             button = page.locator(f'[data-action=resend-invite][data-id="{target["id"]}"]')
+            # Staff actions are behind a native disclosure. Follow the same
+            # visible path as the owner before clicking its hidden descendant.
+            button.locator('xpath=ancestor::details').locator('summary').click()
             button.click()
             if target['role'] != 'driver':
                 expect(modal).to_be_visible()
