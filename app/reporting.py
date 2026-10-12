@@ -93,7 +93,7 @@ def create_snapshot(c,sid,approved_by):
         snap['support_tickets']=safe(report_tickets(c,s['brand_id'],s['branch_ids'],s['opened_at'],s['closed_at']))
     rid=uid();c.execute('INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s)',(rid,sid,s['kind'],s['brand_id'],db.json(s['branch_ids']),s['user_id'],db.json(snap)))
     queue_v5_renderings(c,rid,snap)
-    if s['kind']=='manager':
+    if s['kind']=='manager' or s.get('submission',{}).get('closure_exception'):
         from .report_notifications import enqueue_manager_closure
         enqueue_manager_closure(c,rid)
     return rid
@@ -645,6 +645,7 @@ def v5_tables(snap,view='compact'):
             receipt_rows.append([name(t.get('confirmed_by') or t.get('recipient_user_id'))+(' / '+destination if destination else ''),str(t.get('reference') or 'غير مسجل'),label(t.get('status'))])
     if not receipt_rows:receipt_rows=[['لا تسليم نقدي مطلوب' if closure.get('handover_halalas')==0 else 'غير مسجل','—','—']]
     table('approval','الاستلام والاعتماد',['المستلم','المرجع','التأكيد'],receipt_rows)
+    if shift.get('submission',{}).get('closure_exception'):table('delegated-closure','إقفال استثنائي',['الحالة','المعتمد'],[['مقفل باستثناء من مدير التوصيل',name(snap.get('approved_by'))]])
     if shift.get('exception_reason'):table('exception','الاستثناء المعتمد',['السبب','المعتمد'],[[shift['exception_reason'],name(snap.get('approved_by'))]])
     log=shift.get('vehicle_log') or {}
     if log:

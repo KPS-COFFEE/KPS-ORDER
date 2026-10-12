@@ -232,7 +232,7 @@ def shifts(user=Depends(auth.current_user)):
 
 def people_data(c,user):
     users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver','branch_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
-    users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
+    users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
     managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
     if user['role']=='driver':
@@ -295,7 +295,15 @@ def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
             return {'shift_id':sid,'status':'closing','unresolved_tasks':unresolved(c,sid),'expected_halalas':balance(c,s)}
         return mutate(c,user,request,'shift.closing:'+sid,{},perform)
 
+class ClosureHandover(BaseModel):
+    recipient_user_id: str
+    to_shift_id: str|None=None
+    receiving_branch_id: str|None=None
+    reference: str=Field(min_length=1,max_length=200)
+
 class ClosureSubmit(BaseModel):
+    handover: ClosureHandover|None=None
+    exception_reason: str=Field(default="",max_length=2000)
     vehicle_inspection: shift_vehicle.Inspection|None=None
     counted_halalas: StrictInt=Field(ge=0)
     handover_halalas: StrictInt=Field(ge=0)
@@ -312,10 +320,24 @@ def submit_close(sid:str,body:ClosureSubmit,request:Request,user=Depends(auth.cu
             if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'توجد شفتات سائقين غير مقفلة، تشمل شفتات بلا طلبات')
             if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone(): fail(409,'توجد تسليمات غير مؤكدة')
             if body.counted_halalas!=body.handover_halalas+body.retained_halalas: fail(422,'المعدود يجب أن يساوي التسليم مع المحتفظ به')
-            if s['kind']=='driver':shift_vehicle.finish(c,user,s,body.vehicle_inspection)
-            values=body.model_dump(exclude={'vehicle_inspection'});values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
+            delegated=s['kind']=='driver' and s['user_id']!=user['id']
+            if delegated:
+                roles(user,'owner','delivery_manager')
+                if not body.exception_reason.strip():fail(422,'اكتب سبب إقفال الشفت نيابة عن السائق؛ سيظهر للمالك')
+            elif body.exception_reason.strip():fail(403,'الإقفال الاستثنائي لمدير التوصيل فقط')
+            if s['kind']=='driver':
+                if body.vehicle_inspection is not None or not delegated:
+                    shift_vehicle.finish(c,user,s,body.vehicle_inspection)
+                else:
+                    log=dict(s.get('vehicle_log') or {})
+                    log['end_exception']={'reason':body.exception_reason.strip(),'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
+                    c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
+            values=body.model_dump(exclude={'vehicle_inspection','handover','exception_reason'});values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
             if s['kind']=='driver':values['payment_terminal']=c.execute('SELECT payment_terminal FROM users WHERE id=%s',(s['user_id'],)).fetchone()['payment_terminal']
+            if delegated:values['delegated_closure']={'by':user['id'],'reason':body.exception_reason.strip()}
             c.execute("UPDATE shifts SET status='submitted',submission=%s,submitted_at=now() WHERE id=%s",(db.json(values),sid))
+            if body.handover:
+                create_custody(c,user,Custody(from_shift_id=sid,amount_halalas=body.handover_halalas,closure=True,**body.handover.model_dump()))
             db.audit(c,user['id'],'shift.submit','shift',sid,values)
             return {'shift_id':sid,'status':'submitted','submission':values}
         return mutate(c,user,request,'shift.submit:'+sid,body.model_dump(),perform)
@@ -347,7 +369,7 @@ def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_
             if s['kind']=='manager': roles(user,'owner')
             if s['status']!='submitted': fail(409,'التقفيلة غير مرسلة')
             sub=s['submission']
-            if sub['retained_halalas']:
+            if sub['retained_halalas'] and s['kind']!='driver':
                 roles(user,'owner')
             if sub['difference_halalas'] or sub['retained_halalas']:
                 if not body.exception_reason or not body.exception_reason.strip(): fail(422,'يلزم سبب ظاهر للعجز أو الفائض أو العهدة المحتفظ بها')
@@ -359,7 +381,12 @@ def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_
             if int(receipts['n'])!=sub['handover_halalas'] or not receipts['nrows']: fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
             if sub['difference_halalas']:event(c,sid,sub['difference_halalas'],'adjustment','closure-difference:'+sid,user['id'],body.exception_reason)
             if sub['retained_halalas']:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason))
-            c.execute("UPDATE shifts SET status='closed',closed_at=now(),approved_by=%s,exception_reason=%s WHERE id=%s",(user['id'],body.exception_reason,sid))
+            exceptional=s['kind']=='driver' and (sub.get('delegated_closure') or sub['difference_halalas'] or sub['retained_halalas'])
+            if exceptional:
+                sub=dict(sub)
+                sub['closure_exception']={'by':user['id'],'reason':body.exception_reason or sub.get('delegated_closure',{}).get('reason'),'delegated':bool(sub.get('delegated_closure'))}
+            reason=body.exception_reason or sub.get('delegated_closure',{}).get('reason')
+            c.execute("UPDATE shifts SET status='closed',closed_at=now(),approved_by=%s,exception_reason=%s,submission=%s WHERE id=%s",(user['id'],reason,db.json(sub),sid))
             from .reporting import create_snapshot
             rid=create_snapshot(c,sid,user['id'])
             db.audit(c,user['id'],'shift.approve','shift',sid,{'report_id':rid,'exception_reason':body.exception_reason})
@@ -486,7 +513,10 @@ def operational_alerts(user=Depends(auth.current_user)):
         printing=[]
         if user['role'] in ('owner','delivery_manager'):
             printing=c.execute("SELECT p.id,p.order_id,p.status,p.branch_id FROM branch_print_jobs p WHERE p.brand_id=%s AND (%s OR p.branch_id=ANY(%s)) AND (p.status='uncertain' OR (p.status IN ('queued','claimed') AND p.created_at<now()-interval '2 minutes')) ORDER BY p.created_at LIMIT 100",params).fetchall()
-        return safe({'unassigned':rows,'problems':problems,'printing':printing})
+        exceptions=[]
+        if user['role']=='owner':
+            exceptions=c.execute("SELECT n.id,n.report_id FROM report_notifications n JOIN closure_reports r ON r.id=n.report_id WHERE n.recipient_user_id=%s AND n.brand_id=%s AND n.read_at IS NULL AND r.snapshot->'shift'->'submission'->'closure_exception' IS NOT NULL ORDER BY n.created_at DESC LIMIT 50",(user['id'],user['brand_id'])).fetchall()
+        return safe({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions})
 
 class TaskHandover(BaseModel): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
 
@@ -659,41 +689,43 @@ class Custody(BaseModel):
     closure:bool=False
     receiving_branch_id:str|None=None
 
+def create_custody(c,user,body):
+    ids=sorted(set([body.from_shift_id]+([body.to_shift_id] if body.to_shift_id else [])))
+    locked={i:lock_shift(c,i) for i in ids};src=locked[body.from_shift_id];shift_access(c,user,src)
+    to=locked.get(body.to_shift_id)
+    if src['status']=='closed' or (to and (to['status'] not in ('open','closing') or to['brand_id']!=src['brand_id'])):fail(409,'شفت عهدة غير متاح')
+    recipient=(to['user_id'] if to else body.recipient_user_id)
+    target=c.execute('SELECT * FROM users WHERE id=%s AND active',(recipient,)).fetchone()
+    if not target or target['id']==src['user_id'] or target['role'] not in ('owner','delivery_manager','driver','branch_manager') or not same_scope(user,target):fail(422,'يلزم مستلم مخول مستقل يؤكد فعليا')
+    if src['kind']=='driver':
+        from .catalog import normalize_city
+        branches=c.execute('SELECT id,city FROM branches WHERE brand_id=%s AND id=ANY(%s)',(src['brand_id'],src['branch_ids'])).fetchall()
+        cities={normalize_city(b['city']) for b in branches}
+        if 'حفر الباطن' in cities and len(cities)>1:fail(409,'نطاق السائق يجمع حفر الباطن ومدن أخرى؛ راجع نطاق الشفت قبل تسليم النقد')
+        if cities=={'حفر الباطن'}:
+            if body.receiving_branch_id or not to or to['id']!=src['manager_shift_id']:fail(403,'نقد سائق حفر الباطن يسلم إلى شفت مديره فقط')
+        else:
+            if not branches or to or not body.receiving_branch_id or body.receiving_branch_id not in src['branch_ids'] or target['role']!='branch_manager' or body.receiving_branch_id not in target.get('branch_ids',[]):fail(403,'نقد السائق خارج حفر الباطن يسلم لمسؤول فرع مخول ضمن نطاق الشفت')
+    elif body.receiving_branch_id:fail(422,'تسليم الكيس للفرع مخصص لشفت السائق')
+    if src['kind']=='manager' and to and to['kind']=='driver' and to['manager_shift_id']!=src['id']:fail(403,'السلفة لسائق تابع فقط')
+    if not to and not body.receiving_branch_id and target['role']!='owner':fail(403,'المستلم النهائي المالك المخول')
+    pending=c.execute("SELECT coalesce(sum(amount_halalas),0) n FROM custody_transfers WHERE from_shift_id=%s AND status='pending'",(src['id'],)).fetchone()['n']
+    if body.closure:
+        if src['status']!='submitted':fail(409,'يلزم إرسال التقفيلة أولا')
+        existing=c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected'",(src['id'],)).fetchone()
+        if existing or body.amount_halalas!=src['submission']['handover_halalas']:fail(409,'مبلغ تسليم التقفيلة غير مطابق أو مسجل سابقا')
+    else:
+        if src['status'] not in ('open','closing') or body.amount_halalas<=0 or body.amount_halalas+pending>balance(c,src):fail(409,'العهدة المتاحة غير كافية أو الشفت مرسل')
+    cid=uid();c.execute('INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,recipient_user_id,amount_halalas,reference,closure,created_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(cid,src['id'],body.to_shift_id,recipient,body.amount_halalas,body.reference,body.closure,user['id']))
+    if body.receiving_branch_id:c.execute('UPDATE custody_transfers SET receiving_branch_id=%s WHERE id=%s',(body.receiving_branch_id,cid))
+    db.audit(c,user['id'],'custody.request','custody',cid,body.model_dump())
+    return {'transfer':c.execute('SELECT * FROM custody_transfers WHERE id=%s',(cid,)).fetchone()}
+
 @router.post('/custody')
 def custody_transfer(body:Custody,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','driver','delivery_manager')
     with db.tx() as c:
-        def perform():
-            ids=sorted(set([body.from_shift_id]+([body.to_shift_id] if body.to_shift_id else [])))
-            locked={i:lock_shift(c,i) for i in ids};src=locked[body.from_shift_id];shift_access(c,user,src)
-            to=locked.get(body.to_shift_id)
-            if src['status']=='closed' or (to and (to['status'] not in ('open','closing') or to['brand_id']!=src['brand_id'])):fail(409,'شفت عهدة غير متاح')
-            recipient=(to['user_id'] if to else body.recipient_user_id)
-            target=c.execute('SELECT * FROM users WHERE id=%s AND active',(recipient,)).fetchone()
-            if not target or target['id']==src['user_id'] or target['role'] not in ('owner','delivery_manager','driver','branch_manager') or not same_scope(user,target):fail(422,'يلزم مستلم مخول مستقل يؤكد فعليا')
-            if src['kind']=='driver':
-                from .catalog import normalize_city
-                branches=c.execute('SELECT id,city FROM branches WHERE brand_id=%s AND id=ANY(%s)',(src['brand_id'],src['branch_ids'])).fetchall()
-                cities={normalize_city(b['city']) for b in branches}
-                if 'حفر الباطن' in cities and len(cities)>1:fail(409,'نطاق السائق يجمع حفر الباطن ومدن أخرى؛ راجع نطاق الشفت قبل تسليم النقد')
-                if cities=={'حفر الباطن'}:
-                    if body.receiving_branch_id or not to or to['id']!=src['manager_shift_id']:fail(403,'نقد سائق حفر الباطن يسلم إلى شفت مديره فقط')
-                else:
-                    if not branches or to or not body.receiving_branch_id or body.receiving_branch_id not in src['branch_ids'] or target['role']!='branch_manager' or body.receiving_branch_id not in target.get('branch_ids',[]):fail(403,'نقد السائق خارج حفر الباطن يسلم لمسؤول فرع مخول ضمن نطاق الشفت')
-            elif body.receiving_branch_id:fail(422,'تسليم الكيس للفرع مخصص لشفت السائق')
-            if src['kind']=='manager' and to and to['kind']=='driver' and to['manager_shift_id']!=src['id']:fail(403,'السلفة لسائق تابع فقط')
-            if not to and not body.receiving_branch_id and target['role']!='owner':fail(403,'المستلم النهائي المالك المخول')
-            pending=c.execute("SELECT coalesce(sum(amount_halalas),0) n FROM custody_transfers WHERE from_shift_id=%s AND status='pending'",(src['id'],)).fetchone()['n']
-            if body.closure:
-                if src['status']!='submitted':fail(409,'يلزم إرسال التقفيلة أولا')
-                existing=c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected'",(src['id'],)).fetchone()
-                if existing or body.amount_halalas!=src['submission']['handover_halalas']:fail(409,'مبلغ تسليم التقفيلة غير مطابق أو مسجل سابقا')
-            else:
-                if src['status'] not in ('open','closing') or body.amount_halalas<=0 or body.amount_halalas+pending>balance(c,src):fail(409,'العهدة المتاحة غير كافية أو الشفت مرسل')
-            cid=uid();c.execute('INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,recipient_user_id,amount_halalas,reference,closure,created_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(cid,src['id'],body.to_shift_id,recipient,body.amount_halalas,body.reference,body.closure,user['id']))
-            if body.receiving_branch_id:c.execute('UPDATE custody_transfers SET receiving_branch_id=%s WHERE id=%s',(body.receiving_branch_id,cid))
-            db.audit(c,user['id'],'custody.request','custody',cid,body.model_dump())
-            return {'transfer':c.execute('SELECT * FROM custody_transfers WHERE id=%s',(cid,)).fetchone()}
+        def perform():return create_custody(c,user,body)
         return mutate(c,user,request,'custody.request',body.model_dump(),perform)
 
 @router.get('/custody')
@@ -904,7 +936,7 @@ def save_closure_draft(sid:str,body:ClosureDraft,request:Request,user=Depends(au
             if retained<0 or (body.retained_halalas is not None and body.retained_halalas!=retained):fail(422,'التسليم لا يتجاوز المعدود والمحتفظ به هو الفرق بينهما')
             if body.recipient_user_id:
                 target=c.execute('SELECT * FROM users WHERE id=%s AND brand_id=%s AND active',(body.recipient_user_id,user['brand_id'])).fetchone()
-                if not target or target['role'] not in ('owner','delivery_manager','driver') or target['id']==user['id']:fail(422,'مستلم غير مخول')
+                if not target or target['role'] not in ('owner','delivery_manager','driver','branch_manager') or target['id']==user['id']:fail(422,'مستلم غير مخول')
             draft=body.model_dump(exclude={'revision'})|{'retained_halalas':retained,'expected_halalas':balance(c,shift),
                                                          'difference_halalas':body.counted_halalas-balance(c,shift)}
             row=c.execute('INSERT INTO closure_drafts(shift_id,user_id,draft) VALUES(%s,%s,%s) '

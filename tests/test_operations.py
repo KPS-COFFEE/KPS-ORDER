@@ -242,7 +242,7 @@ def test_discrepancy_partial_handover_retained_carryover(ops):
     assert sub['submission']['expected_halalas']==600 and sub['submission']['difference_halalas']==-100
     tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':400,'reference':'FINAL','closure':True})['transfer']['id']
     post('manager','/api/custody/'+tid+'/confirm')
-    post('manager','/api/shifts/'+driver+'/approve',status=403)
+    post('manager','/api/shifts/'+driver+'/approve',status=422)
     post('owner','/api/shifts/'+driver+'/approve',{'exception_reason':'TEST: نقص معتمد مع إبقاء عهدة 1 ريال'})
     nxt=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager,'branch_ids':['ops-branch']})['shift']
     assert nxt['opening_halalas']==100

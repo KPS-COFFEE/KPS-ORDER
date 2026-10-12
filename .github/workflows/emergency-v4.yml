@@ -110,7 +110,7 @@ jobs:
           alerts = 'tests/test_operational_alerts.py' in changed and changed <= {'app/operations.py','app/chat.py','app/catalog.py','public/ops.js','tests/test_operational_alerts.py','.github/workflows/emergency-v4.yml'}
           images = 'tests/test_image_previews.py' in changed and changed <= {'.gitignore','Dockerfile','app/image_previews.py','app/main.py','app/admin.py','public/customer.js','tests/test_image_previews.py','.github/workflows/emergency-v4.yml'}
           coverage = 'tests/test_coverage_reasons.py' in changed and changed <= {'app/catalog.py','public/customer.js','tests/test_coverage_reasons.py','.github/workflows/emergency-v4.yml'}
-          driver_cash = 'tests/test_driver_cash_handover.py' in changed and changed <= {'app/operations.py','app/reporting.py','public/ops.js','migrations/027_driver_cash_handover.sql','tests/test_driver_cash_handover.py','.github/workflows/emergency-v4.yml'}
+          driver_cash = 'tests/test_driver_cash_handover.py' in changed and changed <= {'app/operations.py','app/reporting.py','app/report_notifications.py','public/ops.js','migrations/027_driver_cash_handover.sql','tests/test_operations.py','tests/test_driver_closure_browser.py','tests/test_driver_cash_handover.py','.github/workflows/emergency-v4.yml'}
           printer_setup = 'tests/test_printer_setup_browser.py' in changed and changed <= {'app/branch_printing.py','public/ops.js','public/ops.css','tools/windows-print-bridge/KpsPrintBridge.cs','tools/windows-print-bridge/Start.cmd','tools/windows-print-bridge/README.txt','tests/test_branch_printing.py','tests/test_printer_setup_browser.py','.github/workflows/emergency-v4.yml'}
           support = 'tests/test_order_support.py' in changed and changed <= {'app/order_support.py','app/chat.py','app/operations.py','app/reporting.py','app/main.py','public/ops.js','public/customer.js','migrations/028_order_support.sql','tests/test_order_support.py','tests/test_order_support_browser.py','tests/test_operations.py','tests/test_dispatch_numbering.py','.github/workflows/emergency-v4.yml'}
           chat_refresh = bool(changed & {'tests/test_chat_refresh_browser.py','tests/test_operational_alerts.py'}) and changed <= {'public/ops.js','public/ops.css','tests/test_chat_refresh_browser.py','tests/test_operational_alerts.py','.github/workflows/emergency-v4.yml'}
@@ -196,7 +196,7 @@ jobs:
         run: python -m pytest -q --strict-markers tests/test_branch_printing.py tests/test_printer_setup_browser.py tests/test_receipt_customer_privacy.py --junitxml=test-results/printer-setup.xml
       - name: Check driver discrepancy approval, branch bags and terminal snapshots
         if: steps.scope.outputs.driver_cash_only == 'true'
-        run: python -m pytest -q --strict-markers tests/test_driver_cash_handover.py tests/test_operations.py tests/test_shift_vehicle.py --junitxml=test-results/driver-cash.xml
+        run: python -m pytest -q --strict-markers tests/test_driver_cash_handover.py tests/test_driver_closure_browser.py tests/test_operations.py tests/test_shift_vehicle.py --junitxml=test-results/driver-cash.xml
       - name: Check geographic exclusion reasons, branch scope and checkout coverage
         if: steps.scope.outputs.coverage_only == 'true'
         run: python -m pytest -q --strict-markers tests/test_coverage_reasons.py tests/test_launch_branches.py tests/test_core.py --junitxml=test-results/coverage-reasons.xml

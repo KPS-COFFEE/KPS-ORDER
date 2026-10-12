@@ -27,7 +27,7 @@ def _queue_mail(c,notification):
     source=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(notification['report_id'],)).fetchone()
     if not source:return None
     snap=source['snapshot'];link=base+'/api/reports/'+notification['report_id']+'/renderings/v5/print'
-    title='تقرير تقفيلة مدير التوصيل المعتمد'
+    title='مقفل باستثناء من مدير التوصيل' if snap.get('shift',{}).get('submission',{}).get('closure_exception') else 'تقرير تقفيلة مدير التوصيل المعتمد'
     # Only a small non-personal summary, then authenticated link. Never bearer URLs.
     payload={'subject':title,'text':title+'\nالتاريخ التشغيلي: '+str(snap.get('operational_date',''))+'\nعدد الطلبات المكتملة: '+str(snap.get('summary',{}).get('completed_orders',0))+'\nافتح التقرير بتسجيل الدخول المصرح:\n'+link+'\nمرجع التقرير: '+notification['report_id']+'\nإصدار القالب: '+str(notification['template_version'])}
     mid=email_delivery.enqueue_mail(c,brand_id=notification['brand_id'],recipient=owner['email'],kind='owner_report',payload=payload,dedupe_key='owner-report:'+notification['report_id']+':'+owner['id']+':v'+str(notification['template_version']))
@@ -39,7 +39,8 @@ def enqueue_manager_closure(c,rid):
     """Idempotent durable notice; intentionally no provider/network call."""
     from .reporting import TEMPLATE_VERSION,queue_v5_renderings
     r=c.execute("SELECT id,kind,brand_id,snapshot FROM closure_reports WHERE id=%s",(rid,)).fetchone()
-    if not r or r['kind']!='manager' or r['snapshot'].get('shift',{}).get('status')!='closed':return
+    if not r or r['snapshot'].get('shift',{}).get('status')!='closed':return
+    if r['kind']!='manager' and not r['snapshot'].get('shift',{}).get('submission',{}).get('closure_exception'):return
     queue_v5_renderings(c,rid,r['snapshot'])
     owners=c.execute("SELECT id FROM users WHERE brand_id=%s AND role='owner' AND active ORDER BY id",(r['brand_id'],)).fetchall()
     for owner in owners:
@@ -60,10 +61,10 @@ def inbox(offset:int=0,user=Depends(auth.current_user)):
     roles(user,'owner')
     if offset<0 or offset>100000:fail(422,'صفحة غير صالحة')
     with db.tx() as c:
-        rows=c.execute("SELECT n.*,coalesce(e.status,'waiting_channel') delivery_status,e.last_error delivery_error,e.attempts delivery_attempts,e.delivery_at,g.status rendering_status,g.error rendering_error,r.shift_id,r.snapshot->>'operational_date' operational_date FROM report_notifications n JOIN closure_reports r ON r.id=n.report_id LEFT JOIN email_outbox e ON e.id=n.email_outbox_id LEFT JOIN report_renderings g ON g.report_id=n.report_id AND g.template_version=n.template_version AND g.view_kind='owner' WHERE n.recipient_user_id=%s AND n.brand_id=%s ORDER BY n.created_at DESC,n.id LIMIT 50 OFFSET %s",(user['id'],user['brand_id'],offset)).fetchall()
+        rows=c.execute("SELECT n.*,coalesce(e.status,'waiting_channel') delivery_status,e.last_error delivery_error,e.attempts delivery_attempts,e.delivery_at,g.status rendering_status,g.error rendering_error,r.shift_id,r.snapshot->'shift'->'submission'->'closure_exception' closure_exception,r.snapshot->'shift'->>'exception_reason' exception_reason,r.snapshot->'display_users'->>(r.snapshot->>'approved_by') approved_by_name,r.snapshot->>'operational_date' operational_date FROM report_notifications n JOIN closure_reports r ON r.id=n.report_id LEFT JOIN email_outbox e ON e.id=n.email_outbox_id LEFT JOIN report_renderings g ON g.report_id=n.report_id AND g.template_version=n.template_version AND g.view_kind=CASE WHEN r.kind='manager' THEN 'owner' ELSE 'compact' END WHERE n.recipient_user_id=%s AND n.brand_id=%s ORDER BY n.created_at DESC,n.id LIMIT 50 OFFSET %s",(user['id'],user['brand_id'],offset)).fetchall()
         unread=c.execute('SELECT count(*) n FROM report_notifications WHERE recipient_user_id=%s AND brand_id=%s AND read_at IS NULL',(user['id'],user['brand_id'])).fetchone()['n']
     for row in rows:
-        row['title']='تقرير تقفيلة مدير التوصيل - معتمد نهائيا'
+        row['title']='مقفل باستثناء من مدير التوصيل' if row.get('closure_exception') else 'تقرير تقفيلة مدير التوصيل - معتمد نهائيا'
         prefix='/api/reports/'+row['report_id']+'/renderings/v5/'
         row.update(print_url=prefix+'print',pdf_url=prefix+'pdf',csv_url=prefix+'csv')
     return safe({'notifications':rows,'unread_count':unread,'offset':offset,'limit':50})

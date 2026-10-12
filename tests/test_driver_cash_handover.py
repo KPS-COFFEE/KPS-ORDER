@@ -100,3 +100,72 @@ def test_branch_receipt_replay_cannot_bypass_revoked_scope(ops):
         assert receipt['confirmed_by']=='ops-branch'
     with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-branch'")
     post('branch',f'/api/custody/{tid}/confirm',key='receipt-once',status=403)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('counted,retained',[(0,0),(900,0),(1000,100),(1100,0)])
+def test_delegated_closure_notifies_owner_and_preserves_receipt_gate(ops,counted,retained):
+    actor,post,order,shifts=ops
+    manager,driver=shifts();delivered(post,order,driver)
+    post('manager',f'/api/shifts/{driver}/closing')
+    body={'counted_halalas':counted,'handover_halalas':counted-retained,'retained_halalas':retained,
+          'exception_reason':'TEST driver unavailable',
+          'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST DELEGATED'}}
+    # Raw client: no invented vehicle inspection from fixture.
+    def submit(who,data,key,status):
+        r=actor(who).post(f'/api/shifts/{driver}/submit',json=data,headers={'Idempotency-Key':key})
+        assert r.status_code==status,r.text
+        return r.json()
+    submit('manager',{**body,'exception_reason':''},'missing-reason',422)
+    submit('other',body,'other-owner-denied',404)
+    submit('driver',body,'driver-cannot-except',403)
+    result=submit('manager',body,'manager-delegated-once',200)
+    assert submit('manager',body,'manager-delegated-once',200)==result
+    assert result['status']=='submitted'
+    reason={'exception_reason':'TEST actual count reviewed'}
+    post('manager',f'/api/shifts/{driver}/approve',reason,status=409)
+    with db.tx() as c:
+        t=c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()
+        assert t['status']=='pending' and t['amount_halalas']==counted-retained
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
+        assert 'end' not in s['vehicle_log'] and s['vehicle_log']['end_exception']['recorded_by']=='ops-manager'
+    post('manager',f"/api/custody/{t['id']}/confirm")
+    r=post('manager',f'/api/shifts/{driver}/approve',reason,key='approve-exception-once')
+    assert post('manager',f'/api/shifts/{driver}/approve',reason,key='approve-exception-once')==r
+    notices=actor('owner').get('/api/report-notifications').json()['notifications']
+    assert len(notices)==1 and notices[0]['title']=='مقفل باستثناء من مدير التوصيل'
+    assert notices[0]['closure_exception']['delegated'] is True
+    assert notices[0]['approved_by_name']=='manager'
+    assert len(actor('owner').get('/api/operations/alerts').json()['closure_exceptions'])==1
+    assert actor('other').get('/api/report-notifications').json()['notifications']==[]
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==1
+        snap=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(r['report_id'],)).fetchone()['snapshot']
+        assert snap['shift']['submission']['difference_halalas']==counted-1000
+    assert 'مقفل باستثناء' in actor('owner').get(f"/api/reports/{r['report_id']}/renderings/v5/print").text
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('remote',[False,True])
+def test_atomic_driver_submission_rolls_back_bad_handover_and_routes_actual_receiver(ops,remote):
+    actor,post,order,shifts=ops
+    if remote:
+        with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
+    manager,driver=shifts()
+    post('driver',f'/api/shifts/{driver}/closing')
+    from app.shift_vehicle import CHECKS
+    body={'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS}},
+          'handover':{'recipient_user_id':'ops-other','reference':'TEST BAD'}}
+    post('driver',f'/api/shifts/{driver}/submit',body,status=422)
+    with db.tx() as c:
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
+        assert s['status']=='closing' and s['submission'] is None and 'end' not in s['vehicle_log']
+        assert not c.execute('SELECT 1 FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()
+    body['handover']={'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','reference':'TEST RAFHA'} if remote else {'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST HAFAR'}
+    result=post('driver',f'/api/shifts/{driver}/submit',body,key='atomic-submit-once')
+    assert post('driver',f'/api/shifts/{driver}/submit',body,key='atomic-submit-once')==result
+    with db.tx() as c:t=c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()
+    if remote:post('manager',f"/api/custody/{t['id']}/confirm",status=404)
+    post('branch' if remote else 'manager',f"/api/custody/{t['id']}/confirm")
+    post('manager',f'/api/shifts/{driver}/approve')
+    assert actor('owner').get('/api/report-notifications').json()['notifications']==[]
