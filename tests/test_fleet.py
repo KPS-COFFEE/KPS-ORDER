@@ -118,3 +118,46 @@ def test_vehicle_changed_driver_rejects_overlap_and_lower_odometer(ops):
     post('driver2','/api/shifts',{'kind':'driver','branch_ids':['ops-branch'],'manager_shift_id':manager,'vehicle_inspection':{'odometer_km':1200,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}}},status=422)
     d=post('driver2','/api/shifts',{'kind':'driver','branch_ids':['ops-branch'],'manager_shift_id':manager,'vehicle_inspection':{'odometer_km':1500,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}}})
     actor('owner');assert len(client.get('/api/fleet/vehicles').json()['vehicles'])==1
+
+
+def test_nonempty_vehicle_history_and_corrections_survive_isolated_restore(ops):
+    import os
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive,restore_archive
+    actor,*_=ops
+    with db.tx() as c:seed(c,'fleet-restore-closed','TEST RESTORE',12,km=210,liters=25)
+    client=delegate(actor)
+    vid=client.get('/api/fleet/vehicles').json()['vehicles'][0]['id']
+    url=f'/api/fleet/vehicles/{vid}/logs/fleet-restore-closed'
+    revision=client.get(url).json()['log']['revision']
+    body={'revision':revision,'reason':'TEST ONLY restored correction','start_odometer':1000,'end_odometer':1210,'liters':'21','full_start':True,'full_end':True,'notes':'TEST ONLY preserve history'}
+    response=client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'fleet-restore-correction'})
+    assert response.status_code==200,response.text
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        contents,manifest=build_archive(c,full=True)
+        source={name:c.execute('SELECT * FROM '+name).fetchall() for name in ('fleet_vehicles','vehicle_operating_logs','vehicle_log_corrections')}
+    target='kps_restore_'+uuid4().hex;test_url=os.environ['TEST_DATABASE_URL']
+    try:
+        result=restore_archive(contents,target_url=test_url,target_schema=target)
+        assert result['verified'] and result['counts']==manifest['counts']
+        with psycopg.connect(test_url,row_factory=dict_row) as restored:
+            restored.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
+            for name,rows in source.items():assert restored.execute('SELECT * FROM '+name).fetchall()==rows
+            # Re-enabled materialization creates only the next canonical shift
+            # row; it never recreates existing history or vehicle identity.
+            seed(restored,'fleet-restore-next','TEST RESTORE',12,state='open')
+            assert restored.execute('SELECT count(*) n FROM fleet_vehicles').fetchone()['n']==1
+            assert restored.execute('SELECT count(*) n FROM vehicle_operating_logs').fetchone()['n']==2
+            assert restored.execute('SELECT count(*) n FROM vehicle_log_corrections').fetchone()['n']==1
+            with pytest.raises(psycopg.errors.RaiseException):
+                with restored.transaction():restored.execute("UPDATE vehicle_operating_logs SET metrics='{}' WHERE shift_id='fleet-restore-closed'")
+            with pytest.raises(psycopg.errors.RaiseException):
+                with restored.transaction():restored.execute("DELETE FROM vehicle_log_corrections WHERE shift_id='fleet-restore-closed'")
+            restored.rollback()
+    finally:
+        with psycopg.connect(test_url,autocommit=True) as cleanup:cleanup.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(target)))
+    with db.tx() as c:
+        for name,rows in source.items():assert c.execute('SELECT * FROM '+name).fetchall()==rows
