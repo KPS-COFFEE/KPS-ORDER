@@ -44,6 +44,7 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
             assert receipt.locator('.receipt-logo').evaluate('(img)=>img.naturalWidth') == 1181
             expect(receipt.locator('.options').first).to_contain_text('شوفان')
             expect(receipt.locator('.totals')).to_have_count(1 if kind == 'order' else 0)
+            expect(receipt.locator('img[alt="Receipt QR"]')).to_have_count(1 if kind == 'order' else 0)
             for width in ('80', '58'):
                 receipt.locator('#paper-width').select_option(width)
                 receipt.emulate_media(media='print')
@@ -51,6 +52,16 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
                 dimensions = receipt.locator('.receipt').evaluate('(e)=>({width:e.offsetWidth,height:e.offsetHeight,scroll:e.scrollWidth})')
                 assert abs(dimensions['width'] - int(width)*96/25.4) < 2
                 assert dimensions['scroll'] <= dimensions['width']
+                if kind == 'order':
+                    from io import BytesIO
+                    from PIL import Image
+                    import zxingcpp
+                    qr = receipt.locator('img[alt="Receipt QR"]')
+                    qr.evaluate('(img)=>img.decode()')
+                    box = qr.bounding_box()
+                    assert abs(box['width']-box['height']) < 1
+                    decoded = zxingcpp.read_barcode(Image.open(BytesIO(qr.screenshot())))
+                    assert decoded and oid in decoded.text
                 assert dimensions['height'] > 1500
                 assert receipt.locator('.receipt header').evaluate('(e)=>e.offsetHeight') < 230
                 expect(receipt.locator('.receipt-item').last).to_contain_text('TEST LAST NOTE')

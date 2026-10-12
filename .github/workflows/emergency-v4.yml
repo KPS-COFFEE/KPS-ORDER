@@ -91,6 +91,7 @@ jobs:
           }
           focused = bool(changed & {'app/auth.py', 'tests/test_owner_staff_management.py'}) and changed <= identity_files
           operation_files = {
+              'app/invoice_profiles.py', 'tests/test_invoice_profiles.py', 'requirements-dev.txt',
               'Dockerfile',
               'app/auth.py', 'app/admin.py', 'app/operations.py', 'app/main.py',
               'app/exports.py', 'app/branch_printing.py', 'app/print_translations.py', 'app/orders.py', 'migrations/024_branch_printing.sql',
@@ -198,6 +199,7 @@ jobs:
         run: >-
           python -m pytest -q --strict-markers
           tests/test_branch_printing.py tests/test_receipt_customer_privacy.py
+          tests/test_invoice_profiles.py
           tests/test_thermal_receipt_browser.py tests/test_driver_configuration_lock.py
           tests/test_driver_configuration_browser.py tests/test_operations.py
           tests/test_launch_admin.py tests/test_launch_branches.py tests/test_launch_browser.py

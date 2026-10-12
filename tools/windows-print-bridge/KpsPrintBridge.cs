@@ -85,7 +85,7 @@ class KpsPrintBridge {
         using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
             key.SetValue("KPS Print Bridge", "\""+System.Reflection.Assembly.GetExecutingAssembly().Location+"\"");
         }
-        Console.WriteLine("Receipt layout: PAPER-FIT-20261012 (balanced columns / printable width).");
+        Console.WriteLine("Receipt layout: PAPER-FIT-20261012 / SALES-QR-V1 (full printable width QR).");
         Console.WriteLine("Printer: "+Printer+". Keep this window open. Ctrl+C stops the bridge.");
     }
     static List<Dictionary<string,object>> Lines(Dictionary<string,object> payload) {
@@ -133,6 +133,7 @@ class KpsPrintBridge {
             return graphics.MeasureString(text,font,(int)Math.Floor(width),format).Height;
     }
     static float LineHeight(Graphics graphics,Dictionary<string,object> line,Font font,float width,bool ar) {
+        if(Str(line,"role")=="qr")return width+8;
         if(IsRule(line))return 12;
         if(Str(line,"role")=="row") {
             return Math.Max(TextHeight(graphics,Str(line,"label"),font,width*0.44f-4,ar),
@@ -141,6 +142,19 @@ class KpsPrintBridge {
         return TextHeight(graphics,Str(line,"text"),font,width,ar)+3;
     }
     static void DrawLine(Graphics graphics,Dictionary<string,object> line,Font font,RectangleF box,bool ar) {
+        if(Str(line,"role")=="qr") {
+            var matrix=(IList)line["matrix"];int count=matrix.Count;
+            if(count<21 || count>185)throw new Exception("Invalid QR dimensions");
+            float cell=box.Width/count;
+            graphics.FillRectangle(Brushes.White,box.Left,box.Top,box.Width,box.Width);
+            for(int y=0;y<count;y++) {
+                string row=Convert.ToString(matrix[y]);
+                if(row.Length!=count)throw new Exception("Invalid QR row");
+                for(int x=0;x<count;x++)if(row[x]=='1')
+                    graphics.FillRectangle(Brushes.Black,box.Left+x*cell,box.Top+y*cell,cell,cell);
+            }
+            return;
+        }
         if(IsRule(line)) {graphics.DrawLine(Pens.Black,box.Left,box.Top+6,box.Right,box.Top+6);return;}
         if(Str(line,"role")=="row") {
             float labelWidth=box.Width*0.44f-4,valueWidth=box.Width*0.56f-4;
@@ -198,6 +212,14 @@ class KpsPrintBridge {
             var narrow=ContentBounds(new RectangleF(0,0,228,600),new RectangleF(10,4,208,590),10,4);
             if(narrow.Width!=192 || narrow.Left<0 || narrow.Right>208)return 3;
             using(var logo=Logo()) {if(logo.Width<1)return 1;}
+            var matrix=new ArrayList();
+            for(int y=0;y<29;y++)matrix.Add(y==14?new string('0',14)+"1"+new string('0',14):new string('0',29));
+            var qrLine=new Dictionary<string,object>{{"role","qr"},{"matrix",matrix}};
+            using(var bitmap=new Bitmap(290,290))using(var graphics=Graphics.FromImage(bitmap))using(var font=new Font("Arial",10)) {
+                if(LineHeight(graphics,qrLine,font,290,false)!=298)return 4;
+                DrawLine(graphics,qrLine,font,new RectangleF(0,0,290,290),false);
+                if(bitmap.GetPixel(145,145).R!=0 || bitmap.GetPixel(5,5).R!=255)return 5;
+            }
             Console.WriteLine("Bridge compile, JSON and logo checks passed; no printer used.");return 0;
         }
         bool created;

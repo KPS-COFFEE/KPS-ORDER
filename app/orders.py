@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations
+from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations, invoice_profiles
 
 router = APIRouter(prefix='/api/orders')
 
@@ -79,6 +79,7 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             config = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (body.brand_id,)).fetchone()
             quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
             quote['order_reference'] = order_numbering.allocate(conn, body.branch_id)
+            quote['receipt_profile'] = invoice_profiles.capture(conn, body.brand_id, body.branch_id)
             order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
@@ -202,6 +203,7 @@ def get_order(order_id: str, user=Depends(auth.current_user)):
         if user['role']!='customer':
             performance.enrich_orders(conn,[row])
             row['print_labels_en']=print_translations.for_order(conn,row)
+            row['receipt_qr']=invoice_profiles.ordinary_qr(row)
         else:
             row=customer_order_view(row)
     return {'order': row, 'events': events}

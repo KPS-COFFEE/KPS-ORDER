@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from . import auth, db, print_translations
+from . import auth, db, print_translations, invoice_profiles
 
 router = APIRouter(prefix='/api/printing', tags=['branch-printing'])
 operators = auth.require_roles('owner', 'delivery_manager')
@@ -214,6 +214,9 @@ def receipt(order, branch, kind, language, translations=None):
         row('حالة التحصيل' if ar else 'Collection',statuses.get(order['payment_status'],('راجع حالة التحصيل بالنظام','Check collection status in system'))[0 if ar else 1],True)
         add('────────────────────',False,True)
         add('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice',False,True,role='caption')
+        if order.get('id'):
+            qr=invoice_profiles.ordinary_qr(order)
+            lines.append({'role':'qr','text':'','matrix':qr['matrix']})
     return {'language':language,'kind':kind,'lines':lines}
 
 
