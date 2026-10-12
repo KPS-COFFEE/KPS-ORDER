@@ -35,7 +35,9 @@ def test_messages_arrive_without_replacing_composer_or_scrolling(live_app,chromi
         # Cover the old 15-second page/alert timer with no draft/focus protection.
         text.fill('');page.locator('#message-form input[type=file]').set_input_files([])
         page.locator('#messages').click()
+        window_y=page.evaluate('window.scrollY')
         with page.expect_response(lambda r:'/api/conversations/alerts' in r.url,timeout=20000):pass
+        assert abs(page.evaluate('window.scrollY')-window_y)<2
         assert page.evaluate("document.querySelector('#message-form')===window.testComposer")
         assert page.evaluate("document.querySelector('#messages')===window.testMessages")
         assert page.evaluate("!window.testAlertDetails || (!window.testAlertDetails.open && window.testAlertDetails.isConnected)")
