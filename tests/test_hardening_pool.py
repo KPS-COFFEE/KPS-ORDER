@@ -75,7 +75,11 @@ def test_full_url_schema_options_keep_separate_pools(database, monkeypatch):
         assert second_pool is not first_pool and second_pool.conninfo == other
         with db.tx() as conn:
             assert conn.execute('SELECT current_schema() schema').fetchone()['schema'] == schema
-            assert conn.info.get_parameters()['sslmode'] == 'prefer'
+            # get_parameters() omits libpq defaults, including sslmode=prefer.
+            # Inspect the connected libpq configuration, without substituting
+            # any assumed default or changing the requested TLS policy.
+            actual_sslmode = next(option.val for option in conn.pgconn.info if option.keyword == b'sslmode')
+            assert actual_sslmode == b'prefer'
         monkeypatch.setenv('DATABASE_URL', original)
         with db.tx() as conn:
             assert conn.execute('SELECT current_schema() schema').fetchone()['schema'] == expected
