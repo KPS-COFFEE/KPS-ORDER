@@ -21,6 +21,7 @@ def test_menu_owner_mobile_desktop_catalog_branches_social_options_unavailable_a
         assert page.evaluate("typeof navigator.geolocation.getCurrentPosition")=='function'  # No invocation or permission.
         assert not any('nearest-branches' in r for r in requests)
         assert context.request.get(live_app+'/menu/preview').headers['permissions-policy'].endswith('geolocation=()')
+        expect(page.locator('[data-product-id="kps-35"] img')).to_have_attribute('src','/assets/kps-35-fc3d1c4bfde4.svg')
         _capture(page,'menu-home-private')
         page.locator('[data-product-id="kps-01"] button').click()
         expect(page.locator('#detail')).to_be_visible()
