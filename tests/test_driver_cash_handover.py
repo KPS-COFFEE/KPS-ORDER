@@ -84,3 +84,16 @@ def test_terminal_manager_only_frozen_at_submission_and_in_report(ops):
     assert page.status_code==200,page.text
     assert 'TID-001' in page.text and 'TID-002' not in page.text
     assert 'متوافق' in page.text and 'عهدة نقدية مستلمة' in page.text
+
+
+@pytest.mark.postgres
+def test_branch_receipt_replay_cannot_bypass_revoked_scope(ops):
+    actor,post,order,shifts=ops
+    with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
+    manager,driver=shifts()
+    post('driver',f'/api/shifts/{driver}/closing')
+    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
+    tid=post('driver','/api/custody',{'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'REPLAY-BAG','closure':True})['transfer']['id']
+    post('branch',f'/api/custody/{tid}/confirm',key='receipt-once')
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-branch'")
+    post('branch',f'/api/custody/{tid}/confirm',key='receipt-once',status=403)
