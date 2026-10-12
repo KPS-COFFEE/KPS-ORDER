@@ -78,7 +78,7 @@ def test_alert_sound_requires_gesture_repeats_and_stops(live_app,chromium_browse
         page.clock.run_for(31000)
         assert page.evaluate('window.testBeeps')==tones
         page.clock.run_for(31000)
-        page.wait_for_function(f'window.testBeeps === {tones*2}')
+        page.wait_for_function('(expected) => window.testBeeps === expected', arg=tones*2)
         pending.clear();page.clock.run_for(16000)
         expect(page.locator('#operational-alerts')).not_to_contain_text(marker)
         count=page.evaluate('window.testBeeps');page.clock.run_for(61000)
