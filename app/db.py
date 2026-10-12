@@ -171,10 +171,10 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
 
 def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
     # Atomic database counters survive restarts and work across all web processes.
-    window = conn.execute('SELECT floor(extract(epoch FROM now())/%s)::bigint AS n', (window_seconds,)).fetchone()['n']
-    row = conn.execute('INSERT INTO rate_limits(bucket,window_start,hits) VALUES(%s,%s,1) '
+    row = conn.execute('INSERT INTO rate_limits(bucket,window_start,hits) '
+                       'VALUES(%s,floor(extract(epoch FROM now())/%s)::bigint,1) '
                        'ON CONFLICT(bucket,window_start) DO UPDATE SET hits=rate_limits.hits+1 RETURNING hits',
-                       (hashlib.sha256(bucket.encode()).hexdigest(), window)).fetchone()
+                       (hashlib.sha256(bucket.encode()).hexdigest(), window_seconds)).fetchone()
     return row['hits'] <= maximum
 
 

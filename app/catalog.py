@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, parse_qs, urlencode, unquote
 
 from fastapi import APIRouter, Depends, Header, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from . import auth, db, service_hours
@@ -360,18 +361,24 @@ def public_product(product: dict, branch=None, service=None) -> dict:
 def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str | None = Query(default=None, max_length=80),
             service: Literal['pickup', 'car', 'delivery'] | None = Query(default=None)):
     with db.tx() as conn:
-        brand = conn.execute('SELECT id,name,settings FROM brands WHERE id=%s AND active', (brand_id,)).fetchone()
+        # Independent, freshly scoped reads share one protocol flush. No menu
+        # cache: availability and brand changes remain visible immediately.
+        with conn.pipeline():
+            brand_query = conn.execute('SELECT id,name,settings FROM brands WHERE id=%s AND active', (brand_id,))
+            branch_query = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s', (branch_id, brand_id)) if branch_id else None
+            products_query = conn.execute("SELECT * FROM products WHERE brand_id=%s AND coalesce(settings->>'lifecycle','active')<>'draft' AND coalesce(settings->>'purchasable','true')<>'false' ORDER BY id", (brand_id,))
+            preferences_query = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,))
+            classic_query = conn.execute("SELECT * FROM products WHERE id='kps-34' AND brand_id='kps'") if brand_id == 'kps' else None
+        brand = brand_query.fetchone()
         if not brand:
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
-        branch = None
-        if branch_id:
-            branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s', (branch_id, brand_id)).fetchone()
-            if not branch:
-                raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود.')
-        products = conn.execute("SELECT * FROM products WHERE brand_id=%s AND coalesce(settings->>'lifecycle','active')<>'draft' AND coalesce(settings->>'purchasable','true')<>'false' ORDER BY id", (brand_id,)).fetchall()
-        preferences = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
+        branch = branch_query.fetchone() if branch_query else None
+        if branch_id and not branch:
+            raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود.')
+        products = products_query.fetchall()
+        preferences = preferences_query.fetchone()
         target = khaliya_branch(conn) if branch and brand_id == 'kps' and service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن' else None
-        classic = conn.execute("SELECT * FROM products WHERE id='kps-34' AND brand_id='kps'").fetchone() if brand_id == 'kps' else None
+        classic = classic_query.fetchone() if classic_query else None
         public_products = []
         for product in products:
             effective = target if target and is_khaliya(product) else branch
@@ -397,9 +404,11 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
                            if key in {'accent', 'background', 'text', 'font', 'profile'}}
-    return {'brand': safe_brand, 'products': public_products,
+    # This allowlisted projection already consists entirely of JSON values.
+    # Serialize it once here instead of traversing it again on the event loop.
+    return JSONResponse({'brand': safe_brand, 'products': public_products,
             'legacy_item_mappings': legacy_item_mappings(products),
-            'source_verified': bool(products) and all(source_approved(p) for p in products)}
+            'source_verified': bool(products) and all(source_approved(p) for p in products)})
 
 
 @router.get('/branches')
@@ -598,8 +607,10 @@ def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list
 
 def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     lock = ' FOR SHARE' if for_update else ''
-    brand = conn.execute('SELECT id,settings FROM brands WHERE id=%s AND active' + lock, (body.brand_id,)).fetchone()
-    branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s' + lock, (body.branch_id, body.brand_id)).fetchone()
+    with conn.pipeline():
+        brand_query = conn.execute('SELECT id,settings FROM brands WHERE id=%s AND active' + lock, (body.brand_id,))
+        branch_query = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s' + lock, (body.branch_id, body.brand_id))
+    brand, branch = brand_query.fetchone(), branch_query.fetchone()
     if not brand or not branch:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع أو البراند غير موجود.')
     available, code, reason = branch_service(branch, body.service, brand_settings=brand['settings'])
