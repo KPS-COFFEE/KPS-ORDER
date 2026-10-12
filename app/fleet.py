@@ -46,10 +46,12 @@ SELECT=f"""SELECT l.shift_id,l.vehicle_id,l.operating_day,l.revision,v.plate,v.d
  s.branch_ids,s.opened_at received_at,coalesce((s.vehicle_log->'end'->>'recorded_at')::timestamptz,(s.vehicle_log->'end_exception'->>'recorded_at')::timestamptz,s.submitted_at) returned_at,
  {METRICS} metrics,
  (SELECT count(DISTINCT t.order_id) FROM driver_tasks t WHERE t.shift_id=s.id) orders,
- (SELECT count(*) FROM vehicle_reports r WHERE r.brand_id=s.brand_id AND r.driver_id=s.user_id
+ GREATEST((SELECT count(*) FROM vehicle_reports r WHERE r.brand_id=s.brand_id AND r.driver_id=s.user_id
  AND r.branch_id IN (SELECT jsonb_array_elements_text(s.branch_ids))
  AND regexp_replace(upper(r.vehicle_plate),'[[:space:]]','','g')=v.plate_key
- AND r.created_at>=s.opened_at AND r.created_at<=coalesce(s.submitted_at,s.closed_at,now())) faults
+ AND r.created_at>=s.opened_at AND r.created_at<coalesce(s.submitted_at,s.closed_at,now())),
+ ((EXISTS(SELECT 1 FROM jsonb_each_text(coalesce(s.vehicle_log->'start'->'checks','{{}}')) check_start WHERE check_start.value='issue')
+ OR EXISTS(SELECT 1 FROM jsonb_each_text(coalesce(s.vehicle_log->'end'->'checks','{{}}')) check_end WHERE check_end.value='issue'))::int)) faults
  """
 
 def filters(user,start=None,end=None,vehicle_id=None,driver_id=None,branch_id=None,fuel_status=None,faults_only=False,exceptions_only=False,metric=None):

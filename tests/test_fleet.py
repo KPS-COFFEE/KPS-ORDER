@@ -8,11 +8,13 @@ from app.shift_vehicle import CHECKS
 from test_operations import ops
 
 
-def seed(c,sid,plate,day,driver='ops-driver',km=210,liters=21,full=True,state='closed',brand='ops-brand',bids=None,exception=False):
+def seed(c,sid,plate,day,driver='ops-driver',km=210,liters=21,full=True,state='closed',brand='ops-brand',bids=None,exception=False,inspection_issue=False):
     opened=datetime(2026,10,day,16,tzinfo=timezone.utc);ended=datetime(2026,10,day,20,tzinfo=timezone.utc)
     log={'vehicle':{'plate':plate,'type':'Test car','description':'Test model'},
          'start':{'odometer_km':1000,'fuel_percent':100 if full else 50,'checks':{k:'ok' for k in CHECKS},'recorded_at':opened.isoformat()},
          'refuels':[{'liters':str(liters),'odometer_km':1000+km,'recorded_at':ended.isoformat()}]}
+    if inspection_issue:
+        log['start']['checks']['brakes']='issue';log['start']['notes']='TEST ONLY inspection fault'
     if state=='closed':log['end']={'odometer_km':1000+km,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS},'recorded_at':ended.isoformat()}
     if exception:log['end_exception']={'reason':'Test-only exception','recorded_at':ended.isoformat()}
     return c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,opened_at,submitted_at,closed_at,status,vehicle_log,delivery_operational_date) VALUES(%s,\'driver\',%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
@@ -71,10 +73,10 @@ def test_audited_correction_replay_immutable_original_and_scope(ops):
     delegate(actor)
     vid=client.get('/api/fleet/vehicles').json()['vehicles'][0]['id'];url=f'/api/fleet/vehicles/{vid}/logs/closed-correction'
     d=client.get(url).json();body={'revision':d['log']['revision'],'reason':'TEST ONLY receipt correction','start_odometer':1000,'end_odometer':1210,'liters':'21','full_start':True,'full_end':True,'notes':'=HYPERLINK("test")'}
-    result=client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'once'});assert result.status_code==200,result.text
+    result=client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'fleet-correction-once'});assert result.status_code==200,result.text
     assert result.json()['metrics']['fuel_status']=='green'
-    assert client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'once'}).json()==result.json()
-    assert client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'stale'}).status_code==409
+    assert client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'fleet-correction-once'}).json()==result.json()
+    assert client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'fleet-correction-stale'}).status_code==409
     assert len(client.get(url).json()['corrections'])==1
     with db.tx() as c:
         assert c.execute('SELECT vehicle_log FROM shifts WHERE id=\'closed-correction\'').fetchone()['vehicle_log']==before
@@ -84,7 +86,7 @@ def test_audited_correction_replay_immutable_original_and_scope(ops):
     actor('manager');assert client.get('/api/fleet/report').status_code==403
     actor('fawzi')
     with db.tx() as c:c.execute("UPDATE users SET permissions='[]' WHERE id='ops-fawzi'")
-    actor('fawzi');assert client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'once'}).status_code==403
+    actor('fawzi');assert client.post(url+'/corrections',json=body,headers={'Idempotency-Key':'fleet-correction-once'}).status_code==403
 
 
 def test_faults_and_branch_scope_no_duplicate_counts(ops):
@@ -92,14 +94,15 @@ def test_faults_and_branch_scope_no_duplicate_counts(ops):
     client=actor('owner')
     with db.tx() as c:
         seed(c,'fault-shift','TEST FAULT',12)
+        seed(c,'inspection-shift','TEST INSPECTION',12,inspection_issue=True)
         c.execute("INSERT INTO vehicle_reports(id,brand_id,branch_id,driver_id,category,vehicle_description,vehicle_plate,description,created_at) VALUES('fault1','ops-brand','ops-branch','ops-driver','engine','test','TEST FAULT','test-only','2026-10-12 18:00:00Z')")
         c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city) VALUES('ops-second',2,'second','ops-brand','test second','test')")
         seed(c,'out-of-scope','TEST HIDDEN',12,bids=['ops-branch','ops-second'])
     delegate(actor)
-    r=client.get('/api/fleet/report?start=2026-10-12&faults_only=true').json();assert r['total']==1 and r['summary']['faults']==1
-    assert client.get('/api/fleet/report?start=2026-10-12').json()['total']==1
+    r=client.get('/api/fleet/report?start=2026-10-12&faults_only=true').json();assert r['total']==2 and r['summary']['faults']==2
+    assert client.get('/api/fleet/report?start=2026-10-12').json()['total']==2
     assert client.get('/api/fleet/report?start=2026-10-12&branch_id=ops-second').json()['total']==0
-    actor('owner');assert client.get('/api/fleet/report?start=2026-10-12').json()['total']==2
+    actor('owner');assert client.get('/api/fleet/report?start=2026-10-12').json()['total']==3
 
 
 def test_vehicle_changed_driver_rejects_overlap_and_lower_odometer(ops):

@@ -91,3 +91,14 @@ The local PostgreSQL runtime could not start under the environment's permissions
 GitHub publication was rejected by automatic approval review because publication
 to the new branch was not authorized. No CI success, deployment or live activation
 is claimed. Workflow: `.github/workflows/fleet-operating-log.yml`.
+
+## Approved publication follow-up
+
+Owner explicitly approved publication to the existing PR #1 branch on 12 October.
+Initial published revision: dbea1c1f647da80be7bd9d9249f5cc63387a7aec.
+Real PostgreSQL 18.6 and Chromium first run: 116 passed, one fixture key failure.
+The correction test now uses a valid canonical idempotency key; the guard was not
+weakened. The test-only PDF reader is pinned to upstream security release 6.20.1.
+Inspection findings count as a fault-bearing record even without a separate fault
+report. Existing report count is retained when available to avoid double counting
+a single inspection and its corresponding report. Deployment remains manual.
