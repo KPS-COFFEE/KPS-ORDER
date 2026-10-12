@@ -360,7 +360,7 @@ def public_product(product: dict, branch=None, service=None) -> dict:
 @router.get('/catalog')
 def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str | None = Query(default=None, max_length=80),
             service: Literal['pickup', 'car', 'delivery'] | None = Query(default=None)):
-    with db.tx() as conn:
+    with db.tx(pipeline=True) as conn:
         # Independent, freshly scoped reads share one protocol flush. No menu
         # cache: availability and brand changes remain visible immediately.
         with conn.pipeline():
@@ -705,7 +705,7 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
 
 @router.post('/quote')
 def quote(body: QuoteBody):
-    with db.tx() as conn:
+    with db.tx(pipeline=True) as conn:
         return {'quote': customer_quote_view(quote_order(conn, body))}
 
 

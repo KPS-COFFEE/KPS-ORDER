@@ -52,7 +52,7 @@ def _ensure_manager_duty(conn, brand_id, branch_id):
 def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(auth.require_roles('customer')), idempotency_key: str | None = Header(default=None)):
     if user['brand_id'] != body.brand_id:
         raise db.error(403, 'BRAND_FORBIDDEN', 'حساب العميل لا يتبع هذا البراند.')
-    with db.tx() as conn:
+    with db.tx(pipeline=True) as conn:
         auth.assert_customer_order_eligible(conn,user)
         def perform():
             if not db.rate_limit(conn,'order-principal:'+user['id'],10,600):

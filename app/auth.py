@@ -497,12 +497,14 @@ def guest_session(body:GuestBody,request:Request,response:Response):
     # Optional email is a hint, never used for identity matching or ownership.
     contact_email=email_delivery.normalize_email(body.email) if body.email else None
     ip = request.client.host if request.client else 'unknown'
-    with db.tx() as conn:
+    # Batch transaction commands without merging the durable abuse guard
+    # with identity creation: rejected/failed identities still consume limits.
+    with db.tx(pipeline=True) as conn:
         allowed = db.rate_limit(conn,'guest-create-contact:'+body.brand_id+':'+token_hash(phone),10,600)
         allowed = db.rate_limit(conn,'guest-create-ip:'+ip,200,600) and allowed
     if not allowed:
         raise db.error(429,'GUEST_RATE_LIMIT','طلبات كثيرة. انتظر قليلًا.')
-    with db.tx() as conn:
+    with db.tx(pipeline=True) as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
             raise db.error(404,'BRAND_NOT_FOUND','البراند غير متاح.')
         if not _guest_channel_available(conn,body.brand_id):
