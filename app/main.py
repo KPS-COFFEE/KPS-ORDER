@@ -26,30 +26,33 @@ LOGGER = logging.getLogger('kps_order')
 @asynccontextmanager
 async def lifespan(app):
     background_tasks = []
-    app.state.database_configured = bool(os.getenv('DATABASE_URL'))
-    if app.state.database_configured:
-        # A bad configured migration/database blocks startup; no storage substitute is created.
-        db.migrate()
-        from . import recovery
-        if recovery.configuration()['poll_configured']:
-            background_tasks.append(asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor'))
-        if monitoring.configuration()['runtime_configured']:
-            background_tasks.append(asyncio.create_task(monitoring.poll_loop(), name='operational-monitor'))
-        from . import email_delivery, report_notifications, order_support
-        if os.getenv('APP_ENV')!='testing':
-            background_tasks.append(asyncio.create_task(order_support.poll_loop(), name='delivery-photo-cleanup'))
-        if email_delivery.configuration()['configured'] and os.getenv('EMAIL_WORKER_ENABLED', 'true').lower() == 'true':
-            background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
-        if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
-            background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
     try:
+        app.state.database_configured = bool(os.getenv('DATABASE_URL'))
+        if app.state.database_configured:
+            # A bad configured migration/database blocks startup; no storage substitute is created.
+            db.migrate()
+            from . import recovery
+            if recovery.configuration()['poll_configured']:
+                background_tasks.append(asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor'))
+            if monitoring.configuration()['runtime_configured']:
+                background_tasks.append(asyncio.create_task(monitoring.poll_loop(), name='operational-monitor'))
+            from . import email_delivery, report_notifications, order_support
+            if os.getenv('APP_ENV')!='testing':
+                background_tasks.append(asyncio.create_task(order_support.poll_loop(), name='delivery-photo-cleanup'))
+            if email_delivery.configuration()['configured'] and os.getenv('EMAIL_WORKER_ENABLED', 'true').lower() == 'true':
+                background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
+            if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
+                background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
         yield
     finally:
-        for task in background_tasks:
-            task.cancel()
-        for task in background_tasks:
-            with suppress(asyncio.CancelledError):
-                await task
+        try:
+            for task in background_tasks:
+                task.cancel()
+            for task in background_tasks:
+                with suppress(asyncio.CancelledError):
+                    await task
+        finally:
+            db.close_pools()
 
 
 app = FastAPI(title='KPS Independent Orders', version='5.0.0', lifespan=lifespan,

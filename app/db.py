@@ -1,10 +1,12 @@
 """PostgreSQL-only persistence, forward migrations and atomic replay protection."""
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json as jsonlib
 import os
 import re
+import threading
 import uuid
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -15,8 +17,75 @@ from fastapi import HTTPException
 from psycopg.rows import dict_row
 from psycopg import sql
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool, PoolClosed, PoolTimeout, TooManyRequests
 
 ROOT = Path(__file__).resolve().parents[1]
+POOL_MIN_SIZE = 2
+POOL_MAX_SIZE = 20
+POOL_CHECKOUT_SECONDS = 5.0
+_pools: dict[tuple[int, str], ConnectionPool] = {}
+_pools_lock = threading.Lock()
+_inherited_pools = []
+
+
+def _after_fork_child():
+    global _pools, _pools_lock
+    # Retain inherited objects without touching their sockets or possibly
+    # locked thread primitives. Only fresh child-owned pools are accessible.
+    _inherited_pools.append(_pools)
+    _pools = {}
+    _pools_lock = threading.Lock()
+
+
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_after_fork_child)
+
+
+def _reset_connection(conn):
+    # Connections use autocommit outside tx(), so DISCARD ALL runs outside a
+    # transaction. It removes roles/GUCs/temp objects/session advisory locks.
+    # Startup DSN options (including test schema search_path/TLS) stay intact.
+    conn.execute('DISCARD ALL')
+
+
+def _pool_for_url(url):
+    if not url.startswith(('postgres://', 'postgresql://')):
+        raise RuntimeError('A PostgreSQL DATABASE_URL is required; no temporary storage fallback exists.')
+    # Full URL identity includes database, SSL parameters and search_path.
+    # PID identity prevents inherited worker connections from being reused.
+    identity = (os.getpid(), url)
+    with _pools_lock:
+        pool = _pools.get(identity)
+        if pool is None:
+            name = 'kps_order_pool_' + str(identity[0]) + '_' + hashlib.sha256(url.encode()).hexdigest()[:12]
+            pool = ConnectionPool(url, min_size=POOL_MIN_SIZE, max_size=POOL_MAX_SIZE,
+                timeout=POOL_CHECKOUT_SECONDS, max_waiting=200, open=False, name=name,
+                kwargs={'row_factory': dict_row, 'connect_timeout': 5, 'autocommit': True,
+                        'prepare_threshold': None, 'application_name': name},
+                check=ConnectionPool.check_connection, reset=_reset_connection,
+                max_lifetime=600, max_idle=60, reconnect_timeout=10, num_workers=3)
+            pool.open()
+            _pools[identity] = pool
+        return pool
+
+
+def close_pools(url=None):
+    """Close this process's pools at lifespan exit/test-schema cleanup."""
+    with _pools_lock:
+        keys = [key for key in _pools if key[0] == os.getpid() and (url is None or key[1] == url)]
+        pools = [_pools.pop(key) for key in keys]
+    for pool in pools:
+        pool.close(timeout=5)
+
+
+def pool_statistics():
+    """Opaque-name, numeric observation; never exposes DSNs or credentials."""
+    with _pools_lock:
+        pools = [pool for key, pool in _pools.items() if key[0] == os.getpid()]
+    return {pool.name: pool.get_stats() for pool in pools}
+
+
+atexit.register(close_pools)
 
 
 def json(value: Any) -> Jsonb:
@@ -36,10 +105,15 @@ def tx():
     url = os.environ.get('DATABASE_URL', '')
     if not url.startswith(('postgres://', 'postgresql://')):
         raise RuntimeError('A PostgreSQL DATABASE_URL is required; no temporary storage fallback exists.')
-    with psycopg.connect(url, row_factory=dict_row, connect_timeout=10) as conn:
-        with conn.transaction():
-            conn.execute("SET LOCAL statement_timeout = '15000ms'")
-            yield conn
+    pool = _pool_for_url(url)
+    try:
+        with pool.connection(timeout=POOL_CHECKOUT_SECONDS) as conn:
+            with conn.transaction():
+                conn.execute("SET LOCAL statement_timeout = '15000ms'")
+                yield conn
+    except (PoolClosed, PoolTimeout, TooManyRequests) as exc:
+        # Preserve the existing sanitized database-unavailable HTTP contract.
+        raise psycopg.OperationalError('Database connection capacity is unavailable.') from exc
 
 
 get_conn = tx

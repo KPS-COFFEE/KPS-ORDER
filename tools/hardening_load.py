@@ -511,7 +511,7 @@ def wait_ready(origin, timeout=45):
     raise RuntimeError('Isolated application did not recover within the bounded readiness window.')
 
 
-def database_fault_drills(db_url, base_url, origin, container):
+def database_fault_drills(db_url, base_url, origin, container, app_pid):
     inspect_test_container(container, base_url)
     report = {'container_safety_verified': True, 'outage': {}, 'connection_capacity': {}, 'passed': False}
     before = order_fingerprints(db_url)
@@ -530,7 +530,9 @@ def database_fault_drills(db_url, base_url, origin, container):
             raise RuntimeError('No synthetic persisted business row available for rollback drill.')
         stopped = True
         subprocess.run(['docker', 'stop', '--time', '2', container], check=True, capture_output=True, timeout=30)
-        with httpx.Client(base_url=origin, timeout=5) as client:
+        # Allow the application's bounded five-second checkout to produce its
+        # real 503 response, including response transport/scheduling overhead.
+        with httpx.Client(base_url=origin, timeout=15) as client:
             report['outage']['readiness_http_status_during_outage'] = client.get('/ready').status_code
             report['outage']['liveness_http_status_during_outage'] = client.get('/health').status_code
         try:
@@ -565,18 +567,40 @@ def database_fault_drills(db_url, base_url, origin, container):
     holders = []
     capacity = report['connection_capacity']
     try:
-        with psycopg.connect(db_url) as conn:
-            maximum = int(conn.execute('SHOW max_connections').fetchone()[0])
-            users_before = conn.execute('SELECT count(*) FROM users').fetchone()[0]
+        control = psycopg.connect(db_url, autocommit=True)
+        holders.append(control)
+        maximum = int(control.execute('SHOW max_connections').fetchone()[0])
+        users_before = control.execute('SELECT count(*) FROM users').fetchone()[0]
         capacity['configured_max_connections'] = maximum
         if maximum > 200:
             raise RuntimeError('Safety cap refuses to occupy more than 200 database connections.')
-        for _ in range(maximum + 1):
-            try:
-                holders.append(psycopg.connect(db_url, autocommit=True, connect_timeout=2))
-            except psycopg.OperationalError:
-                capacity['exhaustion_reached'] = True
+        app_name = f'kps_order_pool_{app_pid}_' + hashlib.sha256(db_url.encode()).hexdigest()[:12]
+        capacity['terminated_isolated_app_pool_backends'] = 0
+        # Idle pooled sockets can still execute at global connection capacity.
+        # Fill every remaining slot, terminate only this isolated application's
+        # named backends, then occupy freed slots before measuring failures.
+        # Repeat boundedly if a pool worker wins a reconnect race.
+        for attempt in range(10):
+            for _ in range(maximum + 1):
+                try:
+                    holders.append(psycopg.connect(db_url, autocommit=True, connect_timeout=2))
+                except psycopg.OperationalError:
+                    capacity['exhaustion_reached'] = True
+                    break
+            app_backends = control.execute("SELECT pid FROM pg_stat_activity WHERE datname=current_database() "
+                                           "AND application_name=%s", (app_name,)).fetchall()
+            if app_backends:
+                for (pid,) in app_backends:
+                    control.execute('SELECT pg_terminate_backend(%s)', (pid,))
+                capacity['terminated_isolated_app_pool_backends'] += len(app_backends)
+                continue
+            capacity['remaining_isolated_app_pool_backends'] = 0
+            capacity['client_backend_count_at_capacity'] = control.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend'").fetchone()[0]
+            if capacity.get('exhaustion_reached'):
                 break
+        else:
+            raise RuntimeError('Could not genuinely exhaust the isolated application pool within bounded attempts.')
         capacity['held_connections'] = len(holders)
         with httpx.Client(base_url=origin, headers={'Origin': origin}, timeout=15) as client:
             capacity['readiness_http_status_at_capacity'] = client.get('/ready').status_code
@@ -601,6 +625,8 @@ def database_fault_drills(db_url, base_url, origin, container):
         except Exception as exc:
             capacity['recovery_error_type'] = type(exc).__name__
     capacity['passed'] = (capacity.get('exhaustion_reached') is True and
+        capacity.get('remaining_isolated_app_pool_backends') == 0 and
+        capacity.get('client_backend_count_at_capacity') == capacity.get('configured_max_connections') and
         capacity.get('readiness_http_status_at_capacity') == 503 and capacity.get('liveness_http_status_at_capacity') == 200 and
         capacity.get('write_http_status_at_capacity') == 503 and capacity.get('failed_write_left_no_partial_user') is True and
         capacity.get('committed_order_fingerprints_preserved') is True and 'error_type' not in capacity and 'recovery_error_type' not in capacity)
@@ -676,6 +702,8 @@ def main():
         os.environ.clear()
         os.environ.update(env)
         configure_synthetic_data()
+        from app import db
+        db.close_pools(isolated)
         process, log, report['startup_seconds'] = start_app(env, port, args.output.parent / 'load-app.log')
         origin = f'http://127.0.0.1:{port}'
         for concurrency in levels:
@@ -724,7 +752,7 @@ def main():
         # Restart only this isolated process, then reconcile all acknowledged
         # orders after the application reruns its real additive migrations.
         if args.database_container:
-            report['database_fault_drills'] = database_fault_drills(isolated, base, origin, args.database_container)
+            report['database_fault_drills'] = database_fault_drills(isolated, base, origin, args.database_container, process.pid)
         else:
             report['database_fault_drills'] = {'status': 'UNVERIFIED', 'reason': 'No explicitly verified local Docker PostgreSQL service was supplied.'}
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
@@ -756,6 +784,8 @@ def main():
             report['interrupted_observer_cleanup'] = sampler.finish()
         if process:
             stop_app(process, log)
+        from app import db
+        db.close_pools(isolated)
         os.environ.clear()
         os.environ.update(previous_env)
         try:

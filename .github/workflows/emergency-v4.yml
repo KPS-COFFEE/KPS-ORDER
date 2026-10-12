@@ -171,6 +171,7 @@ jobs:
           tests/test_hardening_printing.py tests/test_hardening_recovery.py
           tests/test_hardening_staff_browser.py tests/test_hardening_load_observer.py
           tests/test_hardening_order_pipeline.py
+          tests/test_hardening_pool.py
           --junitxml=test-results/hardening-focused.xml
       - name: Run preserved appearance and complete staff role journeys
         # Full mode includes every legacy file in the disjoint shards below.

@@ -99,6 +99,7 @@ def database(monkeypatch, safe_test_environment):
         db.migrate()
         yield isolated_url
     finally:
+        db.close_pools(isolated_url)
         # Cleanup is bounded to the UUID schema created above. Never drop a
         # database, public schema or anything supplied by an external test URL.
         with psycopg.connect(base_url, autocommit=True, connect_timeout=10) as control:

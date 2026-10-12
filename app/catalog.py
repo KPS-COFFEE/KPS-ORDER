@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, parse_qs, urlencode, unquote
 
 from fastapi import APIRouter, Depends, Header, Query
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from . import auth, db, service_hours
 from .service_hours import closed_delivery_message, hours_status
@@ -524,6 +524,18 @@ class QuoteBody(_CheckoutModel):
     customer: CustomerInfo
     notes: str = Field(default='', max_length=1000)
     expected_total_halalas: StrictInt | None = Field(default=None, ge=0, le=10000000)
+
+    @model_validator(mode='before')
+    @classmethod
+    def delivery_neighborhood_error_contract(cls, value):
+        # Preserve the existing delivery error code while rejecting a NUL
+        # before nested text validation or any PostgreSQL statement executes.
+        if isinstance(value, dict) and value.get('service') == 'delivery':
+            customer = value.get('customer')
+            neighborhood = customer.get('neighborhood') if isinstance(customer, dict) else None
+            if isinstance(neighborhood, str) and '\x00' in neighborhood:
+                raise db.error(422, 'DELIVERY_NEIGHBORHOOD_REQUIRED', 'أدخل اسم حي التوصيل بصورة واضحة.')
+        return value
 
 
 def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list]:

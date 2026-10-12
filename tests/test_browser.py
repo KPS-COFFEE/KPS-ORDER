@@ -579,7 +579,13 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             expect(driver.locator('#page-heading [data-action=maintenance-create]')).to_have_count(1)
             expect(driver.locator('#page-heading [data-action=register-vehicle]')).to_have_count(1)
         _capture(driver,'driver-assigned-synthetic-task')
-        accept.click()
+        with driver.expect_response(lambda response:response.request.method=='POST' and response.url.endswith('/transition')) as acceptance:
+            accept.click()
+        assert acceptance.value.status==200,acceptance.value.text()
+        assert acceptance.value.json()['task']['status']=='accepted'
+        with db.tx() as conn:
+            assert conn.execute('SELECT status FROM driver_tasks WHERE order_id=%s',(order_id,)).fetchone()['status']=='accepted'
+            assert conn.execute("SELECT count(*) n FROM order_events WHERE order_id=%s AND event_type='task.accepted'",(order_id,)).fetchone()['n']==1
         expect(driver.locator('[data-action=task-transition][data-status=picked_up]')).to_be_visible()
         branch.locator('#navigation [data-page=orders]').click()
         branch.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
