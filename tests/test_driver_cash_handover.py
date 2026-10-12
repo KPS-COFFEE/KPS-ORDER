@@ -5,6 +5,32 @@ from tests.test_operations import ops, delivered
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('city',['حفر الباطن','رفحاء','الدمام'])
+def test_all_cities_require_linked_manager_receipt_and_scope(ops,city):
+    actor,post,order,shifts=ops
+    with db.tx() as c:c.execute('UPDATE branches SET city=%s WHERE id=%s',(city,'ops-branch'))
+    manager,driver=shifts()
+    post('driver',f'/api/shifts/{driver}/closing')
+    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
+    branch_body={'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'REJECT BRANCH','closure':True}
+    post('driver','/api/custody',branch_body,status=403)
+    body={'from_shift_id':driver,'recipient_user_id':'ops-manager','to_shift_id':manager,'amount_halalas':0,'reference':'MANAGER ALL CITIES','closure':True}
+    post('driver','/api/custody',{**body,'recipient_user_id':'ops-branch'},status=422)
+    tid=post('driver','/api/custody',body)['transfer']['id']
+    post('branch',f'/api/custody/{tid}/confirm',status=404)
+    post('manager',f'/api/shifts/{driver}/approve',status=409)
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-manager'")
+    post('manager',f'/api/custody/{tid}/confirm',status=403)
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[\"ops-branch\"]' WHERE id='ops-manager'")
+    post('manager',f'/api/custody/{tid}/confirm',key='actual-manager-receipt')
+    post('manager',f'/api/custody/{tid}/confirm',key='actual-manager-receipt')
+    post('manager',f'/api/shifts/{driver}/approve')
+    with db.tx() as c:
+        t=c.execute('SELECT * FROM custody_transfers WHERE id=%s',(tid,)).fetchone()
+        assert t['confirmed_by']=='ops-manager' and t['receiving_branch_id'] is None
+
+
+@pytest.mark.postgres
 @pytest.mark.parametrize('counted',[900,1000,1100])
 def test_manager_approves_driver_shortage_match_surplus_after_receipt(ops,counted):
     actor,post,order,shifts=ops
@@ -28,6 +54,7 @@ def test_manager_approves_driver_shortage_match_surplus_after_receipt(ops,counte
 @pytest.mark.postgres
 def test_remote_driver_bag_requires_real_branch_account_not_manager(ops):
     actor,post,order,shifts=ops
+    with db.tx() as c:c.execute("UPDATE brands SET settings=settings || '{\"driver_cash_receipt_policy\":\"branch_by_city\"}'::jsonb WHERE id='ops-brand'")
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     manager,driver=shifts();delivered(post,order,driver)
     post('driver',f'/api/shifts/{driver}/closing')
@@ -50,6 +77,7 @@ def test_remote_driver_bag_requires_real_branch_account_not_manager(ops):
 @pytest.mark.postgres
 def test_hafar_cannot_use_branch_bag_and_revoked_branch_cannot_confirm(ops):
     actor,post,order,shifts=ops
+    with db.tx() as c:c.execute("UPDATE brands SET settings=settings || '{\"driver_cash_receipt_policy\":\"branch_by_city\"}'::jsonb WHERE id='ops-brand'")
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
     post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
@@ -89,6 +117,7 @@ def test_terminal_manager_only_frozen_at_submission_and_in_report(ops):
 @pytest.mark.postgres
 def test_branch_receipt_replay_cannot_bypass_revoked_scope(ops):
     actor,post,order,shifts=ops
+    with db.tx() as c:c.execute("UPDATE brands SET settings=settings || '{\"driver_cash_receipt_policy\":\"branch_by_city\"}'::jsonb WHERE id='ops-brand'")
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
@@ -161,11 +190,11 @@ def test_atomic_driver_submission_rolls_back_bad_handover_and_routes_actual_rece
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
         assert s['status']=='closing' and s['submission'] is None and 'end' not in s['vehicle_log']
         assert not c.execute('SELECT 1 FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()
-    body['handover']={'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','reference':'TEST RAFHA'} if remote else {'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST HAFAR'}
+    body['handover']={'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST MANAGER ALL CITIES'}
     result=post('driver',f'/api/shifts/{driver}/submit',body,key='atomic-submit-once')
     assert post('driver',f'/api/shifts/{driver}/submit',body,key='atomic-submit-once')==result
     with db.tx() as c:t=c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()
-    if remote:post('manager',f"/api/custody/{t['id']}/confirm",status=404)
-    post('branch' if remote else 'manager',f"/api/custody/{t['id']}/confirm")
+    post('branch',f"/api/custody/{t['id']}/confirm",status=404)
+    post('manager',f"/api/custody/{t['id']}/confirm")
     post('manager',f'/api/shifts/{driver}/approve')
     assert actor('owner').get('/api/report-notifications').json()['notifications']==[]

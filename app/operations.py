@@ -230,6 +230,10 @@ def shifts(user=Depends(auth.current_user)):
         rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
         return safe({'shifts':rows,**people_data(c,user)})
 
+def driver_cash_policy(c,brand_id):
+    row=c.execute('SELECT settings FROM brands WHERE id=%s',(brand_id,)).fetchone()
+    return (row['settings'] or {}).get('driver_cash_receipt_policy','delivery_manager')
+
 def people_data(c,user):
     users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver','branch_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
@@ -237,7 +241,7 @@ def people_data(c,user):
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
     if user['role']=='driver':
         managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])]
-    return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers}
+    return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
 
 @router.get('/operations/people')
 def people(user=Depends(auth.current_user)):
@@ -697,7 +701,14 @@ def create_custody(c,user,body):
     recipient=(to['user_id'] if to else body.recipient_user_id)
     target=c.execute('SELECT * FROM users WHERE id=%s AND active',(recipient,)).fetchone()
     if not target or target['id']==src['user_id'] or target['role'] not in ('owner','delivery_manager','driver','branch_manager') or not same_scope(user,target):fail(422,'يلزم مستلم مخول مستقل يؤكد فعليا')
-    if src['kind']=='driver':
+    if src['kind']=='driver' and driver_cash_policy(c,src['brand_id'])=='delivery_manager':
+        if body.receiving_branch_id or not to or to['kind']!='manager' or to['id']!=src['manager_shift_id'] or target['role'] not in ('delivery_manager','owner'):
+            fail(403,'نقد السائق يسلم لمدير التوصيل المسؤول عن شفته في جميع المدن')
+        if body.recipient_user_id and body.recipient_user_id!=to['user_id']:
+            fail(422,'المستلم لا يطابق مدير شفت السائق')
+        if target['role']!='owner' and not set(src['branch_ids'])<=set(target.get('branch_ids',[])):
+            fail(403,'مدير التوصيل غير مخول لجميع فروع الشفت')
+    elif src['kind']=='driver':
         from .catalog import normalize_city
         branches=c.execute('SELECT id,city FROM branches WHERE brand_id=%s AND id=ANY(%s)',(src['brand_id'],src['branch_ids'])).fetchall()
         cities={normalize_city(b['city']) for b in branches}
