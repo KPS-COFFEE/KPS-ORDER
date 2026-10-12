@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   dependency-security:
-    if: github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4'
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -38,7 +38,7 @@ jobs:
           path: test-artifacts/dependency-audit.json
 
   isolated-load-recovery:
-    if: github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4'
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:

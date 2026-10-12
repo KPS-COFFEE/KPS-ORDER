@@ -240,11 +240,19 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         manager.locator(f'[data-action=assign][data-id="{order_id}"]').click()
         _submit_modal(manager, {'driver_shift_id': driver_shift})
         driver.locator('[data-page=tasks]').click()
-        driver.locator('[data-action=task-transition][data-status=accepted]').click()
+        with driver.expect_response(lambda response:response.request.method=='POST' and response.url.endswith('/transition')) as acceptance:
+            driver.locator('[data-action=task-transition][data-status=accepted]').click()
+        assert acceptance.value.status==200,acceptance.value.text()
+        assert acceptance.value.json()['task']['status']=='accepted'
+        # The branch must read the version after driver acceptance has committed.
+        # A click alone starts the async request without waiting for this state.
+        expect(driver.locator('[data-action=task-transition][data-status=picked_up]')).to_be_visible()
         branch.locator('[data-page=orders]').click()
         for status in ('handed_over',):
             branch.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
-            branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status={status}]').click()
+            with branch.expect_response(lambda response:response.request.method=='POST' and response.url==base+'/api/orders/'+order_id+'/preparation') as handover:
+                branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status={status}]').click()
+            assert handover.value.status==200,handover.value.text()
             expect(branch.locator(f'#modal-body [data-action=prepare][data-status={status}]')).not_to_be_visible()
             _close_detail(branch)
         driver.locator('[data-page=tasks]').click()

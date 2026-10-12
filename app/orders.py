@@ -106,7 +106,8 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
             db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': execution_branch_id, 'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'), 'total_halalas': quote['total_halalas']})
             return {'order': customer_order_view(row)}
-        return db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform)
+        return db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform,
+                             pipeline_writes=True)
 
 
 @router.get('')

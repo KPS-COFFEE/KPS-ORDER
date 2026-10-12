@@ -389,7 +389,11 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
             assert conn.execute('SELECT count(*) AS n FROM chat_attachments WHERE conversation_id=%s', (conversation['id'],)).fetchone()['n'] == 1
         page.keyboard.press('Escape')
         page.reload()
+        # Click immediately after reload: restored identity must be ready before
+        # this control can send a signed-in customer into the guest dialog.
         page.locator('#orders-button').click()
+        expect(page.locator('#orders-dialog')).to_be_visible()
+        expect(page.locator('#account-dialog')).not_to_be_visible()
         page.get_by_role('button', name='عرض الطلب ومحادثته', exact=True).click()
         page.get_by_role('button', name='محادثة الطلب', exact=True).click()
         expect(page.locator('.chat-bubble')).to_have_count(2)

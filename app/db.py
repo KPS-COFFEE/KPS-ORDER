@@ -6,7 +6,7 @@ import json as jsonlib
 import os
 import re
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
@@ -69,7 +69,8 @@ def digest(body: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, perform: Callable[[], dict]) -> dict:
+def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, perform: Callable[[], dict],
+               *, pipeline_writes: bool = False) -> dict:
     if not key or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', key):
         raise error(400, 'IDEMPOTENCY_KEY_REQUIRED', 'أرسل مفتاح منع تكرار صحيحًا للعملية.')
     lock_key = hashlib.sha256(f'{user_id}:{operation}:{key}'.encode()).digest()[:8]
@@ -81,10 +82,16 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
         if saved['request_digest'] != request_digest:
             raise error(409, 'IDEMPOTENCY_CONFLICT', 'هذا المفتاح استُخدم لعملية ببيانات مختلفة.')
         return saved['response']
-    result = perform()
-    stable = jsonlib.loads(jsonlib.dumps(result, ensure_ascii=False, default=str))
-    conn.execute('INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) VALUES(%s,%s,%s,%s,%s)',
-                 (user_id, operation, key, request_digest, json(stable)))
+    # Opted-in callers keep all existing read/lock/transaction semantics.
+    # Cursor fetches synchronize their dependent reads; independent trailing
+    # event/audit/replay writes share one pipeline flush. Exiting the context
+    # must succeed before returning a response, and the caller's transaction
+    # still atomically commits or rolls back the entire business operation.
+    with conn.pipeline() if pipeline_writes else nullcontext():
+        result = perform()
+        stable = jsonlib.loads(jsonlib.dumps(result, ensure_ascii=False, default=str))
+        conn.execute('INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) VALUES(%s,%s,%s,%s,%s)',
+                     (user_id, operation, key, request_digest, json(stable)))
     return stable
 
 

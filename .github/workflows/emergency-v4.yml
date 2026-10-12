@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   windows-print-bridge:
-    if: github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4'
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -40,7 +40,7 @@ jobs:
         shard: [0, 1, 2]
     # pull_request branch filters target branches. This gate restricts execution
     # to the emergency source branch without changing legacy integrations.
-    if: github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4'
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -170,24 +170,27 @@ jobs:
           tests/test_hardening_operations.py tests/test_hardening_orders.py
           tests/test_hardening_printing.py tests/test_hardening_recovery.py
           tests/test_hardening_staff_browser.py tests/test_hardening_load_observer.py
+          tests/test_hardening_order_pipeline.py
           --junitxml=test-results/hardening-focused.xml
       - name: Run preserved appearance and complete staff role journeys
-        if: matrix.shard == 0
+        # Full mode includes every legacy file in the disjoint shards below.
+        # Keep this narrower path without running the same browser journeys twice.
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_appearance.py tests/test_browser.py tests/test_v5_browser.py
           --junitxml=test-results/preserved-journeys.xml
       - name: Run temporary dispatch and numbering acceptance
-        if: matrix.shard == 0 && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1' && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
         run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py tests/test_driver_configuration_lock.py tests/test_driver_configuration_browser.py --junitxml=test-results/dispatch-numbering.xml
       - name: Run scoped bilingual vehicle maintenance acceptance
-        if: matrix.shard == 0 && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1' && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
         run: >-
           python -m pytest -q --strict-markers
           tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py
           --junitxml=test-results/vehicle-maintenance.xml
       - name: Run focused launch, access and delivery-hours checks
-        if: matrix.shard == 0 && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1' && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
         run: >-
           python -m pytest -q --strict-markers
           tests/test_launch_admin.py tests/test_launch_branches.py
