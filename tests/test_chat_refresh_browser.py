@@ -1,4 +1,4 @@
-"""Real incoming messages must preserve staff composition, attachments and reading position."""
+"""Real incoming messages preserve composition, attachments, reading position and alert state."""
 import io
 import os
 from uuid import uuid4
