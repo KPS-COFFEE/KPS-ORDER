@@ -107,9 +107,11 @@ jobs:
           vehicle_shift = bool(changed) and changed <= {'app/operations.py','app/shift_vehicle.py','app/reporting.py','public/ops.js','public/ops.css','migrations/026_shift_vehicle_log.sql','tests/test_operations.py','tests/test_shift_vehicle.py','tests/test_owner_staff_management.py','.github/workflows/emergency-v4.yml'} and bool(changed & {'app/shift_vehicle.py','tests/test_shift_vehicle.py','migrations/026_shift_vehicle_log.sql'})
           vehicle_shift = vehicle_shift or (bool(changed) and changed <= {'public/ops.js','public/ops.css','public/ops.html','tests/test_dispatch_numbering.py','.github/workflows/emergency-v4.yml'})
           alerts = 'tests/test_operational_alerts.py' in changed and changed <= {'app/operations.py','app/catalog.py','public/ops.js','tests/test_operational_alerts.py','.github/workflows/emergency-v4.yml'}
-          focused = focused or staff_tests or password_owner or vehicle_shift or alerts
+          images = 'tests/test_image_previews.py' in changed and changed <= {'.gitignore','Dockerfile','app/image_previews.py','app/main.py','app/admin.py','public/customer.js','tests/test_image_previews.py','.github/workflows/emergency-v4.yml'}
+          focused = focused or staff_tests or password_owner or vehicle_shift or alerts or images
           operations = bool(changed) and changed <= operation_files and not focused
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('images_only=' + str(images).lower() + '\n')
               output.write('alerts_only=' + str(alerts).lower() + '\n')
               output.write('vehicle_shift_only=' + str(vehicle_shift).lower() + '\n')
               output.write('staff_tests_only=' + str(staff_tests).lower() + '\n')
@@ -162,7 +164,7 @@ jobs:
         if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
         run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
       - name: Run focused identity, sessions, ownership and browser regression
-        if: steps.scope.outputs.identity_only == 'true' && steps.scope.outputs.staff_tests_only != 'true' && steps.scope.outputs.password_owner_only != 'true' && steps.scope.outputs.vehicle_shift_only != 'true' && steps.scope.outputs.alerts_only != 'true'
+        if: steps.scope.outputs.identity_only == 'true' && steps.scope.outputs.staff_tests_only != 'true' && steps.scope.outputs.password_owner_only != 'true' && steps.scope.outputs.vehicle_shift_only != 'true' && steps.scope.outputs.alerts_only != 'true' && steps.scope.outputs.images_only != 'true'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_guest_session_policy.py tests/test_core.py
@@ -177,6 +179,9 @@ jobs:
       - name: Check operational alerts, stock, no-answer escalation and print safety
         if: steps.scope.outputs.alerts_only == 'true'
         run: python -m pytest -q --strict-markers tests/test_operational_alerts.py tests/test_operations.py tests/test_branch_printing.py --junitxml=test-results/operational-alerts.xml
+      - name: Check optimized images, original zoom and private cache boundaries
+        if: steps.scope.outputs.images_only == 'true'
+        run: python -m pytest -q --strict-markers tests/test_image_previews.py tests/test_guest_session_policy.py tests/test_owner_closure.py --junitxml=test-results/image-previews.xml
       - name: Check additional owner password access and existing owner safeguards
         if: steps.scope.outputs.password_owner_only == 'true'
         run: python -m pytest -q --strict-markers tests/test_additional_password_owner.py tests/test_owner_closure.py tests/test_owner_staff_management.py --junitxml=test-results/owner-password.xml

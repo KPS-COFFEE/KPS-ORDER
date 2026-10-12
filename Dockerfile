@@ -22,6 +22,7 @@ COPY --chown=kpsorder:kpsorder app/ ./app/
 COPY --chown=kpsorder:kpsorder migrations/ ./migrations/
 COPY --chown=kpsorder:kpsorder data/ ./data/
 COPY --chown=kpsorder:kpsorder public/ ./public/
+RUN python -m app.image_previews
 COPY --chown=kpsorder:kpsorder docs/metrics.md ./docs/metrics.md
 COPY --chown=kpsorder:kpsorder tools/portable_backup.py ./tools/portable_backup.py
 COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print-bridge/

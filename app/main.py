@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import auth, catalog, db, email_delivery, monitoring, orders
+from . import auth, catalog, db, email_delivery, monitoring, orders, image_previews
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
@@ -87,8 +87,11 @@ async def security(request: Request, call_next):
                                                    "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
     if os.getenv('APP_ENV', 'production') == 'production':
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    if request.url.path.startswith('/api/') or request.url.path.startswith('/ops'):
+    public_image=request.url.path.startswith(('/api/product-assets/','/api/banner-assets/')) and request.method in ('GET','HEAD') and response.status_code==200
+    if (request.url.path.startswith('/api/') or request.url.path.startswith('/ops')) and not public_image:
         response.headers['Cache-Control'] = 'no-store'
+    if request.url.path.startswith('/assets/') and response.status_code in (200,304):
+        response.headers['Cache-Control']='public, max-age=86400'
     monitoring.record_response(response.status_code)
     return response
 
@@ -189,4 +192,5 @@ def frontend_file(filename: str):
 
 
 if (PUBLIC / 'assets').exists():
+    app.include_router(image_previews.router)
     app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')

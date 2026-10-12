@@ -8,3 +8,4 @@ __pycache__/
 *.backup
 backups/
 test-artifacts/
+public/previews/

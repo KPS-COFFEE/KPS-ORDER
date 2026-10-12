@@ -695,11 +695,16 @@ def create_product(body:dict,user=Depends(product_admin),idem:str|None=Header(No
 
 
 @router.get('/product-assets/{record_id}')
-def public_product_asset(record_id:str):
+def public_product_asset(record_id:str,preview:bool=False):
     with db.tx() as conn:
         row=conn.execute("SELECT a.contents,a.mime_type FROM assets a JOIN products p ON p.brand_id=a.brand_id JOIN brands b ON b.id=p.brand_id WHERE a.id=%s AND a.purpose='product' AND p.settings->>'image_url'=%s AND COALESCE((p.settings->>'enabled')::boolean,true) AND b.active LIMIT 1",(record_id,'/api/product-assets/'+record_id)).fetchone()
         if not row:
             raise db.error(404,'PRODUCT_ASSET_UNAVAILABLE','الصورة غير متاحة.')
+    if preview:
+        from .image_previews import thumbnail,response
+        result=response(thumbnail(bytes(row['contents'])))
+        result.headers['Cache-Control']='public, max-age=60'
+        return result
     return Response(bytes(row['contents']),media_type=row['mime_type'],headers={'Cache-Control':'public,max-age=60','X-Content-Type-Options':'nosniff'})
 
 
