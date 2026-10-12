@@ -23,7 +23,7 @@ CSRF_COOKIE = 'kps_csrf'
 GUEST_SESSION_SECONDS = 30 * 24 * 3600
 ROLES = {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver', 'customer'}
 CONFIGURATION_PERMISSIONS = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage', 'brand_services_manage'}
-ADMIN_PERMISSIONS = CONFIGURATION_PERMISSIONS | {'vehicle_maintenance_manage', 'branch_printers_manage'}
+ADMIN_PERMISSIONS = CONFIGURATION_PERMISSIONS | {'vehicle_maintenance_manage', 'branch_printers_manage', 'accounting_reports', 'accounting_review', 'accounting_cases_followup'}
 
 
 def validate_admin_permissions(values):
