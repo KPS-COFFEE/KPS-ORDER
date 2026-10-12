@@ -18,7 +18,7 @@
   async function enableAlertSound(){
     const Audio=window.AudioContext||window.webkitAudioContext;
     if(!Audio)throw new Error(tr('المتصفح لا يدعم التنبيه الصوتي.','This browser does not support audio alerts.'));
-    alertAudio=alertAudio||new Audio();await alertAudio.resume();const control=$('[data-action=alert-sound]');if(control)control.textContent=tr('الصوت مفعل','Sound enabled');alertLastSound=0;chatLastSound=0;await refreshOperationalAlerts();
+    alertAudio=alertAudio||new Audio();await alertAudio.resume();alertLastSound=0;chatLastSound=0;await refreshOperationalAlerts();
   }
   async function refreshOperationalAlerts(){
     let host=$('#operational-alerts');

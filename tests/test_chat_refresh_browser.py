@@ -32,6 +32,7 @@ def test_messages_arrive_without_replacing_composer_or_scrolling(live_app,chromi
         expect(text).to_have_value('TEST ONLY draft must stay')
         assert page.locator('#message-form input[type=file]').evaluate('(e)=>e.files[0].name')=='test-only.png'
         assert page.evaluate("Math.abs(document.querySelector('#messages').scrollTop-12)<2")
+        assert text.evaluate('(element)=>element===document.activeElement')
         # Cover the old 15-second page/alert timer with no draft/focus protection.
         text.fill('');page.locator('#message-form input[type=file]').set_input_files([])
         page.locator('#messages').click()
