@@ -35,7 +35,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'closure_drafts', 'report_renderings', 'report_notifications',
           'recovery_monitor_state', 'recovery_alert_notifications', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
-          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months')
+          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -64,7 +64,7 @@ def _scoped_sql(table, brand):
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
-              'accounting_reviews', 'accounting_cases', 'accounting_months'} | INFRASTRUCTURE_TABLES
+              'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
@@ -80,6 +80,8 @@ def _scoped_sql(table, brand):
     if table in {'custody_transfers', 'retained_carryovers', 'manager_handovers'}:
         return 'from_shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
     if table == 'custody_events':
+        return 'shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
+    if table in {'vehicle_operating_logs','vehicle_log_corrections'}:
         return 'shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
     if table == 'vehicle_report_events':
         return 'report_id IN (SELECT id FROM vehicle_reports WHERE brand_id=%s)', (brand,)
@@ -278,6 +280,11 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                 (target_schema, 'BASE TABLE')).fetchall()} - {'schema_migrations'}
             if set(manifest['table_order']) != actual:
                 raise ValueError('Backup is missing application tables; restoration aborted.')
+            # Import stored ledger rows rather than re-materializing them from
+            # shifts. These two derived-data triggers alone are disabled within
+            # the new isolated restore schema and this transaction.
+            conn.execute('ALTER TABLE shifts DISABLE TRIGGER sync_vehicle_log')
+            conn.execute('ALTER TABLE users DISABLE TRIGGER register_fleet_vehicle')
             for table in manifest['table_order']:
                 columns = {row['column_name']: row['udt_name'] for row in conn.execute(
                     'SELECT column_name,udt_name FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
@@ -304,6 +311,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                         sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, row)),
                         sql.SQL(',').join(sql.Placeholder() for _ in row))
                     conn.execute(statement, values)
+            conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
+            conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')
             # Restores preserve history, never replay physical printing or
             # reactivate device credentials copied from an older snapshot.
             if 'branch_print_devices' in actual:

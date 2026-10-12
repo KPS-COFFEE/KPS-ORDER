@@ -1,0 +1,69 @@
+'use strict';
+window.KPSFleet={async open(ctx){
+ const {api,mutation,tr,esc,heading,modal,closeModal,lang,view}=ctx;
+ const root=document.querySelector('#content');
+ const colors={green:tr('🟢 أخضر','🟢 Green'),orange:tr('🟠 برتقالي','🟠 Orange'),red:tr('🔴 أحمر','🔴 Red'),grey:tr('⚪ رمادي','⚪ Grey')};
+ const status={closed:tr('مغلق','Closed'),open:tr('مفتوح','Open'),exception:tr('استثناء','Exception')};
+ const [cards,opt]=await Promise.all([api('/api/fleet/vehicles'),api('/api/fleet/options')]);
+ const v=cards.vehicles;let sequence=0;
+ const active=()=>document.querySelector('#navigation [data-page=fleet]')?.classList.contains('active');
+ const date=x=>x?new Intl.DateTimeFormat(lang==='en'?'en-GB':'ar-SA-u-ca-gregory',{timeZone:'Asia/Riyadh',dateStyle:'short',timeStyle:'short'}).format(new Date(x)):'—';
+ const number=x=>x==null?'—':new Intl.NumberFormat(lang==='en'?'en':'ar',{maximumFractionDigits:3}).format(x);
+ const value=(r,k)=>k==='fuel_status'?colors[r[k]]:k==='record_status'?status[r[k]]:k.endsWith('_at')?date(r[k]):typeof r[k]==='boolean'?(r[k]?tr('نعم','Yes'):tr('لا','No')):typeof r[k]==='number'?number(r[k]):r[k]??'—';
+ function table(rows,editable=false){return `<p class="muted">${esc(tr('مرّر أفقيًا لعرض جميع القراءات. كل صف وردية مستقلة.','Scroll horizontally for all readings. Each row is a separate shift.'))}</p><div class="table-wrap" tabindex="0" role="region" aria-label="${esc(tr('سجل السيارات','Vehicle history'))}"><table><thead><tr>${opt.columns.map(c=>`<th>${esc(c[lang])}</th>`).join('')}${editable?`<th>${esc(tr('التفاصيل والتصحيح','Details & correction'))}</th>`:''}</tr></thead><tbody>${rows.map(r=>`<tr data-fleet-row="${esc(r.shift_id)}">${opt.columns.map(c=>`<td class="fleet-${esc(c.key==='fuel_status'?r.fuel_status:'value')}">${esc(value(r,c.key))}</td>`).join('')}${editable?`<td><button data-fleet-log="${esc(r.shift_id)}">${esc(tr('فتح السجل','Open record'))}</button></td>`:''}</tr>`).join('')}</tbody></table></div>${rows.length?'':`<p>${esc(tr('لا توجد سجلات ضمن الاختيار.','No records match this selection.'))}</p>`}`;}
+ const params=()=>{const q=new URLSearchParams(Object.entries(view.filters||{}).filter(([,value])=>value!==''&&value!=null));if(view.quick)q.set('metric',view.quick);return q;};
+ function paging(data){return `<div class="actions">${data.offset>0?`<button data-fleet-offset="${Math.max(0,data.offset-data.limit)}">${esc(tr('السابق','Previous'))}</button>`:''}${data.offset+data.limit<data.total?`<button data-fleet-offset="${data.offset+data.limit}">${esc(tr('التالي','Next'))}</button>`:''}<span>${esc(tr('عدد السجلات','Records'))}: ${esc(number(data.total))}</span></div>`;}
+ const option=(rows,selected,label)=>rows.map(r=>`<option value="${esc(r.id)}" ${selected===r.id?'selected':''}>${esc(label(r))}</option>`).join('');
+ const note=`<details class="panel"><summary>${esc(tr('طريقة الحسبة والألوان','Calculations and color policy'))}</summary><p>${esc(tr('المعيار المبدئي 10 كم/لتر: أخضر 9 فأعلى؛ برتقالي من 8 إلى أقل من 9؛ أحمر أقل من 8. لا يقيم الاستهلاك إلا بسجل مكتمل من فل إلى فل مع تعبئة ومسافة أكبر من صفر. الرمادي: مفتوح أو غير مكتمل. الألوان للمراجعة وليست إثبات مخالفة. متوسط الكفاءة = مجموع المسافات المؤهلة ÷ مجموع لترات سجلاتها. مسافة GPS والطلبات تبقى غير مسجلة حتى تتوفر بيانات قياس موثوقة.','Provisional baseline 10 KM/L: green ≥9; orange ≥8 and <9; red <8. Evaluations require a completed full-to-full record with positive distance and fuel. Grey means open or incomplete. Colors indicate review, not liability. Average efficiency = eligible distance / eligible fuel. GPS and expected route distances remain unrecorded until reliable measured data is available.'))}</p></details>`;
+ async function render(){
+  const request=++sequence;if(!active())return;
+  if(view.mode==='report'){
+   view.filters??={start:opt.today,end:opt.today};const f=view.filters;
+   const q=params();q.set('offset',String(view.offset||0));const data=await api('/api/fleet/report?'+q);if(request!==sequence||!active())return;
+   heading(tr('تقرير الأسطول','Fleet daily report'),tr('كل وردية لكل سيارة ضمن الفترة. التقرير للقراءة؛ التصحيح من سجل السيارة.','Every vehicle shift in the selected period. Correct records from the vehicle history.'),`<button data-fleet-home>${esc(tr('السيارات','Vehicles'))}</button>`);
+   const labels={vehicles:tr('السيارات المستخدمة','Vehicles used'),actual_distance:tr('إجمالي KM','Total KM'),liters:tr('إجمالي L','Total liters'),efficiency:tr('متوسط KM/L','Average KM/L'),...colors,faults:tr('الأعطال','Faults'),exceptions:tr('الاستثناءات','Exceptions')};
+   root.innerHTML=`<form id="fleet-filters" class="filters panel"><label>${esc(tr('من تاريخ','From date'))}<input type="date" name="start" value="${esc(f.start)}" required></label><label>${esc(tr('إلى تاريخ — نفس التاريخ ليوم واحد','To date — same date for one day'))}<input type="date" name="end" value="${esc(f.end)}" required></label><label>${esc(tr('السيارة','Vehicle'))}<select name="vehicle_id"><option value="">${esc(tr('جميع السيارات','All vehicles'))}</option>${option(v,f.vehicle_id,r=>r.plate)}</select></label><label>${esc(tr('السائق','Driver'))}<select name="driver_id"><option value="">${esc(tr('الجميع','All drivers'))}</option>${option(opt.drivers,f.driver_id,r=>r.display_name)}</select></label><label>${esc(tr('الفرع','Branch'))}<select name="branch_id"><option value="">${esc(tr('جميع الفروع المخولة','All authorized branches'))}</option>${option(opt.branches,f.branch_id,r=>`${r.branch_no} · ${r.name}`)}</select></label><label>${esc(tr('لون التقييم','Fuel status'))}<select name="fuel_status"><option value="">${esc(tr('كل الألوان','All colors'))}</option>${Object.entries(colors).map(([k,label])=>`<option value="${k}" ${f.fuel_status===k?'selected':''}>${esc(label)}</option>`).join('')}</select></label><label><input type="checkbox" name="faults_only" value="true" ${f.faults_only==='true'?'checked':''}>${esc(tr('عليها أعطال فقط','Faults only'))}</label><label><input type="checkbox" name="exceptions_only" value="true" ${f.exceptions_only==='true'?'checked':''}>${esc(tr('عليها استثناءات فقط','Exceptions only'))}</label><button type="submit">${esc(tr('عرض التقرير','View report'))}</button><button type="button" data-fleet-reset>${esc(tr('مسح فلاتر الملخص','Clear summary filters'))}</button></form><div class="metrics fleet-summary">${Object.entries(labels).map(([key,label])=>`<button type="button" class="metric" data-fleet-metric="${key}"><span class="number">${esc(number(data.summary[key]))}</span><span>${esc(label)}</span></button>`).join('')}</div><div class="actions"><button data-fleet-export="pdf">PDF</button><button data-fleet-export="xlsx">Excel / XLSX</button></div>${note}${table(data.rows)}${paging(data)}`;
+  }else if(view.mode==='vehicle'){
+   const data=await api(`/api/fleet/vehicles/${encodeURIComponent(view.vehicle)}?offset=${view.offset||0}`);if(request!==sequence||!active())return;
+   heading(tr('سجل التشغيل اليومي للسيارة','Daily vehicle operating log'),`${data.vehicle.plate} · ${data.vehicle.details.type||''} · ${data.vehicle.details.model||data.vehicle.details.description||''}`,`<button data-fleet-home>${esc(tr('السيارات','Vehicles'))}</button><button data-fleet-report>${esc(tr('تقرير الأسطول','Fleet report'))}</button>`);
+   root.innerHTML=note+table(data.rows,true)+paging(data);
+  }else{
+   heading(tr('إدارة السيارات','Vehicle management'),tr('كل بطاقة سيارة ثابتة، ويتغير السائق داخل سجل الورديات.','Each card is a permanent vehicle; driver changes stay in its shift history.'),`<button data-fleet-report>${esc(tr('تقرير الأسطول','Fleet report'))}</button>`);
+   root.innerHTML=`<div class="grid fleet-cards">${v.map(car=>`<article class="panel" data-fleet-card="${esc(car.id)}"><h2><bdi>${esc(car.plate)}</bdi></h2><p>${esc(car.details.type||'')} · ${esc(car.details.model||car.details.description||'—')}</p><button data-fleet-vehicle="${esc(car.id)}">${esc(tr('فتح سجل السيارة','Open vehicle history'))}</button></article>`).join('')}</div>${v.length?'':`<p>${esc(tr('لا توجد سيارات مسجلة ضمن نطاقك. تسجّل السيارة تلقائيًا عند استلام شفت بلوحة سيارة.','No registered vehicles in your scope. A vehicle is registered automatically when a shift with a vehicle plate is received.'))}</p>`}`;
+  }
+ }
+ async function detail(sid){
+  const url=`/api/fleet/vehicles/${encodeURIComponent(view.vehicle)}/logs/${encodeURIComponent(sid)}`;
+  const data=await api(url),r=data.log,m=r.effective_metrics;
+  const fields=[['start_odometer',tr('عداد البداية','Start odometer')],['end_odometer',tr('عداد النهاية','End odometer')],['liters',tr('اللترات','Liters')]];
+  modal(tr('سجل السيارة والتصحيحات','Vehicle record & corrections'),`<p>${esc(sid)}</p><p>${esc(tr('التصحيح يحفظ الأصل والقيم السابقة والسبب وهوية المنفذ. لا يغير التقفيلة المالية.','Corrections retain original values, reason and actor. Financial closures remain unchanged.'))}</p>${r.shift_status==='closed'?`<form><div class="form-columns">${fields.map(([key,label])=>`<label>${esc(label)}<input name="${key}" type="number" min="0" ${key==='liters'?'step="0.01"':'step="1"'} value="${esc(m[key]??'')}" required></label>`).join('')}<label>${esc(tr('فل عند الاستلام','Full at start'))}<select name="full_start"><option value="true" ${m.full_start===true?'selected':''}>${esc(tr('نعم','Yes'))}</option><option value="false" ${m.full_start!==true?'selected':''}>${esc(tr('لا','No'))}</option></select></label><label>${esc(tr('فل عند التسليم','Full at end'))}<select name="full_end"><option value="true" ${m.full_end===true?'selected':''}>${esc(tr('نعم','Yes'))}</option><option value="false" ${m.full_end!==true?'selected':''}>${esc(tr('لا','No'))}</option></select></label><label class="full">${esc(tr('ملاحظات','Notes'))}<textarea name="notes" maxlength="1500">${esc(m.notes||'')}</textarea></label><label class="full">${esc(tr('سبب التصحيح — إلزامي','Correction reason — required'))}<textarea name="reason" required maxlength="2000"></textarea></label></div><p class="form-error" role="alert"></p><button type="submit">${esc(tr('حفظ تصحيح موثق','Save audited correction'))}</button></form>`:`<p>${esc(tr('التصحيح متاح بعد اعتماد التقفيلة؛ أكمل السجل المفتوح من الشفت.','Corrections become available after closure approval. Complete an open record from its shift.'))}</p>`}<h3>${esc(tr('سجل التصحيحات','Correction history'))}</h3>${data.corrections.map(e=>`<article class="panel"><p>${esc(date(e.created_at))} · ${esc(e.actor_name)} · ${esc(e.reason)}</p><details><summary>${esc(tr('قبل وبعد','Before & after'))}</summary><div class="table-wrap"><table><thead><tr><th>${esc(tr('البيان','Field'))}</th><th>${esc(tr('قبل','Before'))}</th><th>${esc(tr('بعد','After'))}</th></tr></thead><tbody>${opt.columns.filter(col=>Object.hasOwn(e.after_metrics,col.key)).map(col=>`<tr><td>${esc(col[lang])}</td><td>${esc(value(e.before_metrics,col.key))}</td><td>${esc(value(e.after_metrics,col.key))}</td></tr>`).join('')}</tbody></table></div></details></article>`).join('')||'—'}`,async fd=>{
+   const body=Object.fromEntries(fd);body.revision=r.revision;body.start_odometer=Number(body.start_odometer);body.end_odometer=Number(body.end_odometer);body.full_start=body.full_start==='true';body.full_end=body.full_end==='true';
+   await mutation(url+'/corrections',body);closeModal();await render();
+  });
+ }
+ // A single delegated handler per surface; replaced on each page render.
+ const headingRoot=document.querySelector('#page-heading');
+ async function click(e){
+  const b=e.target.closest('button');if(!b)return;
+  try{
+   if(b.hasAttribute('data-fleet-report')){view.mode='report';view.offset=0;await render();}
+   else if(b.hasAttribute('data-fleet-home')){view.mode='cards';view.offset=0;await render();}
+   else if(b.dataset.fleetVehicle){view.mode='vehicle';view.vehicle=b.dataset.fleetVehicle;view.offset=0;await render();}
+   else if(b.dataset.fleetLog){await detail(b.dataset.fleetLog);}
+   else if(b.dataset.fleetOffset){view.offset=Number(b.dataset.fleetOffset);await render();}
+   else if(b.hasAttribute('data-fleet-reset')){view.quick=null;view.offset=0;await render();}
+   else if(b.dataset.fleetMetric){
+    view.quick=b.dataset.fleetMetric;
+    view.offset=0;await render();
+   }else if(b.dataset.fleetExport){
+    const q=params();q.set('format',b.dataset.fleetExport);q.set('lang',lang);
+    const response=await fetch('/api/fleet/export?'+q,{credentials:'same-origin'});
+    if(!response.ok)throw new Error(tr('تعذر تصدير التقرير.','Export failed.'));
+    const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=`fleet-${view.filters.start}-${view.filters.end}.${b.dataset.fleetExport}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);
+   }
+  }catch(error){ctx.error(error.message);}
+ }
+ root.onclick=click;headingRoot.onclick=click;
+ root.onsubmit=async e=>{if(e.target.id!=='fleet-filters')return;e.preventDefault();view.filters=Object.fromEntries(new FormData(e.target));view.quick=null;view.offset=0;try{await render();}catch(error){ctx.error(error.message);}};
+ await render();
+}};

@@ -119,7 +119,7 @@ app.include_router(orders.router)
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'order_support', 'accounting'):
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'order_support', 'accounting', 'fleet'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 

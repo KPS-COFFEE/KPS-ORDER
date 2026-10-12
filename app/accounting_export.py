@@ -90,14 +90,14 @@ def xlsx(rows,keys,notes,lang):
         z.writestr('xl/worksheets/sheet2.xml',f'<worksheet xmlns="{root}"><cols><col min="1" max="1" width="120" customWidth="1"/></cols><sheetData>'+''.join(f'<row r="{i}">'+cell(n,f'A{i}',0)+'</row>' for i,n in enumerate(notes,1))+'</sheetData></worksheet>')
     return out.getvalue()
 
-def pdf(rows,keys,title,meta,definitions,lang):
+def pdf(rows,keys,title,meta,definitions,lang,sections=None):
     import arabic_reshaper
     from bidi.algorithm import get_display
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.lib.pagesizes import A3,landscape
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate,Paragraph,LongTable,TableStyle,Spacer,Flowable
+    from reportlab.platypus import SimpleDocTemplate,Paragraph,LongTable,TableStyle,Spacer,Flowable,PageBreak
     from reportlab.lib import colors
     name='AccountingKufi'
     if name not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont(name,str(Path(__file__).resolve().parents[1]/'public/assets/fonts/NotoKufiArabic-Regular.ttf')))
@@ -111,9 +111,17 @@ def pdf(rows,keys,title,meta,definitions,lang):
             for paragraph in self.value.split('\n'):
                 line=''
                 for word in paragraph.split():
-                    candidate=(line+' '+word).strip()
-                    if line and measure(candidate)>width:self.lines.append(line);line=word
-                    else:line=candidate
+                    if measure(word)>width:
+                        if line:self.lines.append(line);line=''
+                        chunk=''
+                        for character in word:
+                            if chunk and measure(chunk+character)>width:self.lines.append(chunk);chunk=character
+                            else:chunk+=character
+                        line=chunk
+                    else:
+                        candidate=(line+' '+word).strip()
+                        if line and measure(candidate)>width:self.lines.append(line);line=word
+                        else:line=candidate
                 self.lines.append(line)
             self.height=len(self.lines)*self.style.leading
             return width,self.height
@@ -125,18 +133,35 @@ def pdf(rows,keys,title,meta,definitions,lang):
             self.canv.setFont(name,self.style.fontSize);self.canv.setFillColor(self.style.textColor)
             for i,line in enumerate(self.lines):self.canv.drawRightString(self.width,self.height-(i+1)*self.style.leading+4,get_display(arabic_reshaper.reshape(line)))
     text=lambda v:ArabicText(v,style) if lang=='ar' else Paragraph(escape(str(v)),style)
-    cells=[[text(f'{v:,.2f}' if isinstance(v,float) else v) for v in row] for row in rows]
-    if lang=='ar':cells=[list(reversed(r)) for r in cells];keys=list(reversed(keys))
-    weights=[2.8 if k in ('notes','reason','action','label') else 1.3 for k in keys];available=landscape(A3)[0]-48
-    widths=[available*w/sum(weights) for w in weights]
-    table=LongTable(cells,colWidths=widths,repeatRows=1,splitByRow=1,splitInRow=1)
-    commands=[('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eeeeee')),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#cccccc')),('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,-1),(-1,-1),colors.HexColor('#eeeeee'))]
-    # Red is applied to the actual shortage cell's paragraph, not a cosmetic badge.
-    for k in ('shortage','approved_shortage'):
-        if k in keys:
-            col=keys.index(k)
-            for row in cells[1:]:row[col].style=ParagraphStyle('red',parent=style,textColor=colors.HexColor('#b00020'))
-    table.setStyle(TableStyle(commands));out=io.BytesIO()
+    def render_table(section_rows,section_keys):
+        cells=[[text(f'{v:,.2f}' if isinstance(v,float) else v) for v in row] for row in section_rows]
+        keys=list(section_keys)
+        if lang=='ar':cells=[list(reversed(r)) for r in cells];keys=list(reversed(keys))
+        weights=[2.8 if k in ('notes','reason','action','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
+        widths=[available*w/sum(weights) for w in weights]
+        table=LongTable(cells,colWidths=widths,repeatRows=1,splitByRow=1,splitInRow=1)
+        commands=[('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eeeeee')),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#cccccc')),('VALIGN',(0,0),(-1,-1),'TOP')]
+        if sections is None:commands.append(('BACKGROUND',(0,-1),(-1,-1),colors.HexColor('#eeeeee')))
+        for k in ('shortage','approved_shortage'):
+            if k in keys:
+                col=keys.index(k)
+                for row in cells[1:]:row[col].style=ParagraphStyle('red',parent=style,textColor=colors.HexColor('#b00020'))
+        if 'fuel_status' in keys:
+            col=keys.index('fuel_status')
+            palette={'green':'#165b2b','orange':'#875000','red':'#b00020','grey':'#555555',
+                     'أخضر':'#165b2b','برتقالي':'#875000','أحمر':'#b00020','رمادي':'#555555'}
+            for source,row in zip(section_rows[1:],cells[1:]):
+                raw=source[list(section_keys).index('fuel_status')]
+                row[col].style=ParagraphStyle('fuel',parent=style,textColor=colors.HexColor(palette.get(str(raw),'#555555')))
+        table.setStyle(TableStyle(commands));return table
+    out=io.BytesIO()
     def footer(canvas,doc):canvas.setFont(name,9);canvas.drawString(24,14,str(doc.page))
-    SimpleDocTemplate(out,pagesize=landscape(A3),rightMargin=24,leftMargin=24,topMargin=24,bottomMargin=30).build([text(title),text(meta),Spacer(1,12),table,Spacer(1,12),text(definitions)],onFirstPage=footer,onLaterPages=footer)
+    story=[text(title),text(meta),Spacer(1,12)]
+    if sections:
+        for i,section in enumerate(sections):
+            if i:story.extend([PageBreak(),text(title),text(meta),Spacer(1,12)])
+            story.extend([text(section['title']),Spacer(1,8),render_table(section['rows'],section['keys'])])
+    else:story.append(render_table(rows,keys))
+    story.extend([Spacer(1,12),text(definitions)])
+    SimpleDocTemplate(out,pagesize=landscape(A3),rightMargin=24,leftMargin=24,topMargin=24,bottomMargin=30).build(story,onFirstPage=footer,onLaterPages=footer)
     return out.getvalue()
