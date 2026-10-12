@@ -193,7 +193,7 @@ def test_final_real_browser_stale_cart_mapping_one_image_and_required_type(live_
         page.locator('#search').fill('بيكان')
         expect(page.locator('.product-card')).to_have_count(1)
         expect(page.locator('.product-card img')).to_have_attribute('src', '/media/previews/khaliya-owner-20261010.webp')
-        page.wait_for_function("document.querySelector('.product-card img')?.naturalWidth > 0")
+        page.wait_for_function("() => document.querySelector('.product-card img')?.naturalWidth > 0")
         for width in (390, 1280):
             page.set_viewport_size({'width': width, 'height': 900})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
