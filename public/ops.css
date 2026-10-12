@@ -35,3 +35,22 @@
 
 /* Keep mixed task states aligned without hiding customer details. */
 .task-grid{align-items:stretch}.task-card{display:flex;flex-direction:column;gap:10px}.task-card .card-head{align-items:flex-start;gap:10px}.task-card .card-head h2{font-size:17px;line-height:1.4;direction:ltr;unicode-bidi:isolate;text-align:start;margin:0 0 5px}.task-card .card-head p,.task-contact p{margin:0}.task-contact{display:grid;gap:3px;min-height:52px}.task-footer{margin-top:auto;display:grid;gap:8px}.task-footer>.actions:empty{display:none}.task-footer .actions>*{flex:1}.task-footer>.button{width:100%;text-align:center}.task-card .data-grid>div{padding:8px 10px}.task-card .data-grid dt{font-size:12px}.task-card .data-grid dd{font-size:16px;line-height:1.5}.task-items summary{padding-block:2px}
+/* Keep printer labels intact; only prose wraps at word boundaries. */
+.printer-directory { min-width: 0; max-width: 100%; }
+.printer-directory table { table-layout: auto; min-width: 1120px; }
+.printer-directory th, .printer-directory td {
+  white-space: nowrap; overflow-wrap: normal; word-break: normal;
+  vertical-align: middle; padding: 12px 14px;
+}
+.printer-directory td:first-child { min-width: 180px; white-space: normal; }
+.printer-directory td:nth-child(2) { min-width: 125px; }
+.printer-directory td:nth-child(3) { min-width: 220px; }
+.printer-directory td:nth-child(4) { min-width: 340px; max-width: 520px; white-space: normal; }
+.printer-directory td:nth-child(5) { min-width: 170px; }
+.printer-directory td:last-child { min-width: 215px; }
+.printer-directory .pill { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+.printer-directory button { display: block; white-space: nowrap; width: 100%; }
+.printer-directory button + button { margin-top: 8px; }
+/* Also cover test approval and print history, without changing other screens. */
+#printer-live th, #printer-live td { overflow-wrap: normal; word-break: normal; }
+#printer-live th, #printer-live button { white-space: nowrap; }

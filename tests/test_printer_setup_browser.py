@@ -33,6 +33,22 @@ def test_guided_printer_setup_and_live_acceptance(live_app,chromium_browser,tmp_
         paired=result.json();token={'Authorization':'Bearer '+paired['token']}
         test=page.locator('#printer-live [data-action=test-printer]')
         expect(test).to_be_enabled(timeout=12000)
+        expect(page.locator('.printer-directory .pill')).to_contain_text('بانتظار الاعتماد' if language=='ar' else 'Awaiting approval')
+        for width in (1366, 768, 390):
+            page.set_viewport_size({'width':width,'height':900})
+            layout=page.locator('.printer-directory').evaluate('''root => {
+                const name=root.querySelector('td:nth-child(2)');
+                const pill=root.querySelector('.pill');
+                const notes=root.querySelector('td:nth-child(4)');
+                return {name:getComputedStyle(name).whiteSpace,
+                    status:getComputedStyle(pill).whiteSpace,
+                    notes:getComputedStyle(notes).overflowWrap,
+                    cut:name.scrollWidth>name.clientWidth,
+                    pageOverflow:document.documentElement.scrollWidth>innerWidth};
+            }''')
+            assert layout=={'name':'nowrap','status':'nowrap','notes':'normal','cut':False,'pageOverflow':False}
+            _capture(page,f'TEST_ONLY_printer_layout_{language}_{width}')
+        page.set_viewport_size({'width':1366,'height':900})
         with page.expect_response(lambda r: r.url.endswith("/test") and r.request.method=="POST"):
             test.click()
         claim=context.request.post(live_app+'/api/printing/bridge/next',headers={**headers,**token},data={})
