@@ -36,7 +36,7 @@ def test_guided_printer_setup_and_live_acceptance(live_app,chromium_browser,tmp_
         expect(page.locator('.printer-directory .pill')).to_contain_text('بانتظار الاعتماد' if language=='ar' else 'Awaiting approval')
         for width in (1366, 768, 390):
             page.set_viewport_size({'width':width,'height':900})
-            layout=page.locator('.printer-directory').evaluate('''root => {
+            layout=page.locator('#printer-live .printer-directory').evaluate('''root => {
                 const name=root.querySelector('td:nth-child(2)');
                 const pill=root.querySelector('.pill');
                 const notes=root.querySelector('td:nth-child(4)');
