@@ -636,8 +636,8 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
         expect(manager.locator('#modal-body')).to_contain_text('التسليم النهائي المستلم المؤكد')
         manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()
-        expect(manager.locator('#modal-body')).to_contain_text('المستلم المؤكد')
-        expect(manager.locator('#modal-body')).to_contain_text('المعدود')
+        expect(manager.locator('#modal-body')).to_contain_text('النقد المستلم فعليًا من السائق')
+        expect(manager.locator('#modal-body')).to_contain_text('النقد الذي عده السائق')
         _capture(manager,'delivery-manager-driver-closure-approval')
         _submit_modal(manager,check=['confirmed'])
         with db.tx() as conn:
