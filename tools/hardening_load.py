@@ -17,6 +17,7 @@ from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -84,6 +85,29 @@ def proc_metrics(pid):
         return None
 
 
+ANSI_CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+
+
+def parse_docker_stat_frame(line):
+    # Streaming Docker stats emits terminal clear/home controls even with a
+    # JSON format. Remove only those protocol controls, never printable text
+    # that could conceal a genuine Docker error or malformed measurement.
+    frame = ANSI_CSI.sub('', line).strip()
+    if not frame:
+        return None
+    raw = json.loads(frame)
+    match = re.match(r'([\d.]+)([A-Za-z]+)', raw['MemUsage'])
+    units = {'B': 1, 'KiB': 1024, 'MiB': 1024 ** 2, 'GiB': 1024 ** 3,
+             'kB': 1000, 'MB': 1000 ** 2, 'GB': 1000 ** 3}
+    if not match or match[2] not in units:
+        raise ValueError('Docker memory measurement has an invalid format.')
+    cpu = float(raw['CPUPerc'].rstrip('%'))
+    memory = float(match[1]) * units[match[2]]
+    if not math.isfinite(cpu) or not math.isfinite(memory) or cpu < 0 or memory < 0:
+        raise ValueError('Docker resource measurement must be finite and nonnegative.')
+    return {'cpu_percent_one_core': cpu, 'memory_bytes': memory}
+
+
 class Sampler:
     def __init__(self, db_url, app_pid, container=None):
         self.db_url, self.app_pid, self.container = db_url, app_pid, container
@@ -103,12 +127,9 @@ class Sampler:
             for line in self.docker_process.stdout:
                 if self.stop.is_set():
                     break
-                raw = json.loads(line)
-                match = re.match(r'([\d.]+)([A-Za-z]+)', raw['MemUsage'])
-                units = {'B': 1, 'KiB': 1024, 'MiB': 1024 ** 2, 'GiB': 1024 ** 3,
-                         'kB': 1000, 'MB': 1000 ** 2, 'GB': 1000 ** 3}
-                self.docker_samples.append({'cpu_percent_one_core': float(raw['CPUPerc'].rstrip('%')),
-                    'memory_bytes': float(match[1]) * units[match[2]] if match else None})
+                sample = parse_docker_stat_frame(line)
+                if sample is not None:
+                    self.docker_samples.append(sample)
         except Exception as exc:
             self.errors['docker:' + type(exc).__name__] += 1
 

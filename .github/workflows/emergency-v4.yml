@@ -34,6 +34,10 @@ jobs:
           & ./KpsPrintBridge.exe --self-test
           exit $LASTEXITCODE
   independent-postgres-regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     # pull_request branch filters target branches. This gate restricts execution
     # to the emergency source branch without changing legacy integrations.
     if: github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4'
@@ -160,23 +164,30 @@ jobs:
           done
           git diff --check
       - name: Run financial, retry, printing and recovery hardening acceptance
+        if: matrix.shard == 0
         run: >-
           python -m pytest -q --strict-markers
           tests/test_hardening_operations.py tests/test_hardening_orders.py
           tests/test_hardening_printing.py tests/test_hardening_recovery.py
           tests/test_hardening_staff_browser.py tests/test_hardening_load_observer.py
           --junitxml=test-results/hardening-focused.xml
+      - name: Run preserved appearance and complete staff role journeys
+        if: matrix.shard == 0
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_appearance.py tests/test_browser.py tests/test_v5_browser.py
+          --junitxml=test-results/preserved-journeys.xml
       - name: Run temporary dispatch and numbering acceptance
-        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
+        if: matrix.shard == 0 && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
         run: python -m pytest -q --strict-markers tests/test_dispatch_numbering.py tests/test_driver_configuration_lock.py tests/test_driver_configuration_browser.py --junitxml=test-results/dispatch-numbering.xml
       - name: Run scoped bilingual vehicle maintenance acceptance
-        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
+        if: matrix.shard == 0 && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
         run: >-
           python -m pytest -q --strict-markers
           tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py
           --junitxml=test-results/vehicle-maintenance.xml
       - name: Run focused launch, access and delivery-hours checks
-        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
+        if: matrix.shard == 0 && (steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true')
         run: >-
           python -m pytest -q --strict-markers
           tests/test_launch_admin.py tests/test_launch_branches.py
@@ -188,8 +199,7 @@ jobs:
           tests/test_staff_invitation_browser.py
           --junitxml=test-results/launch-focused.xml
       - name: Run isolated PostgreSQL 18 and source regression
-        if: steps.scope.outputs.identity_only != 'true' && steps.scope.outputs.operations_only != 'true'
-        run: python -m pytest -q --strict-markers --junitxml=test-results/v5.xml
+        run: python tools/full_regression.py --shard ${{ matrix.shard }}
       - name: Run focused identity, sessions, ownership and browser regression
         if: steps.scope.outputs.identity_only == 'true' && steps.scope.outputs.staff_tests_only != 'true' && steps.scope.outputs.password_owner_only != 'true' && steps.scope.outputs.vehicle_shift_only != 'true' && steps.scope.outputs.alerts_only != 'true' && steps.scope.outputs.images_only != 'true' && steps.scope.outputs.coverage_only != 'true' && steps.scope.outputs.driver_cash_only != 'true' && steps.scope.outputs.printer_setup_only != 'true' && steps.scope.outputs.support_only != 'true' && steps.scope.outputs.chat_refresh_only != 'true' && steps.scope.outputs.accounting_only != 'true'
         run: >-
@@ -248,15 +258,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v5-test-results
-          path: test-results/*.xml
+          name: v5-test-results-${{ matrix.shard }}
+          path: |
+            test-results/*.xml
+            test-results/full-shard-*.json
           if-no-files-found: warn
           retention-days: 7
       - name: Retain actual browser emulation screenshots and metadata
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v5-browser-evidence
+          name: v5-browser-evidence-${{ matrix.shard }}
           # Only explicit synthetic-data browser evidence. Never upload the
           # repository, environment files, credentials or operational backups.
           path: |
@@ -284,3 +296,25 @@ jobs:
             if (fs.existsSync(path)) { const bytes = fs.readFileSync(path); console.log('KPS_PUBLIC_UI_EVIDENCE ' + JSON.stringify({name, synthetic: true, revision: process.env.RUNTIME_REVISION, size_bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex')})); }
           }
           NODE
+
+  complete-release-regression:
+    name: independent-postgres-regression
+    needs: independent-postgres-regression
+    if: always() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require every isolated full-regression worker to succeed
+        env:
+          SHARD_RESULT: ${{ needs.independent-postgres-regression.result }}
+        run: test "$SHARD_RESULT" = success
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v5-test-results-*
+          path: all-test-results
+      - name: Verify exact revision and complete nonduplicated test coverage
+        run: python tools/full_regression.py --verify all-test-results --revision '${{ github.event.pull_request.head.sha || github.sha }}'

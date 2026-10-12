@@ -261,7 +261,7 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
         page.locator('#branch-select').select_option(outside['id'])
         expect(page.locator('#confirm-dialog')).to_be_visible()
         page.keyboard.press('Escape')
-        expect(page.locator('#branch-select')).to_have_value('kps-branch-1')
+        expect(page.locator('#branch-select')).to_have_value('kps-branch-2')
         expect(page.locator('.cart-line-title').filter(has_text='خلية')).to_have_count(2)
         page.locator('#branch-select').select_option(outside['id'])
         page.locator('#confirm-submit').click()
@@ -507,6 +507,32 @@ def _submit_modal(page,values=None,check=None):
     expect(page.locator('#modal')).not_to_be_visible()
 
 
+def _inspection_payload(km=1000,fuel=75):
+    """Explicit synthetic inspection for journeys that open a driver shift."""
+    from app.shift_vehicle import CHECKS
+    return {'odometer_km':km,'fuel_percent':fuel,'checks':{key:'ok' for key in CHECKS},'notes':''}
+
+
+def _fill_closure_inspection(page,km=1025,fuel=50):
+    """Use the driver's required ending-inspection controls before submission."""
+    from app.shift_vehicle import CHECKS
+    form=page.locator('#closure-form')
+    form.locator('[name=inspection_odometer]').fill(str(km))
+    form.locator('[name=inspection_fuel]').fill(str(fuel))
+    for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
+
+
+def _attach_task_photo(page):
+    """Upload labelled synthetic evidence through the required real photo UI."""
+    from io import BytesIO
+    from PIL import Image, ImageDraw
+    image=Image.new('RGB',(320,160),'white')
+    ImageDraw.Draw(image).text((24,64),'TEST ONLY - NO REAL DELIVERY',fill='black')
+    encoded=BytesIO();image.save(encoded,format='PNG')
+    page.locator('#modal-body [name=photo]').set_input_files(
+        {'name':'TEST_ONLY_delivery.png','mimeType':'image/png','buffer':encoded.getvalue()})
+
+
 def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(live_app,chromium_browser):
     """Browser-operated assignment, delivery, receipt and final approvals, no API interception."""
     from playwright.sync_api import expect
@@ -530,7 +556,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         expect(driver.locator('#navigation [data-page=tasks]')).to_be_visible()
 
         manager_shift=_authenticated_post(contexts['manager'],live_app,'/api/shifts',{'kind':'manager','branch_ids':[branch_id]})['shift']['id']
-        driver_shift=_authenticated_post(contexts['driver'],live_app,'/api/shifts',{'kind':'driver','branch_ids':[branch_id],'manager_shift_id':manager_shift})['shift']['id']
+        driver_shift=_authenticated_post(contexts['driver'],live_app,'/api/shifts',{'kind':'driver','branch_ids':[branch_id],'manager_shift_id':manager_shift,'vehicle_inspection':_inspection_payload()})['shift']['id']
         manager.locator('#navigation [data-page=orders]').click()
         manager.locator(f'[data-action=order-detail][data-id="{order_id}"]').click()
         manager.locator(f'[data-action=assign][data-id="{order_id}"]').click()
@@ -549,6 +575,8 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status=handed_over]').click()
         expect(branch.locator(f'[data-action=prepare][data-id="{order_id}"][data-status=handed_over]')).not_to_be_visible()
         driver.locator('[data-action=task-transition][data-status=picked_up]').click()
+        _attach_task_photo(driver)
+        _submit_modal(driver)
         expect(driver.locator('[data-action=collect]')).to_be_visible()
         driver.locator('[data-action=collect]').click()
         driver.locator('#modal-body input[name=tendered]').fill('20.00')
@@ -556,11 +584,14 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         _capture(driver,'driver-actual-cash-collection-and-change')
         _submit_modal(driver,check=['confirmed'])
         driver.locator('[data-action=delivered]').click()
+        _attach_task_photo(driver)
         _submit_modal(driver,{'proof':'إثبات تسليم اختبار معزول؛ لا يوجد تسليم فعلي.'})
         with db.tx() as conn:
             collection=conn.execute('SELECT * FROM collections WHERE order_id=%s',(order_id,)).fetchone()
             assert collection['amount_halalas']==1000 and collection['tendered_halalas']==2000 and collection['change_halalas']==1000
             assert conn.execute('SELECT delivery_status FROM orders WHERE id=%s',(order_id,)).fetchone()['delivery_status']=='delivered'
+            photos=conn.execute('SELECT stage,used_at FROM delivery_photos WHERE order_id=%s ORDER BY stage',(order_id,)).fetchall()
+            assert len(photos)==2 and {row['stage'] for row in photos}=={'picked_up','delivered'} and all(row['used_at'] for row in photos)
 
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'[data-action=start-closing][data-id="{driver_shift}"]').click()
@@ -571,9 +602,10 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         driver.locator('#closure-form input[name=handover]').fill('10.00')
         driver.locator('#closure-form input[name=reference]').fill('BROWSER-TEST-DRIVER-BAG')
         driver.locator('#closure-form select[name=recipient_user_id]').select_option(users['manager']['id'])
+        _fill_closure_inspection(driver)
         expect(driver.locator('#closure-difference')).to_contain_text('٠')
         _capture(driver,'driver-counted-cash-closure-review')
-        _submit_modal(driver)
+        _submit_modal(driver,check=['confirm_closure'])
 
         # This is the receiving manager's own authenticated browser, not a sender override.
         manager.locator('#navigation [data-page=custody]').click()
@@ -599,7 +631,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         manager.locator('#closure-form input[name=reference]').fill('BROWSER-TEST-MANAGER-BAG')
         manager.locator('#closure-form select[name=recipient_user_id]').select_option(users['owner']['id'])
         _capture(manager,'delivery-manager-counted-final-closure')
-        _submit_modal(manager)
+        _submit_modal(manager,check=['confirm_closure'])
         owner.locator('#navigation [data-page=custody]').click()
         expect(owner.locator('[data-action=confirm-custody]')).to_have_count(1)
         owner.locator('[data-action=confirm-custody]').click()

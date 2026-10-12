@@ -23,6 +23,7 @@ import pytest
 from app import auth, db, email_delivery
 from test_browser import (ARTIFACTS, WIDTHS, PASSWORD, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
+                          _inspection_payload, _fill_closure_inspection, _attach_task_photo,
                           chromium_browser, ROOT)
 
 pytestmark = [pytest.mark.postgres,
@@ -179,7 +180,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         assert set(driver_user['branch_ids']) == {'kps-branch-1', 'kps-branch-9'}
         fonts['driver'] = _font_evidence(driver)
         manager_shift = _authenticated_post(contexts['delivery_manager'], base, '/api/shifts', {'kind': 'manager', 'branch_ids': ['kps-branch-1','kps-branch-9']})['shift']['id']
-        driver_shift = _authenticated_post(driver_context, base, '/api/shifts', {'kind': 'driver', 'branch_ids': ['kps-branch-1','kps-branch-9'], 'manager_shift_id': manager_shift})['shift']['id']
+        driver_shift = _authenticated_post(driver_context, base, '/api/shifts', {'kind': 'driver', 'branch_ids': ['kps-branch-1','kps-branch-9'], 'manager_shift_id': manager_shift, 'vehicle_inspection': _inspection_payload()})['shift']['id']
         customer_context, customer, customer_errors = _context(chromium_browser, base)
         contexts['guest'], pages['guest'] = customer_context, customer
         errors.append(customer_errors)
@@ -247,10 +248,13 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             _close_detail(branch)
         driver.locator('[data-page=tasks]').click()
         driver.locator('[data-action=task-transition][data-status=picked_up]').click()
+        _attach_task_photo(driver)
+        _submit_modal(driver)
         driver.locator('[data-action=collect]').click()
         driver.locator('#modal-body [name=tendered]').fill(f'{total/100:.2f}')
         _submit_modal(driver, check=['confirmed'])
         driver.locator('[data-action=delivered]').click()
+        _attach_task_photo(driver)
         _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'[data-action=start-closing][data-id="{driver_shift}"]').click()
@@ -264,7 +268,8 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _close_detail(driver)
         driver.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
         expect(driver.locator('#closure-form [name=counted]')).to_have_value(f'{total/100:.2f}')
-        _submit_modal(driver)
+        _fill_closure_inspection(driver)
+        _submit_modal(driver, check=['confirm_closure'])
         manager.locator('[data-page=custody]').click()
         manager.locator('[data-action=confirm-custody]').click()
         _submit_modal(manager, check=['received'])
@@ -278,7 +283,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         manager.locator('#closure-form [name=reference]').fill('V5-SYNTHETIC-MANAGER-BAG')
         manager.locator('#closure-form [name=recipient_user_id]').select_option(users['owner']['id'])
         _capture(manager, 'v5-manager-compact-closure')
-        _submit_modal(manager)
+        _submit_modal(manager, check=['confirm_closure'])
         owner.locator('[data-page=custody]').click()
         owner.locator('[data-action=confirm-custody]').click()
         _submit_modal(owner, check=['received'])

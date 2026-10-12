@@ -41,6 +41,30 @@ def _mail_channel(monkeypatch):
 
 
 @pytest.mark.postgres
+def test_portable_alert_forward_migration_preserves_history_and_keeps_strict_source_check(client, monkeypatch):
+    _verified_owner(client, monkeypatch)
+    with db.tx() as conn:
+        recovery._record(conn, recovery.configuration(), 'evt-history-before-source-migration',
+                         'postgres_backup_completed', 'succeeded', 'signed_webhook', datetime.now(timezone.utc),
+                         'synthetic-history-digest')
+        conn.execute('ALTER TABLE recovery_events DROP CONSTRAINT recovery_events_source_check')
+        conn.execute("ALTER TABLE recovery_events ADD CONSTRAINT recovery_events_source_check "
+                     "CHECK(source IN ('signed_webhook','provider_api','provider_dashboard','runtime_monitor','restore_drill'))")
+        conn.execute("DELETE FROM schema_migrations WHERE version='030_portable_recovery_alerts.sql'")
+        before = db.preservation_snapshot(conn)
+    db.migrate()
+    with db.tx() as conn:
+        assert db.preservation_snapshot(conn, before) == before
+        assert conn.execute("SELECT version FROM schema_migrations WHERE version='030_portable_recovery_alerts.sql'").fetchone()
+    assert portable_backup.record_failure('backup')
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with db.tx() as conn:
+            recovery._record(conn, recovery.configuration(), 'evt-forbidden-source-after-migration',
+                             'postgres_backup_completed', 'succeeded', 'untrusted_source', datetime.now(timezone.utc),
+                             'synthetic-invalid-source-digest')
+
+
+@pytest.mark.postgres
 @pytest.mark.parametrize('action,event_code', [
     ('backup', 'PORTABLE_BACKUP_FAILED'),
     ('verify', 'PORTABLE_ARCHIVE_VERIFICATION_FAILED'),
