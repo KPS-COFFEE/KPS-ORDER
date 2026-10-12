@@ -15,6 +15,7 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
     with db.tx() as c:
         c.execute("UPDATE branches SET city='حفر الباطن' WHERE id='kps-branch-1'")
         c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager',%s,'kps','[\"kps-branch-1\"]')",(mid,manager['id']))
+        if delegated:c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(mid,))
         c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,vehicle_log) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]',%s,1000,%s)",(sid,driver['id'],mid,db.json({'start':{'odometer_km':1000,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS}},'refuels':[]})))
     ctx,page,errors=_context(chromium_browser,live_app)
     _owner_login(ctx,live_app,manager if delegated else driver)

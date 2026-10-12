@@ -63,3 +63,5 @@
 .conversation strong { font-size: 16px; line-height: 1.6; }
 .conversation small { display: block; white-space: normal; overflow-wrap: break-word; }
 #chat-detail .toolbar h2 { min-width: 0; }
+.shift-card .card-head{flex-wrap:wrap}
+.shift-card .card-head>.pill{flex-shrink:1;max-width:100%;white-space:normal}

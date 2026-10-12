@@ -233,11 +233,11 @@ def shifts(user=Depends(auth.current_user)):
 def people_data(c,user):
     users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver','branch_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
-    managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status='open' AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
+    managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
     if user['role']=='driver':
         managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])]
-    return {'authorized_receivers':users,'available_manager_shifts':managers}
+    return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers}
 
 @router.get('/operations/people')
 def people(user=Depends(auth.current_user)):
