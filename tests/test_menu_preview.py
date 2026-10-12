@@ -129,6 +129,7 @@ def test_all_customer_information_preserved_20_unique_review_links_and_restart(o
     canonical=client.get('/api/branches').json()['branches']
     for p,q in zip(branches,canonical):
         assert p['name']==q['name'] and p['city']==q['city']
+        assert p['maps_url']==q['directions_url']
         assert p['maps_url'] and catalog.safe_map_url(p['maps_url'])
         assert q['location']['lat'] and q['location']['lng']
     assert branches[0]['maps_url']!=branches[8]['maps_url']

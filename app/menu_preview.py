@@ -85,7 +85,7 @@ def preview_data(request:Request,response:Response,user=Depends(preview_access))
         except Exception: links=[]
         result['customer_links']=links
         result['branches']=[{**{k:b[k] for k in ('id','name','city','branch_no')},
-                             'maps_url':catalog.safe_map_url(b['settings'].get('map_url')) if b['settings'].get('map_url_verified') else catalog.directions_url(b),
+                             'maps_url':catalog.directions_url(b),
                              **information.public_information(b)} for b in branches if b['settings'].get('active',True) is True]
         menu_session(conn,request,user['brand_id'],response)
     result['preview']=True
