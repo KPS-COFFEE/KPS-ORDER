@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import io
+import re
 from typing import Literal
 from PIL import Image, UnidentifiedImageError
 from fastapi import APIRouter, Depends, Request, Response
@@ -10,9 +11,22 @@ from . import auth,db
 from .operations import uid,safe,fail,roles,mutate
 
 router=APIRouter(prefix='/api',tags=['chat'])
+CATEGORIES={'help','suggestion','complaint','change','refund','delivery_problem','privacy','other'}
+
+def route_for(category, service, details=''):
+    if category=='privacy':return 'privacy'
+    if category=='refund':return 'review'
+    if category=='delivery_problem' or service=='delivery' or re.search(r'توصيل|سائق|سايق|تأخير|delivery|driver|delay',details,re.I):return 'delivery'
+    return 'branch'
+
+def reference(row):
+    return 'CS-'+str(row['followup_no']).zfill(6)
 
 def customer_conversation_view(conn, row):
     result = dict(row)
+    result['reference']=reference(row)
+    for key in ('assignee_id','route'):
+        result.pop(key,None)
     if row.get('order_id'):
         order = conn.execute('SELECT snapshot FROM orders WHERE id=%s', (row['order_id'],)).fetchone()
         routing = (order['snapshot'] if order else {}).get('internal_routing')
@@ -25,6 +39,7 @@ def customer_conversation_view(conn, row):
 def allowed(user,row):
     if user['role']=='owner':return user['brand_id']==row['brand_id']
     if user['role']=='customer':return row['customer_id']==user['id'] and row['brand_id']==user['brand_id']
+    if row['route'] in ('privacy','review'):return False
     if user['brand_id']!=row['brand_id'] or row['branch_id'] not in user.get('branch_ids',[]):return False
     if row['route']=='delivery':return user['role'] in ('delivery_manager','delivery_staff')
     return user['role']=='branch_manager'
@@ -47,6 +62,8 @@ class CreateConversation(BaseModel):
     order_id:str|None=Field(None,min_length=1,max_length=100)
     branch_id:str|None=Field(None,min_length=1,max_length=100)
     service:Literal['delivery','pickup','car']|None=None
+    category:Literal['help','suggestion','complaint','change','refund','delivery_problem','privacy','other']='help'
+    details:str=Field('',max_length=4000)
 
 @router.post('/conversations')
 def create_conversation(body:CreateConversation,request:Request,user=Depends(auth.current_user)):
@@ -58,24 +75,27 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(body.order_id,)).fetchone()
                 if not o or not auth.can_access_order(user,o,c):fail(404,'الطلب غير موجود')
                 if (body.branch_id is not None and body.branch_id!=o['branch_id']) or (body.service is not None and body.service!=o['service']):fail(422,'سياق المحادثة يجب أن يطابق الطلب')
-                existing=c.execute('SELECT * FROM conversations WHERE order_id=%s',(o['id'],)).fetchone()
+                existing=c.execute('SELECT * FROM conversations WHERE order_id=%s AND category=%s',(o['id'],body.category)).fetchone()
                 order_id=o['id'];branch_id=o['branch_id'];customer_id=o['customer_id'];brand_id=o['brand_id'];service=o['service']
             else:
                 # Customer/guest ownership comes from the revocable server session;
                 # staff/owner accounts cannot fabricate a customer's context.
                 roles(user,'customer')
-                if body.branch_id is None or body.service is None:fail(422,'حدد نوع الخدمة والفرع لبدء المحادثة')
+                if body.category not in ('privacy','refund') and (body.branch_id is None or body.service is None):fail(422,'حدد نوع الخدمة والفرع لبدء المحادثة')
                 branch=c.execute('SELECT id,brand_id FROM branches WHERE id=%s AND brand_id=%s',(body.branch_id,user['brand_id'])).fetchone()
-                if not branch:fail(404,'الفرع غير موجود')
-                order_id=None;branch_id=branch['id'];customer_id=user['id'];brand_id=user['brand_id'];service=body.service
-                existing=c.execute("SELECT * FROM conversations WHERE order_id IS NULL AND customer_id=%s AND branch_id=%s AND context_service=%s AND status<>'resolved' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(customer_id,branch_id,service)).fetchone()
+                if body.branch_id and not branch:fail(404,'الفرع غير موجود')
+                order_id=None;branch_id=branch['id'] if branch else None;customer_id=user['id'];brand_id=user['brand_id'];service=body.service or 'pickup'
+                existing=c.execute("SELECT * FROM conversations WHERE order_id IS NULL AND customer_id=%s AND branch_id IS NOT DISTINCT FROM %s AND context_service=%s AND category=%s AND status<>'resolved' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(customer_id,branch_id,service,body.category)).fetchone()
+            if body.details.strip():existing=None
             if existing:
                 if not allowed(user,existing):fail(404,'المحادثة غير متاحة')
                 return {'conversation':existing}
-            route='delivery' if service=='delivery' else 'branch'
+            route=route_for(body.category,service,body.details)
             row={'customer_id':customer_id,'brand_id':brand_id,'branch_id':branch_id,'route':route}
             if not allowed(user,row):fail(403,'المحادثة مخصصة لفريق المتابعة المختص')
-            cid=uid();c.execute('INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service) VALUES(%s,%s,%s,%s,%s,%s,%s)',(cid,order_id,brand_id,branch_id,customer_id,route,service))
+            cid=uid();c.execute('INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service,category) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(cid,order_id,brand_id,branch_id,customer_id,route,service,body.category))
+            if body.details.strip():
+                c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text) VALUES(%s,%s,%s,%s)',(uid(),cid,user['id'],body.details.strip()))
             db.audit(c,user['id'],'chat.create','conversation',cid,{'order_id':order_id,'service':service,'branch_id':branch_id,'route':route})
             return {'conversation':c.execute('SELECT * FROM conversations WHERE id=%s',(cid,)).fetchone()}
         result = mutate(c,user,request,'chat.create',body.model_dump(),perform)
@@ -94,7 +114,7 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
         if status:
             if status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             scope+=' AND v.status=%s';p.append(status)
-        rows=c.execute('SELECT v.*,o.order_no,o.snapshot->>\'order_reference\' order_reference,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id JOIN branches b ON b.id=v.branch_id WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
+        rows=c.execute('SELECT v.*,o.order_no,o.snapshot->>\'order_reference\' order_reference,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id LEFT JOIN branches b ON b.id=v.branch_id WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
         if user['role'] == 'customer':
             rows = [customer_conversation_view(c, row) for row in rows]
         return safe({'conversations':rows,'offset':offset,'limit':50})
@@ -131,6 +151,7 @@ def messages(cid:str,after:int=0,user=Depends(auth.current_user)):
         tickets=c.execute('SELECT ticket_no,category,status FROM support_tickets WHERE conversation_id=%s ORDER BY ticket_no',(cid,)).fetchall()
         if user['role'] == 'customer':
             v = customer_conversation_view(c, v)
+            transfers=[]
         return safe({'conversation':v,'messages':rows,'transfers':transfers,'tickets':[{'reference':'TKT-'+str(t['ticket_no']).zfill(6),'status':t['status'],'status_label':STATES[t['status']],'category_label':CATEGORIES[t['category']]} for t in tickets]})
 
 class Message(BaseModel):
@@ -142,6 +163,9 @@ def send(cid:str,body:Message,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
             v=conversation(c,user,cid,True)
+            if v['route']=='branch' and route_for(v['category'],v['context_service'],body.text)=='delivery':
+                c.execute("INSERT INTO conversation_transfers(id,conversation_id,from_route,to_route,reason,actor_id) VALUES(%s,%s,'branch','delivery',%s,%s)",(uid(),cid,'تصنيف تلقائي لمشكلة توصيل',user['id']))
+                c.execute("UPDATE conversations SET route='delivery',assignee_id=NULL WHERE id=%s",(cid,))
             if not body.text.strip() and not body.attachment_id:fail(422,'الرسالة فارغة')
             if not db.rate_limit(c,'chat:'+user['id'],60,60):fail(429,'أرسل الرسائل بوتيرة أبطأ')
             if body.attachment_id:
@@ -199,6 +223,7 @@ def transfer(cid:str,body:Transfer,request:Request,user=Depends(auth.current_use
             v=conversation(c,user,cid,True)
             o=c.execute('SELECT service FROM orders WHERE id=%s',(v['order_id'],)).fetchone() if v['order_id'] else None
             service=o['service'] if o else v['context_service']
+            if v['route'] in ('privacy','review'):fail(403,'المراجعة لدى المالك فقط')
             if body.target not in ('delivery','branch') or body.target==v['route']:fail(422,'جهة تحويل غير صالحة')
             if body.target=='branch' and (service=='delivery' or v['route']=='delivery'):fail(409,'شكاوى التوصيل تظل لدى التوصيل')
             tid=uid();c.execute('INSERT INTO conversation_transfers(id,conversation_id,from_route,to_route,reason,actor_id) VALUES(%s,%s,%s,%s,%s,%s)',(tid,cid,v['route'],body.target,body.reason,user['id']))

@@ -119,9 +119,9 @@ def _find_session(conn, request: Request):
     token = request.cookies.get(COOKIE)
     if not token or not re.fullmatch(r'[A-Za-z0-9_-]{40,100}', token):
         return None
-    return conn.execute('SELECT u.*,s.id AS session_id,s.csrf_hash FROM sessions s JOIN users u ON u.id=s.user_id '
+    return conn.execute('SELECT u.*,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id '
                         'JOIN brands b ON b.id=u.brand_id '
-                        'WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND u.active AND b.active',
+                        "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
 
 
@@ -176,23 +176,23 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
     return False
 
 
-def establish_session(conn, user: dict, response: Response, *, owner_step_up=False) -> dict:
+def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False) -> dict:
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a
     # guest only through this browser's random, HttpOnly session cookie.
     # Keep staff/verified identity session policies unchanged.
-    if user['role'] == 'customer' and user.get('identity_kind') == 'guest':
+    if user['role'] == 'customer' and (user.get('identity_kind') == 'guest' or customer_verified):
         hours = GUEST_SESSION_SECONDS // 3600
     expiry = datetime.now(timezone.utc) + timedelta(hours=hours)
-    conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at) '
-                 'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END)',
+    conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at,customer_verified_at) '
+                 'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END,CASE WHEN %s THEN now() ELSE NULL END)',
                  (db.new_id('session_'), token_hash(token), token_hash(csrf), user['id'], expiry,
-                  bool(owner_step_up and user['role'] == 'owner')))
+                  bool(owner_step_up and user['role'] == 'owner'), bool(customer_verified and user['role'] == 'customer')))
     response.set_cookie(COOKIE, token, max_age=hours * 3600, httponly=True, secure=secure_cookie(), samesite='strict', path='/')
     response.set_cookie(CSRF_COOKIE, csrf, max_age=hours * 3600, httponly=False, secure=secure_cookie(), samesite='strict', path='/')
     db.audit(conn, user['id'], 'session.created', 'user', user['id'])
-    return {'user': public_user(user), 'csrf_token': csrf}
+    return {'user': public_user(user), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
 
 
 @router.get('/session')
@@ -208,7 +208,7 @@ def session(request: Request, response: Response):
     if not csrf or not hmac.compare_digest(token_hash(csrf), user['csrf_hash']):
         # Do not reconstruct secret CSRF tokens from their hashes.
         return {'user': public_user(user), 'csrf_token': None, 'reauthentication_required': True}
-    if user['role'] == 'customer' and user.get('identity_kind') == 'guest':
+    if user['role'] == 'customer' and user.get('identity_kind') == 'guest' and not user.get('customer_verified_at'):
         # Refresh only an already valid browser session, never by phone lookup.
         # This also upgrades existing short-lived guests without another login.
         with db.tx() as conn:
@@ -221,7 +221,7 @@ def session(request: Request, response: Response):
                                 httponly=True, secure=secure_cookie(), samesite='strict', path='/')
             response.set_cookie(CSRF_COOKIE, csrf, max_age=GUEST_SESSION_SECONDS,
                                 httponly=False, secure=secure_cookie(), samesite='strict', path='/')
-    return {'user': public_user(user), 'csrf_token': csrf}
+    return {'user': public_user(user), 'csrf_token': csrf, 'customer_verified': bool(user.get('customer_verified_at') and user['customer_verified_at'] + timedelta(days=30) > datetime.now(timezone.utc))}
 
 
 class LoginBody(BaseModel):
@@ -332,6 +332,7 @@ class OTPRequestBody(BaseModel):
     phone: str = Field(min_length=8, max_length=30)
     brand_id: str = Field(default='kps', min_length=1, max_length=80)
     lang: Literal['ar', 'en'] = 'ar'
+    purpose: Literal['login','change_phone']='login'
 
 
 def _otp_channel_ready(conn, brand_id: str, channel: str):
@@ -352,6 +353,9 @@ def _otp_channel_ready(conn, brand_id: str, channel: str):
 def request_otp(body: OTPRequestBody, request: Request):
     check_origin(request)
     phone = normalize_phone(body.phone)
+    source_user = current_user(request) if body.purpose=='change_phone' else None
+    if source_user and (source_user['role']!='customer' or source_user['brand_id']!=body.brand_id or not source_user.get('customer_verified_at')):
+        raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','سجل الدخول بجوالك الحالي أولًا.')
     channel = os.getenv('OTP_CHANNEL', 'sms')
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
@@ -382,8 +386,8 @@ def request_otp(body: OTPRequestBody, request: Request):
         _otp_test_access(conn, body.brand_id, channel, request)
         if _sms_provider(conn, body.brand_id) != provider:
             raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
-        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name) VALUES(%s,%s,%s,%s,%s,%s,%s)',
-                     (challenge_id, body.brand_id, phone, reference, channel, expires_at, provider))
+        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name,source_user_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',
+                     (challenge_id, body.brand_id, phone, reference, channel, expires_at, provider,source_user['id'] if source_user else None))
     return {'challenge_id': challenge_id, 'expires_in': max(0, int((expires_at-datetime.now(timezone.utc)).total_seconds())), 'channel': channel}
 
 
@@ -408,6 +412,10 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     if not challenge:
         raise db.error(400, 'OTP_EXPIRED', 'رمز التحقق منتهي أو مستهلك. اطلب رمزًا جديدًا.')
     channel = challenge['delivery_channel']
+    if challenge.get('source_user_id'):
+        source_user=current_user(request)
+        if source_user['id']!=challenge['source_user_id'] or not source_user.get('customer_verified_at'):
+            raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','سجل الدخول بجوالك الحالي أولًا.')
     with db.tx() as conn:
         conn.execute('SELECT channel FROM identity_channels WHERE brand_id=%s AND channel=%s FOR UPDATE',(challenge['brand_id'],channel)).fetchone()
         _otp_channel_ready(conn, challenge['brand_id'], channel)
@@ -441,15 +449,27 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
             db.audit(conn, owner['id'], 'identity.sms.test_verified', 'brand', challenge['brand_id'], {'provider': provider})
             return {'verified': True, 'test_only': True}
         proof_column = 'phone_whatsapp_verified_at' if channel == 'whatsapp' else 'phone_sms_verified_at'
-        conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone,identity_kind,phone_verified_at," + proof_column + ") VALUES(%s,%s,'customer',%s,%s,%s,now(),now()) ON CONFLICT(brand_id,phone) WHERE role='customer' AND phone_verified_at IS NOT NULL DO NOTHING",
-                     (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone'], 'phone_'+channel+'_verified'))
-        user = conn.execute("SELECT * FROM users WHERE brand_id=%s AND phone=%s AND role='customer' AND phone_verified_at IS NOT NULL AND active", (challenge['brand_id'], challenge['phone'])).fetchone()
+        conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(challenge['brand_id']+':customer-phone:'+challenge['phone'],))
+        if challenge.get('source_user_id'):
+            source=current_user(request)
+            if source['id']!=challenge['source_user_id']:raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','أعد التحقق من الجوال.')
+            conflict=conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND phone=%s AND phone_verified_at IS NOT NULL AND role='customer' AND id<>%s",(challenge['brand_id'],challenge['phone'],source['id'])).fetchone()
+            if conflict:raise db.error(409,'PHONE_CHANGE_UNAVAILABLE','لا يمكن تغيير الجوال إلى هذا الرقم.')
+            user=conn.execute("UPDATE users SET phone=%s,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL WHERE id=%s AND active RETURNING *",(challenge['phone'],source['id'])).fetchone()
+            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(source['id'],))
+            db.audit(conn,source['id'],'customer.phone.changed','user',source['id'])
+        else:
+            conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone,identity_kind,phone_verified_at," + proof_column + ") VALUES(%s,%s,'customer',%s,%s,%s,now(),now()) ON CONFLICT(brand_id,phone) WHERE role='customer' AND phone_verified_at IS NOT NULL DO NOTHING",
+                         (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone'], 'phone_'+channel+'_verified'))
+            user = conn.execute("SELECT * FROM users WHERE brand_id=%s AND phone=%s AND role='customer' AND phone_verified_at IS NOT NULL AND active", (challenge['brand_id'], challenge['phone'])).fetchone()
         if user:
-            user = conn.execute('UPDATE users SET '+proof_column+'=now() WHERE id=%s RETURNING *',(user['id'],)).fetchone()
+            user = conn.execute("UPDATE users SET "+proof_column+"=now(),phone_verified_at=now(),display_name=CASE WHEN %s<>'' THEN %s ELSE display_name END,updated_at=now() WHERE id=%s RETURNING *",(body.display_name.strip(),body.display_name.strip(),user['id'])).fetchone()
             conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s',(challenge['brand_id'],channel))
         if not user:
             raise db.error(403, 'CUSTOMER_DISABLED', 'هذا الحساب موقوف. تواصل مع الإدارة.')
-        return establish_session(conn, user, response)
+        if customer_phone_required(conn,challenge['brand_id']) and not user['display_name'].strip():
+            raise db.error(422, 'CUSTOMER_NAME_REQUIRED', 'أدخل اسمك لإكمال التحقق.')
+        return establish_session(conn, user, response, customer_verified=True)
 
 
 def bootstrap_owner(username: str, password: str, brand_id: str = 'kps', display_name: str = 'الإدارة'):
@@ -533,9 +553,21 @@ def channel_readiness(conn, brand):
     return rows
 
 
-def assert_customer_order_eligible(conn, user):
+def customer_phone_required(conn,brand):
+    row=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand,)).fetchone()
+    return (row or {}).get('settings',{}).get('customer_phone_required',brand=='kps') is not False
+
+
+def assert_customer_order_eligible(conn, user, *, phone_required=None):
     if user['role']!='customer' or not user.get('active',True):
         raise db.error(403,'CUSTOMER_REQUIRED','الطلب يتطلب جلسة عميل مخوّلة.')
+    if (customer_phone_required(conn,user['brand_id']) if phone_required is None else phone_required):
+        proof=user.get('customer_verified_at')
+        if not user.get('phone_sms_verified_at') or not proof or proof + timedelta(days=30) <= datetime.now(timezone.utc):
+            raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','تحقق من جوالك لإتمام الطلب. حاول لاحقًا إذا تعذر إرسال الرمز.')
+        if not user.get('display_name','').strip():
+            raise db.error(422,'CUSTOMER_NAME_REQUIRED','أدخل اسمك لإتمام الطلب.')
+        return
     if user.get('identity_kind')=='guest':
         if not _guest_channel_available(conn,user['brand_id']):
             raise db.error(403,'GUEST_ORDERING_PAUSED','الطلب كضيف متوقف حاليًا.')
@@ -551,7 +583,7 @@ def public_channels(brand_id: str='kps'):
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(brand_id,)).fetchone():
             raise db.error(404,'BRAND_NOT_FOUND','البراند غير متاح.')
-        return {'channels':channel_readiness(conn,brand_id),
+        return {'customer_phone_required':customer_phone_required(conn,brand_id),'channels':channel_readiness(conn,brand_id),
                 'session_recovery':'البريد الموثق يستعيد الحساب. عند فقد جلسة ضيف بلا بريد موثق تواصل مع فريق التشغيل؛ رقم الجوال والطلب وحدهما لا يمنحان الوصول.'}
 
 

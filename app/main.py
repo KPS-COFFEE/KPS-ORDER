@@ -84,7 +84,7 @@ app.include_router(auth.router)
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'order_support', 'accounting', 'fleet', 'driver_incentives'):
+for name in ('operations', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
@@ -108,6 +108,7 @@ def ready():
                            if product['settings'].get('purchasable') is not False)
             branches = conn.execute("SELECT count(*) AS n FROM branches WHERE settings->>'operational_data_verified'='true' OR settings->>'ordering_verified'='true'").fetchone()['n']
             identity = auth.channel_readiness(conn, 'kps')
+            phone_required=auth.customer_phone_required(conn,'kps')
             preservation = conn.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' AND entity_id=%s ORDER BY created_at DESC LIMIT 1", (revision(),)).fetchone()
         otp = any(identity[c]['configured'] for c in ('sms','whatsapp'))
         return {'status': 'ready', 'revision': revision(), 'database': 'connected', 'applied_migrations': applied,
@@ -116,7 +117,7 @@ def ready():
                 'data_preservation': {'verified': bool(preservation and preservation['details'].get('verified')),
                                       'checked_tables': preservation['details'].get('tables_checked', 0) if preservation else 0,
                                       'revision': revision()},
-                'ordering_configured': bool(any(channel['available'] for channel in identity.values()) and products and branches)}
+                'ordering_configured': bool((identity['sms']['available'] if phone_required else any(channel['available'] for channel in identity.values())) and products and branches)}
     except Exception:
         return JSONResponse({'status': 'not_ready', 'revision': revision(), 'database': 'unavailable'}, status_code=503)
 

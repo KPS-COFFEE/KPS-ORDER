@@ -61,7 +61,7 @@ def create_ticket(body:TicketBody,request:Request,user=Depends(auth.current_user
     with db.tx() as c:
         def perform():
             o=order_access(c,user,body.order_id,True)
-            v=c.execute('SELECT * FROM conversations WHERE order_id=%s FOR UPDATE',(o['id'],)).fetchone()
+            v=c.execute("SELECT * FROM conversations WHERE order_id=%s AND category='help' FOR UPDATE",(o['id'],)).fetchone()
             if not v:
                 cid=uid();c.execute("INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service) VALUES(%s,%s,%s,%s,%s,'delivery',%s)",(cid,o['id'],o['brand_id'],o['branch_id'],o['customer_id'],o['service']))
             else:

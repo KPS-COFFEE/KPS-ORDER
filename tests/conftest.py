@@ -98,6 +98,11 @@ def database(monkeypatch, safe_test_environment):
     from app import db
     try:
         db.migrate()
+        # Existing guest-identity certificates exercise the retained legacy brand
+        # policy. Current mandatory-SMS acceptance sets the policy true explicitly.
+        # Production has no fixture override and defaults KPS to required SMS.
+        with db.tx() as c:
+            c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":false}'::jsonb WHERE brand_id='kps'")
         yield isolated_url
     finally:
         db.close_pools(isolated_url)
