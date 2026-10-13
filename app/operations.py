@@ -247,7 +247,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
 
 @router.get('/shifts')
 @router.get('/shifts/current')
-def shifts(user=Depends(auth.current_user)):
+def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id: str | None = None):
     roles(user,'owner','delivery_manager','driver','delivery_staff')
     with db.tx() as c:
         if user['role']=='owner': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
@@ -255,6 +255,29 @@ def shifts(user=Depends(auth.current_user)):
         elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
         else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
         rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
+        if order_id or task_id:
+            roles(user,'owner','delivery_manager','delivery_staff')
+            task=None
+            if task_id:
+                roles(user,'owner','delivery_manager')
+                task=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(task_id,)).fetchone()
+                if not task:fail(404,'المهمة غير موجودة')
+                shift_access(c,user,lock_shift(c,task['shift_id']))
+                order_id=task['order_id']
+            order=c.execute('SELECT * FROM orders WHERE id=%s',(order_id,)).fetchone()
+            order_access(c,user,order)
+            eligible=[]
+            for row in rows:
+                if row['kind']!='driver' or task and row['id']==task['shift_id']:continue
+                candidate=lock_shift(c,row['id'])
+                try:
+                    manager=eligible_driver_shift(c,candidate,order)
+                except HTTPException as error:
+                    if error.status_code not in (403,404,409):raise
+                    continue
+                if user['role']=='delivery_manager' and manager['user_id']!=user['id']:continue
+                eligible.append(row)
+            rows=eligible
         return safe({'shifts':rows,**people_data(c,user)})
 
 def driver_cash_policy(c,brand_id):
