@@ -447,7 +447,11 @@
     "unavailable_0": {ar:" — غير متاح: {0}", en:" — Unavailable: {0}"},
     "0_you_can_choose_a_city_and_branch_manually": {ar:"{0} يمكنك اختيار المدينة والفرع يدويًا.", en:"{0} You can choose a city and branch manually."},
     "0_ranked_for_1_and_basket_items": {ar:"{0} الترتيب حسب {1} وأصناف السلة.", en:"{0} Ranked for {1} and basket items."},
-    "no_verified_eligible_branches_for_this_selection_0_review_your_ci": {ar:"لا توجد فروع مؤهلة موثقة الموقع لهذا الاختيار{0}. يمكنك مراجعة المدينة والخدمة أو اختيار الفرع يدويًا للاطلاع.", en:"No verified eligible branches for this selection{0}. Review your city and service, or select a branch manually to view it."},
+    "no_verified_eligible_branches_for_this_selection_0_review_your_ci": {ar:"لا توجد فروع متاحة لهذا الاختيار{0}. راجع الموقع والخدمة المختارة.", en:"No branches are available for this selection{0}. Check your location and selected service."},
+    "nearest_basket_unavailable": {ar:"يوجد فرع يخدم موقعك، لكن بعض أصناف أو خيارات سلتك غير متاحة فيه: {items}.", en:"A branch serves your location, but some basket items or options are unavailable there: {items}."},
+    "review_basket": {ar:"مراجعة السلة", en:"Review basket"},
+    "basket_option_unavailable": {ar:"الخيار المحفوظ غير متاح حاليًا. احذفه من السلة واختر بديلًا.", en:"This saved option is unavailable. Remove it from your basket and choose another option."},
+    "nearest_saved_options_unavailable": {ar:"بعض خيارات سلتك لم تعد متاحة: {items}. راجع السلة لعرض الفروع المناسبة.", en:"Some saved basket options are no longer available: {items}. Review your basket to see available branches."},
     "0_km": {ar:"{0} كم", en:"{0} km"},
     "0_m": {ar:"{0} م", en:"{0} m"},
     "0_approximate_geographic_distance": {ar:"{0} · مسافة جغرافية تقريبية", en:"{0} · Approximate geographic distance"},
@@ -650,6 +654,19 @@
   function draftSubtotal() { return state.cart.reduce((sum, line) => sum + linePrice(line) * line.quantity, 0); }
   function eligibleForProduct(product, target=branch()) { if (state.branchId && state.branchCatalogId !== state.branchId) return {ok:false, reason:t(state.branchCatalogPending?"checking_branch_options":"branch_options_check_failed")}; if (product.enabled === false) return {ok:false, reason:t("this_item_is_temporarily_unavailable")}; if (restricted(product)) { if (!target) return {ok:false, reason:t("choose_a_branch_to_check_availability_in_hafar_al_batin")}; if (!product.available_cities.some((c) => city(c) === city(target.city))) return {ok:false, reason:t("available_only_in_hafar_al_batin_choose_an_eligible_branch")}; } if (state.branchId && product.available === false && product.unavailable_reason && !/تحقق|مهيأ|مصدر|سعر/.test(product.unavailable_reason)) return {ok:false, reason:serverReason(product)}; return {ok:true, reason:''}; }
   function catalogReady() { return state.cart.length > 0 && state.cart.every((line) => productFor(line)?.source_verified === true); }
+  function cartOptionsAvailable(line,product=productFor(line)) {
+    return groups(product||{}).every(group=>{
+      const choice=line.options?.[group.code];
+      if(!choice)return group.required===false;
+      const value=(group.values||[]).find(value=>(value.code||value.id)===choice);
+      return Boolean(value&&value.enabled!==false&&value.available!==false);
+    });
+  }
+  function appendBasketReview(container) {
+    const review=node('button','button secondary',t('review_basket'));
+    review.type='button';review.addEventListener('click',()=>{$('basket').scrollIntoView({behavior:'smooth',block:'start'});});
+    container.append(review);
+  }
   function updatePolicyLinks(){for(const [id,path] of [['privacy-link','privacy'],['terms-link','terms']])$(id).href=`/${path}?brand_id=${encodeURIComponent(requestedBrandId)}&lang=${language}`;}
   function renderAccount() {
     updatePolicyLinks();text('customer-phone-status',state.session.customer_verified?t('phone_verified'):t('unverified'));$('customer-phone').readOnly=state.session.customer_verified===true;const guestNotice=$('guest-form').querySelector('p');guestNotice.id='guest-flow-note';guestNotice.dataset.i18n=state.identityIntent==='contact'?'contact_guest_notice':'order_directly_without_a_verification_code_or_creating_an_account';text('guest-flow-note',t(guestNotice.dataset.i18n));$('guest-submit').dataset.i18n=state.identityIntent==='contact'?'start_contact':'order_as_a_guest';text('guest-submit',t($('guest-submit').dataset.i18n));
@@ -690,11 +707,30 @@
     if(panel.hidden)return;
     if(nearest.pending){text('nearest-state',t("checking_branches_location_service_and_basket_items"));panel.setAttribute('aria-busy','true');return;}
     panel.removeAttribute('aria-busy');
-    if(nearest.error){text('nearest-state',t("0_you_can_choose_a_city_and_branch_manually",{"0":()=>(nearest.error)}));return;}
+    if(nearest.error){
+      if(nearest.errorCode==='OPTION_VALUE_INVALID'){
+        const names=[...new Set(state.cart.filter(line=>!cartOptionsAvailable(line)).map(line=>{
+          const product=productFor(line);return `${sourceText(product||{})||t('items')}${optionLabel(product||{},line.options)?' · '+optionLabel(product||{},line.options):''}`;
+        }))];
+        text('nearest-state',names.length?t('nearest_saved_options_unavailable',{items:()=>names.join(language==='ar'?'، ':', ')}):nearest.error);
+        appendBasketReview(list);
+      }else text('nearest-state',t("0_you_can_choose_a_city_and_branch_manually",{"0":()=>(nearest.error)}));
+      return;
+    }
     const eligible=nearest.branches.filter(b=>!state.cityFilter||city(b.city)===state.cityFilter);
     text('nearest-state',eligible.length?
       t("0_ranked_for_1_and_basket_items",{"0":()=>((language==='ar'?nearest.distanceLabel:'')||t("approximate_geographic_distance_not_road_distance")),"1":()=>(serviceName(state.service))}):
       t("no_verified_eligible_branches_for_this_selection_0_review_your_ci",{"0":()=>(state.cityFilter?t("in_the_selected_city"):'')}));
+    if(!eligible.length){
+      const basketBlocked=nearest.excluded.find(b=>b.code==='PRODUCT_UNAVAILABLE'&&
+        (!state.cityFilter||city(b.city)===state.cityFilter)&&b.unavailable_products?.length);
+      if(basketBlocked){
+        const names=[...new Set(basketBlocked.unavailable_products.map(item=>
+          sourceText(state.products.find(product=>product.id===item.product_id)||{})||t('items')))];
+        text('nearest-state',t('nearest_basket_unavailable',{items:()=>names.join(language==='ar'?'، ':', ')}));
+        appendBasketReview(list);
+      }
+    }
     for(const b of eligible){
       const card=node('article','nearest-branch-card');
       card.dataset.branchId=b.id;
@@ -717,7 +753,7 @@
     clearTimeout(queueNearestBranches.timer);
     const nearest=state.nearest;
     nearest.controller?.abort();nearest.controller=null;
-    nearest.revision++;nearest.error='';nearest.branches=[];nearest.excluded=[];
+    nearest.revision++;nearest.error='';nearest.errorCode='';nearest.branches=[];nearest.excluded=[];
     nearest.pending=Boolean(state.location);
     renderNearestBranches();
     if(state.location)queueNearestBranches.timer=setTimeout(loadNearestBranches,200);
@@ -739,7 +775,7 @@
         if(existing){if(row.services)existing.services=row.services;if(row.delivery_schedule)existing.delivery_schedule=row.delivery_schedule;existing.directions_url=row.directions_url||null;existing.location_verified=row.location_verified===true;}
       }
       renderBranches();renderService();
-    }catch(error){if(revision===nearest.revision&&error.name!=='AbortError')nearest.error=errorMessage(error);}
+    }catch(error){if(revision===nearest.revision&&error.name!=='AbortError'){nearest.error=errorMessage(error);nearest.errorCode=error.code;}}
     finally{if(revision===nearest.revision){nearest.pending=false;nearest.controller=null;renderNearestBranches();}}
   }
   function renderService(){
@@ -794,7 +830,7 @@
   }
   function renderCart() { const container=$('cart-lines'); container.replaceChildren(); const count=state.cart.reduce((sum,line)=>sum+line.quantity,0); text('header-count',number.format(count)); text('basket-count',t("0_items_2",{"0":()=>(number.format(count))})); text('mobile-basket-count',t("your_basket_0_items",{"0":()=>(number.format(count))})); text('mobile-basket-total',money(state.quote?.total_halalas ?? draftSubtotal())); $('basket-details').hidden=!count;syncMobileBasket();
     if (!count) { const empty=node('div','empty-state'); empty.append(node('span','empty-symbol','＋'),node('h3','',t("start_with_your_favorite")),node('p','',t("items_you_add_will_appear_here"))); container.append(empty); }
-    for (const line of state.cart) { const product=productFor(line); const row=node('div','cart-line'); const title=node('div','cart-line-title'); title.append(node('span','',cartLineName(product,line.options)),node('span','money',money(linePrice(line)*line.quantity))); row.append(title); const label=optionLabel(product || {},line.options); if(label&&!isKhaliya(product||{})) row.append(node('small','',label)); if(line.restoredName)row.append(node('small','',t("previously_saved_item_0_type_and_quantity_retained",{"0":()=>(line.restoredName)}))); if(line.note) row.append(node('small','',t("note_0",{"0":()=>(line.note)}))); const eligible=eligibleForProduct(product || {}); if(!eligible.ok) row.append(node('small','status error',eligible.reason)); const controls=node('div','cart-line-controls'); const stepper=node('div','stepper'); const minus=node('button','','−'); minus.type='button'; minus.setAttribute('aria-label',t("decrease_quantity_of_0",{"0":()=>(sourceText(product))})); minus.addEventListener('click',()=>updateQuantity(line.rowId,-1)); const plus=node('button','','＋'); plus.type='button'; plus.disabled=line.quantity>=30; plus.setAttribute('aria-label',t("increase_quantity_of_0",{"0":()=>(sourceText(product))})); plus.addEventListener('click',()=>updateQuantity(line.rowId,1)); stepper.append(minus,node('span','',number.format(line.quantity)),plus); const remove=node('button','remove-line',t("remove")); remove.type='button'; remove.setAttribute('aria-label',t("remove_0_1",{"0":()=>(sourceText(product)),"1":()=>(label?' '+label:'')})); remove.addEventListener('click',()=>{state.cart=state.cart.filter((item)=>item.rowId!==line.rowId); cartChanged();}); controls.append(stepper,remove); row.append(controls); container.append(row); }
+    for (const line of state.cart) { const product=productFor(line); const row=node('div','cart-line'); const title=node('div','cart-line-title'); title.append(node('span','',cartLineName(product,line.options)),node('span','money',money(linePrice(line)*line.quantity))); row.append(title); const label=optionLabel(product || {},line.options); if(label&&!isKhaliya(product||{})) row.append(node('small','',label)); if(line.restoredName)row.append(node('small','',t("previously_saved_item_0_type_and_quantity_retained",{"0":()=>(line.restoredName)}))); if(line.note) row.append(node('small','',t("note_0",{"0":()=>(line.note)}))); const eligible=eligibleForProduct(product || {}); if(!eligible.ok) row.append(node('small','status error',eligible.reason)); else if(!cartOptionsAvailable(line,product))row.append(node('small','status error',t('basket_option_unavailable'))); const controls=node('div','cart-line-controls'); const stepper=node('div','stepper'); const minus=node('button','','−'); minus.type='button'; minus.setAttribute('aria-label',t("decrease_quantity_of_0",{"0":()=>(sourceText(product))})); minus.addEventListener('click',()=>updateQuantity(line.rowId,-1)); const plus=node('button','','＋'); plus.type='button'; plus.disabled=line.quantity>=30; plus.setAttribute('aria-label',t("increase_quantity_of_0",{"0":()=>(sourceText(product))})); plus.addEventListener('click',()=>updateQuantity(line.rowId,1)); stepper.append(minus,node('span','',number.format(line.quantity)),plus); const remove=node('button','remove-line',t("remove")); remove.type='button'; remove.setAttribute('aria-label',t("remove_0_1",{"0":()=>(sourceText(product)),"1":()=>(label?' '+label:'')})); remove.addEventListener('click',()=>{state.cart=state.cart.filter((item)=>item.rowId!==line.rowId); cartChanged();}); controls.append(stepper,remove); row.append(controls); container.append(row); }
     renderQuote();
   }
   function renderQuote() { const summary=$('quote-summary'); summary.replaceChildren(); const row=(label,amount,cls='')=>{const entry=node('div',`quote-row ${cls}`); entry.append(node('span','',label),node('span','money',money(amount))); summary.append(entry);}; row(t("items"),state.quote?.subtotal_halalas ?? draftSubtotal()); if(state.quote) {row(t("delivery_fee"),state.quote.delivery_fee_halalas || 0); if(Number.isInteger(state.quote.discount_halalas)&&state.quote.discount_halalas>0) row(t("discount"),-state.quote.discount_halalas); row(t("amount_due"),state.quote.total_halalas,'grand');} else {row(t("estimated_item_total"),draftSubtotal(),'grand');summary.append(node('p','small muted',state.quotePending?t("checking_availability_and_amount"):t("fees_and_the_final_amount_appear_after_branch_and_service_checks")));} showError('basket-error',state.quoteError); $('checkout-button').disabled=!state.cart.length||state.quotePending||!state.quote||!catalogReady(); text('checkout-button',state.quotePending?t("checking"):!state.cart.length?t("add_items_to_your_basket"):!catalogReady()?t("review_unapproved_items_in_your_basket"):t("review_and_confirm_order")); }
