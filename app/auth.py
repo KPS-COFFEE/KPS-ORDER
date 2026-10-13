@@ -375,6 +375,8 @@ def _otp_channel_ready(conn, brand_id: str, channel: str):
 def request_otp(body: OTPRequestBody, request: Request):
     check_origin(request)
     phone = normalize_phone(body.phone)
+    if body.brand_id == 'kps' and not re.fullmatch(r'\+9665[0-9]{8}', phone):
+        raise db.error(422, 'PHONE_INVALID', 'أدخل رقم جوال سعودي صحيحًا.')
     source_user = current_user(request) if body.purpose=='change_phone' else None
     if source_user and (source_user['role']!='customer' or source_user['brand_id']!=body.brand_id or not source_user.get('customer_verified_at')):
         raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','سجل الدخول بجوالك الحالي أولًا.')

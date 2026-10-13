@@ -21,7 +21,7 @@ def test_mobile_policy_verified_return_and_contact_draft(live_app,engine,languag
         public.add_init_script("localStorage.setItem('kps_customer_lang',"+repr(language)+")")
         public.goto(live_app)
         expect(public.locator('#account-button')).to_be_enabled()
-        assert public.locator('.customer-navigation button').count()==4
+        assert public.locator('.customer-navigation button').count()==3
         public.locator('#account-button').click()
         expect(public.locator('#otp-request-form')).to_be_visible()
         expect(public.locator('#account-privacy-link')).to_have_attribute('href',f'/privacy?brand_id=kps&lang={language}')

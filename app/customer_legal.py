@@ -44,9 +44,13 @@ def privacy(brand_id:str='kps',lang:Literal['ar','en']='ar'):
 def terms(brand_id:str='kps',lang:Literal['ar','en']='ar'):
     return page('terms',brand_id,lang)
 
+@router.get('/refunds',response_class=HTMLResponse)
+def refunds(brand_id:str='kps',lang:Literal['ar','en']='ar'):
+    return page('refunds',brand_id,lang)
+
 def page(kind,brand,lang):
     info=details(brand);config=info['details'];en=lang=='en'
-    title=('Privacy policy' if kind=='privacy' else 'Terms and conditions') if en else ('سياسة الخصوصية' if kind=='privacy' else 'الشروط والأحكام')
+    title={'privacy':('Privacy policy','سياسة الخصوصية'),'terms':('Terms and conditions','الشروط والأحكام'),'refunds':('Returns and refunds','سياسة الاسترجاع والاسترداد')}[kind][0 if en else 1]
     paras=[PRIVACY_EN if en else PRIVACY_AR] if kind=='privacy' else [TERMS_EN if en else TERMS_AR]
     if kind=='privacy':
         paras += ([
@@ -73,6 +77,18 @@ def page(kind,brand,lang):
         ] if en else [
           'يعرض ملخص الطلب الأصناف والخدمة والفرع والإجمالي ورسوم التوصيل قبل التأكيد. الدفع عند الاستلام حسب الطريقة المختارة. يتحقق الخادم من التوفر ونطاق الخدمة.',
           'لطلب الإلغاء أو التعديل أو الاسترجاع أو التعويض استخدم «تواصل معنا». الطلب لا ينفذ إلغاءً أو صرفًا تلقائيًا؛ يراجع الفريق حالة التجهيز وحقوق المستهلك المطبقة وطبيعة الأغذية المحضرة. لا تحد هذه الشروط من حقوقك النظامية الإلزامية.'
+        ])
+    if kind=='refunds':
+        paras=([
+            'To request a cancellation, change, return, refund or compensation, open Contact us and select Refund or compensation or Cancel or change an order. Link the order when available and describe the issue; photos are optional.',
+            'You receive a reference number and can follow the request and messages in Contact us. Delivery and driver issues go to delivery management; financial refund requests go to the authorized reviewer.',
+            'Submitting a request does not cancel an order or issue a payment automatically. The team reviews preparation and fulfilment status, the issue and applicable consumer rights, including the nature of prepared food. The outcome is communicated through the request.',
+            'This policy does not waive mandatory consumer rights. Do not send payment-card details or verification codes in a message.'
+        ] if en else [
+            'لطلب الإلغاء أو التعديل أو الاسترجاع أو الاسترداد أو التعويض، افتح «تواصل معنا» واختر «استرجاع أو تعويض» أو «إلغاء أو تعديل طلب». اربط الطلب إن وجد واشرح المشكلة؛ إرفاق الصور اختياري.',
+            'تحصل على رقم متابعة، ويمكنك متابعة حالة البلاغ والرسائل من «تواصل معنا». تُوجّه مشكلات التوصيل والسائقين لمدير التوصيل، وطلبات الاسترداد المالية للمسؤول المخوّل بالمراجعة والاعتماد.',
+            'تقديم البلاغ لا يلغي الطلب أو يصرف مبلغًا تلقائيًا. يراجع الفريق حالة التجهيز والتنفيذ والمشكلة وحقوق المستهلك المطبقة، مع مراعاة طبيعة الأغذية المحضّرة. تصلك نتيجة المراجعة عبر البلاغ.',
+            'لا تحد هذه السياسة من حقوقك النظامية الإلزامية. لا ترسل بيانات بطاقتك المصرفية أو رموز التحقق داخل المحادثة.'
         ])
     sellers='<br>'.join(escape(x.get('legal_name',''))+((' — VAT number: ' if en else ' — الرقم الضريبي: ')+escape(x['vat_number']) if x.get('vat_number') else '') for x in info['sellers'])
     labels={'controller_name':('Data controller','جهة التحكم بالبيانات'),'registration_number':('Registration','السجل التجاري'),'business_address':('Business address','عنوان المنشأة'),'contact':('Contact','التواصل'),'legal_basis':('Legal basis','الأساس النظامي للمعالجة'),'retention_policy':('Retention','الاحتفاظ'),'transfer_safeguards':('Transfer safeguards','ضمانات النقل')}

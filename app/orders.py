@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Literal
 import hashlib
 import json
 
@@ -173,7 +174,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 neighborhood: str | None = Query(default=None, max_length=120),
                 driver_id: str | None = Query(default=None, max_length=80),
                 search: str | None = Query(default=None, max_length=80),
-                manager_view: str | None = None):
+                manager_view: str | None = None,
+                customer_view: Literal['active','history','cancelled'] | None = None):
     conditions, params = ['o.brand_id=%s'], [user['brand_id']]
     if user['role'] == 'customer':
         conditions.append('o.customer_id=ANY(%s)')
@@ -193,6 +195,14 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         params.append(user['id'])
     elif user['role'] != 'owner':
         raise db.error(403, 'ROLE_FORBIDDEN', 'الوصول غير مسموح.')
+    if customer_view:
+        if user['role'] != 'customer':
+            raise db.error(403, 'ROLE_FORBIDDEN', 'هذا العرض مخصص للعميل.')
+        cancelled="(o.preparation_status='cancelled' OR o.delivery_status='cancelled')"
+        completed="(o.preparation_status='completed' OR o.delivery_status='delivered')"
+        conditions.append(cancelled if customer_view=='cancelled' else
+                          f'NOT {cancelled} AND {completed}' if customer_view=='history' else
+                          f'NOT {cancelled} AND NOT {completed}')
     if branch_id:
         conditions.append('o.branch_id=%s')
         params.append(branch_id)
