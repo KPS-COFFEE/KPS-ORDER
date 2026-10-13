@@ -194,6 +194,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         customer.locator('#neighborhood').fill('حي اختبار V5 فقط')
         customer.locator('#address').fill('عنوان اختبار معزول — لا تجهيز ولا إرسال فعلي')
         customer.locator('#manual-location-button').click()
+        customer.locator('#manual-location summary').click()
         customer.locator('#latitude').fill('28.4002')
         customer.locator('#longitude').fill('45.9002')
         customer.locator('#save-location').click()

@@ -87,6 +87,7 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
         page.locator('input[name=service][value=delivery]').check()
         page.locator('#address').fill('عنوان اصطناعي للاختبار المعزول فقط')
         page.locator('#manual-location-button').click()
+        page.locator('#manual-location summary').click()
         page.locator('#latitude').fill('28.4002')
         page.locator('#longitude').fill('45.9002')
         page.locator('#save-location').click()
