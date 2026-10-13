@@ -6,6 +6,10 @@
   let language='ar';
   try{if(localStorage.getItem(languageStorageKey)==='en')language='en';}catch{}
   const uiStrings={
+    "sms_try_later":{"ar":"تعذر إرسال الرمز حاليًا. حاول لاحقًا.","en":"Unable to send the code now. Please try again later."},
+    "contact_guest_notice":{"ar":"أدخل بيانات التواصل لبدء رسالتك. لا يفتح رقم غير موثق طلبات أو محادثات أخرى.","en":"Enter your contact details to start your message. An unverified number cannot open other orders or conversations."},
+    "start_contact":{"ar":"بدء التواصل","en":"Start contact"},
+
     "privacy_policy":{"ar": "سياسة الخصوصية", "en": "Privacy policy"},
     "terms_conditions":{"ar": "الشروط والأحكام", "en": "Terms and conditions"},
     "verified_checkout_notice":{"ar": "نتحقق من جوالك مرة واحدة لتسهيل طلباتك القادمة لمدة 30 يومًا. لا تحتاج كلمة مرور.", "en": "Verify your mobile once to make ordering easier for 30 days. No password needed."},
@@ -53,7 +57,7 @@
     "error_STAFF_PHONE_REGISTERED":{"ar": "استخدم رقم الجوال المسجل؛ تغييره من الإدارة المخولة.", "en": "Use your registered phone number. Only authorized administration can change it."},
     "error_STAFF_PROFILE_REQUIRED":{"ar": "أكمل الاسم ورقم الاتصال.", "en": "Complete your name and contact number."},
     "error_PHONE_CHANGE_REQUIRES_VERIFICATION":{"ar": "تغيير الجوال الموثق يتطلب تحققًا مستقلاً.", "en": "Changing a verified phone number requires separate verification."},
-    "error_OTP_PROVIDER_UNAVAILABLE":{"ar": "التحقق بالجوال غير مفعّل بعد. يمكنك الطلب كضيف إذا كان متاحًا.", "en": "Phone verification is not available. You can order as a guest when enabled."},
+    "error_OTP_PROVIDER_UNAVAILABLE":{"ar": "تعذر إرسال الرمز حاليًا. حاول لاحقًا.", "en": "Unable to send the code now. Please try again later."},
     "error_OTP_PROVIDER_FAILURE":{"ar": "تعذر الاتصال بمزود التحقق. حاول لاحقًا.", "en": "Unable to reach the verification provider. Try again later."},
     "error_OTP_CHANNEL_UNAVAILABLE":{"ar": "قناة التحقق غير مهيأة.", "en": "This verification channel is unavailable."},
     "error_OTP_NOT_SENT":{"ar": "لم يؤكد المزود إرسال رمز التحقق.", "en": "The provider did not confirm sending a verification code."},
@@ -644,7 +648,7 @@
   function catalogReady() { return state.cart.length > 0 && state.cart.every((line) => productFor(line)?.source_verified === true); }
   function updatePolicyLinks(){for(const [id,path] of [['privacy-link','privacy'],['terms-link','terms']])$(id).href=`/${path}?brand_id=${encodeURIComponent(requestedBrandId)}&lang=${language}`;}
   function renderAccount() {
-    updatePolicyLinks();
+    updatePolicyLinks();text('customer-phone-status',state.session.customer_verified?t('phone_verified'):t('unverified'));$('customer-phone').readOnly=state.session.customer_verified===true;const guestNotice=$('guest-form').querySelector('p');guestNotice.id='guest-flow-note';guestNotice.dataset.i18n=state.identityIntent==='contact'?'contact_guest_notice':'order_directly_without_a_verification_code_or_creating_an_account';text('guest-flow-note',t(guestNotice.dataset.i18n));$('guest-submit').dataset.i18n=state.identityIntent==='contact'?'start_contact':'order_as_a_guest';text('guest-submit',t($('guest-submit').dataset.i18n));
  ['account-button','orders-button','contacts-button'].forEach((id)=>$(id).disabled=!state.identityReady);const user=state.session.user,authenticated=Boolean(user&&state.session.csrf_token);text('account-button',user?(user.role==='customer'?t("my_account"):t("staff_account")):t("sign_in"));$('account-other-brand').hidden=!user||user.brand_id===requestedBrandId;$('account-profile').hidden=!authenticated;$('guest-form').hidden=(state.phoneRequired!==false&&state.identityIntent!=='contact')||authenticated||!state.channels.guest?.available;$('email-login-button').hidden=authenticated||!state.channels.email?.available;$('email-request-form').hidden=true;$('otp-request-form').hidden=state.phoneRequired!==false?(authenticated&&state.session.customer_verified===true):authenticated||!(state.channels.sms?.available||state.channels.whatsapp?.available);$('otp-verify-form').hidden=true;$('otp-unavailable').hidden=true;$('link-email-button').hidden=!authenticated||user.role!=='customer'||user.identity_kind!=='guest'||!state.channels.email?.available;if(user){text('profile-label',user.display_name||t("signed_in"));text('identity-label',user.identity_kind==='guest'?t("guest_unverified_contact_number"):user.email_verified_at?t("email_verified_phone_verification_is_separate"):t("verification_depends_on_the_channel"));if(user.brand_id===requestedBrandId){if(!$('customer-name').value)$('customer-name').value=user.display_name||'';if(!$('customer-phone').value)$('customer-phone').value=user.phone||'';}}$('otp-name').value=$('customer-name').value||user?.display_name||'';$('phone').value=$('customer-phone').value||user?.phone||'';$('customer-profile-form').hidden=!state.session.customer_verified||user?.role!=='customer';if(user)$('profile-name').value=user.display_name||'';if(state.session.customer_verified)loadCustomerProfile();$('guest-name').value=$('customer-name').value;$('guest-phone').value=$('customer-phone').value; }
   async function establishIdentity(result) {if(!result.user||!result.csrf_token)throw new Error(t("the_server_did_not_confirm_a_secure_session"));state.session=result;renderAccount();closeDialog('account-dialog');if(result.user.role!=='customer'){location.assign('/ops.html');return;}queueQuote();const callback=state.afterLogin;state.afterLogin=null;if(callback)await callback();}
   async function requestGuest(event){event.preventDefault();await busy($('guest-submit'),async()=>{try{const data={display_name:$('guest-name').value.trim(),phone:$('guest-phone').value.trim(),brand_id:requestedBrandId};if($('guest-email').value.trim())data.email=$('guest-email').value.trim();await establishIdentity(await api('/api/identity/guest',{method:'POST',data}));toast(t("a_secure_guest_session_has_been_created"));}catch(error){showError('account-error',errorMessage(error));}});}
@@ -1085,7 +1089,7 @@
   function changeLanguage(){
     language=language==='ar'?'en':'ar';
     try{localStorage.setItem(languageStorageKey,language);}catch{}
-    applyStaticLanguage();updatePolicyLinks();renderBrand();renderBranches();renderService();renderCategories();renderProducts();renderCart();renderNearestBranches();
+    applyStaticLanguage();updatePolicyLinks();text('customer-phone-status',state.session.customer_verified?t('phone_verified'):t('unverified'));renderBrand();renderBranches();renderService();renderCategories();renderProducts();renderCart();renderNearestBranches();
     if(state.product&&$('product-dialog').open){
       text('product-title',sourceText(state.product));
       text('product-description',sourceText(state.product,'description'));
@@ -1112,7 +1116,7 @@
   function clearCustomerView(){
     const id=state.session.user?.id;clearTimeout(state.chatTimer);clearTimeout(state.ordersTimer);
     try{for(const k of Object.keys(sessionStorage))if((k.startsWith('kps-contact-draft:')||k.startsWith('kps-chat-draft:'))&&k.includes(`:${id}`))sessionStorage.removeItem(k);}catch{}
-    state.savedAddresses=[];state.orders=[];state.contactOrders=[];state.conversations=[];state.conversation=null;state.location=null;
+    state.changingPhone=false;state.challenge=null;state.afterLogin=null;state.savedAddresses=[];state.orders=[];state.contactOrders=[];state.conversations=[];state.conversation=null;state.location=null;
     for(const field of ['customer-name','customer-phone','address','neighborhood','chat-text','contact-details','profile-name','phone','otp-name'])$(field).value='';
     $('saved-address').replaceChildren(new Option(t('choose_address'),''));$('saved-address-field').hidden=true;$('profile-addresses').replaceChildren();$('chat-messages').replaceChildren();$('orders-list').replaceChildren();$('contacts-list').replaceChildren();
   }

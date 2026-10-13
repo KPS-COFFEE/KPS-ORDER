@@ -195,3 +195,10 @@ def test_full_restore_preserves_verified_addresses_and_owned_identity_links(requ
             assert c.execute(sql.SQL('SELECT source_id,customer_id FROM {}.customer_identity_links').format(sql.Identifier(schema))).fetchone()==(guest['id'],owner)
     finally:
         with psycopg.connect(target,autocommit=True) as c:c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))
+
+@pytest.mark.postgres
+def test_api_cannot_disable_current_required_mobile_policy(required):
+    _authenticate(required,_make_user(role='owner'))
+    r=required.patch('/api/admin/settings',json={'customer_phone_required':False},headers={'Idempotency-Key':'TEST-no-disable-mobile-proof'})
+    assert r.status_code==422,r.text
+    assert required.get('/api/identity/channels').json()['customer_phone_required'] is True

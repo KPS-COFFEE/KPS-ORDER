@@ -280,7 +280,7 @@ def provider_config() -> tuple[str, str, str]:
             raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
         return ('tawked', '', '')
     if os.getenv('OTP_PROVIDER') != 'twilio_verify':
-        raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد. يمكنك الطلب كضيف إذا كان متاحًا.')
+        raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'تعذر إرسال الرمز حاليًا. حاول لاحقًا.')
     sid, secret, service = (os.getenv(name, '') for name in ('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID'))
     if not re.fullmatch(r'AC[a-fA-F0-9]{32}', sid) or not re.fullmatch(r'VA[a-fA-F0-9]{32}', service) or not secret:
         raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
@@ -350,7 +350,7 @@ def _otp_channel_ready(conn, brand_id: str, channel: str):
     row = _channel(conn, brand_id, channel)
     if row['state'] not in {'testing', 'active'} or (
             row['state'] == 'active' and (not row['enabled'] or not row['delivery_proven_at'])):
-        raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'قناة التحقق متوقفة أو بانتظار اختبارها. يمكنك الطلب كضيف إذا كان متاحًا.')
+        raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'تعذر إرسال الرمز حاليًا. حاول لاحقًا.')
 
 
 @router.post('/auth/otp/request')
