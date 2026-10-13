@@ -192,7 +192,7 @@ class DeferredAtomicResponse:
     """
     cursor: Any
 
-    def resolve(self) -> dict:
+    def resolve(self) -> dict | str:
         if self.cursor.pgresult is None:
             raise RuntimeError('Atomic response must be resolved after the transaction finishes.')
         try:
@@ -205,12 +205,16 @@ class DeferredAtomicResponse:
 
 
 def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, perform: Callable[[], dict | AtomicIdempotentWrite],
-               *, pipeline_writes: bool = False, defer_atomic_response: bool = False) -> dict | DeferredAtomicResponse:
+               *, pipeline_writes: bool = False, defer_atomic_response: bool = False,
+               encoded_response: bool = False) -> dict | str | DeferredAtomicResponse:
     if not key or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', key):
         raise error(400, 'IDEMPOTENCY_KEY_REQUIRED', 'أرسل مفتاح منع تكرار صحيحًا للعملية.')
     lock_key = hashlib.sha256(f'{user_id}:{operation}:{key}'.encode()).digest()[:8]
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (int.from_bytes(lock_key, 'big', signed=True),))
-    saved = conn.execute('SELECT request_digest,response FROM idempotency_keys WHERE user_id=%s AND operation=%s AND key=%s',
+    # An opted-in HTTP caller can send the database's already-authorized JSON
+    # projection without decoding and encoding a complete receipt twice.
+    response_column='response::text AS response' if encoded_response else 'response'
+    saved = conn.execute('SELECT request_digest,'+response_column+' FROM idempotency_keys WHERE user_id=%s AND operation=%s AND key=%s',
                          (user_id, operation, key)).fetchone()
     request_digest = digest(body)
     if saved:
@@ -233,7 +237,7 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
         if isinstance(result, AtomicIdempotentWrite):
             statement = ('WITH ' + result.ctes +
                          ' INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) '
-                         'SELECT %s,%s,%s,%s,response FROM operation_response RETURNING response')
+                         'SELECT %s,%s,%s,%s,response FROM operation_response RETURNING '+response_column)
             params = result.params + (user_id, operation, key, request_digest)
             if defer_atomic_response:
                 # Enforce exactly one saved response *on the server*, before
@@ -242,8 +246,9 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
                 statement = ('WITH ' + result.ctes + ', saved_response AS ('
                              'INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) '
                              'SELECT %s,%s,%s,%s,response FROM operation_response RETURNING response) '
-                             'SELECT CASE WHEN count(*)=1 THEN jsonb_agg(response)->0 '
-                             'ELSE to_jsonb(1/(count(*)-count(*))) END AS response FROM saved_response')
+                             'SELECT (CASE WHEN count(*)=1 THEN jsonb_agg(response)->0 '
+                             'ELSE to_jsonb(1/(count(*)-count(*))) END)'+
+                             ('::text' if encoded_response else '')+' AS response FROM saved_response')
                 return DeferredAtomicResponse(conn.execute(statement, params))
             saved = conn.execute(statement, params).fetchone()
             if saved is None:
@@ -252,7 +257,7 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
         stable = jsonlib.loads(jsonlib.dumps(result, ensure_ascii=False, default=str))
         conn.execute('INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) VALUES(%s,%s,%s,%s,%s)',
                      (user_id, operation, key, request_digest, json(stable)))
-    return stable
+    return jsonlib.dumps(stable,ensure_ascii=False,separators=(',',':')) if encoded_response else stable
 
 
 def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):

@@ -138,6 +138,26 @@ def test_atomic_checkout_response_matches_existing_projection_and_single_write(p
     assert len(writes) == 1
     assert effects(user_id) == {'counter': 1, 'orders': 1, 'events': 1, 'audits': 1, 'keys': 1}
 
+@pytest.mark.parametrize('name',['اسم اختبار "خاص" \\ جديد','TEST "name" \\ <script>unsafe</script>'])
+def test_database_encoded_checkout_preserves_text_scope_and_identical_replay(pipeline_checkout,name):
+    client,user_id,body=pipeline_checkout
+    body['customer']['name']=name
+    key=uuid4().hex
+    first=client.post('/api/orders',json=body,headers={'Idempotency-Key':key})
+    replay=client.post('/api/orders',json=body,headers={'Idempotency-Key':key})
+    assert first.status_code==replay.status_code==200
+    assert first.headers['content-type']=='application/json'
+    assert first.headers['cache-control']=='no-store'
+    assert first.content==replay.content
+    assert first.json()['order']['customer']['name']==name
+    assert 'performance_snapshot' not in first.json()['order']
+    with db.tx() as conn:
+        stored=conn.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND key=%s',(user_id,key)).fetchone()['response']
+    assert first.json()==stored
+    from tests.test_core import _authenticate,_make_user
+    _authenticate(client,_make_user(brand=BRAND))
+    assert client.get('/api/orders/'+first.json()['order']['id']).status_code==404
+
 
 @pytest.mark.parametrize('timezone', ['UTC', 'Asia/Riyadh', 'Asia/Kolkata', 'America/St_Johns'])
 @pytest.mark.parametrize('fraction', ['', '.120000', '.000001'])

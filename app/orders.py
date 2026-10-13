@@ -6,7 +6,7 @@ import hashlib
 import json
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 from .responses import DatabaseJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
@@ -155,12 +155,12 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                                     'total_halalas': quote['total_halalas']}),
                                 public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
         result = db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform,
-                               pipeline_writes=True, defer_atomic_response=True)
-    # The database has acknowledged COMMIT before result decoding/HTTP encoding.
+                               pipeline_writes=True, defer_atomic_response=True,encoded_response=request is not None)
+    # The database acknowledges COMMIT before the saved JSON reaches HTTP.
     # Replays use the same durable JSON, with no new counter/event/financial write.
     if isinstance(result, db.DeferredAtomicResponse):
         result = result.resolve()
-    return JSONResponse(result) if request is not None else result
+    return Response(result,media_type='application/json') if request is not None else result
 
 
 @router.get('')
