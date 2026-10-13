@@ -111,15 +111,18 @@ def tx(*, pipeline: bool = False):
         with pool.connection(timeout=POOL_CHECKOUT_SECONDS) as conn:
             if pipeline:
                 # This connection is exclusively checked out and reset. Queue
-                # explicit transaction boundaries in the SAME pipeline as the
-                # business commands. Connection.transaction() inside a pipeline
+                # COMMIT in the SAME pipeline as the business commands.
+                # Connection.transaction() inside a pipeline
                 # inserts nested synchronization points, including one between
                 # the final write and COMMIT. That needlessly holds the branch
                 # receipt lock while the Python worker is rescheduled.
                 if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
                     raise psycopg.OperationalError('Database connection is not transaction-idle.')
+                # Acknowledge BEGIN before handing the connection to callers.
+                # libpq only updates its transaction state at a Sync boundary;
+                # a queued, unfetched BEGIN still looks idle to safety guards.
+                conn.execute('BEGIN')
                 with conn.pipeline():
-                    conn.execute('BEGIN')
                     conn.execute("SET LOCAL statement_timeout = '15000ms'")
                     yield conn
                     committed = conn.execute('COMMIT')

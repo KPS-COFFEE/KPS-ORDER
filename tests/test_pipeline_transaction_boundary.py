@@ -10,6 +10,13 @@ from app import db
 pytestmark = pytest.mark.postgres
 
 
+def test_transaction_is_acknowledged_before_the_caller_can_write(database):
+    with db.tx(pipeline=True) as conn:
+        assert conn.info.transaction_status == psycopg.pq.TransactionStatus.INTRANS
+        assert conn.info.pipeline_status == psycopg.pq.PipelineStatus.ON
+        assert conn.execute('SELECT 1 AS n').fetchone()['n'] == 1
+
+
 def test_no_pipeline_sync_between_last_business_write_and_commit(database, monkeypatch, tmp_path):
     trace_path = tmp_path / 'synthetic-only-protocol.trace'
     identifier = 'TEST-batched-' + uuid4().hex
