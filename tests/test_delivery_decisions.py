@@ -30,7 +30,12 @@ def test_failed_assignment_does_not_accept_and_contact_gate_preserved(ops):
     manager,driver=shifts();oid=pending(order)
     post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':'missing','accept_order':True},status=409)
     with db.tx() as c:
-        c.execute("UPDATE orders SET customer=customer || '{\"requires_operational_confirmation\":true}'::jsonb WHERE id=%s",(oid,))
+        # Seed a separate immutable test snapshot; never disable snapshot guards.
+        source=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        assert source['preparation_status']=='new'
+        assert c.execute('SELECT count(*) n FROM driver_tasks WHERE order_id=%s',(oid,)).fetchone()['n']==0
+        oid=oid+'-contact'
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,'delivery','new','pending','cash',1000,0,1000,%s,%s)",(oid,source['brand_id'],source['branch_id'],source['customer_id'],db.json(source['snapshot']),db.json({'name':'TEST contact','requires_operational_confirmation':True})))
     result=post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':driver,'accept_order':True},status=409)
     assert result['detail']['code']=='OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED'
     with db.tx() as c:
@@ -61,7 +66,7 @@ def test_manager_cannot_bypass_fulfillment_or_financial_guards(ops,case):
         post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':driver})
         body['version']=2
     if case=='stale':body['version']=999
-    post('manager',f'/api/orders/{oid}/preparation',body,status=403 if case in ('pickup','prepare') else 409)
+    post('manager',f'/api/orders/{oid}/preparation',body,status=404 if case=='pickup' else 403 if case=='prepare' else 409)
     with db.tx() as c:
         assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='new'
 

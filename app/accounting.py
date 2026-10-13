@@ -202,7 +202,7 @@ def review(report_id:str,body:Note,request:Request,user=Depends(auth.require_per
 def can_follow(c,u):
     settings=c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(u['brand_id'],)).fetchone()
     manager_default=(settings or {}).get('settings',{}).get('accounting_manager_followup',True)
-    return auth.has_permission(u,FOLLOW) or u['role']=='delivery_manager' and manager_default
+    return auth.has_permission(u,FOLLOW) and (u['role']!='delivery_manager' or manager_default)
 
 def case_row(c,u,identifier,lock=False):
     row=c.execute('SELECT * FROM accounting_cases WHERE id=%s AND brand_id=%s'+(' FOR UPDATE' if lock else ''),(identifier,u['brand_id'])).fetchone()
