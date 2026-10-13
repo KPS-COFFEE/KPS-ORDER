@@ -22,9 +22,10 @@ def single_connection(monkeypatch):
     return url
 
 
-def test_connections_are_reused_and_session_state_is_removed(database, monkeypatch):
+@pytest.mark.parametrize('pipeline', [False, True])
+def test_connections_are_reused_and_session_state_is_removed(database, monkeypatch, pipeline):
     single_connection(monkeypatch)
-    with db.tx() as conn:
+    with db.tx(pipeline=pipeline) as conn:
         before = conn.execute('SELECT pg_backend_pid() pid,current_schema() schema').fetchone()
         conn.execute("SET search_path='public'")
         conn.execute("SET application_name='TEST polluted session'")
@@ -33,7 +34,7 @@ def test_connections_are_reused_and_session_state_is_removed(database, monkeypat
         conn.execute('SELECT pg_advisory_lock(819264731)')
     pids = []
     for _ in range(6):
-        with db.tx() as conn:
+        with db.tx(pipeline=pipeline) as conn:
             state = conn.execute("SELECT pg_backend_pid() pid,current_schema() schema,current_setting('application_name') name,"
                 "current_setting('statement_timeout') timeout,to_regclass('pg_temp.hardening_pool_leak') temp_table,"
                 "(SELECT count(*) FROM pg_locks WHERE pid=pg_backend_pid() AND locktype='advisory') locks").fetchone()
@@ -44,14 +45,15 @@ def test_connections_are_reused_and_session_state_is_removed(database, monkeypat
     assert set(pids) == {before['pid']}
 
 
-def test_exception_rolls_back_before_reuse_and_normal_exit_commits(database, monkeypatch):
+@pytest.mark.parametrize('pipeline', [False, True])
+def test_exception_rolls_back_before_reuse_and_normal_exit_commits(database, monkeypatch, pipeline):
     single_connection(monkeypatch)
     identifier = 'pool-test-' + uuid4().hex
     with pytest.raises(RuntimeError, match='TEST rollback'):
-        with db.tx() as conn:
+        with db.tx(pipeline=pipeline) as conn:
             conn.execute("INSERT INTO audit_events(id,action,entity_type,entity_id,details) VALUES(%s,'TEST pool','TEST','TEST','{}')", (identifier,))
             raise RuntimeError('TEST rollback')
-    with db.tx() as conn:
+    with db.tx(pipeline=pipeline) as conn:
         assert conn.execute('SELECT count(*) n FROM audit_events WHERE id=%s', (identifier,)).fetchone()['n'] == 0
         conn.execute("INSERT INTO audit_events(id,action,entity_type,entity_id,details) VALUES(%s,'TEST pool','TEST','TEST','{}')", (identifier,))
     with db.tx() as conn:

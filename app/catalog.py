@@ -408,7 +408,7 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
     # Serialize it once here instead of traversing it again on the event loop.
     return JSONResponse({'brand': safe_brand, 'products': public_products,
             'legacy_item_mappings': legacy_item_mappings(products),
-            'source_verified': bool(products) and all(source_approved(p) for p in products)})
+            'source_verified': bool(public_products) and all(p['source_verified'] for p in public_products)})
 
 
 @router.get('/branches')

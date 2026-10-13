@@ -109,12 +109,29 @@ def tx(*, pipeline: bool = False):
     pool = _pool_for_url(url)
     try:
         with pool.connection(timeout=POOL_CHECKOUT_SECONDS) as conn:
-            # Opted-in short HTTP reads batch BEGIN/timeout with the first
-            # query and flush COMMIT before leaving the connection context.
-            # A pipeline error escapes through that context's rollback path;
-            # no success is returned before the database acknowledges it.
-            # Migrations, COPY and all other callers retain the default.
-            with conn.pipeline() if pipeline else nullcontext():
+            if pipeline:
+                # This connection is exclusively checked out and reset. Queue
+                # explicit transaction boundaries in the SAME pipeline as the
+                # business commands. Connection.transaction() inside a pipeline
+                # inserts nested synchronization points, including one between
+                # the final write and COMMIT. That needlessly holds the branch
+                # receipt lock while the Python worker is rescheduled.
+                if conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                    raise psycopg.OperationalError('Database connection is not transaction-idle.')
+                with conn.pipeline():
+                    conn.execute('BEGIN')
+                    conn.execute("SET LOCAL statement_timeout = '15000ms'")
+                    yield conn
+                    committed = conn.execute('COMMIT')
+                # Pipeline exit has consumed every result, including COMMIT.
+                # Any queued error escapes to pool.connection(), whose normal
+                # connection context rolls back before reset/reuse. PostgreSQL
+                # can reply ROLLBACK to COMMIT after a caught SQL error: never
+                # report a successful business operation in that case.
+                if committed.statusmessage != 'COMMIT':
+                    raise psycopg.OperationalError('Database transaction was not committed.')
+            else:
+                # Migrations, COPY and other callers keep the standard context.
                 with conn.transaction():
                     conn.execute("SET LOCAL statement_timeout = '15000ms'")
                     yield conn
