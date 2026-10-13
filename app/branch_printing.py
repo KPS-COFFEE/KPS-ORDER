@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from . import auth, db, print_translations, invoice_profiles
+from . import auth, db, print_translations, invoice_profiles, order_numbering
 
 router = APIRouter(prefix='/api/printing', tags=['branch-printing'])
 operators = auth.require_roles('owner', 'delivery_manager')
@@ -98,11 +98,26 @@ def bridge(request: Request):
     return device
 
 
+def same_print_city(source, destination):
+    # Reuse receipt numbering aliases, but never group unknown cities as BR.
+    left=(source.get('city') or '').strip()
+    right=(destination.get('city') or '').strip()
+    return bool(left and right) and order_numbering.CITY_CODES.get(left,left)==order_numbering.CITY_CODES.get(right,right)
+
+
 @router.get('/devices')
-def devices(user=Depends(printer_admin)):
+def devices(user=Depends(printer_admin), order_id: str | None = None):
     with db.tx() as conn:
+        source=None
+        if order_id:
+            order=conn.execute('SELECT branch_id FROM orders WHERE id=%s AND brand_id=%s',(order_id,user['brand_id'])).fetchone()
+            if not order:raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود.')
+            source=scope(conn,user,order['branch_id'])
         rows = conn.execute('SELECT id,branch_id,label,printer_name,paper_mm,last_seen_at,revoked_at,approved_at,acceptance_job_id FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',(user['brand_id'],)).fetchall()
         visible=[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]
+        if source:
+            branches={b['id']:b for b in conn.execute('SELECT id,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
+            visible=[r for r in visible if same_print_city(source,branches.get(r['branch_id'],{}))]
         for row in visible:
             row['connection_status']=connection_status(row)
         return {'devices':visible}
@@ -262,6 +277,8 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(body.device_id,user['brand_id'])).fetchone()
         if not device:raise db.error(409,'PRINT_NOT_PAIRED','اربط طابعة هذا الفرع أولًا.')
         destination=scope(conn,user,device['branch_id'])
+        if not same_print_city(branch,destination):
+            raise db.error(403,'PRINT_CITY_MISMATCH','اختر طابعة ضمن محافظة الطلب فقط.')
         if not device['approved_at']:
             raise db.error(409,'PRINT_TEST_REQUIRED','اختبر الطابعة وأكد خروج الورقة قبل اعتماد طباعة الطلبات.')
         translations=print_translations.for_order(conn,order)

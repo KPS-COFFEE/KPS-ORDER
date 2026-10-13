@@ -86,7 +86,7 @@ def test_driver_sees_only_fully_covering_manager_and_clear_missing_selection(ops
 def test_manager_selects_destination_and_settings_are_locked(ops):
     actor, post, order, _ = ops
     with db.tx() as conn:
-        conn.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-second',2,'second-source','ops-brand','Second branch','Test','{}')")
+        conn.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-second',2,'second-source','ops-brand','Second branch','حفر الباطن','{}')")
     pair = post('owner', '/api/printing/devices', {'branch_id':'ops-second','label':'Second'})
     result = actor('customer').post('/api/printing/bridge/pair', json={'pairing_code':pair['pairing_code'],'printer_name':'Test second printer'})
     assert result.status_code == 200
