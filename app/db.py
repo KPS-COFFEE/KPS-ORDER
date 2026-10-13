@@ -9,6 +9,7 @@ import re
 import threading
 import uuid
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -149,7 +150,19 @@ def digest(body: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, perform: Callable[[], dict],
+@dataclass(frozen=True)
+class AtomicIdempotentWrite:
+    """Trusted SQL CTEs ending in operation_response(response).
+
+    Prepared by application code, never by a request. The shared replay engine
+    appends its own INSERT so business writes and the durable response execute
+    without an intervening Python fetch/serialization round trip.
+    """
+    ctes: str
+    params: tuple
+
+
+def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, perform: Callable[[], dict | AtomicIdempotentWrite],
                *, pipeline_writes: bool = False) -> dict:
     if not key or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', key):
         raise error(400, 'IDEMPOTENCY_KEY_REQUIRED', 'أرسل مفتاح منع تكرار صحيحًا للعملية.')
@@ -169,6 +182,14 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
     # still atomically commits or rolls back the entire business operation.
     with conn.pipeline() if pipeline_writes else nullcontext():
         result = perform()
+        if isinstance(result, AtomicIdempotentWrite):
+            statement = ('WITH ' + result.ctes +
+                         ' INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) '
+                         'SELECT %s,%s,%s,%s,response FROM operation_response RETURNING response')
+            saved = conn.execute(statement, result.params + (user_id, operation, key, request_digest)).fetchone()
+            if saved is None:
+                raise RuntimeError('Atomic operation did not persist its replay response.')
+            return saved['response']
         stable = jsonlib.loads(jsonlib.dumps(result, ensure_ascii=False, default=str))
         conn.execute('INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) VALUES(%s,%s,%s,%s,%s)',
                      (user_id, operation, key, request_digest, json(stable)))

@@ -11,6 +11,15 @@ from . import auth, catalog, db, performance, service_hours, order_numbering, pr
 router = APIRouter(prefix='/api/orders')
 
 
+def _response_timestamp_sql(column):
+    # Match the existing json.dumps(default=str) contract, including six-digit
+    # nonzero microseconds and colon-separated timezone offsets (not JSON's T).
+    return (f"CASE WHEN {column} IS NULL THEN NULL ELSE "
+            f"to_char({column},'YYYY-MM-DD HH24:MI:SS') || "
+            f"CASE WHEN extract(microseconds FROM {column})::bigint %% 1000000 = 0 THEN '' "
+            f"ELSE '.' || to_char({column},'US') END || to_char({column},'TZH:TZM') END")
+
+
 def scoped_order(conn, order_id, user, lock=False):
     row = conn.execute('SELECT * FROM orders WHERE id=%s' + (' FOR UPDATE' if lock else ''), (order_id,)).fetchone()
     # Identical not-found responses avoid confirming identifiers belonging to another scope.
@@ -88,7 +97,8 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             # Read immutable receipt/policy snapshots before the per-branch
             # counter. The allocation remains in this same atomic transaction,
             # while its mandatory serial section contains only durable writes.
-            quote['receipt_profile'] = invoice_profiles.capture(conn, body.brand_id, execution_branch_id)
+            quote['receipt_profile'] = invoice_profiles.capture(
+                conn, body.brand_id, execution_branch_id, brand_settings=(config or {}).get('settings', {}))
             performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id)
             order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
@@ -99,20 +109,37 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
             # No Python round trip holds the counter before saving the order.
             # These branch fields come from the quote's authoritative SHARE read.
             prefix = order_numbering.reference_prefix({'city': quote['branch_city'], 'branch_no': quote['branch_no']})
-            order_query = conn.execute('WITH next_number AS (' + order_numbering.NEXT_NUMBER_SQL + ') '
+            # Prepare the canonical privacy projection before acquiring the
+            # branch counter; do not duplicate routing/privacy rules in SQL.
+            public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})
+            ctes = ('next_number AS (' + order_numbering.NEXT_NUMBER_SQL + '), created_order AS ('
                                'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
                                'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
                                "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
                                "to_jsonb(%s::text || lpad(last_number::text,greatest(4,length(last_number::text)),'0'))),"
-                               '%s,%s,%s FROM next_number RETURNING *',
+                               '%s,%s,%s FROM next_number RETURNING *), '
+                    'created_event AS (INSERT INTO order_events(id,order_id,actor_id,event_type,details) '
+                    "SELECT %s,id,%s,'order.created',%s FROM created_order RETURNING id), "
+                    'created_audit AS (INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details) '
+                    "SELECT %s,%s,'order.created','order',id,%s FROM created_order RETURNING id), "
+                    "operation_response AS (SELECT jsonb_build_object('order',"
+                    "(to_jsonb(o)-'performance_snapshot') || jsonb_build_object("
+                    "'branch_id',%s::text,'customer',%s::jsonb,"
+                    "'snapshot',jsonb_set(%s::jsonb,'{order_reference}',o.snapshot->'order_reference'),"
+                    "'created_at'," + _response_timestamp_sql('o.created_at') + ","
+                    "'arrival_at'," + _response_timestamp_sql('o.arrival_at') + ","
+                    "'completed_at'," + _response_timestamp_sql('o.completed_at') +
+                    ')) AS response FROM created_order o)')
+            return db.AtomicIdempotentWrite(ctes,
                                (execution_branch_id, order_id, body.brand_id, execution_branch_id, user['id'], body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
-                                db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day))
-            db.event(conn, order_id, user['id'], 'order.created', {'service': body.service})
-            db.audit(conn, user['id'], 'order.created', 'order', order_id, {'branch_id': execution_branch_id, 'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'), 'total_halalas': quote['total_halalas']})
-            row = order_query.fetchone()
-            return {'order': customer_order_view(row)}
+                                db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day,
+                                db.new_id('evt_'), user['id'], db.json({'service': body.service}),
+                                db.new_id('audit_'), user['id'], db.json({'branch_id': execution_branch_id,
+                                    'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
+                                    'total_halalas': quote['total_halalas']}),
+                                public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
         return db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform,
                              pipeline_writes=True)
 

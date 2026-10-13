@@ -9,6 +9,7 @@ import json
 import re
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header
@@ -20,6 +21,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/invoice-profiles', tags=['invoice-preparation'])
 owner = auth.require_roles('owner')
 REEM_BRANCHES = {1,2,3,4,5,6,7,8,9,13,14,15}
+BRANCH_MATCHES_PATH = Path(__file__).resolve().parents[1] / 'data/branch_google_matches.json'
 
 
 def defaults(brand_id):
@@ -38,13 +40,26 @@ def settings(conn, brand_id):
     return copy.deepcopy((row or {}).get('settings', {}).get('invoice_profiles') or defaults(brand_id))
 
 
-def capture(conn, brand_id, branch_id):
-    config = settings(conn, brand_id)
+@lru_cache(maxsize=4)
+def _branch_addresses(path, file_version):
+    # Only source-file addresses are cached, never mutable prices or permissions.
+    # The stat identity changes on edits/replacements; old versions are bounded.
+    matches = json.loads(path.read_text())['matches']
+    addresses = {}
+    for match in matches:
+        addresses.setdefault((match['brand_id'], match['branch_id']), match['google_address'])
+    return addresses
+
+
+def capture(conn, brand_id, branch_id, *, brand_settings=None):
+    config = (settings(conn, brand_id) if brand_settings is None else
+              copy.deepcopy(brand_settings.get('invoice_profiles') or defaults(brand_id)))
     entity_id = config['assignments'].get(branch_id)
     entity = copy.deepcopy(config['entities'].get(entity_id, {}))
     # Addresses are source data, never inferred from the customer's destination.
-    matches = json.loads((Path(__file__).resolve().parents[1] / 'data/branch_google_matches.json').read_text())['matches']
-    address = next((m['google_address'] for m in matches if m['branch_id']==branch_id and m['brand_id']==brand_id), '')
+    stat = BRANCH_MATCHES_PATH.stat()
+    version = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    address = _branch_addresses(BRANCH_MATCHES_PATH, version).get((brand_id, branch_id), '')
     return {'entity_id': entity_id, **entity, 'address': address,
             'issuance_status': 'not_enabled', 'prices_include_vat': bool(entity.get('vat_enabled'))}
 

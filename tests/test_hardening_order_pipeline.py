@@ -2,11 +2,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
+import json
 
 import pytest
 from psycopg import sql
 
-from app import db
+from app import db, orders
 
 pytestmark = pytest.mark.postgres
 BRAND = 'hardening-pipeline'
@@ -110,3 +111,55 @@ def test_checkout_atomic_numbering_preserves_padding_and_committed_snapshot(pipe
         assert stored['snapshot']['order_reference'] == reference
     assert client.post('/api/orders', json=body, headers={'Idempotency-Key': key}).json() == response.json()
     assert effects(user_id) == {'counter': last_number + 1, 'orders': 1, 'events': 1, 'audits': 1, 'keys': 1}
+
+
+@pytest.mark.parametrize('locale', ['ar', 'en'])
+def test_atomic_checkout_response_matches_existing_projection_and_single_write(pipeline_checkout, monkeypatch, locale):
+    import psycopg
+    client, user_id, body = pipeline_checkout
+    writes = []
+    execute = psycopg.Connection.execute
+    def observed(conn, query, *args, **kwargs):
+        if isinstance(query, str) and 'INSERT INTO idempotency_keys' in query:
+            writes.append(query)
+        return execute(conn, query, *args, **kwargs)
+    monkeypatch.setattr(psycopg.Connection, 'execute', observed)
+    key = uuid4().hex
+    first = client.post('/api/orders', json=body, headers={'Idempotency-Key': key, 'Accept-Language': locale})
+    assert first.status_code == 200, first.text
+    assert len(writes) == 1
+    assert all('INSERT INTO ' + table in writes[0] for table in ('orders', 'order_events', 'audit_events', 'idempotency_keys'))
+    with db.tx() as conn:
+        row = conn.execute('SELECT * FROM orders WHERE id=%s', (first.json()['order']['id'],)).fetchone()
+        expected = json.loads(json.dumps({'order': orders.customer_order_view(row)}, ensure_ascii=False, default=str))
+        saved = conn.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND key=%s', (user_id, key)).fetchone()
+    assert expected == first.json() == saved['response']
+    assert client.post('/api/orders', json=body, headers={'Idempotency-Key': key}).json() == expected
+    assert len(writes) == 1
+    assert effects(user_id) == {'counter': 1, 'orders': 1, 'events': 1, 'audits': 1, 'keys': 1}
+
+
+@pytest.mark.parametrize('timezone', ['UTC', 'Asia/Riyadh', 'Asia/Kolkata', 'America/St_Johns'])
+@pytest.mark.parametrize('fraction', ['', '.120000', '.000001'])
+def test_atomic_response_timestamp_matches_python_contract(database, timezone, fraction):
+    with db.tx() as conn:
+        conn.execute("SELECT set_config('TimeZone',%s,true)", (timezone,))
+        row = conn.execute('SELECT ts,' + orders._response_timestamp_sql('ts') +
+                           ' AS encoded FROM (SELECT %s::timestamptz ts) v',
+                           ('2026-10-13 12:34:56' + fraction + '+00:00',)).fetchone()
+        assert row['encoded'] == str(row['ts'])
+        null = conn.execute('SELECT ' + orders._response_timestamp_sql('NULL::timestamptz') + ' AS encoded', ()).fetchone()
+        assert null['encoded'] is None
+
+
+def test_atomic_statement_without_response_rolls_back_business_effect(pipeline_checkout):
+    _, user_id, _ = pipeline_checkout
+    with pytest.raises(RuntimeError, match='did not persist'):
+        with db.tx(pipeline=True) as conn:
+            db.idempotent(conn, user_id, uuid4().hex, 'TEST-empty-atomic', {}, lambda: db.AtomicIdempotentWrite(
+                'created AS (INSERT INTO brands(id,name) VALUES(%s,%s) RETURNING id), '
+                "operation_response AS (SELECT '{}'::jsonb response WHERE false)",
+                ('TEST-empty-atomic-brand', 'TEST rollback')))
+    with db.tx() as conn:
+        assert conn.execute("SELECT id FROM brands WHERE id='TEST-empty-atomic-brand'").fetchone() is None
+        assert conn.execute("SELECT key FROM idempotency_keys WHERE operation='TEST-empty-atomic'").fetchone() is None
