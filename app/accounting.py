@@ -61,6 +61,21 @@ def new_row(label):
 def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar'):
     ds,de,lo,hi=period(start,end);bs=branches(c,u,branch_ids);bids=[b['id'] for b in bs];bn={b['id']:b['name'] for b in bs}
     if driver_id:person(c,u,driver_id,bids)
+    if group in ('driver_incentives','driver_incentive_details'):
+        from .driver_incentives import report_data
+        if product_id:fail('INCENTIVE_FILTER','استحقاق السائق يحسب على مستوى الطلب؛ أزل فلتر الصنف.')
+        data=report_data(c,u,ds,de,driver_id,bids)
+        states={'eligible':('مستحق','Eligible'),'excluded':('مستبعد بسبب السائق','Excluded: driver responsibility'),'pending_review':('بانتظار تحديد المسؤولية','Responsibility pending'),'awaiting_approval':('بانتظار اعتماد الشفت','Awaiting shift approval'),'incomplete':('غير مكتمل','Incomplete')}
+        responsibilities={'driver':('السائق','Driver'),'customer':('الزبون','Customer'),'branch':('الفرع','Branch')}
+        result=data['rows']
+        if group=='driver_incentive_details':
+            names={r['id']:r['display_name'] for r in c.execute('SELECT id,display_name FROM users WHERE brand_id=%s',(u['brand_id'],)).fetchall()}
+            result=[{**e,'label':e['order_reference'],'driver':e['driver_name'],'review':states[e['state']][lang=='en'],
+              'responsibility':responsibilities.get(e['responsibility'],('—','—'))[lang=='en'],
+              'reason':e['reason'] or '—','actor':names.get(e['decided_by'],'—')} for e in data['entries']]
+        return safe({'rows':result,'group':group,'period':{'start':ds,'end':de,'timezone':'Asia/Riyadh'},'branches':bs,
+          'definitions':data['definitions'] if lang=='ar' else 'Entitlement follows shift approval. Customer/branch-caused cancellations or refunds count; driver-caused ones do not. Each order counts once. Daily tiers have no financial rates yet.',
+          'generated_at':datetime.now(TZ)})
     if product_id and not c.execute('SELECT 1 FROM products WHERE id=%s AND brand_id=%s',(product_id,u['brand_id'])).fetchone():fail('PRODUCT_SCOPE','الصنف غير متاح.',404)
     # Fetch qualifying orders once. Lateral task selection prevents split payment,
     # transfers, refunds or multiple tasks from multiplying order/item counts.
@@ -169,7 +184,7 @@ def options(user=Depends(case_access)):
         people=c.execute("SELECT id,display_name,role,branch_ids,vehicle FROM users WHERE brand_id=%s AND role IN ('driver','delivery_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
         return {'branches':bs,'people':[p for p in people if set(p['branch_ids'])&bids],'products':c.execute('SELECT id,name FROM products WHERE brand_id=%s ORDER BY name',(user['brand_id'],)).fetchall(),'today':service_hours.delivery_operational_date(),'can_review':auth.has_permission(user,REVIEW),'can_report':auth.has_permission(user,READ),'can_follow':can_follow(c,user),'categories':KINDS,'states':STATES,'responsibilities':RESP,'manager_followup':(c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(user['brand_id'],)).fetchone() or {}).get('settings',{}).get('accounting_manager_followup',True)}
 
-Group=Literal['daily','branch','items','driver','driver_daily','deficits','actions']
+Group=Literal['daily','branch','items','driver','driver_daily','driver_incentives','driver_incentive_details','deficits','actions']
 @router.get('/reports')
 def reports(start:str='',end:str='',branch_ids:str='',driver_id:str='',product_id:str='',group:Group='daily',lang:Literal['ar','en']='ar',format:Literal['json','pdf','xlsx']='json',user=Depends(access)):
     with db.tx() as c:
@@ -326,11 +341,14 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
         bs=branches(c,user,body.branch_ids);bids=sorted(b['id'] for b in bs);h=hashlib.sha256(','.join(bids).encode()).hexdigest()
         _,_,lo,hi=period(ds.isoformat(),de.isoformat())
         if c.execute("SELECT 1 FROM shifts WHERE brand_id=%s AND status<>'closed' AND opened_at<%s AND coalesce(submitted_at,now())>=%s AND branch_ids ?| %s",(user['brand_id'],hi,lo,bids)).fetchone():fail('OPEN_SHIFTS','توجد شفتات غير مقفلة في الشهر.',409)
+        from .driver_incentives import report_data
+        entitlements=report_data(c,user,ds,de,branch_ids=bids)
+        if entitlements['pending_review'] or entitlements['awaiting_approval'] or any(r['incomplete'] for r in entitlements['rows']):fail('PENDING_INCENTIVES','راجع أسباب الطلبات الملغية والمرتجعة واعتمادات الشفتات قبل إقفال الشهر.',409)
         deficits=deficit_rows(c,user,lo,hi,bids,'','ar')
         if any(r['review'].startswith('بانتظار') for r in deficits):fail('PENDING_REVIEWS','اعتمد مراجعات العجز والفائض قبل إقفال الشهر.',409)
         def perform():
             if c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND scope_hash=%s',(user['brand_id'],ds,h)).fetchone():fail('MONTH_CLOSED','هذا النطاق مقفل مسبقًا.',409)
-            snapshot={g:build(c,user,ds.isoformat(),de.isoformat(),','.join(bids),group=g) for g in ('daily','branch','items','driver','driver_daily','deficits','actions')}
+            snapshot={g:build(c,user,ds.isoformat(),de.isoformat(),','.join(bids),group=g) for g in ('daily','branch','items','driver','driver_daily','driver_incentives','driver_incentive_details','deficits','actions')}
             mid=db.new_id('acm_');c.execute('INSERT INTO accounting_months(id,brand_id,month,branch_ids,scope_hash,snapshot,closed_by,reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(mid,user['brand_id'],ds,db.json(bids),h,db.json(snapshot),user['id'],body.note));db.audit(c,user['id'],'accounting.month.closed','accounting_month',mid,{'month':body.month,'branches':bids,'reason':body.note});return {'id':mid}
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.month',body.model_dump(),perform)
 
@@ -345,5 +363,6 @@ def month(identifier:str,group:Group='driver_daily',format:Literal['json','pdf',
     with db.tx() as c:
         r=c.execute('SELECT * FROM accounting_months WHERE id=%s AND brand_id=%s',(identifier,user['brand_id'])).fetchone()
         if not r or not set(r['branch_ids'])<={b['id'] for b in branches(c,user)}:fail('MONTH_SCOPE','الكشف غير متاح.',404)
+        if group not in r['snapshot']:fail('SNAPSHOT_GROUP_UNAVAILABLE','هذا التقرير غير موجود في الكشف التاريخي المقفل.',409)
         data=r['snapshot'][group];data['frozen']=True;data['closed_at']=r['created_at'].isoformat()
         return export(data,format,lang)

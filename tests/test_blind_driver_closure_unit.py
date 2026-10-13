@@ -58,7 +58,7 @@ class BlindClosureTests(unittest.TestCase):
 
     def test_card_discrepancy_requires_manager_reason_even_with_balanced_cash(self):
         s={**self.shift,'status':'submitted','submission':{'difference_halalas':0,'card_difference_halalas':100,'retained_halalas':0}}
-        with patch.object(op,'lock_shift',return_value=s),patch.object(op,'shift_access'),self.assertRaises(HTTPException) as error:
+        with patch('app.driver_incentives.require_decisions'),patch.object(op,'lock_shift',return_value=s),patch.object(op,'shift_access'),self.assertRaises(HTTPException) as error:
             op.approve_close_in_tx(Mock(),self.manager,'shift',op.Review())
         self.assertEqual(error.exception.status_code,422)
 
@@ -72,7 +72,7 @@ class BlindClosureTests(unittest.TestCase):
         stored={'expected_halalas':100,'submission':{'difference_halalas':5,'terminal_total_halalas':200}}
         with patch.object(op.db,'idempotent',return_value=stored):
             result=op.mutate(c,self.driver,Mock(headers={}), 'shift.submit:shift',{},Mock())
-        self.assertEqual(result,{'submission':{'terminal_total_halalas':200}})
+        self.assertEqual(result,{'submission':{}})
         self.assertIn('expected_halalas',stored)
 
 if __name__=='__main__':unittest.main()

@@ -95,6 +95,7 @@ def catalog():
 
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
+    'driver_incentives': {'achievement': ('shifts_view','accounting_reports'), 'shift_review': ('shifts_view','accounting_reports'), 'decide': 'shifts_approve'},
     'operations': {
         'dashboard': 'dashboard_view', 'operational_alerts': 'operational_alerts',
         'open_shift': 'shifts_open', 'shifts': 'shifts_view', 'shift_detail': 'shifts_view',

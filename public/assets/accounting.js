@@ -5,7 +5,7 @@ window.KPSAccounting={async open(ctx){
   const options=await api('/api/accounting/options');
   if(!user||!host.isConnected)return;
   const text=(ar,en)=>esc(tr(ar,en));
-  const groups={daily:tr('إجمالي يوم التشغيل','Operational day totals'),branch:tr('حسب الفروع','By branch'),items:tr('حسب الأصناف','By item'),driver:tr('حسب السائق','By driver'),driver_daily:tr('عداد السائق اليومي','Daily driver counter'),deficits:tr('العجز والزيادة','Shortages and surpluses'),actions:tr('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments')};
+  const groups={driver_incentives:tr('استحقاق السائقين اليومي والشهري','Daily and monthly driver entitlement'),driver_incentive_details:tr('تفاصيل وأسباب الاستحقاق','Entitlement details and reasons'),daily:tr('إجمالي يوم التشغيل','Operational day totals'),branch:tr('حسب الفروع','By branch'),items:tr('حسب الأصناف','By item'),driver:tr('حسب السائق','By driver'),driver_daily:tr('عداد السائق اليومي','Daily driver counter'),deficits:tr('العجز والزيادة','Shortages and surpluses'),actions:tr('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments')};
   let tab=options.can_report?'reports':'cases',data=null,frozen='',busy=false;
   const filters={start:options.today,end:options.today,group:'daily',branch_ids:[],driver_id:'',product_id:'',subject_id:'',category:'',status:''};
   const opt=(rows,key='id',label='name',selected='')=>rows.map(r=>`<option value="${esc(r[key])}" ${Array.isArray(selected)?selected.includes(r[key])?'selected':'':selected===r[key]?'selected':''}>${esc(r[label])}</option>`).join('');

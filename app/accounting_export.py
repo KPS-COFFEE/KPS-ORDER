@@ -6,6 +6,10 @@ from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 LABELS={
+ 'eligible':('طلبات مستحقة للحافز','Eligible orders'),'excluded':('مستبعدة بسبب السائق','Excluded: driver'),
+ 'pending_review':('بانتظار تحديد المسؤولية','Responsibility pending'),'awaiting_approval':('بانتظار اعتماد الشفت','Awaiting shift approval'),
+ 'open_shifts':('شفتات غير معتمدة','Unapproved shifts'),'incomplete':('غير مكتملة','Incomplete'),
+ 'tier_1':('طلبات 1–20','Orders 1–20'),'tier_2':('طلبات 21–25','Orders 21–25'),'tier_3':('طلبات 26–30','Orders 26–30'),'tier_4':('طلبات 31 فأكثر','Orders 31+'),
  'label':('البيان','Description'),'day':('التاريخ التشغيلي','Operational date'),
  'branch':('الفرع','Branch'),'vehicle':('المركبة','Vehicle'),'responsibility':('المسؤولية','Responsibility'),
  'orders':('عدد الطلبات المنشأة','Orders created'),'correct':('طلبات صحيحة','Correct orders'),
@@ -18,13 +22,15 @@ LABELS={
  'returned_quantity':('كمية مرتجعة محددة','Specified returned quantity'),
  'driver':('السائق','Driver'),'shortage':('العجز','Shortage'),'surplus':('الفائض','Surplus'),
  'approved_shortage':('العجز المعتمد محاسبيًا','Accounting-reviewed shortage'),
- 'review':('مراجعة المحاسبة','Accounting review'),'cumulative':('الصحيح التراكمي للفترة','Cumulative correct in period'),
+ 'review':('مراجعة المحاسبة','Accounting review'),'cumulative':('العدد التراكمي للفترة','Cumulative count in period'),
  'kind':('النوع','Type'),'amount':('المبلغ','Amount'),'method':('وسيلة الدفع','Payment method'),
  'reason':('السبب','Reason'),'actor':('منفذ / معتمد الإجراء','Actor / authorizer'),'action':('الإجراء المتخذ','Action taken'),
  'weekday':('اليوم','Day'),'period':('الفترة بتوقيت الرياض','Period, Riyadh')}
 MONEY={'gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','approved_shortage','amount'}
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
-COLUMNS={'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
+COLUMNS={
+ 'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
+ 'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
  'driver_daily':['label','correct','processed','cumulative','cash','card','refunds','total'],
  'items':['label','quantity','returned_quantity','gross','correct','processed'],
  'deficits':['day','driver','label','orders','cash','card','total','shortage','surplus','approved_shortage','review','notes'],
@@ -40,7 +46,7 @@ def presentation(data,lang='ar'):
             d=date.fromisoformat(r['day']);r['weekday']=(['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'] if lang=='ar' else ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'])[d.weekday()]
             r['period']='16:00 → 16:00 (+1)'
         rows.append(r)
-    totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k in ('orders','correct','processed','cancelled','quantity','returned_quantity')}
+    totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k in ('eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
     # Item counts overlap between items; financial action amounts overlap across
     # cancellation/refund records. Neither may be presented as a grand sales sum.
     if data['group']=='items':totals.pop('correct',None);totals.pop('processed',None)
@@ -53,12 +59,13 @@ def contract(data,lang):
 
 def render(data,format,lang):
     keys,rows,totals=presentation(data,lang)
-    titles={'daily':('إجمالي يوم التشغيل','Operational day totals'),'branch':('مبيعات الفروع','Branch sales'),'items':('مبيعات الأصناف','Item sales'),'driver':('مبيعات السائقين','Driver sales'),'driver_daily':('عداد السائق اليومي','Daily driver counter'),'deficits':('العجز والزيادة','Shortages and surpluses'),'actions':('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments'),'cases':('ملاحظات المركبات والطلبات','Vehicle and order incidents')}
+    titles={'driver_incentives':('استحقاق السائقين اليومي والشهري','Daily and monthly driver entitlement'),'driver_incentive_details':('تفاصيل وأسباب استحقاق السائقين','Driver entitlement decisions and reasons'),'daily':('إجمالي يوم التشغيل','Operational day totals'),'branch':('مبيعات الفروع','Branch sales'),'items':('مبيعات الأصناف','Item sales'),'driver':('مبيعات السائقين','Driver sales'),'driver_daily':('عداد السائق اليومي','Daily driver counter'),'deficits':('العجز والزيادة','Shortages and surpluses'),'actions':('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments'),'cases':('ملاحظات المركبات والطلبات','Vehicle and order incidents')}
     title=('المحاسبة - ' if lang=='ar' else 'Accounting - ')+titles[data['group']][lang=='en']
     headers=[LABELS[k][lang=='en'] for k in keys]
     summary={keys[0]:'الإجمالي / Total',**totals}
     values=[[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k), (int,float)) else r.get(k,'') for k in keys] for r in [*rows,summary]]
-    meta=f"{data['period']['start']} — {data['period']['end']} | Asia/Riyadh | SAR | "+('كشف مقفل / Closed statement' if data.get('frozen') else 'تقرير مباشر / Live report')
+    units="" if data['group'].startswith('driver_incentive') else "SAR | "
+    meta=f"{data['period']['start']} — {data['period']['end']} | Asia/Riyadh | "+units+('كشف مقفل / Closed statement' if data.get('frozen') else 'تقرير مباشر / Live report')
     if format=='xlsx':return xlsx([headers,*values],keys,[title,meta,data['definitions']],lang)
     return pdf([headers,*values],keys,title,meta,data['definitions'],lang)
 

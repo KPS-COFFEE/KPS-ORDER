@@ -93,7 +93,7 @@ def mutate(c,user,request,operation,body,perform):
     key=request.headers.get('Idempotency-Key','')
     replay=c.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND operation=%s AND key=%s',(user['id'],operation,key)).fetchone()
     if replay:authorize_replay(c,user,operation,body,replay['response'])
-    return blind_closure.driver_view(user,db.idempotent(c,user['id'],key,operation,safe(body),lambda: safe(perform())))
+    return blind_closure.driver_view(user,db.idempotent(c,user['id'],key,operation,safe(body),lambda: safe(perform())),shift_money=operation.startswith('shift.') and not operation.startswith('shift.draft:'))
 
 def history_result_access(c,user,oid):
     order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
@@ -279,7 +279,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
                 eligible.append(row)
             rows=eligible
         shift_order_counts.attach(c,rows,user)
-        return safe(blind_closure.driver_view(user,{'shifts':rows,**people_data(c,user)}))
+        return safe(blind_closure.driver_view(user,{'shifts':rows,**people_data(c,user)},shift_money=True))
 
 def driver_cash_policy(c,brand_id):
     row=c.execute('SELECT settings FROM brands WHERE id=%s',(brand_id,)).fetchone()
@@ -320,7 +320,7 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
                 if task['status'] in TERMINAL:
                     task['snapshot']=safe(task['snapshot']);task['snapshot'].pop('notes',None);task['snapshot'].pop('note',None)
                     for item in task['snapshot'].get('items',[]):item.pop('note',None)
-        return safe(blind_closure.driver_view(user,{'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()}))
+        return safe(blind_closure.driver_view(user,{'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
 
 @router.post('/shifts/{sid}/refuel')
 def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
@@ -425,6 +425,8 @@ def approve_close_in_tx(c,user,sid,body):
     s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
     if s['kind']=='manager': roles(user,'owner')
     if s['status']!='submitted': fail(409,'التقفيلة غير مرسلة')
+    from .driver_incentives import require_decisions
+    require_decisions(c,user,s)
     sub=s['submission']
     if sub['retained_halalas'] and s['kind']!='driver':
         roles(user,'owner')
@@ -517,6 +519,7 @@ def tasks(user=Depends(auth.current_user)):
                     r.pop('customer',None)
                     r['snapshot']=safe(r['snapshot']);r['snapshot'].pop('notes',None);r['snapshot'].pop('note',None)
                     for item in r['snapshot'].get('items',[]):item.pop('note',None)
+        if user['role']=='driver':rows=[blind_closure.driver_view(user,r,shift_money=True) if r['status'] in TERMINAL or r['driver_id']!=user['id'] else r for r in rows]
         return safe({'tasks':rows})
 
 class TaskTransition(OperationBody):
@@ -820,6 +823,7 @@ def custody_list(user=Depends(auth.current_user)):
     with db.tx() as c:
         rows=c.execute('SELECT t.*,s.brand_id,s.branch_ids FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id WHERE s.brand_id=%s AND (t.recipient_user_id=%s OR s.user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['brand_id'],user['id'],user['id'])).fetchall()
         rows=[r for r in rows if user['role']=='owner' or (r.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
+        if user['role']=='driver':rows=[r for r in rows if r['status']=='pending' and r['recipient_user_id']==user['id']]
         return safe({'transfers':rows})
 
 def confirm_custody_in_tx(c,user,cid):
@@ -1070,7 +1074,7 @@ def closure_draft(sid:str,user=Depends(auth.current_user)):
         shift=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,shift)
         row=c.execute('SELECT * FROM closure_drafts WHERE shift_id=%s',(sid,)).fetchone()
         return safe(blind_closure.driver_view(user,{'draft':dict(row['draft'],revision=row['revision'],updated_at=row['updated_at']) if row else None,
-                     'expected_halalas':balance(c,shift),'status':shift['status']}))
+                     'expected_halalas':balance(c,shift),'status':shift['status']},shift_money=shift['status'] in ('submitted','closed')))
 
 
 @router.post('/shifts/{sid}/draft')
