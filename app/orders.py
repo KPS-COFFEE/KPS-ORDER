@@ -236,13 +236,15 @@ class PreparationBody(BaseModel):
 
 
 @router.post('/{order_id}/preparation')
-def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_roles('owner', 'branch_manager')),
+def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_roles('owner', 'branch_manager', 'delivery_manager')),
                 idempotency_key: str | None = Header(default=None)):
     if body.status == 'cancelled' and not auth.has_permission(user, 'orders_cancel'):
         raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية رفض وإلغاء الطلبات متوقفة لحسابك.')
     with db.tx() as conn:
         # Replay returns a saved response, so fresh scope authorization must precede replay lookup.
-        scoped_order(conn, order_id, user)
+        visible = scoped_order(conn, order_id, user)
+        if user['role']=='delivery_manager' and (body.status!='cancelled' or visible['service']!='delivery'):
+            raise db.error(403,'DELIVERY_DECISION_ONLY','مدير التوصيل يرفض طلب التوصيل أو يقبله مع إسناد سائق؛ تجهيز الفرع له إجراء مستقل.')
         def perform():
             order = scoped_order(conn, order_id, user, lock=True)
             if order['version'] != body.version:

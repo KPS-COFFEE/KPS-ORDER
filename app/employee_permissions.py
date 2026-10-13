@@ -112,7 +112,7 @@ ROUTES = {
         'save_closure_draft': 'shifts_close', 'set_shift_availability': 'drivers_availability',
     },
     'orders': {'list_orders': 'orders_view', 'get_order': 'orders_view',
-               'preparation': 'orders_prepare', 'operational_confirmation': 'orders_contact'},
+               'preparation': {'delivery_manager': 'orders_cancel', 'branch_manager': 'orders_prepare'}, 'operational_confirmation': 'orders_contact'},
     'reporting': {name: 'reports_view' for name in (
         'report_list', 'report_detail', 'print_report', 'download_pdf', 'download_csv',
         'retry', 'original_pdf', 'v5_download', 'v5_retry')},

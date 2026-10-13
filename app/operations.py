@@ -441,11 +441,15 @@ def eligible_driver_shift(c,s,order):
     if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (principal['role']!='owner' and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
     return manager
 
-class Assignment(OperationBody): driver_shift_id:str
+class Assignment(OperationBody):
+    driver_shift_id:str
+    accept_order:bool=False
 
 @router.post('/orders/{oid}/assign')
 def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff')
+    if not auth.has_permission(user,'delivery_assign'):
+        raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إسناد الطلبات متوقفة لحسابك.')
     with db.tx() as c:
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
@@ -459,6 +463,12 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
             eligible_driver_shift(c,s,o)
             if user['role']=='delivery_manager' and manager['user_id']!=user['id']:fail(403,'الشفت تابع لمدير آخر')
             if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
+            if body.accept_order and o['preparation_status']=='new':
+                if o['customer'].get('requires_operational_confirmation') and not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' AND details->>'result'='reached'",(oid,)).fetchone():
+                    raise db.error(409,'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED','تتطلب سياسة الطلب اتصالًا تشغيليًا موثقًا قبل القبول والإسناد.')
+                c.execute("UPDATE orders SET preparation_status='accepted' WHERE id=%s",(oid,))
+                db.event(c,oid,user['id'],'preparation.accepted',{'previous':'new','reason':'Accepted with driver assignment'})
+                db.audit(c,user['id'],'order.preparation','order',oid,{'from':'new','to':'accepted','reason':'Accepted with driver assignment'})
             tid=uid(); c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by) VALUES(%s,%s,%s,%s,%s)',(tid,oid,s['user_id'],s['id'],user['id']))
             c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(oid,))
             db.event(c,oid,user['id'],'task.assigned',{'task_id':tid,'driver_id':s['user_id']})
