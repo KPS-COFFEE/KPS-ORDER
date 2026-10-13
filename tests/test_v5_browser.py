@@ -278,7 +278,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         driver.locator(f'.shift-card [data-action=shift-detail][data-id="{driver_shift}"]').click()
         expect(driver.locator('#closure-form [name=counted]')).to_have_value(f'{total/100:.2f}')
         _fill_closure_inspection(driver)
-        _submit_modal(driver, check=['confirm_closure'])
+        _submit_modal(driver, check=['confirm_closure'], driver_end=True)
         manager.locator('[data-page=custody]').click()
         manager.locator('[data-action=confirm-custody]').click()
         _submit_modal(manager, check=['received'])

@@ -61,7 +61,7 @@ def test_inspection_validation_and_legacy_shift_preservation(ops):
     assert 'start' not in detail['shift']['vehicle_log']
 
 import os
-from test_browser import _context, _owner_login, _staff, _capture, chromium_browser, live_app, synthetic_mail
+from test_browser import _context, _owner_login, _staff, _capture, _acknowledge_driver_end, chromium_browser, live_app, synthetic_mail
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Real isolated Chromium only')
@@ -111,7 +111,8 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         form.locator('[name=recipient_user_id]').select_option(manager['id'])
         form.locator('[name=confirm_closure]').check()
         form.locator('button[type=submit]').click()
-        expect(page.locator('#modal')).not_to_be_visible()
+        _acknowledge_driver_end(page, language)
+        page.locator('#navigation [data-page=shifts]').click()
         page.locator('.shift-card [data-action=shift-detail][data-id="'+sid+'"]').click()
         expect(page.locator('#closure-form')).to_have_count(0)
         expect(page.locator('#modal .vehicle-shift-summary')).to_be_visible()

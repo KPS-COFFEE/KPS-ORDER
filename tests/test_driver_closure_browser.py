@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from app import db
 from app.shift_vehicle import CHECKS
-from test_browser import _capture,_context,_owner_login,_staff,chromium_browser,live_app,synthetic_mail
+from test_browser import _capture,_context,_owner_login,_staff,_acknowledge_driver_end,chromium_browser,live_app,synthetic_mail
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated browser acceptance')]
 
 @pytest.mark.parametrize('delegated',[False,True])
@@ -45,7 +45,7 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
             expect(form.locator('[name=receiving_branch_id]')).not_to_be_visible()
             form.locator('[name=confirm_closure]').check()
             form.locator('button[type=submit]').click()
-            expect(page.locator('#modal')).not_to_be_visible(timeout=20000)
+            _acknowledge_driver_end(page)
             with db.tx() as c:
                 assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='submitted'
                 assert c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(sid,)).fetchone()['n']==1

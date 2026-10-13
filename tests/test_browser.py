@@ -500,7 +500,19 @@ def _authenticated_post(context,base,path,body=None):
     return response.json()
 
 
-def _submit_modal(page,values=None,check=None):
+def _acknowledge_driver_end(page, language='ar'):
+    from playwright.sync_api import expect
+    title = 'انتهى دوامك بنجاح' if language=='ar' else 'Your shift has ended'
+    expect(page.locator('#modal').get_by_role('heading', name=title, exact=True)).to_be_visible()
+    expect(page.locator('#closure-form')).to_have_count(0)
+    done = page.locator('#modal [data-action=driver-end-done]')
+    expect(done).to_have_count(1)
+    done.click()
+    expect(page.locator('#modal')).not_to_be_visible()
+    expect(page.locator('#navigation [data-page=tasks]')).to_have_attribute('aria-current', 'page')
+
+
+def _submit_modal(page,values=None,check=None,*,driver_end=False):
     from playwright.sync_api import expect
     for name,value in (values or {}).items():
         field=page.locator(f'#modal-body [name="{name}"]')
@@ -508,6 +520,8 @@ def _submit_modal(page,values=None,check=None):
         else:field.fill(value)
     for name in check or []:page.locator(f'#modal-body input[name="{name}"]').check()
     page.locator('#modal-body button[type=submit]').click()
+    if driver_end:
+        _acknowledge_driver_end(page)
     expect(page.locator('#modal')).not_to_be_visible()
 
 
@@ -624,7 +638,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         _fill_closure_inspection(driver)
         expect(driver.locator('#closure-difference')).to_contain_text('٠')
         _capture(driver,'driver-counted-cash-closure-review')
-        _submit_modal(driver,check=['confirm_closure'])
+        _submit_modal(driver,check=['confirm_closure'],driver_end=True)
 
         # This is the receiving manager's own authenticated browser, not a sender override.
         manager.locator('#navigation [data-page=custody]').click()
