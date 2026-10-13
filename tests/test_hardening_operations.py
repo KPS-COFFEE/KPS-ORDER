@@ -152,9 +152,9 @@ def test_delegated_closure_concurrent_replay_notifies_owner_once_and_is_immutabl
     delivered(post, order, driver)
     user = principal('manager')
     operations.request_close(driver, request('race-close-request'), user)
-    invalid = operations.ClosureSubmit(counted_halalas=900, handover_halalas=800, retained_halalas=100)
+    invalid = operations.ClosureSubmit(terminal_total_halalas=0, counted_halalas=900, handover_halalas=800, retained_halalas=100)
     assert outcome(lambda: operations.submit_close(driver, invalid, request('race-close-no-reason'), user))[0] == 422
-    body = operations.ClosureSubmit(counted_halalas=900, handover_halalas=800, retained_halalas=100,
+    body = operations.ClosureSubmit(terminal_total_halalas=0, counted_halalas=900, handover_halalas=800, retained_halalas=100,
         exception_reason='Driver unavailable; actual count witnessed',
         handover=operations.ClosureHandover(recipient_user_id=user['id'], to_shift_id=manager, reference='BAG-WITNESSED'))
     results = race([lambda: operations.submit_close(driver, body, request('race-submit-reconnect'), user)] * 4)

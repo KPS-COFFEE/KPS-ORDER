@@ -31,18 +31,20 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
             expect(form.locator('[name=counted]')).to_have_value('')
             expect(form.locator('[name=received]')).to_have_value('')
             form.locator('[name=counted]').fill('10')
+            form.locator('[name=terminal_total]').fill('0')
             form.locator('[name=received]').fill('10')
             form.locator('[name=exception_reason]').fill('TEST driver phone unavailable')
         else:
             page.locator('.shift-card [data-action=start-closing][data-id="'+sid+'"]').click()
-            form=page.locator('#closure-form');expect(form).to_be_visible()
+            form=page.locator('#blind-closure-form');expect(form).to_be_visible()
             form.locator('[name=inspection_odometer]').fill('1020')
             form.locator('[name=inspection_fuel]').fill('40')
             for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
             form.locator('[name=counted]').fill('10')
-            form.locator('[name=handover]').fill('10')
-            expect(form.locator('[name=recipient_user_id]')).to_have_value(manager['id'])
-            expect(form.locator('[name=receiving_branch_id]')).not_to_be_visible()
+            form.locator('[name=terminal_total]').fill('0')
+            expect(form.locator('[name=handover]')).to_have_count(0)
+            expect(form.locator('[name=recipient_user_id]')).to_have_count(0)
+            expect(form.locator('[name=receiving_branch_id]')).to_have_count(0)
             form.locator('[name=confirm_closure]').check()
             form.locator('button[type=submit]').click()
             _acknowledge_driver_end(page)
@@ -62,6 +64,8 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
             assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='closed'
             assert c.execute("SELECT count(*) n FROM custody_events WHERE shift_id=%s AND kind='transfer_in'",(mid,)).fetchone()['n']==1
             assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(sid,)).fetchone()['n']==1
+        expect(page.locator('.shift-card [data-action=shift-detail][data-id="'+sid+'"]')).to_have_count(0)
+        page.locator('[data-action=manager-work-view][data-target=shifts][data-history="1"]').click()
         card=page.locator('article').filter(has=page.locator('[data-action=shift-detail][data-id="'+sid+'"]'))
         expect(card).to_contain_text('متوافق')
         _capture(page,'TEST_ONLY_manager_driver_closure_'+str(delegated)+'_remote_'+str(remote))

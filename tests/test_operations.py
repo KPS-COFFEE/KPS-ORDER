@@ -160,8 +160,14 @@ def delivered(post,order,driver):
 
 def close_driver(post,driver,manager,counted=1000):
     post('driver','/api/shifts/'+driver+'/closing')
-    post('driver','/api/shifts/'+driver+'/submit',{'counted_halalas':counted,'handover_halalas':counted})
-    transfer=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':counted,'reference':'TEST-BAG','closure':True})['transfer']['id']
+    with db.tx() as c:
+        recipient=c.execute('SELECT user_id FROM shifts WHERE id=%s',(manager,)).fetchone()['user_id']
+    post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':counted,'handover_halalas':counted,
+        'handover':{'recipient_user_id':recipient,'to_shift_id':manager,'reference':'TEST-BAG'}})
+    with db.tx() as c:
+        transfers=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchall()
+        assert len(transfers)==1
+        transfer=transfers[0]['id']
     post('driver','/api/custody/'+transfer+'/confirm',status=404)
     post('manager','/api/shifts/'+driver+'/approve',status=409)
     post('manager','/api/custody/'+transfer+'/confirm')
