@@ -710,12 +710,8 @@
       choose.type='button';choose.dataset.branchId=b.id;choose.setAttribute('aria-pressed',String(b.id===state.branchId));
       choose.addEventListener('click',()=>changeBranch(b.id));card.append(choose);list.append(card);
     }
-    const excludedBranches=nearest.excluded.filter(b=>!state.cityFilter||city(b.city)===state.cityFilter);
-    if(excludedBranches.length){
-      $('nearest-excluded').hidden=false;
-      text('nearest-excluded-title',t("branches_ineligible_for_this_selection_0",{"0":()=>(number.format(excludedBranches.length))}));
-      for(const b of excludedBranches)excluded.append(node('li','small',`${b.branch_no} · ${sourceText(b)}: ${serverReason(b,'service_or_location_is_not_verified',b.delivery_schedule)}`));
-    }
+    // Exclusion diagnostics are not part of the customer branch picker.
+    // The list stays empty and hidden; eligibility is still enforced by the API.
   }
   function queueNearestBranches() {
     clearTimeout(queueNearestBranches.timer);
