@@ -143,3 +143,31 @@ def test_legal_public_before_identity_and_missing_facts_are_visible(required):
             assert 'checkbox' not in r.text
     assert not required.get('/api/customer/legal').json()['complete']
     assert required.put('/api/customer/legal',json={'controller_name':'TEST'}).status_code==401
+
+@pytest.mark.postgres
+def test_guest_contact_links_only_the_current_owned_session(required,monkeypatch):
+    guest=required.post('/api/identity/guest',json={'display_name':'TEST contact','phone':'0500000000'}).json()
+    required.headers['X-CSRF-Token']=guest['csrf_token']
+    r=contact(required);assert r.status_code==200,r.text;cid=r.json()['conversation']['id']
+    own=verify(required,monkeypatch)
+    assert own['user']['id']!=guest['user']['id']
+    assert required.get('/api/conversations/'+cid+'/messages').status_code==200
+    with db.tx() as c:
+        assert c.execute('SELECT customer_id FROM conversations WHERE id=%s',(cid,)).fetchone()['customer_id']==own['user']['id']
+        assert not c.execute('SELECT 1 FROM sessions WHERE user_id=%s AND revoked_at IS NULL',(guest['user']['id'],)).fetchone()
+
+@pytest.mark.postgres
+def test_owned_guest_order_links_without_changing_immutable_snapshot(required,monkeypatch):
+    _prepare_catalog()
+    with db.tx() as c:c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":false}'::jsonb WHERE brand_id='kps'")
+    guest=required.post('/api/identity/guest',json={'display_name':'TEST legacy','phone':'0500000000'}).json()
+    required.headers['X-CSRF-Token']=guest['csrf_token']
+    r=_create(required,key='test-owned-legacy');assert r.status_code==200,r.text
+    oid=r.json()['order']['id']
+    with db.tx() as c:
+        before=c.execute('SELECT customer_id,snapshot,customer FROM orders WHERE id=%s',(oid,)).fetchone()
+        c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":true}'::jsonb WHERE brand_id='kps'")
+    verify(required,monkeypatch)
+    assert required.get('/api/orders/'+oid).status_code==200
+    assert required.get('/api/orders').json()['orders'][0]['id']==oid
+    with db.tx() as c:assert c.execute('SELECT customer_id,snapshot,customer FROM orders WHERE id=%s',(oid,)).fetchone()==before

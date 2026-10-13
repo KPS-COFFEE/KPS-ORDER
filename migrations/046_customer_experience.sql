@@ -17,3 +17,12 @@ ALTER TABLE conversations ALTER COLUMN branch_id DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS conversation_order_category ON conversations(order_id,category) WHERE order_id IS NOT NULL;
 
 ALTER TABLE otp_challenges ADD COLUMN IF NOT EXISTS source_user_id TEXT REFERENCES users(id);
+
+ALTER TABLE otp_challenges ADD COLUMN IF NOT EXISTS source_guest_id TEXT REFERENCES users(id);
+
+CREATE TABLE IF NOT EXISTS customer_identity_links (
+ source_id TEXT PRIMARY KEY REFERENCES users(id), customer_id TEXT NOT NULL REFERENCES users(id),
+ brand_id TEXT NOT NULL REFERENCES brands(id), created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ CHECK(source_id<>customer_id)
+);
+CREATE INDEX IF NOT EXISTS customer_identity_links_target ON customer_identity_links(customer_id,brand_id);

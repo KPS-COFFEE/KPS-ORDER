@@ -119,7 +119,7 @@ def _find_session(conn, request: Request):
     token = request.cookies.get(COOKIE)
     if not token or not re.fullmatch(r'[A-Za-z0-9_-]{40,100}', token):
         return None
-    return conn.execute('SELECT u.*,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id '
+    return conn.execute("SELECT u.*,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
                         'JOIN brands b ON b.id=u.brand_id '
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
@@ -153,6 +153,10 @@ def require_roles(*roles):
     return dependency
 
 
+def customer_ids(user):
+    return [user['id'],*user.get('customer_alias_ids',[])]
+
+
 def can_access_order(user: dict, order: dict, conn) -> bool:
     if not user.get('active', True) or user['brand_id'] != order['brand_id']:
         return False
@@ -160,7 +164,7 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
     if role == 'owner':
         return True
     if role == 'customer':
-        return user['id'] == order['customer_id']
+        return order['customer_id'] in customer_ids(user)
     if role == 'branch_manager':
         return order['branch_id'] in user.get('branch_ids', [])
     if role in {'delivery_manager', 'delivery_staff'}:
@@ -361,6 +365,10 @@ def request_otp(body: OTPRequestBody, request: Request):
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (body.brand_id,)).fetchone():
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
+        guest=_optional_identity(request,conn) if body.purpose=='login' else None
+        if guest and guest['role']=='customer' and guest['identity_kind']=='guest' and guest['brand_id']==body.brand_id:
+            guest=current_user(request)
+        else:guest=None
         provider = _sms_provider(conn, body.brand_id)
         _provider_ready(provider)
         _otp_channel_ready(conn, body.brand_id, channel)
@@ -386,8 +394,8 @@ def request_otp(body: OTPRequestBody, request: Request):
         _otp_test_access(conn, body.brand_id, channel, request)
         if _sms_provider(conn, body.brand_id) != provider:
             raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
-        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name,source_user_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',
-                     (challenge_id, body.brand_id, phone, reference, channel, expires_at, provider,source_user['id'] if source_user else None))
+        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name,source_user_id,source_guest_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                     (challenge_id, body.brand_id, phone, reference, channel, expires_at, provider,source_user['id'] if source_user else None,guest['id'] if guest else None))
     return {'challenge_id': challenge_id, 'expires_in': max(0, int((expires_at-datetime.now(timezone.utc)).total_seconds())), 'channel': channel}
 
 
@@ -469,6 +477,17 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
             raise db.error(403, 'CUSTOMER_DISABLED', 'هذا الحساب موقوف. تواصل مع الإدارة.')
         if customer_phone_required(conn,challenge['brand_id']) and not user['display_name'].strip():
             raise db.error(422, 'CUSTOMER_NAME_REQUIRED', 'أدخل اسمك لإكمال التحقق.')
+        if challenge.get('source_guest_id'):
+            owned=current_user(request)
+            if owned['id']!=challenge['source_guest_id'] or owned['brand_id']!=user['brand_id']:
+                raise db.error(403,'GUEST_LINK_FORBIDDEN','أعد التحقق من نفس جلسة التواصل.')
+            conn.execute('SELECT id FROM users WHERE id=%s FOR UPDATE',(owned['id'],)).fetchone()
+            if not _find_session(conn,request):raise db.error(403,'GUEST_LINK_FORBIDDEN','أعد التحقق من نفس جلسة التواصل.')
+            conn.execute('INSERT INTO customer_identity_links(source_id,customer_id,brand_id) VALUES(%s,%s,%s)',(owned['id'],user['id'],user['brand_id']))
+            conn.execute('UPDATE conversations SET customer_id=%s WHERE customer_id=%s AND brand_id=%s',(user['id'],owned['id'],user['brand_id']))
+            conn.execute('UPDATE customer_addresses SET customer_id=%s WHERE customer_id=%s AND brand_id=%s',(user['id'],owned['id'],user['brand_id']))
+            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(owned['id'],))
+            db.audit(conn,user['id'],'customer.owned_guest_linked','user',user['id'],{'source_user_id':owned['id']})
         return establish_session(conn, user, response, customer_verified=True)
 
 

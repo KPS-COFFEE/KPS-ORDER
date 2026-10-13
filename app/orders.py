@@ -173,8 +173,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 manager_view: str | None = None):
     conditions, params = ['o.brand_id=%s'], [user['brand_id']]
     if user['role'] == 'customer':
-        conditions.append('o.customer_id=%s')
-        params.append(user['id'])
+        conditions.append('o.customer_id=ANY(%s)')
+        params.append(auth.customer_ids(user))
     elif user['role'] == 'branch_manager':
         conditions.append('o.branch_id=ANY(%s)')
         params.append(user['branch_ids'])

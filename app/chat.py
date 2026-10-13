@@ -38,7 +38,7 @@ def customer_conversation_view(conn, row):
 
 def allowed(user,row):
     if user['role']=='owner':return user['brand_id']==row['brand_id']
-    if user['role']=='customer':return row['customer_id']==user['id'] and row['brand_id']==user['brand_id']
+    if user['role']=='customer':return row['customer_id'] in auth.customer_ids(user) and row['brand_id']==user['brand_id']
     if row['route'] in ('privacy','review'):return False
     if user['brand_id']!=row['brand_id'] or row['branch_id'] not in user.get('branch_ids',[]):return False
     if row['route']=='delivery':return user['role'] in ('delivery_manager','delivery_staff')
@@ -77,6 +77,8 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 if (body.branch_id is not None and body.branch_id!=o['branch_id']) or (body.service is not None and body.service!=o['service']):fail(422,'سياق المحادثة يجب أن يطابق الطلب')
                 existing=c.execute('SELECT * FROM conversations WHERE order_id=%s AND category=%s',(o['id'],body.category)).fetchone()
                 order_id=o['id'];branch_id=o['branch_id'];customer_id=o['customer_id'];brand_id=o['brand_id'];service=o['service']
+                linked=c.execute('SELECT customer_id FROM customer_identity_links WHERE source_id=%s AND brand_id=%s',(customer_id,brand_id)).fetchone()
+                if linked:customer_id=linked['customer_id']
             else:
                 # Customer/guest ownership comes from the revocable server session;
                 # staff/owner accounts cannot fabricate a customer's context.
@@ -109,7 +111,7 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
     if offset<0 or offset>100000:fail(422,'صفحة غير صالحة')
     with db.tx() as c:
         if user['role']=='owner':scope='v.brand_id=%s';p=[user['brand_id']]
-        elif user['role']=='customer':scope='v.customer_id=%s AND v.brand_id=%s';p=[user['id'],user['brand_id']]
+        elif user['role']=='customer':scope='v.customer_id=ANY(%s) AND v.brand_id=%s';p=[auth.customer_ids(user),user['brand_id']]
         else:scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s';p=[user['brand_id'],user.get('branch_ids',[]),'branch' if user['role']=='branch_manager' else 'delivery']
         if status:
             if status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')

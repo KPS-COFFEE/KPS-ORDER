@@ -28,7 +28,7 @@ def next_cleanup(now=None):
 
 def ticket_rows(c,user,oid=None):
     query='o.brand_id=%s';args=[user['brand_id']]
-    if user['role']=='customer':query+=' AND o.customer_id=%s';args.append(user['id'])
+    if user['role']=='customer':query+=' AND o.customer_id=ANY(%s)';args.append(auth.customer_ids(user))
     elif user['role']!='owner':query+=' AND o.branch_id=ANY(%s)';args.append(user.get('branch_ids',[]))
     if oid:query+=' AND t.order_id=%s';args.append(oid)
     return c.execute("SELECT t.*, 'TKT-'||lpad(t.ticket_no::text,greatest(6,length(t.ticket_no::text)),'0') reference,o.snapshot->>'order_reference' order_reference,o.branch_id FROM support_tickets t JOIN orders o ON o.id=t.order_id WHERE "+query+' ORDER BY t.created_at DESC LIMIT 500',args).fetchall()
