@@ -17,6 +17,7 @@ class LegalDetails(BaseModel):
     registration_number:str=Field('',max_length=80)
     business_address:str=Field('',max_length=500)
     contact:str=Field('',max_length=200)
+    legal_basis:str=Field('',max_length=2000)
     retention_policy:str=Field('',max_length=2000)
     transfer_safeguards:str=Field('',max_length=2000)
 
@@ -50,12 +51,16 @@ def page(kind,brand,lang):
     if kind=='privacy':
         paras += ([
           'We process contact, delivery location, order, support-message and optional photo data to fulfil requests, provide support and meet legal obligations. Security logs and essential session cookies protect access. Optional marketing is separate and is not required to order.',
+          'Your name and verified mobile are required for your first order. Delivery needs an address and location; car pickup needs the relevant vehicle details. Without the information required for your chosen service, we cannot complete the order. Nearby-branch location suggestions, support photos and marketing are optional.',
+          'Information is collected directly through these forms and your messages, and stored in the server database with access limited by role and customer identity. Information is used for the stated service purposes. The owner must confirm the legal basis, retention schedule and deletion procedures shown below before official launch.',
           'Necessary information is shared with the fulfilling branch, delivery team, hosting provider and mobile verification provider. Order browsing never grants access from an unverified phone number.',
           'The current test service is hosted by Render in Frankfurt, Germany, outside Saudi Arabia. Approval of applicable transfer safeguards and the retention schedule is required before official launch.',
           'Use Contact us → Privacy / personal data to request access, a copy, correction or deletion, or to raise a privacy complaint. Requests are reviewed by the owner after suitable identity checks. Required financial and legal records may be retained; signing out does not delete your profile. You may complain to the competent authority, SDAIA.',
           'The verified mobile session expires 30 days after successful verification. Visiting or ordering does not extend it. A changed mobile number requires new verification.'
         ] if en else [
           'نعالج بيانات التواصل والموقع اللازم للتوصيل والطلبات ورسائل الدعم والصور الاختيارية لتنفيذ طلبك وخدمتك والوفاء بالالتزامات النظامية. تستخدم سجلات الأمان وملفات الجلسة الضرورية لحماية الدخول. التسويق اختياري ومستقل عن الطلب.',
+          'الاسم والجوال الموثق مطلوبان لأول طلب. يتطلب التوصيل العنوان والموقع، ويتطلب الاستلام بالسيارة بيانات السيارة اللازمة. لا يمكن إتمام الطلب دون البيانات المطلوبة للخدمة المختارة. الموقع لاقتراح أقرب فرع وصور الدعم والتسويق اختياريّة.',
+          'نجمع البيانات مباشرة من النماذج ورسائلك، ونحفظها في قاعدة بيانات الخادم مع تقييد الوصول بالصلاحيات وهوية العميل. تستخدم البيانات لأغراض الخدمة الموضحة. يلزم توثيق المالك للأساس النظامي ومدد الاحتفاظ وإجراءات الحذف المبينة أدناه قبل الإطلاق الرسمي.',
           'تتاح البيانات الضرورية للفرع المنفذ وفريق التوصيل ومزود الاستضافة ومزود التحقق بالجوال. رقم جوال غير موثق لا يمنح الوصول إلى سجلات أي عميل.',
           'الخدمة التجريبية الحالية مستضافة لدى Render في فرانكفورت، ألمانيا، خارج المملكة العربية السعودية. يلزم اعتماد ضمانات النقل المطبقة وجدول الاحتفاظ قبل الإطلاق الرسمي.',
           'يمكنك من «تواصل معنا ← الخصوصية والبيانات الشخصية» طلب الاطلاع على بياناتك أو نسخة منها أو تصحيحها أو حذفها أو تقديم شكوى خصوصية. يراجع المالك الطلب بعد التحقق المناسب من الهوية. قد تبقى السجلات المالية والنظامية المطلوبة؛ تسجيل الخروج لا يحذف ملفك. يحق لك تقديم شكوى إلى الجهة المختصة، سدايا.',
@@ -70,7 +75,7 @@ def page(kind,brand,lang):
           'لطلب الإلغاء أو التعديل أو الاسترجاع أو التعويض استخدم «تواصل معنا». الطلب لا ينفذ إلغاءً أو صرفًا تلقائيًا؛ يراجع الفريق حالة التجهيز وحقوق المستهلك المطبقة وطبيعة الأغذية المحضرة. لا تحد هذه الشروط من حقوقك النظامية الإلزامية.'
         ])
     sellers='<br>'.join(escape(x.get('legal_name',''))+((' — VAT number: ' if en else ' — الرقم الضريبي: ')+escape(x['vat_number']) if x.get('vat_number') else '') for x in info['sellers'])
-    labels={'controller_name':('Data controller','جهة التحكم بالبيانات'),'registration_number':('Registration','السجل التجاري'),'business_address':('Business address','عنوان المنشأة'),'contact':('Contact','التواصل'),'retention_policy':('Retention','الاحتفاظ'),'transfer_safeguards':('Transfer safeguards','ضمانات النقل')}
+    labels={'controller_name':('Data controller','جهة التحكم بالبيانات'),'registration_number':('Registration','السجل التجاري'),'business_address':('Business address','عنوان المنشأة'),'contact':('Contact','التواصل'),'legal_basis':('Legal basis','الأساس النظامي للمعالجة'),'retention_policy':('Retention','الاحتفاظ'),'transfer_safeguards':('Transfer safeguards','ضمانات النقل')}
     fields=''.join(f'<p><b>{labels[k][0 if en else 1]}:</b> {escape(str(v))}</p>' for k,v in config.items() if k in labels and v)
     pending='' if info['complete'] else '<p class="notice">'+('Test version: some legal disclosures await owner confirmation before official launch.' if en else 'نسخة تجريبية: بعض الإفصاحات النظامية تنتظر توثيق المالك قبل الإطلاق الرسمي.')+'</p>'
     body=''.join('<p>'+escape(x)+'</p>' for x in paras)
