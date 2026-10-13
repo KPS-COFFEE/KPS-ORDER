@@ -69,3 +69,8 @@
    Wrap controls within the main column while keeping labels and text readable. */
 .page-heading{flex-wrap:wrap}.page-heading>div{flex:1 1 220px;min-width:0}.page-heading>button,.page-heading>.button{max-width:100%;white-space:normal}
 .fleet-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.fleet-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:16px 0}.fleet-summary .metric{color:inherit;text-align:center}.fleet-green{background:#e3f5e8;color:#125b2b}.fleet-orange{background:#fff0d4;color:#754300}.fleet-red{background:#ffe4e4;color:#8a1515}.fleet-grey{background:#eee;color:#454545}[data-fleet-row] td{min-width:100px;white-space:normal}[data-fleet-row] td:last-child{min-width:140px}
+/* Keep operating-log headings readable even when the selected period has no rows. */
+.fleet-log-table{width:max-content;min-width:100%;table-layout:auto}
+.fleet-log-table th,.fleet-log-table td{min-width:130px;white-space:nowrap;word-break:normal;overflow-wrap:normal}
+.fleet-log-table th:last-child,.fleet-log-table td:last-child{min-width:150px}
+.fleet-log-table td:nth-child(22){min-width:220px;max-width:320px;white-space:normal;overflow-wrap:anywhere}

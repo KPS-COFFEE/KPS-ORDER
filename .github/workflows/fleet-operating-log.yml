@@ -2,9 +2,9 @@ name: Fleet operating log acceptance
 on:
   push:
     branches: [agent/kps-order-emergency-v4]
-    paths: [app/fleet.py, app/shift_vehicle.py, app/accounting_export.py, app/exports.py, app/db.py, app/main.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, tests/test_fleet.py, tests/test_fleet_math.py, tests/test_fleet_browser.py, .github/workflows/fleet-operating-log.yml]
+    paths: [app/fleet.py, app/shift_vehicle.py, app/accounting_export.py, app/exports.py, app/db.py, app/main.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, public/ops.css, tests/test_fleet.py, tests/test_fleet_math.py, tests/test_fleet_browser.py, .github/workflows/fleet-operating-log.yml]
   pull_request:
-    paths: [app/fleet.py, app/shift_vehicle.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, tests/test_fleet.py, tests/test_fleet_browser.py, .github/workflows/fleet-operating-log.yml]
+    paths: [app/fleet.py, app/shift_vehicle.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, public/ops.css, tests/test_fleet.py, tests/test_fleet_browser.py, .github/workflows/fleet-operating-log.yml]
 permissions:
   contents: read
 jobs:
