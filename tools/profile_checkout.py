@@ -30,13 +30,13 @@ _stats = pstats.Stats()
 _calls = 0
 
 
-async def measured_thread_call(function, *args, **kwargs):
+async def measured_thread_call(func, /, *args, **kwargs):
     def measured():
         global _calls
         # Per-thread CPU excludes database waits and time running other threads.
         profile = cProfile.Profile(timer=time.thread_time)
         try:
-            return profile.runcall(function, *args, **kwargs)
+            return profile.runcall(func, *args, **kwargs)
         finally:
             with _lock:
                 _stats.add(profile)
