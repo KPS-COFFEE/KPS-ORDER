@@ -1,5 +1,15 @@
 -- Additive identity proof belongs to the server session, never a supplied phone.
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS customer_verified_at TIMESTAMPTZ;
+-- Preserve a still-valid SMS login issued by the previous application. The
+-- consumed challenge and session share their issuing transaction timestamp;
+-- a verified phone on the user alone cannot authenticate an email/guest login.
+-- Only the new proof column changes here, preserving old session snapshots.
+UPDATE sessions s SET customer_verified_at=c.verified_at
+FROM users u, otp_challenges c
+WHERE s.user_id=u.id AND u.role='customer' AND u.phone_sms_verified_at IS NOT NULL
+ AND c.brand_id=u.brand_id AND c.phone=u.phone AND c.delivery_channel='sms'
+ AND c.verified_at=s.created_at AND c.verified_at>now()-interval '30 days'
+ AND s.revoked_at IS NULL AND s.expires_at>now() AND s.customer_verified_at IS NULL;
 CREATE TABLE IF NOT EXISTS customer_addresses (
  id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES users(id), brand_id TEXT NOT NULL REFERENCES brands(id),
  label TEXT NOT NULL, address TEXT NOT NULL, neighborhood TEXT NOT NULL DEFAULT '',

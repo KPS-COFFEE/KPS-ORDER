@@ -66,10 +66,13 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
     if user['brand_id'] != body.brand_id:
         raise db.error(403, 'BRAND_FORBIDDEN', 'حساب العميل لا يتبع هذا البراند.')
     with db.tx(pipeline=True) as conn:
-        config = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (body.brand_id,)).fetchone()
-        phone_required=(config or {}).get('settings',{}).get('customer_phone_required',body.brand_id=='kps') is not False
+        # The fresh server-session read carries this policy. Replays still
+        # require identity proof without repeating the full settings read.
+        phone_required=user.get('customer_phone_required')
+        if phone_required is None:phone_required=auth.customer_phone_required(conn,body.brand_id)
         auth.assert_customer_order_eligible(conn,user,phone_required=phone_required)
         def perform():
+            config=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(body.brand_id,)).fetchone()
             if not db.rate_limit(conn,'order-principal:'+user['id'],10,600):
                 raise db.error(429,'ORDER_RATE_LIMIT','أرسلت طلبات كثيرة. انتظر قليلًا قبل طلب جديد.')
             if request and not db.rate_limit(conn,'order-ip:'+(request.client.host if request.client else 'unknown'),200,600):

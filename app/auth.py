@@ -119,8 +119,8 @@ def _find_session(conn, request: Request):
     token = request.cookies.get(COOKIE)
     if not token or not re.fullmatch(r'[A-Za-z0-9_-]{40,100}', token):
         return None
-    return conn.execute("SELECT u.*,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
-                        'JOIN brands b ON b.id=u.brand_id '
+    return conn.execute("SELECT u.*,COALESCE(a.settings->'customer_phone_required',to_jsonb(u.brand_id='kps'))<>'false'::jsonb AS customer_phone_required,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
+                        'JOIN brands b ON b.id=u.brand_id LEFT JOIN app_settings a ON a.brand_id=u.brand_id '
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
 
@@ -185,7 +185,7 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a
     # guest only through this browser's random, HttpOnly session cookie.
-    # Keep staff/verified identity session policies unchanged.
+    # Verified customers receive a fixed deadline from this verification.
     if user['role'] == 'customer' and (user.get('identity_kind') == 'guest' or customer_verified):
         hours = GUEST_SESSION_SECONDS // 3600
     expiry = datetime.now(timezone.utc) + timedelta(hours=hours)
@@ -212,6 +212,24 @@ def session(request: Request, response: Response):
     if not csrf or not hmac.compare_digest(token_hash(csrf), user['csrf_hash']):
         # Do not reconstruct secret CSRF tokens from their hashes.
         return {'user': public_user(user), 'csrf_token': None, 'reauthentication_required': True}
+    if user['role']=='customer' and user.get('customer_verified_at'):
+        deadline=user['customer_verified_at']+timedelta(days=30)
+        if user['session_expires_at']<deadline:
+            # Upgrade an existing short SMS login to its original proof's
+            # deadline once. Reading the session never moves that deadline.
+            with db.tx() as conn:
+                upgraded=conn.execute(
+                    "UPDATE sessions SET expires_at=customer_verified_at+interval '30 days' "
+                    "WHERE id=%s AND revoked_at IS NULL AND expires_at>now() "
+                    "AND customer_verified_at=%s AND customer_verified_at+interval '30 days'>now() "
+                    "AND expires_at<customer_verified_at+interval '30 days' RETURNING expires_at",
+                    (user['session_id'],user['customer_verified_at'])).fetchone()
+            if upgraded:
+                remaining=max(1,int((upgraded['expires_at']-datetime.now(timezone.utc)).total_seconds()))
+                response.set_cookie(COOKIE,request.cookies[COOKIE],max_age=remaining,
+                                    httponly=True,secure=secure_cookie(),samesite='strict',path='/')
+                response.set_cookie(CSRF_COOKIE,csrf,max_age=remaining,
+                                    httponly=False,secure=secure_cookie(),samesite='strict',path='/')
     if user['role'] == 'customer' and user.get('identity_kind') == 'guest' and not user.get('customer_verified_at'):
         # Refresh only an already valid browser session, never by phone lookup.
         # This also upgrades existing short-lived guests without another login.
