@@ -162,8 +162,30 @@ class AtomicIdempotentWrite:
     params: tuple
 
 
+@dataclass(frozen=True)
+class DeferredAtomicResponse:
+    """Buffered result decoded only after the owning tx/pipeline has exited.
+
+    No SQL is issued by resolve(): the successful transaction context already
+    consumed the server's write/COMMIT results. Cursor rows remain local even
+    after the connection is returned to its pool.
+    """
+    cursor: Any
+
+    def resolve(self) -> dict:
+        if self.cursor.pgresult is None:
+            raise RuntimeError('Atomic response must be resolved after the transaction finishes.')
+        try:
+            saved = self.cursor.fetchone()
+            if saved is None:
+                raise RuntimeError('Atomic operation did not persist its replay response.')
+            return saved['response']
+        finally:
+            self.cursor.close()
+
+
 def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, perform: Callable[[], dict | AtomicIdempotentWrite],
-               *, pipeline_writes: bool = False) -> dict:
+               *, pipeline_writes: bool = False, defer_atomic_response: bool = False) -> dict | DeferredAtomicResponse:
     if not key or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', key):
         raise error(400, 'IDEMPOTENCY_KEY_REQUIRED', 'أرسل مفتاح منع تكرار صحيحًا للعملية.')
     lock_key = hashlib.sha256(f'{user_id}:{operation}:{key}'.encode()).digest()[:8]
@@ -180,13 +202,30 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
     # event/audit/replay writes share one pipeline flush. Exiting the context
     # must succeed before returning a response, and the caller's transaction
     # still atomically commits or rolls back the entire business operation.
-    with conn.pipeline() if pipeline_writes else nullcontext():
+    # The checkout's outer tx owns its pipeline. Do not create an inner Sync
+    # between its final write and COMMIT: that holds the receipt-counter lock
+    # while Python waits, decodes JSON and gets scheduled again under load.
+    if defer_atomic_response and (conn.info.pipeline_status != psycopg.pq.PipelineStatus.ON
+                                  or conn.info.transaction_status != psycopg.pq.TransactionStatus.INTRANS):
+        raise RuntimeError('Deferred atomic writes require an enclosing pipelined transaction.')
+    with conn.pipeline() if pipeline_writes and not defer_atomic_response else nullcontext():
         result = perform()
         if isinstance(result, AtomicIdempotentWrite):
             statement = ('WITH ' + result.ctes +
                          ' INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) '
                          'SELECT %s,%s,%s,%s,response FROM operation_response RETURNING response')
-            saved = conn.execute(statement, result.params + (user_id, operation, key, request_digest)).fetchone()
+            params = result.params + (user_id, operation, key, request_digest)
+            if defer_atomic_response:
+                # Enforce exactly one saved response *on the server*, before
+                # COMMIT, including an empty operation_response. A missing row
+                # raises DivisionByZero and rolls back every business write.
+                statement = ('WITH ' + result.ctes + ', saved_response AS ('
+                             'INSERT INTO idempotency_keys(user_id,operation,key,request_digest,response) '
+                             'SELECT %s,%s,%s,%s,response FROM operation_response RETURNING response) '
+                             'SELECT CASE WHEN count(*)=1 THEN jsonb_agg(response)->0 '
+                             'ELSE to_jsonb(1/(count(*)-count(*))) END AS response FROM saved_response')
+                return DeferredAtomicResponse(conn.execute(statement, params))
+            saved = conn.execute(statement, params).fetchone()
             if saved is None:
                 raise RuntimeError('Atomic operation did not persist its replay response.')
             return saved['response']

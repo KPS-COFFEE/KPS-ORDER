@@ -902,7 +902,7 @@ def main():
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
         env = {key: value for key, value in previous_env.items() if not key.startswith((
-            'TWILIO_', 'RENDER_', 'RESEND_', 'SMTP_', 'RECOVERY_', 'MONITOR_', 'MONITORING_')) and
+            'TAWKED_', 'TWILIO_', 'RENDER_', 'RESEND_', 'SMTP_', 'RECOVERY_', 'MONITOR_', 'MONITORING_')) and
             key not in {'DATABASE_URL', 'MAIL_OUTBOX_KEY', 'EMAIL_FROM'}}
         env.update({'DATABASE_URL': isolated, 'APP_ENV': 'testing', 'PUBLIC_BASE_URL': f'http://127.0.0.1:{port}',
             'APP_ALLOWED_HOSTS': 'localhost,127.0.0.1', 'SESSION_COOKIE_SECURE': 'false',

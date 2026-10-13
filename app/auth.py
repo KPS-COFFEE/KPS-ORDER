@@ -300,7 +300,11 @@ def _provider_post(path: str, data: dict):
 
 
 def _sms_provider(conn, brand):
-    return _channel(conn, brand, 'sms').get('sms_provider') or os.getenv('OTP_PROVIDER', 'disabled')
+    return _selected_sms_provider(_channel(conn, brand, 'sms'))
+
+
+def _selected_sms_provider(row):
+    return row.get('sms_provider') or os.getenv('OTP_PROVIDER', 'disabled')
 
 
 def _provider_ready(name):
@@ -516,7 +520,7 @@ def channel_readiness(conn, brand):
         configured = True if channel=='guest' else email_delivery.configuration()['configured'] if channel=='email' else False
         if channel in {'sms','whatsapp'}:
             try:
-                provider = _sms_provider(conn, brand)
+                provider = _selected_sms_provider(channels.get('sms') or {})
                 _provider_ready(provider)
                 configured = os.getenv('OTP_CHANNEL','sms') == channel and (provider != 'tawked' or channel == 'sms')
             except Exception:

@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations, invoice_profiles
@@ -140,8 +141,13 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                                     'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
                                     'total_halalas': quote['total_halalas']}),
                                 public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
-        return db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform,
-                             pipeline_writes=True)
+        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform,
+                               pipeline_writes=True, defer_atomic_response=True)
+    # The database has acknowledged COMMIT before result decoding/HTTP encoding.
+    # Replays use the same durable JSON, with no new counter/event/financial write.
+    if isinstance(result, db.DeferredAtomicResponse):
+        result = result.resolve()
+    return JSONResponse(result) if request is not None else result
 
 
 @router.get('')

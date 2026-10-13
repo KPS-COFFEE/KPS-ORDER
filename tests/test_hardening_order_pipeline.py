@@ -163,3 +163,47 @@ def test_atomic_statement_without_response_rolls_back_business_effect(pipeline_c
     with db.tx() as conn:
         assert conn.execute("SELECT id FROM brands WHERE id='TEST-empty-atomic-brand'").fetchone() is None
         assert conn.execute("SELECT key FROM idempotency_keys WHERE operation='TEST-empty-atomic'").fetchone() is None
+
+
+def test_deferred_atomic_empty_response_fails_before_commit(pipeline_checkout):
+    import psycopg
+    _, user_id, _ = pipeline_checkout
+    with pytest.raises(psycopg.errors.DivisionByZero):
+        with db.tx(pipeline=True) as conn:
+            db.idempotent(conn, user_id, uuid4().hex, 'TEST-empty-deferred', {}, lambda: db.AtomicIdempotentWrite(
+                'created AS (INSERT INTO brands(id,name) VALUES(%s,%s) RETURNING id), '
+                "operation_response AS (SELECT '{}'::jsonb response WHERE false)",
+                ('TEST-empty-deferred-brand', 'TEST rollback')), defer_atomic_response=True)
+    with db.tx() as conn:
+        assert conn.execute("SELECT id FROM brands WHERE id='TEST-empty-deferred-brand'").fetchone() is None
+        assert conn.execute("SELECT key FROM idempotency_keys WHERE operation='TEST-empty-deferred'").fetchone() is None
+
+
+@pytest.mark.parametrize('response_lost', [False, True])
+def test_checkout_commits_all_effects_before_decoding_and_lost_response_replays(pipeline_checkout, monkeypatch, response_lost):
+    client, user_id, body = pipeline_checkout
+    resolve = db.DeferredAtomicResponse.resolve
+    observed = []
+    def after_commit(result):
+        # This separate transaction must see every effect before the original
+        # response is decoded. A slow/lost HTTP response cannot hold the counter.
+        observed.append(effects(user_id))
+        assert observed[-1] == {'counter': 1, 'orders': 1, 'events': 1, 'audits': 1, 'keys': 1}
+        assert result.cursor.pgresult is not None
+        if response_lost:
+            result.cursor.close()
+            raise RuntimeError('TEST connection lost after durable COMMIT')
+        return resolve(result)
+    monkeypatch.setattr(db.DeferredAtomicResponse, 'resolve', after_commit)
+    key = uuid4().hex
+    first = client.post('/api/orders', json=body, headers={'Idempotency-Key': key})
+    assert first.status_code == (503 if response_lost else 200), first.text
+    replay = client.post('/api/orders', json=body, headers={'Idempotency-Key': key})
+    assert replay.status_code == 200, replay.text
+    assert len(observed) == 1  # Replays never queue another write/response.
+    if not response_lost:
+        assert first.json() == replay.json()
+    with db.tx() as conn:
+        saved = conn.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND key=%s', (user_id, key)).fetchone()
+    assert saved['response'] == replay.json()
+    assert effects(user_id) == observed[0]
