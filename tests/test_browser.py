@@ -613,7 +613,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             assert len(photos)==2 and {row['stage'] for row in photos}=={'picked_up','delivered'} and all(row['used_at'] for row in photos)
 
         driver.locator('#navigation [data-page=shifts]').click()
-        driver.locator(f'[data-action=start-closing][data-id="{driver_shift}"]').click()
+        driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
         expect(driver.locator('#closure-form')).to_be_visible()
         expect(driver.locator('#modal-body')).to_contain_text('الرصيد المتوقع')
         expect(driver.locator('#modal-body')).to_contain_text('النقد المعدود')

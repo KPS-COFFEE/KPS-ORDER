@@ -98,14 +98,21 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         page.locator('#modal button[type=submit]').click()
         expect(page.locator('#modal .vehicle-shift-summary')).to_be_visible()
         page.locator('#modal-close').click()
-        page.locator('[data-action=start-closing]').click()
+        # The guidance shortcut and the canonical shift card intentionally
+        # expose the same action. Verify both target this driver's shift, and
+        # exercise each entry point across the bilingual journeys.
+        card_close=page.locator('.shift-card [data-action=start-closing][data-id="'+sid+'"]')
+        guide_close=page.locator('.driver-shift-guidance [data-action=start-closing][data-id="'+sid+'"]')
+        expect(card_close).to_have_count(1)
+        expect(guide_close).to_have_count(1)
+        (guide_close if language=='ar' else card_close).click()
         form=fill_check(1025,50)
         form.locator('[name=reference]').fill('TEST-ZERO-CASH')
         form.locator('[name=recipient_user_id]').select_option(manager['id'])
         form.locator('[name=confirm_closure]').check()
         form.locator('button[type=submit]').click()
         expect(page.locator('#modal')).not_to_be_visible()
-        page.locator('[data-action=shift-detail][data-id="'+sid+'"]').click()
+        page.locator('.shift-card [data-action=shift-detail][data-id="'+sid+'"]').click()
         expect(page.locator('#closure-form')).to_have_count(0)
         expect(page.locator('#modal .vehicle-shift-summary')).to_be_visible()
         with db.tx() as c:
