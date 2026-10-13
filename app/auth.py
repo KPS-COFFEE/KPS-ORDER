@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import db, employee_permissions
+from . import db, employee_permissions, sms_verification
 
 router = APIRouter(prefix='/api')
 COOKIE = 'kps_session'
@@ -271,6 +271,10 @@ def normalize_phone(value: str) -> str:
 
 
 def provider_config() -> tuple[str, str, str]:
+    if os.getenv('OTP_PROVIDER') == 'tawked':
+        if not sms_verification.configured():
+            raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
+        return ('tawked', '', '')
     if os.getenv('OTP_PROVIDER') != 'twilio_verify':
         raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد. يمكنك الطلب كضيف إذا كان متاحًا.')
     sid, secret, service = (os.getenv(name, '') for name in ('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID'))
@@ -280,21 +284,50 @@ def provider_config() -> tuple[str, str, str]:
 
 
 def _provider_post(path: str, data: dict):
-    sid, secret, service = provider_config()
+    sid, secret, service = (os.getenv(name, '') for name in ('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID'))
+    _provider_ready('twilio_verify')
     try:
         with httpx.Client(timeout=12, follow_redirects=False) as client:
             result = client.post(f'https://verify.twilio.com/v2/Services/{service}/{path}', data=data, auth=(sid, secret))
-        if result.status_code >= 400:
+        if result.status_code not in {200,201}:
             raise db.error(503, 'OTP_PROVIDER_FAILURE', 'تعذر الاتصال بمزود التحقق. حاول لاحقًا.')
-        return result.json()
+        payload = result.json()
+        if not isinstance(payload, dict):
+            raise ValueError('invalid provider response')
+        return payload
     except (httpx.HTTPError, ValueError):
         raise db.error(503, 'OTP_PROVIDER_FAILURE', 'تعذر الاتصال بمزود التحقق. حاول لاحقًا.') from None
+
+
+def _sms_provider(conn, brand):
+    return _channel(conn, brand, 'sms').get('sms_provider') or os.getenv('OTP_PROVIDER', 'disabled')
+
+
+def _provider_ready(name):
+    if name == 'tawked':
+        if not sms_verification.configured():
+            raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
+    elif name == 'twilio_verify':
+        if (not re.fullmatch(r'AC[a-fA-F0-9]{32}', os.getenv('TWILIO_ACCOUNT_SID',''))
+                or not re.fullmatch(r'VA[a-fA-F0-9]{32}', os.getenv('TWILIO_VERIFY_SERVICE_SID',''))
+                or not os.getenv('TWILIO_AUTH_TOKEN')):
+            raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
+    else:
+        raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد.')
+
+
+def _otp_test_access(conn, brand, channel, request):
+    if _channel(conn, brand, channel)['state'] == 'testing':
+        user = _optional_identity(request, conn)
+        if not user or user['role'] != 'owner' or user['brand_id'] != brand:
+            raise db.error(403, 'OTP_OWNER_TEST_ONLY', 'اختبار الرسائل متاح للمالك فقط قبل الاعتماد.')
 
 
 class OTPRequestBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     phone: str = Field(min_length=8, max_length=30)
     brand_id: str = Field(default='kps', min_length=1, max_length=80)
+    lang: Literal['ar', 'en'] = 'ar'
 
 
 def _otp_channel_ready(conn, brand_id: str, channel: str):
@@ -314,7 +347,6 @@ def _otp_channel_ready(conn, brand_id: str, channel: str):
 @router.post('/auth/otp/request')
 def request_otp(body: OTPRequestBody, request: Request):
     check_origin(request)
-    provider_config()
     phone = normalize_phone(body.phone)
     channel = os.getenv('OTP_CHANNEL', 'sms')
     ip = request.client.host if request.client else 'unknown'
@@ -322,56 +354,88 @@ def request_otp(body: OTPRequestBody, request: Request):
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (body.brand_id,)).fetchone():
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
         _otp_channel_ready(conn, body.brand_id, channel)
+        _otp_test_access(conn, body.brand_id, channel, request)
+        provider = _sms_provider(conn, body.brand_id)
+        _provider_ready(provider)
+        if provider == 'tawked' and channel != 'sms':
+            raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'توكيد مخصص للتحقق برسائل SMS.')
         allowed = db.rate_limit(conn, 'otp-request-phone:' + phone, 3, 600)
         allowed = db.rate_limit(conn, 'otp-request-ip:' + ip, 10, 600) and allowed
     if not allowed:
         raise db.error(429, 'OTP_RATE_LIMIT', 'طلبات تحقق كثيرة. انتظر قبل المحاولة مجددًا.')
-    result = _provider_post('Verifications', {'To': phone, 'Channel': channel})
-    if result.get('status') != 'pending' or not result.get('sid') or result.get('channel', channel) != channel:
-        raise db.error(503, 'OTP_NOT_SENT', 'لم يؤكد المزود إرسال رمز التحقق.')
     challenge_id = db.new_id('otp_')
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    if provider == 'tawked':
+        reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
+        expires_at = min(expires_at, provider_expiry)
+    else:
+        result = _provider_post('Verifications', {'To': phone, 'Channel': channel})
+        if result.get('status') != 'pending' or not result.get('sid') or result.get('channel', channel) != channel:
+            raise db.error(503, 'OTP_NOT_SENT', 'لم يؤكد المزود إرسال رمز التحقق.')
+        reference = result['sid']
     with db.tx() as conn:
-        # Recheck after provider latency so pausing the channel cannot create a
-        # new usable challenge. Record the channel actually used by the provider.
         _otp_channel_ready(conn, body.brand_id, channel)
-        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at) VALUES(%s,%s,%s,%s,%s,now()+interval \'10 minutes\')',
-                     (challenge_id, body.brand_id, phone, result['sid'], channel))
-    return {'challenge_id': challenge_id, 'expires_in': 600, 'channel': channel}
+        _otp_test_access(conn, body.brand_id, channel, request)
+        if _sms_provider(conn, body.brand_id) != provider:
+            raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
+        conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name) VALUES(%s,%s,%s,%s,%s,%s,%s)',
+                     (challenge_id, body.brand_id, phone, reference, channel, expires_at, provider))
+    return {'challenge_id': challenge_id, 'expires_in': max(0, int((expires_at-datetime.now(timezone.utc)).total_seconds())), 'channel': channel}
+
 
 
 class OTPVerifyBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     challenge_id: str = Field(min_length=5, max_length=80)
-    code: str = Field(pattern=r'^\d{4,10}$')
+    code: str = Field(pattern=r'^[0-9]{4}$')
     display_name: str = Field(default='', max_length=100)
 
 
 @router.post('/auth/otp/verify')
 def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     check_origin(request)
-    provider_config()
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         allowed = db.rate_limit(conn, 'otp-verify-ip:' + ip, 20, 600)
-        challenge = conn.execute('UPDATE otp_challenges SET attempts=attempts+1 WHERE id=%s AND verified_at IS NULL AND expires_at>now() AND attempts<5 RETURNING *',
-                                 (body.challenge_id,)).fetchone()
+        challenge = conn.execute('UPDATE otp_challenges SET attempts=attempts+1 WHERE id=%s AND verified_at IS NULL AND expires_at>now() AND attempts<3 RETURNING *',
+                                 (body.challenge_id,)).fetchone() if allowed else None
     if not allowed:
         raise db.error(429, 'OTP_RATE_LIMIT', 'محاولات تحقق كثيرة. انتظر قليلًا.')
     if not challenge:
         raise db.error(400, 'OTP_EXPIRED', 'رمز التحقق منتهي أو مستهلك. اطلب رمزًا جديدًا.')
     channel = challenge['delivery_channel']
     with db.tx() as conn:
+        conn.execute('SELECT channel FROM identity_channels WHERE brand_id=%s AND channel=%s FOR UPDATE',(challenge['brand_id'],channel)).fetchone()
         _otp_channel_ready(conn, challenge['brand_id'], channel)
-    # Only the provider's approved result authenticates a phone; typed phone/code never does.
-    result = _provider_post('VerificationCheck', {'VerificationSid': challenge['provider_reference'], 'Code': body.code})
-    if result.get('status') != 'approved' or result.get('to') != challenge['phone'] or result.get('channel', channel) != channel:
+        _otp_test_access(conn, challenge['brand_id'], channel, request)
+        provider = challenge['provider_name']
+        if _sms_provider(conn, challenge['brand_id']) != provider:
+            raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
+        _provider_ready(provider)
+    # Check the stored provider reference, never a client supplied phone/reference.
+    if provider == 'tawked':
+        approved = channel == 'sms' and sms_verification.check(challenge['provider_reference'], body.code)
+    else:
+        result = _provider_post('VerificationCheck', {'VerificationSid': challenge['provider_reference'], 'Code': body.code})
+        approved = result.get('status') == 'approved' and result.get('to') == challenge['phone'] and result.get('channel', channel) == channel
+    if not approved:
         raise db.error(400, 'OTP_INVALID', 'رمز التحقق غير صحيح.')
     with db.tx() as conn:
+        conn.execute('SELECT channel FROM identity_channels WHERE brand_id=%s AND channel=%s FOR UPDATE',(challenge['brand_id'],channel)).fetchone()
         _otp_channel_ready(conn, challenge['brand_id'], channel)
+        _otp_test_access(conn, challenge['brand_id'], channel, request)
+        if _sms_provider(conn, challenge['brand_id']) != provider:
+            raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
         claimed = conn.execute('UPDATE otp_challenges SET verified_at=now() WHERE id=%s AND verified_at IS NULL AND expires_at>now() RETURNING id',
                                (body.challenge_id,)).fetchone()
         if not claimed:
             raise db.error(409, 'OTP_ALREADY_USED', 'تم استخدام طلب التحقق بالفعل.')
+        if _channel(conn, challenge['brand_id'], channel)['state'] == 'testing':
+            # Owner smoke test proves delivery without creating/logging in a customer.
+            owner = _optional_identity(request, conn)
+            conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s', (challenge['brand_id'], channel))
+            db.audit(conn, owner['id'], 'identity.sms.test_verified', 'brand', challenge['brand_id'], {'provider': provider})
+            return {'verified': True, 'test_only': True}
         proof_column = 'phone_whatsapp_verified_at' if channel == 'whatsapp' else 'phone_sms_verified_at'
         conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone,identity_kind,phone_verified_at," + proof_column + ") VALUES(%s,%s,'customer',%s,%s,%s,now(),now()) ON CONFLICT(brand_id,phone) WHERE role='customer' AND phone_verified_at IS NOT NULL DO NOTHING",
                      (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone'], 'phone_'+channel+'_verified'))
@@ -452,8 +516,9 @@ def channel_readiness(conn, brand):
         configured = True if channel=='guest' else email_delivery.configuration()['configured'] if channel=='email' else False
         if channel in {'sms','whatsapp'}:
             try:
-                provider_config()
-                configured = os.getenv('OTP_CHANNEL','sms') == channel
+                provider = _sms_provider(conn, brand)
+                _provider_ready(provider)
+                configured = os.getenv('OTP_CHANNEL','sms') == channel and (provider != 'tawked' or channel == 'sms')
             except Exception:
                 configured = False
         available = bool(row['enabled'] and row['state']=='active' and configured)
@@ -1333,10 +1398,12 @@ def revoke_invitation(identifier:str,user=Depends(require_roles('owner','deliver
 @router.get('/identity/settings')
 def identity_settings(user=Depends(require_roles('owner'))):
     with db.tx() as conn:
-        rows=conn.execute('SELECT channel,state,enabled,delivery_proven_at,updated_at FROM identity_channels WHERE brand_id=%s ORDER BY channel',(user['brand_id'],)).fetchall()
+        rows=conn.execute('SELECT channel,state,enabled,delivery_proven_at,updated_at,sms_provider FROM identity_channels WHERE brand_id=%s ORDER BY channel',(user['brand_id'],)).fetchall()
         return {'channels':rows,'readiness':channel_readiness(conn,user['brand_id']),
                 'email_provider':email_delivery.configuration(),
-                'required_secret_settings':['EMAIL_PROVIDER','EMAIL_FROM','MAIL_OUTBOX_KEY','RESEND_API_KEY or SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD'],
+                'sms_provider':_sms_provider(conn,user['brand_id']),
+                'sms_providers':['disabled','tawked','twilio_verify'],
+                'required_secret_settings':['TAWKED_API_KEY','EMAIL_PROVIDER','EMAIL_FROM','MAIL_OUTBOX_KEY','RESEND_API_KEY or SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD'],
                 'email_security':'لا تستخدم كلمة مرور Gmail في المحادثة. استخدم مزودًا مخولًا أو بيانات SMTP مخصصة في إعدادات الخادم السرية.'}
 
 
@@ -1345,12 +1412,22 @@ class ChannelUpdateBody(BaseModel):
     channel:Literal['guest','email','sms','whatsapp']
     state:Literal['unconfigured','testing','active','paused','fault']
     enabled:bool=False
+    sms_provider:Literal['disabled','tawked','twilio_verify'] | None = None
 
 
 @router.patch('/identity/settings')
 def update_identity_settings(body:ChannelUpdateBody,user=Depends(require_roles('owner'))):
     with db.tx() as conn:
+        conn.execute('SELECT channel FROM identity_channels WHERE brand_id=%s AND channel=%s FOR UPDATE',(user['brand_id'],body.channel)).fetchone()
         row=_channel(conn,user['brand_id'],body.channel)
+        if body.sms_provider is not None:
+            if body.channel != 'sms':
+                raise db.error(422,'SMS_PROVIDER_CHANNEL','اختر قناة SMS لتغيير المزود.')
+            if body.sms_provider != _sms_provider(conn,user['brand_id']):
+                if body.state == 'active' or body.enabled:
+                    raise db.error(409,'CHANNEL_DELIVERY_PROOF_REQUIRED','اختبر المزود الجديد قبل التفعيل.')
+                conn.execute("UPDATE identity_channels SET sms_provider=%s,delivery_proven_at=NULL WHERE brand_id=%s AND channel='sms'",(body.sms_provider,user['brand_id']))
+                conn.execute("UPDATE otp_challenges SET expires_at=LEAST(expires_at,now()) WHERE brand_id=%s AND delivery_channel='sms' AND verified_at IS NULL",(user['brand_id'],))
         if body.channel!='guest' and body.state=='active':
             configured=channel_readiness(conn,user['brand_id'])[body.channel]['configured']
             if not configured or not row['delivery_proven_at']:

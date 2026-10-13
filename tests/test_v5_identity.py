@@ -320,7 +320,10 @@ class TestV5Identity:
 
     @pytest.mark.parametrize('state', ['unconfigured', 'paused', 'fault'])
     def test_optional_otp_respects_disabled_channel_and_guest_stays_available(self,client,monkeypatch,state):
-        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        monkeypatch.setenv('OTP_PROVIDER','twilio_verify')
+        monkeypatch.setenv('TWILIO_ACCOUNT_SID','AC'+'1'*32)
+        monkeypatch.setenv('TWILIO_AUTH_TOKEN','test-only')
+        monkeypatch.setenv('TWILIO_VERIFY_SERVICE_SID','VA'+'1'*32)
         calls=[]
         monkeypatch.setattr(auth,'_provider_post',lambda path,data: calls.append((path,data)))
         with db.tx() as conn:
@@ -332,27 +335,33 @@ class TestV5Identity:
         assert guest['identity_kind']=='guest' and guest['phone_verified_at'] is None
 
     def test_pausing_otp_revokes_pending_authentication_not_existing_guest(self,client,monkeypatch):
-        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        monkeypatch.setenv('OTP_PROVIDER','twilio_verify')
+        monkeypatch.setenv('TWILIO_ACCOUNT_SID','AC'+'1'*32)
+        monkeypatch.setenv('TWILIO_AUTH_TOKEN','test-only')
+        monkeypatch.setenv('TWILIO_VERIFY_SERVICE_SID','VA'+'1'*32)
         calls=[]
         def provider(path,data):
             calls.append(path)
             return {'status':'pending','sid':'VE'+'2'*32} if path=='Verifications' else {'status':'approved','to':'+966500000000'}
         monkeypatch.setattr(auth,'_provider_post',provider)
         with db.tx() as conn:
-            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='sms'")
+            conn.execute("UPDATE identity_channels SET state='active',enabled=true,delivery_proven_at=now() WHERE brand_id='kps' AND channel='sms'")
         sent=client.post('/api/auth/otp/request',json={'phone':'0500000000'})
         assert sent.status_code==200,sent.text
         guest=_guest(client)
         with db.tx() as conn:
             conn.execute("UPDATE identity_channels SET state='paused',enabled=false WHERE brand_id='kps' AND channel='sms'")
-        denied=client.post('/api/auth/otp/verify',json={'challenge_id':sent.json()['challenge_id'],'code':'123456'})
+        denied=client.post('/api/auth/otp/verify',json={'challenge_id':sent.json()['challenge_id'],'code':'1234'})
         assert denied.status_code==503 and calls==['Verifications']
         assert client.get('/api/session').json()['user']['id']==guest['id']
         with db.tx() as conn:
             assert conn.execute("SELECT count(*) n FROM users WHERE phone_verified_at IS NOT NULL").fetchone()['n']==0
 
     def test_otp_proof_uses_actual_send_channel_after_runtime_setting_change(self,client,monkeypatch):
-        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        monkeypatch.setenv('OTP_PROVIDER','twilio_verify')
+        monkeypatch.setenv('TWILIO_ACCOUNT_SID','AC'+'1'*32)
+        monkeypatch.setenv('TWILIO_AUTH_TOKEN','test-only')
+        monkeypatch.setenv('TWILIO_VERIFY_SERVICE_SID','VA'+'1'*32)
         monkeypatch.setenv('OTP_CHANNEL','sms')
         def provider(path,data):
             if path=='Verifications':
@@ -361,10 +370,10 @@ class TestV5Identity:
             return {'status':'approved','to':'+966500000000'}
         monkeypatch.setattr(auth,'_provider_post',provider)
         with db.tx() as conn:
-            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel IN ('sms','whatsapp')")
+            conn.execute("UPDATE identity_channels SET state='active',enabled=true,delivery_proven_at=CASE WHEN channel='sms' THEN now() ELSE NULL END WHERE brand_id='kps' AND channel IN ('sms','whatsapp')")
         sent=client.post('/api/auth/otp/request',json={'phone':'0500000000'}).json()
         monkeypatch.setenv('OTP_CHANNEL','whatsapp')
-        result=client.post('/api/auth/otp/verify',json={'challenge_id':sent['challenge_id'],'code':'123456'})
+        result=client.post('/api/auth/otp/verify',json={'challenge_id':sent['challenge_id'],'code':'1234'})
         assert result.status_code==200,result.text
         user=result.json()['user']
         assert user['identity_kind']=='phone_sms_verified'
@@ -375,25 +384,31 @@ class TestV5Identity:
             assert channels['sms'] and channels['whatsapp'] is None
 
     def test_legacy_pending_otp_without_channel_cannot_fabricate_proof(self,client,monkeypatch):
-        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        monkeypatch.setenv('OTP_PROVIDER','twilio_verify')
+        monkeypatch.setenv('TWILIO_ACCOUNT_SID','AC'+'1'*32)
+        monkeypatch.setenv('TWILIO_AUTH_TOKEN','test-only')
+        monkeypatch.setenv('TWILIO_VERIFY_SERVICE_SID','VA'+'1'*32)
         calls=[]
         monkeypatch.setattr(auth,'_provider_post',lambda path,data: calls.append(path))
         identifier=db.new_id('otp_')
         with db.tx() as conn:
             conn.execute("INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,expires_at) VALUES(%s,'kps','+966500000000',%s,now()+interval '10 minutes')",(identifier,'VE'+'2'*32))
-        result=client.post('/api/auth/otp/verify',json={'challenge_id':identifier,'code':'123456'})
+        result=client.post('/api/auth/otp/verify',json={'challenge_id':identifier,'code':'1234'})
         assert result.status_code==503 and result.json()['detail']['code']=='OTP_CHANNEL_UNAVAILABLE'
         assert calls==[]
 
     def test_provider_cannot_verify_different_channel_than_original_send(self,client,monkeypatch):
-        monkeypatch.setattr(auth,'provider_config',lambda: ('AC'+'1'*32,'test-only','VA'+'1'*32))
+        monkeypatch.setenv('OTP_PROVIDER','twilio_verify')
+        monkeypatch.setenv('TWILIO_ACCOUNT_SID','AC'+'1'*32)
+        monkeypatch.setenv('TWILIO_AUTH_TOKEN','test-only')
+        monkeypatch.setenv('TWILIO_VERIFY_SERVICE_SID','VA'+'1'*32)
         def provider(path,data):
             return {'status':'pending','sid':'VE'+'2'*32,'channel':'sms'} if path=='Verifications' else {'status':'approved','to':'+966500000000','channel':'whatsapp'}
         monkeypatch.setattr(auth,'_provider_post',provider)
         with db.tx() as conn:
-            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='sms'")
+            conn.execute("UPDATE identity_channels SET state='active',enabled=true,delivery_proven_at=now() WHERE brand_id='kps' AND channel='sms'")
         sent=client.post('/api/auth/otp/request',json={'phone':'0500000000'}).json()
-        result=client.post('/api/auth/otp/verify',json={'challenge_id':sent['challenge_id'],'code':'123456'})
+        result=client.post('/api/auth/otp/verify',json={'challenge_id':sent['challenge_id'],'code':'1234'})
         assert result.status_code==400 and result.json()['detail']['code']=='OTP_INVALID'
         with db.tx() as conn:
             assert conn.execute("SELECT count(*) n FROM users WHERE phone_verified_at IS NOT NULL").fetchone()['n']==0

@@ -43,6 +43,9 @@ services:
         # Public guest browsing is testable. Customer verification stays closed
         # until an actual provider account and credentials are configured.
         value: disabled
+      - key: TAWKED_API_KEY
+        # Enter only in Render Environment; never commit the value.
+        sync: false
       - key: OTP_CHANNEL
         value: sms
     # No domains entry: order.kps.sa cutover requires launch gates + owner go.
