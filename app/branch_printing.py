@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from . import auth, db, print_translations, invoice_profiles, order_numbering
+from . import auth, db, print_translations, invoice_profiles, catalog
 
 router = APIRouter(prefix='/api/printing', tags=['branch-printing'])
 operators = auth.require_roles('owner', 'delivery_manager')
@@ -99,10 +99,10 @@ def bridge(request: Request):
 
 
 def same_print_city(source, destination):
-    # Reuse receipt numbering aliases, but never group unknown cities as BR.
+    # Match branch geography independently of invoice numbering or prefixes.
     left=(source.get('city') or '').strip()
     right=(destination.get('city') or '').strip()
-    return bool(left and right) and order_numbering.CITY_CODES.get(left,left)==order_numbering.CITY_CODES.get(right,right)
+    return bool(left and right) and catalog.normalize_city(left)==catalog.normalize_city(right)
 
 
 @router.get('/devices')
