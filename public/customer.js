@@ -6,6 +6,8 @@
   let language='ar';
   try{if(localStorage.getItem(languageStorageKey)==='en')language='en';}catch{}
   const uiStrings={
+    "error_SESSION_CHANGED":{"ar":"تغيرت جلسة الدخول. افتح الصفحة مجددًا.","en":"Your sign-in session changed. Open the page again."},
+
     "sms_try_later":{"ar":"تعذر إرسال الرمز حاليًا. حاول لاحقًا.","en":"Unable to send the code now. Please try again later."},
     "contact_guest_notice":{"ar":"أدخل بيانات التواصل لبدء رسالتك. لا يفتح رقم غير موثق طلبات أو محادثات أخرى.","en":"Enter your contact details to start your message. An unverified number cannot open other orders or conversations."},
     "start_contact":{"ar":"بدء التواصل","en":"Start contact"},
@@ -589,6 +591,7 @@
   function clearConfirmation() { const pending=state.confirmation; state.confirmation=null; if(pending?.cancel)pending.cancel(); }
   function closeDialog(dialog) { if (typeof dialog === 'string') dialog = $(dialog); if (dialog.open) { if(dialog.id==='confirm-dialog')clearConfirmation(); dialog.close(); } }
   async function api(path, {method='GET', data, idempotency, signal} = {}) {
+    const principal=state.session.user?.id;
     const headers = {'Accept': 'application/json'};
     if (data !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && method !== 'HEAD') { if (state.session.csrf_token) headers['X-CSRF-Token'] = state.session.csrf_token; headers['Idempotency-Key'] = idempotency || key(); }
@@ -596,6 +599,7 @@
     try { response = await fetch(path, {method, credentials: 'same-origin', headers, body: data === undefined ? undefined : JSON.stringify(data), signal, cache: 'no-store'}); }
     catch (cause) { if (cause.name === 'AbortError') throw cause; const error = new Error(t("unable_to_connect_check_your_internet_and_try_again_this_action_h")); error.code = 'NETWORK'; throw error; }
     let body; try { body = await response.json(); } catch { body = {}; }
+    if(principal&&principal!==state.session.user?.id){const error=new Error(String(t('error_SESSION_CHANGED')));error.code='SESSION_CHANGED';throw error;}
     if (!response.ok) {
       const detail = body.error || body.detail || body;
       const code=detail?.code||body.code||String(response.status);
