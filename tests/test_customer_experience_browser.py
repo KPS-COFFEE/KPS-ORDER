@@ -2,7 +2,7 @@
 import os
 import pytest
 from app import auth,db
-from test_browser import live_app,synthetic_mail,_customer_session
+from test_browser import live_app,synthetic_mail,_customer_session,ARTIFACTS
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit isolated browser acceptance')]
 
 @pytest.mark.parametrize('engine',['chromium','webkit'])
@@ -16,6 +16,22 @@ def test_mobile_policy_verified_return_and_contact_draft(live_app,engine,languag
         c.execute("UPDATE sessions SET customer_verified_at=now()-interval '7 days',expires_at=now()+interval '23 days' WHERE user_id=%s",(uid,))
     with sync_playwright() as pw:
         browser=getattr(pw,engine).launch(headless=True)
+        anonymous=browser.new_context(viewport={'width':320,'height':640},is_mobile=True,has_touch=True)
+        public=anonymous.new_page();public_errors=[];public.on('pageerror',lambda e:public_errors.append(str(e)))
+        public.add_init_script("localStorage.setItem('kps_customer_lang',"+repr(language)+")")
+        public.goto(live_app)
+        expect(public.locator('#account-button')).to_be_enabled()
+        assert public.locator('.customer-navigation button').count()==4
+        public.locator('#account-button').click()
+        expect(public.locator('#otp-request-form')).to_be_visible()
+        expect(public.locator('#account-privacy-link')).to_have_attribute('href',f'/privacy?brand_id=kps&lang={language}')
+        expect(public.locator('#account-signout')).to_be_hidden()
+        public.locator('#account-new-order').click()
+        expect(public.locator('#account-dialog')).to_be_hidden()
+        expect(public.locator('#menu-button')).to_have_attribute('aria-current','page')
+        assert public.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        assert not public_errors
+        anonymous.close()
         context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,locale='ar-SA',timezone_id='Asia/Riyadh')
         context.add_cookies([{'name':auth.COOKIE,'value':token,'url':live_app,'httpOnly':True,'sameSite':'Strict'},{'name':auth.CSRF_COOKIE,'value':csrf,'url':live_app,'sameSite':'Strict'}])
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
@@ -27,6 +43,23 @@ def test_mobile_policy_verified_return_and_contact_draft(live_app,engine,languag
         page.locator('#account-button').click()
         expect(page.locator('#customer-profile-form')).to_be_visible()
         expect(page.locator('#otp-request-form')).to_be_hidden()
+        expect(page.locator('#profile-phone')).to_be_visible()
+        expect(page.locator('#account-button')).to_have_attribute('aria-current','page')
+        ARTIFACTS.mkdir(exist_ok=True)
+        page.screenshot(path=str(ARTIFACTS/f'customer-account-{engine}-{language}.png'))
+        page.locator('#account-orders').click()
+        expect(page.locator('#account-dialog')).to_be_hidden()
+        expect(page.locator('#orders-dialog')).to_be_visible()
+        expect(page.locator('#orders-button')).to_have_attribute('aria-current','page')
+        page.locator('#orders-dialog [data-close]').click()
+        page.locator('#account-button').click()
+        page.locator('#account-data-request').click()
+        expect(page.locator('#contacts-dialog')).to_be_visible()
+        expect(page.locator('#contact-category')).to_have_value('privacy')
+        expect(page.locator('#contact-context-fields')).to_be_hidden()
+        page.locator('#contact-new-order').click()
+        expect(page.locator('#contacts-dialog')).to_be_hidden()
+        page.locator('#account-button').click()
         page.locator('#account-dialog [data-close]').click()
         page.locator('#contacts-button').click()
         page.locator('#contact-category').select_option('privacy')
