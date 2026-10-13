@@ -91,12 +91,9 @@ def page(kind,brand,lang):
             'لا تحد هذه السياسة من حقوقك النظامية الإلزامية. لا ترسل بيانات بطاقتك المصرفية أو رموز التحقق داخل المحادثة.'
         ])
     # Public presentation only; retain legal entity and invoice snapshots unchanged.
-    sellers='<br>'.join(' — '.join(part for part in (
-        '' if x.get('legal_name','').startswith('مؤسسة ريم') else escape(x.get('legal_name','')),
-        (('VAT number: ' if en else 'الرقم الضريبي: ')+escape(x['vat_number'])) if x.get('vat_number') else ''
-    ) if part) for x in info['sellers'])
+    sellers='<br>'.join(('VAT number: ' if en else 'الرقم الضريبي: ')+escape(x['vat_number']) for x in info['sellers'] if x.get('vat_number'))
     labels={'controller_name':('Data controller','جهة التحكم بالبيانات'),'registration_number':('Registration','السجل التجاري'),'business_address':('Business address','عنوان المنشأة'),'contact':('Contact','التواصل'),'legal_basis':('Legal basis','الأساس النظامي للمعالجة'),'retention_policy':('Retention','الاحتفاظ'),'transfer_safeguards':('Transfer safeguards','ضمانات النقل')}
-    fields=''.join(f'<p><b>{labels[k][0 if en else 1]}:</b> {escape(str(v))}</p>' for k,v in config.items() if k in labels and v)
+    fields=''.join(f'<p><b>{labels[k][0 if en else 1]}:</b> {escape(str(v))}</p>' for k,v in config.items() if k in labels and k!='controller_name' and v)
     pending='' if info['complete'] else '<p class="notice">'+('Test version: some legal disclosures await owner confirmation before official launch.' if en else 'نسخة تجريبية: بعض الإفصاحات النظامية تنتظر توثيق المالك قبل الإطلاق الرسمي.')+'</p>'
     body=''.join('<p>'+escape(x)+'</p>' for x in paras)
     return HTMLResponse(f'<!doctype html><html lang="{lang}" dir="{"ltr" if en else "rtl"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/customer.css"></head><body><main class="page-shell"><article class="panel legal-page"><a href="/?brand_id={escape(brand,quote=True)}">{"Menu" if en else "المنيو"}</a> · <a href="/{kind}?lang={"ar" if en else "en"}&amp;brand_id={escape(brand,quote=True)}">{"العربية" if en else "English"}</a><h1>{title}</h1>{body}<h2>{"Seller information" if en else "بيانات المنشأة"}</h2><p>{sellers}</p>{fields}<p>{"Contact: use Contact us on the menu." if en else "التواصل: عبر مركز «تواصل معنا» في صفحة المنيو."}</p>{pending}<small>2026-10-13</small></article></main></body></html>',headers={'Cache-Control':'no-store'})
