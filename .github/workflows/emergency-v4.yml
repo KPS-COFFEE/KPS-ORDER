@@ -11,7 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: kps-order-emergency-v4-${{ github.head_ref || github.ref_name }}
+  # Keep completed/ongoing evidence tied to its immutable candidate. Concurrent
+  # feature pushes must not cancel the last shard of another candidate's CI.
+  group: kps-order-emergency-v4-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:

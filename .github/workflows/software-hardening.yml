@@ -10,7 +10,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: kps-order-hardening-${{ github.head_ref || github.ref_name }}
+  # Coalesce push/PR duplicates for this exact candidate, not a different HEAD
+  # whose diagnostic evidence must be allowed to finish.
+  group: kps-order-hardening-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -72,6 +74,11 @@ jobs:
           python tools/hardening_load.py
           --output test-artifacts/hardening-load.json
           --database-container '${{ job.services.postgres.id }}'
+      - name: Diagnose failed gate separately without relaxing or replacing its result
+        if: failure()
+        run: >-
+          python tools/hardening_load.py --profile-cpu --levels 50
+          --output test-artifacts/diagnostic/load.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -79,6 +86,7 @@ jobs:
           path: |
             test-artifacts/hardening-load.json
             test-artifacts/load-app.log
+            test-artifacts/diagnostic/
 
   isolated-two-worker-capacity:
     if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"

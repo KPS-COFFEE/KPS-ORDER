@@ -614,7 +614,8 @@ def reconcile(db_url, workload):
 def start_app(env, port, log_path, workers=1):
     log = log_path.open('a')
     offset = log_path.stat().st_size
-    process = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1',
+    module = 'tools.profile_checkout:app' if env.get('KPS_LOAD_PROFILE_OUTPUT') else 'app.main:app'
+    process = subprocess.Popen([sys.executable, '-m', 'uvicorn', module, '--host', '127.0.0.1',
                                 '--port', str(port), '--workers', str(workers), '--no-access-log'], cwd=ROOT, env=env,
                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     origin = f'http://127.0.0.1:{port}'
@@ -849,9 +850,12 @@ def main():
     parser.add_argument('--p99-ms', type=float, default=10000)
     parser.add_argument('--max-error-rate', type=float, default=.01)
     parser.add_argument('--database-container', help='Optional local Docker PG service ID for container CPU/RAM samples.')
+    parser.add_argument('--profile-cpu', action='store_true', help='Separate diagnostic run, not release performance evidence.')
     parser.add_argument('--workers', type=int, choices=(1, 2), default=1,
                         help='Isolated comparison only; one mirrors runtime, two does not change deployment defaults.')
     args = parser.parse_args()
+    if args.profile_cpu and args.workers != 1:
+        parser.error('Per-thread CPU diagnosis requires one isolated worker.')
     levels = [int(item) for item in args.levels.split(',')]
     if not levels or min(levels) < 1 or max(levels) > 500 or not 1 <= args.rounds <= 5:
         parser.error('Levels must be 1..500 and rounds 1..5.')
@@ -903,7 +907,10 @@ def main():
             port = reservation.getsockname()[1]
         env = {key: value for key, value in previous_env.items() if not key.startswith((
             'TAWKED_', 'TWILIO_', 'RENDER_', 'RESEND_', 'SMTP_', 'RECOVERY_', 'MONITOR_', 'MONITORING_')) and
-            key not in {'DATABASE_URL', 'MAIL_OUTBOX_KEY', 'EMAIL_FROM'}}
+            key not in {'DATABASE_URL', 'MAIL_OUTBOX_KEY', 'EMAIL_FROM', 'KPS_LOAD_PROFILE_OUTPUT'}}
+        if args.profile_cpu:
+            env['KPS_LOAD_PROFILE_OUTPUT'] = str(args.output.parent.resolve() / 'checkout-cpu-profile.json')
+            report['methodology']['diagnostic_profile_not_release_evidence'] = True
         env.update({'DATABASE_URL': isolated, 'APP_ENV': 'testing', 'PUBLIC_BASE_URL': f'http://127.0.0.1:{port}',
             'APP_ALLOWED_HOSTS': 'localhost,127.0.0.1', 'SESSION_COOKIE_SECURE': 'false',
             'OTP_PROVIDER': 'disabled', 'EMAIL_PROVIDER': 'disabled', 'EMAIL_WORKER_ENABLED': 'false',
