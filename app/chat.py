@@ -69,6 +69,7 @@ class CreateConversation(BaseModel):
 def create_conversation(body:CreateConversation,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','customer','delivery_manager','delivery_staff','branch_manager')
     if body.order_id is None:roles(user,'customer')
+    if body.category=='other' and not body.details.strip():fail(422,'اكتب التفاصيل عند اختيار أخرى')
     with db.tx() as c:
         def perform():
             if body.order_id is not None:
@@ -88,10 +89,11 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 if body.branch_id and not branch:fail(404,'الفرع غير موجود')
                 order_id=None;branch_id=branch['id'] if branch else None;customer_id=user['id'];brand_id=user['brand_id'];service=body.service or 'pickup'
                 existing=c.execute("SELECT * FROM conversations WHERE order_id IS NULL AND customer_id=%s AND branch_id IS NOT DISTINCT FROM %s AND context_service=%s AND category=%s AND status<>'resolved' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(customer_id,branch_id,service,body.category)).fetchone()
-            if body.details.strip():existing=None
+            if body.details.strip() or 'category' in body.model_fields_set:existing=None
             if existing:
                 if not allowed(user,existing):fail(404,'المحادثة غير متاحة')
                 return {'conversation':existing}
+            if not db.rate_limit(c,'contact-create:'+user['id'],10,600):raise db.error(429,'CONTACT_RATE_LIMIT','رسائل كثيرة. حاول بعد قليل.')
             route=route_for(body.category,service,body.details)
             row={'customer_id':customer_id,'brand_id':brand_id,'branch_id':branch_id,'route':route}
             if not allowed(user,row):fail(403,'المحادثة مخصصة لفريق المتابعة المختص')

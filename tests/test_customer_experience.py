@@ -202,3 +202,11 @@ def test_api_cannot_disable_current_required_mobile_policy(required):
     r=required.patch('/api/admin/settings',json={'customer_phone_required':False},headers={'Idempotency-Key':'TEST-no-disable-mobile-proof'})
     assert r.status_code==422,r.text
     assert required.get('/api/identity/channels').json()['customer_phone_required'] is True
+
+@pytest.mark.postgres
+def test_other_requires_details_and_each_new_contact_has_own_reference(required,monkeypatch):
+    verify(required,monkeypatch)
+    assert contact(required,category='other',details='').status_code==422
+    first=contact(required,key='test-fresh-contact-1');second=contact(required,key='test-fresh-contact-2')
+    assert first.status_code==second.status_code==200
+    assert first.json()['conversation']['reference']!=second.json()['conversation']['reference']

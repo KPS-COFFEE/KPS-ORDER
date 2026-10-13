@@ -444,13 +444,18 @@ def test_manager_handover_real_acceptance_scope_revocation_and_cash_separation(o
         assert c.execute('SELECT count(*) n FROM custody_events').fetchone()['n']==0
 
 
+def _stored_conversation_route(identifier):
+    with db.tx() as c:
+        return c.execute('SELECT route FROM conversations WHERE id=%s',(identifier,)).fetchone()['route']
+
+
 @pytest.mark.postgres
 def test_chat_without_order_context_routing_replay_history_and_attachment_scopes(ops):
     actor,post,order,shifts=ops
     body={'branch_id':'ops-branch','service':'pickup'}
     opened=post('customer','/api/conversations',body,key='no-order-context-key')
     conv=opened['conversation']['id'];assert opened['conversation']['order_id'] is None
-    assert opened['conversation']['route']=='branch' and opened['conversation']['context_service']=='pickup'
+    assert 'route' not in opened['conversation'] and _stored_conversation_route(conv)=='branch' and opened['conversation']['context_service']=='pickup'
     assert post('customer','/api/conversations',body,key='no-order-context-key')==opened
     assert post('customer','/api/conversations',body)['conversation']['id']==conv
     post('customer','/api/conversations/'+conv+'/messages',{'text':'شكوى تخص التوصيل بدأت من الاستلام'})
@@ -486,13 +491,13 @@ def test_chat_without_order_requires_service_branch_and_customer_ownership(ops):
     post('customer','/api/conversations',{'branch_id':'ops-branch','service':'pickup','category':'product_inquiry'},status=422)
     with db.tx() as c:c.execute("INSERT INTO users(id,display_name,role,brand_id) VALUES('ops-customer2','Customer 2','customer','ops-brand')")
     opened=post('customer','/api/conversations',{'branch_id':'ops-branch','service':'delivery'})['conversation']
-    assert opened['route']=='delivery'
+    assert 'route' not in opened and _stored_conversation_route(opened['id'])=='delivery'
     assert actor('branch').get('/api/conversations/'+opened['id']+'/messages').status_code==404
     assert actor('customer2').get('/api/conversations/'+opened['id']+'/messages').status_code==404
     assert actor('customer2').get('/api/conversations').json()['conversations']==[]
     assert actor('manager').get('/api/conversations').json()['conversations'][0]['id']==opened['id']
     car=post('customer','/api/conversations',{'branch_id':'ops-branch','service':'car'})['conversation']
-    assert car['route']=='branch' and car['context_service']=='car'
+    assert 'route' not in car and _stored_conversation_route(car['id'])=='branch' and car['context_service']=='car'
 
 
 @pytest.mark.postgres
@@ -501,4 +506,4 @@ def test_order_linked_chat_context_still_uses_real_order(ops):
     post('customer','/api/conversations',{'order_id':oid,'branch_id':'ops-branch-other','service':'pickup'},status=422)
     post('customer','/api/conversations',{'order_id':oid,'service':'delivery'},status=422)
     row=post('customer','/api/conversations',{'order_id':oid})['conversation']
-    assert row['order_id']==oid and row['context_service']=='pickup' and row['route']=='branch'
+    assert row['order_id']==oid and row['context_service']=='pickup' and 'route' not in row and _stored_conversation_route(row['id'])=='branch'

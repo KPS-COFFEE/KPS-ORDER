@@ -69,7 +69,7 @@ def page(kind,brand,lang):
           'يعرض ملخص الطلب الأصناف والخدمة والفرع والإجمالي ورسوم التوصيل قبل التأكيد. الدفع عند الاستلام حسب الطريقة المختارة. يتحقق الخادم من التوفر ونطاق الخدمة.',
           'لطلب الإلغاء أو التعديل أو الاسترجاع أو التعويض استخدم «تواصل معنا». الطلب لا ينفذ إلغاءً أو صرفًا تلقائيًا؛ يراجع الفريق حالة التجهيز وحقوق المستهلك المطبقة وطبيعة الأغذية المحضرة. لا تحد هذه الشروط من حقوقك النظامية الإلزامية.'
         ])
-    sellers=' · '.join(escape(x.get('legal_name','')) for x in info['sellers'])
+    sellers='<br>'.join(escape(x.get('legal_name',''))+((' — VAT number: ' if en else ' — الرقم الضريبي: ')+escape(x['vat_number']) if x.get('vat_number') else '') for x in info['sellers'])
     labels={'controller_name':('Data controller','جهة التحكم بالبيانات'),'registration_number':('Registration','السجل التجاري'),'business_address':('Business address','عنوان المنشأة'),'contact':('Contact','التواصل'),'retention_policy':('Retention','الاحتفاظ'),'transfer_safeguards':('Transfer safeguards','ضمانات النقل')}
     fields=''.join(f'<p><b>{labels[k][0 if en else 1]}:</b> {escape(str(v))}</p>' for k,v in config.items() if k in labels and v)
     pending='' if info['complete'] else '<p class="notice">'+('Test version: some legal disclosures await owner confirmation before official launch.' if en else 'نسخة تجريبية: بعض الإفصاحات النظامية تنتظر توثيق المالك قبل الإطلاق الرسمي.')+'</p>'
