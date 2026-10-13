@@ -669,6 +669,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         owner.locator('[data-action=confirm-custody]').click()
         _submit_modal(owner,check=['received'])
         owner.locator('#navigation [data-page=shifts]').click()
+        owner.locator('[data-action=owner-shift-view][data-view=review]').click()
         owner.locator(f'[data-action=shift-detail][data-id="{manager_shift}"]').click()
         owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
         _capture(owner,'owner-final-manager-closure-approval')

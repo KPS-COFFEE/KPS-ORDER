@@ -295,6 +295,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         owner.locator('[data-action=confirm-custody]').click()
         _submit_modal(owner, check=['received'])
         owner.locator('#navigation [data-page=shifts]').click()
+        owner.locator('[data-action=owner-shift-view][data-view=review]').click()
         owner.locator(f'[data-action=shift-detail][data-id="{manager_shift}"]').click()
         owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
         _submit_modal(owner, check=['confirmed'])

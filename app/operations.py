@@ -1,11 +1,11 @@
 """Independent delivery operations. Monetary values are integer halalas."""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 import json as jsonlib
 from uuid import uuid4
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator
 from . import db, auth, service_hours, shift_vehicle, shift_order_counts, blind_closure
 
@@ -247,10 +247,33 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
 
 @router.get('/shifts')
 @router.get('/shifts/current')
-def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id: str | None = None):
+def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id: str | None = None,
+           owner_view: Literal['current','review','history'] | None = None,
+           search: str = '', start: date | None = None, end: date | None = None,
+           offset: int = Query(0, ge=0)):
     roles(user,'owner','delivery_manager','driver','delivery_staff')
+    if owner_view:
+        roles(user,'owner')
+        if order_id or task_id:fail(422,'لا يمكن الجمع بين عرض الشفتات واختيار سائق')
+        if start and end and start>end:fail(422,'تاريخ البداية بعد النهاية')
     with db.tx() as c:
-        if user['role']=='owner': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
+        page_meta={}
+        if owner_view:
+            # Filter before pagination so old unclosed shifts cannot disappear
+            # behind hundreds of newer historical records. Never change state.
+            statuses={'current':['open'],'review':['closing','submitted'],'history':['closed']}[owner_view]
+            where=['s.brand_id=%s','s.status=ANY(%s)'];params=[user['brand_id'],statuses]
+            if search.strip():
+                where.append('(strpos(lower(u.display_name),lower(%s))>0 OR strpos(lower(s.id),lower(%s))>0)')
+                params.extend([search.strip(),search.strip()])
+            day="COALESCE(s.delivery_operational_date, ((s.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '16 hours')::date)"
+            if start:where.append(day+'>=%s');params.append(start)
+            if end:where.append(day+'<=%s');params.append(end)
+            source=' FROM shifts s JOIN users u ON u.id=s.user_id WHERE '+' AND '.join(where)
+            total=c.execute('SELECT count(*) AS n'+source,params).fetchone()['n']
+            rows=c.execute('SELECT s.*,u.display_name'+source+' ORDER BY s.opened_at DESC,s.id LIMIT 50 OFFSET %s',params+[offset]).fetchall()
+            page_meta={'total':total,'offset':offset,'next_offset':offset+50 if offset+50<total else None}
+        elif user['role']=='owner': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
         elif user['role']=='delivery_manager': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s OR s.manager_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY opened_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
         elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
         else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
@@ -279,7 +302,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
                 eligible.append(row)
             rows=eligible
         shift_order_counts.attach(c,rows,user)
-        return safe(blind_closure.driver_view(user,{'shifts':rows,**people_data(c,user)},shift_money=True))
+        return safe(blind_closure.driver_view(user,{'shifts':rows,**people_data(c,user),**page_meta},shift_money=True))
 
 def driver_cash_policy(c,brand_id):
     row=c.execute('SELECT settings FROM brands WHERE id=%s',(brand_id,)).fetchone()
