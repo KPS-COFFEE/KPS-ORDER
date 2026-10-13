@@ -17,7 +17,7 @@ def test_accountant_reports_exports_case_and_bilingual_layout(live_app,chromium_
         expect(page.locator('#ac-results table')).to_be_visible()
         page.locator('#ac-filters [name=group]').select_option('driver_daily')
         page.locator('#ac-filters button[type=submit]').click()
-        expect(page.locator('#ac-results')).to_contain_text('الصحيح التراكمي')
+        expect(page.locator('#ac-results')).to_contain_text('العدد التراكمي للفترة')
         for fmt in ('pdf','xlsx'):
             with page.expect_download() as got:page.locator(f'[data-ac={fmt}]').click()
             download=got.value

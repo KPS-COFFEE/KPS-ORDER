@@ -352,7 +352,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         assert tracked.status == 200 and tracked.json()['order']['snapshot'] == order['snapshot']
         assert tracked.json()['order']['delivery_status'] == 'delivered'
         for (rid,role,fmt),contents in saved_report_files.items():
-            context = driver_context if role == 'driver' else contexts['delivery_manager'] if role == 'manager' else contexts['owner']
+            context = contexts['delivery_manager'] if role in ('driver','manager') else contexts['owner']
             response = context.request.get(base+'/api/reports/'+rid+'/renderings/v5/'+fmt)
             assert response.status == 200 and response.body() == contents
         customer.reload()

@@ -3,6 +3,7 @@ import pytest
 from app import db, operations
 from tests.test_operations import ops, delivered
 from tests.test_hardening_operations import request, principal, race
+from tests.test_driver_cash_handover import submit_cash
 
 pytestmark=pytest.mark.postgres
 
@@ -12,9 +13,10 @@ def test_submitted_receipt_and_approval_once(ops,counted,transfer_exists):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':counted,'handover_halalas':counted})
     if transfer_exists:
-        post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':counted,'reference':'TEST cash','closure':True})
+        submit_cash(post,driver,manager,counted)
+    else:
+        post('manager',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':counted,'handover_halalas':counted,'exception_reason':'TEST manager counted before receipt'})
     body={'received_halalas':counted,'confirmed':True,'exception_reason':'TEST actual discrepancy' if counted!=1000 else ''}
     url=f'/api/shifts/{driver}/driver-close'
     if counted!=1000:post('manager',url,{**body,'exception_reason':''},status=422)
@@ -34,7 +36,7 @@ def test_delegated_close_and_notification(ops,status):
     actor,post,order,shifts=ops
     manager,driver=shifts()
     if status=='closing':post('driver',f'/api/shifts/{driver}/closing')
-    body={'counted_halalas':0,'received_halalas':0,'confirmed':True,'exception_reason':'TEST phone unavailable'}
+    body={'terminal_total_halalas':0,'counted_halalas':0,'received_halalas':0,'confirmed':True,'exception_reason':'TEST phone unavailable'}
     url=f'/api/shifts/{driver}/driver-close'
     post('manager',url,{**body,'exception_reason':''},status=422)
     post('driver',url,body,status=403)
@@ -65,7 +67,7 @@ def test_different_keys_race_cannot_repeat_financial_effects(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts()
     user=principal('manager')
-    body=operations.DriverClose(counted_halalas=0,received_halalas=0,confirmed=True,exception_reason='TEST unavailable')
+    body=operations.DriverClose(terminal_total_halalas=0,counted_halalas=0,received_halalas=0,confirmed=True,exception_reason='TEST unavailable')
     results=race([
         lambda:operations.simple_driver_close(driver,body,request('TEST-race-a'),user),
         lambda:operations.simple_driver_close(driver,body,request('TEST-race-b'),user),
@@ -79,8 +81,7 @@ def test_failed_approval_does_not_confirm_or_move_cash(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':900,'handover_halalas':900})
-    tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':900,'reference':'TEST atomic receipt','closure':True})['transfer']['id']
+    _,tid=submit_cash(post,driver,manager,900,reference='TEST atomic receipt')
     post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':900,'confirmed':True},status=422)
     with db.tx() as c:
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='submitted'
@@ -92,7 +93,8 @@ def test_retained_cash_requires_explicit_reason_and_keeps_count(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200})
+    post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200},status=422)
+    post('manager',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200,'exception_reason':'TEST authorized manager retained count'})
     url=f'/api/shifts/{driver}/driver-close'
     post('manager',url,{'received_halalas':800,'confirmed':True},status=422)
     post('manager',url,{'received_halalas':800,'counted_halalas':800,'confirmed':True,'exception_reason':'TEST retained'},status=422)
@@ -117,14 +119,14 @@ def test_owner_monitoring_does_not_claim_manager_receipt(ops,submitted):
     manager,driver=shifts()
     if submitted:
         post('driver',f'/api/shifts/{driver}/closing')
-        post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
-    body={'received_halalas':0,'counted_halalas':None if submitted else 0,
+        submit_cash(post,driver,manager)
+    body={'terminal_total_halalas':None if submitted else 0,'received_halalas':0,'counted_halalas':None if submitted else 0,
           'confirmed':True,'exception_reason':'TEST unavailable' if not submitted else ''}
     result=post('owner',f'/api/shifts/{driver}/driver-close',body,status=403)
     assert result['detail']['code']=='DRIVER_CLOSE_MANAGER_ONLY'
     with db.tx() as c:
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']==('submitted' if submitted else 'open')
-        assert c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['n']==0
+        assert c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['n']==int(submitted)
     post('manager',f'/api/shifts/{driver}/driver-close',body)
     with db.tx() as c:
         assert c.execute('SELECT status,approved_by FROM shifts WHERE id=%s',(driver,)).fetchone()=={'status':'closed','approved_by':'ops-manager'}
@@ -133,8 +135,7 @@ def test_legacy_other_recipient_is_explained_without_moving_cash(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
-    tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':0,'reference':'TEST legacy recipient','closure':True})['transfer']['id']
+    _,tid=submit_cash(post,driver,manager,reference='TEST legacy recipient')
     # Synthetic legacy record only; the runtime never rewrites a recipient.
     with db.tx() as c:c.execute("UPDATE custody_transfers SET recipient_user_id='ops-owner' WHERE id=%s",(tid,))
     result=post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':0,'confirmed':True},status=409)

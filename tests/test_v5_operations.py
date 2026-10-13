@@ -74,9 +74,8 @@ def test_dashboard_uses_frozen_province_policy_and_rejected_orders_are_excluded(
     assert frozen['valid']==1 and frozen['excluded']==1 and frozen['average_seconds']==1801
     assert dash['delivery_time']['delayed']==1 and dash['delivery_time']['valid']==1
     assert call('driver','POST','/api/shifts/'+driver+'/closing').status_code==200
-    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'counted_halalas':1200,'handover_halalas':1200,'vehicle_inspection':synthetic_vehicle_inspection(1025)}).status_code==200
-    transfer=call('driver','POST','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,
-                  'amount_halalas':1200,'reference':'TEST-policy-bag','closure':True}).json()['transfer']['id']
+    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':1200,'handover_halalas':1200,'vehicle_inspection':synthetic_vehicle_inspection(1025),'handover':{'recipient_user_id':'v5-manager','to_shift_id':manager,'reference':'TEST-policy-bag'}}).status_code==200
+    with db.tx() as c:transfer=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchone()['id']
     assert call('manager','POST','/api/custody/'+transfer+'/confirm').status_code==200
     approved=call('manager','POST','/api/shifts/'+driver+'/approve')
     assert approved.status_code==200,approved.text
@@ -266,7 +265,8 @@ def test_multi_branch_one_shift_revocation_preserves_task_custody_and_draft(v5):
         assert c.execute('SELECT count(*) n FROM driver_tasks WHERE driver_id=%s',('v5-driver',)).fetchone()['n']==1
         assert c.execute("SELECT count(*) n FROM shifts WHERE user_id='v5-driver' AND status<>'closed'").fetchone()['n']==1
     draft=call('driver','POST','/api/shifts/'+driver+'/draft',{'counted_halalas':100,'handover_halalas':80,'notes':'TEST draft'});assert draft.status_code==200,draft.text
-    assert draft.json()['draft']['retained_halalas']==20 and draft.json()['draft']['difference_halalas']==100
+    assert draft.json()['draft']['retained_halalas']==20 and 'difference_halalas' not in draft.json()['draft']
+    with db.tx() as c:assert c.execute('SELECT draft FROM closure_drafts WHERE shift_id=%s',(driver,)).fetchone()['draft']['difference_halalas']==100
     db.migrate()
     assert actor('driver').get('/api/shifts/'+driver+'/draft').json()['draft']['notes']=='TEST draft'
     assert call('manager','POST','/api/shifts/'+driver+'/draft',{'counted_halalas':0,'handover_halalas':0}).status_code==403
@@ -315,8 +315,8 @@ def test_zero_task_driver_shift_still_blocks_manager_until_approved(v5):
     assert call('manager','POST','/api/shifts/'+manager+'/closing').status_code==200
     assert call('manager','POST','/api/shifts/'+manager+'/submit',{'counted_halalas':0,'handover_halalas':0}).status_code==409
     assert call('driver','POST','/api/shifts/'+driver+'/closing').status_code==200
-    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':synthetic_vehicle_inspection()}).status_code==200
-    tid=call('driver','POST','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':0,'reference':'TEST-empty','closure':True}).json()['transfer']['id']
+    assert call('driver','POST','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':synthetic_vehicle_inspection(),'handover':{'recipient_user_id':'v5-manager','to_shift_id':manager,'reference':'TEST-empty'}}).status_code==200
+    with db.tx() as c:tid=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchone()['id']
     assert call('manager','POST','/api/custody/'+tid+'/confirm').status_code==200
     approved=call('manager','POST','/api/shifts/'+driver+'/approve');assert approved.status_code==200,approved.text
     assert call('manager','POST','/api/shifts/'+manager+'/submit',{'counted_halalas':0,'handover_halalas':0}).status_code==200
