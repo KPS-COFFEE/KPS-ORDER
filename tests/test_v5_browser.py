@@ -239,7 +239,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         expect(manager.locator('#modal-body')).to_contain_text('ضيف — الجوال غير موثق')
         manager.locator(f'[data-action=assign][data-id="{order_id}"]').click()
         _submit_modal(manager, {'driver_shift_id': driver_shift})
-        driver.locator('[data-page=tasks]').click()
+        driver.locator('#navigation [data-page=tasks]').click()
         with driver.expect_response(lambda response:response.request.method=='POST' and response.url.endswith('/transition')) as acceptance:
             driver.locator('[data-action=task-transition][data-status=accepted]').click()
         assert acceptance.value.status==200,acceptance.value.text()
@@ -255,7 +255,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             assert handover.value.status==200,handover.value.text()
             expect(branch.locator(f'#modal-body [data-action=prepare][data-status={status}]')).not_to_be_visible()
             _close_detail(branch)
-        driver.locator('[data-page=tasks]').click()
+        driver.locator('#navigation [data-page=tasks]').click()
         driver.locator('[data-action=task-transition][data-status=picked_up]').click()
         _attach_task_photo(driver)
         _submit_modal(driver)
@@ -267,16 +267,14 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
-        driver.locator('#closure-form [name=counted]').fill(f'{total/100:.2f}')
-        driver.locator('#closure-form [name=handover]').fill(f'{total/100:.2f}')
-        driver.locator('#closure-form [name=reference]').fill('V5-SYNTHETIC-DRIVER-BAG')
-        driver.locator('#closure-form [name=recipient_user_id]').select_option(users['delivery_manager']['id'])
-        driver.locator('#save-closure-draft').click()
+        driver.locator('#blind-closure-form [name=counted]').fill(f'{total/100:.2f}')
+        driver.locator('#blind-closure-form [name=terminal_total]').fill('0')
+        driver.locator('#save-blind-closure').click()
         expect(driver.locator('#closure-draft-state')).to_contain_text('محفوظة')
         _capture(driver, 'v5-driver-compact-saved-draft')
         _close_detail(driver)
         driver.locator(f'.shift-card [data-action=shift-detail][data-id="{driver_shift}"]').click()
-        expect(driver.locator('#closure-form [name=counted]')).to_have_value(f'{total/100:.2f}')
+        expect(driver.locator('#blind-closure-form [name=counted]')).to_have_value(f'{total/100:.2f}')
         _fill_closure_inspection(driver)
         _submit_modal(driver, check=['confirm_closure'], driver_end=True)
         manager.locator('[data-page=custody]').click()
@@ -314,7 +312,8 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             final_reports=conn.execute('SELECT id,kind,snapshot FROM closure_reports WHERE shift_id IN (%s,%s)',(driver_shift,manager_shift)).fetchall()
         saved_report_files = {}
         for report in final_reports:
-            reviewer=driver_context if report['kind']=='driver' else contexts['delivery_manager']
+            assert driver_context.request.get(v5_live_app+'/api/reports/'+report['id']).status==404
+            reviewer=contexts['delivery_manager']
             path=base+'/api/reports/'+report['id']+'/renderings/v5/'
             compact=reviewer.request.get(path+'pdf')
             assert compact.status==200 and compact.body().startswith(b'%PDF')

@@ -27,7 +27,8 @@ def test_inspection_required_readings_refuel_replay_and_report(ops):
     post('other',path,{'liters':5,'odometer_km':1010},status=404)
     delivered(post,order,driver)
     post('driver','/api/shifts/'+driver+'/closing')
-    close={'counted_halalas':1000,'handover_halalas':1000}
+    close={'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':1000,
+           'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST-END'}}
     result=actor('driver').post('/api/shifts/'+driver+'/submit',json=close,headers={'Idempotency-Key':uuid4().hex})
     assert result.status_code==422
     post('driver','/api/shifts/'+driver+'/submit',{**close,'vehicle_inspection':inspection(1008)},status=422)
@@ -55,7 +56,7 @@ def test_inspection_validation_and_legacy_shift_preservation(ops):
     with db.tx() as c:
         c.execute("UPDATE shifts SET vehicle_log='{}' WHERE id=%s",(driver,))
     post('driver','/api/shifts/'+driver+'/closing')
-    post('driver','/api/shifts/'+driver+'/submit',{'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':inspection(2000,25)})
+    post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':inspection(2000,25),'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST-LEGACY'}})
     detail=actor('driver').get('/api/shifts/'+driver).json()
     assert detail['vehicle_summary']['distance_km'] is None
     assert 'start' not in detail['shift']['vehicle_log']
@@ -107,8 +108,8 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         expect(guide_close).to_have_count(1)
         (guide_close if language=='ar' else card_close).click()
         form=fill_check(1025,50)
-        form.locator('[name=reference]').fill('TEST-ZERO-CASH')
-        form.locator('[name=recipient_user_id]').select_option(manager['id'])
+        form.locator('[name=counted]').fill('0')
+        form.locator('[name=terminal_total]').fill('0')
         form.locator('[name=confirm_closure]').check()
         form.locator('button[type=submit]').click()
         _acknowledge_driver_end(page, language)

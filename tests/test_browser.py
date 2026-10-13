@@ -534,7 +534,7 @@ def _inspection_payload(km=1000,fuel=75):
 def _fill_closure_inspection(page,km=1025,fuel=50):
     """Use the driver's required ending-inspection controls before submission."""
     from app.shift_vehicle import CHECKS
-    form=page.locator('#closure-form')
+    form=page.locator('#blind-closure-form')
     form.locator('[name=inspection_odometer]').fill(str(km))
     form.locator('[name=inspection_fuel]').fill(str(fuel))
     for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
@@ -628,15 +628,14 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
 
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
-        expect(driver.locator('#closure-form')).to_be_visible()
-        expect(driver.locator('#modal-body')).to_contain_text('الرصيد المتوقع')
-        expect(driver.locator('#modal-body')).to_contain_text('النقد المعدود')
-        driver.locator('#closure-form input[name=counted]').fill('10.00')
-        driver.locator('#closure-form input[name=handover]').fill('10.00')
-        driver.locator('#closure-form input[name=reference]').fill('BROWSER-TEST-DRIVER-BAG')
-        driver.locator('#closure-form select[name=recipient_user_id]').select_option(users['manager']['id'])
+        expect(driver.locator('#blind-closure-form')).to_be_visible()
+        expect(driver.locator('#modal-body')).not_to_contain_text('الرصيد المتوقع')
+        expect(driver.locator('#modal-body')).to_contain_text('الكاش الموجود معك')
+        driver.locator('#blind-closure-form input[name=counted]').fill('10.00')
+        driver.locator('#blind-closure-form input[name=terminal_total]').fill('0')
+        expect(driver.locator('#blind-closure-form [name=recipient_user_id]')).to_have_count(0)
         _fill_closure_inspection(driver)
-        expect(driver.locator('#closure-difference')).to_contain_text('٠')
+        expect(driver.locator('#closure-difference')).to_have_count(0)
         _capture(driver,'driver-counted-cash-closure-review')
         _submit_modal(driver,check=['confirm_closure'],driver_end=True)
 
@@ -677,7 +676,9 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
 
         # Both reports are really generated after committed, approved closures.
         saved={}
-        for kind,who,shift in [('driver','driver',driver_shift),('manager','manager',manager_shift)]:
+        expect(driver.locator('#navigation [data-page=reports]')).to_have_count(0)
+        assert contexts['driver'].request.get(live_app+'/api/reports').json()['reports']==[]
+        for kind,who,shift in [('driver','manager',driver_shift),('manager','manager',manager_shift)]:
             actor=pages[who]
             actor.locator('#navigation [data-page=reports]').click()
             report_rows=contexts[who].request.get(live_app+'/api/reports').json()['reports']

@@ -4,6 +4,17 @@ from app import db
 from tests.test_operations import ops, delivered
 
 
+def submit_cash(post, driver, manager, counted=0, *, branch=False, reference='TEST-BAG'):
+    receiver = ({'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch'} if branch
+                else {'recipient_user_id':'ops-manager','to_shift_id':manager})
+    result=post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,
+        'counted_halalas':counted,'handover_halalas':counted,'handover':{**receiver,'reference':reference}})
+    with db.tx() as c:
+        transfers=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchall()
+        assert len(transfers)==1
+    return result,transfers[0]['id']
+
+
 @pytest.mark.postgres
 @pytest.mark.parametrize('city',['حفر الباطن','رفحاء','الدمام'])
 def test_all_cities_require_linked_manager_receipt_and_scope(ops,city):
@@ -11,12 +22,12 @@ def test_all_cities_require_linked_manager_receipt_and_scope(ops,city):
     with db.tx() as c:c.execute('UPDATE branches SET city=%s WHERE id=%s',(city,'ops-branch'))
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
+    _,tid=submit_cash(post,driver,manager)
     branch_body={'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'REJECT BRANCH','closure':True}
     post('driver','/api/custody',branch_body,status=403)
     body={'from_shift_id':driver,'recipient_user_id':'ops-manager','to_shift_id':manager,'amount_halalas':0,'reference':'MANAGER ALL CITIES','closure':True}
     post('driver','/api/custody',{**body,'recipient_user_id':'ops-branch'},status=422)
-    tid=post('driver','/api/custody',body)['transfer']['id']
+    post('driver','/api/custody',body,status=409)
     post('branch',f'/api/custody/{tid}/confirm',status=404)
     post('manager',f'/api/shifts/{driver}/approve',status=409)
     with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-manager'")
@@ -36,11 +47,12 @@ def test_manager_approves_driver_shortage_match_surplus_after_receipt(ops,counte
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
     post('driver',f'/api/shifts/{driver}/closing')
-    sub=post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':counted,'handover_halalas':counted})['submission']
+    submitted,tid=submit_cash(post,driver,manager,counted)
+    assert 'difference_halalas' not in submitted['submission']
+    sub=actor('manager').get(f'/api/shifts/{driver}').json()['shift']['submission']
     assert sub['difference_halalas']==counted-1000
     reason={'exception_reason':'Actual count reviewed'} if counted!=1000 else {}
     post('manager',f'/api/shifts/{driver}/approve',reason,status=409)
-    tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':counted,'reference':'BAG-001','closure':True})['transfer']['id']
     post('driver',f'/api/custody/{tid}/confirm',status=404)
     post('manager',f'/api/custody/{tid}/confirm')
     if counted!=1000:post('manager',f'/api/shifts/{driver}/approve',{},status=422)
@@ -58,10 +70,10 @@ def test_remote_driver_bag_requires_real_branch_account_not_manager(ops):
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     manager,driver=shifts();delivered(post,order,driver)
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':1000,'handover_halalas':1000})
+    _,tid=submit_cash(post,driver,manager,1000,branch=True,reference='RAF-BAG-1')
     body={'from_shift_id':driver,'recipient_user_id':'ops-branch','amount_halalas':1000,'reference':'RAF-BAG-1','closure':True,'receiving_branch_id':'ops-branch'}
     post('driver','/api/custody',{**body,'to_shift_id':manager},status=403)
-    tid=post('driver','/api/custody',body)['transfer']['id']
+    post('driver','/api/custody',body,status=409)
     assert actor('branch').get('/api/custody').json()['transfers'][0]['id']==tid
     post('manager',f'/api/custody/{tid}/confirm',status=404)
     post('other',f'/api/custody/{tid}/confirm',status=404)
@@ -80,11 +92,11 @@ def test_hafar_cannot_use_branch_bag_and_revoked_branch_cannot_confirm(ops):
     with db.tx() as c:c.execute("UPDATE brands SET settings=settings || '{\"driver_cash_receipt_policy\":\"branch_by_city\"}'::jsonb WHERE id='ops-brand'")
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
     body={'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'ZERO','closure':True}
-    post('driver','/api/custody',body,status=403)
+    from app.shift_vehicle import CHECKS
+    post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1025,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS}},'handover':{'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','reference':'ZERO'}},status=403)
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
-    tid=post('driver','/api/custody',body)['transfer']['id']
+    _,tid=submit_cash(post,driver,manager,branch=True,reference='ZERO')
     with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-branch'")
     post('branch',f'/api/custody/{tid}/confirm',status=403)
 
@@ -102,10 +114,10 @@ def test_terminal_manager_only_frozen_at_submission_and_in_report(ops):
     assert actor('driver').get(path).json()['payment_terminal']['terminal_id']=='TID-001'
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
-    sub=post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})['submission']
+    submitted,tid=submit_cash(post,driver,manager)
+    sub=submitted['submission']
     assert sub['payment_terminal']['terminal_id']=='TID-001'
     put('manager',{**body,'terminal_id':'TID-002','reason':'Replacement'})
-    tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':0,'reference':'ZERO','closure':True})['transfer']['id']
     post('manager',f'/api/custody/{tid}/confirm')
     rid=post('manager',f'/api/shifts/{driver}/approve')['report_id']
     page=actor('manager').get(f'/api/reports/{rid}/renderings/v5/print')
@@ -121,8 +133,7 @@ def test_branch_receipt_replay_cannot_bypass_revoked_scope(ops):
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
-    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
-    tid=post('driver','/api/custody',{'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'REPLAY-BAG','closure':True})['transfer']['id']
+    _,tid=submit_cash(post,driver,manager,branch=True,reference='REPLAY-BAG')
     post('branch',f'/api/custody/{tid}/confirm',key='receipt-once')
     with db.tx() as c:
         receipt=c.execute('SELECT confirmed_by FROM custody_transfers WHERE id=%s',(tid,)).fetchone()
@@ -137,7 +148,7 @@ def test_delegated_closure_notifies_owner_and_preserves_receipt_gate(ops,counted
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
     post('manager',f'/api/shifts/{driver}/closing')
-    body={'counted_halalas':counted,'handover_halalas':counted-retained,'retained_halalas':retained,
+    body={'terminal_total_halalas':0,'counted_halalas':counted,'handover_halalas':counted-retained,'retained_halalas':retained,
           'exception_reason':'TEST driver unavailable',
           'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST DELEGATED'}}
     # Raw client: no invented vehicle inspection from fixture.
@@ -183,7 +194,7 @@ def test_atomic_driver_submission_rolls_back_bad_handover_and_routes_actual_rece
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
     from app.shift_vehicle import CHECKS
-    body={'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS}},
+    body={'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS}},
           'handover':{'recipient_user_id':'ops-other','reference':'TEST BAD'}}
     post('driver',f'/api/shifts/{driver}/submit',body,status=422)
     with db.tx() as c:

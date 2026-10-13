@@ -244,14 +244,16 @@ def test_discrepancy_partial_handover_retained_carryover(ops):
     partial=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':400,'reference':'PARTIAL'})['transfer']['id']
     post('manager','/api/custody/'+partial+'/confirm')
     post('driver','/api/shifts/'+driver+'/closing')
-    sub=post('driver','/api/shifts/'+driver+'/submit',{'counted_halalas':500,'handover_halalas':400,'retained_halalas':100})
+    post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':500,'handover_halalas':400,'retained_halalas':100},status=422)
+    sub=post('manager','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':500,'handover_halalas':400,'retained_halalas':100,'exception_reason':'TEST manager witnessed retained cash'})
     assert sub['submission']['expected_halalas']==600 and sub['submission']['difference_halalas']==-100
     tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':400,'reference':'FINAL','closure':True})['transfer']['id']
     post('manager','/api/custody/'+tid+'/confirm')
     post('manager','/api/shifts/'+driver+'/approve',status=422)
     post('owner','/api/shifts/'+driver+'/approve',{'exception_reason':'TEST: نقص معتمد مع إبقاء عهدة 1 ريال'})
     nxt=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager,'branch_ids':['ops-branch']})['shift']
-    assert nxt['opening_halalas']==100
+    assert 'opening_halalas' not in nxt
+    assert actor('manager').get('/api/shifts/'+nxt['id']).json()['shift']['opening_halalas']==100
     with db.tx() as c:
         carry=c.execute('SELECT * FROM retained_carryovers WHERE from_shift_id=%s',(driver,)).fetchone()
         assert carry['to_shift_id']==nxt['id']
@@ -281,7 +283,9 @@ def test_cash_card_pickup_does_not_enter_delivery_custody(ops):
     post('branch','/api/orders/'+oid+'/collect',{'method':'card','amount_halalas':1000,'reference':''},status=422)
     post('branch','/api/orders/'+oid+'/collect',{'method':'card','amount_halalas':1000,'reference':'CARD-TEST'})
     detail=actor('driver').get('/api/shifts/'+driver).json()
-    assert detail['expected_halalas']==0 and detail['collections']==[]
+    assert 'expected_halalas' not in detail and 'collections' not in detail
+    review=actor('manager').get('/api/shifts/'+driver).json()
+    assert review['expected_halalas']==0 and review['collections']==[]
 
 
 @pytest.mark.postgres
@@ -365,8 +369,8 @@ def test_task_transfer_across_manager_reports_does_not_duplicate_completed_sale(
     snap=actor('owner').get('/api/reports/'+source['report_id']).json()['report']['snapshot']
     assert snap['summary']['completed_orders']==0 and snap['summary']['gross_completed_halalas']==0
     post('driver2','/api/shifts/'+driver2+'/closing')
-    post('driver2','/api/shifts/'+driver2+'/submit',{'counted_halalas':0,'handover_halalas':0})
-    tid=post('driver2','/api/custody',{'from_shift_id':driver2,'to_shift_id':manager2,'amount_halalas':0,'reference':'ZERO-CARD','closure':True})['transfer']['id']
+    post('driver2','/api/shifts/'+driver2+'/submit',{'terminal_total_halalas':1000,'counted_halalas':0,'handover_halalas':0,'handover':{'recipient_user_id':'ops-manager2','to_shift_id':manager2,'reference':'ZERO-CARD'}})
+    with db.tx() as c:tid=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver2,)).fetchone()['id']
     post('manager2','/api/custody/'+tid+'/confirm')
     dest=post('manager2','/api/shifts/'+driver2+'/approve')
     target=actor('owner').get('/api/reports/'+dest['report_id']).json()['report']['snapshot']

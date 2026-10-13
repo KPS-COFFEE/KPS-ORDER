@@ -99,6 +99,8 @@ def test_delivery_split_only_cash_enters_custody(v5):
         c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s", (oid,))
     assert call('driver', 'POST', f'/api/orders/{oid}/collect', data).status_code == 200
     shift = call('driver', 'GET', f'/api/shifts/{driver}').json()
+    assert 'expected_halalas' not in shift and 'collections' not in shift
+    shift = call('manager', 'GET', f'/api/shifts/{driver}').json()
     assert shift['expected_halalas'] == 400
     assert len(shift['collections']) == 2
     dashboard = call('owner', 'GET', '/api/dashboard').json()
