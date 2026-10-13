@@ -23,7 +23,7 @@ from . import auth, db
 
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
-TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'assets', 'banners',
+TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
           'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports',
           'report_corrections', 'conversations', 'chat_attachments',
@@ -60,7 +60,7 @@ def _encode(value) -> bytes:
 def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
-    direct = {'branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',

@@ -171,3 +171,27 @@ def test_owned_guest_order_links_without_changing_immutable_snapshot(required,mo
     assert required.get('/api/orders/'+oid).status_code==200
     assert required.get('/api/orders').json()['orders'][0]['id']==oid
     with db.tx() as c:assert c.execute('SELECT customer_id,snapshot,customer FROM orders WHERE id=%s',(oid,)).fetchone()==before
+
+@pytest.mark.postgres
+def test_full_restore_preserves_verified_addresses_and_owned_identity_links(required,monkeypatch,database,tmp_path):
+    import os,uuid,psycopg
+    from psycopg import sql
+    from app.exports import build_archive,restore_archive,verify_archive
+    verify(required,monkeypatch)
+    guest=_make_user()
+    owner=required.get('/api/session').json()['user']['id']
+    with db.tx() as c:
+        c.execute("INSERT INTO customer_addresses(id,customer_id,brand_id,label,address) VALUES('TEST-restore-address',%s,'kps','TEST','TEST restored address')",(owner,))
+        c.execute("INSERT INTO customer_identity_links(source_id,customer_id,brand_id) VALUES(%s,%s,'kps')",(guest['id'],owner))
+        data,manifest=build_archive(c,full=True)
+    assert manifest['counts']['customer_addresses']==1 and manifest['counts']['customer_identity_links']==1
+    schema='kps_restore_'+uuid.uuid4().hex
+    target=os.environ['TEST_DATABASE_URL']
+    try:
+        result=restore_archive(data,target_url=target,target_schema=schema,asset_directory=tmp_path/'restored-assets')
+        assert result['verified']
+        with psycopg.connect(target) as c:
+            assert c.execute(sql.SQL('SELECT address FROM {}.customer_addresses').format(sql.Identifier(schema))).fetchone()[0]=='TEST restored address'
+            assert c.execute(sql.SQL('SELECT source_id,customer_id FROM {}.customer_identity_links').format(sql.Identifier(schema))).fetchone()==(guest['id'],owner)
+    finally:
+        with psycopg.connect(target,autocommit=True) as c:c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))

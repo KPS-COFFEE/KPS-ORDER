@@ -165,7 +165,7 @@ def send(cid:str,body:Message,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
             v=conversation(c,user,cid,True)
-            if v['route']=='branch' and route_for(v['category'],v['context_service'],body.text)=='delivery':
+            if v['route']=='branch' and auth.customer_phone_required(c,user['brand_id']) and route_for(v['category'],v['context_service'],body.text)=='delivery':
                 c.execute("INSERT INTO conversation_transfers(id,conversation_id,from_route,to_route,reason,actor_id) VALUES(%s,%s,'branch','delivery',%s,%s)",(uid(),cid,'تصنيف تلقائي لمشكلة توصيل',user['id']))
                 c.execute("UPDATE conversations SET route='delivery',assignee_id=NULL WHERE id=%s",(cid,))
             if not body.text.strip() and not body.attachment_id:fail(422,'الرسالة فارغة')

@@ -278,7 +278,7 @@ def migrate():
                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
 
 
-PRESERVED_TABLES = ('users', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
+PRESERVED_TABLES = ('users', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
                     'orders', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'collections', 'refunds',
                     'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
                     'closure_reports', 'report_corrections', 'report_renderings', 'report_notifications',
