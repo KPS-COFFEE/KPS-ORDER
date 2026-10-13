@@ -131,3 +131,30 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 .employee-permission-form{display:grid;gap:1rem}
 [data-permission-hidden=true]{display:none!important}
 @media(max-width:480px){.employee-permission-picker{padding:.7rem}.permission-option{gap:.4rem;padding:.55rem .4rem;grid-template-columns:minmax(0,1fr) 2.8rem 3.6rem}.permission-option>span:first-child{font-size:.85rem}}
+
+
+/* Branch administration follows the same clear card structure as delivery tasks. */
+.branch-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;align-items:stretch}
+.branch-card{display:flex;flex-direction:column;gap:16px;padding:18px;border:1px solid #c7d2cc;border-block-start:4px solid var(--accent);border-radius:16px;box-shadow:0 3px 12px rgb(29 40 38 / 7%);color:var(--ink)}
+.branch-card-head{display:grid;gap:10px;padding-block-end:14px;border-block-end:1px solid var(--line)}
+.branch-card-head h3{margin:0 0 6px;font-size:17px;line-height:1.6;overflow-wrap:anywhere}
+.branch-card-head p{font-size:13px;line-height:1.5}
+.branch-card-head>.pill{justify-self:start;font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px}
+.branch-services{display:grid;gap:0;margin:0;padding:4px 12px;border:1px solid var(--line);border-radius:10px;background:#f5f7f5}
+.branch-services>div{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0}
+.branch-services>div+div{border-block-start:1px solid var(--line)}
+.branch-services dt{font-size:13px;line-height:1.5}
+.branch-services dd{margin:0;flex-shrink:0}
+.branch-services .pill{min-width:58px;justify-content:center;font-size:11px}
+.branch-card .notice{font-size:12px}
+.branch-card-actions{display:grid;gap:8px;margin-block-start:auto}
+.branch-card-actions>button{width:100%}
+.branch-card-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.branch-card-tools>[data-action="branch-printers"]{grid-column:1/-1}
+.branch-card-actions button{min-height:44px;padding:8px 10px;font-size:13px;line-height:1.5;white-space:normal;max-width:100%}
+.branch-card-tools>[data-action="pause-delivery-branch"]{color:var(--bad);border-color:#e2c9c9}
+@media(max-width:1100px){.branch-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.branch-grid{grid-template-columns:minmax(0,1fr);gap:14px}.branch-card{padding:16px;gap:14px}}
+.branch-card-tools:empty{display:none}
+.branch-card-tools>[data-action="branch-printers"]{display:flex;align-items:center;justify-content:center;gap:8px}
+.branch-card-tools svg{flex-shrink:0}
