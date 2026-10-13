@@ -33,4 +33,4 @@ EXPOSE 10000
 # Core lifespan runs versioned, advisory-locked additive migrations. exec
 # delivers shutdown signals directly to Uvicorn for graceful transaction exit.
 # Two web processes share this one service, not two paid Render instances.
-CMD ["/bin/sh", "-c", "exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 2"]
+CMD ["/bin/sh", "-c", "exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 2 --timeout-keep-alive 15"]

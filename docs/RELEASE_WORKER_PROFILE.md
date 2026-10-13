@@ -6,6 +6,21 @@ service, or a background job worker. PostgreSQL, durable idempotency keys,
 branch receipt counters and existing transactional outboxes remain shared.
 Each process owns its bounded pool (maximum 20 connections each).
 
+Both Docker and the isolated harness keep idle HTTP connections for 15 seconds,
+instead of closing them at the HTTP client's same five-second expiry boundary.
+This changes **idle socket lifetime only**, not the latency acceptance limits,
+request timeout, statement timeout, retry allowance or error accounting. A
+real-socket regression verifies reuse across the old five-second boundary. It
+does not, by itself, prove the cause of every observed transport reset; both
+complete load gates still have to pass with all raw failures counted.
+
+The HTTP security middleware now applies the same checks and response headers
+directly at the ASGI boundary, without per-request relay tasks and body-stream
+copies. Cookie multiplicity, streaming, Origin rejection, body-length checks,
+sanitized errors, cache policies and response monitoring have explicit contract
+tests. Frequently used order routes precede the disjoint catalog/auth routers;
+their original route and authorization dependency objects are preserved.
+
 ## Acceptance remains unchanged
 
 Both independent load jobs run the actual two-worker release topology against

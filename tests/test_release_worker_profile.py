@@ -20,6 +20,7 @@ def test_release_load_and_docker_use_the_same_two_web_workers():
     args = shlex.split(command)
     assert args[:5] == ['exec', 'python', '-m', 'uvicorn', 'app.main:app']
     assert int(args[args.index('--workers') + 1]) == hardening_load.RELEASE_WORKERS == 2
+    assert int(args[args.index('--timeout-keep-alive') + 1]) == hardening_load.RELEASE_KEEPALIVE_SECONDS == 15
     assert inspect.signature(hardening_load.start_app).parameters['workers'].default == 2
     assert args[args.index('--host') + 1] == '0.0.0.0'
     assert args[args.index('--port') + 1] == '${PORT:-10000}'
@@ -54,3 +55,56 @@ def test_release_cli_defaults_keep_the_original_acceptance_thresholds(monkeypatc
     monkeypatch.setattr(hardening_load.argparse.ArgumentParser, 'parse_args', checked)
     with pytest.raises(CheckedWithoutDatabase):
         hardening_load.main()
+
+
+def test_keepalive_preserves_idle_socket_across_old_five_second_boundary():
+    """Real HTTP sockets, no DB: distinguish idle lifetime from request latency."""
+    import contextlib
+    import http.client
+    import select
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    async def app(scope, receive, send):
+        await send({'type': 'http.response.start', 'status': 200,
+                    'headers': [(b'content-length', b'2')]})
+        await send({'type': 'http.response.body', 'body': b'OK'})
+
+    @contextlib.contextmanager
+    def server(timeout):
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        runtime = uvicorn.Server(uvicorn.Config(app, lifespan='off', log_config=None,
+            access_log=False, timeout_keep_alive=timeout))
+        thread = threading.Thread(target=runtime.run, kwargs={'sockets': [listener]}, daemon=True)
+        thread.start()
+        client = http.client.HTTPConnection('127.0.0.1', listener.getsockname()[1], timeout=5)
+        try:
+            deadline = time.monotonic() + 5
+            while not runtime.started and thread.is_alive() and time.monotonic() < deadline:
+                time.sleep(.01)
+            assert runtime.started
+            client.request('GET', '/')
+            assert client.getresponse().read() == b'OK'
+            yield client
+        finally:
+            client.close()
+            runtime.should_exit = True
+            thread.join(5)
+            listener.close()
+            assert not thread.is_alive()
+
+    with server(5) as old, server(hardening_load.RELEASE_KEEPALIVE_SECONDS) as release:
+        old_socket, release_socket = old.sock, release.sock
+        # The old server closes while the checkout's other request may still be
+        # outstanding. The release keeps this connection available for reuse.
+        assert select.select([old_socket], [], [], 7)[0] == [old_socket]
+        assert old_socket.recv(1, socket.MSG_PEEK) == b''
+        assert not select.select([release_socket], [], [], 0)[0]
+        release.request('GET', '/')
+        assert release.getresponse().read() == b'OK'
+        assert release.sock is release_socket

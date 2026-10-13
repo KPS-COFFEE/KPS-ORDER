@@ -41,6 +41,7 @@ from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 RELEASE_WORKERS = 2
+RELEASE_KEEPALIVE_SECONDS = 15
 
 
 def safe_url(value):
@@ -618,7 +619,8 @@ def start_app(env, port, log_path, workers=RELEASE_WORKERS):
     offset = log_path.stat().st_size
     module = 'tools.profile_checkout:app' if env.get('KPS_LOAD_PROFILE_OUTPUT') else 'app.main:app'
     process = subprocess.Popen([sys.executable, '-m', 'uvicorn', module, '--host', '127.0.0.1',
-                                '--port', str(port), '--workers', str(workers), '--no-access-log'], cwd=ROOT, env=env,
+                                '--port', str(port), '--workers', str(workers),
+                                '--timeout-keep-alive', str(RELEASE_KEEPALIVE_SECONDS), '--no-access-log'], cwd=ROOT, env=env,
                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     origin = f'http://127.0.0.1:{port}'
     started = time.perf_counter()

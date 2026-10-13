@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import logging
 import os
-import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -17,10 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import auth, catalog, db, email_delivery, monitoring, orders, image_previews
+from .http_security import SecurityMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
-LOGGER = logging.getLogger('kps_order')
 
 
 @asynccontextmanager
@@ -62,43 +60,7 @@ if hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
 
-@app.middleware('http')
-async def security(request: Request, call_next):
-    trace = uuid.uuid4().hex
-    try:
-        if request.url.path.startswith('/api/') and request.method not in {'GET', 'HEAD', 'OPTIONS'}:
-            auth.check_origin(request)
-        length = request.headers.get('content-length')
-        if length and (not length.isdecimal() or int(length) > 8 * 1024 * 1024):
-            response = JSONResponse({'detail': {'code': 'BODY_TOO_LARGE', 'message': 'الملف أو الطلب أكبر من الحد المسموح.'}}, status_code=413)
-        else:
-            response = await call_next(request)
-    except Exception as exc:
-        from fastapi import HTTPException
-        if isinstance(exc, HTTPException):
-            response = JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
-        else:
-            # Never serialize DB error details, submitted fields or provider credentials to a client.
-            LOGGER.error('request_failed trace=%s method=%s path=%s error_type=%s',
-                         trace, request.method, request.url.path, type(exc).__name__)
-            response = JSONResponse({'detail': {'code': 'SERVICE_UNAVAILABLE', 'message': 'تعذر تنفيذ العملية الآن. حاول لاحقًا.'}}, status_code=503)
-    response.headers['X-Request-ID'] = trace
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Referrer-Policy'] = 'same-origin'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
-    response.headers['Content-Security-Policy'] = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                                                   "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
-                                                   "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-    if os.getenv('APP_ENV', 'production') == 'production':
-        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    public_image=request.url.path.startswith(('/api/product-assets/','/api/banner-assets/')) and request.method in ('GET','HEAD') and response.status_code==200
-    if (request.url.path.startswith('/api/') or request.url.path.startswith('/ops')) and not public_image:
-        response.headers['Cache-Control'] = 'no-store'
-    if request.url.path.startswith('/assets/') and response.status_code in (200,304):
-        response.headers['Cache-Control']='public, max-age=86400'
-    monitoring.record_response(response.status_code)
-    return response
+app.add_middleware(SecurityMiddleware)
 
 
 @app.exception_handler(RequestValidationError)
@@ -112,9 +74,12 @@ async def database_unavailable(request: Request, exc):
     return JSONResponse({'detail': {'code': 'DATABASE_UNAVAILABLE', 'message': 'قاعدة البيانات غير متاحة مؤقتًا.'}}, status_code=503)
 
 
-app.include_router(auth.router)
-app.include_router(catalog.router)
+# These routers have disjoint namespaces. Resolve the frequently used order
+# routes first without changing a route's dependencies or relative precedence
+# within its router. No permission/session result is cached.
 app.include_router(orders.router)
+app.include_router(catalog.router)
+app.include_router(auth.router)
 # Provider callbacks use their own signed timestamped verification, rather than
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
