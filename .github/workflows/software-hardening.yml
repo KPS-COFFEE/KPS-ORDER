@@ -69,7 +69,7 @@ jobs:
           cache: pip
       - name: Install pinned requirements and isolated observation tools
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Execute measured steps and verify committed business data
+      - name: Gate the Docker-matched two-worker profile and verify committed business data
         run: >-
           python tools/hardening_load.py
           --output test-artifacts/hardening-load.json
@@ -77,7 +77,7 @@ jobs:
       - name: Diagnose failed gate separately without relaxing or replacing its result
         if: failure()
         run: >-
-          python tools/hardening_load.py --profile-cpu --levels 50
+          python tools/hardening_load.py --profile-cpu --workers 1 --levels 50
           --output test-artifacts/diagnostic/load.json
       - uses: actions/upload-artifact@v4
         if: always()
@@ -116,9 +116,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - name: Install pinned requirements for isolated two-worker comparison
+      - name: Install pinned requirements for independent release-profile repetition
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Compare two workers using the unchanged complete load and recovery gate
+      - name: Independently repeat the unchanged complete two-worker load and recovery gate
         run: >-
           python tools/hardening_load.py
           --workers 2

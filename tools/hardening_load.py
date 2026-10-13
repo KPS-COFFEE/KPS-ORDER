@@ -5,7 +5,7 @@ Run with TEST_DATABASE_URL=postgresql://...@127.0.0.1:5432/test_hardening
 python tools/hardening_load.py --output test-artifacts/hardening-load.json
 
 Every run creates its own UUID schema in an explicitly named local test DB.
-It starts one real Uvicorn worker by default (two only by explicit comparison), preserves application authorization/rate
+It starts two real Uvicorn workers by default (matching Docker), preserves application authorization/rate
 limits, and represents customers using distinct actual loopback source IPs.
 The gate is a local engineering criterion, not a production capacity SLA.
 """
@@ -39,6 +39,8 @@ import psycopg
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
+
+RELEASE_WORKERS = 2
 
 
 def safe_url(value):
@@ -611,7 +613,7 @@ def reconcile(db_url, workload):
             'passed': not failures}
 
 
-def start_app(env, port, log_path, workers=1):
+def start_app(env, port, log_path, workers=RELEASE_WORKERS):
     log = log_path.open('a')
     offset = log_path.stat().st_size
     module = 'tools.profile_checkout:app' if env.get('KPS_LOAD_PROFILE_OUTPUT') else 'app.main:app'
@@ -851,8 +853,8 @@ def main():
     parser.add_argument('--max-error-rate', type=float, default=.01)
     parser.add_argument('--database-container', help='Optional local Docker PG service ID for container CPU/RAM samples.')
     parser.add_argument('--profile-cpu', action='store_true', help='Separate diagnostic run, not release performance evidence.')
-    parser.add_argument('--workers', type=int, choices=(1, 2), default=1,
-                        help='Isolated comparison only; one mirrors runtime, two does not change deployment defaults.')
+    parser.add_argument('--workers', type=int, choices=(1, 2), default=RELEASE_WORKERS,
+                        help='Two matches Docker release configuration; one is an explicit diagnostic comparison.')
     args = parser.parse_args()
     if args.profile_cpu and args.workers != 1:
         parser.error('Per-thread CPU diagnosis requires one isolated worker.')
@@ -883,7 +885,7 @@ def main():
             'cpu_quota': Path('/sys/fs/cgroup/cpu.max').read_text().strip() if Path('/sys/fs/cgroup/cpu.max').exists() else 'unavailable',
             'memory_limit_bytes': Path('/sys/fs/cgroup/memory.max').read_text().strip() if Path('/sys/fs/cgroup/memory.max').exists() else 'unavailable'},
         'comparability_limits': [
-            'One worker mirrors Docker CMD; two workers are an explicit isolated comparison only. Local CPU/RAM and DB/network differ from deployed Render resources.',
+            'Two workers match Docker CMD; one is an explicit diagnostic comparison. Local CPU/RAM and DB/network differ from deployed Render resources.',
             'Repository Blueprint specifies 0.5 CPU / 512 MiB; these measurements do not certify its production 500-user capacity.',
             'DB connection/lock metrics sample every 250 ms; transient peaks below the interval may be missed.',
             'App CPU/RSS aggregate the owned process tree; summed RSS counts shared pages in each process and is not unique physical memory.',
