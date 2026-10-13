@@ -67,3 +67,7 @@ html[dir="rtl"] .account-action::after{transform:rotate(-45deg)}
 #address-add{margin-top:12px}.saved-address-row{align-items:flex-start}.saved-address-row .row{flex-wrap:wrap;justify-content:flex-end}
 #logout-button{position:static;margin:0}.account-policies a{text-decoration:none}
 @media(max-width:800px){.dialog{max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}.dialog-scroll{padding-bottom:calc(20px + env(safe-area-inset-bottom))}.profile-summary{padding:16px}.saved-address-row{flex-direction:column;align-items:stretch}}
+
+.site-footer button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;vertical-align:middle;margin-inline-end:6px}.account-locations{display:grid;gap:8px;padding-top:12px}.account-locations a{color:inherit;text-underline-offset:4px}
+
+.dialog-destinations{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--line);flex-shrink:0}.dialog-destinations .button{min-width:0;padding:10px 4px;font-size:12px}.dialog-destinations [aria-current="page"]{color:var(--accent-dark);background:var(--accent-soft)}

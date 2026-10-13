@@ -30,7 +30,7 @@ def test_address_create_edit_replay_delete_and_other_customer(required,monkeypat
     assert required.get('/api/customer/profile').json()['addresses']==[]
     assert required.patch('/api/customer/addresses/'+identifier,json=changed,headers={'Idempotency-Key':'test-address-edit'}).status_code==404
 
-@pytest.mark.parametrize('changes',[{'label':'  '},{'address':'  '},{'lat':91},{'lng':181},{'lat':None},{'customer_id':'someone-else'},{'brand_id':'other'}])
+@pytest.mark.parametrize('changes',[{'label':'  '},{'address':'  '},{'lat':True},{'lat':91},{'lng':181},{'lat':None},{'customer_id':'someone-else'},{'brand_id':'other'}])
 def test_address_strict_input(required,monkeypatch,changes):
     verify(required,monkeypatch)
     assert required.post('/api/customer/addresses',json={**ADDRESS,**changes},headers={'Idempotency-Key':'test-address-invalid'}).status_code==422

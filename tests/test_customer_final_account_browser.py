@@ -1,7 +1,7 @@
 """Real mobile Chromium/WebKit account delta, synthetic local data only."""
 import os
 import pytest
-from app import auth,db
+from app import auth,db,catalog
 from test_browser import live_app,synthetic_mail,_customer_session,ARTIFACTS
 from tests.test_core import _prepare_catalog,_body
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Requires explicit real-browser acceptance')]
@@ -25,7 +25,9 @@ def test_account_addresses_filters_reorder_and_mobile_layout(live_app,engine,lan
         with db.tx() as c:
             before=c.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()['snapshot']
             c.execute("UPDATE orders SET preparation_status='completed' WHERE id=%s",(oid,))
-            c.execute("UPDATE products SET price_halalas=price_halalas+100 WHERE id='kps-01'")
+            updated=c.execute("UPDATE products SET price_halalas=price_halalas+100 WHERE id='kps-01' RETURNING *").fetchone()
+            # Synthetic approved commercial change, using the same digest as owner approval.
+            c.execute("UPDATE products SET settings=settings||%s WHERE id='kps-01'",(db.json({'owner_approved_digest':catalog.commercial_digest(updated)}),))
         page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.add_init_script("localStorage.setItem('kps_customer_lang',"+repr(lang)+")")
         page.goto(live_app);expect(page.locator('#account-button')).to_be_enabled()

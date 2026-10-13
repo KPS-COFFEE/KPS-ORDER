@@ -32,8 +32,8 @@ class Address(BaseModel):
     label:str=Field(min_length=1,max_length=100)
     address:str=Field(min_length=1,max_length=500)
     neighborhood:str=Field(default='',max_length=120)
-    lat:float|None=Field(default=None,ge=-90,le=90)
-    lng:float|None=Field(default=None,ge=-180,le=180)
+    lat:float|None=Field(default=None,ge=-90,le=90,strict=True)
+    lng:float|None=Field(default=None,ge=-180,le=180,strict=True)
 
     @model_validator(mode='after')
     def paired_location(self):

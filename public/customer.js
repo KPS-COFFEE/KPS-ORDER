@@ -6,6 +6,7 @@
   let language='ar';
   try{if(localStorage.getItem(languageStorageKey)==='en')language='en';}catch{}
   const uiStrings={
+    "branches_locations":{ar:"الفروع والمواقع",en:"Branches and locations"},
     "home":{"ar": "الرئيسية", "en": "Home"},
     "welcome_back":{"ar": "أهلًا بك", "en": "Welcome back"},
     "add_address":{"ar": "إضافة عنوان", "en": "Add address"},
@@ -701,11 +702,12 @@
     review.type='button';review.addEventListener('click',()=>{$('basket').scrollIntoView({behavior:'smooth',block:'start'});});
     container.append(review);
   }
-  function updatePolicyLinks(){for(const [id,path] of [['privacy-link','privacy'],['terms-link','terms'],['account-privacy-link','privacy'],['account-terms-link','terms'],['refunds-link','refunds'],['account-refunds-link','refunds']])$(id).href=`/${path}?brand_id=${encodeURIComponent(requestedBrandId)}&lang=${language}`;}
+  function updatePolicyLinks(){for(const [id,path] of [['privacy-link','privacy'],['terms-link','terms'],['account-privacy-link','privacy'],['account-terms-link','terms'],['refunds-link','refunds'],['account-refunds-link','refunds'],['identity-privacy-link','privacy']])$(id).href=`/${path}?brand_id=${encodeURIComponent(requestedBrandId)}&lang=${language}`;}
   function maskedPhone(value=''){return value.length>4?value.slice(0,4)+' •••• '+value.slice(-3):value;}
   function renderAccount() {
     updatePolicyLinks();text('customer-phone-status',state.session.customer_verified?t('phone_verified'):t('unverified'));$('customer-phone').readOnly=state.session.customer_verified===true;const guestNotice=$('guest-form').querySelector('p');guestNotice.id='guest-flow-note';guestNotice.dataset.i18n=state.identityIntent==='contact'?'contact_guest_notice':'order_directly_without_a_verification_code_or_creating_an_account';text('guest-flow-note',t(guestNotice.dataset.i18n));$('guest-submit').dataset.i18n=state.identityIntent==='contact'?'start_contact':'order_as_a_guest';text('guest-submit',t($('guest-submit').dataset.i18n));
  ['account-button','orders-button','contacts-button'].forEach((id)=>$(id).disabled=!state.identityReady);const user=state.session.user,authenticated=Boolean(user&&state.session.csrf_token);text('account-button-label',user&&user.role!=='customer'?t("staff_account"):t("my_account"));$('account-other-brand').hidden=!user||user.brand_id===requestedBrandId;$('account-profile').hidden=!authenticated;$('guest-form').hidden=(state.phoneRequired!==false&&state.identityIntent!=='contact')||authenticated||!state.channels.guest?.available;$('email-login-button').hidden=authenticated||!state.channels.email?.available;$('email-request-form').hidden=true;$('otp-request-form').hidden=state.phoneRequired!==false?(authenticated&&state.session.customer_verified===true):authenticated||!(state.channels.sms?.available||state.channels.whatsapp?.available);$('otp-verify-form').hidden=true;$('otp-unavailable').hidden=true;$('link-email-button').hidden=!authenticated||user.role!=='customer'||user.identity_kind!=='guest'||!state.channels.email?.available;if(user){text('profile-label',user.display_name||t("signed_in"));text('identity-label',user.identity_kind==='guest'?t("guest_unverified_contact_number"):user.email_verified_at?t("email_verified_phone_verification_is_separate"):t("verification_depends_on_the_channel"));if(user.brand_id===requestedBrandId){if(!$('customer-name').value)$('customer-name').value=user.display_name||'';if(!$('customer-phone').value)$('customer-phone').value=user.phone||'';}}$('otp-name').value=$('customer-name').value||user?.display_name||'';$('phone').value=$('customer-phone').value||user?.phone||'';$('customer-profile-form').hidden=!state.session.customer_verified||user?.role!=='customer';if(user)$('profile-name').value=user.display_name||'';if(state.session.customer_verified&&user?.role==='customer'&&user.brand_id===requestedBrandId)loadCustomerProfile();$('guest-name').value=$('customer-name').value;$('guest-phone').value=$('customer-phone').value;
+    const directory=$('account-locations');directory.replaceChildren();for(const b of state.branches){const url=directionsLink(b);if(!url)continue;const link=node('a','small',`${b.branch_no} · ${sourceText(b)} · ${b.city}`);link.href=url;link.target='_blank';link.rel='noopener noreferrer';directory.append(link);}
     const ownCustomer=authenticated&&user.role==='customer'&&user.brand_id===requestedBrandId;
     $('account-customer-actions').hidden=!ownCustomer;
     $('customer-profile-form').hidden=!ownCustomer||!state.session.customer_verified;
@@ -1287,6 +1289,16 @@
     }catch(error){showError('orders-error',errorMessage(error));}
   }
   function bindEvents() {
+    // Native dialogs keep their own destinations reachable in normal flow.
+    for(const id of ['account-dialog','orders-dialog']){
+      const nav=node('nav','dialog-destinations');nav.setAttribute('aria-label',t('customer_navigation'));
+      for(const [destination,label] of [['menu','home'],['orders','my_orders'],['account','my_account']]){
+        const button=node('button','button quiet',t(label));button.type='button';button.dataset.destination=destination;
+        if(id.startsWith(destination))button.setAttribute('aria-current','page');
+        button.addEventListener('click',()=>{if(id.startsWith(destination))return;closeDialog(id);if(destination==='menu')returnToMenu();else if(destination==='orders')openOrders();else{state.identityIntent='login';renderAccount();openDialog('account-dialog');}});nav.append(button);
+      }
+      $(id).append(nav);
+    }
     $('address-add').addEventListener('click',()=>editAddress());$('address-form').addEventListener('submit',saveAddress);
     $('address-map').addEventListener('input',()=>{state.addressPin=null;updateAddressPin();});
     $('address-clear-pin').addEventListener('click',()=>{state.addressPin=null;$('address-map').value='';updateAddressPin();});
