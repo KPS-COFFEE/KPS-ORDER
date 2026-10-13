@@ -7,7 +7,7 @@ from uuid import uuid4
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator
-from . import db, auth, service_hours, shift_vehicle
+from . import db, auth, service_hours, shift_vehicle, shift_order_counts
 
 router = APIRouter(prefix='/api', tags=['operations'])
 RIYADH = ZoneInfo('Asia/Riyadh')
@@ -278,6 +278,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
                 if user['role']=='delivery_manager' and manager['user_id']!=user['id']:continue
                 eligible.append(row)
             rows=eligible
+        shift_order_counts.attach(c,rows,user)
         return safe({'shifts':rows,**people_data(c,user)})
 
 def driver_cash_policy(c,brand_id):
