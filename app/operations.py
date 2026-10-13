@@ -824,6 +824,8 @@ def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(au
     with db.tx() as c:
         def perform():
             s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
+            if user['role']!='delivery_manager':
+                raise HTTPException(403,{'code':'DRIVER_CLOSE_MANAGER_ONLY'})
             if s['kind']!='driver' or s['status'] not in ('open','closing','submitted'):
                 fail(409,'التقفيلة مقفلة أو غير متاحة')
             if not body.confirmed:fail(422,'أكد استلام النقد الفعلي ومراجعة التقفيلة')
@@ -855,7 +857,10 @@ def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(au
                     reference='Driver closure '+str(s.get('shift_no') or sid),closure=True))['transfer']
                 transfers=[transfer]
             for transfer in transfers:
-                if transfer['status']=='pending':confirm_custody_in_tx(c,user,transfer['id'])
+                if transfer['status']=='pending':
+                    if transfer['recipient_user_id']!=user['id']:
+                        raise HTTPException(409,{'code':'DRIVER_RECEIPT_OTHER_RECIPIENT'})
+                    confirm_custody_in_tx(c,user,transfer['id'])
             return approve_close_in_tx(c,user,sid,Review(exception_reason=body.exception_reason or None))
         result=mutate(c,user,request,'shift.driver-close:'+sid,body.model_dump(),perform)
     from .reporting import generate_files

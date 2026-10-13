@@ -72,3 +72,28 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
             expect(page.locator('.owner-notifications')).to_contain_text('مقفل باستثناء من مدير التوصيل')
         assert not errors
     finally:ctx.close()
+
+@pytest.mark.parametrize('lang',['ar','en'])
+@pytest.mark.parametrize('status',['open','closing','submitted'])
+def test_owner_driver_closure_is_clear_read_only(live_app,chromium_browser,lang,status):
+    from playwright.sync_api import expect
+    manager=_staff('delivery_manager');driver=_staff('driver');owner=_staff('owner')
+    mid='TEST-manager-'+uuid4().hex;sid='TEST-driver-'+uuid4().hex
+    with db.tx() as c:
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager',%s,'kps','[\"kps-branch-1\"]')",(mid,manager['id']))
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,status) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]',%s,%s)",(sid,driver['id'],mid,status))
+    ctx,page,errors=_context(chromium_browser,live_app)
+    _owner_login(ctx,live_app,owner)
+    ctx.add_init_script("localStorage.setItem('kps_ops_lang',"+repr(lang)+");")
+    try:
+        page.goto(live_app+'/ops');page.locator('#navigation [data-page=shifts]').click()
+        expect(page.locator('[data-action=simple-driver-close][data-id="'+sid+'"]')).to_have_count(0)
+        page.locator('[data-action=shift-detail][data-id="'+sid+'"]').click()
+        expect(page.locator('#modal-body')).to_contain_text('للمتابعة فقط' if lang=='ar' else 'View only')
+        for selector in ['#closure-form','[data-action=approve-shift]','[data-action=return-shift]','[data-action=final-custody]']:
+            expect(page.locator('#modal-body').locator(selector)).to_have_count(0)
+        with db.tx() as c:
+            assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']==status
+            assert c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(sid,)).fetchone()['n']==0
+        assert not errors
+    finally:ctx.close()

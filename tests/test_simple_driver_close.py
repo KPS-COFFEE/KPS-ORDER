@@ -110,3 +110,36 @@ def test_another_manager_cannot_close_or_claim_receipt(ops):
     post('manager2',f'/api/shifts/{driver}/driver-close',{'received_halalas':0,'counted_halalas':0,'confirmed':True,'exception_reason':'TEST unavailable'},status=403)
     with db.tx() as c:
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='open'
+
+@pytest.mark.parametrize('submitted',[False,True])
+def test_owner_monitoring_does_not_claim_manager_receipt(ops,submitted):
+    actor,post,order,shifts=ops
+    manager,driver=shifts()
+    if submitted:
+        post('driver',f'/api/shifts/{driver}/closing')
+        post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
+    body={'received_halalas':0,'counted_halalas':None if submitted else 0,
+          'confirmed':True,'exception_reason':'TEST unavailable' if not submitted else ''}
+    result=post('owner',f'/api/shifts/{driver}/driver-close',body,status=403)
+    assert result['detail']['code']=='DRIVER_CLOSE_MANAGER_ONLY'
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']==('submitted' if submitted else 'open')
+        assert c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['n']==0
+    post('manager',f'/api/shifts/{driver}/driver-close',body)
+    with db.tx() as c:
+        assert c.execute('SELECT status,approved_by FROM shifts WHERE id=%s',(driver,)).fetchone()=={'status':'closed','approved_by':'ops-manager'}
+
+def test_legacy_other_recipient_is_explained_without_moving_cash(ops):
+    actor,post,order,shifts=ops
+    manager,driver=shifts()
+    post('driver',f'/api/shifts/{driver}/closing')
+    post('driver',f'/api/shifts/{driver}/submit',{'counted_halalas':0,'handover_halalas':0})
+    tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':0,'reference':'TEST legacy recipient','closure':True})['transfer']['id']
+    # Synthetic legacy record only; the runtime never rewrites a recipient.
+    with db.tx() as c:c.execute("UPDATE custody_transfers SET recipient_user_id='ops-owner' WHERE id=%s",(tid,))
+    result=post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':0,'confirmed':True},status=409)
+    assert result['detail']['code']=='DRIVER_RECEIPT_OTHER_RECIPIENT'
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='submitted'
+        assert c.execute('SELECT status,confirmed_by,recipient_user_id FROM custody_transfers WHERE id=%s',(tid,)).fetchone()=={'status':'pending','confirmed_by':None,'recipient_user_id':'ops-owner'}
+        assert c.execute('SELECT count(*) n FROM custody_events WHERE reference_id=%s',(tid,)).fetchone()['n']==0
