@@ -353,10 +353,10 @@ def request_otp(body: OTPRequestBody, request: Request):
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (body.brand_id,)).fetchone():
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
-        _otp_channel_ready(conn, body.brand_id, channel)
-        _otp_test_access(conn, body.brand_id, channel, request)
         provider = _sms_provider(conn, body.brand_id)
         _provider_ready(provider)
+        _otp_channel_ready(conn, body.brand_id, channel)
+        _otp_test_access(conn, body.brand_id, channel, request)
         if provider == 'tawked' and channel != 'sms':
             raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'توكيد مخصص للتحقق برسائل SMS.')
         allowed = db.rate_limit(conn, 'otp-request-phone:' + phone, 3, 600)

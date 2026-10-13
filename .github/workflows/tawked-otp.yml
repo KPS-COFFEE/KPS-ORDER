@@ -29,7 +29,7 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: node --check public/ops.js && node --check public/customer.js
-      - run: python -m pytest -q tests/test_tawked_otp.py tests/test_v5_identity.py tests/test_final_identity.py --junitxml=test-results/otp.xml
+      - run: python -m pytest -q tests/test_tawked_otp.py tests/test_v5_identity.py tests/test_final_identity.py tests/test_core.py --junitxml=test-results/otp.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

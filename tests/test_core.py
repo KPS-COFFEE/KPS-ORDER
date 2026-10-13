@@ -383,29 +383,32 @@ class TestPostgreSQLCore:
     def test_missing_otp_provider_fails_closed_and_typed_phone_is_not_identity(self, client):
         response = client.post('/api/auth/otp/request', json={'brand_id': 'kps', 'phone': '0500000000'})
         assert response.status_code == 503 and response.json()['detail']['code'] == 'OTP_PROVIDER_UNAVAILABLE'
-        assert client.post('/api/auth/otp/verify', json={'challenge_id': 'invented', 'code': '123456'}).status_code == 503
+        assert client.post('/api/auth/otp/verify', json={'challenge_id': 'invented', 'code': '1234'}).status_code == 400
         with db.tx() as conn:
             assert conn.execute("SELECT count(*) AS n FROM users WHERE role='customer'").fetchone()['n'] == 0
             assert conn.execute('SELECT count(*) AS n FROM sessions').fetchone()['n'] == 0
 
     def test_real_provider_contract_success_and_wrong_phone_rejected(self, client, monkeypatch):
         # Network is mocked exclusively in this test; no development OTP branch exists in application code.
-        monkeypatch.setattr(auth, 'provider_config', lambda: ('AC' + '1' * 32, 'test-only', 'VA' + '1' * 32))
+        monkeypatch.setenv('OTP_PROVIDER','twilio_verify')
+        monkeypatch.setenv('TWILIO_ACCOUNT_SID','AC'+'1'*32)
+        monkeypatch.setenv('TWILIO_AUTH_TOKEN','test-only')
+        monkeypatch.setenv('TWILIO_VERIFY_SERVICE_SID','VA'+'1'*32)
         with db.tx() as conn:
-            conn.execute("UPDATE identity_channels SET state='testing',enabled=false WHERE brand_id='kps' AND channel='sms'")
+            conn.execute("UPDATE identity_channels SET state='active',enabled=true,delivery_proven_at=now() WHERE brand_id='kps' AND channel='sms'")
         outputs = {'Verifications': {'status': 'pending', 'sid': 'VE' + '2' * 32},
                    'VerificationCheck': {'status': 'approved', 'to': '+966500000000'}}
         monkeypatch.setattr(auth, '_provider_post', lambda path, data: outputs[path])
         sent = client.post('/api/auth/otp/request', json={'phone': '0500000000'}).json()
         outputs['VerificationCheck']['to'] = '+966500000001'
-        wrong = client.post('/api/auth/otp/verify', json={'challenge_id': sent['challenge_id'], 'code': '123456'})
+        wrong = client.post('/api/auth/otp/verify', json={'challenge_id': sent['challenge_id'], 'code': '1234'})
         assert wrong.status_code == 400
         with db.tx() as conn:
             assert conn.execute("SELECT count(*) AS n FROM users WHERE role='customer'").fetchone()['n'] == 0
         outputs['VerificationCheck']['to'] = '+966500000000'
-        correct = client.post('/api/auth/otp/verify', json={'challenge_id': sent['challenge_id'], 'code': '123456'})
+        correct = client.post('/api/auth/otp/verify', json={'challenge_id': sent['challenge_id'], 'code': '1234'})
         assert correct.status_code == 200 and correct.json()['user']['phone'] == '+966500000000'
-        assert client.post('/api/auth/otp/verify', json={'challenge_id': sent['challenge_id'], 'code': '123456'}).status_code == 400
+        assert client.post('/api/auth/otp/verify', json={'challenge_id': sent['challenge_id'], 'code': '1234'}).status_code == 400
 
     def test_opaque_static_allowlist_security_headers(self, client):
         assert client.get('/').status_code == 200

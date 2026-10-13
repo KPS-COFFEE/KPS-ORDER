@@ -212,11 +212,9 @@ def configuration(user=Depends(auth.require_configuration())):
                   'users': conn.execute('SELECT id,username,display_name,role,brand_id,branch_ids,phone,active FROM users WHERE brand_id=%s ORDER BY role,display_name',(user['brand_id'],)).fetchall(),
                   'banners': conn.execute('SELECT * FROM banners WHERE brand_id=%s ORDER BY sort_order,created_at',(user['brand_id'],)).fetchall(),
                   'settings': conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(user['brand_id'],)).fetchone()['settings']}
-    try:
-        auth.provider_config()
-        result['otp_configured'] = True
-    except Exception:
-        result['otp_configured'] = False
+    with db.tx() as conn:
+        identity = auth.channel_readiness(conn, user['brand_id'])
+        result['otp_configured'] = any(identity[c]['configured'] for c in ('sms','whatsapp'))
     if user['role'] == 'admin':
         result['branches'] = [b for b in result['branches'] if b['id'] in user['branch_ids']]
         result['users'] = []

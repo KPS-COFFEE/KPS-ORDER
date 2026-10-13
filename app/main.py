@@ -144,11 +144,7 @@ def ready():
             branches = conn.execute("SELECT count(*) AS n FROM branches WHERE settings->>'operational_data_verified'='true' OR settings->>'ordering_verified'='true'").fetchone()['n']
             identity = auth.channel_readiness(conn, 'kps')
             preservation = conn.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' AND entity_id=%s ORDER BY created_at DESC LIMIT 1", (revision(),)).fetchone()
-        try:
-            auth.provider_config()
-            otp = True
-        except Exception:
-            otp = False
+        otp = any(identity[c]['configured'] for c in ('sms','whatsapp'))
         return {'status': 'ready', 'revision': revision(), 'database': 'connected', 'applied_migrations': applied,
                 'customer_otp_configured': otp, 'verified_products': products, 'verified_branches': branches,
                 'identity_channels': identity,
