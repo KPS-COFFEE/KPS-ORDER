@@ -187,20 +187,31 @@ def test_same_customer_same_contents_different_keys_are_two_real_orders(checkout
 
 
 @pytest.mark.postgres
-def test_failed_order_event_rolls_back_order_number_audit_and_key_then_same_key_retries(checkout, monkeypatch):
+def test_failed_order_event_rolls_back_order_number_audit_and_key_then_same_key_retries(checkout):
     client, user = checkout
-    key, canonical_event = uuid4().hex, db.event
-    def fail_after_insert(*args, **kwargs):
-        raise RuntimeError('TEST ONLY injected transaction failure after insert')
-    monkeypatch.setattr(db, 'event', fail_after_insert)
+    key = uuid4().hex
+    # Inject after the actual database write, independent of whether the
+    # application uses a helper or a combined CTE. All rollback assertions stay.
+    with db.tx() as conn:
+        conn.execute("CREATE FUNCTION test_reject_created_event() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                     "BEGIN IF NEW.event_type='order.created' THEN "
+                     "RAISE EXCEPTION 'TEST ONLY failure after event insert' USING ERRCODE='23514'; "
+                     "END IF; RETURN NEW; END $$")
+        conn.execute('CREATE TRIGGER test_reject_created_event AFTER INSERT ON order_events '
+                     'FOR EACH ROW EXECUTE FUNCTION test_reject_created_event()')
     assert create(client, key=key).status_code == 503
     assert counts(user['id']) == {'orders': 0, 'created_events': 0, 'created_audits': 0, 'keys': 0}
     with db.tx() as conn:
         assert conn.execute('SELECT * FROM order_branch_counters WHERE branch_id=%s', ('hardening-orders-branch',)).fetchone() is None
-    monkeypatch.setattr(db, 'event', canonical_event)
+        conn.execute('DROP TRIGGER test_reject_created_event ON order_events')
     result = create(client, key=key)
     assert result.status_code == 200, result.text
     assert counts(user['id']) == {'orders': 1, 'created_events': 1, 'created_audits': 1, 'keys': 1}
+    assert create(client, key=key).json() == result.json()
+    assert counts(user['id']) == {'orders': 1, 'created_events': 1, 'created_audits': 1, 'keys': 1}
+    with db.tx() as conn:
+        assert conn.execute('SELECT last_number FROM order_branch_counters WHERE branch_id=%s',
+                            ('hardening-orders-branch',)).fetchone()['last_number'] == 1
 
 
 @pytest.mark.postgres
