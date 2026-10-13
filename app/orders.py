@@ -153,7 +153,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 sort: str | None = Query(default=None, max_length=20),
                 neighborhood: str | None = Query(default=None, max_length=120),
                 driver_id: str | None = Query(default=None, max_length=80),
-                search: str | None = Query(default=None, max_length=80)):
+                search: str | None = Query(default=None, max_length=80),
+                manager_view: str | None = None):
     conditions, params = ['o.brand_id=%s'], [user['brand_id']]
     if user['role'] == 'customer':
         conditions.append('o.customer_id=%s')
@@ -205,6 +206,22 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         if user['role'] == 'driver' and not conn.execute("SELECT to_regclass('driver_tasks') AS n").fetchone()['n']:
             return {'orders': [], 'next_offset': None}
         period_info = None
+        workspace_shift = None
+        if manager_view:
+            if user['role']!='delivery_manager' or manager_view not in ('current','history'):
+                raise db.error(403,'MANAGER_WORKSPACE_SCOPE','عرض شفت المدير غير متاح لهذا الحساب.')
+            from . import manager_workday
+            workspace_shift=manager_workday.current_shift(conn,user)
+            predicate, workspace_params=manager_workday.current_orders(workspace_shift,user)
+            if manager_view=='current':
+                conditions.append(predicate)
+                params.extend(workspace_params)
+                # Current work must survive midnight and missing/old date filters.
+                period=start=end=None
+            else:
+                conditions.append('NOT ('+predicate+')')
+                params.extend(workspace_params)
+                conditions.append('NOT ('+manager_workday.ACTIVE+')')
         if period or start or end:
             if period not in {None, 'today', 'yesterday', 'custom'}:
                 raise db.error(422, 'PERIOD_INVALID', 'الفترة غير صحيحة.')

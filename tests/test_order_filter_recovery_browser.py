@@ -14,6 +14,7 @@ def test_order_filters_remain_usable(live_app,chromium_browser,lang):
     try:
         page.goto(live_app+'/ops')
         page.locator('#navigation [data-page=orders]').click()
+        page.locator('[data-action=manager-work-view][data-target=orders][data-history="1"]').click()
         form=page.locator('#filters-form')
         form.locator('[name=period]').select_option('custom')
         form.locator('button[type=submit]').click()
