@@ -90,7 +90,11 @@ def page(kind,brand,lang):
             'تقديم البلاغ لا يلغي الطلب أو يصرف مبلغًا تلقائيًا. يراجع الفريق حالة التجهيز والتنفيذ والمشكلة وحقوق المستهلك المطبقة، مع مراعاة طبيعة الأغذية المحضّرة. تصلك نتيجة المراجعة عبر البلاغ.',
             'لا تحد هذه السياسة من حقوقك النظامية الإلزامية. لا ترسل بيانات بطاقتك المصرفية أو رموز التحقق داخل المحادثة.'
         ])
-    sellers='<br>'.join(escape(x.get('legal_name',''))+((' — VAT number: ' if en else ' — الرقم الضريبي: ')+escape(x['vat_number']) if x.get('vat_number') else '') for x in info['sellers'])
+    # Public presentation only; retain legal entity and invoice snapshots unchanged.
+    sellers='<br>'.join(' — '.join(part for part in (
+        '' if x.get('legal_name','').startswith('مؤسسة ريم') else escape(x.get('legal_name','')),
+        (('VAT number: ' if en else 'الرقم الضريبي: ')+escape(x['vat_number'])) if x.get('vat_number') else ''
+    ) if part) for x in info['sellers'])
     labels={'controller_name':('Data controller','جهة التحكم بالبيانات'),'registration_number':('Registration','السجل التجاري'),'business_address':('Business address','عنوان المنشأة'),'contact':('Contact','التواصل'),'legal_basis':('Legal basis','الأساس النظامي للمعالجة'),'retention_policy':('Retention','الاحتفاظ'),'transfer_safeguards':('Transfer safeguards','ضمانات النقل')}
     fields=''.join(f'<p><b>{labels[k][0 if en else 1]}:</b> {escape(str(v))}</p>' for k,v in config.items() if k in labels and v)
     pending='' if info['complete'] else '<p class="notice">'+('Test version: some legal disclosures await owner confirmation before official launch.' if en else 'نسخة تجريبية: بعض الإفصاحات النظامية تنتظر توثيق المالك قبل الإطلاق الرسمي.')+'</p>'
