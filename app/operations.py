@@ -7,7 +7,7 @@ from uuid import uuid4
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator
-from . import db, auth, service_hours, shift_vehicle, shift_order_counts
+from . import db, auth, service_hours, shift_vehicle, shift_order_counts, blind_closure
 
 router = APIRouter(prefix='/api', tags=['operations'])
 RIYADH = ZoneInfo('Asia/Riyadh')
@@ -93,7 +93,7 @@ def mutate(c,user,request,operation,body,perform):
     key=request.headers.get('Idempotency-Key','')
     replay=c.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND operation=%s AND key=%s',(user['id'],operation,key)).fetchone()
     if replay:authorize_replay(c,user,operation,body,replay['response'])
-    return db.idempotent(c,user['id'],key,operation,safe(body),lambda: safe(perform()))
+    return blind_closure.driver_view(user,db.idempotent(c,user['id'],key,operation,safe(body),lambda: safe(perform())))
 
 def history_result_access(c,user,oid):
     order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
@@ -279,7 +279,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
                 eligible.append(row)
             rows=eligible
         shift_order_counts.attach(c,rows,user)
-        return safe({'shifts':rows,**people_data(c,user)})
+        return safe(blind_closure.driver_view(user,{'shifts':rows,**people_data(c,user)}))
 
 def driver_cash_policy(c,brand_id):
     row=c.execute('SELECT settings FROM brands WHERE id=%s',(brand_id,)).fetchone()
@@ -320,7 +320,7 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
                 if task['status'] in TERMINAL:
                     task['snapshot']=safe(task['snapshot']);task['snapshot'].pop('notes',None);task['snapshot'].pop('note',None)
                     for item in task['snapshot'].get('items',[]):item.pop('note',None)
-        return safe({'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()})
+        return safe(blind_closure.driver_view(user,{'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()}))
 
 @router.post('/shifts/{sid}/refuel')
 def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
@@ -357,6 +357,7 @@ class ClosureHandover(OperationBody):
     reference: str=Field(min_length=1,max_length=200)
 
 class ClosureSubmit(OperationBody):
+    terminal_total_halalas: StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     handover: ClosureHandover|None=None
     exception_reason: str=Field(default="",max_length=2000)
     vehicle_inspection: shift_vehicle.Inspection|None=None
@@ -378,6 +379,8 @@ def submit_close_in_tx(c,user,sid,body):
         if not body.exception_reason.strip():fail(422,'اكتب سبب إقفال الشفت نيابة عن السائق؛ سيظهر للمالك')
     elif body.exception_reason.strip():fail(403,'الإقفال الاستثنائي لمدير التوصيل فقط')
     if s['kind']=='driver':
+        if body.terminal_total_halalas is None:fail(422,'أدخل مبلغ موازنة جهاز الشبكة الفعلي، أو صفر إذا لم توجد عمليات')
+        if user['role']=='driver' and (body.handover is None or body.handover_halalas!=body.counted_halalas or body.retained_halalas):fail(422,'سلّم كامل النقد المعدود لمدير التوصيل مع التقفيلة')
         if body.vehicle_inspection is not None or not delegated:
             shift_vehicle.finish(c,user,s,body.vehicle_inspection)
         else:
@@ -385,6 +388,7 @@ def submit_close_in_tx(c,user,sid,body):
             log['end_exception']={'reason':body.exception_reason.strip(),'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
             c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
     values=body.model_dump(exclude={'vehicle_inspection','handover','exception_reason'});values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
+    if s['kind']=='driver':values.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas))
     if s['kind']=='driver':values['payment_terminal']=c.execute('SELECT payment_terminal FROM users WHERE id=%s',(s['user_id'],)).fetchone()['payment_terminal']
     if delegated:values['delegated_closure']={'by':user['id'],'reason':body.exception_reason.strip()}
     c.execute("UPDATE shifts SET status='submitted',submission=%s,submitted_at=now() WHERE id=%s",(db.json(values),sid))
@@ -424,8 +428,8 @@ def approve_close_in_tx(c,user,sid,body):
     sub=s['submission']
     if sub['retained_halalas'] and s['kind']!='driver':
         roles(user,'owner')
-    if sub['difference_halalas'] or sub['retained_halalas']:
-        if not body.exception_reason or not body.exception_reason.strip(): fail(422,'يلزم سبب ظاهر للعجز أو الفائض أو العهدة المحتفظ بها')
+    if sub['difference_halalas'] or sub.get('card_difference_halalas') or sub['retained_halalas']:
+        if not body.exception_reason or not body.exception_reason.strip(): fail(422,'يلزم سبب ظاهر لفرق النقد أو موازنة الشبكة أو العهدة المحتفظ بها')
     if unresolved(c,sid): fail(409,'مهام معلقة')
     if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
     if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'سائق غير مقفل')
@@ -434,7 +438,7 @@ def approve_close_in_tx(c,user,sid,body):
     if int(receipts['n'])!=sub['handover_halalas'] or not receipts['nrows']: fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
     if sub['difference_halalas']:event(c,sid,sub['difference_halalas'],'adjustment','closure-difference:'+sid,user['id'],body.exception_reason)
     if sub['retained_halalas']:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason))
-    exceptional=s['kind']=='driver' and (sub.get('delegated_closure') or sub['difference_halalas'] or sub['retained_halalas'])
+    exceptional=s['kind']=='driver' and (sub.get('delegated_closure') or sub['difference_halalas'] or sub.get('card_difference_halalas') or sub['retained_halalas'])
     if exceptional:
         sub=dict(sub)
         sub['closure_exception']={'by':user['id'],'reason':body.exception_reason or sub.get('delegated_closure',{}).get('reason'),'delegated':bool(sub.get('delegated_closure'))}
@@ -844,6 +848,7 @@ def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user)):
         return mutate(c,user,request,'custody.confirm:'+cid,{},perform)
 
 class DriverClose(OperationBody):
+    terminal_total_halalas: StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     received_halalas: StrictInt=Field(ge=0,le=MAX_HALALAS)
     counted_halalas: StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     confirmed: StrictBool
@@ -874,7 +879,7 @@ def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(au
                     c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
                     db.audit(c,user['id'],'shift.closing','shift',sid)
                 submit_close_in_tx(c,user,sid,ClosureSubmit(
-                    counted_halalas=body.counted_halalas,handover_halalas=body.received_halalas,
+                    terminal_total_halalas=body.terminal_total_halalas,counted_halalas=body.counted_halalas,handover_halalas=body.received_halalas,
                     retained_halalas=body.counted_halalas-body.received_halalas,
                     exception_reason=body.exception_reason))
                 s=lock_shift(c,sid)
@@ -1048,6 +1053,7 @@ def driver_roster(user=Depends(auth.current_user)):
 
 
 class ClosureDraft(OperationBody):
+    terminal_total_halalas:StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     model_config=ConfigDict(extra='forbid')
     counted_halalas:StrictInt=Field(ge=0,le=MAX_HALALAS)
     handover_halalas:StrictInt=Field(ge=0,le=MAX_HALALAS)
@@ -1063,8 +1069,8 @@ def closure_draft(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         shift=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,shift)
         row=c.execute('SELECT * FROM closure_drafts WHERE shift_id=%s',(sid,)).fetchone()
-        return safe({'draft':dict(row['draft'],revision=row['revision'],updated_at=row['updated_at']) if row else None,
-                     'expected_halalas':balance(c,shift),'status':shift['status']})
+        return safe(blind_closure.driver_view(user,{'draft':dict(row['draft'],revision=row['revision'],updated_at=row['updated_at']) if row else None,
+                     'expected_halalas':balance(c,shift),'status':shift['status']}))
 
 
 @router.post('/shifts/{sid}/draft')

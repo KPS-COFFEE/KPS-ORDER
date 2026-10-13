@@ -12,6 +12,7 @@ from .operations import uid,safe,fail,roles,mutate,day_start
 router=APIRouter(prefix='/api/reports',tags=['reports'])
 
 def can_read(user,row):
+    if user['role']=='driver':return False
     if user['role']=='owner':return user['brand_id']==row['brand_id']
     if user['brand_id']!=row['brand_id'] or not set(row['branch_ids'])<=set(user.get('branch_ids',[])):return False
     if user['id']==row['user_id']:return True
@@ -126,7 +127,7 @@ def make_print_html(snap):
 
     esc=lambda value:html.escape(str(value),quote=True)
     labels={
-        'expected_halalas':'النقد المتوقع','counted_halalas':'النقد المعدود',
+        'terminal_total_halalas':'موازنة جهاز الشبكة','expected_card_halalas':'الشبكة حسب النظام','card_difference_halalas':'فرق الشبكة','expected_halalas':'النقد المتوقع','counted_halalas':'النقد المعدود',
         'handover_halalas':'التسليم النهائي المؤكد','retained_halalas':'العهدة المحتفظ بها',
         'difference_halalas':'الفرق المعتمد','cash_collected_halalas':'التحصيل النقدي الصافي بعد الباقي',
         'card_collected_halalas':'تحصيل الشبكة','cash_refunded_halalas':'استردادات الكاش',
@@ -388,7 +389,7 @@ def make_pdf(snap):
     def divider():
         nonlocal y
         reserve(9);cv.setStrokeColorRGB(.88,.9,.9);cv.line(left,y,right,y);y-=12
-    labels={'expected_halalas':'النقد المتوقع','counted_halalas':'النقد المعدود','handover_halalas':'التسليم النهائي المؤكد','retained_halalas':'العهدة المحتفظ بها','difference_halalas':'الفرق المعتمد','cash_collected_halalas':'التحصيل النقدي الصافي بعد الباقي','card_collected_halalas':'تحصيل الشبكة','cash_refunded_halalas':'استردادات الكاش','card_refunded_halalas':'استردادات الشبكة','net_collections_halalas':'صافي التحصيلات','delivery_fees_halalas':'رسوم الطلبات المكتملة'}
+    labels={'terminal_total_halalas':'موازنة جهاز الشبكة','expected_card_halalas':'الشبكة حسب النظام','card_difference_halalas':'فرق الشبكة','expected_halalas':'النقد المتوقع','counted_halalas':'النقد المعدود','handover_halalas':'التسليم النهائي المؤكد','retained_halalas':'العهدة المحتفظ بها','difference_halalas':'الفرق المعتمد','cash_collected_halalas':'التحصيل النقدي الصافي بعد الباقي','card_collected_halalas':'تحصيل الشبكة','cash_refunded_halalas':'استردادات الكاش','card_refunded_halalas':'استردادات الشبكة','net_collections_halalas':'صافي التحصيلات','delivery_fees_halalas':'رسوم الطلبات المكتملة'}
     text(title,15)
     text('تقرير تشغيلي وتقفيلة',13)
     kv('مرجع التقفيلة',snap['reference'],ltr=True)
@@ -475,6 +476,7 @@ def generate_files(rid):
 
 @router.get('')
 def report_list(offset:int=0,user=Depends(auth.current_user)):
+    if user['role']=='driver':return {'reports':[],'offset':offset,'limit':50}
     roles(user,'owner','driver','delivery_manager')
     if offset<0 or offset>100000:fail(422,'صفحة غير صالحة')
     with db.tx() as c:
@@ -632,6 +634,9 @@ def v5_tables(snap,view='compact'):
     if direct_receipts:finance.insert(2,['استلامات نقدية مباشرة مسجلة',v5_money(direct_receipts),'—','—'])
     table('finance','النقد والشبكة والعهدة - جميع المبالغ بالريال',['البيان','المبلغ','البيان','المبلغ'],finance)
     difference=closure.get('difference_halalas',0) or 0
+    if closure.get('terminal_total_halalas') is not None:
+        table('card-reconciliation','موازنة جهاز الشبكة',['حسب النظام','موازنة الجهاز','فرق الشبكة'],[[
+            v5_money(closure.get('expected_card_halalas')),v5_money(closure['terminal_total_halalas']),v5_money(closure.get('card_difference_halalas'))]])
     table('reconciliation','نتيجة المطابقة',['الحالة','الفرق بالريال'],[['عجز' if difference<0 else 'فائض' if difference>0 else 'متوافق',v5_money(difference)]])
     if snap.get('kind')=='driver':
         terminal=closure.get('payment_terminal') or {}

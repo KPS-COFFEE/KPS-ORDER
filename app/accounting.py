@@ -26,7 +26,7 @@ RESP={'pending':('لم تحدد المسؤولية','Responsibility pending'),'c
 
 def fail(code,message,status=422):raise db.error(status,code,message)
 def access(user=Depends(auth.current_user)):
-    if not auth.has_permission(user,READ):fail('ACCOUNTING_FORBIDDEN','صلاحية المحاسبة غير متاحة.',403)
+    if user['role']=='driver' or not auth.has_permission(user,READ):fail('ACCOUNTING_FORBIDDEN','صلاحية المحاسبة غير متاحة.',403)
     return user
 
 def case_access(user=Depends(auth.current_user)):
