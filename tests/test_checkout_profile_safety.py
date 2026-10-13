@@ -22,16 +22,20 @@ def test_cpu_diagnostic_rejects_nonisolated_environment(environment, url, databa
     assert 'Started server' not in result.stderr
 
 
-def test_cpu_diagnostic_preserves_fastapi_thread_call_keywords(tmp_path):
+@pytest.mark.parametrize('requests', [1, 50])
+def test_cpu_diagnostic_preserves_fastapi_thread_call_keywords(tmp_path, requests):
     """FastAPI passes a keyword named function through the threadpool wrapper."""
     url = 'postgresql://fixture@127.0.0.1/test_load'
     env = dict(os.environ, APP_ENV='testing', TEST_DATABASE_URL=url,
                DATABASE_URL=url + '?options=isolated',
-               KPS_LOAD_PROFILE_OUTPUT=str(tmp_path / 'cpu.json'))
+               KPS_LOAD_PROFILE_OUTPUT=str(tmp_path / 'cpu.json'),
+               KPS_PROFILE_TEST_REQUESTS=str(requests))
     # A tiny app exercises the installed FastAPI without connecting a database
     # or importing the deployed application/lifespan into this subprocess.
     code = '''
-import sys, types
+import sys, types, os, time, json
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 app = FastAPI()
@@ -43,11 +47,20 @@ def identity():
     return 'fixture'
 @app.get('/probe')
 def probe(value=Depends(identity)):
+    time.sleep(.005)
     return {'value': value}
-with TestClient(app) as client:
-    response = client.get('/probe')
-    assert response.status_code == 200, response.text
-    assert response.json() == {'value': 'fixture'}
+with TestClient(tools.profile_checkout.app) as client:
+    def request(_):
+        response = client.get('/probe')
+        assert response.status_code == 200, response.text
+        assert response.json() == {'value': 'fixture'}
+    with ThreadPoolExecutor(25) as workers:
+        list(workers.map(request, range(int(os.environ['KPS_PROFILE_TEST_REQUESTS']))))
+# The report must already exist at graceful shutdown, before atexit runs.
+base = Path(os.environ['KPS_LOAD_PROFILE_OUTPUT'])
+report = json.loads(base.with_name(f'{base.stem}-{os.getpid()}{base.suffix}').read_text())
+assert any(row['function'] == 'probe' and row['calls'] == int(os.environ['KPS_PROFILE_TEST_REQUESTS'])
+           for row in report['functions'])
 '''
     result = subprocess.run([sys.executable, '-c', code], env=env,
                             cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=10)
@@ -55,5 +68,5 @@ with TestClient(app) as client:
     reports = list(tmp_path.glob('cpu-*.json'))
     assert len(reports) == 1
     report = json.loads(reports[0].read_text())
-    assert report['thread_calls'] == 2
-    assert any(row['function'] == 'probe' for row in report['functions'])
+    assert len(report['threads']) >= 2
+    assert any(row['function'] == 'probe' and row['calls'] == requests for row in report['functions'])
