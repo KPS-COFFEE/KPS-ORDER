@@ -238,6 +238,8 @@ class PreparationBody(BaseModel):
 @router.post('/{order_id}/preparation')
 def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_roles('owner', 'branch_manager')),
                 idempotency_key: str | None = Header(default=None)):
+    if body.status == 'cancelled' and not auth.has_permission(user, 'orders_cancel'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية رفض وإلغاء الطلبات متوقفة لحسابك.')
     with db.tx() as conn:
         # Replay returns a saved response, so fresh scope authorization must precede replay lookup.
         scoped_order(conn, order_id, user)

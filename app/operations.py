@@ -491,6 +491,8 @@ class TaskTransition(OperationBody):
 @router.post('/tasks/{tid}/transition')
 def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(auth.current_user)):
     roles(user,'driver','owner','delivery_manager')
+    if body.status == 'cancelled' and not auth.has_permission(user, 'orders_cancel'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية إلغاء المهام متوقفة لحسابك.')
     with db.tx() as c:
         def perform():
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()

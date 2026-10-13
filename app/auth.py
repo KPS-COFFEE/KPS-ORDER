@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import db
+from . import db, employee_permissions
 
 router = APIRouter(prefix='/api')
 COOKIE = 'kps_session'
@@ -33,7 +33,15 @@ def validate_admin_permissions(values):
 
 
 def has_permission(user, permission):
-    return user['role'] == 'owner' or (user['role'] == 'admin' and permission in (user.get('permissions') or []))
+    return permission in employee_permissions.effective(user)
+
+
+def validate_permission_denials(values, role):
+    if (not isinstance(values, list) or any(not isinstance(x, str) for x in values)
+            or len(values) != len(set(values)) or not set(values) <= employee_permissions.eligible(role)
+            or (role in {'owner', 'customer'} and values)):
+        raise db.error(422, 'STAFF_PERMISSIONS_INVALID', 'اختر صلاحيات متاحة لدور الموظف فقط.')
+    return sorted(values)
 
 
 def require_permission(permission):
@@ -48,7 +56,7 @@ def require_permission(permission):
 
 def require_configuration():
     def dependency(user=Depends(current_user)):
-        if user['role'] != 'owner' and not (user['role'] == 'admin' and set(user.get('permissions') or []) & CONFIGURATION_PERMISSIONS):
+        if not employee_permissions.effective(user) & CONFIGURATION_PERMISSIONS:
             raise db.error(403, 'ROLE_FORBIDDEN', 'لا توجد صلاحيات إعدادات مخولة لحسابك.')
         return user
     return dependency
@@ -83,7 +91,10 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 
 def public_user(user: dict) -> dict:
-    return {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions')}
+    output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials')}
+    output['effective_permissions'] = sorted(employee_permissions.effective(user))
+    output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
+    return output
 
 
 def secure_cookie() -> bool:
@@ -125,6 +136,9 @@ def current_user(request: Request) -> dict:
         if not token or not hmac.compare_digest(token_hash(token), user['csrf_hash']):
             raise db.error(403, 'CSRF_REJECTED', 'انتهى التحقق الآمن للطلب. حدّث الصفحة.')
     # Database result is fresh on every request: disabling an employee or changing branch access is immediate.
+    required = employee_permissions.required_for(request.scope.get('endpoint'), user['role'])
+    if required and not any(has_permission(user, value) for value in ((required,) if isinstance(required, str) else required)):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'هذه الصلاحية متوقفة لحسابك. تواصل مع المالك.')
     return user
 
 
@@ -553,9 +567,13 @@ def _staff_code_hash(identifier, code):
 
 
 def _staff_context(user):
-    return {'phone':normalize_phone(user['phone']) if user.get('phone') else None,
+    context = {'phone':normalize_phone(user['phone']) if user.get('phone') else None,
             'role':user['role'],'branch_ids':sorted(user.get('branch_ids',[])),
             'permissions':sorted(user.get('permissions') or [])}
+    # Empty defaults keep previously issued unmodified invitations valid.
+    if user.get('permission_denials'):
+        context['permission_denials'] = sorted(user['permission_denials'])
+    return context
 
 
 def _same_email(left, right):
@@ -946,6 +964,7 @@ class StaffInvitationBody(BaseModel):
     vehicle:dict=Field(default_factory=dict)
     role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager']='driver'
     permissions:list[str]=Field(default_factory=list,max_length=20)
+    permission_denials:list[str]=Field(default_factory=list,max_length=80)
 
 
 def _vehicle(value):
@@ -1008,6 +1027,9 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
     elif maintenance_provenance is not None:
         raise db.error(422,'DRAFT_APPROVAL_PROVENANCE_REQUIRED','مرجع الصيانة مخصص لتسجيل المسودة فقط.')
     permissions=validate_admin_permissions(body.permissions)
+    denials=validate_permission_denials(body.permission_denials,body.role)
+    if denials and user['role']!='owner':
+        raise db.error(403,'STAFF_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الموظفين.')
     if permissions and body.role != 'admin':
         raise db.error(422, 'ADMIN_ROLE_REQUIRED', 'صلاحيات الإدارة مخصصة لدور أدمن فقط.')
     email=email_delivery.normalize_email(body.email)
@@ -1024,7 +1046,7 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
     scope=_staff_scope(conn,user,body.branch_ids)
     if body.role!='owner' and not scope:
         raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
-    if body.role in {'owner','admin','delivery_manager'} and not draft_only:
+    if (body.role in {'owner','admin','delivery_manager'} or denials) and not draft_only:
         require_owner_step_up(conn,user)
     # Serialize identity conflicts without revealing the matched account's attributes.
     conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
@@ -1034,9 +1056,9 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
     identifier=db.new_id('staff_')
     invitation_state='pending_email' if ready else 'draft'
     row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
-    row=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
+    row=conn.execute('UPDATE users SET permissions=%s,permission_denials=%s WHERE id=%s RETURNING *',(db.json(permissions),db.json(denials),identifier)).fetchone()
     challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
-    details={'role':body.role,'branch_ids':scope,'permissions':permissions}
+    details={'role':body.role,'branch_ids':scope,'permissions':permissions,'permission_denials':denials}
     if draft_only:
         details['owner_decision']=maintenance_provenance
     db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,details)
@@ -1050,7 +1072,43 @@ def staff_list(user=Depends(require_roles('owner','delivery_manager'))):
         rows=conn.execute("SELECT * FROM users WHERE brand_id=%s AND role<>'customer' ORDER BY role,display_name LIMIT 500",(user['brand_id'],)).fetchall()
         if user['role']=='delivery_manager':
             rows=[r for r in rows if r['invitation_status']!='archived' and r['role']=='driver' and set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
-        return {'users':[staff_public(conn,row) for row in rows]}
+        return {'users':[staff_public(conn,row) for row in rows], 'permission_catalog':employee_permissions.catalog()}
+
+
+class EmployeePermissionsBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    enabled_permissions:list[str]=Field(max_length=80)
+    expected_permissions:list[str]=Field(max_length=80)
+    reason:str=Field(min_length=3,max_length=500)
+
+
+@router.put('/identity/staff/{identifier}/permissions')
+def set_employee_permissions(identifier:str,body:EmployeePermissionsBody,user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        require_owner_step_up(conn,user)
+        row=_staff_record(conn,identifier,user)
+        if row['role']=='owner' or row['invitation_status']=='archived':
+            raise db.error(409,'STAFF_PERMISSIONS_LOCKED','صلاحيات المالك كاملة؛ استعد الموظف المحذوف قبل تعديل صلاحياته.')
+        values=body.enabled_permissions
+        if len(values)!=len(set(values)) or not set(values)<=employee_permissions.eligible(row['role']) or not body.reason.strip():
+            raise db.error(422,'STAFF_PERMISSIONS_INVALID','اختر صلاحيات متاحة لدور الموظف فقط وسجل سبب التغيير.')
+        before=sorted(employee_permissions.effective(row))
+        if sorted(body.expected_permissions)!=before:
+            raise db.error(409,'STAFF_PERMISSIONS_CHANGED','تغيرت صلاحيات الموظف؛ حدّث القائمة ثم أعد المراجعة.')
+        grants=sorted(values) if row['role']=='admin' else []
+        denials=sorted(employee_permissions.eligible(row['role'])-set(values)) if row['role']!='admin' else []
+        output=conn.execute('UPDATE users SET permissions=%s,permission_denials=%s,updated_at=now() WHERE id=%s RETURNING *',
+                            (db.json(grants),db.json(denials),identifier)).fetchone()
+        _invalidate_staff_tokens(conn,identifier)
+        # Sessions remain valid; current_user reloads grants before every action.
+        db.audit(conn,user['id'],'staff.permissions.updated','user',identifier,
+                 {'before':before,'after':sorted(values),'reason':body.reason.strip()})
+        return {'user':staff_public(conn,output)}
+
+
+def _invalidate_staff_tokens(conn,identifier):
+    conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL AND revoked_at IS NULL',(identifier,))
+    conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s AND revoked_at IS NOT NULL) AND status IN ('pending','failed')",(identifier,))
 
 
 class OwnerDriverActivationBody(BaseModel):
@@ -1118,6 +1176,7 @@ class StaffUpdateBody(BaseModel):
     employee_ref:str|None=Field(default=None,max_length=80)
     vehicle:dict|None=None
     permissions:list[str]|None=Field(default=None,max_length=20)
+    permission_denials:list[str]|None=Field(default=None,max_length=80)
     role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager']|None=None
     reason:str|None=Field(default=None,min_length=3,max_length=500)
 
@@ -1142,6 +1201,13 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             require_owner_step_up(conn,user)
         else:
             permissions=(row.get('permissions') or []) if role=='admin' else []
+        denials=[] if role_changed else row.get('permission_denials') or []
+        if body.permission_denials is not None:
+            if user['role']!='owner':
+                raise db.error(403,'STAFF_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الموظفين.')
+            denials=validate_permission_denials(body.permission_denials,role)
+            if denials!=(row.get('permission_denials') or []):
+                require_owner_step_up(conn,user)
         scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
         active=body.active if body.active is not None else row['active']
         if role_changed and not row['email_verified_at']:
@@ -1178,6 +1244,10 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
         output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
         if body.permissions is not None or role_changed:
             output=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
+        if body.permission_denials is not None or role_changed:
+            output=conn.execute('UPDATE users SET permission_denials=%s WHERE id=%s RETURNING *',(db.json(denials),identifier)).fetchone()
+            if denials!=(row.get('permission_denials') or []):
+                _invalidate_staff_tokens(conn,identifier)
         if role_changed:
             output=conn.execute('UPDATE users SET role=%s WHERE id=%s RETURNING *',(role,identifier)).fetchone()
             if not row['email_verified_at']:
@@ -1188,7 +1258,7 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
             conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
             conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
-        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {})})
+        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {}),**({'old_permission_denials':row.get('permission_denials') or [],'permission_denials':denials} if body.permission_denials is not None else {})})
         return {'user':staff_public(conn,output)}
 
 
