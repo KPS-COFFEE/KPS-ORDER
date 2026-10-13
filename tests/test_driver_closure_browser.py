@@ -91,6 +91,8 @@ def test_owner_driver_closure_is_clear_read_only(live_app,chromium_browser,lang,
     ctx.add_init_script("localStorage.setItem('kps_ops_lang',"+repr(lang)+");")
     try:
         page.goto(live_app+'/ops');page.locator('#navigation [data-page=shifts]').click()
+        if status!='open':
+            page.locator('[data-action=owner-shift-view][data-view=review]').click()
         expect(page.locator('[data-action=simple-driver-close][data-id="'+sid+'"]')).to_have_count(0)
         page.locator('[data-action=shift-detail][data-id="'+sid+'"]').click()
         expect(page.locator('#modal-body')).to_contain_text('للمتابعة فقط' if lang=='ar' else 'View only')
