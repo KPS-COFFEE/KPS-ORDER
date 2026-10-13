@@ -12,9 +12,12 @@ pytestmark = pytest.mark.postgres
 
 def test_transaction_is_acknowledged_before_the_caller_can_write(database):
     with db.tx(pipeline=True) as conn:
+        # Drain SET LOCAL and this read without issuing a Sync. While SET is
+        # in flight libpq legitimately reports ACTIVE; after fetch it must
+        # retain the acknowledged BEGIN state, not the old idle state.
+        assert conn.execute('SELECT 1 AS n').fetchone()['n'] == 1
         assert conn.info.transaction_status == psycopg.pq.TransactionStatus.INTRANS
         assert conn.info.pipeline_status == psycopg.pq.PipelineStatus.ON
-        assert conn.execute('SELECT 1 AS n').fetchone()['n'] == 1
 
 
 def test_no_pipeline_sync_between_last_business_write_and_commit(database, monkeypatch, tmp_path):

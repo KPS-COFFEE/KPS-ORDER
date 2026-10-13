@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse
+from .responses import DatabaseJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations, invoice_profiles
@@ -265,7 +266,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
 
 
 @router.get('/{order_id}')
-def get_order(order_id: str, user=Depends(auth.current_user)):
+def get_order(order_id: str, user=Depends(auth.current_user), request: Request = None):
     with db.tx(pipeline=user['role'] == 'customer') as conn:
         row = scoped_order(conn, order_id, user)
         events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
@@ -275,7 +276,8 @@ def get_order(order_id: str, user=Depends(auth.current_user)):
             row['receipt_qr']=invoice_profiles.ordinary_qr(row)
         else:
             row=customer_order_view(row)
-    return {'order': row, 'events': events}
+    result = {'order': row, 'events': events}
+    return DatabaseJSONResponse(result) if request is not None else result
 
 
 class PreparationBody(BaseModel):

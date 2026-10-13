@@ -12,8 +12,9 @@ from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, parse_qs, urlencode, unquote
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse
+from .responses import DatabaseJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from . import auth, db, service_hours
@@ -704,9 +705,10 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
 
 
 @router.post('/quote')
-def quote(body: QuoteBody):
+def quote(body: QuoteBody, request: Request = None):
     with db.tx(pipeline=True) as conn:
-        return {'quote': customer_quote_view(quote_order(conn, body))}
+        result = {'quote': customer_quote_view(quote_order(conn, body))}
+    return DatabaseJSONResponse(result) if request is not None else result
 
 
 class AvailabilityBody(BaseModel):

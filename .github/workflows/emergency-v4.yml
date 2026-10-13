@@ -173,7 +173,7 @@ jobs:
           tests/test_hardening_printing.py tests/test_hardening_recovery.py
           tests/test_hardening_staff_browser.py tests/test_hardening_load_observer.py
           tests/test_hardening_order_pipeline.py
-          tests/test_pipeline_transaction_boundary.py tests/test_hardening_pool.py
+          tests/test_pipeline_transaction_boundary.py tests/test_database_json_response.py
           tests/test_hardening_pool.py tests/test_monitoring_workers.py tests/test_customer_hotpath.py
           --junitxml=test-results/hardening-focused.xml
       - name: Run preserved appearance and complete staff role journeys

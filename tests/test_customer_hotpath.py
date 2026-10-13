@@ -14,6 +14,39 @@ from test_hardening_orders import checkout
 pytestmark = pytest.mark.postgres
 
 
+@pytest.mark.parametrize('locale', ['ar', 'en'])
+def test_single_pass_http_quote_and_order_preserve_json_and_privacy(checkout, monkeypatch, locale):
+    from fastapi.encoders import jsonable_encoder
+    from starlette.responses import JSONResponse
+    from app import catalog, orders
+    from test_hardening_orders import create, payload
+
+    client, user = checkout
+    original = catalog.quote_order
+    quoted = []
+
+    def observed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        quoted.append(catalog.customer_quote_view(result))
+        return result
+
+    monkeypatch.setattr(catalog, 'quote_order', observed)
+    quote = client.post('/api/quote', json=payload(), headers={'Accept-Language': locale})
+    assert quote.status_code == 200 and len(quoted) == 1
+    assert quote.content == JSONResponse(jsonable_encoder({'quote': quoted[0]})).body
+    placed = create(client)
+    assert placed.status_code == 200, placed.text
+    identifier = placed.json()['order']['id']
+    direct = orders.get_order(identifier, user=user)
+    viewed = client.get('/api/orders/' + identifier, headers={'Accept-Language': locale})
+    assert viewed.status_code == 200
+    assert viewed.content == JSONResponse(jsonable_encoder(direct)).body
+    for response in (quote, viewed):
+        assert response.headers['content-type'] == 'application/json'
+        assert response.headers['cache-control'] == 'no-store'
+        assert 'performance_snapshot' not in response.text and 'risk_reasons' not in response.text
+
+
 @pytest.mark.parametrize('failure', ['sql', 'python'])
 def test_pipelined_transaction_never_commits_after_a_queued_failure(database, failure):
     brand = 'TEST-hotpath-rollback-' + failure
