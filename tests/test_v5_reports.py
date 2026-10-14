@@ -172,3 +172,14 @@ def test_formatted_vehicle_closure_single_page_and_preserves_source():
     # Long notes must flow onto further pages instead of being cropped or shrunk.
     snap['shift']['vehicle_log']['end']['notes']='ملاحظة فحص المركبة ' * 150
     assert _pdf_pages(reporting.make_v5_pdf(snap))>1
+
+
+def test_separate_driver_sheet_keeps_rows_and_compact_main():
+    snap=sample('manager',8)
+    main=reporting.make_v5_print_html(snap,part='main')
+    drivers=reporting.make_v5_print_html(snap,part='drivers')
+    assert 'id="drivers"' not in main
+    assert 'id="drivers"' in drivers and 'id="finance"' not in drivers
+    assert len(reporting.output_tables(snap,'compact','drivers')[0]['rows'])==8
+    assert _pdf_pages(reporting.make_v5_pdf(snap,part='main'))==1
+    assert _pdf_pages(reporting.make_v5_pdf(snap,part='drivers'))==1

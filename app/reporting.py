@@ -751,18 +751,25 @@ V5_CSS = '''
 @page{size:A4;margin:11mm}
 @media print{body{background:white;font-size:11pt;line-height:1.65}main{padding:0;margin:0;max-width:none}.brand{font-size:14pt}h1{font-size:16pt}h2{font-size:14pt;margin:11px 0 5px;break-after:avoid}.meta,.foot{font-size:9pt}button,.screen-only,.drilldowns{display:none}.table-wrap{overflow:visible}table,.wide table{min-width:0;font-size:11pt;line-height:1.6}th,td{padding:4px 5px}thead{display:table-header-group}tfoot{display:table-row-group}tr{break-inside:avoid;page-break-inside:avoid}header{break-inside:avoid}}
 /* Compact sections use page area before reducing readable type. */
-main[data-report-view="compact"]{max-width:1000px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
+main[data-report-view="compact"]{max-width:794px;font-size:13px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
 main[data-report-view="compact"]>header,main[data-report-view="compact"]>footer,main[data-report-view="compact"]>#shift,main[data-report-view="compact"]>#finance,main[data-report-view="compact"]>#drivers,main[data-report-view="compact"]>#support-tickets,main[data-report-view="compact"]>#refuels{grid-column:1/-1}
-main>section{min-width:0}h2{color:#873a12}tbody tr:nth-child(even){background:#faf9f6}
+main[data-report-view="compact"] table{font-size:12px;line-height:1.5}main[data-report-view="compact"] th,main[data-report-view="compact"] td{padding:4px 6px}main[data-report-view="compact"] h2{font-size:15px;margin:8px 0 5px}main[data-report-view="compact"] h1{font-size:21px}main>section{min-width:0}h2{color:#873a12}tbody tr:nth-child(even){background:#faf9f6}
 @media screen and (max-width:700px){main[data-report-view="compact"]{display:block}}
 @media print{main[data-report-view="compact"]{gap:4px 12px}main[data-report-view="compact"] table{font-size:9pt;line-height:1.35}main[data-report-view="compact"] th,main[data-report-view="compact"] td{padding:2px 4px}main[data-report-view="compact"] h2{font-size:10pt;line-height:1.4;margin:5px 0 3px}main[data-report-view="compact"] .meta,main[data-report-view="compact"] .foot{font-size:8pt;line-height:1.4}main[data-report-view="compact"] h1{font-size:14pt}main[data-report-view="compact"] header{padding-bottom:4px}main[data-report-view="compact"] section{break-inside:avoid}main[data-report-view="compact"] #drivers,main[data-report-view="compact"] #refuels,main[data-report-view="compact"] #support-tickets{break-inside:auto}}
 
 '''
 
-def make_v5_print_html(snap,view='compact',report_id=None):
-    esc=lambda value:html.escape(str(value if value is not None else '—'),quote=True)
+def output_tables(snap,view,part):
     tables=v5_tables(snap,view)
+    if part=='drivers':return [t for t in tables if t['key']=='drivers']
+    if part=='main':return [t for t in tables if t['key']!='drivers']
+    return tables
+
+def make_v5_print_html(snap,view='compact',report_id=None,part='all'):
+    esc=lambda value:html.escape(str(value if value is not None else '—'),quote=True)
+    tables=output_tables(snap,view,part)
     title='تقرير المالك المفصل' if view=='owner' else 'تقفيلة السائق' if snap.get('kind')=='driver' else 'تقفيلة مدير التوصيل'
+    if part=='drivers':title='تقفيلات السائقين'
     sections=[]
     for table in tables:
         def row(values,tag='td',target=None):
@@ -771,7 +778,7 @@ def make_v5_print_html(snap,view='compact',report_id=None):
         footer='<tfoot>'+row(table['total'])+'</tfoot>' if table.get('total') else ''
         sections.append('<section id="'+esc(table['key'])+'"><h2>'+esc(table['title'])+'</h2><div class="table-wrap '+('wide' if len(table['columns'])>4 else '')+'"><table><thead>'+row(table['columns'],'th')+'</thead><tbody>'+rows+'</tbody>'+footer+'</table></div></section>')
     drill=[]
-    if view=='owner':
+    if view=='owner' and part!='drivers':
         for o in snap.get('orders',[]):
             itemrows=[]
             for item in (o.get('snapshot') or {}).get('items',[]):
@@ -793,7 +800,8 @@ def make_v5_print_html(snap,view='compact',report_id=None):
         prefix='/api/reports/'+quote(str(report_id),safe='')+'/renderings/v5/'
         actions+='<a href="'+esc(prefix+'pdf')+'">تنزيل PDF المحفوظ</a><a href="'+esc(prefix+'csv')+'">تنزيل CSV المحفوظ</a>'
     if report_id:
-        actions+='<a href="/api/reports/'+quote(str(report_id),safe='')+'/formatted/pdf">تنزيل PDF المنسق</a>'
+        actions+='<a href="/api/reports/'+quote(str(report_id),safe='')+'/formatted/pdf?part='+esc(part)+'&amp;view='+esc(view)+'">تنزيل PDF المنسق</a>'
+        if snap.get('kind')=='manager':actions+='<a href="/api/reports/'+quote(str(report_id),safe='')+'/formatted/print?part=drivers">ورقة تقفيلات السائقين</a>'
     actions='<nav class="report-actions screen-only" aria-label="ملفات التقرير">'+actions+'</nav>'
     return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+' - '+esc(brand_title(snap))+'</title><style>'+V5_CSS+'</style><script src="/report.js" defer></script></head><body><main data-report-template="5" data-report-view="'+esc(view)+'"><header><div class="brand">'+esc(brand_title(snap))+'</div><h1>'+esc(title)+'</h1>'+test+'<p class="meta">قالب 5 · بيانات '+esc(snap.get('schema_version',1))+' · '+esc(snap.get('timezone','Asia/Riyadh'))+' · تقرير '+esc(snap.get('closure_label') or display_shift_label(snap.get('shift',{})))+'</p>'+actions+'<p class="meta">اللقطة المعتمدة ثابتة. تسليم العهدة لا يُحسب بيعًا ثانيًا.</p></header>'+''.join(sections)+'<section class="drilldowns screen-only"><h2>الطلبات - عرض التفاصيل</h2>'+''.join(drill)+'</section><footer class="foot">مرجع الشفت '+esc(snap.get('closure_label') or display_shift_label(snap.get('shift',{})))+' · النسخة المعتمدة محفوظة · جميع المبالغ بالريال السعودي</footer></main></body></html>'
 
@@ -807,7 +815,7 @@ def make_v5_csv(snap,view='compact'):
         if table.get('total'):writer.writerow([cell(v) for v in table['total']])
     return ('\ufeff'+out.getvalue()).encode('utf-8')
 
-def make_v5_pdf(snap,view='compact'):
+def make_v5_pdf(snap,view='compact',part='all'):
     """Readable A4 tables; repeat real headers and keep every row across pages."""
     from pathlib import Path
     from reportlab.lib import colors
@@ -864,9 +872,10 @@ def make_v5_pdf(snap,view='compact'):
     def p(value,style=normal):return RTLText(value,style)
     stream=io.BytesIO();doc=SimpleDocTemplate(stream,pagesize=A4,rightMargin=30,leftMargin=30,topMargin=28,bottomMargin=37,title=brand_title(snap)+' - Closure V5',invariant=1)
     title='تقرير المالك المفصل' if view=='owner' else 'تقفيلة السائق' if snap.get('kind')=='driver' else 'تقفيلة مدير التوصيل'
+    if part=='drivers':title='تقفيلات السائقين'
     body=[p(brand_title(snap)+' - '+title,heading),p('قالب 5 · بيانات '+str(snap.get('schema_version',1))+' · التاريخ '+str(snap.get('operational_date',''))+' · وقت الرياض',meta)]
     if snap.get('test_data') or str(snap.get('brand_name','')).startswith(('اختبار','تجريبي','TEST')):body.append(p('بيانات اختبار فقط - ليست تشغيلًا حقيقيًا',bold))
-    for table in v5_tables(snap,view):
+    for table in output_tables(snap,view,part):
         # Pack short key/value sections into paired fields, preserving all values.
         field_table=view=='compact' and table['columns']==['البيان','القيمة']
         if field_table and len(table['rows'])>1:
@@ -946,12 +955,14 @@ def original_pdf(rid:str,user=Depends(auth.current_user)):
         return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="KPS-original-{rid}.pdf"','Cache-Control':'private, no-store'})
 
 @router.get('/{rid}/formatted/{format}')
-def formatted_download(rid:str,format:str,user=Depends(auth.current_user)):
+def formatted_download(rid:str,format:str,view:str='compact',part:str='main',user=Depends(auth.current_user)):
     if format not in ('print','pdf'):fail(404,'الملف غير موجود')
+    if view not in ('compact','owner') or part not in ('main','drivers','all'):fail(422,'عرض غير صالح')
     with db.tx() as c:
         r=report(c,user,rid)
-        variant=current_view(user,r)
-    data=make_v5_print_html(r['snapshot'],variant,rid) if format=='print' else make_v5_pdf(r['snapshot'],variant)
+        if view=='owner' and current_view(user,r)!='owner':fail(403,'التقرير المفصل للمالك فقط')
+        variant=view
+    data=make_v5_print_html(r['snapshot'],variant,rid,part) if format=='print' else make_v5_pdf(r['snapshot'],variant,part)
     headers={'Cache-Control':'private, no-store'}
     if format=='pdf':headers['Content-Disposition']=f'attachment; filename="KPS-formatted-{rid}.pdf"'
     return Response(data,media_type='text/html' if format=='print' else 'application/pdf',headers=headers)
