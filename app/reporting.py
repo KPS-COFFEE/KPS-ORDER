@@ -860,7 +860,12 @@ def make_v5_pdf(snap,view='compact',part='all'):
             self.width=avail_width;self.height=len(self.lines)*self.style.leading
             return self.width,self.height
         def split(self,avail_width,avail_height):
-            self.wrap(avail_width,avail_height)
+            # Table._splitCell passes the full column width, including padding,
+            # whereas its original wrap uses the narrower content width. Keep
+            # that measured width: broadening it here can turn three lines into
+            # two and return a single flowable to a two-part cell split.
+            measured_width=self.width
+            self.wrap(min(avail_width,measured_width) if measured_width else avail_width,avail_height)
             count=int(avail_height//self.style.leading)
             if count<1:return []
             if count>=len(self.lines):return [self]

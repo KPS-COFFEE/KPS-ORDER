@@ -66,6 +66,32 @@ def test_v5_driver_and_small_manager_readable_single_a4_large_has_every_row():
     assert len(table['rows'])==103 and table['total'][1]==103
 
 
+def test_owner_pdf_keeps_narrow_reference_cells_when_splitting_across_pages():
+    """The UTC browser witness used to fail while splitting a three-line ID."""
+    import json
+    import re
+    from pypdf import PdfReader
+    snap=json.loads((Path(__file__).parent/'fixtures'/'v5_owner_utc_page_boundary.json').read_text())
+    before=deepcopy(snap)
+    assert snap['shift']['closed_at'].endswith('+00:00')
+    assert snap['shift']['submission']['operational_approved'] is True
+    blob=reporting.make_v5_pdf(snap,'owner')
+    reader=PdfReader(io.BytesIO(blob))
+    assert len(reader.pages)>1
+    pages=[re.sub(r'\s+','',page.extract_text()) for page in reader.pages]
+    text=''.join(pages)
+    for record in [*snap['collections'],*snap['custody_events'][1:],*snap['transfers']]:
+        assert record['id'] in text
+    # The first custody ID crosses a repeated table header. Check both page
+    # fragments, including the final character and its saved shift reference.
+    crossing=snap['custody_events'][0]['id']
+    prefix=max(length for length in range(1,len(crossing)+1) if crossing[:length] in pages[1])
+    assert 0<prefix<len(crossing)
+    assert crossing[prefix:]+'/D-000002' in pages[2]
+    assert snap==before
+    assert reporting.make_v5_pdf(snap,'owner')==blob
+
+
 def close_manager(ops):
     actor,post,order,shifts=ops;manager,driver=shifts();delivered(post,order,driver);close_driver(post,driver,manager)
     post('manager','/api/shifts/'+manager+'/closing')

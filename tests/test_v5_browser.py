@@ -315,6 +315,10 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             assert not conn.execute('SELECT 1 FROM custody_transfers WHERE from_shift_id=%s',(manager_shift,)).fetchone()
             final_reports=conn.execute('SELECT id,kind,snapshot FROM closure_reports WHERE shift_id IN (%s,%s)',(driver_shift,manager_shift)).fetchall()
         manager_report=next(report['id'] for report in final_reports if report['kind']=='manager')
+        manager_snapshot=next(report['snapshot'] for report in final_reports if report['kind']=='manager')
+        # Preserve the actual synthetic source even when a saved view fails;
+        # status alone cannot distinguish a row lock from a renderer error.
+        (ARTIFACTS / 'v5-final-financial-snapshot.json').write_text(json.dumps({'test_only':True,'snapshot':manager_snapshot},ensure_ascii=False,default=str,indent=2)+'\n')
         _match_manager_finances(pages['admin'],base,contexts['admin'],manager_report,0,total)
         saved_report_files = {}
         for report in final_reports:
@@ -322,16 +326,18 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             reviewer=contexts['delivery_manager']
             path=base+'/api/reports/'+report['id']+'/renderings/v5/'
             compact=reviewer.request.get(path+'pdf')
-            assert compact.status==200 and compact.body().startswith(b'%PDF')
+            assert compact.status==200,{'status':compact.status,'response':compact.text(),
+                                       'renderings':reviewer.request.get(base+'/api/reports/'+report['id']).json()['report']['renderings']}
+            assert compact.body().startswith(b'%PDF')
             saved_report_files[(report['id'],report['kind'],'pdf')] = compact.body()
             (ARTIFACTS / ('v5_'+report['kind']+'_final.pdf')).write_bytes(compact.body())
             if report['kind']=='manager':
                 for fmt in ('pdf','csv'):
                     detailed=contexts['owner'].request.get(path+fmt)
-                    assert detailed.status==200
+                    assert detailed.status==200,{'status':detailed.status,'response':detailed.text(),
+                                                'renderings':contexts['owner'].request.get(base+'/api/reports/'+report['id']).json()['report']['renderings']}
                     saved_report_files[(report['id'],'owner',fmt)] = detailed.body()
                     (ARTIFACTS / ('v5_owner_final.'+fmt)).write_bytes(detailed.body())
-                (ARTIFACTS / 'v5-final-financial-snapshot.json').write_text(json.dumps({'test_only':True,'snapshot':report['snapshot']},ensure_ascii=False,default=str,indent=2)+'\n')
         # Restart the actual HTTP process against the SAME isolated PostgreSQL
         # schema. Startup executes all safe migrations/catalog import again;
         # it must not reset the guest identity, ledger, closures or saved bytes.
