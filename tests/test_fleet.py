@@ -198,3 +198,47 @@ def test_nonempty_vehicle_history_and_corrections_survive_isolated_restore(ops):
         with psycopg.connect(test_url,autocommit=True) as cleanup:cleanup.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(target)))
     with db.tx() as c:
         for name,rows in source.items():assert c.execute('SELECT * FROM '+name).fetchall()==rows
+
+
+def test_vehicle_management_atomic_swap_pause_replace_history_and_scope(ops):
+    from fastapi import HTTPException
+    from app.shift_vehicle import start,Inspection
+    actor,post,*_=ops
+    with db.tx() as c:
+        for driver,plate,baseline in [('ops-driver','TEST ALLOC A',12),('ops-driver2','TEST ALLOC B',10)]:
+            c.execute('UPDATE users SET vehicle=%s WHERE id=%s',(db.json({'plate':plate,'baseline_kml':baseline,'odometer_km':1000}),driver))
+        seed(c,'allocation-history','TEST ALLOC A',10)
+        original=c.execute("SELECT * FROM vehicle_operating_logs WHERE shift_id='allocation-history'").fetchone()
+    client=delegate(actor)
+    cards={r['plate']:r for r in client.get('/api/fleet/vehicles').json()['vehicles']};a=cards['TEST ALLOC A']['id'];b=cards['TEST ALLOC B']['id']
+    url=f'/api/fleet/vehicles/{a}/management'
+    body={'action':'swap','revision':0,'driver_id':'ops-driver2','reason':'TEST ONLY swap'}
+    assert client.post(url,json=body,headers={'Idempotency-Key':'swap-once'}).status_code==200
+    assert client.post(url,json=body,headers={'Idempotency-Key':'swap-once'}).status_code==200
+    assert client.post(url,json=body,headers={'Idempotency-Key':'swap-stale'}).status_code==409
+    with db.tx() as c:
+        drivers={r['id']:r['vehicle'] for r in c.execute("SELECT id,vehicle FROM users WHERE role='driver' AND brand_id='ops-brand'").fetchall()}
+        assert drivers['ops-driver']['plate']=='TEST ALLOC B' and drivers['ops-driver2']['plate']=='TEST ALLOC A'
+        assert drivers['ops-driver2']['baseline_kml']==12
+        assert c.execute("SELECT * FROM vehicle_operating_logs WHERE shift_id='allocation-history'").fetchone()==original
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='fleet.manage'").fetchone()['n']==2
+    post('fawzi',url,{'action':'pause','revision':1,'reason':'TEST ONLY maintenance'})
+    with db.tx() as c:
+        driver=c.execute("SELECT * FROM users WHERE id='ops-driver2'").fetchone()
+        with pytest.raises(HTTPException) as err:start(c,driver,driver,Inspection(odometer_km=1210,fuel_percent=100,checks={k:'ok' for k in CHECKS}))
+        assert err.value.status_code==409
+    post('fawzi',url,{'action':'resume','revision':2,'reason':'TEST ONLY maintenance completed'})
+    post('fawzi',url,{'action':'release','revision':3,'reason':'TEST ONLY return'})
+    assert client.get('/api/fleet/vehicles/'+a).status_code==200
+    post('fawzi',url,{'action':'assign','revision':4,'driver_id':'ops-driver','reason':'TEST ONLY replacement'})
+    assert client.get('/api/fleet/vehicles/'+b).status_code==200 # released car retained without prior history
+    with db.tx() as c:
+        assert c.execute("SELECT vehicle->>'plate' p FROM users WHERE id='ops-driver'").fetchone()['p']=='TEST ALLOC A'
+        seed(c,'allocation-open','TEST ALLOC A',12,state='open')
+    post('fawzi',url,{'action':'pause','revision':5,'reason':'TEST ONLY blocked while driving'},status=409)
+    actor('other');assert client.get(url).status_code==404
+    actor('driver');assert client.get(url).status_code==403
+    with db.tx() as c:
+        c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-fawzi'")
+    actor('fawzi');assert client.get(url).status_code==404
+    assert client.post(url,json={'action':'pause','revision':5,'reason':'TEST ONLY blocked'},headers={'Idempotency-Key':'scope-block'}).status_code==404

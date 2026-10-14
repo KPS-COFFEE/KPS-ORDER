@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
-from . import auth, db, accounting_export, service_hours, vehicle_profile
+from . import auth, db, accounting_export, service_hours, vehicle_profile, fleet_management
 
 router=APIRouter(prefix='/api/fleet',tags=['fleet'])
 PERMISSION='vehicle_maintenance_manage'
@@ -124,6 +124,12 @@ def vehicles(user=Depends(access)):
             current_scope+=' AND u.branch_ids <@ %s::jsonb AND jsonb_array_length(u.branch_ids)>0';current_args.append(db.json(user.get('branch_ids') or []))
         rows=c.execute('SELECT DISTINCT v.id,v.plate,v.details'+BASE+' WHERE '+' AND '.join(clauses)+
          ' UNION SELECT v.id,v.plate,v.details FROM fleet_vehicles v JOIN users u ON u.brand_id=v.brand_id AND v.plate_key=regexp_replace(upper(u.vehicle->>\'plate\'),\'[[:space:]]\',\'\',\'g\') WHERE '+current_scope+' ORDER BY plate,id',args+current_args).fetchall()
+        extra=c.execute('SELECT id,plate,details FROM fleet_vehicles WHERE brand_id=%s', (user['brand_id'],)).fetchall()
+        seen={r['id'] for r in rows}
+        for car in extra:
+            scope=car['details'].get('management_branch_ids') or []
+            if car['id'] not in seen and (user['role']=='owner' or scope and set(scope)<=set(user.get('branch_ids') or [])):rows.append(car)
+        rows.sort(key=lambda r:r['plate'])
         assignments=c.execute("SELECT regexp_replace(upper(u.vehicle->>'plate'),'[[:space:]]','','g') plate_key,u.display_name FROM users u WHERE "+current_scope+' ORDER BY u.display_name',current_args).fetchall()
         import re
         for row in rows:
@@ -157,6 +163,10 @@ def vehicle(vid:str,limit:int=Query(50,ge=1,le=200),offset:int=Query(0,ge=0,le=1
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         clauses,args=scoped(user);clauses.append('l.vehicle_id=%s');args.append(vid)
         card=c.execute('SELECT DISTINCT v.id,v.plate,v.details'+BASE+' WHERE '+' AND '.join(clauses),args).fetchone()
+        if not card:
+            candidate=c.execute('SELECT id,plate,details FROM fleet_vehicles WHERE id=%s AND brand_id=%s',(vid,user['brand_id'])).fetchone()
+            scope=(candidate or {}).get('details',{}).get('management_branch_ids') or []
+            if candidate and (user['role']=='owner' or scope and set(scope)<=set(user.get('branch_ids') or [])):card=candidate
         if not card:
             current_clause="u.brand_id=%s AND u.role='driver' AND v.id=%s";current_args=[user['brand_id'],vid]
             if user['role']!='owner':
@@ -269,3 +279,33 @@ def correct(vid:str,sid:str,body:Correction,request:Request,user=Depends(access)
             db.audit(c,user['id'],'vehicle_log.correct','vehicle_log',sid,{'vehicle_id':vid,'revision':revision,'reason':body.reason,'before':before,'after':after})
             return {'shift_id':sid,'revision':revision,'metrics':after}
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'vehicle_log.correct:'+sid,body.model_dump(mode='json'),perform)
+
+
+class ManagementAction(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    action:Literal['assign','swap','release','pause','resume']
+    revision:StrictInt=Field(ge=0)
+    driver_id:str|None=Field(default=None,max_length=150)
+    reason:str=Field(min_length=1,max_length=2000)
+    @field_validator('reason')
+    @classmethod
+    def safe_reason(cls,v):
+        if '\x00' in v:raise ValueError('Invalid text')
+        return v
+
+@router.get('/vehicles/{vid}/management')
+def management(vid:str,user=Depends(access)):
+    with db.tx() as c:
+        drivers=c.execute("SELECT id,display_name,vehicle,branch_ids,brand_id,active FROM users WHERE brand_id=%s AND role='driver' ORDER BY display_name",(user['brand_id'],)).fetchall()
+        car=c.execute('SELECT * FROM fleet_vehicles WHERE id=%s AND brand_id=%s',(vid,user['brand_id'])).fetchone()
+        if not car or not fleet_management.car_scope(c,user,car,drivers):raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')
+        events=c.execute("SELECT a.created_at,a.details,u.display_name actor_name FROM audit_events a LEFT JOIN users u ON u.id=a.actor_id WHERE a.entity_id=%s AND a.entity_type='vehicle' AND a.action='fleet.manage' ORDER BY a.created_at DESC LIMIT 50",(vid,)).fetchall()
+        return {'vehicle':car,'drivers':[{'id':d['id'],'display_name':d['display_name'],'plate':d['vehicle'].get('plate')} for d in drivers if d['active'] and fleet_management.driver_scope(user,d)],'events':events}
+
+@router.post('/vehicles/{vid}/management')
+def manage(vid:str,body:ManagementAction,request:Request,user=Depends(access)):
+    with db.tx() as c:
+        car=c.execute('SELECT * FROM fleet_vehicles WHERE id=%s AND brand_id=%s',(vid,user['brand_id'])).fetchone()
+        drivers=c.execute("SELECT * FROM users WHERE brand_id=%s AND role='driver'",(user['brand_id'],)).fetchall()
+        if not car or not fleet_management.car_scope(c,user,car,drivers):raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'fleet.manage:'+vid,body.model_dump(mode='json'),lambda:fleet_management.perform(c,user,vid,body))
