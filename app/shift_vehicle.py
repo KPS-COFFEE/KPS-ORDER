@@ -31,12 +31,15 @@ def stamp(c,user,value):
 
 def start(c,user,target,inspection):
     if inspection is None:raise db.error(422,'VEHICLE_INSPECTION_REQUIRED','أكمل فحص المركبة وقراءة العداد والبنزين لفتح شفت السائق.')
-    vehicle=target.get('vehicle') or {}
+    vehicle=dict(target.get('vehicle') or {})
     plate=re.sub(r'\s+', '', str(vehicle.get('plate','')).upper())
     if plate:
         vid='veh_'+hashlib.md5((target['brand_id']+':'+plate).encode()).hexdigest()
         c.execute('INSERT INTO fleet_vehicles(id,brand_id,plate_key,plate,details) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',(vid,target['brand_id'],plate,vehicle['plate'],db.json(vehicle)))
-        v=c.execute('SELECT id FROM fleet_vehicles WHERE brand_id=%s AND plate_key=%s FOR UPDATE',(target['brand_id'],plate)).fetchone()
+        v=c.execute('SELECT id,details FROM fleet_vehicles WHERE brand_id=%s AND plate_key=%s FOR UPDATE',(target['brand_id'],plate)).fetchone()
+        # The permanent car owns its specification/rate; freeze it for this shift.
+        for key in ('type','model_year','color','engine_cc','transmission','baseline_kml','baseline_note'):
+            if key in v['details']:vehicle[key]=v['details'][key]
         if c.execute("SELECT 1 FROM vehicle_operating_logs l JOIN shifts s ON s.id=l.shift_id WHERE l.vehicle_id=%s AND s.status IN ('open','closing')",(v['id'],)).fetchone():
             raise db.error(409,'VEHICLE_IN_USE','السيارة مستلمة في شفت آخر. سلّمها قبل استلامها من سائق آخر.')
         last=c.execute("SELECT max((coalesce(x.after_metrics,l.metrics)->>'end_odometer')::numeric) km FROM vehicle_operating_logs l LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id ORDER BY revision DESC LIMIT 1) x ON true WHERE l.vehicle_id=%s",(v['id'],)).fetchone()

@@ -1108,17 +1108,14 @@ class StaffInvitationBody(BaseModel):
 
 
 def _vehicle(value):
-    if set(value)-{'type','plate','description','owned_by_kps','odometer_km'} or any(not isinstance(v,str) or len(v)>150 or '\x00' in v for k,v in value.items() if k in {'type','plate','description'}):
-        raise db.error(422,'VEHICLE_INVALID','بيانات المركبة غير صحيحة.')
-    if 'owned_by_kps' in value and type(value['owned_by_kps']) is not bool:
-        raise db.error(422,'VEHICLE_INVALID','حدد هل المركبة تابعة لكبز.')
-    if 'odometer_km' in value and (type(value['odometer_km']) is not int or not 0<=value['odometer_km']<=10000000):
-        raise db.error(422,'VEHICLE_INVALID','قراءة العداد غير صحيحة.')
-    return value
+    from .vehicle_profile import validate
+    return validate(value)
 
 
 @router.put('/identity/driver/vehicle')
 def register_driver_vehicle(body: dict, user=Depends(require_roles('driver'))):
+    if {'baseline_kml','baseline_note'} & body.keys():
+        raise db.error(403,'VEHICLE_MANAGER_ONLY','معدل الوقود يحدده مدير التوصيل.')
     vehicle = _vehicle(body)
     if not str(vehicle.get('plate','')).strip() or 'owned_by_kps' not in vehicle:
         raise db.error(422,'VEHICLE_REQUIRED','أدخل لوحة المركبة وحدد هل هي تابعة لكبز.')

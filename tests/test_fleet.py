@@ -10,9 +10,9 @@ from test_operations import ops
 pytestmark = pytest.mark.postgres
 
 
-def seed(c,sid,plate,day,driver='ops-driver',km=210,liters=21,full=True,state='closed',brand='ops-brand',bids=None,exception=False,inspection_issue=False):
+def seed(c,sid,plate,day,driver='ops-driver',km=210,liters=21,full=True,state='closed',brand='ops-brand',bids=None,exception=False,inspection_issue=False,profile=None):
     opened=datetime(2026,10,day,16,tzinfo=timezone.utc);ended=datetime(2026,10,day,20,tzinfo=timezone.utc)
-    log={'vehicle':{'plate':plate,'type':'Test car','description':'Test model'},
+    log={'vehicle':{'plate':plate,'type':'Test car','description':'Test model',**(profile or {})},
          'start':{'odometer_km':1000,'fuel_percent':100 if full else 50,'checks':{k:'ok' for k in CHECKS},'recorded_at':opened.isoformat()},
          'refuels':[{'liters':str(liters),'odometer_km':1000+km,'recorded_at':ended.isoformat()}]}
     if inspection_issue:
@@ -27,6 +27,41 @@ def delegate(actor):
     with db.tx() as c:
         c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions) VALUES('ops-fawzi','TEST ONLY Fawzi','admin','ops-brand','[\"ops-branch\"]','[\"vehicle_maintenance_manage\"]')")
     return actor('fawzi')
+
+
+def test_vehicle_profile_assignment_rate_snapshot_and_correction(ops):
+    from app.shift_vehicle import start,Inspection
+    actor,*_=ops;client=actor('owner')
+    profile=dict(plate='TEST PROFILE',type='Test compact',model_year=2020,color='White',engine_cc=1193,
+                 transmission='automatic',baseline_kml=15,baseline_note='TEST ONLY provisional city use')
+    with db.tx() as c:
+        seed(c,'profile-legacy','TEST PROFILE',10)
+        original=c.execute("SELECT metrics FROM vehicle_operating_logs WHERE shift_id='profile-legacy'").fetchone()['metrics']
+    result=client.patch('/api/identity/staff/ops-driver',json={'vehicle':profile,'reason':'TEST ONLY vehicle specification import'})
+    assert result.status_code==200,result.text
+    assert result.json()['user']['vehicle']['transmission']=='automatic'
+    with db.tx() as c:
+        target=c.execute("SELECT * FROM users WHERE id='ops-driver'").fetchone()
+        snapshot=start(c,target,target,Inspection(odometer_km=1210,fuel_percent=100,checks={k:'ok' for k in CHECKS}))
+        assert snapshot['vehicle']['baseline_kml']==15
+        seed(c,'profile-new','TEST PROFILE',11,km=260,liters=20,profile=profile)
+        assert c.execute("SELECT metrics FROM vehicle_operating_logs WHERE shift_id='profile-legacy'").fetchone()['metrics']==original
+        assert c.execute("SELECT metrics->>'fuel_status' status FROM vehicle_operating_logs WHERE shift_id='profile-new'").fetchone()['status']=='orange'
+    changed=client.patch('/api/identity/staff/ops-driver',json={'vehicle':{**profile,'baseline_kml':20},'reason':'TEST ONLY revised baseline for future shifts'})
+    assert changed.status_code==200,changed.text
+    delegate(actor)
+    cards=client.get('/api/fleet/vehicles').json()['vehicles']
+    car=next(v for v in cards if v['plate']=='TEST PROFILE')
+    assert car['details']['baseline_kml']==20 and car['details']['color']=='White'
+    assert len(car['assigned_drivers'])==1
+    url=f"/api/fleet/vehicles/{car['id']}/logs/profile-new"
+    detail=client.get(url).json()['log']
+    result=client.post(url+'/corrections',json=dict(revision=detail['revision'],reason='TEST ONLY corrected end reading',
+        start_odometer=1000,end_odometer=1270,liters='20',full_start=True,full_end=True),headers={'Idempotency-Key':'profile-correct-once'})
+    assert result.status_code==200,result.text
+    assert result.json()['metrics']['baseline_kml']==15 and result.json()['metrics']['fuel_status']=='green'
+    actor('driver')
+    assert client.put('/api/identity/driver/vehicle',json=profile).status_code==403
 
 
 def test_ten_cars_twelve_days_history_summary_filters_exports(ops):

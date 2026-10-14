@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
-from . import auth, db, accounting_export, service_hours
+from . import auth, db, accounting_export, service_hours, vehicle_profile
 
 router=APIRouter(prefix='/api/fleet',tags=['fleet'])
 PERMISSION='vehicle_maintenance_manage'
@@ -19,11 +19,11 @@ COLUMNS=[('date','التاريخ','Date'),('operating_day','اليوم التش�
  ('driver_name','السائق','Driver'),('branches','الفرع','Branch'),('received_at','وقت الاستلام','Received'),('returned_at','وقت التسليم','Returned'),
  ('start_odometer','عداد البداية','Start odometer'),('end_odometer','عداد النهاية','End odometer'),('actual_distance','المسافة الفعلية KM','Actual KM'),
  ('gps_distance','مسافة GPS','GPS KM'),('expected_distance','مسافة الطلبات المتوقعة','Expected order KM'),('distance_variance','فرق المسافة','Variance KM'),
- ('liters','التعبئة L','Liters'),('efficiency','كفاءة KM/L','KM/L'),('full_start','فل عند الاستلام','Full at start'),('full_end','فل عند التسليم','Full at end'),
+ ('liters','التعبئة L','Liters'),('efficiency','كفاءة KM/L','KM/L'),('baseline_kml','المعيار KM/L','Baseline KM/L'),('full_start','فل عند الاستلام','Full at start'),('full_end','فل عند التسليم','Full at end'),
  ('fuel_status','حالة البنزين','Fuel status'),('orders','عدد الطلبات','Orders'),('faults','عدد الأعطال','Faults'),('exception','استثناء','Exception'),
  ('notes','ملاحظات','Notes'),('record_status','حالة السجل','Record status')]
 DEFINITIONS=('KM/L: full-to-full measured distance / filled liters. Grey: open or incomplete readings, not full-to-full, or zero fuel/distance. '
- 'Provisional baseline 10 KM/L: Green >=9; Orange >=8 and <9; Red <8. This is a review indicator, not driver liability. '
+ 'Per-vehicle operating baseline (legacy default 10 KM/L): Green >=90%; Orange >=80% and <90%; Red <80% of the baseline saved when the shift started. This is a review indicator, not driver liability. '
  'GPS and expected route distance remain blank until measured canonical data is available. '
  'Average KM/L uses only comparable full-to-full rows (sum KM / sum liters), not a mean of ratios. '
  'One row per vehicle shift. Multiple shifts in one day remain separate. Operational day starts 16:00 Asia/Riyadh. '
@@ -124,6 +124,11 @@ def vehicles(user=Depends(access)):
             current_scope+=' AND u.branch_ids <@ %s::jsonb AND jsonb_array_length(u.branch_ids)>0';current_args.append(db.json(user.get('branch_ids') or []))
         rows=c.execute('SELECT DISTINCT v.id,v.plate,v.details'+BASE+' WHERE '+' AND '.join(clauses)+
          ' UNION SELECT v.id,v.plate,v.details FROM fleet_vehicles v JOIN users u ON u.brand_id=v.brand_id AND v.plate_key=regexp_replace(upper(u.vehicle->>\'plate\'),\'[[:space:]]\',\'\',\'g\') WHERE '+current_scope+' ORDER BY plate,id',args+current_args).fetchall()
+        assignments=c.execute("SELECT regexp_replace(upper(u.vehicle->>'plate'),'[[:space:]]','','g') plate_key,u.display_name FROM users u WHERE "+current_scope+' ORDER BY u.display_name',current_args).fetchall()
+        import re
+        for row in rows:
+            key=re.sub(r'\s+','',row['plate'].upper())
+            row['assigned_drivers']=[a['display_name'] for a in assignments if a['plate_key']==key]
         return {'vehicles':rows}
 
 @router.get('/options')
@@ -207,7 +212,7 @@ def make_pdf(rows,lang,title,meta,definitions):
     sections=[]
     for title_part,keys in [
        (('الحركة والمسافات','Movement and distances'),['date','operating_day','plate','driver_name','branches','received_at','returned_at','start_odometer','end_odometer','actual_distance','gps_distance','expected_distance','distance_variance']),
-       (('الوقود والأعطال والاستثناءات','Fuel, faults and exceptions'),['operating_day','plate','driver_name','liters','efficiency','full_start','full_end','fuel_status','orders','faults','exception','notes','record_status'])]:
+       (('الوقود والأعطال والاستثناءات','Fuel, faults and exceptions'),['operating_day','plate','driver_name','liters','efficiency','baseline_kml','full_start','full_end','fuel_status','orders','faults','exception','notes','record_status'])]:
         headers=[('الصف' if lang=='ar' else 'Row'),*[definitions_map[k] for k in keys]]
         values=[[i,*[value(r.get(k)) for k in keys]] for i,r in enumerate(rows,1)]
         sections.append({'title':title_part[lang=='en'],'keys':['row_number',*keys],'rows':[headers,*values]})
@@ -255,7 +260,7 @@ def correct(vid:str,sid:str,body:Correction,request:Request,user=Depends(access)
             after['actual_distance']=body.end_odometer-body.start_odometer
             efficiency=after['actual_distance']/float(body.liters) if body.full_start and body.full_end and body.liters>0 and after['actual_distance']>0 else None
             after['efficiency']=round(efficiency,3) if efficiency is not None else None
-            after['fuel_status']='grey' if efficiency is None else 'green' if efficiency>=9 else 'orange' if efficiency>=8 else 'red'
+            after['fuel_status']=vehicle_profile.fuel_status(efficiency,before.get('baseline_kml',10))
             after['distance_variance']=after['actual_distance']-after['expected_distance'] if after.get('expected_distance') is not None else None
             after['exception']=True;after['record_status']='exception'
             revision=row['revision']+1

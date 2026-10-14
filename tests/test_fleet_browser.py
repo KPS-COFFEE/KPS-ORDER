@@ -26,6 +26,7 @@ def test_fawzi_vehicle_history_report_summary_exports_correction(live_app,chromi
         c.execute('UPDATE users SET permissions=%s WHERE id=%s',(db.json(['vehicle_maintenance_manage']),admin['id']))
         for day in (10,11,12):
             seed(c,'browser-fleet-'+str(day),'TEST FLEET <img>',day,driver=driver['id'],brand='kps',bids=['kps-branch-1'],km=210,liters=30 if day==12 else 21)
+        c.execute('UPDATE users SET vehicle=%s WHERE id=%s',(db.json({'plate':'TEST FLEET <img>','type':'TEST Compact','model_year':2020,'color':'White','engine_cc':1193,'transmission':'automatic','baseline_kml':14}),driver['id']))
     context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,admin)
     try:
         page.goto(live_app+'/ops')
@@ -34,6 +35,10 @@ def test_fawzi_vehicle_history_report_summary_exports_correction(live_app,chromi
         page.locator('[data-page=fleet]').click()
         expect(page.locator('[data-fleet-card]')).to_have_count(1)
         expect(page.locator('[data-fleet-card] img')).to_have_count(0)
+        expect(page.locator('[data-fleet-card]')).to_contain_text('TEST Compact')
+        expect(page.locator('[data-fleet-card]')).to_contain_text('2020')
+        expect(page.locator('[data-fleet-card]')).to_contain_text('White')
+        expect(page.locator('[data-fleet-card]')).to_contain_text('Automatic' if language=='en' else 'أوتوماتيك')
         page.locator('[data-fleet-vehicle]').click()
         expect(page.locator('[data-fleet-row]')).to_have_count(3)
         _readable_log(page)

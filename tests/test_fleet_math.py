@@ -65,3 +65,23 @@ def test_pdf_readable_two_sections_and_ryadh_times(lang):
         assert 'Movement and distances' in pages[0].extract_text()
         assert 'Fuel, faults and exceptions' in pages[1].extract_text()
         assert '19:00' in pages[0].extract_text() and '23:00' in pages[0].extract_text()
+
+
+@pytest.mark.parametrize('value,expected',[(None,'grey'),(13.5,'green'),(13.499,'orange'),(12,'orange'),(11.999,'red')])
+def test_vehicle_baseline_color_boundaries(value,expected):
+    from app.vehicle_profile import fuel_status
+    assert fuel_status(value,15)==expected
+
+
+@pytest.mark.parametrize('extra',[{'baseline_kml':0},{'baseline_kml':True},{'baseline_kml':float('nan')},
+    {'baseline_kml':float('inf')},{'baseline_kml':61},{'engine_cc':1.2},{'model_year':True},
+    {'odometer_km':None},{'transmission':'invented'},{'color':'bad\x00text'},{'invented':'x'}])
+def test_vehicle_profile_rejects_invalid_or_untrusted_values(extra):
+    from app.auth import _vehicle
+    with pytest.raises(HTTPException):_vehicle({'plate':'TEST 8',**extra})
+
+
+def test_vehicle_profile_keeps_unknown_engine_empty_and_legacy_compatible():
+    from app.auth import _vehicle
+    assert _vehicle({'plate':'TEST 8','type':'Test model','model_year':2015,'engine_cc':None,'transmission':'automatic','baseline_kml':12})['engine_cc'] is None
+    assert _vehicle({'plate':'TEST 8','description':'Legacy car','odometer_km':0,'owned_by_kps':False})['owned_by_kps'] is False
