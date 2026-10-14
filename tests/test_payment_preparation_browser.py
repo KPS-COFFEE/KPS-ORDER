@@ -42,6 +42,17 @@ def test_owner_prepares_multiple_providers_without_customer_activation(live_app,
         expect(form.locator('select[name="provider:reem"]')).to_have_value('paytabs')
         expect(form.locator('input[name="custom:sami"]')).to_have_value('fixture_gateway')
         expect(form).to_contain_text('غير مفعل' if lang == 'ar' else 'Disabled')
+        session = context.request.get(live_app + '/api/session').json()
+        changed = context.request.put(live_app + '/api/admin/online-payments',
+                    data={'accounts': {'reem': {'provider': 'tap'}, 'sami': {'provider': 'fixture_gateway'}},
+                          'revision': result['revision'], 'reason': 'Synthetic concurrent preparation'},
+                    headers={'Origin': live_app, 'X-CSRF-Token': session['csrf_token'],
+                             'Idempotency-Key': 'concurrent-preparation-change'})
+        assert changed.ok, changed.text()
+        form.locator('input[name=reason]').fill('Reject the stale preparation form')
+        form.locator('button[type=submit]').click()
+        expect(form.locator('.form-error')).to_contain_text(
+            'تغيرت إعدادات المنشآت أو الدفع' if lang == 'ar' else 'Seller or payment settings changed')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 2')
         page.screenshot(path=str(ARTIFACTS / f'payment-preparation-{lang}-{width}.png'), full_page=True)
         assert not errors and not provider_requests
