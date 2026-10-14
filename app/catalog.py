@@ -10,7 +10,7 @@ import unicodedata
 from datetime import datetime
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
-from urllib.parse import urlsplit, parse_qs, urlencode, unquote
+from urllib.parse import urlsplit, parse_qs, urlencode, unquote, urljoin
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse
@@ -876,6 +876,8 @@ def parse_map_url(body: MapURLBody):
     value = safe_map_url(body.url)
     if not value:
         raise db.error(422, 'MAP_URL_NOT_ALLOWED', 'اختر دبوسًا أو رابط Google Maps معتمدًا.')
+    if urlsplit(value).hostname in {'maps.app.goo.gl', 'goo.gl'}:
+        value = resolve_short_map_url(value)
     parsed = urlsplit(value)
     query = parse_qs(parsed.query)
     candidate = (query.get('destination') or query.get('query') or query.get('q') or [None])[0]
@@ -891,6 +893,27 @@ def parse_map_url(body: MapURLBody):
     if not valid_location(point):
         raise db.error(422, 'COORDINATE_INVALID', 'الموقع غير صحيح.')
     return {'location': point, 'source': 'customer_selected', 'location_is_device_verified': False}
+
+
+def resolve_short_map_url(value):
+    """Follow only Google Maps redirects; never fetch arbitrary URLs or page bodies."""
+    import httpx
+    try:
+        with httpx.Client(timeout=3.0, follow_redirects=False, trust_env=False) as client:
+            for _ in range(4):
+                if not safe_map_url(value):
+                    raise db.error(422, 'MAP_REDIRECT_NOT_ALLOWED', 'الرابط لا يشير إلى موقع Google Maps موثوق.')
+                if urlsplit(value).hostname not in {'maps.app.goo.gl', 'goo.gl'}:
+                    return value
+                with client.stream('GET', value, headers={'User-Agent':'Mozilla/5.0'}) as response:
+                    if response.status_code not in (301,302,303,307,308) or not response.headers.get('location'):
+                        break
+                    value = urljoin(value, response.headers['location'])
+            if safe_map_url(value) and urlsplit(value).hostname not in {'maps.app.goo.gl','goo.gl'}:
+                return value
+    except httpx.HTTPError:
+        pass
+    raise db.error(422, 'MAP_SHORT_LINK_UNAVAILABLE', 'تعذر فتح الرابط المختصر. افتحه في خرائط جوجل وانسخ رابط الدبوس الكامل، أو استخدم الإحداثيات الصحيحة.')
 
 
 class NearestBody(BaseModel):

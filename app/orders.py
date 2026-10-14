@@ -376,6 +376,9 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
             if order['version'] != body.version:
                 raise db.error(409, 'ORDER_VERSION_CONFLICT', 'تغير الطلب. حدّث الصفحة قبل تنفيذ العملية.')
             current = order['preparation_status']
+            if body.status != 'cancelled':
+                from .order_amendments import guard
+                guard(conn,order)
             transitions = {'new': {'accepted', 'cancelled'}, 'accepted': {'preparing', 'cancelled'},
                            'preparing': {'ready', 'cancelled'}, 'ready': {'handed_over', 'completed', 'cancelled'}}
             if body.status not in transitions.get(current, set()):

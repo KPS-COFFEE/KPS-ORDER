@@ -508,6 +508,8 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             if o['service']!='delivery' or o['preparation_status'] in ('cancelled','rejected','completed') or o.get('completed_at'):fail(409,'الطلب غير قابل للإسناد')
+            from .order_amendments import guard
+            guard(c,o,require_branch=False)
             s=lock_shift(c,body.driver_shift_id)
             if not s or s['kind']!='driver' or s['status']!='open' or s['brand_id']!=o['brand_id'] or o['branch_id'] not in s['branch_ids']:fail(409,'السائق غير مؤهل أو شفته غير مفتوح')
             driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
@@ -566,6 +568,9 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             s=lock_shift(c,t['shift_id']);shift_access(c,user,s)
             if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
+            if body.status in ('accepted','picked_up','delivered'):
+                from .order_amendments import guard
+                guard(c,o,driver_id=t['driver_id'],require_branch=body.status!='accepted')
             allowed={'assigned':('accepted','problem'),'accepted':('picked_up','problem'),'picked_up':('delivered','problem'),'problem':('accepted','picked_up','cancelled')}
             if body.contact_method:
                 if body.status!='problem':fail(422,'محاولة التواصل ترفع للمدير كبلاغ فقط')
@@ -677,7 +682,10 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             if o['payment_status']!='unpaid' or o['preparation_status'] in ('cancelled','rejected'):fail(409,'الطلب غير قابل للتحصيل')
-            if body.method not in ('cash','card','split') or body.amount_halalas!=o['total_halalas']:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح')
+            from .order_amendments import guard,balance as paid_balance
+            guard(c,o,driver_id=user['id'] if user['role']=='driver' else None)
+            due=o['total_halalas']-paid_balance(c,o)
+            if body.method not in ('cash','card','split') or due<=0 or body.amount_halalas!=due:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح؛ حصّل المتبقي فقط')
             if body.method=='split':
                 if body.cash_halalas is None or body.card_halalas is None or body.cash_halalas+body.card_halalas!=body.amount_halalas:
                     fail(422,'مجموع الكاش والشبكة يجب أن يساوي قيمة الطلب، وكل جزء أكبر من صفر')
@@ -702,7 +710,7 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             ids=[]
             for method,amount in parts:
                 cid=uid();ids.append(cid)
-                c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],method,amount,body.tendered_halalas if method=='cash' else None,change if method=='cash' else 0,body.reference.strip() if method=='card' else ''))
+                c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference,amendment_revision) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],method,amount,body.tendered_halalas if method=='cash' else None,change if method=='cash' else 0,body.reference.strip() if method=='card' else '',o.get('amendment_revision',0)))
                 if sid and method=='cash':event(c,sid,amount,'collection',cid,user['id'],'تحصيل نقدي صافي بعد الباقي')
             c.execute("UPDATE orders SET payment_status='paid',payment_method=%s,version=version+1 WHERE id=%s",(body.method,oid))
             db.audit(c,user['id'],'order.collect','order',oid,{'collection_ids':ids,'amount_halalas':body.amount_halalas,'method':body.method,'cash_halalas':cash,'card_halalas':body.amount_halalas-cash,'change_halalas':change})
@@ -715,17 +723,27 @@ class Refund(OperationBody):
     reason:str=Field(min_length=1,max_length=2000)
     line_quantities:dict[str,StrictInt]=Field(default_factory=dict)
     shift_id:str|None=None
+    amendment_id:str|None=None
 
 @router.post('/orders/{oid}/refund')
 def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager')
+    roles(user,'owner','delivery_manager','branch_manager')
+    if user['role']=='branch_manager' and not body.amendment_id:fail(403,'الاسترداد الاعتيادي يتطلب المدير')
     with db.tx() as c:
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
-            col=c.execute('SELECT * FROM collections WHERE order_id=%s AND method=%s',(oid,body.method)).fetchone()
+            from .order_amendments import active,balance as paid_balance
+            if active(c,oid):fail(409,'أكمل مراجعة التعديل قبل الاسترداد')
+            if user['role']=='branch_manager' and o['service']=='delivery':fail(403,'تسوية التوصيل من مدير التوصيل')
+            cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()
+            cols=[p for p in cols if p['available']>0]
+            col=cols[0] if cols else None
             prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']
-            method_prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s AND method=%s',(oid,body.method)).fetchone()['n']
-            if not col or body.amount_halalas+method_prior>col['amount_halalas']:fail(422,'مبلغ أو وسيلة الاسترداد غير صالح')
+            if not col or body.amount_halalas>sum(p['available'] for p in cols):fail(422,'مبلغ أو وسيلة الاسترداد غير صالح')
+            if body.amendment_id:
+                amendment=c.execute("SELECT 1 FROM order_revisions WHERE order_id=%s AND revision=%s AND amendment_id=%s",(oid,o['amendment_revision'],body.amendment_id)).fetchone()
+                if not amendment or body.line_quantities or body.amount_halalas>paid_balance(c,o)-o['total_halalas']:fail(422,'سجل فرق التعديل المستحق فقط بدون كميات مرتجعة')
+            elif paid_balance(c,o)>o['total_halalas']:fail(409,'سوّ فرق التعديل أولًا قبل تسجيل مرتجع جديد')
             lines={}
             for x in o['snapshot']['items']:lines[x['product_id']]=lines.get(x['product_id'],0)+x['quantity']
             for pid,q in body.line_quantities.items():
@@ -737,12 +755,18 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
                 if s['status'] not in ('open','closing') or s['brand_id']!=o['brand_id']:fail(409,'الاسترداد يحتاج عهدة شفت مفتوح؛ لا يعدل تقفيلة تاريخية')
                 if body.method=='cash' and available_balance(c,s)<body.amount_halalas:fail(409,'العهدة النقدية غير كافية')
             elif o['service']=='delivery' and body.method=='cash':fail(409,'يلزم شفت عهدة للاسترداد النقدي')
-            rid=uid();c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,col['id'],oid,sid,body.method,body.amount_halalas,db.json(body.line_quantities),body.reason,user['id']))
-            if sid and body.method=='cash':event(c,sid,-body.amount_halalas,'refund',rid,user['id'],body.reason)
-            status='refunded' if body.amount_halalas+prior==o['total_halalas'] else 'partially_refunded'
+            remaining=body.amount_halalas;refund_ids=[]
+            for source in cols:
+                if not remaining:break
+                amount=min(remaining,source['available']);rid=uid()
+                c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by,amendment_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,source['id'],oid,sid,body.method,amount,db.json(body.line_quantities if not refund_ids else {}),body.reason,user['id'],body.amendment_id))
+                refund_ids.append(rid);remaining-=amount
+                if sid and body.method=='cash':event(c,sid,-amount,'refund',rid,user['id'],body.reason)
+            net=paid_balance(c,o)
+            status=('paid' if net==o['total_halalas'] else 'unpaid') if body.amendment_id else ('refunded' if net==0 else 'partially_refunded')
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',(status,oid))
             db.audit(c,user['id'],'order.refund','order',oid,{'refund_id':rid,**body.model_dump()})
-            return {'refund_id':rid,'payment_status':status}
+            return {'refund_id':refund_ids[0],'refund_ids':refund_ids,'payment_status':status}
         return mutate(c,user,request,'order.refund:'+oid,body.model_dump(),perform)
 
 class PaymentTerminal(OperationBody):
@@ -998,13 +1022,13 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
             clauses.append('o.service=%s');params.append(service)
         where=' AND '.join(clauses)
         summary=c.execute("SELECT count(*) orders,count(*) FILTER(WHERE preparation_status='new') new,count(*) FILTER(WHERE completed_at IS NULL AND preparation_status NOT IN ('cancelled','rejected','new')) active,count(*) FILTER(WHERE completed_at IS NOT NULL) completed,count(*) FILTER(WHERE preparation_status IN ('cancelled','rejected')) cancelled,coalesce(sum(total_halalas) FILTER(WHERE completed_at IS NOT NULL),0) gross_completed_halalas,coalesce(sum(delivery_fee_halalas) FILTER(WHERE completed_at IS NOT NULL),0) delivery_fee_halalas FROM orders o WHERE "+where,params).fetchone()
-        refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
+        refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE r.amendment_id IS NULL AND o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
         late=config.get('late_after_minutes',60)
         if not isinstance(late,int) or not 1<=late<=1440:fail(503,'حد التأخير غير صحيح')
         summary['live_overdue']=c.execute("SELECT count(*) n FROM orders o WHERE o.service='delivery' AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected') AND o.created_at<now()-(%s*interval '1 minute') AND "+where,[late,*params]).fetchone()['n']
         summary['refund_halalas']=int(refs);summary['net_completed_halalas']=int(summary['gross_completed_halalas'])-int(refs)
-        items=c.execute("WITH lines AS (SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item WHERE o.completed_at IS NOT NULL AND "+where+" GROUP BY o.id,o.total_halalas,item->>'product_id') SELECT product_id,max(name) name,sum(greatest(quantity-coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r WHERE r.order_id=lines.order_id),0),0)) quantity,sum(gross_halalas) gross_halalas,round(sum(gross_halalas::numeric*greatest(total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=lines.order_id),0),0)/nullif(total_halalas,0))) net_halalas FROM lines GROUP BY product_id ORDER BY quantity DESC LIMIT 10",params).fetchall()
-        branch_top=c.execute("SELECT o.branch_id,b.branch_no,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.branch_no,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
+        items=c.execute("WITH lines AS (SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item WHERE o.completed_at IS NOT NULL AND "+where+" GROUP BY o.id,o.total_halalas,item->>'product_id') SELECT product_id,max(name) name,sum(greatest(quantity-coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)) quantity,sum(gross_halalas) gross_halalas,round(sum(gross_halalas::numeric*greatest(total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)/nullif(total_halalas,0))) net_halalas FROM lines GROUP BY product_id ORDER BY quantity DESC LIMIT 10",params).fetchall()
+        branch_top=c.execute("SELECT o.branch_id,b.branch_no,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.branch_no,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
         timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
         timing['threshold_minutes']=late;timing['threshold_configured']='late_after_minutes' in config
         from .performance import delivery_summary

@@ -17,7 +17,7 @@ SOURCE="""SELECT o.id order_id,coalesce(o.snapshot->>'order_reference',o.order_n
  t.id task_id,t.status task_status,t.driver_id,t.shift_id,
  s.status shift_status,s.branch_ids,s.manager_shift_id,u.display_name driver_name,
  """+DAY+""" operational_day,
- coalesce((SELECT array_agg(r.id ORDER BY r.id) FROM refunds r WHERE r.order_id=o.id),ARRAY[]::text[]) refund_ids,
+ coalesce((SELECT array_agg(r.id ORDER BY r.id) FROM refunds r WHERE r.order_id=o.id AND r.amendment_id IS NULL),ARRAY[]::text[]) refund_ids,
  d.task_id decision_task_id,d.responsibility,d.reason,d.incident_key saved_incident_key,
  d.version decision_version,d.decided_by,d.decided_at
  FROM orders o

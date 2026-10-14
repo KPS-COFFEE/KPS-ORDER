@@ -23,7 +23,15 @@
       <div id="staff-review" class="full" aria-live="polite"></div><p class="form-error full" role="alert"></p><button type="submit" class="full">${esc(tr('مراجعة الإجمالي','Review total'))}</button></form>`,async(fd,form)=>{
       if(!cart.length)throw new Error(tr('أضف صنفًا واحدًا على الأقل.','Add at least one item.'));
       let location;
-      if(fd.get('map_url').trim())location=(await mutation('/api/location/parse-map-url',{url:fd.get('map_url').trim()})).location;
+      if(fd.get('map_url').trim()){
+        try{location=(await mutation('/api/location/parse-map-url',{url:fd.get('map_url').trim()})).location;}
+        catch(error){
+          const lat=Number(fd.get('lat')),lng=Number(fd.get('lng'));
+          if(!fd.get('lat').trim()||!fd.get('lng').trim()||!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180)throw error;
+          if(!window.confirm(tr('تعذر قراءة الرابط. هل تؤكد استخدام الإحداثيات التي أدخلتها لموقع العميل؟','Could not read the link. Confirm using the coordinates you entered for the customer?')))throw error;
+          location={lat,lng};
+        }
+      }
       else {
         if(!fd.get('lat').trim()||!fd.get('lng').trim())throw new Error(tr('أدخل رابط دبوس العميل أو إحداثياته.','Enter the customer pin link or coordinates.'));
         location={lat:Number(fd.get('lat')),lng:Number(fd.get('lng'))};

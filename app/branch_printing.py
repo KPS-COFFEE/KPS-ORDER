@@ -216,6 +216,9 @@ def receipt(order, branch, kind, language, translations=None):
                       'role':role,'label':label,'value':value})
     def row(label,value,bold=False):
         add(label+': '+value,bold,role='row',label=label,value=value)
+    if order.get('amendment_revision',0):
+        add(('نسخة معدلة رقم ' if ar else 'REVISED COPY ')+str(order['amendment_revision']+1),True,True)
+        add('تلغي نسخة الطلب السابقة' if ar else 'Replaces previous order copy',True,True)
     def amount(value): return f'{int(value or 0)/100:.2f} '+('ر.س' if ar else 'SAR')
     add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True,role='brand')
     add(('فاتورة تحضير الطلب' if ar else 'Preparation receipt') if kind=='preparation' else ('فاتورة طلب' if ar else 'Order receipt'),True,True)

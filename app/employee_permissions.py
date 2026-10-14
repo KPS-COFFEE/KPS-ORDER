@@ -17,6 +17,7 @@ FIELD = OPERATORS | {'driver'}
 DEFINITIONS = [
     ('dashboard_view', 'عرض نظرة التشغيل والإحصائيات', 'View operational overview', 'orders', OPERATORS),
     ('orders_create_customer', 'إنشاء طلب نيابة عن العميل', 'Place an order for a customer', 'orders', MANAGER),
+    ('orders_amend', 'مراجعة واعتماد تعديل الطلب بطلب العميل', 'Review customer-requested amendments', 'orders', MANAGER | {'branch_manager'}),
     ('orders_view', 'عرض الطلبات وتفاصيلها', 'View orders and details', 'orders', FIELD),
     ('orders_prepare', 'تحديث تجهيز الطلب وتسليمه', 'Update preparation and handover', 'orders', {'branch_manager'}),
     ('orders_cancel', 'رفض وإلغاء الطلبات غير المحصلة', 'Reject or cancel unpaid orders', 'orders', MANAGER | {'branch_manager'}),
@@ -96,6 +97,8 @@ def catalog():
 
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
+    'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':'orders_amend', 'request_amendment':'orders_amend', 'decide':'orders_amend',
+                         'acknowledge':{'branch_manager':'orders_prepare','driver':'tasks_update'}},
     'driver_incentives': {'achievement': ('shifts_view','accounting_reports'), 'shift_review': ('shifts_view','accounting_reports'), 'decide': 'shifts_approve'},
     'operations': {
         'dashboard': 'dashboard_view', 'operational_alerts': 'operational_alerts',
@@ -105,7 +108,7 @@ ROUTES = {
         'submit_close': 'shifts_close', 'return_close': 'shifts_approve', 'approve_close': 'shifts_approve',
         'assign': 'delivery_assign', 'tasks': 'tasks_view', 'task_transition': 'tasks_update',
         'task_handover': 'tasks_transfer', 'accept_task_handover': 'tasks_accept_transfer',
-        'collect': 'payments_collect', 'refund': 'refunds_manage',
+        'collect': 'payments_collect', 'refund': {'delivery_manager':'refunds_manage','branch_manager':'payments_collect'},
         'get_payment_terminal': 'driver_terminal_view', 'set_payment_terminal': 'driver_terminal',
         'custody_transfer': 'custody_transfer', 'custody_list': 'custody_view', 'confirm_custody': 'custody_transfer',
         'simple_driver_close': {'driver': 'shifts_close', 'delivery_manager': 'shifts_delegate_close'},

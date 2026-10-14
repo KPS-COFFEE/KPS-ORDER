@@ -97,7 +97,8 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     events=c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
     paid=defaultdict(int);refunded=defaultdict(int);treated={t['order_id'] for t in tickets}
     for x in cols:paid[x['order_id']]+=x['amount_halalas']
-    for x in refs:refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
+    for x in refs:
+        if not x.get('amendment_id'):refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
     rows={};items={};om={o['id']:o for o in orders}
     def bucket(o,at):
         d=opday(at)
@@ -126,13 +127,14 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     for x in refs:
         if not in_period(x['created_at'],lo,hi):continue
         b=bucket(om[x['order_id']],x['created_at']);b['refund_'+x['method']]+=x['amount_halalas'];b['refunds']+=x['amount_halalas']
+        if x.get('amendment_id'):b['amendment_refunds']=b.get('amendment_refunds',0)+x['amount_halalas']
         for pid,qty in x['line_quantities'].items():
             if product_id and pid!=product_id:continue
             if pid not in items:
                 name=next((i.get('name',pid) for i in om[x['order_id']]['snapshot'].get('items',[]) if i['product_id']==pid),pid)
                 items[pid]={'label':name,'quantity':0,'returned_quantity':0,'gross':0,'correct':0,'processed':0}
             items[pid]['returned_quantity']+=qty
-    for b in rows.values():b['total']=b['cash']+b['card']-b['refunds'];b['net_sales']=b['gross']-b['refunds']
+    for b in rows.values():b['total']=b['cash']+b['card']-b['refunds'];b['net_sales']=b['gross']-b['refunds']+b.get('amendment_refunds',0)
     if group=='daily':
         for n in range((de-ds).days+1):
             day=(ds+timedelta(days=n)).isoformat()
