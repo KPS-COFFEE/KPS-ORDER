@@ -1,4 +1,4 @@
-"""Persistent order or service-context support; drivers have no customer inbox."""
+"""Persistent support and task-scoped driver contact; no general driver inbox."""
 import base64
 import hashlib
 import io
@@ -6,7 +6,7 @@ import re
 from typing import Literal
 from PIL import Image, UnidentifiedImageError
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from . import auth,db
 from .operations import uid,safe,fail,roles,mutate
 
@@ -76,7 +76,7 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(body.order_id,)).fetchone()
                 if not o or not auth.can_access_order(user,o,c):fail(404,'الطلب غير موجود')
                 if (body.branch_id is not None and body.branch_id!=o['branch_id']) or (body.service is not None and body.service!=o['service']):fail(422,'سياق المحادثة يجب أن يطابق الطلب')
-                existing=c.execute('SELECT * FROM conversations WHERE order_id=%s AND category=%s',(o['id'],body.category)).fetchone()
+                existing=c.execute('SELECT * FROM conversations WHERE order_id=%s AND category=%s AND driver_task_id IS NULL',(o['id'],body.category)).fetchone()
                 order_id=o['id'];branch_id=o['branch_id'];customer_id=o['customer_id'];brand_id=o['brand_id'];service=o['service']
                 linked=c.execute('SELECT customer_id FROM customer_identity_links WHERE source_id=%s AND brand_id=%s',(customer_id,brand_id)).fetchone()
                 if linked:customer_id=linked['customer_id']
@@ -186,8 +186,7 @@ class Attachment(BaseModel):
     data_base64:str=Field(max_length=6990510)
     content_type:str
 
-@router.post('/conversations/{cid}/attachments')
-def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_user)):
+def validated_image(body:Attachment):
     expected={'image/png':'PNG','image/jpeg':'JPEG','image/webp':'WEBP'}
     if body.content_type not in expected:fail(422,'نوع صورة غير مسموح')
     try:
@@ -197,6 +196,11 @@ def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_use
             if img.format!=expected[body.content_type] or img.width*img.height>16000000:fail(422,'ملف الصورة غير صالح أو كبير')
             img.verify()
     except (ValueError,UnidentifiedImageError,Image.DecompressionBombError,OSError):fail(422,'ملف الصورة غير صالح')
+    return data
+
+@router.post('/conversations/{cid}/attachments')
+def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_user)):
+    data=validated_image(body)
     digest=hashlib.sha256(data).hexdigest()
     with db.tx() as c:
         def perform():
@@ -276,3 +280,115 @@ def status(cid:str,body:Status,request:Request,user=Depends(auth.current_user)):
             c.execute('UPDATE conversations SET status=%s WHERE id=%s',(body.status,cid));db.audit(c,user['id'],'chat.status','conversation',cid,body.model_dump())
             return {'status':body.status}
         return mutate(c,user,request,'chat.status:'+cid,body.model_dump(),perform)
+
+
+DRIVER_ACTIVE_TASKS={'assigned','accepted','picked_up','problem'}
+
+def driver_contact_scope(c,user,tid):
+    roles(user,'driver')
+    task=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+    if not task:fail(404,'المهمة غير متاحة للتواصل')
+    # Match task-transition lock order; reassignment cannot race a message send.
+    order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(task['order_id'],)).fetchone()
+    task=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
+    if (not task or not order or task['driver_id']!=user['id'] or task['status'] not in DRIVER_ACTIVE_TASKS
+        or not auth.can_access_order(user,order,c)):
+        fail(404,'المهمة غير متاحة للتواصل')
+    shift=c.execute('SELECT user_id,status FROM shifts WHERE id=%s FOR UPDATE',(task['shift_id'],)).fetchone()
+    if not shift or shift['user_id']!=user['id'] or shift['status']!='open':fail(409,'التواصل متاح أثناء الشفت المفتوح فقط')
+    return task,order
+
+
+def whatsapp_contact(phone):
+    try:
+        normalized=auth.normalize_phone(str(phone or ''))
+    except Exception:
+        return None
+    return 'https://wa.me/'+normalized.lstrip('+')
+
+
+@router.get('/tasks/{tid}/customer-chat')
+def driver_customer_messages(tid:str,after:int=0,user=Depends(auth.current_user)):
+    if not auth.has_permission(user,'tasks_view'):fail(403,'صلاحية التواصل غير متاحة')
+    if after<0:fail(422,'مرجع غير صالح')
+    with db.tx() as c:
+        task,order=driver_contact_scope(c,user,tid)
+        conv=c.execute('SELECT * FROM conversations WHERE driver_task_id=%s',(tid,)).fetchone()
+        rows=[]
+        if conv:
+            rows=c.execute('SELECT m.seq,m.text,m.attachment_id,m.created_at,u.display_name sender FROM chat_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=%s AND m.seq>%s ORDER BY m.seq LIMIT 100',(conv['id'],after)).fetchall()
+        for row in rows:
+            aid=row.pop('attachment_id',None)
+            row['attachment_url']='/api/tasks/'+tid+'/customer-chat/attachments/'+aid if aid else None
+        return safe({'messages':rows,'whatsapp_url':whatsapp_contact((order.get('customer') or {}).get('phone')),'has_more':len(rows)==100})
+
+
+class DriverCustomerMessage(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    text:str=Field(default='',max_length=2000)
+    attachment_id:str|None=Field(default=None,min_length=1,max_length=100)
+
+    @model_validator(mode='after')
+    def content_required(self):
+        if not self.text and not self.attachment_id:raise ValueError('أدخل رسالة أو صورة')
+        return self
+
+
+def driver_conversation(c,tid,order):
+    conv=c.execute('SELECT * FROM conversations WHERE driver_task_id=%s',(tid,)).fetchone()
+    if not conv:
+        customer_id=order['customer_id']
+        linked=c.execute('SELECT customer_id FROM customer_identity_links WHERE source_id=%s AND brand_id=%s',(customer_id,order['brand_id'])).fetchone()
+        if linked:customer_id=linked['customer_id']
+        cid=uid()
+        c.execute("INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service,category,driver_task_id) VALUES(%s,%s,%s,%s,%s,'delivery','delivery','help',%s)",
+            (cid,order['id'],order['brand_id'],order['branch_id'],customer_id,tid))
+    else:cid=conv['id']
+    return cid
+
+
+@router.post('/tasks/{tid}/customer-chat')
+def driver_customer_send(tid:str,body:DriverCustomerMessage,request:Request,user=Depends(auth.current_user)):
+    if not auth.has_permission(user,'tasks_update'):fail(403,'صلاحية الإرسال غير متاحة')
+    with db.tx() as c:
+        # Check live assignment even on idempotent replay.
+        task,order=driver_contact_scope(c,user,tid)
+        def perform():
+            if not db.rate_limit(c,'driver-chat:'+user['id'],30,60):fail(429,'أرسل الرسائل بوتيرة أبطأ')
+            cid=driver_conversation(c,tid,order)
+            if body.attachment_id:
+                a=c.execute('SELECT id FROM chat_attachments WHERE id=%s AND conversation_id=%s AND uploader_id=%s',(body.attachment_id,cid,user['id'])).fetchone()
+                if not a:fail(404,'المرفق غير موجود')
+            mid=uid()
+            c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text,attachment_id) VALUES(%s,%s,%s,%s,%s)',(mid,cid,user['id'],body.text,body.attachment_id))
+            c.execute("UPDATE conversations SET status='open' WHERE id=%s AND status='resolved'",(cid,))
+            db.audit(c,user['id'],'driver.customer_message','conversation',cid,{'message_id':mid,'task_id':tid})
+            return {'message_id':mid,'conversation_id':cid}
+        return mutate(c,user,request,'driver.customer_message:'+tid,body.model_dump(),perform)
+
+
+@router.post('/tasks/{tid}/customer-chat/attachments')
+def driver_customer_upload(tid:str,body:Attachment,request:Request,user=Depends(auth.current_user)):
+    if not auth.has_permission(user,'tasks_update'):fail(403,'صلاحية الإرسال غير متاحة')
+    data=validated_image(body)
+    digest=hashlib.sha256(data).hexdigest()
+    with db.tx() as c:
+        task,order=driver_contact_scope(c,user,tid)
+        def perform():
+            if not db.rate_limit(c,'attachment:'+user['id'],12,60):fail(429,'أرسل الصور بوتيرة أبطأ')
+            cid=driver_conversation(c,tid,order)
+            aid=uid()
+            c.execute('INSERT INTO chat_attachments(id,conversation_id,uploader_id,content_type,size_bytes,sha256,data) VALUES(%s,%s,%s,%s,%s,%s,%s)',(aid,cid,user['id'],body.content_type,len(data),digest,data))
+            db.audit(c,user['id'],'chat.attachment','conversation',cid,{'attachment_id':aid,'size_bytes':len(data),'task_id':tid})
+            return {'id':aid}
+        return mutate(c,user,request,'driver.customer_attachment:'+tid,{'sha256':digest,'content_type':body.content_type},perform)
+
+
+@router.get('/tasks/{tid}/customer-chat/attachments/{aid}')
+def driver_customer_download(tid:str,aid:str,user=Depends(auth.current_user)):
+    if not auth.has_permission(user,'tasks_view'):fail(403,'صلاحية التواصل غير متاحة')
+    with db.tx() as c:
+        driver_contact_scope(c,user,tid)
+        a=c.execute('SELECT a.* FROM chat_attachments a JOIN conversations v ON v.id=a.conversation_id WHERE a.id=%s AND v.driver_task_id=%s',(aid,tid)).fetchone()
+        if not a:fail(404,'المرفق غير موجود')
+        return Response(bytes(a['data']),media_type=a['content_type'],headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'inline; filename="image.'+{'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[a['content_type']]+'"'})

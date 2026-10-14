@@ -750,6 +750,13 @@ V5_CSS = '''
 @media(max-width:768px){main{margin:0;padding:14px}h1{font-size:23px}h2{font-size:21px}.wide table{min-width:850px}.meta{overflow-wrap:anywhere}}
 @page{size:A4;margin:11mm}
 @media print{body{background:white;font-size:11pt;line-height:1.65}main{padding:0;margin:0;max-width:none}.brand{font-size:14pt}h1{font-size:16pt}h2{font-size:14pt;margin:11px 0 5px;break-after:avoid}.meta,.foot{font-size:9pt}button,.screen-only,.drilldowns{display:none}.table-wrap{overflow:visible}table,.wide table{min-width:0;font-size:11pt;line-height:1.6}th,td{padding:4px 5px}thead{display:table-header-group}tfoot{display:table-row-group}tr{break-inside:avoid;page-break-inside:avoid}header{break-inside:avoid}}
+/* Compact sections use page area before reducing readable type. */
+main[data-report-view="compact"]{max-width:1000px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
+main[data-report-view="compact"]>header,main[data-report-view="compact"]>footer,main[data-report-view="compact"]>#shift,main[data-report-view="compact"]>#finance,main[data-report-view="compact"]>#drivers,main[data-report-view="compact"]>#support-tickets,main[data-report-view="compact"]>#refuels{grid-column:1/-1}
+main>section{min-width:0}h2{color:#873a12}tbody tr:nth-child(even){background:#faf9f6}
+@media screen and (max-width:700px){main[data-report-view="compact"]{display:block}}
+@media print{main[data-report-view="compact"]{gap:4px 12px}main[data-report-view="compact"] table{font-size:9pt;line-height:1.35}main[data-report-view="compact"] th,main[data-report-view="compact"] td{padding:2px 4px}main[data-report-view="compact"] h2{font-size:10pt;line-height:1.4;margin:5px 0 3px}main[data-report-view="compact"] .meta,main[data-report-view="compact"] .foot{font-size:8pt;line-height:1.4}main[data-report-view="compact"] h1{font-size:14pt}main[data-report-view="compact"] header{padding-bottom:4px}main[data-report-view="compact"] section{break-inside:avoid}main[data-report-view="compact"] #drivers,main[data-report-view="compact"] #refuels,main[data-report-view="compact"] #support-tickets{break-inside:auto}}
+
 '''
 
 def make_v5_print_html(snap,view='compact',report_id=None):
@@ -785,6 +792,8 @@ def make_v5_print_html(snap,view='compact',report_id=None):
         from urllib.parse import quote
         prefix='/api/reports/'+quote(str(report_id),safe='')+'/renderings/v5/'
         actions+='<a href="'+esc(prefix+'pdf')+'">تنزيل PDF المحفوظ</a><a href="'+esc(prefix+'csv')+'">تنزيل CSV المحفوظ</a>'
+    if report_id:
+        actions+='<a href="/api/reports/'+quote(str(report_id),safe='')+'/formatted/pdf">تنزيل PDF المنسق</a>'
     actions='<nav class="report-actions screen-only" aria-label="ملفات التقرير">'+actions+'</nav>'
     return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+' - '+esc(brand_title(snap))+'</title><style>'+V5_CSS+'</style><script src="/report.js" defer></script></head><body><main data-report-template="5" data-report-view="'+esc(view)+'"><header><div class="brand">'+esc(brand_title(snap))+'</div><h1>'+esc(title)+'</h1>'+test+'<p class="meta">قالب 5 · بيانات '+esc(snap.get('schema_version',1))+' · '+esc(snap.get('timezone','Asia/Riyadh'))+' · تقرير '+esc(snap.get('closure_label') or display_shift_label(snap.get('shift',{})))+'</p>'+actions+'<p class="meta">اللقطة المعتمدة ثابتة. تسليم العهدة لا يُحسب بيعًا ثانيًا.</p></header>'+''.join(sections)+'<section class="drilldowns screen-only"><h2>الطلبات - عرض التفاصيل</h2>'+''.join(drill)+'</section><footer class="foot">مرجع الشفت '+esc(snap.get('closure_label') or display_shift_label(snap.get('shift',{})))+' · النسخة المعتمدة محفوظة · جميع المبالغ بالريال السعودي</footer></main></body></html>'
 
@@ -813,10 +822,10 @@ def make_v5_pdf(snap,view='compact'):
     for weight,name in [('Regular','KPSKufi400'),('SemiBold','KPSKufi600'),('Bold','KPSKufi700')]:
         if name not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont(name,str(font_root/('NotoKufiArabic-'+weight+'.ttf'))))
     pdfmetrics.registerFontFamily('KPSKufi400',normal='KPSKufi400',bold='KPSKufi700',italic='KPSKufi400',boldItalic='KPSKufi700')
-    normal=ParagraphStyle('KufiBody',fontName='KPSKufi400',fontSize=11,leading=19,alignment=2,wordWrap='RTL')
-    bold=ParagraphStyle('KufiHead',parent=normal,fontName='KPSKufi700',fontSize=11,leading=19)
+    normal=ParagraphStyle('KufiBody',fontName='KPSKufi400',fontSize=9 if view=='compact' else 11,leading=13 if view=='compact' else 19,alignment=2,wordWrap='RTL')
+    bold=ParagraphStyle('KufiHead',parent=normal,fontName='KPSKufi700',fontSize=9 if view=='compact' else 11,leading=13 if view=='compact' else 19)
     heading=ParagraphStyle('KufiTitle',parent=bold,fontSize=15,leading=23,spaceAfter=5,keepWithNext=True)
-    section=ParagraphStyle('KufiSection',parent=bold,fontSize=14,leading=22,spaceBefore=8,spaceAfter=4,keepWithNext=True)
+    section=ParagraphStyle('KufiSection',parent=bold,fontSize=10 if view=='compact' else 14,leading=15 if view=='compact' else 22,spaceBefore=4,spaceAfter=3,keepWithNext=True)
     meta=ParagraphStyle('KufiMeta',parent=normal,fontSize=9,leading=16)
     class RTLText(Flowable):
         # Wrap the logical Arabic text first, then shape each complete line.
@@ -842,6 +851,12 @@ def make_v5_pdf(snap,view='compact'):
                 self.lines.append(current)
             self.width=avail_width;self.height=len(self.lines)*self.style.leading
             return self.width,self.height
+        def split(self,avail_width,avail_height):
+            self.wrap(avail_width,avail_height)
+            count=int(avail_height//self.style.leading)
+            if count<1:return []
+            if count>=len(self.lines):return [self]
+            return [RTLText('\n'.join(self.lines[:count]),self.style),RTLText('\n'.join(self.lines[count:]),self.style)]
         def draw(self):
             self.canv.setFont(self.style.fontName,self.style.fontSize);self.canv.setFillColor(colors.HexColor('#20241f'))
             for index,line in enumerate(self.lines):
@@ -852,22 +867,25 @@ def make_v5_pdf(snap,view='compact'):
     body=[p(brand_title(snap)+' - '+title,heading),p('قالب 5 · بيانات '+str(snap.get('schema_version',1))+' · التاريخ '+str(snap.get('operational_date',''))+' · وقت الرياض',meta)]
     if snap.get('test_data') or str(snap.get('brand_name','')).startswith(('اختبار','تجريبي','TEST')):body.append(p('بيانات اختبار فقط - ليست تشغيلًا حقيقيًا',bold))
     for table in v5_tables(snap,view):
-        if table['key']=='shift' and view=='compact':
-            meta_rows=table['rows']
-            for label,value in meta_rows:body.append(p(label+': '+str(value),normal))
-            continue
+        # Pack short key/value sections into paired fields, preserving all values.
+        field_table=view=='compact' and table['columns']==['البيان','القيمة']
+        if field_table and len(table['rows'])>1:
+            source=table['rows']
+            table={**table,'columns':['البيان','القيمة','البيان','القيمة'],
+                   'rows':[source[i]+(source[i+1] if i+1<len(source) else ['','']) for i in range(0,len(source),2)]}
         # PDF rightmost column is the first semantic column, matching the RTL HTML.
-        rows=[[p(table['title'],section)]+['' for _ in table['columns'][1:]], [p(v,bold) for v in reversed(table['columns'])]]
+        rows=[[p(table['title'],section)]+['' for _ in table['columns'][1:]]]
+        if not field_table:rows.append([p(v,bold) for v in reversed(table['columns'])])
         for row in table['rows']:rows.append([p(v) for v in reversed(row)])
         if not table['rows']:rows.append([p('لا توجد سجلات')]+[p('—') for _ in table['columns'][1:]])
         if table.get('total'):rows.append([p(v,bold) for v in reversed(table['total'])])
         n=len(table['columns']);weights=[1]*n
-        if table['key']=='shift':weights=[.7,1.8] # reversed: value, label below corrected
+        if n==4 and table['key'] in ('shift','payment-terminal','vehicle'):weights=[1.4,1,1.4,1]
         if n==2:weights=[1.9,1.1]
         if table['key']=='finance':weights=[.55,1.45,.55,1.45]
         if table['key']=='drivers':weights=[1.5,.6,.8,.8,.8,.8,.5,1.3]
         widths=[doc.width*w/sum(weights) for w in weights]
-        rendered=Table(rows,colWidths=widths,repeatRows=2,hAlign='RIGHT',splitByRow=1)
+        rendered=Table(rows,colWidths=widths,repeatRows=1 if field_table else 2,hAlign='RIGHT',splitByRow=1,splitInRow=1)
         # Compact staff closures keep the same readable type and line spacing.
         # Use less empty cell padding so the added terminal/receipt metadata does
         # not force an otherwise small closure onto a nearly empty second page.
@@ -926,6 +944,17 @@ def original_pdf(rid:str,user=Depends(auth.current_user)):
         r=report(c,user,rid)
         if r['pdf_status']!='ready' or not r['pdf_data']:fail(409,'النسخة الأصلية قيد التوليد')
         return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="KPS-original-{rid}.pdf"','Cache-Control':'private, no-store'})
+
+@router.get('/{rid}/formatted/{format}')
+def formatted_download(rid:str,format:str,user=Depends(auth.current_user)):
+    if format not in ('print','pdf'):fail(404,'الملف غير موجود')
+    with db.tx() as c:
+        r=report(c,user,rid)
+        variant=current_view(user,r)
+    data=make_v5_print_html(r['snapshot'],variant,rid) if format=='print' else make_v5_pdf(r['snapshot'],variant)
+    headers={'Cache-Control':'private, no-store'}
+    if format=='pdf':headers['Content-Disposition']=f'attachment; filename="KPS-formatted-{rid}.pdf"'
+    return Response(data,media_type='text/html' if format=='print' else 'application/pdf',headers=headers)
 
 @router.get('/{rid}/renderings/v5/{format}')
 def v5_download(rid:str,format:str,user=Depends(auth.current_user)):

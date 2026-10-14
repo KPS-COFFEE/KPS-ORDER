@@ -154,3 +154,21 @@ def test_v5_owner_mail_paused_channel_provider_fail_retry_unique_no_financial_ch
         assert c.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(rid,)).fetchone()==source
         assert c.execute('SELECT count(*) n FROM collections').fetchone()['n']==1
         assert c.execute("SELECT count(*) n FROM email_outbox WHERE kind='owner_report'").fetchone()['n']==1
+
+
+def test_formatted_vehicle_closure_single_page_and_preserves_source():
+    snap=sample()
+    checks={key:'ok' for key in ('tyres','brakes','lights','oil','damage','cleanliness')}
+    snap['shift']['vehicle_log']={'vehicle':{'plate':'5685 ق ط'},
+        'start':{'odometer_km':282402,'fuel_percent':50,'checks':checks},
+        'end':{'odometer_km':282566,'fuel_percent':75,'checks':checks},'refuels':[]}
+    snap['shift']['exception_reason']='5.5'
+    snap['shift']['submission']['closure_exception']=True
+    before=deepcopy(snap)
+    assert _pdf_pages(reporting.make_v5_pdf(snap))==1
+    assert snap==before
+    tables=reporting.v5_tables(snap)
+    assert len(next(t for t in tables if t['key']=='inspections')['rows'])==7
+    # Long notes must flow onto further pages instead of being cropped or shrunk.
+    snap['shift']['vehicle_log']['end']['notes']='ملاحظة فحص المركبة ' * 150
+    assert _pdf_pages(reporting.make_v5_pdf(snap))>1

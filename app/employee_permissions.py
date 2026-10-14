@@ -118,6 +118,8 @@ ROUTES = {
         'report_list', 'report_detail', 'print_report', 'download_pdf', 'download_csv',
         'retry', 'original_pdf', 'v5_download', 'v5_retry')},
     'chat': {name: permission for permission, names in (
+        ('tasks_view', ('driver_customer_messages','driver_customer_download')),
+        ('tasks_update', ('driver_customer_send','driver_customer_upload')),
         ('chat_view', ('inbox', 'reply_alerts', 'messages', 'download', 'mark_read')),
         ('chat_reply', ('create_conversation', 'send', 'upload')),
         ('chat_manage', ('transfer', 'claim', 'status'))

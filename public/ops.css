@@ -232,3 +232,53 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 @media(max-width:650px){.shift-grid{grid-template-columns:minmax(0,1fr);gap:14px}.shift-card{padding:16px}}
 
 .shift-orders{padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#f5f7f5}.shift-order-total{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;font-weight:700}.shift-order-total strong{font-size:24px;line-height:1.4;font-variant-numeric:tabular-nums}.shift-orders dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 14px;margin:9px 0 0;padding-top:9px;border-top:1px solid var(--line)}.shift-orders dl>div{display:flex;justify-content:space-between;align-items:center;gap:6px;min-width:0}.shift-orders dt{font-size:12px;color:var(--muted)}.shift-orders dd{font-size:15px;font-weight:700;margin:0;font-variant-numeric:tabular-nums}
+
+/* Operations summaries and saved closures: compact, aligned and responsive. */
+.operations-overview .metrics{gap:12px}
+.operations-overview .metric{padding:16px 18px;border-inline-start:3px solid var(--accent);display:flex;flex-direction:column;justify-content:center;gap:5px;min-height:100px}
+.operations-overview .metric .number{font-size:24px;overflow-wrap:anywhere}
+.operations-overview .metric .label{margin:0;font-size:13px;color:var(--ink)}
+.operations-overview .panel h2,.owner-notifications h2{padding-bottom:12px;border-bottom:1px solid var(--line)}
+.operations-overview table,.owner-notifications table{width:100%;min-width:0;table-layout:auto}
+.operations-overview th,.operations-overview td,.owner-notifications th,.owner-notifications td{padding:10px 12px;text-align:start;border-bottom:1px solid var(--line)}
+.operations-overview th,.owner-notifications th{background:var(--accent-light);color:var(--ink)}
+.operations-overview tbody tr:nth-child(even),.owner-notifications tbody tr:nth-child(even){background:var(--bg)}
+.operations-overview td:not(:first-child){font-variant-numeric:tabular-nums}
+.owner-notifications{margin-bottom:20px}
+.owner-notifications td:first-child{min-width:190px;font-weight:700}
+.owner-notifications td:last-child{min-width:230px}
+.owner-notifications td .button,.owner-notifications td button{display:inline-flex;align-items:center;justify-content:center;margin:3px;padding:8px 10px;font-size:12px;min-height:40px;white-space:normal}
+.report-list{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:18px}
+.report-list>.panel{display:flex;flex-direction:column;padding:18px;border-top:3px solid var(--accent)}
+.report-list .actions{margin-top:auto;padding-top:14px;gap:7px}
+.report-list .actions>*{font-size:12px;padding:8px 10px}
+.report-list .progress-note{font-size:12px;margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+@media(max-width:1200px){.report-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.report-list{grid-template-columns:1fr}.operations-overview .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.operations-overview .metric{padding:12px}.operations-overview .metric .number{font-size:21px}.owner-notifications table{min-width:650px}}
+
+/* Fleet cards retain generous label widths on desktop and stack on mobile. */
+.fleet-cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;align-items:stretch}
+.fleet-cards>[data-fleet-card]{display:flex;flex-direction:column;gap:14px;padding:20px;border-top:3px solid var(--accent);box-shadow:0 3px 12px #00000006}
+.fleet-cards h2{font-size:23px;line-height:1.5;margin:0;padding-bottom:12px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.vehicle-profile{display:grid;gap:14px;min-width:0}
+.vehicle-profile>.pill{justify-self:start;font-size:12px}
+.vehicle-specs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px;margin:0}
+.vehicle-specs>div:first-child{grid-column:1/-1}
+.vehicle-specs dt,.vehicle-assignee>span{font-size:12px;color:var(--muted)}
+.vehicle-specs dd{margin:2px 0 0;font-size:14px;font-weight:700;overflow-wrap:anywhere}
+.vehicle-baseline{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;border-radius:10px;background:var(--accent-light);color:var(--ink)}
+.vehicle-baseline>span{font-size:12px}.vehicle-baseline strong{font-size:26px;white-space:nowrap}.vehicle-baseline small{font-size:12px;font-weight:400}
+.vehicle-assignee{display:grid;gap:3px;overflow-wrap:anywhere}
+.vehicle-baseline-note{font-size:12px;color:var(--muted)}.vehicle-baseline-note summary{cursor:pointer;min-height:32px;line-height:32px}.vehicle-baseline-note p{padding-top:6px;line-height:1.8}
+.vehicle-card-actions{display:grid;gap:8px;margin-top:auto;padding-top:10px}
+.vehicle-card-actions button{width:100%;min-height:44px;white-space:normal;line-height:1.5}
+@media(max-width:1100px){.fleet-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.fleet-cards{grid-template-columns:minmax(0,1fr)}.fleet-cards>[data-fleet-card]{padding:16px}}
+
+.fleet-distance-intro{display:grid;gap:10px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--accent-light);margin-bottom:16px}.fleet-log-table .fleet-red,.fleet-log-table .fleet-orange,.fleet-log-table .fleet-green{font-weight:700}.fleet-log-table td button+button{margin-top:8px}.fleet-log-table td button{width:100%;font-size:12px}.fleet-distance-intro .fleet-red{padding:10px;border-radius:8px}
+
+.fleet-distance-comparisons{display:grid;gap:12px;margin:20px 0}.fleet-distance-card{padding:16px;background:var(--surface);border:1px solid var(--line);border-radius:12px;display:grid;gap:12px}.fleet-distance-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.fleet-distance-values>div{display:grid;gap:5px;padding:12px;border:1px solid var(--line);border-radius:9px}.fleet-distance-values span{font-size:12px}.fleet-distance-values strong{font-size:20px}.fleet-distance-values small{font-size:12px}.fleet-distance-card>button{justify-self:end}.fleet-distance-card p{overflow-wrap:anywhere}@media(max-width:650px){.fleet-distance-values{grid-template-columns:1fr}.fleet-distance-card>button{width:100%}}
+
+.driver-contact-dialog{display:grid;gap:14px}.driver-contact-dialog .messages{min-height:100px;max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:12px}.driver-contact-dialog .message{padding:10px;margin-bottom:8px;background:var(--bg);border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere}.driver-message-presets{display:flex;flex-wrap:wrap;gap:8px}.driver-message-presets button{font-size:13px;text-align:start;flex:1 1 180px}.driver-contact-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.whatsapp-button{background:#176646;color:white}.driver-contact-state{font-size:13px;color:var(--muted)}.task-card .driver-contact-button{width:100%}@media(max-width:500px){.driver-contact-actions{grid-template-columns:1fr}}
+
+.driver-image-inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.driver-image-preview:not([hidden]){display:flex;align-items:center;gap:12px}.driver-image-preview img,.driver-chat-image{max-width:100%;width:240px;max-height:220px;object-fit:contain;border-radius:10px}.driver-chat-image{display:block;margin:8px 0}.driver-image-inputs input{max-width:100%}

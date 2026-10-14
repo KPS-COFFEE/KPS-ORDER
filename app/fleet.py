@@ -21,10 +21,10 @@ COLUMNS=[('date','التاريخ','Date'),('operating_day','اليوم التش�
  ('gps_distance','مسافة GPS','GPS KM'),('expected_distance','مسافة الطلبات المتوقعة','Expected order KM'),('distance_variance','فرق المسافة','Variance KM'),
  ('liters','التعبئة L','Liters'),('efficiency','كفاءة KM/L','KM/L'),('baseline_kml','المعيار KM/L','Baseline KM/L'),('full_start','فل عند الاستلام','Full at start'),('full_end','فل عند التسليم','Full at end'),
  ('fuel_status','حالة البنزين','Fuel status'),('orders','عدد الطلبات','Orders'),('faults','عدد الأعطال','Faults'),('exception','استثناء','Exception'),
- ('notes','ملاحظات','Notes'),('record_status','حالة السجل','Record status')]
+ ('notes','ملاحظات','Notes'),('record_status','حالة السجل','Record status'),('distance_status','لون فرق المسافة','Distance status'),('distance_review','مراجعة المسافة','Distance review'),('distance_variance_percent','فرق المسافة %','Variance %')]
 DEFINITIONS=('KM/L: full-to-full measured distance / filled liters. Grey: open or incomplete readings, not full-to-full, or zero fuel/distance. '
  'Per-vehicle operating baseline (legacy default 10 KM/L): Green >=90%; Orange >=80% and <90%; Red <80% of the baseline saved when the shift started. This is a review indicator, not driver liability. '
- 'GPS and expected route distance remain blank until measured canonical data is available. '
+ 'Google Maps expected KM is manually recorded for the complete itinerary including return; it is not GPS or an automatic API reading. Absolute difference: green <=10% or <=5 KM, orange <=25%, red >25%. Implausible odometers are excluded from distance totals and fuel efficiency. GPS remains blank until measured. '
  'Average KM/L uses only comparable full-to-full rows (sum KM / sum liters), not a mean of ratios. '
  'One row per vehicle shift. Multiple shifts in one day remain separate. Operational day starts 16:00 Asia/Riyadh. '
  'الفترة يوم تشغيلي بتوقيت الرياض. الكفاءة من فل إلى فل فقط؛ الرمادي بيانات ناقصة. الألوان للمراجعة ولا تثبت مسؤولية السائق.')
@@ -40,11 +40,12 @@ def scoped(user):
 
 BASE=""" FROM vehicle_operating_logs l JOIN shifts s ON s.id=l.shift_id
  JOIN fleet_vehicles v ON v.id=l.vehicle_id AND v.brand_id=s.brand_id JOIN users u ON u.id=s.user_id
- LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id ORDER BY revision DESC LIMIT 1) correction ON true """
-METRICS='coalesce(correction.after_metrics,l.metrics)'
+ LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id ORDER BY revision DESC LIMIT 1) correction ON true
+ LEFT JOIN LATERAL(SELECT * FROM fleet_route_readings WHERE shift_id=l.shift_id ORDER BY revision DESC LIMIT 1) route_reading ON true """
+METRICS="fleet_distance_review(coalesce(correction.after_metrics,l.metrics),route_reading.expected_km,s.opened_at,coalesce((s.vehicle_log->'end'->>'recorded_at')::timestamptz,s.submitted_at,s.closed_at))"
 SELECT=f"""SELECT l.shift_id,l.vehicle_id,l.operating_day,l.revision,v.plate,v.details,u.id driver_id,u.display_name driver_name,
  s.branch_ids,s.opened_at received_at,coalesce((s.vehicle_log->'end'->>'recorded_at')::timestamptz,(s.vehicle_log->'end_exception'->>'recorded_at')::timestamptz,s.submitted_at) returned_at,
- {METRICS} metrics,
+ {METRICS} metrics,route_reading.source_url route_source_url,route_reading.itinerary route_itinerary,route_reading.created_at route_recorded_at,
  (SELECT count(DISTINCT t.order_id) FROM driver_tasks t WHERE t.shift_id=s.id) orders,
  GREATEST((SELECT count(*) FROM vehicle_reports r WHERE r.brand_id=s.brand_id AND r.driver_id=s.user_id
  AND r.branch_id IN (SELECT jsonb_array_elements_text(s.branch_ids))
@@ -94,7 +95,7 @@ def query_rows(c,user,limit=None,offset=0,**kwargs):
 def query_summary(c,user,**kwargs):
     lo,hi,statement,args=query_statement(user,**kwargs)
     stats=c.execute("""SELECT count(*) records,count(DISTINCT vehicle_id) vehicles,
-      coalesce(sum((metrics->>'actual_distance')::numeric),0) actual_distance,
+      coalesce(sum((metrics->>'actual_distance')::numeric) FILTER(WHERE coalesce((metrics->>'distance_eligible')::boolean,true)),0) actual_distance,
       coalesce(sum((metrics->>'liters')::numeric),0) liters,
       round(sum((metrics->>'actual_distance')::numeric) FILTER (WHERE metrics->>'efficiency' IS NOT NULL)
        / nullif(sum((metrics->>'liters')::numeric) FILTER (WHERE metrics->>'efficiency' IS NOT NULL),0),3) efficiency,
@@ -109,7 +110,7 @@ def query_summary(c,user,**kwargs):
 def summary(rows):
     eligible=[r for r in rows if r.get('efficiency') is not None]
     liters=sum(float(r['liters']) for r in eligible)
-    return dict(vehicles=len({r['vehicle_id'] for r in rows}),actual_distance=round(sum(float(r['actual_distance'] or 0) for r in rows),3),
+    return dict(vehicles=len({r['vehicle_id'] for r in rows}),actual_distance=round(sum(float(r['actual_distance'] or 0) for r in rows if r.get('distance_eligible',True)),3),
       liters=round(sum(float(r['liters'] or 0) for r in rows),3),efficiency=round(sum(float(r['actual_distance']) for r in eligible)/liters,3) if liters else None,
       **{color:sum(r['fuel_status']==color for r in rows) for color in ('green','orange','red','grey')},
       faults=sum(r['faults'] for r in rows),exceptions=sum(bool(r['exception']) for r in rows),records=len(rows))
@@ -192,7 +193,7 @@ def export(format:Literal['pdf','xlsx'],lang:Literal['ar','en']='ar',start:date|
         if type(v) is bool:return ('Yes' if v else 'No') if lang=='en' else ('نعم' if v else 'لا')
         if isinstance(v,datetime):return v.astimezone(service_hours.RIYADH).strftime('%Y-%m-%d %H:%M')
         if isinstance(v,(int,float)):return v
-        translations={'green':'أخضر','orange':'برتقالي','red':'أحمر','grey':'رمادي','closed':'مغلق','open':'مفتوح','exception':'استثناء'}
+        translations={'green':'أخضر','orange':'برتقالي','red':'أحمر','grey':'رمادي','closed':'مغلق','open':'مفتوح','exception':'استثناء','invalid_odometer':'راجع العداد','missing_route':'قراءة جوجل غير مسجلة','incomplete':'سجل غير مكتمل','within_tolerance':'ضمن السماح','review_difference':'فرق يحتاج مراجعة'}
         return translations.get(str(v),str(v)) if lang=='ar' else str(v)
     values=[[value(r.get(k)) for k in keys] for r in rows]
     title='تقرير الأسطول / Fleet daily report';meta=f'{lo} - {hi} | Asia/Riyadh'
@@ -211,7 +212,7 @@ def export(format:Literal['pdf','xlsx'],lang:Literal['ar','en']='ar',start:date|
 
 def make_pdf(rows,lang,title,meta,definitions):
     from datetime import datetime
-    translations={'green':'أخضر','orange':'برتقالي','red':'أحمر','grey':'رمادي','closed':'مغلق','open':'مفتوح','exception':'استثناء'}
+    translations={'green':'أخضر','orange':'برتقالي','red':'أحمر','grey':'رمادي','closed':'مغلق','open':'مفتوح','exception':'استثناء','invalid_odometer':'راجع العداد','missing_route':'قراءة جوجل غير مسجلة','incomplete':'سجل غير مكتمل','within_tolerance':'ضمن السماح','review_difference':'فرق يحتاج مراجعة'}
     def value(v):
         if v is None:return '—'
         if type(v) is bool:return ('Yes' if v else 'No') if lang=='en' else ('نعم' if v else 'لا')
@@ -221,7 +222,7 @@ def make_pdf(rows,lang,title,meta,definitions):
     definitions_map={k:e if lang=='en' else a for k,a,e in COLUMNS}
     sections=[]
     for title_part,keys in [
-       (('الحركة والمسافات','Movement and distances'),['date','operating_day','plate','driver_name','branches','received_at','returned_at','start_odometer','end_odometer','actual_distance','gps_distance','expected_distance','distance_variance']),
+       (('الحركة والمسافات','Movement and distances'),['date','operating_day','plate','driver_name','branches','received_at','returned_at','start_odometer','end_odometer','actual_distance','gps_distance','expected_distance','distance_variance','distance_status','distance_review','distance_variance_percent']),
        (('الوقود والأعطال والاستثناءات','Fuel, faults and exceptions'),['operating_day','plate','driver_name','liters','efficiency','baseline_kml','full_start','full_end','fuel_status','orders','faults','exception','notes','record_status'])]:
         headers=[('الصف' if lang=='ar' else 'Row'),*[definitions_map[k] for k in keys]]
         values=[[i,*[value(r.get(k)) for k in keys]] for i,r in enumerate(rows,1)]
@@ -249,7 +250,8 @@ def detail(vid:str,sid:str,user=Depends(access)):
     with db.tx() as c:
         row=log_access(c,user,vid,sid)
         events=c.execute('SELECT e.*,u.display_name actor_name FROM vehicle_log_corrections e JOIN users u ON u.id=e.actor_id WHERE shift_id=%s ORDER BY e.revision',(sid,)).fetchall()
-        return {'log':row,'corrections':events}
+        reading=c.execute('SELECT expected_km,source_url,itinerary,reason,created_at FROM fleet_route_readings WHERE shift_id=%s ORDER BY revision DESC LIMIT 1',(sid,)).fetchone()
+        return {'log':row,'corrections':events,'route_reading':reading}
 
 def log_access(c,user,vid,sid,lock=False):
     clauses,args=scoped(user);clauses+=['l.vehicle_id=%s','l.shift_id=%s'];args +=[vid,sid]
@@ -309,3 +311,47 @@ def manage(vid:str,body:ManagementAction,request:Request,user=Depends(access)):
         drivers=c.execute("SELECT * FROM users WHERE brand_id=%s AND role='driver'",(user['brand_id'],)).fetchall()
         if not car or not fleet_management.car_scope(c,user,car,drivers):raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'fleet.manage:'+vid,body.model_dump(mode='json'),lambda:fleet_management.perform(c,user,vid,body))
+
+
+class GoogleRouteReading(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    revision:StrictInt=Field(ge=1)
+    expected_km:Decimal=Field(gt=0,le=100000,max_digits=12,decimal_places=3)
+    source_url:str=Field(min_length=10,max_length=2000)
+    itinerary:str=Field(min_length=10,max_length=2000)
+    reason:str=Field(min_length=3,max_length=2000)
+    complete_itinerary:Literal[True]
+
+    @field_validator('source_url')
+    @classmethod
+    def google_url(cls,value):
+        from urllib.parse import urlsplit
+        url=urlsplit(value)
+        host=(url.hostname or '').lower()
+        valid=(host in ('maps.google.com','maps.app.goo.gl') or
+               host in ('www.google.com','google.com') and url.path.startswith('/maps') or
+               host=='goo.gl' and url.path.startswith('/maps'))
+        if url.scheme!='https' or not valid or url.username or url.password or url.port not in (None,443):
+            raise ValueError('Use an HTTPS Google Maps route link')
+        return value
+
+    @field_validator('source_url','itinerary','reason')
+    @classmethod
+    def clean_text(cls,value):
+        if '\x00' in value:raise ValueError('Invalid text')
+        return value
+
+@router.post('/vehicles/{vid}/logs/{sid}/google-reading')
+def save_google_reading(vid:str,sid:str,body:GoogleRouteReading,request:Request,user=Depends(access)):
+    with db.tx() as c:
+        row=log_access(c,user,vid,sid,True)
+        def perform():
+            if row['shift_status']!='closed':raise db.error(409,'VEHICLE_LOG_OPEN','أكمل اعتماد الشفت قبل تسجيل المسار النهائي.')
+            if row['revision']!=body.revision:raise db.error(409,'VEHICLE_LOG_CHANGED','حدّث السجل قبل الحفظ.')
+            revision=row['revision']+1
+            c.execute('INSERT INTO fleet_route_readings(id,shift_id,revision,actor_id,expected_km,source_url,itinerary,reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',
+                (db.new_id('vgr_'),sid,revision,user['id'],body.expected_km,body.source_url,body.itinerary,body.reason))
+            c.execute('UPDATE vehicle_operating_logs SET revision=%s WHERE shift_id=%s',(revision,sid))
+            db.audit(c,user['id'],'vehicle_log.google_reading','vehicle_log',sid,{'vehicle_id':vid,**body.model_dump(mode='json')})
+            return {'shift_id':sid,'revision':revision}
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'vehicle_log.google_reading:'+sid,body.model_dump(mode='json'),perform)
