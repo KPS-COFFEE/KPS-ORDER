@@ -98,7 +98,7 @@ def catalog():
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
     'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':'orders_amend', 'request_amendment':'orders_amend', 'decide':'orders_amend',
-                         'acknowledge':{'branch_manager':'orders_prepare','driver':'tasks_update'}},
+                         'acknowledge':{'branch_manager':'orders_prepare','driver':'tasks_update','delivery_manager':'orders_amend'}},
     'driver_incentives': {'achievement': ('shifts_view','accounting_reports'), 'shift_review': ('shifts_view','accounting_reports'), 'decide': 'shifts_approve'},
     'operations': {
         'dashboard': 'dashboard_view', 'operational_alerts': 'operational_alerts',

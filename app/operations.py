@@ -593,7 +593,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
-                if o['payment_status'] in ('paid','partially_refunded'):fail(409,'يلزم استرداد كامل قبل الإلغاء')
+                from .order_amendments import balance as paid_balance
+                if o['payment_status'] in ('paid','partially_refunded') or paid_balance(c,o)>0:fail(409,'يلزم استرداد كامل قبل الإلغاء')
             if t['status']=='problem' and body.status!='problem':
                 from .order_support import next_cleanup
                 c.execute('UPDATE delivery_photos SET expires_at=greatest(expires_at,%s) WHERE order_id=%s AND data IS NOT NULL',(next_cleanup(),o['id']))

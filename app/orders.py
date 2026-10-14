@@ -389,7 +389,8 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
             if body.status == 'cancelled':
                 if not body.reason.strip():
                     raise db.error(422, 'CANCELLATION_REASON_REQUIRED', 'اكتب سبب رفض أو إلغاء الطلب.')
-                if order['payment_status'] not in {'unpaid', 'refunded'}:
+                from .order_amendments import balance as paid_balance
+                if order['payment_status'] not in {'unpaid', 'refunded'} or paid_balance(conn,order)>0:
                     raise db.error(409, 'REFUND_WORKFLOW_REQUIRED', 'الطلب محصل. يلزم مسار الاسترداد المعتمد قبل الإلغاء.')
                 if conn.execute("SELECT to_regclass('driver_tasks') AS n").fetchone()['n']:
                     if conn.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','reassigned','delivered','transferred')", (order_id,)).fetchone():

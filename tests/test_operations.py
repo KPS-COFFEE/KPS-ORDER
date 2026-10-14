@@ -205,7 +205,13 @@ def test_zero_task_shift_requires_real_zero_receipt_and_blocks_manager(ops):
     post('manager','/api/shifts/'+manager+'/submit',{'counted_halalas':0,'handover_halalas':0},status=409)
     close_driver(post,driver,manager,counted=0)
     post('manager','/api/shifts/'+manager+'/submit',{'counted_halalas':0,'handover_halalas':0})
-    post('owner','/api/shifts/'+manager+'/approve',status=409)
+    approved=post('manager','/api/shifts/'+manager+'/approve')
+    with db.tx() as c:
+        saved=c.execute('SELECT submission FROM shifts WHERE id=%s',(manager,)).fetchone()
+        assert saved['submission']['operational_approved'] is True
+        assert not c.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s',(approved['report_id'],)).fetchone()
+        # Operational approval never fabricates a cash receipt or bank match.
+        assert not c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND status='confirmed'",(manager,)).fetchone()
 
 
 @pytest.mark.postgres

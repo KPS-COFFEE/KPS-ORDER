@@ -178,7 +178,8 @@ def decide(aid: str, body: Decision, user=Depends(auth.require_roles('customer',
                 if not body.note.strip(): raise db.error(422,'AMENDMENT_REASON','اكتب سبب الرفض.')
                 status = 'rejected'
             elif action == 'confirm_branch':
-                if user['role'] not in ('branch_manager','owner') or row['status'] != 'requested': raise db.error(403,'AMENDMENT_BRANCH','تأكيد إمكانية التجهيز من الفرع فقط.')
+                delegated=user['role']=='delivery_manager' and o['snapshot'].get('delivery_workflow')=='manager_dispatch' and body.note.strip()
+                if (user['role'] not in ('branch_manager','owner') and not delegated) or row['status'] != 'requested': raise db.error(403,'AMENDMENT_BRANCH','يلزم تأكيد الفرع؛ في التشغيل المباشر يوثق المدير تأكيده بملاحظة.')
                 c.execute('UPDATE order_amendments SET branch_confirmed_by=%s WHERE id=%s',(user['id'],aid))
                 status = 'branch_confirmed'
             elif action == 'offer':
@@ -218,19 +219,22 @@ class Receipt(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: StrictInt = Field(gt=0)
     kind: Literal['branch','driver']
+    note: str = Field(default='',max_length=500)
 
 
 @router.post('/orders/{oid}/receipt')
-def acknowledge(oid: str, body: Receipt, user=Depends(auth.require_roles('branch_manager','driver','owner')), idempotency_key: str | None=Header(default=None)):
+def acknowledge(oid: str, body: Receipt, user=Depends(auth.require_roles('branch_manager','driver','owner','delivery_manager')), idempotency_key: str | None=Header(default=None)):
     with db.tx() as c:
         scoped_order(c,oid,user)
         def perform():
             o=scoped_order(c,oid,user,lock=True)
             if body.revision != o['amendment_revision']: raise db.error(409,'AMENDMENT_STALE_RECEIPT','راجع آخر نسخة من الطلب.')
-            if body.kind == 'branch' and user['role'] not in ('branch_manager','owner') or body.kind == 'driver' and user['role'] != 'driver':
+            delegated=user['role']=='delivery_manager' and o['snapshot'].get('delivery_workflow')=='manager_dispatch' and body.note.strip()
+            if body.kind == 'branch' and user['role'] not in ('branch_manager','owner') and not delegated or body.kind == 'driver' and user['role'] != 'driver':
                 raise db.error(403,'AMENDMENT_RECEIPT_ROLE','التأكيد من الفرع أو السائق المعني فقط.')
             c.execute('INSERT INTO order_revision_receipts(order_id,revision,actor_id,kind) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',(oid,body.revision,user['id'],body.kind))
             db.event(c,oid,user['id'],'amendment.received',body.model_dump())
+            db.audit(c,user['id'],'amendment.received','order',oid,body.model_dump())
             return {'received':True}
         return db.idempotent(c,user['id'],idempotency_key,'amendment.receipt:'+oid,body.model_dump(),perform)
 
