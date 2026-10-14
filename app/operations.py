@@ -445,22 +445,23 @@ def return_close(sid:str,body:Review,request:Request,user=Depends(auth.current_u
         return mutate(c,user,request,'shift.return:'+sid,body.model_dump(),perform)
 
 def approve_close_in_tx(c,user,sid,body):
-    s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
-    if s['kind']=='manager': roles(user,'owner')
+    s=lock_shift(c,sid)
+    own_manager=bool(s and s['kind']=='manager' and s['user_id']==user['id'] and user['role']=='delivery_manager')
+    shift_access(c,user,s,manager=not own_manager)
+    if s['kind']=='manager' and not own_manager:roles(user,'owner')
     if s['status']!='submitted': fail(409,'التقفيلة غير مرسلة')
     from .driver_incentives import require_decisions
     require_decisions(c,user,s)
     sub=s['submission']
-    if sub['retained_halalas'] and s['kind']!='driver':
-        roles(user,'owner')
     if sub['difference_halalas'] or sub.get('card_difference_halalas') or sub['retained_halalas']:
         if not body.exception_reason or not body.exception_reason.strip(): fail(422,'يلزم سبب ظاهر لفرق النقد أو موازنة الشبكة أو العهدة المحتفظ بها')
     if unresolved(c,sid): fail(409,'مهام معلقة')
     if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
     if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'سائق غير مقفل')
-    if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone(): fail(409,'استلام غير مؤكد')
+    if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending' AND NOT (%s AND from_shift_id=%s AND closure AND to_shift_id IS NULL)",(sid,sid,s['kind']=='manager',sid)).fetchone(): fail(409,'استلام غير مؤكد')
     receipts=c.execute("SELECT coalesce(sum(amount_halalas),0) n,count(*) nrows FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchone()
-    if int(receipts['n'])!=sub['handover_halalas'] or not receipts['nrows']: fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
+    if s['kind']=='driver' and (int(receipts['n'])!=sub['handover_halalas'] or not receipts['nrows']):fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
+    if s['kind']=='manager':sub=dict(sub,operational_approved=True)
     if sub['difference_halalas']:event(c,sid,sub['difference_halalas'],'adjustment','closure-difference:'+sid,user['id'],body.exception_reason)
     if sub['retained_halalas']:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason))
     exceptional=s['kind']=='driver' and (sub.get('delegated_closure') or sub['difference_halalas'] or sub.get('card_difference_halalas') or sub['retained_halalas'])
@@ -859,7 +860,9 @@ def confirm_custody_in_tx(c,user,cid):
     if t['to_shift_id']:shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(t['to_shift_id'],)).fetchone())
     ids=sorted(set([t['from_shift_id']]+([t['to_shift_id']] if t['to_shift_id'] else [])))
     ss={i:lock_shift(c,i) for i in ids}
-    if ss[t['from_shift_id']]['status']=='closed' or (t['to_shift_id'] and ss[t['to_shift_id']]['status'] not in ('open','closing')):fail(409,'شفت مقفل')
+    source_closed=ss[t['from_shift_id']]['status']=='closed'
+    operational_receipt=ss[t['from_shift_id']]['kind']=='manager' and (ss[t['from_shift_id']].get('submission') or {}).get('operational_approved') and t['closure'] and not t['to_shift_id']
+    if (source_closed and not operational_receipt) or (t['to_shift_id'] and ss[t['to_shift_id']]['status'] not in ('open','closing')):fail(409,'شفت مقفل')
     if t['to_shift_id']:valid_cash_amount(balance(c,ss[t['to_shift_id']])+t['amount_halalas'])
     c.execute("UPDATE custody_transfers SET status='confirmed',confirmed_by=%s,confirmed_at=now() WHERE id=%s",(user['id'],cid))
     event(c,t['from_shift_id'],-t['amount_halalas'],'transfer_out',cid,user['id'],t['reference'])

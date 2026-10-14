@@ -574,7 +574,7 @@ def v5_tables(snap,view='compact'):
     shift_names={shift.get('id'):snap.get('closure_label') or display_shift_label(shift)}
     shift_names.update({r.get('shift_id'):r.get('closure_label') or display_shift_label({'id':r.get('shift_id'),'shift_no':r.get('shift_no'),'kind':'driver'}) for r in snap.get('driver_reports',[])})
     shift_name=lambda identifier:shift_names.get(identifier) or display_shift_label({'id':identifier})
-    label=lambda value:V5_NAMES.get(value,str(value or 'غير مسجل'))
+    label=lambda value:('معتمدة تشغيليًا — المطابقة المالية لدى المحاسبة' if value=='closed' and (shift.get('submission') or {}).get('operational_approved') else V5_NAMES.get(value,str(value or 'غير مسجل')))
     tables=[]
     def table(key,title,columns,rows,total=None):
         if not rows and not total:return
@@ -625,7 +625,7 @@ def v5_tables(snap,view='compact'):
         ['عهدة افتتاحية',v5_money(shift.get('opening_halalas',0)),'نقد مستلم من السائقين' if snap.get('kind')=='manager' else 'عهدة نقدية مستلمة',v5_money(driver_receipts if snap.get('kind')=='manager' else received_custody)],
         ['مصروفات / سلف / ردود نقدية مسجلة',v5_money(expenses),'تسليمات نقدية سابقة',v5_money(previous)],
         ['النقد المتوقع',v5_money(closure.get('expected_halalas')),'النقد المعدود',v5_money(closure.get('counted_halalas'))],
-        ['التسليم النهائي المؤكد',v5_money(closure.get('handover_halalas')),'العهدة المتبقية',v5_money(closure.get('retained_halalas'))],
+        ['الكاش المقرر تسليمه للمطابقة' if closure.get('operational_approved') else 'التسليم النهائي المؤكد',v5_money(closure.get('handover_halalas')),'العهدة المتبقية',v5_money(closure.get('retained_halalas'))],
         ['الفرق المعتمد',v5_money(closure.get('difference_halalas')),'صافي التحصيلات - كاش وشبكة',v5_money(summary.get('net_collections_halalas',0))]]
     if adjustment:finance.append(['تسويات معتمدة بإشارتها',v5_money(adjustment),'استردادات الشبكة',v5_money(summary.get('card_refunded_halalas',0))])
     elif summary.get('card_refunded_halalas'):finance.append(['استردادات الشبكة',v5_money(summary['card_refunded_halalas']),'رسوم الطلبات المكتملة',v5_money(summary.get('delivery_fees_halalas',0))])

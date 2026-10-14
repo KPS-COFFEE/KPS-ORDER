@@ -9,7 +9,7 @@ import json
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import Response
 from .responses import DatabaseJSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations, invoice_profiles
 
@@ -64,20 +64,61 @@ def _ensure_manager_duty(conn, brand_id, branch_id):
 
 @router.post('')
 def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(auth.require_roles('customer')), idempotency_key: str | None = Header(default=None)):
+    return _create_order(body, request, user, idempotency_key)
+
+
+class DeliveryCenterCustomer(catalog.CustomerInfo):
+    name: str = Field(default='عميل', max_length=100)
+
+    @field_validator('name', mode='before')
+    @classmethod
+    def default_contact_name(cls, value):
+        return value.strip() or 'عميل' if isinstance(value, str) else value
+
+
+class DeliveryCenterOrder(catalog.QuoteBody):
+    customer: DeliveryCenterCustomer
+
+
+@router.post('/delivery-center')
+def create_delivery_center_order(body: DeliveryCenterOrder, request: Request = None,
+                                 user=Depends(auth.require_roles('owner','delivery_manager')),
+                                 idempotency_key: str | None = Header(default=None)):
+    return _create_order(body, request, user, idempotency_key, delivery_center=True)
+
+
+def delivery_center_scope(conn, user, branch_id):
+    if user['role'] not in {'owner','delivery_manager'} or (user['role'] != 'owner' and branch_id not in user.get('branch_ids', [])):
+        raise db.error(403, 'BRANCH_FORBIDDEN', 'الفرع خارج نطاق مدير التوصيل.')
+    shift = conn.execute("SELECT id FROM shifts WHERE brand_id=%s AND user_id=%s AND kind='manager' AND status='open' AND branch_ids ? %s FOR SHARE",
+                         (user['brand_id'],user['id'],branch_id)).fetchone()
+    if not shift:
+        raise db.error(409,'MANAGER_SHIFT_REQUIRED','افتح شفت مدير توصيل يغطي فرع الطلب أولًا.')
+    return shift['id']
+
+
+def _create_order(body, request, user, idempotency_key, *, delivery_center=False):
     if user['brand_id'] != body.brand_id:
         raise db.error(403, 'BRAND_FORBIDDEN', 'حساب العميل لا يتبع هذا البراند.')
     with db.tx(pipeline=True) as conn:
         # The fresh server-session read carries this policy. Replays still
         # require identity proof without repeating the full settings read.
-        phone_required=user.get('customer_phone_required')
+        phone_required=False if delivery_center else user.get('customer_phone_required')
         if phone_required is None:phone_required=auth.customer_phone_required(conn,body.brand_id)
-        auth.assert_customer_order_eligible(conn,user,phone_required=phone_required)
+        if delivery_center:
+            if body.service != 'delivery':
+                raise db.error(422,'DELIVERY_ONLY','طلب مركز التوصيل مخصص للتوصيل.')
+            if not body.customer.phone:
+                raise db.error(422,'CUSTOMER_PHONE_REQUIRED','أدخل رقم اتصال العميل.')
+        else:
+            auth.assert_customer_order_eligible(conn,user,phone_required=phone_required)
         def perform():
             config=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(body.brand_id,)).fetchone()
-            if not db.rate_limit(conn,'order-principal:'+user['id'],10,600):
+            if not db.rate_limit(conn,'order-principal:'+user['id'],100 if delivery_center else 10,600):
                 raise db.error(429,'ORDER_RATE_LIMIT','أرسلت طلبات كثيرة. انتظر قليلًا قبل طلب جديد.')
             if request and not db.rate_limit(conn,'order-ip:'+(request.client.host if request.client else 'unknown'),200,600):
                 raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
+            if delivery_center:delivery_center_scope(conn,user,body.branch_id)
             quote = catalog.quote_order(conn, body, for_update=True)
             execution_branch_id = quote['branch_id']
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
@@ -98,7 +139,18 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                 address_key='addr_'+hashlib.sha256((user['id']+json.dumps({k:customer.get(k) for k in ('address','neighborhood','location')},sort_keys=True)).encode()).hexdigest()
                 loc=customer.get('location') or {}
                 conn.execute('INSERT INTO customer_addresses(id,customer_id,brand_id,label,address,neighborhood,lat,lng) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=now()', (address_key,user['id'],user['brand_id'],customer['neighborhood'],customer['address'],customer['neighborhood'],loc.get('lat'),loc.get('lng')))
-            customer.update(auth.identity_snapshot(user))
+            customer_owner_id=user['id']
+            if delivery_center:
+                manager_shift_id=delivery_center_scope(conn,user,execution_branch_id)
+                # An opaque contact principal owns this order. A typed phone number
+                # never grants access to an existing customer's account or history.
+                customer_owner_id=db.new_id('customer_')
+                conn.execute("INSERT INTO users(id,display_name,phone,role,brand_id,identity_kind) VALUES(%s,%s,%s,'customer',%s,'guest')",
+                             (customer_owner_id,customer['name'],customer['phone'],body.brand_id))
+                customer.update(identity_kind='guest',phone_verified=False,phone_sms_verified=False,phone_whatsapp_verified=False)
+                quote.update(order_source='delivery_center',created_by_staff_id=user['id'],manager_shift_id=manager_shift_id)
+            else:
+                customer.update(auth.identity_snapshot(user))
             if supplied_phone and customer['phone'] != user.get('phone'):
                 for flag in ('phone_verified','phone_sms_verified','phone_whatsapp_verified'):customer[flag]=False
             if user.get('identity_kind') == 'guest':
@@ -146,7 +198,7 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                     "'completed_at'," + _response_timestamp_sql('o.completed_at') +
                     ')) AS response FROM created_order o)')
             return db.AtomicIdempotentWrite(ctes,
-                               (execution_branch_id, order_id, body.brand_id, execution_branch_id, user['id'], body.service,
+                               (execution_branch_id, order_id, body.brand_id, execution_branch_id, customer_owner_id, body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
                                 db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day,
@@ -155,7 +207,7 @@ def create_order(body: catalog.QuoteBody, request: Request = None, user=Depends(
                                     'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
                                     'total_halalas': quote['total_halalas']}),
                                 public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
-        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.create', body.model_dump(), perform,
+        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', body.model_dump(), perform,
                                pipeline_writes=True, defer_atomic_response=True,encoded_response=request is not None)
     # The database acknowledges COMMIT before the saved JSON reaches HTTP.
     # Replays use the same durable JSON, with no new counter/event/financial write.

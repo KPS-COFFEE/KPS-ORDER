@@ -16,6 +16,7 @@ FIELD = OPERATORS | {'driver'}
 # code, Arabic name, English name, group, eligible roles
 DEFINITIONS = [
     ('dashboard_view', 'عرض نظرة التشغيل والإحصائيات', 'View operational overview', 'orders', OPERATORS),
+    ('orders_create_customer', 'إنشاء طلب نيابة عن العميل', 'Place an order for a customer', 'orders', MANAGER),
     ('orders_view', 'عرض الطلبات وتفاصيلها', 'View orders and details', 'orders', FIELD),
     ('orders_prepare', 'تحديث تجهيز الطلب وتسليمه', 'Update preparation and handover', 'orders', {'branch_manager'}),
     ('orders_cancel', 'رفض وإلغاء الطلبات غير المحصلة', 'Reject or cancel unpaid orders', 'orders', MANAGER | {'branch_manager'}),
@@ -112,7 +113,7 @@ ROUTES = {
         'accept_manager_handover': 'shifts_handover', 'closure_draft': 'shifts_view',
         'save_closure_draft': 'shifts_close', 'set_shift_availability': 'drivers_availability',
     },
-    'orders': {'list_orders': 'orders_view', 'get_order': 'orders_view',
+    'orders': {'create_delivery_center_order': 'orders_create_customer', 'list_orders': 'orders_view', 'get_order': 'orders_view',
                'preparation': {'delivery_manager': 'orders_cancel', 'branch_manager': 'orders_prepare'}, 'operational_confirmation': 'orders_contact'},
     'reporting': {name: 'reports_view' for name in (
         'report_list', 'report_detail', 'print_report', 'download_pdf', 'download_csv',

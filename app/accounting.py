@@ -341,6 +341,8 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
         bs=branches(c,user,body.branch_ids);bids=sorted(b['id'] for b in bs);h=hashlib.sha256(','.join(bids).encode()).hexdigest()
         _,_,lo,hi=period(ds.isoformat(),de.isoformat())
         if c.execute("SELECT 1 FROM shifts WHERE brand_id=%s AND status<>'closed' AND opened_at<%s AND coalesce(submitted_at,now())>=%s AND branch_ids ?| %s",(user['brand_id'],hi,lo,bids)).fetchone():fail('OPEN_SHIFTS','توجد شفتات غير مقفلة في الشهر.',409)
+        if c.execute("SELECT 1 FROM closure_reports r WHERE r.brand_id=%s AND r.kind='manager' AND r.created_at>=%s AND r.created_at<%s AND r.branch_ids ?| %s AND r.snapshot->'shift'->'submission'->>'operational_approved'='true' AND NOT EXISTS(SELECT 1 FROM manager_financial_matches m WHERE m.report_id=r.id AND m.status='matched') LIMIT 1",(user['brand_id'],lo,hi,bids)).fetchone():
+            fail('PENDING_MANAGER_MATCHES','ثبّت البنك والكاش لتقفيلات المدير قبل إقفال الشهر.',409)
         from .driver_incentives import report_data
         entitlements=report_data(c,user,ds,de,branch_ids=bids)
         if entitlements['pending_review'] or entitlements['awaiting_approval'] or any(r['incomplete'] for r in entitlements['rows']):fail('PENDING_INCENTIVES','راجع أسباب الطلبات الملغية والمرتجعة واعتمادات الشفتات قبل إقفال الشهر.',409)
@@ -366,3 +368,70 @@ def month(identifier:str,group:Group='driver_daily',format:Literal['json','pdf',
         if group not in r['snapshot']:fail('SNAPSHOT_GROUP_UNAVAILABLE','هذا التقرير غير موجود في الكشف التاريخي المقفل.',409)
         data=r['snapshot'][group];data['frozen']=True;data['closed_at']=r['created_at'].isoformat()
         return export(data,format,lang)
+
+
+class FinancialMatch(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    bank_halalas:StrictInt=Field(ge=0,le=100000000000)
+    cash_halalas:StrictInt=Field(ge=0,le=100000000000)
+    bank_reference:str=Field(min_length=1,max_length=200)
+    cash_reference:str=Field(min_length=1,max_length=200)
+    note:str=Field(default='',max_length=2000)
+    expected_revision:StrictInt=Field(ge=0)
+
+
+def matching_expected(snapshot):
+    summary=snapshot.get('summary') or {}
+    submission=summary.get('submission') or (snapshot.get('shift') or {}).get('submission') or {}
+    return (int(summary.get('card_collected_halalas') or 0)-int(summary.get('card_refunded_halalas') or 0),
+            int(submission.get('handover_halalas',0)))
+
+
+def matching_report_scope(user,row):
+    if not row or row['brand_id']!=user['brand_id'] or row['kind']!='manager':
+        fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
+    if user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):
+        fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
+    if row['user_id']==user['id']:fail('SELF_MATCH','المطابقة المالية من حساب محاسب مستقل.',403)
+
+
+@router.get('/manager-closures')
+def manager_closures(user=Depends(access)):
+    with db.tx() as c:
+        rows=c.execute("""SELECT r.id,r.brand_id,r.branch_ids,r.user_id,r.kind,r.snapshot,r.created_at,
+          u.display_name manager_name,m.revision,m.status financial_status,m.bank_halalas,m.cash_halalas,
+          m.bank_reference,m.cash_reference,m.note,m.created_at matched_at
+          FROM closure_reports r JOIN users u ON u.id=r.user_id
+          LEFT JOIN LATERAL (SELECT * FROM manager_financial_matches WHERE report_id=r.id ORDER BY revision DESC LIMIT 1) m ON true
+          WHERE r.brand_id=%s AND r.kind='manager'
+          ORDER BY CASE WHEN m.status='matched' THEN 1 ELSE 0 END,r.created_at DESC LIMIT 500""",(user['brand_id'],)).fetchall()
+        result=[]
+        for r in rows:
+            if user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[])):continue
+            snap=r.pop('snapshot');bank,cash=matching_expected(snap)
+            r.update(expected_bank_halalas=bank,expected_cash_halalas=cash,
+                     label=snap.get('closure_label') or snap.get('shift',{}).get('closure_label') or snap.get('reference') or r['id'],day=snap.get('operational_date'),revision=r['revision'] or 0)
+            result.append(r)
+        return safe({'closures':result})
+
+
+@router.post('/manager-closures/{report_id}/match')
+def match_manager_closure(report_id:str,body:FinancialMatch,request:Request,user=Depends(auth.require_permission(REVIEW))):
+    with db.tx() as c:
+        r=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s FOR UPDATE",(report_id,user['brand_id'])).fetchone()
+        matching_report_scope(user,r)
+        def perform():
+            previous=c.execute('SELECT * FROM manager_financial_matches WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
+            revision=previous['revision'] if previous else 0
+            if previous and previous['status']=='matched':fail('ALREADY_MATCHED','تمت المطابقة المالية سابقًا.',409)
+            if revision!=body.expected_revision:fail('MATCH_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
+            bank,cash=matching_expected(r['snapshot'])
+            matched=body.bank_halalas==bank and body.cash_halalas==cash
+            if not matched and not body.note:fail('DIFFERENCE_NOTE','اكتب ملاحظة توضح فرق البنك أو الكاش.')
+            row=c.execute("""INSERT INTO manager_financial_matches
+              (id,report_id,brand_id,revision,expected_bank_halalas,expected_cash_halalas,bank_halalas,cash_halalas,bank_reference,cash_reference,note,status,reviewer_id)
+              VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+              (db.new_id('mfm_'),report_id,user['brand_id'],revision+1,bank,cash,body.bank_halalas,body.cash_halalas,body.bank_reference,body.cash_reference,body.note,'matched' if matched else 'difference',user['id'])).fetchone()
+            db.audit(c,user['id'],'accounting.manager_match','report',report_id,{'match_id':row['id'],'status':row['status'],'revision':revision+1})
+            return safe(row)
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.manager_match:'+report_id,body.model_dump(),perform)
