@@ -781,6 +781,27 @@ def safe_campaign_url(value):
     return value
 
 
+def map_route_destination(path):
+    """Read an explicit final route stop, never the origin or camera center."""
+    path = unquote(path)
+    if not path.startswith('/maps/dir/'):
+        return None
+    stops = []
+    for segment in path[len('/maps/dir/'):].split('/'):
+        if segment.startswith(('@', 'data=')):
+            break
+        stops.append(segment)
+    while stops and not stops[-1]:
+        stops.pop()
+    if len(stops) < 2:
+        return None
+    destination = stops[-1]
+    if not re.fullmatch(r'-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?', destination):
+        return None
+    lat, lng = map(float, destination.split(','))
+    return destination if valid_location({'lat': lat, 'lng': lng}) else None
+
+
 def safe_map_url(value):
     """Accept a branch destination, never a review link or a map viewport.
 
@@ -808,6 +829,8 @@ def safe_map_url(value):
             return value if re.fullmatch(r'/maps/[A-Za-z0-9_-]+/?', path) else None
         if not re.match(r'^/maps(?:/|$)', path) and not (parsed.hostname=='maps.google.com' and path in {'','/'}):
             return None
+        if map_route_destination(path):
+            return value
         # A real pin, Place ID or CID identifies a destination. @lat,lng only
         # describes the camera center and a free text search can select a wrong
         # namesake branch, so neither is accepted as verified branch evidence.
@@ -881,6 +904,8 @@ def parse_map_url(body: MapURLBody):
     parsed = urlsplit(value)
     query = parse_qs(parsed.query)
     candidate = (query.get('destination') or query.get('query') or query.get('q') or [None])[0]
+    if candidate is None:
+        candidate = map_route_destination(parsed.path)
     if candidate is None:
         # @lat,lng is merely a viewport center, not a confirmed destination pin.
         match = re.search(r'!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)', parsed.path)
