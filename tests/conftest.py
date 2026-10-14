@@ -46,6 +46,9 @@ def pytest_configure(config):
     os.environ.pop('DATABASE_URL', None)
     for key in _PROVIDER_SECRETS:
         os.environ.pop(key, None)
+    for key in list(os.environ):
+        if key.startswith('KPS_PAYMENTS_'):
+            os.environ.pop(key, None)
     os.environ.update(_TEST_DEFAULTS)
     config.addinivalue_line('markers', 'postgres: requires an explicit isolated TEST_DATABASE_URL')
 
@@ -56,6 +59,9 @@ def safe_test_environment(monkeypatch):
         monkeypatch.setenv(key, value)
     for key in _PROVIDER_SECRETS:
         monkeypatch.delenv(key, raising=False)
+    for key in list(os.environ):
+        if key.startswith('KPS_PAYMENTS_'):
+            monkeypatch.delenv(key, raising=False)
     # A test that needs the database must request database/client. Otherwise an
     # accidental app call fails closed instead of reaching a runtime resource.
     monkeypatch.delenv('DATABASE_URL', raising=False)
