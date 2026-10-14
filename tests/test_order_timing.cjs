@@ -1,0 +1,26 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const context={window:{}};vm.createContext(context);vm.runInContext(fs.readFileSync('public/assets/order-timing.js','utf8'),context);
+const {preparation,classification,seconds,duration}=context.window.KPSOrderTiming;
+const tr=(ar,en)=>en;
+const order={timings:{acceptance_wait:{seconds:120,state:'completed'},preparation:{seconds:300,state:'completed'},delivery:{seconds:600,state:'running'},total:{seconds:1200,state:'running'}},performance_snapshot:{policies:{delivery:{t1_seconds:600,t2_seconds:1200},total:{t1_seconds:1200,t2_seconds:1800}}}};
+assert.equal(preparation(order).seconds,420);
+assert.equal(preparation({...order,timings:{acceptance_wait:{seconds:50,state:'running'},preparation:{seconds:null,state:'not_started'}}},10).seconds,60);
+assert.equal(preparation({...order,timings:{acceptance_wait:{seconds:null,state:'missing'},preparation:{seconds:300,state:'completed'}}}).seconds,null);
+assert.equal(classification(order,'delivery'), 'excellent');
+assert.equal(classification(order,'delivery',1), 'good');
+assert.equal(classification(order,'delivery',601), 'late');
+assert.equal(classification({...order,performance_snapshot:{}},'delivery'), 'unconfigured');
+assert.equal(seconds({seconds:600,state:'completed'},1000),600);
+assert.equal(classification({...order,timings:{delivery:{seconds:null,state:'cancelled'}}},'delivery'),'excluded');
+assert.equal(duration({seconds:3605},tr),'60:05');
+assert.equal(duration({seconds:null,state:'missing'},tr),'Incomplete timing');
+assert.equal(duration({seconds:null,state:'cancelled'},tr),'Cancelled — excluded');
+const ops=fs.readFileSync('public/ops.js','utf8');assert(ops.includes("timing:tr('متابعة أوقات الطلبات'"));
+const access={state:{user:null}};vm.createContext(access);
+vm.runInContext(ops.split('\n').filter(x=>/const can =|const pagePermissions=|const canPage=/.test(x)).join('\n')+'\nthis.allowed=canPage;',access);
+for(const [role,permissions,expected] of [['owner',[],true],['delivery_manager',['orders_view'],true],['delivery_manager',[],false],['driver',['orders_view','tasks_view'],false],['admin',['orders_view'],false]]){
+ access.state.user={role,effective_permissions:permissions};assert.equal(access.allowed('timing'),expected);
+}
+assert(ops.includes('state.timingView=null;'));
+const css=fs.readFileSync('public/assets/order-timing.css','utf8');assert(css.includes('text-overflow:clip'));assert(css.includes('position:sticky'));
+console.log('PASS: preparation includes acceptance wait; running/frozen durations; exact policy boundaries; missing/cancelled/unconfigured states; navigation and full-text styling.');
