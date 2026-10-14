@@ -3,7 +3,7 @@ import asyncio
 import json
 
 import pytest
-from fastapi import HTTPException
+from fastapi import Body, Depends, FastAPI, HTTPException
 
 from app import auth, monitoring
 from app.http_security import SecurityMiddleware
@@ -16,11 +16,13 @@ def scope(path='/api/check', method='GET', headers=()):
             'client': ('127.0.0.1', 1234), 'headers': list(headers)}
 
 
-def run(app, request_scope):
+def run(app, request_scope, request_messages=None):
     messages = []
+    requests = iter(request_messages or [
+        {'type': 'http.request', 'body': b'', 'more_body': False}])
 
     async def receive():
-        return {'type': 'http.request', 'body': b'', 'more_body': False}
+        return next(requests, {'type': 'http.disconnect'})
 
     async def send(message):
         messages.append(message)
@@ -96,6 +98,127 @@ def test_rejections_do_not_execute_application_or_read_body(monkeypatch, headers
     assert records == [status]
 
 
+@pytest.mark.parametrize('declared', [None, '1', '8388608'])
+@pytest.mark.parametrize('chunked', [False, True])
+def test_actual_oversize_rejects_before_fastapi_dependencies_or_endpoint(monkeypatch, declared, chunked):
+    records, effects = [], []
+    monkeypatch.setattr(monitoring, 'record_response', records.append)
+    app = FastAPI()
+
+    async def authorization():
+        effects.append('authorization')
+
+    @app.post('/api/check')
+    async def write(body: dict = Body(), authorized=Depends(authorization)):
+        effects.append(body)
+        return {'ok': True}
+
+    # A valid JSON prefix followed only by whitespace would execute the write if
+    # middleware truncated the excess and replayed the accepted prefix.
+    prefix = b'{"value":1}'
+    padding = b' ' * (8 * 1024 * 1024 - len(prefix))
+    if chunked:
+        requests = [
+            {'type': 'http.request', 'body': prefix, 'more_body': True},
+            {'type': 'http.request', 'body': padding, 'more_body': True},
+            {'type': 'http.request', 'body': b' ', 'more_body': False},
+        ]
+    else:
+        requests = [{'type': 'http.request', 'body': prefix + padding + b' ', 'more_body': False}]
+    headers = [(b'origin', b'http://testserver'), (b'content-type', b'application/json')]
+    if declared is not None:
+        headers.append((b'content-length', declared.encode()))
+    elif chunked:
+        headers.append((b'transfer-encoding', b'chunked'))
+    messages = run(app, scope(method='POST', headers=headers), requests)
+    assert messages[0]['status'] == 413
+    assert json.loads(messages[1]['body'])['detail']['code'] == 'BODY_TOO_LARGE'
+    assert dict(messages[0]['headers'])[b'cache-control'] == b'no-store'
+    assert effects == []
+    assert records == [413]
+
+
+@pytest.mark.parametrize('size', [17, 8 * 1024 * 1024])
+@pytest.mark.parametrize('chunked', [False, True])
+def test_complete_permitted_body_is_preserved_and_disconnect_is_forwarded(size, chunked):
+    body = b'a' * size
+    requests = ([{'type': 'http.request', 'body': body[:9], 'more_body': True},
+                 {'type': 'http.request', 'body': body[9:], 'more_body': False}]
+                if chunked else [{'type': 'http.request', 'body': body, 'more_body': False}])
+    observed = []
+
+    async def app(request_scope, receive, send):
+        observed.append(await receive())
+        observed.append(await receive())
+        await send({'type': 'http.response.start', 'status': 204, 'headers': []})
+        await send({'type': 'http.response.body', 'body': b''})
+
+    messages = run(app, scope(method='POST', headers=[(b'origin', b'http://testserver')]), requests)
+    assert messages[0]['status'] == 204
+    assert observed == [{'type': 'http.request', 'body': body, 'more_body': False},
+                        {'type': 'http.disconnect'}]
+
+
+def test_body_limit_stops_receiving_after_first_oversized_chunk():
+    received = []
+    messages = []
+    requests = iter([
+        {'type': 'http.request', 'body': b'a', 'more_body': True},
+        {'type': 'http.request', 'body': b'b' * (8 * 1024 * 1024), 'more_body': True},
+        {'type': 'http.request', 'body': b'never consumed', 'more_body': False},
+    ])
+
+    async def receive():
+        event = next(requests)
+        received.append(event['type'])
+        return event
+
+    async def send(message):
+        messages.append(message)
+
+    async def app(*args):
+        pytest.fail('Oversized request reached an application that could write before reading its body')
+
+    asyncio.run(SecurityMiddleware(app)(
+        scope(method='POST', headers=[(b'origin', b'http://testserver')]), receive, send))
+    assert received == ['http.request', 'http.request']
+    assert messages[0]['status'] == 413
+    assert json.loads(messages[1]['body'])['detail']['code'] == 'BODY_TOO_LARGE'
+
+
+def test_disconnect_before_complete_request_does_not_execute_application():
+    async def app(*args):
+        pytest.fail('Incomplete request reached the application')
+
+    messages = run(app, scope(method='POST', headers=[(b'origin', b'http://testserver')]), [
+        {'type': 'http.request', 'body': b'{"value":', 'more_body': True},
+        {'type': 'http.disconnect'},
+    ])
+    assert messages == []
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('declared', [None, '1'])
+def test_oversized_guest_request_has_no_database_side_effects(client, declared):
+    from app import db
+
+    def counts():
+        with db.tx() as conn:
+            return {table: conn.execute('SELECT count(*) AS n FROM ' + table).fetchone()['n']
+                    for table in ('users', 'sessions', 'audit_events', 'rate_limits')}
+
+    before = counts()
+    prefix = b'{"brand_id":"kps","display_name":"SECURITY TEST"}'
+    headers = {'Content-Type': 'application/json'}
+    if declared is not None:
+        headers['Content-Length'] = declared
+    response = client.post('/api/identity/guest', headers=headers,
+        content=iter([prefix, b' ' * (8 * 1024 * 1024 + 1 - len(prefix))]))
+    assert response.status_code == 413
+    assert response.json()['detail']['code'] == 'BODY_TOO_LARGE'
+    assert counts() == before
+
+
 @pytest.mark.parametrize('error,status,code', [
     (RuntimeError('secret-password-value'), 503, 'SERVICE_UNAVAILABLE'),
     (HTTPException(403, {'code': 'ROLE_FORBIDDEN'}), 403, 'ROLE_FORBIDDEN'),
@@ -120,8 +243,10 @@ def test_started_response_failure_never_sends_second_headers(monkeypatch):
         raise RuntimeError('stream interrupted')
     async def send(message):
         messages.append(message)
+    async def receive():
+        return {'type': 'http.request', 'body': b'', 'more_body': False}
     with pytest.raises(RuntimeError, match='stream interrupted'):
-        asyncio.run(SecurityMiddleware(app)(scope(), None, send))
+        asyncio.run(SecurityMiddleware(app)(scope(), receive, send))
     assert len(messages) == 1 and records == [200]
 
 

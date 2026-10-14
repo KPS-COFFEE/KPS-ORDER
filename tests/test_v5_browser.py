@@ -23,6 +23,7 @@ import pytest
 from app import auth, db, email_delivery
 from test_browser import (ARTIFACTS, WIDTHS, PASSWORD, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
+                          _match_manager_finances,
                           _inspection_payload, _fill_closure_inspection, _attach_task_photo,
                           chromium_browser, ROOT)
 
@@ -132,7 +133,7 @@ def _close_detail(page):
 def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live_app, chromium_browser):
     from playwright.sync_api import expect
     base = v5_live_app
-    users = {role: _staff(role=role) for role in ('owner', 'delivery_manager', 'branch_manager')}
+    users = {role: _staff(role=role) for role in ('owner', 'delivery_manager', 'branch_manager', 'admin')}
     with db.tx() as conn:
         conn.execute("UPDATE products SET settings=settings||'{\"source_verified\":true}'::jsonb")
         for index, branch_id in enumerate(('kps-branch-1', 'kps-branch-9')):
@@ -146,6 +147,8 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
                         'delivery_fee_halalas': 0, 'minimum_order_halalas': 0}
             conn.execute('UPDATE branches SET settings=settings||%s WHERE id=%s', (db.json(settings), branch_id))
         conn.execute("UPDATE users SET branch_ids=%s WHERE id=%s", (db.json(['kps-branch-1', 'kps-branch-9']), users['delivery_manager']['id']))
+        conn.execute('UPDATE users SET branch_ids=%s,permissions=%s WHERE id=%s',
+                     (db.json(['kps-branch-1','kps-branch-9']),db.json(['accounting_reports','accounting_review']),users['admin']['id']))
         conn.execute("UPDATE app_settings SET settings=settings||'{\"operational_day_start\":\"00:00\"}'::jsonb WHERE brand_id='kps'")
         product = conn.execute("SELECT id,name,price_halalas FROM products WHERE brand_id='kps' AND coalesce(jsonb_array_length(settings->'option_groups'),0)=0 AND coalesce(jsonb_array_length(settings->'available_cities'),0)=0 ORDER BY id LIMIT 1").fetchone()
     contexts, pages, errors, fonts = {}, {}, [], {}
@@ -289,17 +292,15 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         manager.locator('#closure-form [name=counted]').fill(f'{total/100:.2f}')
         manager.locator('#closure-form [name=handover]').fill(f'{total/100:.2f}')
         manager.locator('#closure-form [name=reference]').fill('V5-SYNTHETIC-MANAGER-BAG')
-        manager.locator('#closure-form [name=recipient_user_id]').select_option(users['owner']['id'])
+        expect(manager.locator('#closure-form [name=recipient_user_id]')).not_to_be_visible()
         _capture(manager, 'v5-manager-compact-closure')
-        _submit_modal(manager, check=['confirm_closure'])
-        owner.locator('[data-page=custody]').click()
-        owner.locator('[data-action=confirm-custody]').click()
-        _submit_modal(owner, check=['received'])
+        _submit_modal(manager, check=['confirm_closure'], manager_operational=True)
         owner.locator('#navigation [data-page=shifts]').click()
-        owner.locator('[data-action=owner-shift-view][data-view=review]').click()
+        owner.locator('[data-action=owner-shift-view][data-view=history]').click()
         owner.locator(f'[data-action=shift-detail][data-id="{manager_shift}"]').click()
-        owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
-        _submit_modal(owner, check=['confirmed'])
+        expect(owner.locator('#modal-body')).to_contain_text('معتمدة تشغيليًا')
+        expect(owner.locator('#modal-body [data-action=approve-shift]')).to_have_count(0)
+        _close_detail(owner)
         owner.locator('[data-page=reports]').click()
         expect(owner.locator('#navigation [data-page=reports]')).to_have_attribute('aria-current','page')
         expect(owner.locator('.owner-notifications')).to_be_visible()
@@ -311,7 +312,10 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             assert conn.execute("SELECT count(*) n FROM closure_reports WHERE shift_id IN (%s,%s)", (driver_shift,manager_shift)).fetchone()['n'] == 2
             assert conn.execute("SELECT count(*) n FROM orders WHERE customer_id=%s", (order['customer_id'],)).fetchone()['n'] == 1
             assert conn.execute('SELECT status FROM shifts WHERE id=%s', (manager_shift,)).fetchone()['status'] == 'closed'
+            assert not conn.execute('SELECT 1 FROM custody_transfers WHERE from_shift_id=%s',(manager_shift,)).fetchone()
             final_reports=conn.execute('SELECT id,kind,snapshot FROM closure_reports WHERE shift_id IN (%s,%s)',(driver_shift,manager_shift)).fetchall()
+        manager_report=next(report['id'] for report in final_reports if report['kind']=='manager')
+        _match_manager_finances(pages['admin'],base,contexts['admin'],manager_report,0,total)
         saved_report_files = {}
         for report in final_reports:
             assert driver_context.request.get(v5_live_app+'/api/reports/'+report['id']).status==404
@@ -341,6 +345,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
                     'reports': conn.execute('SELECT id,snapshot,pdf_data,csv_data FROM closure_reports WHERE shift_id IN (%s,%s) ORDER BY id',(driver_shift,manager_shift)).fetchall(),
                     'renderings': conn.execute('SELECT report_id,template_version,view_kind,status,source_sha256,html_data,pdf_data,csv_data FROM report_renderings ORDER BY report_id,view_kind').fetchall(),
                     'notifications': conn.execute('SELECT * FROM report_notifications ORDER BY id').fetchall(),
+                    'financial_matches': conn.execute('SELECT * FROM manager_financial_matches ORDER BY id').fetchall(),
                     'migrations': conn.execute('SELECT version,sha256 FROM schema_migrations ORDER BY version').fetchall(),
                 }
         before_restart = persistence_state()
@@ -372,7 +377,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             'physical_device_test': False, 'external_email_delivery_tested': False,
             'email_link_source': 'isolated encrypted synthetic test outbox, not an external mailbox',
             'sms_configured': False, 'whatsapp_configured': False, 'font_loads': fonts,
-            'financial_events': {'orders':1,'collections':1,'driver_closures':1,'manager_closures':1},
+            'financial_events': {'orders':1,'collections':1,'driver_closures':1,'manager_closures':1,'independent_financial_matches':1},
             'actual_http_process_restarts': base.restart_count,
             'restart_database_and_saved_report_bytes_identical': True,
             'authenticated_guest_and_staff_sessions_survived_restart': True,

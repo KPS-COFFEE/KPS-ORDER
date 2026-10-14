@@ -42,6 +42,113 @@ from psycopg.rows import dict_row
 
 RELEASE_WORKERS = 2
 RELEASE_KEEPALIVE_SECONDS = 15
+CGROUP_ROOT = Path('/sys/fs/cgroup')
+RENDER_APP_CPU_MAX = '50000 100000'
+RENDER_APP_MEMORY_BYTES = 512 * 1024 ** 2
+RENDER_DB_MEMORY_BYTES = 256 * 1024 ** 2
+
+
+def application_cgroup_path(value):
+    path = Path(value)
+    if (path.parent != CGROUP_ROOT or not re.fullmatch(r'kps_order_load_[0-9a-f]{32}', path.name)
+            or path.is_symlink()):
+        raise ValueError('Only a run-owned UUID application cgroup is permitted.')
+    return path
+
+
+def cgroup_limits(path):
+    quota, period = (path / 'cpu.max').read_text().split()
+    if quota == 'max':
+        raise ValueError('A finite CPU quota is required for the resource profile.')
+    memory = (path / 'memory.max').read_text().strip()
+    swap = (path / 'memory.swap.max').read_text().strip()
+    if memory == 'max' or swap == 'max':
+        raise ValueError('Finite memory and zero swap are required for the resource profile.')
+    return {'cpu_quota_us': int(quota), 'cpu_period_us': int(period),
+            'memory_limit_bytes': int(memory), 'swap_limit_bytes': int(swap)}
+
+
+def require_budget(path, *, cpu_tenths, memory_bytes):
+    limits = cgroup_limits(path)
+    if (limits['cpu_quota_us'] * 10 != cpu_tenths * limits['cpu_period_us']
+            or limits['memory_limit_bytes'] != memory_bytes or limits['swap_limit_bytes'] != 0):
+        raise ValueError('The observed cgroup limits do not match the declared Render budget.')
+    return limits
+
+
+def cgroup_snapshot(path):
+    def counters(filename):
+        return {key: int(value) for key, value in
+                (line.split() for line in (path / filename).read_text().splitlines())}
+    return {'cpu': counters('cpu.stat'), 'memory_events': counters('memory.events'),
+            'memory_current_bytes': int((path / 'memory.current').read_text()),
+            'pids': sorted(int(value) for value in (path / 'cgroup.procs').read_text().split())}
+
+
+def process_cgroup(pid, *, docker_host_pid=False):
+    proc = Path('/proc') / str(pid) if docker_host_pid else _proc_path(pid)
+    if proc is None:
+        raise ValueError('The resource-profile process could not be observed.')
+    rows = [line[3:] for line in (proc / 'cgroup').read_text().splitlines() if line.startswith('0::')]
+    if len(rows) != 1 or not rows[0].startswith('/') or '..' in Path(rows[0]).parts:
+        raise ValueError('A unified cgroup v2 process membership is required.')
+    return CGROUP_ROOT / rows[0].lstrip('/')
+
+
+def resource_helper():
+    """Narrow CI-only helpers, never used by the deployment entry point.
+
+    The runner may not migrate across a root-owned cgroup ancestor itself.
+    sudo joins only this run's bounded group, then drops to the original runner
+    UID/GID before exec. The generator and sudo controller remain outside it.
+    """
+    command = sys.argv[1]
+    if os.getenv('GITHUB_ACTIONS') != 'true' or os.geteuid() != 0:
+        raise RuntimeError('Resource setup helpers require the isolated GitHub Actions runner.')
+    path = application_cgroup_path(sys.argv[2])
+    if command == '--prepare-application-cgroup':
+        if len(sys.argv) != 5 or int(sys.argv[3]) <= 0 or int(sys.argv[4]) <= 0:
+            raise ValueError('The non-root runner UID/GID must be explicit.')
+        available = set((CGROUP_ROOT / 'cgroup.controllers').read_text().split())
+        if not {'cpu', 'memory'} <= available:
+            raise RuntimeError('The runner must provide real CPU and memory cgroup controllers.')
+        (CGROUP_ROOT / 'cgroup.subtree_control').write_text('+cpu +memory')
+        path.mkdir()  # Refuse an existing group, including one from another run.
+        (path / 'cpu.max').write_text(RENDER_APP_CPU_MAX)
+        (path / 'cpu.max.burst').write_text('0')
+        (path / 'memory.max').write_text(str(RENDER_APP_MEMORY_BYTES))
+        (path / 'memory.swap.max').write_text('0')
+        require_budget(path, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
+    elif command == '--join-application-cgroup':
+        uid, gid = int(sys.argv[3]), int(sys.argv[4])
+        executable = sys.argv[6]
+        if (uid <= 0 or gid <= 0 or sys.argv[5] != '--' or executable != sys.executable
+                or sys.argv[7:10] != ['-m', 'uvicorn', 'app.main:app']):
+            raise ValueError('The resource helper may only exec the existing Uvicorn application.')
+        safe_url(os.environ['TEST_DATABASE_URL'])
+        if os.getenv('APP_ENV') != 'testing':
+            raise RuntimeError('Resource-limited application execution requires the synthetic test environment.')
+        require_budget(path, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
+        if (path / 'cgroup.procs').read_text().strip():
+            raise RuntimeError('The run-owned application cgroup must be empty before launch.')
+        (path / 'cgroup.procs').write_text('0')
+        if process_cgroup(os.getpid()) != path:
+            raise RuntimeError('The application did not enter its bounded cgroup.')
+        os.setgroups([])
+        os.setgid(gid)
+        os.setuid(uid)
+        print('KPS_RESOURCE_APPLICATION_PID=' + str(os.getpid()), flush=True)
+        os.execv(executable, sys.argv[6:])
+    elif command == '--cleanup-application-cgroup':
+        if len(sys.argv) != 3:
+            raise ValueError('Invalid resource cleanup arguments.')
+        if path.exists():
+            if (path / 'cgroup.procs').read_text().strip():
+                raise RuntimeError('Refuse to remove a cgroup containing live processes.')
+            path.rmdir()
+    else:
+        raise ValueError('Unknown resource helper action.')
+    return 0
 
 
 def safe_url(value):
@@ -76,6 +183,15 @@ def percentile(values, fraction):
 
 def distribution(values):
     return {name: percentile(values, p) for name, p in [('p50_ms', .5), ('p95_ms', .95), ('p99_ms', .99)]}
+
+
+def latency_failure_reasons(metrics, p95_ms, p99_ms):
+    reasons = []
+    if metrics['p95_ms'] is None or not math.isfinite(metrics['p95_ms']) or metrics['p95_ms'] >= p95_ms:
+        reasons.append('P95 latency gate failed.')
+    if metrics['p99_ms'] is None or not math.isfinite(metrics['p99_ms']) or metrics['p99_ms'] > p99_ms:
+        reasons.append('P99 latency gate failed.')
+    return reasons
 
 
 def _namespace_pid(proc_path):
@@ -190,6 +306,36 @@ def startup_worker_pids(log_contents, root_pid):
                    if int(value) in owned})
 
 
+def resource_application_pid(log_contents, controller_pid, application_cgroup):
+    """Prove the unprivileged exec child without inspecting sudo's protected namespace links."""
+    candidates = {int(value) for value in re.findall(r'^KPS_RESOURCE_APPLICATION_PID=(\d+)$', log_contents, re.M)}
+    if len(candidates) != 1:
+        return None
+    pid = next(iter(candidates))
+    if process_start_ticks(pid) is None or process_cgroup(pid) != application_cgroup:
+        return None
+    current, seen = pid, set()
+    for _ in range(10):
+        if current == controller_pid:
+            return pid
+        if current in seen or current <= 1:
+            return None
+        seen.add(current)
+        # PPid is public metadata. This helper runs only on the native CI host;
+        # each number is in that host namespace, even for the sudo controller.
+        try:
+            parent = next(line for line in (Path('/proc') / str(current) / 'status').read_text().splitlines()
+                          if line.startswith('PPid:'))
+            current = int(parent.split()[1])
+        except (OSError, ValueError, StopIteration):
+            return None
+    return None
+
+
+def application_root_pid(process):
+    return getattr(process, 'resource_application_pid', process.pid)
+
+
 ANSI_CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 
@@ -258,8 +404,9 @@ WITH activity AS (
 
 
 class Sampler:
-    def __init__(self, db_url, app_pid, container=None, worker_pids=None):
+    def __init__(self, db_url, app_pid, container=None, worker_pids=None, resource_profile=None):
         self.db_url, self.app_pid, self.container = db_url, app_pid, container
+        self.resource_profile = resource_profile
         self.stop = threading.Event()
         self.samples = []
         self.errors = Counter()
@@ -328,6 +475,8 @@ class Sampler:
                         previous = now, metrics['cpu_seconds'], set(metrics['processes'])
                     else:
                         self.errors['application_workers:missing_or_replaced'] += 1
+                    if self.resource_profile:
+                        row['verified_resource_budget'] = self.resource_profile.observe(self.app_pid, self.expected_workers)
                     row['monotonic_seconds'] = now
                     self.samples.append(row)
                     self.stop.wait(.25)
@@ -382,6 +531,25 @@ class Sampler:
             'samples': self.docker_samples}
         if self.container and not self.docker_samples:
             summary['sample_errors']['docker:no_samples'] = 1
+        if self.resource_profile:
+            observations = [sample['verified_resource_budget'] for sample in self.samples
+                            if 'verified_resource_budget' in sample]
+            summary['verified_resource_budget'] = {
+                'sample_count': len(observations),
+                'all_samples_verified': len(observations) == len(self.samples) and bool(observations),
+                'generator_outside_application_cgroup': True,
+                'application_limits': self.resource_profile.app_limits,
+                'postgresql_limits': self.resource_profile.db_limits}
+            for name in ('application', 'postgresql'):
+                if observations:
+                    first, last = observations[0][name], observations[-1][name]
+                    summary['verified_resource_budget'][name] = {
+                        'peak_cgroup_memory_bytes': max(row[name]['memory_current_bytes'] for row in observations),
+                        'cpu_usage_usec_delta': last['cpu']['usage_usec'] - first['cpu']['usage_usec'],
+                        'cpu_throttled_periods_delta': last['cpu']['nr_throttled'] - first['cpu']['nr_throttled'],
+                        'cpu_throttled_usec_delta': last['cpu']['throttled_usec'] - first['cpu']['throttled_usec'],
+                        'memory_events_delta': {key: last['memory_events'][key] - first['memory_events'][key]
+                                                for key in first['memory_events']}}
         return summary
 
 
@@ -617,13 +785,21 @@ def reconcile(db_url, workload):
             'passed': not failures}
 
 
-def start_app(env, port, log_path, workers=RELEASE_WORKERS):
+def start_app(env, port, log_path, workers=RELEASE_WORKERS, application_cgroup=None):
     log = log_path.open('a')
     offset = log_path.stat().st_size
     module = 'tools.profile_checkout:app' if env.get('KPS_LOAD_PROFILE_OUTPUT') else 'app.main:app'
-    process = subprocess.Popen([sys.executable, '-m', 'uvicorn', module, '--host', '127.0.0.1',
-                                '--port', str(port), '--workers', str(workers),
-                                '--timeout-keep-alive', str(RELEASE_KEEPALIVE_SECONDS), '--no-access-log'], cwd=ROOT, env=env,
+    command = [sys.executable, '-m', 'uvicorn', module, '--host', '127.0.0.1',
+               '--port', str(port), '--workers', str(workers),
+               '--timeout-keep-alive', str(RELEASE_KEEPALIVE_SECONDS), '--no-access-log']
+    if application_cgroup:
+        preserve = ('TEST_DATABASE_URL', 'DATABASE_URL', 'APP_ENV', 'PUBLIC_BASE_URL', 'APP_ALLOWED_HOSTS',
+                    'SESSION_COOKIE_SECURE', 'OTP_PROVIDER', 'EMAIL_PROVIDER', 'EMAIL_WORKER_ENABLED',
+                    'REPORT_WORKER_ENABLED', 'INITIAL_CATALOG_IMPORT', 'RUNTIME_REVISION', 'GITHUB_ACTIONS',
+                    'PYTHONDONTWRITEBYTECODE', 'PATH', 'LD_LIBRARY_PATH')
+        command = ['sudo', '-n', '--preserve-env=' + ','.join(preserve), sys.executable, str(Path(__file__).resolve()),
+                   '--join-application-cgroup', str(application_cgroup), str(os.getuid()), str(os.getgid()), '--', *command]
+    process = subprocess.Popen(command, cwd=ROOT, env=env,
                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     origin = f'http://127.0.0.1:{port}'
     started = time.perf_counter()
@@ -632,13 +808,19 @@ def start_app(env, port, log_path, workers=RELEASE_WORKERS):
             while time.perf_counter() - started < 45:
                 if process.poll() is not None:
                     raise RuntimeError('Isolated application startup failed; inspect load-app.log.')
+                if application_cgroup:
+                    with log_path.open() as observed:
+                        observed.seek(offset)
+                        resource_pid = resource_application_pid(observed.read(), process.pid, application_cgroup)
+                    if resource_pid:
+                        process.resource_application_pid = resource_pid
                 try:
                     response = client.get(origin + '/ready')
                     if response.status_code == 200:
                         with log_path.open() as observed:
                             observed.seek(offset)
                             contents = observed.read()
-                        worker_pids = startup_worker_pids(contents, process.pid)
+                        worker_pids = startup_worker_pids(contents, application_root_pid(process))
                         if len(worker_pids) == workers and contents.count('Application startup complete.') >= workers:
                             return process, log, round(time.perf_counter() - started, 3), worker_pids
                 except httpx.HTTPError:
@@ -651,6 +833,32 @@ def start_app(env, port, log_path, workers=RELEASE_WORKERS):
 
 
 def stop_app(process, log):
+    if hasattr(process, 'resource_application_pid'):
+        # Signal the verified unprivileged Uvicorn tree directly: sudo's own
+        # process may be protected from /proc namespace inspection or use a
+        # separate session. Never signal a process by name or a guessed group.
+        identities = {pid: process_start_ticks(pid) for pid in owned_process_pids(application_root_pid(process))}
+        root = application_root_pid(process)
+        if identities.get(root) is not None and process_start_ticks(root) == identities[root]:
+            os.kill(root, signal.SIGTERM)
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            for pid, start in identities.items():
+                if start is not None and process_start_ticks(pid) == start:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        log.close()
+        return
     identities = {pid: process_start_ticks(pid) for pid in owned_process_pids(process.pid)}
     if process.poll() is None:
         process.terminate()
@@ -706,6 +914,46 @@ def inspect_test_container(container, base_url):
     bindings = inspected['NetworkSettings']['Ports'].get('5432/tcp') or []
     if not any(binding['HostPort'] == str(info.get('port', '5432')) for binding in bindings):
         raise ValueError('Docker PostgreSQL published port must match the explicit loopback test URL.')
+    return inspected
+
+
+class RenderResourceProfile:
+    """Verify real kernel limits and workload process ownership, never simulated CPU duty cycles."""
+    def __init__(self, application_cgroup, container, base_url):
+        self.application_cgroup = application_cgroup_path(application_cgroup)
+        self.app_limits = require_budget(self.application_cgroup, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
+        if (self.application_cgroup / 'cgroup.procs').read_text().strip():
+            raise ValueError('The application cgroup must be exclusively empty before the run.')
+        self.generator_pid = os.getpid()
+        self.generator_cgroup = process_cgroup(self.generator_pid)
+        if self.generator_cgroup == self.application_cgroup:
+            raise ValueError('The load generator must remain outside the bounded application cgroup.')
+        inspected = inspect_test_container(container, base_url)
+        config = inspected['HostConfig']
+        if (config.get('NanoCpus') != 100_000_000 or config.get('Memory') != RENDER_DB_MEMORY_BYTES
+                or config.get('MemorySwap') != RENDER_DB_MEMORY_BYTES or not inspected['State'].get('Running')):
+            raise ValueError('The isolated PostgreSQL Docker service does not match the current Render resource budget.')
+        self.database_cgroup = process_cgroup(inspected['State']['Pid'], docker_host_pid=True)
+        self.db_limits = require_budget(self.database_cgroup, cpu_tenths=1, memory_bytes=RENDER_DB_MEMORY_BYTES)
+        if self.generator_cgroup == self.database_cgroup or self.application_cgroup == self.database_cgroup:
+            raise ValueError('Application, database and load generator must have separate resource budgets.')
+
+    def observe(self, app_pid, worker_pids):
+        if process_cgroup(self.generator_pid) in {self.application_cgroup, self.database_cgroup}:
+            raise RuntimeError('The load generator entered a constrained workload cgroup.')
+        require_budget(self.application_cgroup, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
+        require_budget(self.database_cgroup, cpu_tenths=1, memory_bytes=RENDER_DB_MEMORY_BYTES)
+        app = cgroup_snapshot(self.application_cgroup)
+        owned = owned_process_pids(app_pid)
+        # Observation starts at the verified Uvicorn exec PID, below sudo.
+        # The supervisor and every workload descendant must stay in the group;
+        # no unrelated PID may enter, and the generator remains outside.
+        if not set(worker_pids) <= set(app['pids']) == owned or app_pid not in app['pids']:
+            raise RuntimeError('The constrained application PID set does not match the owned workload.')
+        if not all(process_cgroup(pid) == self.application_cgroup for pid in worker_pids):
+            raise RuntimeError('An application worker escaped its declared resource limits.')
+        app['observation_scope'] = 'Verified Uvicorn supervisor and all owned descendants; generator/sudo controller excluded.'
+        return {'application': app, 'postgresql': cgroup_snapshot(self.database_cgroup)}
 
 
 def wait_ready(origin, timeout=45):
@@ -860,9 +1108,13 @@ def main():
     parser.add_argument('--profile-cpu', action='store_true', help='Separate diagnostic run, not release performance evidence.')
     parser.add_argument('--workers', type=int, choices=(1, 2), default=RELEASE_WORKERS,
                         help='Two matches Docker release configuration; one is an explicit diagnostic comparison.')
+    parser.add_argument('--application-cgroup', type=Path,
+                        help='Explicit CI-only Render-budget cgroup; the generator stays outside and all levels run even after failure.')
     args = parser.parse_args()
     if args.profile_cpu and args.workers != 1:
         parser.error('Per-thread CPU diagnosis requires one isolated worker.')
+    if args.application_cgroup and (args.profile_cpu or args.workers != RELEASE_WORKERS or not args.database_container):
+        parser.error('Render-budget acceptance requires two unprofiled application workers and an explicit local PostgreSQL container.')
     levels = [int(item) for item in args.levels.split(',')]
     if not levels or min(levels) < 1 or max(levels) > 500 or not 1 <= args.rounds <= 5:
         parser.error('Levels must be 1..500 and rounds 1..5.')
@@ -877,7 +1129,8 @@ def main():
         ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'status': 'NOT_READY', 'stages': [],
         'tested_source_sha256': tree_hash.hexdigest(), 'tested_tree_dirty': bool(subprocess.check_output(
             ['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()),
-        'gate': {'p95_ms_max': args.p95_ms, 'p99_ms_max': args.p99_ms, 'unexpected_error_rate_max': args.max_error_rate,
+        'gate': {'p95_ms_max': args.p95_ms, 'p95_comparison': 'strictly_less_than',
+                 'p99_ms_max': args.p99_ms, 'unexpected_error_rate_max': args.max_error_rate,
                  'data_invariant_failures_max': 0, 'deadlocks_max': 0, 'all_requested_levels_required': True},
         'methodology': {'workers': args.workers, 'rounds_per_user': args.rounds, 'requested_levels': levels,
             'real_guest_identity': True, 'checkout_identity_policy': 'legacy_guest', 'real_HTTP': True, 'real_PostgreSQL': True,
@@ -898,10 +1151,20 @@ def main():
             'No customer/production data, payments, physical printers or external notification providers are exercised.']}
     schema = 'kps_load_' + uuid.uuid4().hex
     isolated = schema_url(base, schema)
-    process = log = sampler = None
+    process = log = sampler = resource_profile = None
     workloads = []
     previous_env = dict(os.environ)
     try:
+        if args.application_cgroup:
+            resource_profile = RenderResourceProfile(args.application_cgroup, args.database_container, base)
+            report['runtime_resource_profile'] = {
+                'name': 'current_render_resource_budget', 'budget_configuration_verified': True,
+                'application_limits': resource_profile.app_limits, 'postgresql_limits': resource_profile.db_limits,
+                'generator_outside_workload_cgroups': True,
+                'complete_all_requested_levels_even_after_failure': True}
+            report['comparability_limits'][1] = (
+                'Kernel CPU/memory limits match the current Render app and database resource budgets; '
+                'CPU model, provider storage, TLS, network latency and background jobs still differ from deployed Render.')
         with psycopg.connect(base, autocommit=True, row_factory=dict_row) as control:
             actual = control.execute('SELECT current_database() name,version() version').fetchone()
             if not (actual['name'].startswith('test_') or actual['name'].endswith('_test')):
@@ -927,14 +1190,17 @@ def main():
         configure_synthetic_data()
         from app import db
         db.close_pools(isolated)
-        process, log, report['startup_seconds'], worker_pids = start_app(env, port, args.output.parent / 'load-app.log', args.workers)
+        process, log, report['startup_seconds'], worker_pids = start_app(
+            env, port, args.output.parent / 'load-app.log', args.workers, args.application_cgroup)
         report['methodology']['verified_startup_worker_pids'] = worker_pids
+        if resource_profile:
+            report['runtime_resource_profile']['startup_ownership'] = resource_profile.observe(application_root_pid(process), worker_pids)
         origin = f'http://127.0.0.1:{port}'
         for concurrency in levels:
             marker = f'load-{uuid.uuid4().hex}-{concurrency}'
             with psycopg.connect(isolated, row_factory=dict_row) as conn:
                 before = conn.execute('SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()').fetchone()['deadlocks']
-            sampler = Sampler(isolated, process.pid, args.database_container, worker_pids)
+            sampler = Sampler(isolated, application_root_pid(process), args.database_container, worker_pids, resource_profile)
             sampler.begin()
             workload = Workload(origin, marker, concurrency, args.rounds, args.request_timeout)
             workloads.append(workload)
@@ -953,36 +1219,39 @@ def main():
             with psycopg.connect(isolated, row_factory=dict_row) as conn:
                 after = conn.execute('SELECT deadlocks FROM pg_stat_database WHERE datname=current_database()').fetchone()['deadlocks']
             violations = list(integrity['failure_reasons'])
-            if metrics['p95_ms'] is None or metrics['p95_ms'] > args.p95_ms:
-                violations.append('P95 latency gate failed.')
-            if metrics['p99_ms'] is None or metrics['p99_ms'] > args.p99_ms:
-                violations.append('P99 latency gate failed.')
+            violations.extend(latency_failure_reasons(metrics, args.p95_ms, args.p99_ms))
             if metrics['error_rate'] > args.max_error_rate:
                 violations.append('HTTP/business error rate gate failed.')
             if after != before:
                 violations.append('PostgreSQL deadlocks increased.')
             if resources['sample_errors'] or not resources['sample_count']:
                 violations.append('Resource/connection/lock monitoring failed.')
+            if resource_profile and not resources['verified_resource_budget']['all_samples_verified']:
+                violations.append('Render resource-budget limits or process ownership verification failed.')
             stage.update({'resources': resources, 'deadlocks_delta': after - before,
                           'passed': not violations, 'gate_failure_reasons': violations})
             args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
             print(json.dumps({'concurrent_users': concurrency, 'passed': stage['passed'], 'p95_ms': metrics['p95_ms'],
                               'p99_ms': metrics['p99_ms'], 'persisted_orders': integrity['persisted_orders'],
                               'errors': metrics['error_count'], 'failure_reasons': violations}), flush=True)
-            if violations:
+            if violations and not resource_profile:
                 report['blocked_levels'] = levels[len(report['stages']):]
                 report['reason'] = 'Stopped escalation after failed stage; investigate and rerun before attempting blocked levels.'
                 break
         # Restart only this isolated process, then reconcile all acknowledged
         # orders after the application reruns its real additive migrations.
         if args.database_container:
-            report['database_fault_drills'] = database_fault_drills(isolated, base, origin, args.database_container, process.pid)
+            report['database_fault_drills'] = database_fault_drills(
+                isolated, base, origin, args.database_container, application_root_pid(process))
         else:
             report['database_fault_drills'] = {'status': 'UNVERIFIED', 'reason': 'No explicitly verified local Docker PostgreSQL service was supplied.'}
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
         stop_app(process, log)
         process = log = None
-        process, log, recovery_seconds, restarted_worker_pids = start_app(env, port, args.output.parent / 'load-app.log', args.workers)
+        process, log, recovery_seconds, restarted_worker_pids = start_app(
+            env, port, args.output.parent / 'load-app.log', args.workers, args.application_cgroup)
+        if resource_profile:
+            report['runtime_resource_profile']['restart_ownership'] = resource_profile.observe(application_root_pid(process), restarted_worker_pids)
         recovery_checks = [reconcile(isolated, workload) for workload in workloads]
         report['recovery'] = {'process_restart_to_ready_seconds': recovery_seconds,
             'confirmed_orders_preserved': all(check['passed'] for check in recovery_checks),
@@ -995,8 +1264,10 @@ def main():
             report['recovery']['migration_preservation_verified'] = ready['data_preservation']['verified']
         fault_drills_ok = not args.database_container or report['database_fault_drills'].get('passed') is True
         if all(stage['passed'] for stage in report['stages']) and len(report['stages']) == len(levels) and report['recovery']['revision_matches'] and report['recovery']['migration_preservation_verified'] and report['recovery']['confirmed_orders_preserved'] and report['recovery']['worker_count_matches'] and fault_drills_ok:
-            report['status'] = 'PASS_LOCAL_ENGINEERING_GATE'
+            report['status'] = 'PASS_REPRESENTATIVE_RESOURCE_GATE' if resource_profile else 'PASS_LOCAL_ENGINEERING_GATE'
             report['reason'] = 'All requested load levels and PostgreSQL business invariants passed; production hardware/provider validation remains separate.'
+        elif resource_profile:
+            report['reason'] = 'Current Render resource-budget acceptance failed; every attempted stage and recovery outcome remains recorded.'
     except Exception as exc:
         # No exception values/DSNs are printed, because startup errors may
         # contain connection configuration. Detailed app errors are sanitized.
@@ -1023,8 +1294,10 @@ def main():
             report['status'] = 'NOT_READY'
         report['finished_at'] = datetime.now(timezone.utc).isoformat()
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    return 0 if report['status'] == 'PASS_LOCAL_ENGINEERING_GATE' else 1
+    return 0 if report['status'] in {'PASS_LOCAL_ENGINEERING_GATE', 'PASS_REPRESENTATIVE_RESOURCE_GATE'} else 1
 
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] in {'--prepare-application-cgroup', '--join-application-cgroup', '--cleanup-application-cgroup'}:
+        raise SystemExit(resource_helper())
     raise SystemExit(main())

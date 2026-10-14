@@ -157,19 +157,25 @@ def test_pre_cutoff_order_finishes_and_custody_closes_after_cutoff(delivery_ops)
     post('manager', '/api/shifts/' + manager + '/submit', {'counted_halalas': 1000, 'handover_halalas': 1000}, status=409)
     driver_report = close_driver(post, driver, manager)
     post('manager', '/api/shifts/' + manager + '/submit', {'counted_halalas': 1000, 'handover_halalas': 1000})
-    transfer = post('manager', '/api/custody', {'from_shift_id': manager, 'recipient_user_id': 'ops-owner',
-                                             'amount_halalas': 1000, 'reference': 'TEST-HOURS-FINAL', 'closure': True})['transfer']['id']
-    post('owner', '/api/shifts/' + manager + '/approve', status=409)
-    post('owner', '/api/custody/' + transfer + '/confirm')
-    final = post('owner', '/api/shifts/' + manager + '/approve')
+    # Cutoff permits the manager's own operational close. Bank/cash matching is
+    # a separate accountant step and never a fabricated owner custody receipt.
+    final = post('manager', '/api/shifts/' + manager + '/approve', key='TEST-HOURS-MANAGER-CLOSE')
+    assert post('manager', '/api/shifts/' + manager + '/approve', key='TEST-HOURS-MANAGER-CLOSE') == final
     for report_id in (driver_report['report_id'], final['report_id']):
         report = actor('owner').get('/api/reports/' + report_id).json()['report']
+        assert report['pdf_status'] == 'ready' and report['pdf_error'] is None
         assert report['snapshot']['operational_date'] == '2026-10-09'
         assert report['snapshot']['summary']['cash_collected_halalas'] == 1000
+        pdf = actor('owner').get('/api/reports/' + report_id + '/pdf')
+        assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF')
     with db.tx() as c:
         before = c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
         assert before['delivery_status'] == 'delivered' and before['payment_status'] == 'paid'
-        assert c.execute('SELECT status FROM shifts WHERE id=%s', (manager,)).fetchone()['status'] == 'closed'
+        closed = c.execute('SELECT status,submission FROM shifts WHERE id=%s', (manager,)).fetchone()
+        assert closed['status'] == 'closed' and closed['submission']['operational_approved'] is True
+        assert not c.execute('SELECT 1 FROM custody_transfers WHERE from_shift_id=%s', (manager,)).fetchone()
+        assert not c.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s', (final['report_id'],)).fetchone()
+        assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s', (manager,)).fetchone()['n'] == 1
     db.migrate()
     with db.tx() as c:
         assert c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone() == before

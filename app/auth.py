@@ -146,7 +146,10 @@ def require_roles(*roles):
     if not set(roles).issubset(ROLES):
         raise ValueError('Unknown role in authorization policy')
 
-    def dependency(user=Depends(current_user)):
+    # The upstream session dependency already performs its fresh database read
+    # in a worker thread. This role-only check has no I/O: scheduling another
+    # synchronous worker unnecessarily queues every protected request twice.
+    async def dependency(user=Depends(current_user)):
         if user['role'] not in roles:
             raise db.error(403, 'ROLE_FORBIDDEN', 'هذه العملية غير مسموحة لحسابك.')
         return user

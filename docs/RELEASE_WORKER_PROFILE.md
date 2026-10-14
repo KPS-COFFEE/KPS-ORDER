@@ -26,7 +26,7 @@ their original route and authorization dependency objects are preserved.
 Both independent load jobs run the actual two-worker release topology against
 isolated PostgreSQL 18: 50, 100, 250 and 500 simultaneous synthetic customers,
 two genuine orders per customer, with concurrent duplicate transmissions.
-Both must pass on the exact release HEAD. The limits remain P95 <= 5000 ms,
+Both must pass on the exact release HEAD. The owner requires P95 < 5000 ms,
 P99 <= 10000 ms, unexpected errors <= 1%, zero deadlocks and zero duplicate,
 missing or orphaned business effects. Restart, database outage, exhausted
 connections and post-failure database reconciliation remain mandatory.

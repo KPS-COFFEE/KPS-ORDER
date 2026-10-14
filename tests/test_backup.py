@@ -7,6 +7,7 @@ import json
 import os
 import uuid
 import zipfile
+from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
@@ -17,6 +18,23 @@ from psycopg.rows import dict_row
 from app import auth, db, email_delivery
 from app.exports import AUTH_TABLES, INFRASTRUCTURE_TABLES, build_archive, restore_archive, verify_archive
 from test_operations import ops, delivered, close_driver
+
+
+@pytest.fixture
+def independent_restore_database(database):
+    """Restore only into a new local test database, never the source database."""
+    from conftest import _isolated_test_url
+    source = _isolated_test_url()
+    name = 'test_kps_restore_' + uuid.uuid4().hex
+    target = urlunsplit(urlsplit(source)._replace(path='/' + name))
+    with psycopg.connect(source, autocommit=True) as control:
+        control.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name)))
+    try:
+        yield target
+    finally:
+        with psycopg.connect(source, autocommit=True) as control:
+            control.execute('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s AND pid<>pg_backend_pid()', (name,))
+            control.execute(sql.SQL('DROP DATABASE {}').format(sql.Identifier(name)))
 
 
 def test_archive_verifier_rejects_invalid_zip_and_unknown_format():
@@ -88,7 +106,7 @@ def test_owner_business_export_preserves_bytea_and_excludes_other_brands_and_cre
 
 
 @pytest.mark.postgres
-def test_full_backup_restores_orders_messages_images_closures_reports_without_overwriting_new_orders(ops, monkeypatch, tmp_path):
+def test_full_backup_restores_orders_messages_images_closures_reports_without_overwriting_new_orders(ops, monkeypatch, tmp_path, independent_restore_database):
     actor, post, order, shifts = ops
     manager, driver = shifts()
     policy = post('manager', '/api/performance/policies', {'province_id':'restore-province', 'province_name':'محافظة اختبار الاستعادة',
@@ -136,7 +154,8 @@ def test_full_backup_restores_orders_messages_images_closures_reports_without_ov
     assert manifest['totals']['collected_halalas'] == 1000
     newer = order('pickup', name='post-backup-new-order')
     target = 'kps_restore_' + uuid.uuid4().hex
-    base_url = os.environ['TEST_DATABASE_URL']
+    base_url = independent_restore_database
+    assert urlsplit(base_url).path != urlsplit(os.environ['TEST_DATABASE_URL']).path
     try:
         asset_directory = tmp_path / 'private-restored-assets'
         result = restore_archive(contents, target_url=base_url, target_schema=target, asset_directory=asset_directory)
@@ -144,6 +163,13 @@ def test_full_backup_restores_orders_messages_images_closures_reports_without_ov
         assert result['elapsed_seconds'] > 0 and result['snapshot_created_at'] == manifest['created_at']
         assert result['binary_files_verified'] > 0 and set(result['identifier_sha256']) == set(manifest['table_order'])
         assert result['static_restore_verified'] and result['static_files_restored'] == result['static_files_archived'] > 0
+        print('KPS_ISOLATED_RESTORE_EVIDENCE ' + json.dumps({
+            'source_revision': result['source_revision'], 'separate_database': True,
+            'tables_verified': len(result['counts']), 'elapsed_seconds': result['elapsed_seconds'],
+            'binary_files_verified': result['binary_files_verified'],
+            'static_files_restored': result['static_files_restored'],
+            'archive_sha256': result['archive_sha256'], 'synthetic': True,
+        }, sort_keys=True))
         import hashlib
         for name, descriptor in manifest['files'].items():
             if name.startswith('static/assets/'):

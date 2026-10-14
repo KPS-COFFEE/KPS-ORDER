@@ -467,12 +467,15 @@ def _role_fixture():
                      (branch_id,'browser-synthetic-source',brand,'فرع اختبار معزول','حفر الباطن',db.json({})))
         conn.execute('INSERT INTO app_settings(brand_id,settings) VALUES(%s,%s)',
                      (brand,db.json({'operational_day_start':'05:30','late_after_minutes':60})))
-        for name,role in [('owner','owner'),('manager','delivery_manager'),('driver','driver'),('branch','branch_manager'),('customer','customer')]:
+        for name,role in [('owner','owner'),('manager','delivery_manager'),('driver','driver'),('branch','branch_manager'),('accountant','admin'),('customer','customer')]:
             identifier='browser-ops-'+name
             username='browser.ops.'+name if name!='customer' else None
             conn.execute('INSERT INTO users(id,username,display_name,password_hash,role,brand_id,branch_ids) VALUES(%s,%s,%s,%s,%s,%s,%s)',
                          (identifier,username,'اختبار '+name+' فقط',auth.hash_password(PASSWORD) if username else None,role,brand,db.json([branch_id])))
             users[name]={'id':identifier,'username':username}
+            if name=='accountant':
+                conn.execute('UPDATE users SET permissions=%s WHERE id=%s',
+                             (db.json(['accounting_reports','accounting_review']),identifier))
         order_id='browser-ops-test-order'
         snapshot={'items':[{'product_id':'browser-synthetic-coffee','name':'قهوة اختبار معزول','quantity':1,
                             'unit_price_halalas':1000,'line_total_halalas':1000,'units':[],'note':''}],
@@ -512,7 +515,7 @@ def _acknowledge_driver_end(page, language='ar'):
     expect(page.locator('#navigation [data-page=tasks]')).to_have_attribute('aria-current', 'page')
 
 
-def _submit_modal(page,values=None,check=None,*,driver_end=False):
+def _submit_modal(page,values=None,check=None,*,driver_end=False,manager_operational=False):
     from playwright.sync_api import expect
     for name,value in (values or {}).items():
         field=page.locator(f'#modal-body [name="{name}"]')
@@ -522,7 +525,63 @@ def _submit_modal(page,values=None,check=None,*,driver_end=False):
     page.locator('#modal-body button[type=submit]').click()
     if driver_end:
         _acknowledge_driver_end(page)
+    if manager_operational:
+        # Manager submission opens a distinct operational-review form. The
+        # recipient selector is intentionally hidden; it creates no owner
+        # custody receipt or financial approval.
+        expect(page.locator('#closure-form')).to_have_count(0)
+        expect(page.locator('#modal-body')).to_contain_text('المطابقة المالية لا تغيّر تقفيلتك الأصلية')
+        page.locator('#modal-body input[name=confirmed]').check()
+        page.locator('#modal-body button[type=submit]').click()
     expect(page.locator('#modal')).not_to_be_visible()
+
+
+def _match_manager_finances(page,base,context,report_id,bank,cash):
+    """Verify independent bank/cash review using real accounting controls."""
+    from playwright.sync_api import expect
+    with db.tx() as conn:
+        before=conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()
+        assert before['snapshot']['shift']['submission']['operational_approved'] is True
+        assert not conn.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchone()
+    page.locator('#navigation [data-page=accounting]').click()
+    page.locator('[data-ac=matching]').click()
+    action=page.locator(f'[data-match-id="{report_id}"]')
+    expect(action).to_be_visible()
+    expect(action.locator('xpath=ancestor::tr')).to_contain_text('بانتظار المطابقة المالية')
+    action.click()
+    for name in ('bank','cash'):
+        expect(page.locator(f'#modal-body [name={name}]')).to_have_value('')
+    matching_url=base+'/api/accounting/manager-closures/'+report_id+'/match'
+    with page.expect_response(lambda response:response.request.method=='POST' and response.url==matching_url) as matched:
+        _submit_modal(page,{'bank':f'{bank/100:.2f}','cash':f'{cash/100:.2f}',
+                           'bank_reference':'TEST ONLY BANK STATEMENT',
+                           'cash_reference':'TEST ONLY ACCOUNTANT CASH RECEIPT'})
+    assert matched.value.status==200
+    request=matched.value.request
+    # Request.headers is Playwright's reduced header map; use the actual wire
+    # headers so APIRequestContext replays the browser's Origin and CSRF proof.
+    headers={key:value for key,value in request.all_headers().items()
+             if key in ('origin','x-csrf-token','idempotency-key','content-type')}
+    headers['origin']=base
+    assert headers.get('x-csrf-token') and headers.get('idempotency-key')
+    repeated=context.request.post(matching_url,headers=headers,data=request.post_data_json)
+    assert repeated.status==200,repeated.text()
+    assert repeated.json()==matched.value.json()
+    duplicated=context.request.post(matching_url,headers={**headers,'idempotency-key':secrets.token_hex(16)},data=request.post_data_json)
+    assert duplicated.status==409,duplicated.text()
+    assert duplicated.json()['detail']['code']=='ALREADY_MATCHED'
+    expect(page.locator('#ac-results')).to_contain_text('معتمدة ماليًا — مطابقة')
+    expect(page.locator(f'[data-match-id="{report_id}"]')).to_have_count(0)
+    rows=context.request.get(base+'/api/accounting/manager-closures').json()['closures']
+    saved=next(row for row in rows if row['id']==report_id)
+    assert saved['financial_status']=='matched'
+    assert saved['bank_halalas']==bank and saved['cash_halalas']==cash
+    assert saved['expected_bank_halalas']==bank and saved['expected_cash_halalas']==cash
+    with db.tx() as conn:
+        matches=conn.execute('SELECT * FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchall()
+        assert len(matches)==1 and matches[0]['status']=='matched'
+        assert matches[0]['reviewer_id']!=before['snapshot']['shift']['user_id']
+        assert conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()==before
 
 
 def _inspection_payload(km=1000,fuel=75):
@@ -560,7 +619,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
     errors=[]
     csp_errors=[]
     try:
-        for name in ['owner','manager','driver','branch']:
+        for name in ['owner','manager','driver','branch','accountant']:
             context,page,page_errors=_context(chromium_browser,live_app)
             contexts[name]=context;pages[name]=page
             page.on('console',lambda message:csp_errors.append(message.text) if ('Content Security Policy' in message.text or 'Refused to execute inline' in message.text) else None)
@@ -661,19 +720,22 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         manager.locator('#closure-form input[name=counted]').fill('10.00')
         manager.locator('#closure-form input[name=handover]').fill('10.00')
         manager.locator('#closure-form input[name=reference]').fill('BROWSER-TEST-MANAGER-BAG')
-        manager.locator('#closure-form select[name=recipient_user_id]').select_option(users['owner']['id'])
+        expect(manager.locator('#closure-form select[name=recipient_user_id]')).not_to_be_visible()
         _capture(manager,'delivery-manager-counted-final-closure')
-        _submit_modal(manager,check=['confirm_closure'])
-        owner.locator('#navigation [data-page=custody]').click()
-        expect(owner.locator('[data-action=confirm-custody]')).to_have_count(1)
-        owner.locator('[data-action=confirm-custody]').click()
-        _submit_modal(owner,check=['received'])
+        _submit_modal(manager,check=['confirm_closure'],manager_operational=True)
+        with db.tx() as conn:
+            closed=conn.execute('SELECT status,submission FROM shifts WHERE id=%s',(manager_shift,)).fetchone()
+            assert closed['status']=='closed' and closed['submission']['operational_approved'] is True
+            assert not conn.execute('SELECT 1 FROM custody_transfers WHERE from_shift_id=%s',(manager_shift,)).fetchone()
+            manager_report=conn.execute('SELECT id FROM closure_reports WHERE shift_id=%s',(manager_shift,)).fetchone()['id']
         owner.locator('#navigation [data-page=shifts]').click()
-        owner.locator('[data-action=owner-shift-view][data-view=review]').click()
+        owner.locator('[data-action=owner-shift-view][data-view=history]').click()
         owner.locator(f'[data-action=shift-detail][data-id="{manager_shift}"]').click()
-        owner.locator(f'[data-action=approve-shift][data-id="{manager_shift}"]').click()
-        _capture(owner,'owner-final-manager-closure-approval')
-        _submit_modal(owner,check=['confirmed'])
+        expect(owner.locator('#modal-body')).to_contain_text('معتمدة تشغيليًا')
+        expect(owner.locator('#modal-body [data-action=approve-shift]')).to_have_count(0)
+        _capture(owner,'owner-operationally-approved-manager-closure')
+        owner.keyboard.press('Escape')
+        _match_manager_finances(pages['accountant'],live_app,contexts['accountant'],manager_report,0,1000)
 
         # Both reports are really generated after committed, approved closures.
         saved={}
@@ -730,7 +792,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         (ARTIFACTS/'TEST_ONLY_financial_example_summary.json').write_text(json.dumps({
             'test_only':True,'currency':'SAR','environment':'Chromium browser emulation, real isolated PostgreSQL and HTTP',
             'physical_delivery_or_cash_receipt':False,'physical_device_test':False,'customer_details_included':False,
-            'description_ar':'طلب اختبار واحد بقيمة 10 ريالات. استلم السائق ورقة 20 وأعاد 10. التحصيل 10، والتسليم للمدير 10 ثم للمالك 10، دون احتسابها كمبيعات إضافية.',
+            'description_ar':'طلب اختبار واحد بقيمة 10 ريالات. استلم السائق ورقة 20 وأعاد 10. التحصيل والتسليم للمدير 10. المدير يعتمد تشغيليًا، والمحاسب المستقل يثبت استلام 10 نقدًا وصفر في البنك، دون إنشاء مبيعات أو عهدة إضافية.',
             'reports':saved},ensure_ascii=False,indent=2))
         assert all(not page_errors for page_errors in errors),errors
         assert not csp_errors,csp_errors

@@ -12,6 +12,47 @@ from starlette.responses import JSONResponse
 from . import auth, monitoring
 
 LOGGER = logging.getLogger('kps_order')
+MAX_BODY_BYTES = 8 * 1024 * 1024
+
+
+def _body_too_large():
+    return HTTPException(413, {'code': 'BODY_TOO_LARGE',
+        'message': 'الملف أو الطلب أكبر من الحد المسموح.'})
+
+
+async def _bounded_request(receive):
+    """Validate the complete body before downstream dependencies can write.
+
+    Content-Length is only an early rejection hint, not a trusted byte count.
+    Raising inside FastAPI's request parser can turn a size violation into 400;
+    truncating a valid prefix can let an endpoint commit a partial request.
+    Keep a single-chunk request intact and coalesce streamed input into one
+    bounded buffer, without unbounded per-chunk metadata or relay tasks.
+    """
+    message = await receive()
+    if message['type'] == 'http.disconnect':
+        return None
+    if message['type'] != 'http.request':
+        raise RuntimeError('Invalid HTTP request event.')
+    size = len(message.get('body', b''))
+    if size > MAX_BODY_BYTES:
+        raise _body_too_large()
+    if not message.get('more_body', False):
+        return message
+
+    body = bytearray(message.get('body', b''))
+    while message.get('more_body', False):
+        message = await receive()
+        if message['type'] == 'http.disconnect':
+            return None
+        if message['type'] != 'http.request':
+            raise RuntimeError('Invalid HTTP request event.')
+        chunk = message.get('body', b'')
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            raise _body_too_large()
+        body.extend(chunk)
+    return {'type': 'http.request', 'body': bytes(body), 'more_body': False}
 
 
 class SecurityMiddleware:
@@ -52,20 +93,28 @@ class SecurityMiddleware:
                     headers['Cache-Control'] = 'public, max-age=86400'
                 monitoring.record_response(status)
                 response_started = True
-            # Preserve streaming bodies, duplicate Set-Cookie headers, disconnect
-            # handling and server extensions. Never buffer or spawn relay tasks.
+            # Preserve streaming responses, duplicate Set-Cookie headers,
+            # disconnect handling and server extensions without relay tasks.
             await send(message)
 
         try:
             if path.startswith('/api/') and method not in {'GET', 'HEAD', 'OPTIONS'}:
                 auth.check_origin(request)
             length = request.headers.get('content-length')
-            if length and (not length.isdecimal() or int(length) > 8 * 1024 * 1024):
-                response = JSONResponse({'detail': {'code': 'BODY_TOO_LARGE',
-                    'message': 'الملف أو الطلب أكبر من الحد المسموح.'}}, status_code=413)
-                await response(scope, receive, secured_send)
+            if length and (not length.isdecimal() or int(length) > MAX_BODY_BYTES):
+                raise _body_too_large()
+            buffered_request = await _bounded_request(receive)
+            if buffered_request is None:
                 return
-            await self.app(scope, receive, secured_send)
+
+            async def bounded_receive():
+                nonlocal buffered_request
+                if buffered_request is not None:
+                    message, buffered_request = buffered_request, None
+                    return message
+                return await receive()
+
+            await self.app(scope, bounded_receive, secured_send)
         except Exception as exc:
             if response_started:
                 # Headers already went over the wire: a second success/error
