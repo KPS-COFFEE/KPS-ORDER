@@ -2,9 +2,9 @@ name: Fleet operating log acceptance
 on:
   push:
     branches: [agent/kps-order-emergency-v4]
-    paths: [app/fleet.py, app/shift_vehicle.py, app/accounting_export.py, app/exports.py, app/db.py, app/main.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, public/ops.css, tests/test_fleet.py, tests/test_fleet_math.py, tests/test_fleet_browser.py, .github/workflows/fleet-operating-log.yml]
+    paths: [app/fleet.py, app/shift_vehicle.py, app/accounting_export.py, app/exports.py, app/db.py, app/main.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, public/assets/saudi-plate.js, public/assets/saudi-plate.css, public/ops.css, public/ops.html, tests/test_fleet.py, tests/test_fleet_math.py, tests/test_fleet_browser.py, tests/test_saudi_plate.py, tests/test_saudi_plate.cjs, tests/test_saudi_plate_component_browser.py, tests/test_saudi_plate_integration_browser.py, .github/workflows/fleet-operating-log.yml]
   pull_request:
-    paths: [app/fleet.py, app/shift_vehicle.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, public/ops.css, tests/test_fleet.py, tests/test_fleet_browser.py, .github/workflows/fleet-operating-log.yml]
+    paths: [app/fleet.py, app/shift_vehicle.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, public/assets/saudi-plate.js, public/assets/saudi-plate.css, public/ops.css, public/ops.html, tests/test_fleet.py, tests/test_fleet_browser.py, tests/test_saudi_plate.py, tests/test_saudi_plate.cjs, tests/test_saudi_plate_component_browser.py, tests/test_saudi_plate_integration_browser.py, .github/workflows/fleet-operating-log.yml]
 permissions:
   contents: read
 jobs:
@@ -32,8 +32,8 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
-      - run: python -m compileall -q app tests && node --check public/ops.js && node --check public/assets/fleet.js
-      - run: python -m pytest -q tests/test_fleet.py tests/test_fleet_math.py tests/test_fleet_browser.py tests/test_shift_vehicle.py tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py tests/test_backup.py tests/test_recovery.py tests/test_operations.py tests/test_driver_cash_handover.py --junitxml=test-results/fleet.xml
+      - run: python -m compileall -q app tests && node --check public/ops.js && node --check public/assets/fleet.js && node --check public/assets/saudi-plate.js && node --test tests/test_saudi_plate.cjs
+      - run: python -m pytest -q tests/test_fleet.py tests/test_fleet_math.py tests/test_fleet_browser.py tests/test_saudi_plate.py tests/test_saudi_plate_component_browser.py tests/test_saudi_plate_integration_browser.py tests/test_shift_vehicle.py tests/test_vehicle_maintenance.py tests/test_vehicle_maintenance_browser.py tests/test_backup.py tests/test_recovery.py tests/test_operations.py tests/test_driver_cash_handover.py --junitxml=test-results/fleet.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
