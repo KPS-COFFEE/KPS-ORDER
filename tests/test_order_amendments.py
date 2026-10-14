@@ -158,3 +158,29 @@ def test_parallel_requests_have_one_active_winner(amendment_case):
     def submit(_):return client.post('/api/order-amendments/orders/'+oid,json=payload,headers={'Idempotency-Key':uuid4().hex}).status_code
     with ThreadPoolExecutor(max_workers=2) as pool:assert sorted(pool.map(submit,range(2)))==[200,409]
     with db.tx() as c:assert c.execute('SELECT count(*) n FROM order_amendments WHERE order_id=%s',(oid,)).fetchone()['n']==1
+
+
+@pytest.mark.postgres
+def test_amended_order_and_original_survive_full_restore(amendment_case,tmp_path):
+    import os,psycopg
+    from psycopg import sql
+    from app.exports import build_archive,restore_archive
+    actor,post,make,propose,decision=amendment_case;oid=make();aid,p=propose(oid)
+    decision(aid,'offer');decision(aid,'accept',who='customer')
+    post('branch','/api/order-amendments/orders/'+oid+'/receipt',{'revision':1,'kind':'branch'})
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        contents,manifest=build_archive(c,full=True)
+    assert manifest['counts']['order_revisions']==1
+    assert actor('other').get('/api/order-amendments/orders/'+oid).status_code==404
+    target='kps_restore_'+uuid4().hex;base=os.environ['TEST_DATABASE_URL']
+    try:
+        result=restore_archive(contents,target_url=base,target_schema=target,asset_directory=tmp_path/'assets')
+        assert result['verified'] and result['counts']==manifest['counts']
+        with psycopg.connect(base) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
+            assert c.execute('SELECT before_total,after_total FROM order_revisions WHERE order_id=%s',(oid,)).fetchone()==(2000,1000)
+            assert c.execute('SELECT total_halalas,amendment_revision FROM orders WHERE id=%s',(oid,)).fetchone()==(1000,1)
+    finally:
+        with psycopg.connect(base,autocommit=True) as c:
+            c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(target)))

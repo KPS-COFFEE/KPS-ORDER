@@ -35,7 +35,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'closure_drafts', 'report_renderings', 'report_notifications',
           'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
-          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections')
+          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -81,7 +81,7 @@ def _scoped_sql(table, brand):
         return 'from_shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
     if table == 'custody_events':
         return 'shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
-    if table in {'vehicle_operating_logs','vehicle_log_corrections'}:
+    if table in {'vehicle_operating_logs','vehicle_log_corrections','fleet_route_readings'}:
         return 'shift_id IN (SELECT id FROM shifts WHERE brand_id=%s)', (brand,)
     if table == 'vehicle_report_events':
         return 'report_id IN (SELECT id FROM vehicle_reports WHERE brand_id=%s)', (brand,)
