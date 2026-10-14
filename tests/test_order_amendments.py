@@ -109,6 +109,13 @@ def test_paid_reduction_refunds_difference_without_rewriting_collection(amendmen
     with db.tx() as c:
         assert c.execute('SELECT amount_halalas FROM collections WHERE id=%s',(collected['collection_id'],)).fetchone()['amount_halalas']==2000
         assert c.execute('SELECT amendment_id FROM refunds WHERE order_id=%s',(oid,)).fetchone()['amendment_id']==aid
+        c.execute("UPDATE orders SET preparation_status='completed',completed_at=now() WHERE id=%s",(oid,))
+    report=actor('owner').get('/api/accounting/reports').json()
+    assert report['totals']['net_sales']==1000
+    assert report['totals']['total']==1000
+    assert report['totals']['correct']==1
+    post('owner','/api/orders/'+oid+'/refund',{'method':'cash','amount_halalas':1000,'reason':'استرداد كامل لاحق'})
+    assert actor('owner').get('/api/orders/'+oid).json()['order']['payment_status']=='refunded'
 
 
 @pytest.mark.postgres
@@ -140,3 +147,14 @@ def test_frontend_integrates_isolated_editor():
     for path in ('ops.html','index.html'):assert 'order-amendments.js' in (root/path).read_text()
     assert 'KPSAmendments.open' in (root/'ops.js').read_text()
     assert 'KPSAmendments.open' in (root/'customer.js').read_text()
+
+
+@pytest.mark.postgres
+def test_parallel_requests_have_one_active_winner(amendment_case):
+    from concurrent.futures import ThreadPoolExecutor
+    actor,post,make,propose,decision=amendment_case;oid=make()
+    client=actor('customer')
+    payload={'version':1,'items':[{'product_id':'ops-product','quantity':1}], 'customer':{'name':'اختبار'},'reason':'تعديل متزامن','notes':''}
+    def submit(_):return client.post('/api/order-amendments/orders/'+oid,json=payload,headers={'Idempotency-Key':uuid4().hex}).status_code
+    with ThreadPoolExecutor(max_workers=2) as pool:assert sorted(pool.map(submit,range(2)))==[200,409]
+    with db.tx() as c:assert c.execute('SELECT count(*) n FROM order_amendments WHERE order_id=%s',(oid,)).fetchone()['n']==1

@@ -98,7 +98,8 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     paid=defaultdict(int);refunded=defaultdict(int);treated={t['order_id'] for t in tickets}
     for x in cols:paid[x['order_id']]+=x['amount_halalas']
     for x in refs:
-        if not x.get('amendment_id'):refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
+        if x.get('amendment_id'):paid[x['order_id']]-=x['amount_halalas']
+        else:refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
     rows={};items={};om={o['id']:o for o in orders}
     def bucket(o,at):
         d=opday(at)
