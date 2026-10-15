@@ -33,12 +33,17 @@ def test_policies_public_controller_only_in_privacy_and_no_db(monkeypatch,lang,k
         assert CONTROLLER in r.text.split('id="data-controller"')[1].split('</section>')[0]
         assert CR in r.text and '15-10-2026' in r.text
         assert all(word not in r.text for word in ('Render','Frankfurt','Germany','فرانكفورت','ألمانيا'))
-        assert ('outside Saudi Arabia' if lang=='en' else 'خارج المملكة العربية السعودية') in r.text
+        processing = ('Some service data may be hosted and processed within or outside the Kingdom of Saudi Arabia, in accordance with relevant laws and regulations and in compliance with personal data protection controls.' if lang=='en' else 'قد تتم استضافة بعض بيانات الخدمة ومعالجتها داخل المملكة العربية السعودية أو خارجها، وفق الأنظمة واللوائح ذات الصلة، مع الالتزام بضوابط حماية البيانات الشخصية.')
+        assert r.text.count(processing)==1
+        provider = ('Technology service providers may be used as needed, subject to applicable data-protection controls and regulatory requirements.' if lang=='en' else 'تتم الاستعانة بمزودي خدمات تقنية عند الحاجة، مع الالتزام بضوابط حماية البيانات والمتطلبات النظامية.')
+        assert r.text.count(provider)==1
+        assert ('Data processing' if lang=='en' else 'معالجة البيانات') in r.text
+        assert all(old not in r.text for old in ('local and international technology service providers', 'محليين ودوليين', 'Service information is hosted and processed by service providers outside Saudi Arabia.', 'تُستضاف بيانات الخدمة وتُعالج لدى مزودي خدمات خارج المملكة العربية السعودية.'))
         assert ('Technology service providers may be used as needed' if lang=='en' else 'تتم الاستعانة بمزودي خدمات تقنية عند الحاجة') in r.text
         approved = ('We retain data for as long as necessary to provide our services and meet regulatory requirements. When it is no longer needed, we handle it in accordance with applicable laws and approved controls, taking into account customers’ rights to request deletion of their data.' if lang=='en' else 'نحتفظ بالبيانات للمدة اللازمة لتقديم خدماتنا والوفاء بالمتطلبات النظامية. وعند انتهاء الحاجة إليها، نتعامل معها وفق الأنظمة والضوابط المعتمدة، مع مراعاة حقوق العملاء في طلب حذف بياناتهم.')
         assert r.text.count(approved)==1
         assert ('We retain information for as long as needed' if lang=='en' else 'نحتفظ بالبيانات للمدة اللازمة لتقديم الخدمة والوفاء بالالتزامات') not in r.text
-        assert r.text.count('outside Saudi Arabia' if lang=='en' else 'خارج المملكة العربية السعودية')==1
+        assert r.text.count('outside the Kingdom of Saudi Arabia' if lang=='en' else 'داخل المملكة العربية السعودية أو خارجها')==1
         assert ('30 days' if lang=='en' else '30 يومًا') in r.text
     assert 'KPS COFFEE' in r.text and 'كبز قهوة مختصة' in r.text
     assert '2026-10-15' in r.text and 'mailto:' not in r.text
