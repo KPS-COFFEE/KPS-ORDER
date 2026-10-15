@@ -278,6 +278,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
+        driver.locator('[data-confirm-driver-close]').click()
         driver.locator('#blind-closure-form [name=counted]').fill(f'{total/100:.2f}')
         driver.locator('#blind-closure-form [name=terminal_total]').fill('0')
         driver.locator('#save-blind-closure').click()

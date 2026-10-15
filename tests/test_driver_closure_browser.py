@@ -36,6 +36,7 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
             form.locator('[name=exception_reason]').fill('TEST driver phone unavailable')
         else:
             page.locator('.shift-card [data-action=start-closing][data-id="'+sid+'"]').click()
+            page.locator('[data-confirm-driver-close]').click()
             form=page.locator('#blind-closure-form');expect(form).to_be_visible()
             form.locator('[name=inspection_odometer]').fill('1020')
             form.locator('[name=inspection_fuel]').fill('40')

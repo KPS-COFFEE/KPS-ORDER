@@ -96,6 +96,13 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         page.locator('[data-action=shift-refuel]').click()
         page.locator('#modal [name=liters]').fill('12.50')
         page.locator('#modal [name=odometer_km]').fill('1010')
+        page.locator('#modal [name=amount]').fill('25')
+        page.locator('#modal [name=station]').fill('TEST fuel station')
+        page.locator('#modal [name=fueled_at]').fill('2026-10-15T18:00')
+        import io
+        from PIL import Image
+        receipt=io.BytesIO();Image.new('RGB',(12,12),'white').save(receipt,'PNG')
+        page.locator('#modal [name=receipt]').set_input_files({'name':'receipt.png','mimeType':'image/png','buffer':receipt.getvalue()})
         page.locator('#modal button[type=submit]').click()
         expect(page.locator('#modal .vehicle-shift-summary')).to_be_visible()
         page.locator('#modal-close').click()
@@ -107,6 +114,7 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         expect(card_close).to_have_count(1)
         expect(guide_close).to_have_count(1)
         (guide_close if language=='ar' else card_close).click()
+        page.locator('[data-confirm-driver-close]').click()
         form=fill_check(1025,50)
         form.locator('[name=counted]').fill('0')
         form.locator('[name=terminal_total]').fill('0')

@@ -22,6 +22,10 @@ class Inspection(BaseModel):
 
 class Refuel(BaseModel):
     model_config=ConfigDict(extra='forbid')
+    amount_halalas:StrictInt|None=Field(None,ge=0)
+    station:str=Field('',max_length=200)
+    receipt_id:str|None=None
+    fueled_at:str=Field('',max_length=50)
     liters:Decimal=Field(gt=0,le=500,max_digits=7,decimal_places=2)
     odometer_km:StrictInt=Field(ge=0,le=9999999)
     notes:str=Field(default='',max_length=500)

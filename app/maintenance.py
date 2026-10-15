@@ -14,6 +14,12 @@ from . import auth, db
 router = APIRouter(prefix='/api/vehicle-maintenance', tags=['vehicle-maintenance'])
 PERMISSION = 'vehicle_maintenance_manage'
 CATEGORIES = (
+    ('order_problem','مشكلة طلب','Order problem'),
+    ('delay','تأخير','Delay'),
+    ('customer_problem','مشكلة عميل','Customer problem'),
+    ('payment_problem','مشكلة دفع','Payment problem'),
+    ('branch_problem','مشكلة في الفرع','Branch problem'),
+    ('general','أخرى','Other'),
     ('engine', 'المحرك', 'Engine'),
     ('transmission', 'ناقل الحركة', 'Transmission'),
     ('brakes', 'الفرامل', 'Brakes'),
@@ -27,12 +33,13 @@ CATEGORIES = (
     ('scheduled_service', 'الصيانة الدورية', 'Scheduled maintenance'),
     ('other', 'عطل آخر', 'Other fault'),
 )
+DELIVERY_CATEGORIES={'order_problem','delay','customer_problem','payment_problem','branch_problem','general'}
 CATEGORY_CODES = {row[0] for row in CATEGORIES}
 Status = Literal['open', 'in_progress', 'resolved']
 
 
 def participant(user=Depends(auth.current_user)):
-    if user['role'] != 'driver' and not auth.has_permission(user, PERMISSION):
+    if user['role'] not in ('driver','delivery_manager') and not auth.has_permission(user, PERMISSION):
         raise db.error(403, 'ROLE_FORBIDDEN', 'ليس لديك صلاحية بلاغات المركبات والصيانة.')
     return user
 
@@ -45,6 +52,7 @@ def scope(user):
     if user['role'] == 'driver':
         clauses.append('r.driver_id=%s')
         params.append(user['id'])
+    if user['role']=='delivery_manager':clauses.append("r.department='delivery'")
     return clauses, params
 
 
@@ -66,6 +74,9 @@ def record_event(conn, row, user, event_type, details):
 
 class ReportCreate(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    shift_id:str|None=None
+    order_id:str|None=None
+    evidence_id:str|None=None
     branch_id: str = Field(min_length=1, max_length=100)
     category: str = Field(min_length=1, max_length=40)
     vehicle_description: str = Field(min_length=1, max_length=150)
@@ -82,7 +93,7 @@ class ReportCreate(BaseModel):
     @field_validator('*')
     @classmethod
     def safe_text(cls, value):
-        if '\x00' in value:
+        if isinstance(value,str) and '\x00' in value:
             raise ValueError('Invalid text')
         return value
 
@@ -96,7 +107,7 @@ class ReportUpdate(BaseModel):
     @field_validator('note')
     @classmethod
     def safe_note(cls, value):
-        if '\x00' in value:
+        if isinstance(value,str) and '\x00' in value:
             raise ValueError('Invalid text')
         return value
 
@@ -104,7 +115,7 @@ class ReportUpdate(BaseModel):
 @router.get('/options')
 def options(user=Depends(participant)):
     return {'categories': [{'code': code, 'ar': ar, 'en': en} for code, ar, en in CATEGORIES],
-            'can_manage': auth.has_permission(user, PERMISSION), 'can_create': user['role'] == 'driver'}
+            'can_manage': user['role']=='delivery_manager' or auth.has_permission(user, PERMISSION), 'can_create': user['role'] == 'driver'}
 
 
 @router.get('/reports')
@@ -149,11 +160,23 @@ def create_report(body: ReportCreate, request: Request, user=Depends(auth.requir
             raise db.error(404, 'BRANCH_SCOPE_FORBIDDEN', 'الفرع خارج نطاقك المخول.')
 
         def perform():
+            if body.shift_id:
+                from .operations import shift_access
+                shift=conn.execute('SELECT * FROM shifts WHERE id=%s',(body.shift_id,)).fetchone();shift_access(conn,user,shift)
+            if body.evidence_id:
+                from .driver_evidence import validate
+                validate(conn,body.evidence_id,user,body.shift_id)
+            if body.order_id:
+                from .order_support import order_access
+                order_access(conn,user,body.order_id)
             row = conn.execute(
                 'INSERT INTO vehicle_reports(id,brand_id,branch_id,driver_id,category,vehicle_description,vehicle_plate,description) '
                 'VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                 (db.new_id('vr_'), user['brand_id'], body.branch_id, user['id'], body.category,
                  body.vehicle_description, body.vehicle_plate, body.description)).fetchone()
+            department='delivery' if body.category in DELIVERY_CATEGORIES else 'maintenance'
+            conn.execute('UPDATE vehicle_reports SET shift_id=%s,order_id=%s,evidence_id=%s,department=%s WHERE id=%s',(body.shift_id,body.order_id,body.evidence_id,department,row['id']))
+            row.update(shift_id=body.shift_id,order_id=body.order_id,evidence_id=body.evidence_id,department=department)
             record_event(conn, row, user, 'created', {'category': body.category, 'status': 'open'})
             return {'report': row}
 
@@ -163,7 +186,8 @@ def create_report(body: ReportCreate, request: Request, user=Depends(auth.requir
 
 @router.post('/reports/{identifier}/status')
 def update_report(identifier: str, body: ReportUpdate, request: Request,
-                  user=Depends(auth.require_permission(PERMISSION))):
+                  user=Depends(participant)):
+    if user['role']!='delivery_manager' and not auth.has_permission(user,PERMISSION):raise db.error(403,'FORBIDDEN','تحديث البلاغ للإدارة فقط.')
     with db.tx() as conn:
         # Lock before replay and verify current scope. Only one version can win.
         row = report(conn, identifier, user, lock=True)

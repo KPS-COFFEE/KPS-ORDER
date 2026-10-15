@@ -24,7 +24,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
-          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'channel_settlement_allocations', 'custody_transfers',
+          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'channel_settlement_allocations', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports', 'manager_financial_matches',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
@@ -33,7 +33,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
           'performance_provinces', 'performance_province_branches', 'province_performance_policies',
           'closure_drafts', 'report_renderings', 'report_notifications',
-          'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations', 'vehicle_reports', 'vehicle_report_events',
+          'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations', 'driver_evidence', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
           'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings')
 AUTH_TABLES = {'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
@@ -60,10 +60,10 @@ def _encode(value) -> bytes:
 def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
-    direct = {'driver_float_requests','driver_float_decisions','manager_financial_matches','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
-              'report_notifications', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
+              'report_notifications', 'driver_evidence', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
               'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)

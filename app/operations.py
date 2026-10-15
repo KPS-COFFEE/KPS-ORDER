@@ -360,6 +360,9 @@ def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(
             log=dict(s.get('vehicle_log') or {})
             floor=max([log.get('start',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
             if body.odometer_km<floor:fail(422,'قراءة العداد أقل من آخر قراءة مسجلة')
+            if body.receipt_id:
+                from .driver_evidence import validate
+                validate(c,body.receipt_id,user,sid)
             entry={**shift_vehicle.stamp(c,user,body),'id':uid()}
             log['refuels']=[*log.get('refuels',[]),entry]
             c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
@@ -372,6 +375,8 @@ def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
             s=lock_shift(c,sid); shift_access(c,user,s)
+            from .driver_breaks import guard as break_guard
+            break_guard(c,sid)
             if s['status']=='open': c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
             elif s['status']!='closing': fail(409,'الشفت ليس مفتوحا')
             db.audit(c,user['id'],'shift.closing','shift',sid)
@@ -497,6 +502,8 @@ def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_
     return result
 
 def eligible_driver_shift(c,s,order):
+    from .driver_breaks import guard as break_guard
+    if s:break_guard(c,s['id'])
     if not s or s['kind']!='driver' or s['status']!='open' or not s.get('available',True) or s['brand_id']!=order['brand_id'] or order['branch_id'] not in s['branch_ids']:fail(409,'شفت السائق غير مؤهل')
     driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
     if not driver or not driver['active'] or driver['role']!='driver' or driver['brand_id']!=order['brand_id'] or order['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
@@ -510,37 +517,39 @@ class Assignment(OperationBody):
     driver_shift_id:str
     accept_order:bool=False
 
+def assign_in_transaction(c,user,oid,body):
+    o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+    if o['service']!='delivery' or o['preparation_status'] in ('cancelled','rejected','completed') or o.get('completed_at'):fail(409,'الطلب غير قابل للإسناد')
+    from .order_amendments import guard
+    guard(c,o,require_branch=False)
+    s=lock_shift(c,body.driver_shift_id)
+    if not s or s['kind']!='driver' or s['status']!='open' or s['brand_id']!=o['brand_id'] or o['branch_id'] not in s['branch_ids']:fail(409,'السائق غير مؤهل أو شفته غير مفتوح')
+    driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
+    if not driver or not driver['active'] or driver['role']!='driver' or o['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
+    manager=lock_shift(c,s['manager_shift_id'])
+    if not manager or manager['status']!='open':fail(409,'شفت المدير غير مفتوح')
+    eligible_driver_shift(c,s,o)
+    if user['role']=='delivery_manager' and manager['user_id']!=user['id']:fail(403,'الشفت تابع لمدير آخر')
+    if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
+    if body.accept_order and o['preparation_status']=='new':
+        if o['customer'].get('requires_operational_confirmation') and not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' AND details->>'result'='reached'",(oid,)).fetchone():
+            raise db.error(409,'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED','تتطلب سياسة الطلب اتصالًا تشغيليًا موثقًا قبل القبول والإسناد.')
+        c.execute("UPDATE orders SET preparation_status='accepted' WHERE id=%s",(oid,))
+        db.event(c,oid,user['id'],'preparation.accepted',{'previous':'new','reason':'Accepted with driver assignment'})
+        db.audit(c,user['id'],'order.preparation','order',oid,{'from':'new','to':'accepted','reason':'Accepted with driver assignment'})
+    tid=uid(); c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by) VALUES(%s,%s,%s,%s,%s)',(tid,oid,s['user_id'],s['id'],user['id']))
+    c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(oid,))
+    db.event(c,oid,user['id'],'task.assigned',{'task_id':tid,'driver_id':s['user_id']})
+    db.audit(c,user['id'],'task.assign','order',oid,{'task_id':tid,'shift_id':s['id']})
+    return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
+
 @router.post('/orders/{oid}/assign')
 def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff')
     if not auth.has_permission(user,'delivery_assign'):
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إسناد الطلبات متوقفة لحسابك.')
     with db.tx() as c:
-        def perform():
-            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
-            if o['service']!='delivery' or o['preparation_status'] in ('cancelled','rejected','completed') or o.get('completed_at'):fail(409,'الطلب غير قابل للإسناد')
-            from .order_amendments import guard
-            guard(c,o,require_branch=False)
-            s=lock_shift(c,body.driver_shift_id)
-            if not s or s['kind']!='driver' or s['status']!='open' or s['brand_id']!=o['brand_id'] or o['branch_id'] not in s['branch_ids']:fail(409,'السائق غير مؤهل أو شفته غير مفتوح')
-            driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
-            if not driver or not driver['active'] or driver['role']!='driver' or o['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
-            manager=lock_shift(c,s['manager_shift_id'])
-            if not manager or manager['status']!='open':fail(409,'شفت المدير غير مفتوح')
-            eligible_driver_shift(c,s,o)
-            if user['role']=='delivery_manager' and manager['user_id']!=user['id']:fail(403,'الشفت تابع لمدير آخر')
-            if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
-            if body.accept_order and o['preparation_status']=='new':
-                if o['customer'].get('requires_operational_confirmation') and not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' AND details->>'result'='reached'",(oid,)).fetchone():
-                    raise db.error(409,'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED','تتطلب سياسة الطلب اتصالًا تشغيليًا موثقًا قبل القبول والإسناد.')
-                c.execute("UPDATE orders SET preparation_status='accepted' WHERE id=%s",(oid,))
-                db.event(c,oid,user['id'],'preparation.accepted',{'previous':'new','reason':'Accepted with driver assignment'})
-                db.audit(c,user['id'],'order.preparation','order',oid,{'from':'new','to':'accepted','reason':'Accepted with driver assignment'})
-            tid=uid(); c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by) VALUES(%s,%s,%s,%s,%s)',(tid,oid,s['user_id'],s['id'],user['id']))
-            c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(oid,))
-            db.event(c,oid,user['id'],'task.assigned',{'task_id':tid,'driver_id':s['user_id']})
-            db.audit(c,user['id'],'task.assign','order',oid,{'task_id':tid,'shift_id':s['id']})
-            return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
+        def perform():return assign_in_transaction(c,user,oid,body)
         return mutate(c,user,request,'order.assign:'+oid,body.model_dump(),perform)
 
 @router.get('/tasks')
@@ -1186,6 +1195,8 @@ def set_shift_availability(sid:str,body:AvailabilityUpdate,request:Request,user=
         def perform():
             current=lock_shift(c,sid);shift_access(c,user,current)
             if current['kind']!='driver' or current['status']!='open':fail(409,'التوفر يخص شفت سائق مفتوح فقط')
+            from .driver_breaks import guard as break_guard
+            break_guard(c,sid)
             c.execute('UPDATE shifts SET available=%s WHERE id=%s',(body.available,sid))
             db.audit(c,user['id'],'shift.availability','shift',sid,{'available':body.available})
             return {'shift_id':sid,'available':body.available}

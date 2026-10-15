@@ -282,3 +282,10 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 .driver-contact-dialog{display:grid;gap:14px}.driver-contact-dialog .messages{min-height:100px;max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:12px}.driver-contact-dialog .message{padding:10px;margin-bottom:8px;background:var(--bg);border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere}.driver-message-presets{display:flex;flex-wrap:wrap;gap:8px}.driver-message-presets button{font-size:13px;text-align:start;flex:1 1 180px}.driver-contact-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.whatsapp-button{background:#176646;color:white}.driver-contact-state{font-size:13px;color:var(--muted)}.task-card .driver-contact-button{width:100%}@media(max-width:500px){.driver-contact-actions{grid-template-columns:1fr}}
 
 .driver-image-inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.driver-image-preview:not([hidden]){display:flex;align-items:center;gap:12px}.driver-image-preview img,.driver-chat-image{max-width:100%;width:240px;max-height:220px;object-fit:contain;border-radius:10px}.driver-chat-image{display:block;margin:8px 0}.driver-image-inputs input{max-width:100%}
+
+/* Driver home: comfortable touch targets without changing manager screens. */
+.driver-home-tasks .actions {display:flex;flex-wrap:wrap;gap:12px}
+.driver-home-tasks .actions button,.driver-home-tasks .button,.driver-shift-guidance button {min-height:48px}
+@media(max-width:600px){.driver-home-tasks{grid-template-columns:1fr}.driver-home-tasks .actions button{flex:1 1 45%}.driver-home-summary .data-grid{grid-template-columns:1fr 1fr}}
+
+.driver-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.driver-tools button,.driver-offer button{min-height:48px}button.danger{background:#b42318;color:#fff;border-color:#b42318}button.danger:hover{background:#8f1d14}.driver-break-state{border:2px solid #c46a10}

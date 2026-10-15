@@ -28,6 +28,8 @@ _PROVIDER_SECRETS = (
 )
 _TEST_DEFAULTS = {
     'APP_ENV': 'testing',
+    'DISPATCH_OFFER_ACCEPT_ENABLED': 'false',
+    'DISPATCH_AUTO_ASSIGN_ENABLED': 'false',
     'PUBLIC_BASE_URL': 'http://testserver',
     'APP_ALLOWED_HOSTS': 'testserver,localhost,127.0.0.1',
     'SESSION_COOKIE_SECURE': 'false',

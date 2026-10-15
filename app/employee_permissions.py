@@ -137,8 +137,10 @@ ROUTES = {
              'revoke_invitation': 'drivers_manage', 'register_driver_vehicle': 'vehicle_register'},
     'catalog': {'nearest_branches': 'delivery_assign',
                 'branch_product_availability': {'branch_manager': 'branch_availability', 'admin': 'products_manage'}},
-    'maintenance': {name: {'driver': 'vehicle_faults_report', 'admin': 'vehicle_maintenance_manage'}
+    'maintenance': {name: {'delivery_manager':'support_manage','driver': 'vehicle_faults_report', 'admin': 'vehicle_maintenance_manage'}
                     for name in ('options', 'list_reports', 'report_detail', 'create_report', 'update_report')},
+    'driver_breaks': {'request_break':'shifts_open','configure':'drivers_availability','listing':{'delivery_manager':'drivers_availability'},'change':{'delivery_manager':'drivers_availability'}},
+    'smart_dispatch': {'offer':'delivery_assign','auto_assign':'delivery_assign','expire':'delivery_assign','decide':'tasks_update','inbox':'tasks_view'},
     'fleet': {name: 'vehicle_maintenance_manage' for name in (
         'vehicles', 'options', 'report', 'vehicle', 'export', 'detail', 'correct')},
     'branch_printing': {name: 'branch_printers_manage' for name in (

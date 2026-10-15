@@ -689,6 +689,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
 
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
+        driver.locator('[data-confirm-driver-close]').click()
         expect(driver.locator('#blind-closure-form')).to_be_visible()
         expect(driver.locator('#modal-body')).not_to_contain_text('الرصيد المتوقع')
         expect(driver.locator('#modal-body')).to_contain_text('الكاش الموجود معك')
