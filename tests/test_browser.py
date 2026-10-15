@@ -586,13 +586,13 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
         assert conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()==before
 
 
-def _inspection_payload(km=1000,fuel=75):
+def _inspection_payload(km=1000,fuel=100):
     """Explicit synthetic inspection for journeys that open a driver shift."""
     from app.shift_vehicle import CHECKS
     return {'odometer_km':km,'fuel_percent':fuel,'checks':{key:'ok' for key in CHECKS},'notes':''}
 
 
-def _fill_closure_inspection(page,km=1025,fuel=50):
+def _fill_closure_inspection(page,km=1025,fuel=100):
     """Use the driver's required ending-inspection controls before submission."""
     from app.shift_vehicle import CHECKS
     form=page.locator('#blind-closure-form')

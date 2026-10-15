@@ -94,7 +94,7 @@ def test_hafar_cannot_use_branch_bag_and_revoked_branch_cannot_confirm(ops):
     post('driver',f'/api/shifts/{driver}/closing')
     body={'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'ZERO','closure':True}
     from app.shift_vehicle import CHECKS
-    post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1025,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS}},'handover':{'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','reference':'ZERO'}},status=403)
+    post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1025,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}},'handover':{'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','reference':'ZERO'}},status=403)
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     _,tid=submit_cash(post,driver,manager,branch=True,reference='ZERO')
     with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-branch'")
@@ -151,7 +151,9 @@ def test_delegated_closure_notifies_owner_and_preserves_receipt_gate(ops,counted
     body={'terminal_total_halalas':0,'counted_halalas':counted,'handover_halalas':counted-retained,'retained_halalas':retained,
           'exception_reason':'TEST driver unavailable',
           'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST DELEGATED'}}
-    # Raw client: no invented vehicle inspection from fixture.
+    # Raw client: delegated closure now also requires actual FULL inspection.
+    from tests.test_shift_vehicle import inspection
+    body['vehicle_inspection']=inspection(1025,100)
     def submit(who,data,key,status):
         r=actor(who).post(f'/api/shifts/{driver}/submit',json=data,headers={'Idempotency-Key':key})
         assert r.status_code==status,r.text
@@ -168,7 +170,7 @@ def test_delegated_closure_notifies_owner_and_preserves_receipt_gate(ops,counted
         t=c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()
         assert t['status']=='pending' and t['amount_halalas']==counted-retained
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
-        assert 'end' not in s['vehicle_log'] and s['vehicle_log']['end_exception']['recorded_by']=='ops-manager'
+        assert s['vehicle_log']['end']['fuel_percent']==100 and s['vehicle_log']['end_exception']['recorded_by']=='ops-manager'
     post('manager',f"/api/custody/{t['id']}/confirm")
     r=post('manager',f'/api/shifts/{driver}/approve',reason,key='approve-exception-once')
     assert post('manager',f'/api/shifts/{driver}/approve',reason,key='approve-exception-once')==r
@@ -194,7 +196,7 @@ def test_atomic_driver_submission_rolls_back_bad_handover_and_routes_actual_rece
     manager,driver=shifts()
     post('driver',f'/api/shifts/{driver}/closing')
     from app.shift_vehicle import CHECKS
-    body={'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':50,'checks':{k:'ok' for k in CHECKS}},
+    body={'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}},
           'handover':{'recipient_user_id':'ops-other','reference':'TEST BAD'}}
     post('driver',f'/api/shifts/{driver}/submit',body,status=422)
     with db.tx() as c:

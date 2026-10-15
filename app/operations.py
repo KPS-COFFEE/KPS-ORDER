@@ -246,6 +246,8 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
             if body.kind=='driver':
                 c.execute('UPDATE shifts SET permanent_float=%s WHERE id=%s',(db.json(permanent_float) if permanent_float else None,sid))
+                from .fuel_exceptions import consume
+                consume(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),body.vehicle_inspection,'start',target.get('vehicle') or {})
                 vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
                 c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
             for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
@@ -418,12 +420,9 @@ def submit_close_in_tx(c,user,sid,body):
             handover,retained=split(s,body.counted_halalas)
             if (body.handover_halalas,body.retained_halalas)!=(handover,retained):fail(422,'مبلغ التسليم يساوي الكاش المعدود بعد استبعاد العهدة الثابتة؛ لا يمكن تغيير العهدة')
         if user['role']=='driver' and body.handover is None:fail(422,'سجل تسليم النقد لمدير التوصيل مع التقفيلة')
-        if body.vehicle_inspection is not None or not delegated:
-            shift_vehicle.finish(c,user,s,body.vehicle_inspection)
-        else:
-            log=dict(s.get('vehicle_log') or {})
-            log['end_exception']={'reason':body.exception_reason.strip(),'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
-            c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
+        shift_vehicle.finish(c,user,s,body.vehicle_inspection)
+        if delegated:
+            c.execute("UPDATE shifts SET vehicle_log=jsonb_set(vehicle_log, '{end_exception}', %s) WHERE id=%s",(db.json({'reason':body.exception_reason.strip(),'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}),sid))
     values=body.model_dump(exclude={'vehicle_inspection','handover','exception_reason'});values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
     if s['kind']=='driver':values.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas))
     if s['kind']=='driver':values['payment_terminal']=c.execute('SELECT payment_terminal FROM users WHERE id=%s',(s['user_id'],)).fetchone()['payment_terminal']
@@ -926,6 +925,7 @@ def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user)):
         return mutate(c,user,request,'custody.confirm:'+cid,{},perform)
 
 class DriverClose(OperationBody):
+    vehicle_inspection: shift_vehicle.Inspection|None=None
     terminal_total_halalas: StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     received_halalas: StrictInt=Field(ge=0,le=MAX_HALALAS)
     counted_halalas: StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
@@ -959,7 +959,7 @@ def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(au
                 submit_close_in_tx(c,user,sid,ClosureSubmit(
                     terminal_total_halalas=body.terminal_total_halalas,counted_halalas=body.counted_halalas,handover_halalas=body.received_halalas,
                     retained_halalas=body.counted_halalas-body.received_halalas,
-                    exception_reason=body.exception_reason))
+                    vehicle_inspection=body.vehicle_inspection,exception_reason=body.exception_reason))
                 s=lock_shift(c,sid)
             elif body.counted_halalas is not None:
                 fail(422,'المعدود المرسل محفوظ؛ أعد التقفيلة للتصحيح عند الحاجة')

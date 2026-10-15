@@ -94,3 +94,10 @@ separate restoration schema. This does not access operational databases.
   including public ordering disabled and no live customer messaging.
 - Keep smart dispatch disabled; scheduler/reoffer automation and GPS-based ranking
   require a future approved rollout.
+
+
+## FULL fuel policy — owner decision, 15 October 2026
+
+Opening and submitting a driver shift now require a 100% actual fuel reading, including delegated closure. Lower readings require one single-use approval by the responsible delivery manager, with current branch authorization rechecked. Exactly three reasons are accepted: Aldrees unavailable, balance exhausted, or refuelling limit exhausted before FULL. The request binds the driver, assigned vehicle snapshot, manager shift, phase, actual odometer and fuel reading. Closing approval additionally binds the exact driver shift. Approval and consumption are audited; transactions roll back together with financial/inspection validation. Existing historical readings and approvals remain untouched.
+
+UI: “Is the tank full? Yes / No”, three translated reasons, request approval and refresh status. Manager inbox shows driver, vehicle, phase and actual readings with approve/reject. No financial changes; no live deployment or public ordering activation. New PostgreSQL acceptance is in tests/test_fuel_exceptions.py. Successful legacy journey fixtures now use FULL; historical fixture snapshots remain unchanged.

@@ -139,6 +139,7 @@ ROUTES = {
                 'branch_product_availability': {'branch_manager': 'branch_availability', 'admin': 'products_manage'}},
     'maintenance': {name: {'delivery_manager':'support_manage','driver': 'vehicle_faults_report', 'admin': 'vehicle_maintenance_manage'}
                     for name in ('options', 'list_reports', 'report_detail', 'create_report', 'update_report')},
+    'fuel_exceptions': {'request_exception':'shifts_open','listing':{'delivery_manager':'shifts_approve'},'decide':'shifts_approve'},
     'driver_breaks': {'request_break':'shifts_open','configure':'drivers_availability','listing':{'delivery_manager':'drivers_availability'},'change':{'delivery_manager':'drivers_availability'}},
     'smart_dispatch': {'offer':'delivery_assign','auto_assign':'delivery_assign','expire':'delivery_assign','decide':'tasks_update','inbox':'tasks_view'},
     'fleet': {name: 'vehicle_maintenance_manage' for name in (

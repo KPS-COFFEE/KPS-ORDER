@@ -11,7 +11,7 @@ pytestmark = pytest.mark.postgres
 
 def shifts(call):
     manager=call('manager','POST','/api/shifts',{'kind':'manager','branch_ids':['v5-a']}).json()['shift']['id']
-    return call('manager','POST','/api/shifts',{'kind':'driver','user_id':'v5-driver','branch_ids':['v5-a'],'manager_shift_id':manager,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':75,'checks':{k:'ok' for k in ('tyres','brakes','lights','oil','damage','cleanliness')},'notes':''}}).json()['shift']['id']
+    return call('manager','POST','/api/shifts',{'kind':'driver','user_id':'v5-driver','branch_ids':['v5-a'],'manager_shift_id':manager,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':100,'checks':{k:'ok' for k in ('tyres','brakes','lights','oil','damage','cleanliness')},'notes':''}}).json()['shift']['id']
 
 
 def test_temporary_delivery_without_branch_actions_and_full_mode_preserved(v5):

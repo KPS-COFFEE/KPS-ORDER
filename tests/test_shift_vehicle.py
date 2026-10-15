@@ -5,7 +5,7 @@ from app import db, shift_vehicle
 from tests.test_operations import ops, delivered, close_driver
 
 
-def inspection(km=1000,fuel=75):
+def inspection(km=1000,fuel=100):
     return dict(odometer_km=km,fuel_percent=fuel,checks={k:'ok' for k in shift_vehicle.CHECKS},notes='')
 
 @pytest.mark.postgres
@@ -56,7 +56,7 @@ def test_inspection_validation_and_legacy_shift_preservation(ops):
     with db.tx() as c:
         c.execute("UPDATE shifts SET vehicle_log='{}' WHERE id=%s",(driver,))
     post('driver','/api/shifts/'+driver+'/closing')
-    post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':inspection(2000,25),'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST-LEGACY'}})
+    post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':inspection(2000,100),'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST-LEGACY'}})
     detail=actor('driver').get('/api/shifts/'+driver).json()
     assert detail['vehicle_summary']['distance_km'] is None
     assert 'start' not in detail['shift']['vehicle_log']
@@ -87,6 +87,7 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         page.locator('[data-action=open-shift]').click()
         form=fill_check(1000,75)
         expect(form.locator('.fuel-needle')).to_have_attribute('style','transform: rotate(135deg);')
+        form.locator('[name=fuel_full]').select_option('yes')
         for width in (390,1280):
             page.set_viewport_size({'width':width,'height':900})
             _capture(page,'TEST_ONLY_shift_inspection_'+language+'_'+str(width))
@@ -115,7 +116,7 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         expect(guide_close).to_have_count(1)
         (guide_close if language=='ar' else card_close).click()
         page.locator('[data-confirm-driver-close]').click()
-        form=fill_check(1025,50)
+        form=fill_check(1025,100)
         form.locator('[name=counted]').fill('0')
         form.locator('[name=terminal_total]').fill('0')
         form.locator('[name=confirm_closure]').check()

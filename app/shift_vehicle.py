@@ -11,6 +11,7 @@ class Inspection(BaseModel):
     model_config=ConfigDict(extra='forbid')
     odometer_km:StrictInt=Field(ge=0,le=9999999)
     fuel_percent:StrictInt=Field(ge=0,le=100)
+    fuel_exception_id:str|None=None
     checks:dict[str,Literal['ok','issue']]
     notes:str=Field(default='',max_length=1500)
     @model_validator(mode='after')
@@ -59,6 +60,8 @@ def start(c,user,target,inspection):
 
 def finish(c,user,shift,inspection):
     if inspection is None:raise db.error(422,'VEHICLE_INSPECTION_REQUIRED','أكمل فحص نهاية الشفت وقراءة العداد والبنزين قبل إرسال التقفيلة.')
+    from .fuel_exceptions import consume
+    consume(c,user,shift,inspection,'end',(shift.get('vehicle_log') or {}).get('vehicle') or {})
     log=dict(shift.get('vehicle_log') or {})
     floor=max([log.get('start',{}).get('odometer_km',0)]+[x['odometer_km'] for x in log.get('refuels',[])])
     if inspection.odometer_km<floor:raise db.error(422,'ODOMETER_DECREASE','قراءة النهاية لا تقل عن البداية أو آخر تعبئة.')

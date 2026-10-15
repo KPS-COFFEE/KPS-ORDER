@@ -9,7 +9,7 @@ from app import admin, auth, catalog, db, performance, shift_vehicle
 
 
 def synthetic_vehicle_inspection(odometer_km=1000):
-    return {'odometer_km': odometer_km, 'fuel_percent': 75,
+    return {'odometer_km': odometer_km, 'fuel_percent': 100,
             'checks': {item: 'ok' for item in shift_vehicle.CHECKS}, 'notes': ''}
 
 

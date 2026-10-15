@@ -155,6 +155,7 @@ def test_delegated_closure_concurrent_replay_notifies_owner_once_and_is_immutabl
     invalid = operations.ClosureSubmit(terminal_total_halalas=0, counted_halalas=900, handover_halalas=800, retained_halalas=100)
     assert outcome(lambda: operations.submit_close(driver, invalid, request('race-close-no-reason'), user))[0] == 422
     body = operations.ClosureSubmit(terminal_total_halalas=0, counted_halalas=900, handover_halalas=800, retained_halalas=100,
+        vehicle_inspection=__import__('app.shift_vehicle',fromlist=['Inspection']).Inspection(odometer_km=1025,fuel_percent=100,checks={k:'ok' for k in ('tyres','brakes','lights','oil','damage','cleanliness')}),
         exception_reason='Driver unavailable; actual count witnessed',
         handover=operations.ClosureHandover(recipient_user_id=user['id'], to_shift_id=manager, reference='BAG-WITNESSED'))
     results = race([lambda: operations.submit_close(driver, body, request('race-submit-reconnect'), user)] * 4)
