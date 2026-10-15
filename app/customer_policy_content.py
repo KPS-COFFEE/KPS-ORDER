@@ -88,7 +88,7 @@ SECTIONS = {
 
 def render(kind, lang):
     en = lang == 'en'
-    title = {'privacy':('سياسة الخصوصية','Privacy policy'), 'terms':('الشروط والأحكام','Terms and conditions'), 'refunds':('سياسة الاسترجاع والإلغاء','Refund and cancellation policy')}[kind][en]
+    title = {'privacy':('سياسة الخصوصية','Privacy policy'), 'terms':('الشروط والأحكام','Terms and conditions'), 'refunds':('سياسة الاسترجاع والاسترداد','Returns and refunds')}[kind][en]
     sections = ''.join(f'<section><h2>{escape(s[en])}</h2><p>{escape(s[2+en])}</p></section>' for s in SECTIONS[kind])
     controller = ''
     if kind == 'privacy':
