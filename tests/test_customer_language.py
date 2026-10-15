@@ -109,9 +109,13 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
         expect(page.locator('#car-plate')).to_have_value('TEST-ONLY')
         expect(page.locator('#branch-select')).to_have_value('kps-branch-1')
         assert page.evaluate("localStorage.getItem('kps-unconfirmed-basket-v2:kps')") == draft_before
-        assert page.locator('.product-card').evaluate_all("""els=>els.map(el=>({
+        translated_cards = page.locator('.product-card').evaluate_all("""els=>els.map(el=>({
             id:el.dataset.productId,image:el.querySelector('img')?.getAttribute('src'),
-            title:el.querySelector('h3')?.textContent}))""") == source_cards
+            title:el.querySelector('h3')?.textContent}))""")
+        assert [(c['id'], c['image']) for c in translated_cards] == [(c['id'], c['image']) for c in source_cards]
+        assert translated_cards[0]['title'] == 'Cold Brew'
+        assert all(not re.search(r'[\u0600-\u06ff]', c['title']) for c in translated_cards)
+        assert 'Drinks' in page.locator('#categories').inner_text()
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         assert 'Noto Kufi Arabic' in page.locator('body').evaluate('el=>getComputedStyle(el).fontFamily')
         _evidence(page, f'customer-language-en-{width}', language='en', basket='unchanged; source IDs/options retained')
@@ -151,6 +155,9 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
         page.locator('#customer-language').click()
         expect(page.locator('html')).to_have_attribute('lang', 'ar')
         expect(page.locator('#orders-button')).to_have_text('طلباتي')
+        assert page.locator('.product-card').evaluate_all("""els=>els.map(el=>({
+            id:el.dataset.productId,image:el.querySelector('img')?.getAttribute('src'),
+            title:el.querySelector('h3')?.textContent}))""") == source_cards
         page.locator('#customer-language').click()
         page.reload()
         expect(page.locator('html')).to_have_attribute('lang', 'en')
@@ -163,3 +170,4 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
     finally:
         context.close()
         owner_context.close()
+
