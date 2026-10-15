@@ -57,6 +57,12 @@ def resource_budget():
     if name == 'proposed':
         return {'name': name, 'app_cpu_tenths': 20, 'app_memory': 4 * 1024 ** 3,
                 'db_cpu_tenths': 10, 'db_memory': 2 * 1024 ** 3}
+    if name == 'economy':
+        return {'name': name, 'app_cpu_tenths': 10, 'app_memory': 2 * 1024 ** 3,
+                'db_cpu_tenths': 5, 'db_memory': 1024 ** 3}
+    if name == 'medium':
+        return {'name': name, 'app_cpu_tenths': 10, 'app_memory': 2 * 1024 ** 3,
+                'db_cpu_tenths': 10, 'db_memory': 2 * 1024 ** 3}
     raise ValueError('Unknown resource profile; arbitrary budget overrides are prohibited.')
 
 
@@ -917,6 +923,76 @@ def order_fingerprints(db_url):
             'SELECT id,md5(row_to_json(o)::text) fingerprint FROM orders o ORDER BY id').fetchall()}
 
 
+def hosting_report_checks(db_url, origin, workloads):
+    """Read actual reports through the bounded app after restart, outside timed load.
+
+    All fixture writes stay in the existing UUID schema. A real persisted test
+    session exercises normal owner authorization; no dependency override, live
+    identity, provider call or financial mutation is involved.
+    """
+    import io
+    from http.cookies import SimpleCookie
+    from fastapi import Response
+    from app import auth, db, exports
+
+    expected_count = sum(w.concurrency * w.rounds for w in workloads)
+    expected_total = sum(order['total'] for w in workloads for order in w.confirmed)
+    response = Response()
+    with db.tx() as conn:
+        conn.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) "
+                     "VALUES('load-report-owner','TEST report owner','owner','kps',%s)",
+                     (db.json(['kps-branch-1', 'kps-branch-2']),))
+        owner = conn.execute("SELECT * FROM users WHERE id='load-report-owner'").fetchone()
+        auth.establish_session(conn, owner, response)
+        stored = conn.execute('SELECT count(*) orders,coalesce(sum(total_halalas),0)::bigint total_halalas '
+                              'FROM orders').fetchone()
+    cookies = SimpleCookie()
+    for key, value in response.raw_headers:
+        if key.lower() == b'set-cookie':
+            cookies.load(value.decode())
+    # Reports cannot hide writes: order fingerprints must remain identical.
+    before = order_fingerprints(db_url)
+    report = {'expected_orders': expected_count, 'expected_total_halalas': expected_total,
+              'database_orders': stored['orders'], 'database_total_halalas': stored['total_halalas']}
+    with httpx.Client(base_url=origin, cookies={k: v.value for k, v in cookies.items()}, timeout=60) as client:
+        exported = client.get('/api/admin/export')
+        exported.raise_for_status()
+        archive, manifest = exports.verify_archive(exported.content)
+        with archive:
+            orders = json.loads(archive.read('data/orders.json'))
+        report['export'] = {'http_status': exported.status_code, 'checksums_verified': True,
+            'orders': manifest['counts']['orders'], 'totals': manifest['totals'],
+            'archived_order_total_halalas': sum(row['total_halalas'] for row in orders),
+            'archive_bytes': len(exported.content)}
+        report['accounting_reports'] = []
+        for lang in ('ar', 'en'):
+            value = client.get('/api/accounting/reports', params={'lang': lang})
+            value.raise_for_status()
+            data = value.json()
+            entry = {'language': lang, 'http_status': value.status_code,
+                     'uncollected_orders_not_recognized_as_cash_or_card':
+                         all(data['totals'].get(k, 0) == 0 for k in ('cash', 'card', 'total', 'gross'))}
+            for fmt, signature in (('pdf', b'%PDF'), ('xlsx', b'PK')):
+                content = client.get('/api/accounting/reports', params={'lang': lang, 'format': fmt})
+                content.raise_for_status()
+                entry[fmt + '_valid'] = content.content.startswith(signature)
+                if fmt == 'xlsx':
+                    import zipfile
+                    with zipfile.ZipFile(io.BytesIO(content.content)) as workbook:
+                        entry['xlsx_valid'] = entry['xlsx_valid'] and workbook.testzip() is None
+            report['accounting_reports'].append(entry)
+    report['order_fingerprints_preserved'] = before == order_fingerprints(db_url)
+    report['passed'] = (stored['orders'] == expected_count and stored['total_halalas'] == expected_total
+        and manifest['counts']['orders'] == expected_count and manifest['totals']['orders'] == expected_count
+        and manifest['totals']['total_halalas'] == expected_total
+        and sum(row['total_halalas'] for row in orders) == expected_total
+        and manifest['totals']['collected_halalas'] == 0 and manifest['totals']['refunded_halalas'] == 0
+        and report['order_fingerprints_preserved']
+        and all(row['uncollected_orders_not_recognized_as_cash_or_card'] and row['pdf_valid'] and row['xlsx_valid']
+                for row in report['accounting_reports']))
+    return report
+
+
 def inspect_test_container(container, base_url):
     """Mutations are restricted to the explicit, local synthetic PG service."""
     inspected = json.loads(subprocess.check_output(['docker', 'inspect', container], text=True))[0]
@@ -1281,9 +1357,16 @@ def main():
             ready = client.get('/ready').json()
             report['recovery']['revision_matches'] = ready['revision'] == report['head']
             report['recovery']['migration_preservation_verified'] = ready['data_preservation']['verified']
+        hosting_reports_ok = True
+        if budget['name'] in {'economy', 'medium'}:
+            report['post_recovery_reports'] = hosting_report_checks(isolated, origin, workloads)
+            hosting_reports_ok = report['post_recovery_reports']['passed']
+            report['runtime_resource_profile']['post_report_ownership'] = resource_profile.observe(
+                application_root_pid(process), restarted_worker_pids)
         fault_drills_ok = not args.database_container or report['database_fault_drills'].get('passed') is True
-        if all(stage['passed'] for stage in report['stages']) and len(report['stages']) == len(levels) and report['recovery']['revision_matches'] and report['recovery']['migration_preservation_verified'] and report['recovery']['confirmed_orders_preserved'] and report['recovery']['worker_count_matches'] and fault_drills_ok:
-            report['status'] = ('PASS_PROPOSED_RESOURCE_GATE' if budget['name'] == 'proposed' else
+        if all(stage['passed'] for stage in report['stages']) and len(report['stages']) == len(levels) and report['recovery']['revision_matches'] and report['recovery']['migration_preservation_verified'] and report['recovery']['confirmed_orders_preserved'] and report['recovery']['worker_count_matches'] and fault_drills_ok and hosting_reports_ok:
+            report['status'] = ('PASS_CANDIDATE_RESOURCE_GATE' if budget['name'] in {'economy', 'medium'} else
+                               'PASS_PROPOSED_RESOURCE_GATE' if budget['name'] == 'proposed' else
                                'PASS_REPRESENTATIVE_RESOURCE_GATE') if resource_profile else 'PASS_LOCAL_ENGINEERING_GATE'
             report['reason'] = 'All requested load levels and PostgreSQL business invariants passed; production hardware/provider validation remains separate.'
         elif resource_profile:
@@ -1314,7 +1397,7 @@ def main():
             report['status'] = 'NOT_READY'
         report['finished_at'] = datetime.now(timezone.utc).isoformat()
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    return 0 if report['status'] in {'PASS_LOCAL_ENGINEERING_GATE', 'PASS_REPRESENTATIVE_RESOURCE_GATE', 'PASS_PROPOSED_RESOURCE_GATE'} else 1
+    return 0 if report['status'] in {'PASS_LOCAL_ENGINEERING_GATE', 'PASS_REPRESENTATIVE_RESOURCE_GATE', 'PASS_PROPOSED_RESOURCE_GATE', 'PASS_CANDIDATE_RESOURCE_GATE'} else 1
 
 
 if __name__ == '__main__':

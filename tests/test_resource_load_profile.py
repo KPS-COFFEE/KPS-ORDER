@@ -48,6 +48,41 @@ def test_proposal_runs_do_not_replace_current_budget_or_reduce_workload():
         assert option not in section
 
 
+@pytest.mark.parametrize('name,db_cpu,db_memory', [
+    ('economy', 5, 1024 ** 3), ('medium', 10, 2 * 1024 ** 3)])
+def test_hosting_candidates_require_their_exact_kernel_limits_and_never_certify_current(
+        budgets, monkeypatch, name, db_cpu, db_memory):
+    monkeypatch.setenv('KPS_LOAD_RESOURCE_PROFILE', name)
+    with pytest.raises(ValueError):
+        profile(budgets)
+    (budgets.app / 'cpu.max').write_text('100000 100000')
+    (budgets.app / 'memory.max').write_text(str(2 * 1024 ** 3))
+    (budgets.db / 'cpu.max').write_text(f'{db_cpu * 10000} 100000')
+    (budgets.db / 'memory.max').write_text(str(db_memory))
+    budgets.inspected['HostConfig'].update(NanoCpus=db_cpu * 100_000_000,
+                                         Memory=db_memory, MemorySwap=db_memory)
+    configured = profile(budgets)
+    assert configured.budget['name'] == name
+    (budgets.app / 'cgroup.procs').write_text('100002\n100003\n100004\n')
+    configured.observe(100002, [100003, 100004])
+    # A later quota escape must invalidate the candidate just like the current plan.
+    (budgets.db / 'cpu.max').write_text('200000 100000')
+    with pytest.raises(ValueError):
+        configured.observe(100002, [100003, 100004])
+
+
+def test_economy_precedes_medium_and_neither_reduces_the_retained_workload():
+    workflow = Path(__file__).resolve().parents[1] / '.github/workflows/hosting-capacity.yml'
+    value = workflow.read_text()
+    assert "needs: economy" in value
+    assert "needs.economy.result == 'failure'" in value
+    assert value.count('repetition: [1, 2]') == 2
+    assert '--cpus 0.5 --memory 1g --memory-swap 1g' in value
+    assert '--cpus 1 --memory 2g --memory-swap 2g' in value
+    for option in ('--levels', '--rounds', '--p95-ms', '--p99-ms', '--request-timeout'):
+        assert option not in value
+
+
 @pytest.mark.parametrize('latency,failed', [(4999.999, False), (5000, True), (5000.001, True),
                                           (None, True), (float('nan'), True), (float('inf'), True)])
 def test_owner_p95_limit_is_strict_and_invalid_measurements_cannot_pass(latency, failed):
