@@ -10,7 +10,6 @@ def test_full_gate_manager_only_exact_readings_and_single_use(ops,reason):
     actor,post,order,shifts=ops
     mid=post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
     opening={'kind':'driver','manager_shift_id':mid,'vehicle_inspection':inspection(1000,65)}
-    post('driver','/api/shifts',opening,status=409)
     request={'phase':'start','manager_shift_id':mid,'reason':reason,'fuel_percent':65,'odometer_km':1000}
     post('driver','/api/fuel-exceptions',{**request,'reason':'other'},status=422)
     r=post('driver','/api/fuel-exceptions',request,key='fuel-request-once')
@@ -76,8 +75,16 @@ def test_mobile_full_exception_request_and_manager_approval(live_app,chromium_br
         page.locator('#navigation [data-page=shifts]').click();page.locator('[data-action=open-shift]').click()
         form=page.locator('#modal form');form.locator('[name=manager_shift_id]').select_option(mid)
         form.locator('[name=inspection_odometer]').fill('1000');form.locator('[name=fuel_full]').select_option('no')
-        form.locator('[name=inspection_fuel]').fill('70');form.locator('[name=fuel_reason]').select_option('aldrees_limit_reached')
+        form.locator('[name=inspection_fuel]').fill('70')
         for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
+        expect(form.locator('.fuel-start-guidance')).to_be_visible()
+        form.locator('button[type=submit]').click();expect(page.locator('#modal')).not_to_be_visible()
+        page.locator('#navigation [data-page=tasks]').click()
+        expect(page.locator('[data-fuel-ready]')).to_be_visible()
+        page.locator('[data-fuel-ready]').click()
+        form=page.locator('#modal form')
+        form.locator('[name=inspection_odometer]').fill('1005');form.locator('[name=fuel_full]').select_option('no')
+        form.locator('[name=inspection_fuel]').fill('65');form.locator('[name=fuel_reason]').select_option('aldrees_limit_reached')
         form.locator('[data-action=fuel-request]').click()
         expect(form.locator('.fuel-status')).to_contain_text('بانتظار' if language=='ar' else 'Waiting')
         _capture(page,'TEST_ONLY_fuel_pending_'+language)
@@ -92,8 +99,46 @@ def test_mobile_full_exception_request_and_manager_approval(live_app,chromium_br
         with db.tx() as c:
             r=c.execute('SELECT status,consumed_shift_id FROM fuel_exceptions WHERE driver_id=%s',(driver['id'],)).fetchone()
             assert r['status']=='consumed' and r['consumed_shift_id']
+            log=c.execute('SELECT vehicle_log FROM shifts WHERE id=%s',(r['consumed_shift_id'],)).fetchone()['vehicle_log']
+            assert log['start']['fuel_percent']==70 and log['fuel_readiness']['fuel_percent']==65
         assert not errors and not merrors
     finally:ctx.close();mctx.close()
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('exception',[False,True])
+def test_low_fuel_opens_shift_but_blocks_all_assignment_until_ready(ops,exception):
+    actor,post,order,shifts=ops
+    mid=post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
+    body={'kind':'driver','manager_shift_id':mid,'vehicle_inspection':inspection(1000,40)}
+    s=post('driver','/api/shifts',body,key='open-for-refuel')['shift'];sid=s['id']
+    assert s['status']=='open' and not s['available'] and s['vehicle_log']['awaiting_refuel']
+    assert post('driver','/api/shifts',body,key='open-for-refuel')['shift']['id']==sid
+    oid=order()
+    post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':sid},status=409)
+    post('manager','/api/shifts/'+sid+'/availability',{'available':True},status=409)
+    # The fuel gate remains authoritative even if an unrelated workflow flips available.
+    with db.tx() as c:c.execute('UPDATE shifts SET available=true WHERE id=%s',(sid,))
+    post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':sid},status=409)
+    ready={'odometer_km':1005,'fuel_percent':100}
+    post('driver2','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,status=403)
+    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,status=409)
+    if exception:
+        r=post('driver','/api/fuel-exceptions',{'phase':'activation','shift_id':sid,'manager_shift_id':mid,'reason':'aldrees_unavailable','fuel_percent':35,'odometer_km':1005})
+        ready.update(fuel_percent=35,fuel_exception_id=r['id'])
+        post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,status=409)
+        post('manager','/api/fuel-exceptions/'+r['id'],{'decision':'approved'})
+    else:
+        post('driver','/api/shifts/'+sid+'/refuel',{'liters':'20','odometer_km':1005})
+    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',{**ready,'odometer_km':999},status=422)
+    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,key='fuel-ready-once')
+    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,key='fuel-ready-once')
+    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,status=409)
+    post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':sid})
+    with db.tx() as c:
+        log=c.execute('SELECT vehicle_log FROM shifts WHERE id=%s',(sid,)).fetchone()['vehicle_log']
+        assert log['start']['fuel_percent']==40 and log['start']['odometer_km']==1000
+        assert not log['awaiting_refuel'] and log['fuel_readiness']['odometer_km']==1005
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='fuel.ready' AND entity_id=%s",(sid,)).fetchone()['n']==1
 
 @pytest.mark.postgres
 def test_rejection_vehicle_change_and_revoked_scope_fail_closed(ops):

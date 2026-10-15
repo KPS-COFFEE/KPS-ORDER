@@ -247,9 +247,12 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             if body.kind=='driver':
                 c.execute('UPDATE shifts SET permanent_float=%s WHERE id=%s',(db.json(permanent_float) if permanent_float else None,sid))
                 from .fuel_exceptions import consume
-                consume(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),body.vehicle_inspection,'start',target.get('vehicle') or {})
+                if body.vehicle_inspection and body.vehicle_inspection.fuel_exception_id:
+                    consume(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),body.vehicle_inspection,'start',target.get('vehicle') or {})
                 vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
+                vehicle_log['awaiting_refuel']=body.vehicle_inspection.fuel_percent<100 and not body.vehicle_inspection.fuel_exception_id
                 c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
+                if vehicle_log['awaiting_refuel']:c.execute('UPDATE shifts SET available=false WHERE id=%s',(sid,))
             for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
             db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'previous_carry_halalas':sum(x['amount_halalas'] for x in carryovers),'permanent_float':permanent_float,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
             return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}
@@ -360,7 +363,7 @@ def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(
             if s['kind']!='driver' or s['status'] not in ('open','closing'):fail(409,'تسجيل الوقود متاح لشفت سائق مفتوح أو تحت التقفيلة فقط')
             if user['role'] not in ('driver','owner','delivery_manager'):fail(403,'الصلاحية غير كافية')
             log=dict(s.get('vehicle_log') or {})
-            floor=max([log.get('start',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
+            floor=max([log.get('start',{}).get('odometer_km',0),log.get('fuel_readiness',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
             if body.odometer_km<floor:fail(422,'قراءة العداد أقل من آخر قراءة مسجلة')
             if body.receipt_id:
                 from .driver_evidence import validate
@@ -501,6 +504,8 @@ def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_
     return result
 
 def eligible_driver_shift(c,s,order):
+    from .fuel_exceptions import readiness_guard
+    if s:readiness_guard(s)
     from .driver_breaks import guard as break_guard
     if s:break_guard(c,s['id'])
     if not s or s['kind']!='driver' or s['status']!='open' or not s.get('available',True) or s['brand_id']!=order['brand_id'] or order['branch_id'] not in s['branch_ids']:fail(409,'شفت السائق غير مؤهل')
@@ -1159,6 +1164,8 @@ def save_closure_draft(sid:str,body:ClosureDraft,request:Request,user=Depends(au
         if shift['status'] not in ('open','closing'):fail(409,'لا تعدل مسودة تقفيلة مرسلة أو مقفلة')
         def perform():
             current=lock_shift(c,sid);shift_access(c,user,current)
+            from .fuel_exceptions import readiness_guard
+            if body.available:readiness_guard(current)
             if current['user_id']!=user['id'] or current['status'] not in ('open','closing'):fail(409,'لا تعدل مسودة تقفيلة مرسلة أو مقفلة')
             existing=c.execute('SELECT * FROM closure_drafts WHERE shift_id=%s FOR UPDATE',(sid,)).fetchone()
             if existing and body.revision!=existing['revision']:fail(409,'تغيرت مسودة التقفيلة؛ حدّثها قبل الحفظ')

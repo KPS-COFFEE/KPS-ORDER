@@ -63,7 +63,7 @@ def finish(c,user,shift,inspection):
     from .fuel_exceptions import consume
     consume(c,user,shift,inspection,'end',(shift.get('vehicle_log') or {}).get('vehicle') or {})
     log=dict(shift.get('vehicle_log') or {})
-    floor=max([log.get('start',{}).get('odometer_km',0)]+[x['odometer_km'] for x in log.get('refuels',[])])
+    floor=max([log.get('start',{}).get('odometer_km',0),log.get('fuel_readiness',{}).get('odometer_km',0)]+[x['odometer_km'] for x in log.get('refuels',[])])
     if inspection.odometer_km<floor:raise db.error(422,'ODOMETER_DECREASE','قراءة النهاية لا تقل عن البداية أو آخر تعبئة.')
     # Returned closures retain every earlier ending inspection in the audit trail.
     log['end']=stamp(c,user,inspection)
