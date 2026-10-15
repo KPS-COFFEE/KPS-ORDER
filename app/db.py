@@ -22,7 +22,10 @@ from psycopg_pool import ConnectionPool, PoolClosed, PoolTimeout, TooManyRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 POOL_MIN_SIZE = 2
-POOL_MAX_SIZE = 20
+# Two release workers share a 0.1-CPU / 256-MiB database. Forty backends
+# multiply plan memory and contention instead of adding database CPU.
+# Bound execution concurrency; HTTP load and checkout deadlines are unchanged.
+POOL_MAX_SIZE = 4
 POOL_CHECKOUT_SECONDS = 5.0
 _pools: dict[tuple[int, str], ConnectionPool] = {}
 _pools_lock = threading.Lock()

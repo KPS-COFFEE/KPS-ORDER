@@ -4,7 +4,10 @@ The release Docker command now starts **two Uvicorn web processes in one
 existing Render service**. This is not a second Render instance, a new paid
 service, or a background job worker. PostgreSQL, durable idempotency keys,
 branch receipt counters and existing transactional outboxes remain shared.
-Each process owns its bounded pool (maximum 20 connections each).
+Each process owns its bounded pool (maximum 4 connections each, 8 total).
+The previous 40-backend ceiling saturated the 256-MiB database envelope in
+resource-isolated tests. This bounds database execution concurrency, not HTTP
+users, order count, retries or the unchanged five-second checkout deadline.
 
 The pool retains at most 64 parameterized SQL plans per connection, not rows,
 prices, authorization results or sessions. Every request still reads current

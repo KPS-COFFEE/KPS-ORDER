@@ -146,8 +146,8 @@ def test_real_pool_capacity_is_bounded_and_http_failure_recovers_without_partial
     try:
         for _ in range(db.POOL_MAX_SIZE):
             holders.append(pool.getconn(timeout=5))
-        assert len({conn.info.backend_pid for conn in holders}) == db.POOL_MAX_SIZE == 20
-        assert pool.get_stats()['pool_size'] == 20
+        assert len({conn.info.backend_pid for conn in holders}) == db.POOL_MAX_SIZE == 4
+        assert pool.get_stats()['pool_size'] == 4
         started = time.monotonic()
         ready = client.get('/ready')
         assert ready.status_code == 503 and ready.json()['status'] == 'not_ready'
