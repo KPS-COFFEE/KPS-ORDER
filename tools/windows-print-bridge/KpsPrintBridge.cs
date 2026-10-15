@@ -155,8 +155,9 @@ class KpsPrintBridge {
         string text=Str(line,"text").Trim();
         return text.Length>0 && text.Trim('─').Length==0;
     }
-    static Font LineFont(Dictionary<string,object> line,Font regular,Font bold,Font caption,Font heading) {
+    static Font LineFont(Dictionary<string,object> line,Font regular,Font bold,Font caption,Font heading,Font occasion) {
         string role=Str(line,"role");
+        if(role=="occasion")return occasion;
         if(role=="caption")return caption;
         if(role=="reference" || role=="item")return heading;
         return Bool(line,"bold")?bold:regular;
@@ -198,13 +199,26 @@ class KpsPrintBridge {
                 graphics.DrawString(Str(line,"label"),font,Brushes.Black,labelBox,labelFormat);
                 graphics.DrawString(Str(line,"value"),font,Brushes.Black,valueBox,valueFormat);
             }
-        } else using(var format=LineFormat(ar,Bool(line,"center")))
+        } else using(var format=LineFormat(ar,Bool(line,"center"))) {
+            if(Str(line,"role")=="occasion") {
+                string align=Str(line,"align");
+                format.Alignment=align=="center"?StringAlignment.Center:
+                    ((align=="right")==ar?StringAlignment.Near:StringAlignment.Far);
+            }
             graphics.DrawString(Str(line,"text"),font,Brushes.Black,box,format);
+        }
+    }
+    static Font OccasionFont(Dictionary<string,object> payload) {
+        if(!payload.ContainsKey("occasion_style"))return new Font("Arial",18,FontStyle.Bold);
+        var style=Obj(payload["occasion_style"]);string family=Str(style,"font");
+        if(family!="Arial" && family!="Tahoma" && family!="Times New Roman")family="Arial";
+        float size=style.ContainsKey("size")?Convert.ToSingle(style["size"]):18;
+        return new Font(family,Math.Max(12,Math.Min(32,size)),Bool(style,"bold")?FontStyle.Bold:FontStyle.Regular);
     }
     static void Print(Dictionary<string,object> job) {
         var payload=Obj(job["payload"]);var lines=Lines(payload);bool ar=Str(payload,"language")=="ar";
         int width=Convert.ToInt32(job["paper_mm"])==58?228:315;
-        using(var document=new PrintDocument()) using(var regular=new Font("Arial",11)) using(var bold=new Font("Arial",12,FontStyle.Bold)) using(var caption=new Font("Arial",9)) using(var heading=new Font("Arial",13,FontStyle.Bold)) using(var logo=Logo()) {
+        using(var document=new PrintDocument()) using(var regular=new Font("Arial",11)) using(var bold=new Font("Arial",12,FontStyle.Bold)) using(var caption=new Font("Arial",9)) using(var heading=new Font("Arial",13,FontStyle.Bold)) using(var occasion=OccasionFont(payload)) using(var logo=Logo()) {
             document.PrinterSettings.PrinterName=Printer;document.PrinterSettings.Copies=1;
             document.PrintController=new StandardPrintController();document.DocumentName="KPS "+Str(job,"id");
             document.OriginAtMargins=false;
@@ -216,16 +230,19 @@ class KpsPrintBridge {
             // and the same RTL measurement used for drawing.
             float height=88+settings.HardMarginY;
             using(var graphics=document.PrinterSettings.CreateMeasurementGraphics(settings)) {
-                foreach(var line in lines)height+=LineHeight(graphics,line,LineFont(line,regular,bold,caption,heading),measured.Width,ar);
+                foreach(var line in lines)height+=LineHeight(graphics,line,LineFont(line,regular,bold,caption,heading,occasion),measured.Width,ar);
             }
             settings.PaperSize=new PaperSize("KPS thermal roll",width,(int)Math.Min(30000,Math.Ceiling(height)));
             int index=0;bool first=true;
             document.PrintPage+=(sender,e)=> {
                 var bounds=ContentBounds(e.PageBounds,e.PageSettings.PrintableArea,e.PageSettings.HardMarginX,e.PageSettings.HardMarginY);
                 float left=bounds.Left,top=bounds.Top,available=bounds.Width;
-                if(first) {e.Graphics.DrawImage(logo,left+(available-60)/2,top,60,60);top+=64;first=false;}
                 while(index<lines.Count) {
-                    var line=lines[index];var font=LineFont(line,regular,bold,caption,heading);
+                    if(first && Str(lines[index],"role")!="occasion") {
+                        if(top+64>bounds.Bottom && top>bounds.Top) {e.HasMorePages=true;return;}
+                        e.Graphics.DrawImage(logo,left+(available-60)/2,top,60,60);top+=64;first=false;
+                    }
+                    var line=lines[index];var font=LineFont(line,regular,bold,caption,heading,occasion);
                     float lineHeight=LineHeight(e.Graphics,line,font,available,ar);
                     if(top+lineHeight>bounds.Bottom && top>bounds.Top) {e.HasMorePages=true;return;}
                     DrawLine(e.Graphics,line,font,new RectangleF(left,top,available,lineHeight),ar);

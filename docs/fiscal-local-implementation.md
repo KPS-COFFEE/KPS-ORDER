@@ -87,3 +87,12 @@ These database/browser cases require the isolated CI environment; do not treat
 their presence as a passing result. Local Chromium execution was blocked by an
 OS socket restriction and no local PostgreSQL server was available. Physical
 paper output still requires a real printer acceptance check.
+
+## Owner print presentation decision
+
+The printed preview uses only the existing large brand heading (كبز قهوة مختصة / KPS COFFEE), with no duplicate seller line, at the owner’s explicit request. The saved legal seller and QR tag 1 remain Reem Establishment unchanged. This omission of the legal supplier name from the printed output is an unresolved compliance gap; official issuance remains disabled. City repetition is removed only in presentation; the certificate address remains preserved.
+
+## Optional receipt occasion message
+Owner operating settings accept receipt_occasion_text (plain text, up to 240 characters / 6 lines; blank disables). New orders freeze it in their snapshot, amendments preserve it, fiscal previews and credits inherit it. Browser and device receipts print large centered bold lines above the original logo; preparation tickets and QR fields are unchanged. No operational setting was enabled by this code change.
+
+Owner-only occasion formatting: Arial, Tahoma or Times New Roman; 12–32 pt; bold/regular; physical right/center/left alignment. Text and formatting are frozen in each new order and inherited by fiscal previews/credits. Browser and Windows bridge consume the saved formatting. Installed device fonts may use system fallback. Physical printer and Windows compilation validation remain pending.

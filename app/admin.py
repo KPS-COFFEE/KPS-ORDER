@@ -434,9 +434,25 @@ def homepage_presentation_config(existing=None, changes=None, brand_id=None):
 
 @router.patch('/admin/settings')
 def update_settings(body: dict, user=Depends(appearance_admin), idem: str | None=Header(None,alias='Idempotency-Key')):
+    if {'receipt_occasion_text', 'receipt_occasion_style'} & set(body) and user['role'] != 'owner':
+        raise db.error(403,'ROLE_FORBIDDEN','عبارة مناسبات الفاتورة للمالك فقط.')
     if user['role']=='admin' and set(body)-{'theme','homepage_presentation'}:
         raise db.error(403,'ROLE_FORBIDDEN','إعدادات التشغيل الحساسة للمالك فقط.')
-    keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas','homepage_presentation','delivery_workflow'})
+    keys(body, {'operational_day_start','late_after_minutes','theme','guest_operational_confirmation_above_halalas','homepage_presentation','delivery_workflow','receipt_occasion_text','receipt_occasion_style'})
+    if 'receipt_occasion_style' in body:
+        style = body['receipt_occasion_style']
+        if not isinstance(style, dict):
+            raise db.error(422,'RECEIPT_STYLE_INVALID','تنسيق العبارة غير صحيح.')
+        keys(style, {'font', 'size', 'bold', 'align'})
+        if (style.get('font') not in ('Arial','Tahoma','Times New Roman') or
+            type(style.get('size')) is not int or not 12 <= style['size'] <= 32 or
+            type(style.get('bold')) is not bool or style.get('align') not in ('right','center','left')):
+            raise db.error(422,'RECEIPT_STYLE_INVALID','اختر خطًا معتمدًا وحجمًا من 12 إلى 32 ومحاذاة صحيحة.')
+    if 'receipt_occasion_text' in body:
+        text = body['receipt_occasion_text']
+        if not isinstance(text, str) or len(text) > 240 or len(text.splitlines()) > 6 or any(ord(c) < 32 and c not in '\n\r' for c in text):
+            raise db.error(422,'RECEIPT_TEXT_INVALID','عبارة المناسبات حتى 240 حرفًا و6 أسطر.')
+        body['receipt_occasion_text'] = text.strip()
     if 'delivery_workflow' in body and body['delivery_workflow'] not in ('manager_dispatch','branch_fulfillment'):
         raise db.error(422,'DELIVERY_WORKFLOW_INVALID','اختر وضع تشغيل التوصيل المعتمد.')
     if 'operational_day_start' in body and not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',str(body['operational_day_start'])):

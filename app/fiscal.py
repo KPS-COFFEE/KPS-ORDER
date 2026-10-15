@@ -78,7 +78,8 @@ def build(order, number, issued_at):
            'number': number, 'issued_at': issued_at.astimezone(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
            'seller': deepcopy(SELLER), 'order_id': order['id'], 'items': items,
            'payment_method': order['payment_method'], 'source_revision': order.get('amendment_revision', 0),
-           'prices_include_vat': True}
+           'receipt_occasion_style': deepcopy(order['snapshot'].get('receipt_occasion_style', {})),
+           'prices_include_vat': True, 'receipt_occasion_text': order['snapshot'].get('receipt_occasion_text', '')}
     doc['qr_text'] = encode_qr(doc)
     return doc
 

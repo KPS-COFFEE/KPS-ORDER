@@ -76,7 +76,7 @@ def proposal_quote(c, o, p):
         quote['items'] = o['snapshot']['items']
         quote['subtotal_halalas'] = o['subtotal_halalas']
         quote['total_halalas'] = quote['subtotal_halalas'] + quote['delivery_fee_halalas']
-    for key in ('receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow'):
+    for key in ('receipt_occasion_style', 'receipt_occasion_text', 'receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow'):
         if key in o['snapshot']: quote[key] = o['snapshot'][key]
     if 'channel_commercial' in o['snapshot']:
         from .channel_commercial import amounts

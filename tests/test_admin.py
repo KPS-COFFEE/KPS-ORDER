@@ -173,3 +173,37 @@ def test_add_brand_same_database_invites_separate_scoped_owner_and_no_catalog_fo
     client.headers['X-CSRF-Token']=verified.json()['csrf_token']
     assert client.get('/api/admin/config').json()['brand']['id']=='testbrand'
     assert mutate('PATCH','/api/admin/products/kps-33',{'price_halalas':1}).status_code==404
+
+
+@pytest.mark.parametrize('role', ['admin', 'delivery_manager', 'branch_manager', 'driver', 'customer'])
+def test_receipt_occasion_setting_is_owner_only_even_with_delegated_appearance(role):
+    with pytest.raises(HTTPException) as error:
+        admin.update_settings({'receipt_occasion_text': 'Happy occasion'}, user={'role': role, 'permissions': ['appearance_manage']}, idem='occasion-permission')
+    assert error.value.status_code == 403
+
+
+@pytest.mark.postgres
+def test_owner_can_save_and_disable_receipt_occasion(owner):
+    client, mutate = owner
+    phrase = 'كل عام وأنتم بخير\nكبز تجمعنا'
+    saved = mutate('PATCH', '/api/admin/settings', {'receipt_occasion_text': phrase})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['settings']['receipt_occasion_text'] == phrase
+    assert client.get('/api/admin/config').json()['settings']['receipt_occasion_text'] == phrase
+    disabled = mutate('PATCH', '/api/admin/settings', {'receipt_occasion_text': ''})
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()['settings']['receipt_occasion_text'] == ''
+
+
+@pytest.mark.parametrize('role', ['admin','delivery_manager','branch_manager','driver','customer'])
+def test_occasion_style_cannot_be_changed_by_non_owner(role):
+    with pytest.raises(HTTPException) as error:
+        admin.update_settings({'receipt_occasion_style': {'font':'Tahoma','size':24,'bold':True,'align':'center'}}, user={'role':role}, idem='style-only')
+    assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize('style', [None, {}, {'font':'Arial','size':99,'bold':True,'align':'center'}, {'font':'Arial','size':18,'bold':'false','align':'center'}, {'font':'url(evil)','size':18,'bold':True,'align':'center'}])
+def test_invalid_occasion_style_rejected_before_write(style):
+    with pytest.raises(HTTPException) as error:
+        admin.update_settings({'receipt_occasion_style':style}, user={'role':'owner'}, idem='bad-style')
+    assert error.value.status_code == 422

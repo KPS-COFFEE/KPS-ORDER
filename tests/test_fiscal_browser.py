@@ -28,7 +28,9 @@ def test_owner_fiscal_preview_preserves_thermal_layout(live_app,chromium_browser
             page.locator(f'[data-action="fiscal-preview"][data-id="{oid}"]').click()
         popup=opened.value
         expect(popup.locator('html')).to_have_attribute('lang',language)
-        expect(popup.locator('body')).to_contain_text(fiscal.SELLER['legal_name'])
+        expect(popup.locator('header h1')).to_have_text('كبز قهوة مختصة' if language=='ar' else 'KPS COFFEE')
+        expect(popup.locator('header p').filter(has_text='كبز قهوة مختصة')).to_have_count(0)
+        expect(popup.locator('body')).not_to_contain_text(fiscal.SELLER['legal_name'])
         expect(popup.locator('body')).to_contain_text('311887526600003')
         expect(popup.locator('body')).to_contain_text('39912')
         expect(popup.locator('body')).not_to_contain_text('الدمام')
@@ -38,6 +40,7 @@ def test_owner_fiscal_preview_preserves_thermal_layout(live_app,chromium_browser
         with db.tx() as c:
             document=c.execute('SELECT document FROM fiscal_previews WHERE order_id=%s',(oid,)).fetchone()['document']
         for width in (80,58):
+            popup.emulate_media(media="screen")
             popup.locator('#paper-width').select_option(str(width));popup.emulate_media(media='print')
             dims=popup.locator('.receipt').evaluate('(e)=>({width:e.offsetWidth,scroll:e.scrollWidth})')
             assert dims['scroll']<=dims['width']

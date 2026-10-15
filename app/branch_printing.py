@@ -221,13 +221,17 @@ def receipt(order, branch, kind, language, translations=None):
         add(('نسخة معدلة رقم ' if ar else 'REVISED COPY ')+str(order['amendment_revision']+1),True,True)
         add('تلغي نسخة الطلب السابقة' if ar else 'Replaces previous order copy',True,True)
     def amount(value): return f'{int(value or 0)/100:.2f} '+('ر.س' if ar else 'SAR')
+    occasion_style = {'font': 'Arial', 'size': 18, 'bold': True, 'align': 'center'} | (snap.get('receipt_occasion_style') or {})
+    if kind == 'order':
+        for occasion_line in (snap.get('receipt_occasion_text') or '').splitlines():
+            add(occasion_line,occasion_style['bold'],occasion_style['align']=='center',role='occasion')
+            lines[-1]['align'] = occasion_style['align']
     add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True,role='brand')
     if fiscal:
         add(('إشعار دائن مبسط' if ar else 'Simplified credit note') if fiscal['kind']=='credit_note' else ('فاتورة ضريبية مبسطة' if ar else 'Simplified tax invoice'),True,True)
         add('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued',True,True)
-        add(fiscal['seller']['legal_name'],False,True)
         add('VAT: '+fiscal['seller']['vat_number'],False,True)
-        add(fiscal['seller']['address'],False,True)
+        add(fiscal['seller']['address'].replace('حفر الباطن,حفر الباطن,', 'حفر الباطن,'),False,True)
         if fiscal.get('original_number'): add(fiscal['original_number'],False,True)
     else:
         add(('فاتورة تحضير الطلب' if ar else 'Preparation receipt') if kind=='preparation' else ('فاتورة طلب' if ar else 'Order receipt'),True,True)
@@ -275,7 +279,7 @@ def receipt(order, branch, kind, language, translations=None):
             else:
                 qr=invoice_profiles.ordinary_qr(order)
             lines.append({'role':'qr','text':'','matrix':qr['matrix']})
-    return {'language':language,'kind':kind,'lines':lines}
+    return {'language':language,'kind':kind,'lines':lines,'occasion_style':occasion_style}
 
 
 class JobBody(BaseModel):

@@ -81,9 +81,12 @@ def test_full_refund_rounding_and_over_refund():
 def test_preserved_thermal_renderer_has_supplier_tax_and_real_qr(language):
     doc = fiscal.build(sample(), 'PREVIEW-KPS-4', NOW)
     order = fiscal.print_order(doc)
-    rendered = receipt(order, {'name':'KPS COFFEE'}, 'order',language)
+    rendered = receipt(order, {'name':'فرع الاختبار'}, 'order',language)
     text = '\n'.join(x['text'] for x in rendered['lines'])
-    assert fiscal.SELLER['legal_name'] in text and '311887526600003' in text
+    brand = 'كبز قهوة مختصة' if language == 'ar' else 'KPS COFFEE'
+    assert sum(line['text'] == brand for line in rendered['lines']) == 1
+    assert '311887526600003' in text
+    assert fiscal.SELLER['legal_name'] not in text
     assert '5.15' in text and '34.35' in text and '39.50' in text
     assert ('معاينة فقط' if language=='ar' else 'PREVIEW ONLY') in text
     assert next(x['matrix'] for x in rendered['lines'] if x['role']=='qr') == fiscal.qr(doc)['matrix']
@@ -102,12 +105,13 @@ from app import auth, db
 from uuid import uuid4
 
 @pytest.fixture
-def fiscal_sale(client):
+def fiscal_sale(client, request):
+    branch = getattr(request, "param", "kps-branch-1")
     uid = 'fiscal-owner-'+uuid4().hex
     oid = 'fiscal-order-'+uuid4().hex
     with db.tx() as c:
         c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,'Fiscal test','owner','kps','[\"kps-branch-1\"]')", (uid,))
-        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}')", (oid,uid,db.json(sample()['snapshot'])))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps',%s,%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}')", (oid,branch,uid,db.json(sample()['snapshot'])))
         user = c.execute('SELECT * FROM users WHERE id=%s',(uid,)).fetchone()
     client.app.dependency_overrides[auth.current_user]=lambda:user
     yield client,oid,user
@@ -159,10 +163,10 @@ def test_preview_access_and_incomplete_sale(fiscal_sale):
     assert client.post(path,headers={'Idempotency-Key':'fiscal-test-0003'}).status_code==404
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("fiscal_sale", ["kps-branch-11"], indirect=True)
 def test_concurrent_preview_retries_and_sami_fulfilment(fiscal_sale):
     from concurrent.futures import ThreadPoolExecutor
     client,oid,user=fiscal_sale
-    with db.tx() as c:c.execute("UPDATE orders SET branch_id='kps-branch-11' WHERE id=%s",(oid,))
     def prepare(i):
         return client.post(f'/api/fiscal/orders/{oid}/preview',headers={'Idempotency-Key':f'fiscal-concurrent-{i}'})
     with ThreadPoolExecutor(max_workers=4) as pool:responses=list(pool.map(prepare,range(4)))
@@ -176,3 +180,33 @@ def test_concurrent_preview_retries_and_sami_fulfilment(fiscal_sale):
     with db.tx() as c:
         c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{items,0,name}','\"Changed operational text\"'::jsonb),amendment_revision=amendment_revision+1 WHERE id=%s",(oid,))
     assert prepare(5).json()['document']==before
+
+
+def test_occasion_header_frozen_and_kept_out_of_fiscal_qr():
+    order = sample()
+    baseline = fiscal.build(order, 'PREVIEW-1', NOW)
+    phrase = 'كل عام وأنتم بخير\nكبز تجمعنا'
+    order['snapshot']['receipt_occasion_text'] = phrase
+    doc = fiscal.build(order, 'PREVIEW-1', NOW)
+    order['snapshot']['receipt_occasion_text'] = 'changed later'
+    assert doc['receipt_occasion_text'] == phrase
+    assert doc['qr_text'] == baseline['qr_text']
+    printed = fiscal.print_order(doc)
+    lines = receipt(printed, {'name': 'Test branch'}, 'order', 'ar')['lines']
+    assert [line['text'] for line in lines if line['role'] == 'occasion'] == phrase.splitlines()
+    assert [line['role'] for line in lines[:3]] == ['occasion', 'occasion', 'brand']
+    assert not any(line['role'] == 'occasion' for line in receipt(printed, {'name': 'Test branch'}, 'preparation', 'ar')['lines'])
+    assert not any(line['role'] == 'occasion' for line in receipt(fiscal.print_order(baseline), {'name': 'Test branch'}, 'order', 'ar')['lines'])
+
+
+def test_occasion_style_is_frozen_and_used_by_device_renderer():
+    order = sample()
+    style = {'font':'Tahoma','size':26,'bold':False,'align':'right'}
+    order['snapshot'].update(receipt_occasion_text='كل عام وأنتم بخير', receipt_occasion_style=style)
+    doc = fiscal.build(order, 'PREVIEW-STYLE', NOW)
+    style['size'] = 12
+    assert doc['receipt_occasion_style']['size'] == 26
+    rendered = receipt(fiscal.print_order(doc), {'name':'Test'}, 'order','ar')
+    assert rendered['occasion_style'] == {'font':'Tahoma','size':26,'bold':False,'align':'right'}
+    line = next(line for line in rendered['lines'] if line['role']=='occasion')
+    assert line['align']=='right' and line['bold'] is False and line['center'] is False

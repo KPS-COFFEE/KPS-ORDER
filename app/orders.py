@@ -160,6 +160,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 customer['risk_alert']=bool(recent)
                 customer['risk_reasons']=['similar_recent_unverified_contact_order'] if recent else []
                 customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
+            quote['receipt_occasion_style'] = (config or {}).get('settings', {}).get('receipt_occasion_style', {})
+            quote['receipt_occasion_text'] = (config or {}).get('settings', {}).get('receipt_occasion_text', '')
             quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
             # Read immutable receipt/policy snapshots before the per-branch
             # counter. The allocation remains in this same atomic transaction,
