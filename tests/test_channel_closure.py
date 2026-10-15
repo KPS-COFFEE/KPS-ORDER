@@ -161,7 +161,14 @@ def test_nonempty_channel_allocations_export_and_restore(channel_client,tmp_path
     assert manifest['counts'][table]==business_manifest['counts'][table]==1
     assert other_manifest['counts'][table]==0
     archive,_=verify_archive(business)
-    assert json.loads(archive.read('data/'+table+'.json'))==[original]
+    exported=json.loads(archive.read('data/'+table+'.json'))
+    assert len(exported)==1
+    # PostgreSQL JSON trims fractional trailing zeroes; Python ISO serialization
+    # retains six digits. Compare the exact instant, including every microsecond,
+    # and still require exact equality of all remaining fields and keys.
+    from datetime import datetime
+    assert datetime.fromisoformat(exported[0]['created_at'])==datetime.fromisoformat(original['created_at'])
+    assert {**exported[0],'created_at':original['created_at']}==original
     assert table not in business_manifest['excluded_tables']
     base=os.environ['TEST_DATABASE_URL'];target='kps_restore_'+uuid4().hex
     try:
