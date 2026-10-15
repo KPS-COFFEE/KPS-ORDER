@@ -33,8 +33,9 @@ Expiry/decline never cancels an order. Manager fallback permits explicit reoffer
 there is intentionally no background reoffer/automatic assignment worker enabled.
 Future scheduling must invoke these guarded routes and preserve the same flags.
 
-The two empty additive tables join existing scoped backup/restore and preservation
-inventories. There are no operational data updates or counter resets.
+The six empty additive dispatch, break and evidence tables join existing scoped
+backup/restore and preservation inventories. Vehicle reports gain optional links
+to shifts, orders and evidence. There are no operational data updates or counter resets.
 
 ## Review gates
 
@@ -49,3 +50,47 @@ Render service cannot accept public orders or affect operating data. Prior ready
 output reported ordering configured and SMS active; that is not sufficient proof
 of an isolated visual-only environment. Never test this by submitting real orders
 or sending SMS. Do not merge, change DNS, upgrade or activate smart modes.
+
+## Added driver operations
+
+The mobile home links to active tasks, breaks, fuel/vehicle, conversations and
+reports. Ending a shift requires an explicit red confirmation before the existing
+closure workflow. Blind cash/card entry, float approvals and manager review remain
+unchanged. The existing camera/gallery and task-scoped chat flows are reused.
+
+Break reasons and duration/approval limits are configured by the delivery manager;
+there is no assumed business-duration policy. Active breaks block assignment and
+closure server-side. Expiry remains overdue until an authorized explicit end;
+countdown warnings and manager overdue alerts are in-app polling, not SMS.
+
+Fuel recording adds station, amount, timestamp and a durable receipt attachment.
+Legacy API records remain compatible. New reports route delivery categories to
+delivery management and vehicle categories to maintenance, with department and
+branch checks on reports and attached evidence. Drivers cannot resolve reports.
+
+## Acceptance reconciliation
+
+The first run on 0b05b86 had 84 passing and four failing focused cases: three
+maintenance assertions still described the old categories/role contract, and the
+concurrency fixture supplied a six-character idempotency key rejected by the
+existing eight-character minimum. The fix retains that validation and tests two
+simultaneous valid keys, exactly one acceptance and replay without duplication.
+Maintenance tests retain the original twelve categories, assert six new categories,
+and explicitly deny delivery management access to maintenance-department reports.
+Browser regressions now navigate to the preserved vehicle report form and check
+the new home action locations through two actual polling cycles.
+
+Full restore coverage seeds breaks/events/policy, evidence and linked reports,
+and an accepted dispatch offer/task in isolated PostgreSQL, then checks them in a
+separate restoration schema. This does not access operational databases.
+
+## Still required before claiming complete owner acceptance
+
+- Confirm the configured FULL fuel intake/return policy and authorized exceptions;
+  existing actual fuel-percent inspection is preserved, not newly certified as FULL enforcement.
+- Certify the complete requested mobile journey and every requested screenshot;
+  current synthetic home screenshots are not deployed or physical-camera evidence.
+- Prove the existing Render environment is safe for a limited visual deployment,
+  including public ordering disabled and no live customer messaging.
+- Keep smart dispatch disabled; scheduler/reoffer automation and GPS-based ranking
+  require a future approved rollout.
