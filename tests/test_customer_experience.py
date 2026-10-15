@@ -183,7 +183,7 @@ def test_legal_public_before_identity_and_internal_clearance_not_implied(require
             r=required.get('/'+path+'?lang='+lang)
             assert r.status_code==200
             if path=='privacy':
-                assert ('outside Saudi Arabia' if lang=='en' else 'خارج المملكة العربية السعودية') in r.text
+                assert r.text.count('within or outside the Kingdom of Saudi Arabia' if lang=='en' else 'داخل المملكة العربية السعودية أو خارجها')==1
                 assert 'Render' not in r.text
             assert 'checkbox' not in r.text
     assert not required.get('/api/customer/legal').json()['complete']

@@ -37,6 +37,8 @@ def test_policies_public_controller_only_in_privacy_and_no_db(monkeypatch,lang,k
         assert r.text.count(processing)==1
         provider = ('Technology service providers may be used as needed, subject to applicable data-protection controls and regulatory requirements.' if lang=='en' else 'تتم الاستعانة بمزودي خدمات تقنية عند الحاجة، مع الالتزام بضوابط حماية البيانات والمتطلبات النظامية.')
         assert r.text.count(provider)==1
+        assert next(s for s in SECTIONS['privacy'] if s[0]=='الحفظ ومزودو الخدمة')[2 if lang=='ar' else 3]==provider
+        assert next(s for s in SECTIONS['privacy'] if s[0]=='معالجة البيانات')[2 if lang=='ar' else 3]==processing
         assert ('Data processing' if lang=='en' else 'معالجة البيانات') in r.text
         assert all(old not in r.text for old in ('local and international technology service providers', 'محليين ودوليين', 'Service information is hosted and processed by service providers outside Saudi Arabia.', 'تُستضاف بيانات الخدمة وتُعالج لدى مزودي خدمات خارج المملكة العربية السعودية.'))
         assert ('Technology service providers may be used as needed' if lang=='en' else 'تتم الاستعانة بمزودي خدمات تقنية عند الحاجة') in r.text
