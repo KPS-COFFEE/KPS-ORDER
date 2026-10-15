@@ -211,6 +211,7 @@ def approve_printer(identifier:str,body:AcceptBody,user=Depends(printer_admin)):
 def receipt(order, branch, kind, language, translations=None):
     ar = language=='ar'
     snap=order['snapshot']; lines=[]
+    fiscal = order.get('fiscal_document') if kind == 'order' else None
     def add(text,bold=False,center=False,role='',label='',value=''):
         lines.append({'text':str(text),'bold':bold,'center':center,
                       'role':role,'label':label,'value':value})
@@ -221,7 +222,15 @@ def receipt(order, branch, kind, language, translations=None):
         add('تلغي نسخة الطلب السابقة' if ar else 'Replaces previous order copy',True,True)
     def amount(value): return f'{int(value or 0)/100:.2f} '+('ر.س' if ar else 'SAR')
     add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True,role='brand')
-    add(('فاتورة تحضير الطلب' if ar else 'Preparation receipt') if kind=='preparation' else ('فاتورة طلب' if ar else 'Order receipt'),True,True)
+    if fiscal:
+        add(('إشعار دائن مبسط' if ar else 'Simplified credit note') if fiscal['kind']=='credit_note' else ('فاتورة ضريبية مبسطة' if ar else 'Simplified tax invoice'),True,True)
+        add('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued',True,True)
+        add(fiscal['seller']['legal_name'],False,True)
+        add('VAT: '+fiscal['seller']['vat_number'],False,True)
+        add(fiscal['seller']['address'],False,True)
+        if fiscal.get('original_number'): add(fiscal['original_number'],False,True)
+    else:
+        add(('فاتورة تحضير الطلب' if ar else 'Preparation receipt') if kind=='preparation' else ('فاتورة طلب' if ar else 'Order receipt'),True,True)
     add('رقم الطلب' if ar else 'Order number',False,True,role='caption')
     add(snap.get('order_reference') or order['order_no'],True,True,role='reference')
     add(('مركز التوصيل' if ar else 'Delivery Center') if kind!='preparation' and snap.get('order_source')=='delivery_center' else branch['name'],False,True)
@@ -250,14 +259,21 @@ def receipt(order, branch, kind, language, translations=None):
             value=order.get(key,snap.get(key,0))
             if key=='discount_halalas' and not value:continue
             row(label if ar else en,amount(value),key=='total_halalas')
+        if fiscal:
+            row('الصافي قبل الضريبة' if ar else 'Net before VAT',amount(fiscal['net_halalas']))
+            row('ضريبة القيمة المضافة 15%' if ar else 'VAT 15%',amount(fiscal['tax_halalas']))
         methods={'cash':('كاش','Cash'),'card':('شبكة','Card'),'split':('كاش وشبكة','Cash and card')}
         row('الدفع' if ar else 'Payment',methods.get(order['payment_method'],(order['payment_method'],)*2)[0 if ar else 1])
         statuses={'paid':('تم التحصيل','Paid'),'unpaid':('لم يتم التحصيل','Unpaid'),'partially_refunded':('مسترد جزئيًا','Partially refunded'),'refunded':('مسترد','Refunded')}
         row('حالة التحصيل' if ar else 'Collection',statuses.get(order['payment_status'],('راجع حالة التحصيل بالنظام','Check collection status in system'))[0 if ar else 1],True)
         add('────────────────────',False,True)
-        add('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice',False,True,role='caption')
+        add(('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued') if fiscal else ('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice'),False,True,role='caption')
         if order.get('id'):
-            qr=invoice_profiles.ordinary_qr(order)
+            if fiscal:
+                from .fiscal import qr as fiscal_qr
+                qr=fiscal_qr(fiscal)
+            else:
+                qr=invoice_profiles.ordinary_qr(order)
             lines.append({'role':'qr','text':'','matrix':qr['matrix']})
     return {'language':language,'kind':kind,'lines':lines}
 

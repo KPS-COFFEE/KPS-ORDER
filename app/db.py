@@ -297,7 +297,7 @@ def migrate():
 
 
 PRESERVED_TABLES = ('users', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
-                    'orders', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'collections', 'refunds',
+                    'orders', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'collections', 'refunds', 'fiscal_previews',
                     'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
                     'closure_reports', 'manager_financial_matches', 'report_corrections', 'report_renderings', 'report_notifications',
                     'closure_drafts', 'conversations', 'chat_messages', 'chat_attachments',

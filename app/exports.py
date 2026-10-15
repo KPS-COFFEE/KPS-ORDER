@@ -24,7 +24,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
-          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'channel_settlement_allocations', 'custody_transfers',
+          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'channel_settlement_allocations', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports', 'manager_financial_matches',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
@@ -71,7 +71,7 @@ def _scoped_sql(table, brand):
         return 'brand_id=%s', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
-    if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
+    if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
         return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
     if table == 'support_ticket_events':
         return 'ticket_id IN (SELECT id FROM support_tickets WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
@@ -327,6 +327,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM chat_messages),0),1),EXISTS(SELECT 1 FROM chat_messages))", (sequence,))
             if 'orders' in actual:
                 conn.execute("SELECT setval('order_human_number_seq',greatest(coalesce((SELECT max(order_no) FROM orders),0),1),EXISTS(SELECT 1 FROM orders))")
+            if 'fiscal_previews' in manifest['table_order']:
+                conn.execute("SELECT setval('fiscal_preview_number_seq',greatest(coalesce((SELECT max(substring(number from '[0-9]+$')::bigint) FROM fiscal_previews),0),1),EXISTS(SELECT 1 FROM fiscal_previews))")
             if 'shifts' in actual:
                 sequence = conn.execute("SELECT pg_get_serial_sequence('shifts','shift_no') AS name").fetchone()['name']
                 if sequence:
