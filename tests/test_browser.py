@@ -692,7 +692,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         driver.locator('[data-confirm-driver-close]').click()
         expect(driver.locator('#blind-closure-form')).to_be_visible()
         expect(driver.locator('#modal-body')).not_to_contain_text('الرصيد المتوقع')
-        expect(driver.locator('#modal-body')).to_contain_text('الكاش الموجود معك')
+        expect(driver.locator('#modal-body')).to_contain_text('إجمالي الكاش شامل العهدة')
         driver.locator('#blind-closure-form input[name=counted]').fill('10.00')
         driver.locator('#blind-closure-form input[name=terminal_total]').fill('0')
         expect(driver.locator('#blind-closure-form [name=recipient_user_id]')).to_have_count(0)

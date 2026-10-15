@@ -34,7 +34,7 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
-      - run: python -m pytest -q tests/test_driver_breaks.py tests/test_driver_evidence.py tests/test_shift_vehicle.py tests/test_vehicle_maintenance.py tests/test_smart_dispatch.py tests/test_driver_simple_browser.py tests/test_driver_camera_browser.py tests/test_driver_float.py tests/test_blind_driver_closure_unit.py tests/test_operations.py tests/test_accounting.py tests/test_driver_incentives_unit.py --junitxml=driver-float-results.xml
+      - run: python -m pytest -q tests/test_browser.py::test_real_all_staff_roles_driver_manager_closures_and_saved_report_files tests/test_driver_breaks.py tests/test_driver_evidence.py tests/test_shift_vehicle.py tests/test_vehicle_maintenance.py tests/test_smart_dispatch.py tests/test_driver_simple_browser.py tests/test_driver_camera_browser.py tests/test_driver_float.py tests/test_blind_driver_closure_unit.py tests/test_operations.py tests/test_accounting.py tests/test_driver_incentives_unit.py --junitxml=driver-float-results.xml
       - run: node tests/test_driver_simple_ui.cjs && node tests/test_blind_driver_closure_ui.cjs && node tests/test_driver_alerts_ui.cjs
       - uses: actions/upload-artifact@v4
         if: always()
