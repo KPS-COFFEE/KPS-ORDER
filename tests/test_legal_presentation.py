@@ -35,6 +35,11 @@ def test_policies_public_controller_only_in_privacy_and_no_db(monkeypatch,lang,k
         assert all(word not in r.text for word in ('Render','Frankfurt','Germany','فرانكفورت','ألمانيا'))
         assert ('outside Saudi Arabia' if lang=='en' else 'خارج المملكة العربية السعودية') in r.text
         assert ('Technology service providers may be used as needed' if lang=='en' else 'تتم الاستعانة بمزودي خدمات تقنية عند الحاجة') in r.text
+        approved = ('We retain data for as long as necessary to provide our services and meet regulatory requirements. When it is no longer needed, we handle it in accordance with applicable laws and approved controls, taking into account customers’ rights to request deletion of their data.' if lang=='en' else 'نحتفظ بالبيانات للمدة اللازمة لتقديم خدماتنا والوفاء بالمتطلبات النظامية. وعند انتهاء الحاجة إليها، نتعامل معها وفق الأنظمة والضوابط المعتمدة، مع مراعاة حقوق العملاء في طلب حذف بياناتهم.')
+        assert r.text.count(approved)==1
+        assert ('We retain information for as long as needed' if lang=='en' else 'نحتفظ بالبيانات للمدة اللازمة لتقديم الخدمة والوفاء بالالتزامات') not in r.text
+        assert r.text.count('outside Saudi Arabia' if lang=='en' else 'خارج المملكة العربية السعودية')==1
+        assert ('30 days' if lang=='en' else '30 يومًا') in r.text
     assert 'KPS COFFEE' in r.text and 'كبز قهوة مختصة' in r.text
     assert '2026-10-15' in r.text and 'mailto:' not in r.text
     assert not any(tag in ('script','input') for tag,_ in m.tags)
