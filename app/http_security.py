@@ -9,7 +9,7 @@ from fastapi import HTTPException, Request
 from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 
-from . import auth, monitoring
+from . import auth, monitoring, storefront_scope
 
 LOGGER = logging.getLogger('kps_order')
 MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -97,6 +97,7 @@ class SecurityMiddleware:
             # disconnect handling and server extensions without relay tasks.
             await send(message)
 
+        brand_token = storefront_scope.current_brand.set(storefront_scope.bound_brand(request))
         try:
             if path.startswith('/api/') and method not in {'GET', 'HEAD', 'OPTIONS'}:
                 auth.check_origin(request)
@@ -106,6 +107,8 @@ class SecurityMiddleware:
             buffered_request = await _bounded_request(receive)
             if buffered_request is None:
                 return
+
+            storefront_scope.validate_scope(request, buffered_request.get('body', b''))
 
             async def bounded_receive():
                 nonlocal buffered_request
@@ -129,3 +132,6 @@ class SecurityMiddleware:
                 response = JSONResponse({'detail': {'code': 'SERVICE_UNAVAILABLE',
                     'message': 'تعذر تنفيذ العملية الآن. حاول لاحقًا.'}}, status_code=503)
             await response(scope, receive, secured_send)
+
+        finally:
+            storefront_scope.current_brand.reset(brand_token)

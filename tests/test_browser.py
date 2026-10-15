@@ -847,6 +847,19 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
         assert page.locator('#brand-logo').get_attribute('src') is None
         expect(page.locator('#banner-content')).to_contain_text('اطلب مباشرة من '+brand_name)
         expect(page.locator('body')).not_to_contain_text('KPS')
+        # Contact fragments must be absent from the response and DOM in both languages.
+        for contact in ['0550472662', '966550472662', 'kps.coffe', 'Kps.cofee']:
+            assert contact not in page.content()
+        page.locator('#customer-language').click()
+        expect(page.locator('html')).to_have_attribute('lang', 'en')
+        expect(page.locator('body')).not_to_contain_text('KPS')
+        page.locator('#legal-contact-button').click()
+        expect(page.locator('#public-contact-dialog')).to_be_visible()
+        expect(page.locator('#public-contact-support')).to_be_visible()
+        assert page.locator('[data-kps-contact]').count() == 0
+        page.keyboard.press('Escape')
+        page.locator('#customer-language').click()
+        expect(page.locator('html')).to_have_attribute('lang', 'ar')
         assert any('/api/catalog?brand_id='+brand_id in url for url in requests)
         assert any('/api/branches?brand_id='+brand_id in url for url in requests)
         assert not any('/assets/kps-' in url or 'brand_id=kps' in url for url in requests)

@@ -119,10 +119,14 @@ def _find_session(conn, request: Request):
     token = request.cookies.get(COOKIE)
     if not token or not re.fullmatch(r'[A-Za-z0-9_-]{40,100}', token):
         return None
-    return conn.execute("SELECT u.*,COALESCE(a.settings->'customer_phone_required',to_jsonb(u.brand_id='kps'))<>'false'::jsonb AS customer_phone_required,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
+    user = conn.execute("SELECT u.*,COALESCE(a.settings->'customer_phone_required',to_jsonb(u.brand_id='kps'))<>'false'::jsonb AS customer_phone_required,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
                         'JOIN brands b ON b.id=u.brand_id LEFT JOIN app_settings a ON a.brand_id=u.brand_id '
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
+    if user:
+        from .storefront_scope import require_brand
+        require_brand(user["brand_id"])
+    return user
 
 
 def current_user(request: Request) -> dict:
@@ -184,6 +188,8 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
 
 
 def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False) -> dict:
+    from .storefront_scope import require_brand
+    require_brand(user['brand_id'])
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a

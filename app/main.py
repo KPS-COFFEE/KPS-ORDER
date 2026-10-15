@@ -10,7 +10,7 @@ from pathlib import Path
 import psycopg
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -123,11 +123,12 @@ def ready():
 
 
 @app.get('/')
-def customer_page():
+def customer_page(request: Request):
     path = PUBLIC / 'index.html'
     if not path.is_file():
         return JSONResponse({'detail': {'code': 'UI_UNAVAILABLE', 'message': 'واجهة المتجر قيد الإعداد.'}}, status_code=503)
-    return FileResponse(path, media_type='text/html', headers={'Cache-Control': 'no-cache'})
+    from .storefront_scope import customer_html
+    return HTMLResponse(customer_html(path.read_text(), request), headers={'Cache-Control': 'no-store'})
 
 
 @app.get('/ops')

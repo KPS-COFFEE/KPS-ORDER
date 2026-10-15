@@ -447,6 +447,8 @@ def availability(product_id: str, branch_id: str):
         branch = conn.execute('SELECT * FROM branches WHERE id=%s', (branch_id,)).fetchone()
         if not product or not branch or product['brand_id'] != branch['brand_id']:
             raise db.error(404, 'PRODUCT_NOT_FOUND', 'الصنف أو الفرع غير موجود.')
+        from .storefront_scope import require_brand
+        require_brand(product['brand_id'])
         available, reason = product_availability(product, branch)
         return {'available': available, 'reason': reason, 'source_verified': source_approved(product)}
 
