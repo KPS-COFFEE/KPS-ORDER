@@ -98,6 +98,7 @@ def report_data(c,user,start,end,driver_id='',branch_ids=None):
     if branch_ids is not None:query+=' AND s.branch_ids ?| %s';args.append(branch_ids)
     days=c.execute(query,args).fetchall()
     rows=aggregate(entries,days)
+    if user['role']=='driver':entries=[]
     return safe({'rows':rows,'entries':entries,'eligible':sum(b['eligible'] for b in rows),
       'excluded':sum(b['excluded'] for b in rows),'pending_review':sum(b['pending_review'] for b in rows),
       'awaiting_approval':sum(b['awaiting_approval'] for b in rows),'open_shifts':sum(b['open_shifts'] for b in rows),
@@ -120,6 +121,7 @@ def achievement(month:str='',driver_id:str='',user=Depends(read_access)):
 def shift_review(sid:str,user=Depends(read_access)):
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,s)
+        if user['role']=='driver':return {'entries':[]}
         return safe({'entries':[classify(r) for r in source_rows(c,user,shift_id=sid)]})
 
 class Decision(BaseModel):

@@ -11,7 +11,7 @@ from . import db, auth, service_hours, shift_vehicle, shift_order_counts, blind_
 
 router = APIRouter(prefix='/api', tags=['operations'])
 RIYADH = ZoneInfo('Asia/Riyadh')
-TERMINAL = ('delivered', 'cancelled', 'transferred')
+TERMINAL = ('delivered', 'cancelled', 'transferred', 'reassigned')
 MAX_HALALAS = 9223372036854775807
 
 
@@ -124,6 +124,8 @@ def authorize_replay(c,user,operation,body,result):
             row=c.execute('SELECT order_id FROM '+table+' WHERE id=%s',(result[field],)).fetchone()
             if not row:fail(404,'السجل غير متاح')
             history_result_access(c,user,row['order_id'])
+            if user['role']=='driver':
+                order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(row['order_id'],)).fetchone())
     cid=result.get('conversation_id') or (result.get('conversation') or {}).get('id')
     if operation.startswith('chat.') and ':' in operation:cid=operation.split(':',1)[1]
     if cid:
@@ -235,13 +237,19 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             sid=uid()
             carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL FOR UPDATE',(target['id'],)).fetchall()
             carried=sum(x['amount_halalas'] for x in carryovers)
+            permanent_float=None
+            if body.kind=='driver':
+                from . import driver_float
+                carried,permanent_float=driver_float.opening(c,target,carried)
+                if permanent_float and body.opening_halalas:fail(422,'العهدة الدائمة يحددها اعتماد المحاسبة فقط')
             valid_cash_amount(body.opening_halalas+carried)
             c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
             if body.kind=='driver':
+                c.execute('UPDATE shifts SET permanent_float=%s WHERE id=%s',(db.json(permanent_float) if permanent_float else None,sid))
                 vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
                 c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
             for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
-            db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
+            db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'previous_carry_halalas':sum(x['amount_halalas'] for x in carryovers),'permanent_float':permanent_float,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
             return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}
         return mutate(c,user,request,'shift.open',body.model_dump(),perform)
 
@@ -339,10 +347,7 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s)
         task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
-            for task in task_rows:
-                if task['status'] in TERMINAL:
-                    task['snapshot']=safe(task['snapshot']);task['snapshot'].pop('notes',None);task['snapshot'].pop('note',None)
-                    for item in task['snapshot'].get('items',[]):item.pop('note',None)
+            task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
         return safe(blind_closure.driver_view(user,{'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
 
 @router.post('/shifts/{sid}/refuel')
@@ -403,7 +408,11 @@ def submit_close_in_tx(c,user,sid,body):
     elif body.exception_reason.strip():fail(403,'الإقفال الاستثنائي لمدير التوصيل فقط')
     if s['kind']=='driver':
         if body.terminal_total_halalas is None:fail(422,'أدخل مبلغ موازنة جهاز الشبكة الفعلي، أو صفر إذا لم توجد عمليات')
-        if user['role']=='driver' and (body.handover is None or body.handover_halalas!=body.counted_halalas or body.retained_halalas):fail(422,'سلّم كامل النقد المعدود لمدير التوصيل مع التقفيلة')
+        from .driver_float import split
+        if s.get('permanent_float') or user['role']=='driver':
+            handover,retained=split(s,body.counted_halalas)
+            if (body.handover_halalas,body.retained_halalas)!=(handover,retained):fail(422,'مبلغ التسليم يساوي الكاش المعدود بعد استبعاد العهدة الثابتة؛ لا يمكن تغيير العهدة')
+        if user['role']=='driver' and body.handover is None:fail(422,'سجل تسليم النقد لمدير التوصيل مع التقفيلة')
         if body.vehicle_inspection is not None or not delegated:
             shift_vehicle.finish(c,user,s,body.vehicle_inspection)
         else:
@@ -453,7 +462,9 @@ def approve_close_in_tx(c,user,sid,body):
     from .driver_incentives import require_decisions
     require_decisions(c,user,s)
     sub=s['submission']
-    if sub['difference_halalas'] or sub.get('card_difference_halalas') or sub['retained_halalas']:
+    fixed_amount=int((s.get('permanent_float') or {}).get('amount',0))
+    unusual_retained=sub['retained_halalas']!=min(sub.get('counted_halalas',0),fixed_amount) or (not s.get('permanent_float') and sub['retained_halalas'])
+    if sub['difference_halalas'] or sub.get('card_difference_halalas') or unusual_retained or sub.get('counted_halalas',0)<fixed_amount:
         if not body.exception_reason or not body.exception_reason.strip(): fail(422,'يلزم سبب ظاهر لفرق النقد أو موازنة الشبكة أو العهدة المحتفظ بها')
     if unresolved(c,sid): fail(409,'مهام معلقة')
     if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
@@ -463,8 +474,8 @@ def approve_close_in_tx(c,user,sid,body):
     if s['kind']=='driver' and (int(receipts['n'])!=sub['handover_halalas'] or not receipts['nrows']):fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
     if s['kind']=='manager':sub=dict(sub,operational_approved=True)
     if sub['difference_halalas']:event(c,sid,sub['difference_halalas'],'adjustment','closure-difference:'+sid,user['id'],body.exception_reason)
-    if sub['retained_halalas']:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason))
-    exceptional=s['kind']=='driver' and (sub.get('delegated_closure') or sub['difference_halalas'] or sub.get('card_difference_halalas') or sub['retained_halalas'])
+    if sub['retained_halalas']:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason or 'عهدة دائمة معتمدة من المحاسبة'))
+    exceptional=s['kind']=='driver' and (sub.get('delegated_closure') or sub['difference_halalas'] or sub.get('card_difference_halalas') or unusual_retained or sub.get('counted_halalas',0)<fixed_amount)
     if exceptional:
         sub=dict(sub)
         sub['closure_exception']={'by':user['id'],'reason':body.exception_reason or sub.get('delegated_closure',{}).get('reason'),'delegated':bool(sub.get('delegated_closure'))}
@@ -536,7 +547,7 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
 def tasks(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff','driver')
     with db.tx() as c:
-        if user['role']=='driver':rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
+        if user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
         else:rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC LIMIT 500').fetchall(); rows=[r for r in rows if same_scope(user,r) and (user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[]))]
         if user['role']=='driver':
             rows=[r for r in rows if r['branch_id'] in user.get('branch_ids',[])]
@@ -546,7 +557,10 @@ def tasks(user=Depends(auth.current_user)):
                     r['snapshot']=safe(r['snapshot']);r['snapshot'].pop('notes',None);r['snapshot'].pop('note',None)
                     for item in r['snapshot'].get('items',[]):item.pop('note',None)
         if user['role']=='driver':rows=[blind_closure.driver_view(user,r,shift_money=True) if r['status'] in TERMINAL or r['driver_id']!=user['id'] else r for r in rows]
-        return safe({'tasks':rows})
+        counts=None
+        if user['role']=='driver':
+            counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
+        return safe({'tasks':rows, 'counts':counts})
 
 class TaskTransition(OperationBody):
     photo_id:str|None=None
@@ -1141,6 +1155,10 @@ def save_closure_draft(sid:str,body:ClosureDraft,request:Request,user=Depends(au
             if existing and body.revision!=existing['revision']:fail(409,'تغيرت مسودة التقفيلة؛ حدّثها قبل الحفظ')
             retained=body.counted_halalas-body.handover_halalas
             if retained<0 or (body.retained_halalas is not None and body.retained_halalas!=retained):fail(422,'التسليم لا يتجاوز المعدود والمحتفظ به هو الفرق بينهما')
+            if current['kind']=='driver':
+                from .driver_float import split
+                if (body.handover_halalas,retained)!=split(current,body.counted_halalas):
+                    fail(422,'التسليم يحسب بعد استبعاد العهدة الثابتة؛ لا يمكن تغييرها')
             if body.recipient_user_id:
                 target=c.execute('SELECT * FROM users WHERE id=%s AND brand_id=%s AND active',(body.recipient_user_id,user['brand_id'])).fetchone()
                 if not target or target['role'] not in ('owner','delivery_manager','driver','branch_manager') or target['id']==user['id']:fail(422,'مستلم غير مخول')
