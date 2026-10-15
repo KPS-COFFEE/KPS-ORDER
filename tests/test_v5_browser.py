@@ -227,6 +227,13 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             assert order and order['customer']['identity_kind'] == 'guest'
             assert not order['customer']['phone_verified']
         order_id, total = order['id'], order['total_halalas']
+        public_created = customer_context.request.get(base+'/api/orders/'+order_id)
+        assert public_created.status == 200
+        original_customer_snapshot = public_created.json()['order']['snapshot']
+        assert 'channel_commercial' not in original_customer_snapshot
+        assert 'channel_commercial' in order['snapshot']
+        assert original_customer_snapshot['items'] == order['snapshot']['items']
+        assert original_customer_snapshot['total_halalas'] == total
         manager.locator('[data-page=orders]').click()
         expect(manager.locator(f'[data-order-id="{order_id}"]')).to_be_visible()
         _capture(manager, 'v5-manager-sequential-orders')
@@ -355,6 +362,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
                     'migrations': conn.execute('SELECT version,sha256 FROM schema_migrations ORDER BY version').fetchall(),
                 }
         before_restart = persistence_state()
+        assert before_restart['order']['snapshot'] == order['snapshot']
         base.restart()
         assert base.restart_count == 1
         assert persistence_state() == before_restart
@@ -362,7 +370,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             session = context.request.get(base+'/api/session')
             assert session.status == 200 and session.json()['user'] and session.json()['csrf_token'], role
         tracked = customer_context.request.get(base+'/api/orders/'+order_id)
-        assert tracked.status == 200 and tracked.json()['order']['snapshot'] == order['snapshot']
+        assert tracked.status == 200 and tracked.json()['order']['snapshot'] == original_customer_snapshot
         assert tracked.json()['order']['delivery_status'] == 'delivered'
         for (rid,role,fmt),contents in saved_report_files.items():
             context = contexts['delivery_manager'] if role in ('driver','manager') else contexts['owner']

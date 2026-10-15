@@ -22,7 +22,7 @@ def test_guest_persistence_does_not_extend_staff_sessions(monkeypatch, role, kin
     conn, response = Mock(), Response()
     before = datetime.now(timezone.utc)
     result = auth.establish_session(conn, {
-        'id': 'synthetic-user', 'role': role, 'identity_kind': kind,
+        'id': 'synthetic-user', 'role': role, 'identity_kind': kind, 'brand_id': 'kps',
     }, response)
     sql, params = conn.execute.call_args.args
     assert 'INSERT INTO sessions' in sql

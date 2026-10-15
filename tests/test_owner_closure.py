@@ -79,6 +79,11 @@ def test_independent_color_stop_global_and_branch_rechecks_order_and_preserves_h
     created = mutate('POST', '/api/orders', _body())
     assert created.status_code == 200, created.text
     historical = created.json()['order']
+    assert 'channel_commercial' not in historical['snapshot']
+    with db.tx() as conn:
+        original_internal_snapshot = conn.execute('SELECT snapshot FROM orders WHERE id=%s', (historical['id'],)).fetchone()['snapshot']
+    assert 'channel_commercial' in original_internal_snapshot
+    assert original_internal_snapshot['items'] == historical['snapshot']['items']
     _restore(client, owner_cookies, owner_csrf)
 
     groups = deepcopy(previous['settings']['option_groups'])
@@ -108,7 +113,7 @@ def test_independent_color_stop_global_and_branch_rechecks_order_and_preserves_h
 
     with db.tx() as conn:
         saved = conn.execute('SELECT * FROM orders WHERE id=%s', (historical['id'],)).fetchone()
-        assert saved['snapshot'] == historical['snapshot']
+        assert saved['snapshot'] == original_internal_snapshot
         assert saved['total_halalas'] == historical['total_halalas']
         assert saved['snapshot']['items'][0]['units'][0]['option_snapshot']['COLOR']['choices'][0]['code'] == 'BLK'
         assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n'] == 1
