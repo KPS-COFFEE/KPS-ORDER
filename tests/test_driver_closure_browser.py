@@ -7,6 +7,61 @@ from app.shift_vehicle import CHECKS
 from test_browser import _capture,_context,_owner_login,_staff,_acknowledge_driver_end,chromium_browser,live_app,synthetic_mail
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated browser acceptance')]
 
+@pytest.mark.parametrize('language',['ar','en'])
+def test_low_fuel_closure_requests_approval_without_losing_counted_cash(live_app,chromium_browser,language):
+    from playwright.sync_api import expect
+    manager=_staff('delivery_manager');driver=_staff('driver')
+    mid='TEST-fuel-manager-'+uuid4().hex;sid='TEST-fuel-driver-'+uuid4().hex
+    with db.tx() as c:
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager',%s,'kps','[\"kps-branch-1\"]')",(mid,manager['id']))
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,status,vehicle_log) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]',%s,'closing',%s)",(sid,driver['id'],mid,db.json({'start':{'odometer_km':1000,'fuel_percent':100},'refuels':[]})))
+    ctx,page,errors=_context(chromium_browser,live_app);_owner_login(ctx,live_app,driver)
+    mctx,mpage,merrors=_context(chromium_browser,live_app);_owner_login(mctx,live_app,manager)
+    try:
+        page.set_viewport_size({'width':390,'height':844});page.goto(live_app+'/ops')
+        if language=='en':page.get_by_role('button',name='English',exact=True).click()
+        page.locator('#navigation [data-page=shifts]').click()
+        page.locator('.shift-card [data-action=shift-detail][data-id="'+sid+'"]').click()
+        form=page.locator('#blind-closure-form');expect(form).to_be_visible()
+        form.locator('[name=inspection_odometer]').fill('1025')
+        # Direct numeric entry, without first choosing the FULL dropdown.
+        form.locator('[name=inspection_fuel]').fill('70')
+        for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
+        form.locator('[name=counted]').fill('211');form.locator('[name=terminal_total]').fill('80')
+        form.locator('[name=confirm_closure]').check()
+        expect(form.locator('.fuel-submit-help')).to_be_visible()
+        form.locator('button[type=submit]').click()
+        expect(form.locator('.form-error')).to_contain_text('طلب موافقة' if language=='ar' else 'Request delivery manager approval')
+        assert ' / ' not in form.locator('.form-error').inner_text()
+        form.locator('[data-action=fuel-submit-request]').click()
+        expect(form.locator('.fuel-submit-help')).to_contain_text('بانتظار' if language=='ar' else 'Waiting')
+        form.locator('[data-action=fuel-submit-request]').click()
+        expect(form.locator('[data-action=fuel-submit-request]')).to_be_enabled()
+        with db.tx() as c:
+            assert c.execute('SELECT count(*) n FROM fuel_exceptions WHERE shift_id=%s',(sid,)).fetchone()['n']==1
+            assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='closing'
+        mpage.goto(live_app+'/ops');mpage.locator('[data-action=fuel-inbox]').click()
+        mpage.locator('[data-action=fuel-reject]').click()
+        expect(mpage.locator('[data-action=fuel-reject]')).to_have_count(0)
+        form.locator('button[type=submit]').click()
+        expect(form.locator('.form-error')).to_contain_text('مرفوض' if language=='ar' else 'rejected')
+        expect(form.locator('[name=counted]')).to_have_value('211')
+        expect(form.locator('[name=terminal_total]')).to_have_value('80')
+        form.locator('[data-action=fuel-submit-request]').click()
+        expect(form.locator('.fuel-submit-help')).to_contain_text('بانتظار' if language=='ar' else 'Waiting')
+        mpage.locator('#modal-close').click() if mpage.locator('#modal-close').count() else mpage.keyboard.press('Escape')
+        mpage.locator('[data-action=fuel-inbox]').click();mpage.locator('[data-action=fuel-approve]').click()
+        expect(mpage.locator('[data-action=fuel-approve]')).to_have_count(0)
+        # No manual approval refresh: submission retrieves the exact approved reading.
+        form.locator('button[type=submit]').click();_acknowledge_driver_end(page)
+        with db.tx() as c:
+            s=c.execute('SELECT status,submission,vehicle_log FROM shifts WHERE id=%s',(sid,)).fetchone()
+            assert s['status']=='submitted' and s['submission']['counted_halalas']==21100
+            assert s['submission']['terminal_total_halalas']==8000 and s['vehicle_log']['end']['fuel_percent']==70
+            assert c.execute("SELECT count(*) n FROM fuel_exceptions WHERE shift_id=%s AND status='consumed'",(sid,)).fetchone()['n']==1
+        assert not errors and not merrors
+    finally:ctx.close();mctx.close()
+
 @pytest.mark.parametrize('delegated',[False,True])
 @pytest.mark.parametrize('remote',[False,True])
 def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromium_browser,delegated,remote):
