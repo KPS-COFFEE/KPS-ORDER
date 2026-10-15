@@ -71,3 +71,18 @@ html[dir="rtl"] .account-action::after{transform:rotate(-45deg)}
 .site-footer button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;vertical-align:middle;margin-inline-end:6px}.account-locations{display:grid;gap:8px;padding-top:12px}.account-locations a{color:inherit;text-underline-offset:4px}
 
 .dialog-destinations{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--line);flex-shrink:0}.dialog-destinations .button{min-width:0;padding:10px 4px;font-size:12px}.dialog-destinations [aria-current="page"]{color:var(--accent-dark);background:var(--accent-soft)}
+
+/* Compact legal presentation; keep mobile navigation clearance on body, not footer. */
+.site-footer.compact-legal-footer{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:4px 12px;margin:0;font-size:12px;line-height:1.4;color:#655e56;border-top:1px solid var(--line)}
+.compact-legal-footer .legal-strip{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap}
+.legal-strip>a,.legal-strip>button{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:40px;padding:0 5px;font:inherit;font-size:12px;color:inherit;background:transparent;border:0;border-radius:5px}
+.site-footer .legal-strip svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6;margin:0;flex-shrink:0}
+.social-icons,.site-footer .social-icons{display:flex;align-items:center;justify-content:center;gap:0;direction:ltr}
+.social-icons>a{width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px}
+.social-icons img{width:18px;height:18px;opacity:.7}
+.social-icons a:hover,.legal-strip>a:hover,.legal-strip>button:hover{background:var(--surface-alt)}
+.public-contact-dialog{width:min(420px,calc(100% - 24px))}
+.contact-brand{margin-bottom:12px}.public-contact-dialog .social-icons{justify-content:flex-start;margin-block:8px}.public-contact-dialog .button{margin-top:14px}
+.legal-page{line-height:1.9}.legal-page section{margin-block:24px}.legal-page h2{font-size:18px;margin-bottom:8px}.policy-brand{margin-block:20px;color:var(--muted)}
+.legal-page .controller-details{font-size:13px;border-top:1px solid var(--line);padding-top:16px}.controller-details h2{font-size:16px}.controller-details dl{margin:0}.controller-details dt{font-weight:700}.controller-details dd{margin:0 0 8px;overflow-wrap:anywhere}
+@media(max-width:800px){body:has(.compact-legal-footer){padding-bottom:calc(170px + env(safe-area-inset-bottom))}.site-footer.compact-legal-footer{padding:4px 8px}.legal-strip>a,.legal-strip>button{font-size:11px}}

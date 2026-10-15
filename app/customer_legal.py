@@ -49,6 +49,9 @@ def refunds(brand_id:str='kps',lang:Literal['ar','en']='ar'):
     return page('refunds',brand_id,lang)
 
 def page(kind,brand,lang):
+    if brand == 'kps':
+        from .customer_policy_content import render
+        return render(kind, lang)
     info=details(brand);config=info['details'];en=lang=='en'
     title={'privacy':('Privacy policy','سياسة الخصوصية'),'terms':('Terms and conditions','الشروط والأحكام'),'refunds':('Returns and refunds','سياسة الاسترجاع والاسترداد')}[kind][0 if en else 1]
     paras=[PRIVACY_EN if en else PRIVACY_AR] if kind=='privacy' else [TERMS_EN if en else TERMS_AR]

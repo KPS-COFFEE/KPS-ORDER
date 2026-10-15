@@ -314,7 +314,8 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         expect(page.locator('.product-card')).to_have_count(34)
         # Persisted general contact uses real HTTP even while this branch is closed
         # for orders. This seeded test session proves UI scope, not SMS delivery.
-        page.locator('#contacts-button').click()
+        page.locator('#legal-contact-button').click()
+        page.locator('#public-contact-support').click()
         expect(page.locator('#contacts-dialog')).to_be_visible()
         page.locator('#contact-service').select_option('delivery')
         page.locator('#contact-branch').select_option('kps-branch-5')
@@ -328,7 +329,8 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
             assert general['branch_id']=='kps-branch-5' and general['context_service']=='delivery' and general['route']=='delivery'
         page.reload()
         expect(page.locator('#account-button')).to_have_text('حسابي')
-        page.locator('#contacts-button').click()
+        page.locator('#legal-contact-button').click()
+        page.locator('#public-contact-support').click()
         expect(page.locator('#contacts-list [data-conversation-id]')).to_have_count(1)
         _capture(page,'customer-persisted-no-order-inbox')
         page.locator(f'#contacts-list [data-conversation-id="{general["id"]}"]').click()

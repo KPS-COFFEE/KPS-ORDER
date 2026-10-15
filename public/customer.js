@@ -6,6 +6,20 @@
   let language='ar';
   try{if(localStorage.getItem(languageStorageKey)==='en')language='en';}catch{}
   const uiStrings={
+    "footer_privacy":{"ar": "الخصوصية", "en": "Privacy"},
+    "footer_terms":{"ar": "الشروط", "en": "Terms"},
+    "footer_refunds":{"ar": "الاسترجاع", "en": "Refunds"},
+    "social_accounts":{"ar": "التواصل الاجتماعي", "en": "Social accounts"},
+    "legal_navigation":{"ar": "السياسات", "en": "Policies"},
+    "phone_whatsapp":{"ar": "الهاتف / واتساب", "en": "Phone / WhatsApp"},
+    "international_phone":{"ar": "دولي", "en": "International"},
+    "contact_support_hint":{"ar": "للطلبات والشكاوى والخصوصية، افتح طلب تواصل داخل الخدمة لمتابعته برقم مرجعي.", "en": "For orders, complaints and privacy, open an in-service support request to follow it with a reference number."},
+    "contact_support_action":{"ar": "فتح طلب تواصل", "en": "Open a support request"},
+    "social_whatsapp":{"ar": "واتساب", "en": "WhatsApp"},
+    "social_instagram":{"ar": "إنستغرام", "en": "Instagram"},
+    "social_snapchat":{"ar": "سناب شات", "en": "Snapchat"},
+    "social_tiktok":{"ar": "تيك توك", "en": "TikTok"},
+
     "branches_locations":{ar:"الفروع والمواقع",en:"Branches and locations"},
     "home":{"ar": "الرئيسية", "en": "Home"},
     "welcome_back":{"ar": "أهلًا بك", "en": "Welcome back"},
@@ -1359,6 +1373,10 @@
     $('account-data-request').addEventListener('click',()=>{closeDialog('account-dialog');openDataRequest();});
     $('account-branch').addEventListener('click',()=>{closeDialog('account-dialog');$('service-title').scrollIntoView({behavior:prefersLessMotion()?'auto':'smooth'});$('branch-select').focus({preventScroll:true});});
 
+    $('legal-contact-button').addEventListener('click',()=>openDialog('public-contact-dialog'));
+    $('public-contact-support').addEventListener('click',()=>{closeDialog('public-contact-dialog');openContacts();});
+    document.querySelectorAll('[data-kps-contact]').forEach(el=>el.hidden=requestedBrandId!=='kps');
+    if(location.hash==='#contact')openDialog('public-contact-dialog');
     $('footer-contact').addEventListener('click',openContacts);
     $('contact-new-order').addEventListener('click',returnToMenu);
     $('contact-category').addEventListener('change',updateContactContext);
