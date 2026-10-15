@@ -264,8 +264,11 @@ def test_multi_branch_one_shift_revocation_preserves_task_custody_and_draft(v5):
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM driver_tasks WHERE driver_id=%s',('v5-driver',)).fetchone()['n']==1
         assert c.execute("SELECT count(*) n FROM shifts WHERE user_id='v5-driver' AND status<>'closed'").fetchone()['n']==1
-    draft=call('driver','POST','/api/shifts/'+driver+'/draft',{'counted_halalas':100,'handover_halalas':80,'notes':'TEST draft'});assert draft.status_code==200,draft.text
-    assert draft.json()['draft']['retained_halalas']==20 and 'difference_halalas' not in draft.json()['draft']
+    # A driver cannot invent retained cash without an approved permanent float.
+    rejected=call('driver','POST','/api/shifts/'+driver+'/draft',{'counted_halalas':100,'handover_halalas':80,'notes':'TEST draft'})
+    assert rejected.status_code==422,rejected.text
+    draft=call('driver','POST','/api/shifts/'+driver+'/draft',{'counted_halalas':100,'handover_halalas':100,'notes':'TEST draft'});assert draft.status_code==200,draft.text
+    assert draft.json()['draft']['retained_halalas']==0 and 'difference_halalas' not in draft.json()['draft']
     with db.tx() as c:assert c.execute('SELECT draft FROM closure_drafts WHERE shift_id=%s',(driver,)).fetchone()['draft']['difference_halalas']==100
     db.migrate()
     assert actor('driver').get('/api/shifts/'+driver+'/draft').json()['draft']['notes']=='TEST draft'
