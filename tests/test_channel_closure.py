@@ -77,8 +77,11 @@ def channel_client(client):
     with db.tx() as c:
         for role in ('owner','customer','delivery_manager','branch_manager','driver','accountant'):
             uid='channel-'+role
-            c.execute('INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,%s,%s,\'kps\',%s)',(uid,uid,role,db.json(['kps-branch-11'])))
-            users[role]={'id':uid,'display_name':uid,'role':role,'brand_id':'kps','branch_ids':['kps-branch-11'],'active':True}
+            # Match the existing accounting persona; accountant is not a DB role.
+            stored_role='admin' if role=='accountant' else role
+            permissions=['accounting_reports','accounting_review'] if role=='accountant' else []
+            c.execute('INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions) VALUES(%s,%s,%s,\'kps\',%s,%s)',(uid,uid,stored_role,db.json(['kps-branch-11']),db.json(permissions)))
+            users[role]={'id':uid,'display_name':uid,'role':stored_role,'permissions':permissions,'brand_id':'kps','branch_ids':['kps-branch-11'],'active':True}
         commercial=channel.capture(invoice_profiles.defaults('kps'),'kps-branch-11',QUOTE,users['owner']['id'])
         c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES('channel-order','kps','kps-branch-11','channel-customer','pickup','ready','not_applicable','cash',2000,300,2300,%s,'{}')",(db.json({**QUOTE,'items':[],'channel_commercial':commercial}),))
         c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES('channel-payment','channel-order','channel-owner','cash',2300)")
@@ -133,3 +136,41 @@ def test_anonymous_cannot_access_internal_and_public_metadata_is_safe(client):
     assert client.get('/api/customer/legal').json()['sellers']==[]
     for path in ('/docs/internal-agreement.html','/internal_documents.py','/app/internal_documents.py'):
         assert client.get(path).status_code==404
+
+
+@pytest.mark.postgres
+def test_nonempty_channel_allocations_export_and_restore(channel_client,tmp_path):
+    import os
+    import json
+    import psycopg
+    from psycopg import sql
+    from app.exports import build_archive,verify_archive,restore_archive
+    actor,_=channel_client
+    response=actor('owner').post('/api/channel-settlements/orders/channel-order/allocations',
+        json={'kind':'refund','refund_id':'channel-refund','cause':'branch','amount_halalas':200,'reason':'Reviewed quality issue'},
+        headers={'Idempotency-Key':uuid4().hex})
+    assert response.status_code==200,response.text
+    table='channel_settlement_allocations'
+    with db.tx() as conn:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        original=conn.execute('SELECT row_to_json(a) value FROM channel_settlement_allocations a').fetchone()['value']
+        contents,manifest=build_archive(conn,full=True)
+        business,business_manifest=build_archive(conn,brand_id='kps')
+        other,other_manifest=build_archive(conn,brand_id='other')
+    assert manifest['counts'][table]==business_manifest['counts'][table]==1
+    assert other_manifest['counts'][table]==0
+    archive,_=verify_archive(business)
+    assert json.loads(archive.read('data/'+table+'.json'))==[original]
+    assert table not in business_manifest['excluded_tables']
+    base=os.environ['TEST_DATABASE_URL'];target='kps_restore_'+uuid4().hex
+    try:
+        result=restore_archive(contents,target_url=base,target_schema=target,asset_directory=tmp_path/'assets')
+        assert result['verified'] and result['counts']==manifest['counts']
+        with psycopg.connect(base) as conn:
+            conn.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
+            assert conn.execute('SELECT row_to_json(a) FROM channel_settlement_allocations a').fetchone()[0]==original
+            with pytest.raises(psycopg.errors.RaiseException):
+                conn.execute('DELETE FROM channel_settlement_allocations')
+    finally:
+        with psycopg.connect(base,autocommit=True) as conn:
+            conn.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(target)))
