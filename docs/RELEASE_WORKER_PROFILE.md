@@ -21,6 +21,25 @@ Migration 052 adds a selective recent-contact index; exact basket equality,
 15-minute age, brand and branch checks remain unchanged. The index does not
 make a phone number proof of customer ownership.
 
+## Explicit capacity proposal, not an authorized upgrade
+
+The current-budget gate stays unchanged: app 0.5 CPU/512 MiB, PostgreSQL
+0.1 CPU/256 MiB. On candidate `7e3e0d72173ed8fb211c1b17f999c97383773265`,
+both runs preserved all orders without HTTP errors or OOM, but 500-user P95
+was 18178.443 / 24494.021 ms: FAIL. Unconstrained runs passed at
+3520.141 / 4390.617 ms; they do not certify the current budget.
+
+Separate CI jobs explicitly select `KPS_LOAD_RESOURCE_PROFILE=proposed`:
+app 2 CPU/4 GiB, PostgreSQL 1 CPU/2 GiB, the same two application workers,
+eight maximum pooled connections, workload, timeouts and acceptance limits.
+Every sample still verifies actual kernel budgets and process ownership.
+The result is named `PASS_PROPOSED_RESOURCE_GATE`, never a current-plan PASS.
+This tests the Render `2c-4g` app / `1c-2g` database resource envelope only;
+provider I/O, network and operating traffic remain separate validation.
+No Render plan, Blueprint, domain, SMS setting or deployment is changed.
+Owner approval of paid capacity and the remaining launch gates is mandatory.
+Plan specifications: https://render.com/docs/compute-plans (checked 2026-10-15).
+
 Both Docker and the isolated harness keep idle HTTP connections for 15 seconds,
 instead of closing them at the HTTP client's same five-second expiry boundary.
 This changes **idle socket lifetime only**, not the latency acceptance limits,

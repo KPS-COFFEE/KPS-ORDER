@@ -8,6 +8,46 @@ import pytest
 from tools import hardening_load as load
 
 
+@pytest.fixture(autouse=True)
+def explicit_current_profile(monkeypatch):
+    # Tests verify both profiles regardless of the enclosing CI job's choice.
+    monkeypatch.delenv('KPS_LOAD_RESOURCE_PROFILE', raising=False)
+
+
+def test_unknown_budget_cannot_silently_relax_a_gate(monkeypatch):
+    monkeypatch.setenv('KPS_LOAD_RESOURCE_PROFILE', 'arbitrary')
+    with pytest.raises(ValueError, match='Unknown resource profile'):
+        load.resource_budget()
+
+
+def test_proposed_profile_is_explicit_and_cannot_certify_current_limits(budgets, monkeypatch):
+    monkeypatch.setenv('KPS_LOAD_RESOURCE_PROFILE', 'proposed')
+    with pytest.raises(ValueError):
+        profile(budgets)
+    (budgets.app / 'cpu.max').write_text('200000 100000')
+    (budgets.app / 'memory.max').write_text(str(4 * 1024 ** 3))
+    (budgets.db / 'cpu.max').write_text('100000 100000')
+    (budgets.db / 'memory.max').write_text(str(2 * 1024 ** 3))
+    budgets.inspected['HostConfig'].update(NanoCpus=1_000_000_000, Memory=2 * 1024 ** 3, MemorySwap=2 * 1024 ** 3)
+    configured = profile(budgets)
+    assert configured.budget['name'] == 'proposed'
+    (budgets.app / 'cgroup.procs').write_text('100002\n100003\n100004\n')
+    configured.observe(100002, [100003, 100004])
+    (budgets.app / 'cgroup.procs').write_text('')
+    monkeypatch.setenv('KPS_LOAD_RESOURCE_PROFILE', 'current')
+    with pytest.raises(ValueError):
+        profile(budgets)
+
+
+def test_proposal_runs_do_not_replace_current_budget_or_reduce_workload():
+    workflow = Path(__file__).resolve().parents[1] / '.github/workflows/software-hardening.yml'
+    section = workflow.read_text().split('  proposed-capacity-budget:', 1)[1].split('  representative-render-budget:', 1)[0]
+    assert 'repetition: [1, 2]' in section and 'KPS_LOAD_RESOURCE_PROFILE: proposed' in section
+    assert '--cpus 1 --memory 2g --memory-swap 2g' in section
+    for option in ('--levels', '--rounds', '--p95-ms', '--p99-ms', '--max-error-rate', '--request-timeout'):
+        assert option not in section
+
+
 @pytest.mark.parametrize('latency,failed', [(4999.999, False), (5000, True), (5000.001, True),
                                           (None, True), (float('nan'), True), (float('inf'), True)])
 def test_owner_p95_limit_is_strict_and_invalid_measurements_cannot_pass(latency, failed):

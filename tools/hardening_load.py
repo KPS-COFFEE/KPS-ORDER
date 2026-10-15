@@ -48,6 +48,18 @@ RENDER_APP_MEMORY_BYTES = 512 * 1024 ** 2
 RENDER_DB_MEMORY_BYTES = 256 * 1024 ** 2
 
 
+def resource_budget():
+    """Explicit CI budgets. A proposal never certifies the current paid plan."""
+    name = os.getenv('KPS_LOAD_RESOURCE_PROFILE', 'current')
+    if name == 'current':
+        return {'name': name, 'app_cpu_tenths': 5, 'app_memory': RENDER_APP_MEMORY_BYTES,
+                'db_cpu_tenths': 1, 'db_memory': RENDER_DB_MEMORY_BYTES}
+    if name == 'proposed':
+        return {'name': name, 'app_cpu_tenths': 20, 'app_memory': 4 * 1024 ** 3,
+                'db_cpu_tenths': 10, 'db_memory': 2 * 1024 ** 3}
+    raise ValueError('Unknown resource profile; arbitrary budget overrides are prohibited.')
+
+
 def application_cgroup_path(value):
     path = Path(value)
     if (path.parent != CGROUP_ROOT or not re.fullmatch(r'kps_order_load_[0-9a-f]{32}', path.name)
@@ -106,6 +118,7 @@ def resource_helper():
     if os.getenv('GITHUB_ACTIONS') != 'true' or os.geteuid() != 0:
         raise RuntimeError('Resource setup helpers require the isolated GitHub Actions runner.')
     path = application_cgroup_path(sys.argv[2])
+    budget = resource_budget()
     if command == '--prepare-application-cgroup':
         if len(sys.argv) != 5 or int(sys.argv[3]) <= 0 or int(sys.argv[4]) <= 0:
             raise ValueError('The non-root runner UID/GID must be explicit.')
@@ -114,11 +127,11 @@ def resource_helper():
             raise RuntimeError('The runner must provide real CPU and memory cgroup controllers.')
         (CGROUP_ROOT / 'cgroup.subtree_control').write_text('+cpu +memory')
         path.mkdir()  # Refuse an existing group, including one from another run.
-        (path / 'cpu.max').write_text(RENDER_APP_CPU_MAX)
+        (path / 'cpu.max').write_text(f"{budget['app_cpu_tenths'] * 10000} 100000")
         (path / 'cpu.max.burst').write_text('0')
-        (path / 'memory.max').write_text(str(RENDER_APP_MEMORY_BYTES))
+        (path / 'memory.max').write_text(str(budget['app_memory']))
         (path / 'memory.swap.max').write_text('0')
-        require_budget(path, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
+        require_budget(path, cpu_tenths=budget['app_cpu_tenths'], memory_bytes=budget['app_memory'])
     elif command == '--join-application-cgroup':
         uid, gid = int(sys.argv[3]), int(sys.argv[4])
         executable = sys.argv[6]
@@ -128,7 +141,7 @@ def resource_helper():
         safe_url(os.environ['TEST_DATABASE_URL'])
         if os.getenv('APP_ENV') != 'testing':
             raise RuntimeError('Resource-limited application execution requires the synthetic test environment.')
-        require_budget(path, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
+        require_budget(path, cpu_tenths=budget['app_cpu_tenths'], memory_bytes=budget['app_memory'])
         if (path / 'cgroup.procs').read_text().strip():
             raise RuntimeError('The run-owned application cgroup must be empty before launch.')
         (path / 'cgroup.procs').write_text('0')
@@ -796,7 +809,7 @@ def start_app(env, port, log_path, workers=RELEASE_WORKERS, application_cgroup=N
         preserve = ('TEST_DATABASE_URL', 'DATABASE_URL', 'APP_ENV', 'PUBLIC_BASE_URL', 'APP_ALLOWED_HOSTS',
                     'SESSION_COOKIE_SECURE', 'OTP_PROVIDER', 'EMAIL_PROVIDER', 'EMAIL_WORKER_ENABLED',
                     'REPORT_WORKER_ENABLED', 'INITIAL_CATALOG_IMPORT', 'RUNTIME_REVISION', 'GITHUB_ACTIONS',
-                    'PYTHONDONTWRITEBYTECODE', 'PATH', 'LD_LIBRARY_PATH')
+                    'PYTHONDONTWRITEBYTECODE', 'PATH', 'LD_LIBRARY_PATH', 'KPS_LOAD_RESOURCE_PROFILE')
         command = ['sudo', '-n', '--preserve-env=' + ','.join(preserve), sys.executable, str(Path(__file__).resolve()),
                    '--join-application-cgroup', str(application_cgroup), str(os.getuid()), str(os.getgid()), '--', *command]
     process = subprocess.Popen(command, cwd=ROOT, env=env,
@@ -920,8 +933,10 @@ def inspect_test_container(container, base_url):
 class RenderResourceProfile:
     """Verify real kernel limits and workload process ownership, never simulated CPU duty cycles."""
     def __init__(self, application_cgroup, container, base_url):
+        self.budget = resource_budget()
+        budget = self.budget
         self.application_cgroup = application_cgroup_path(application_cgroup)
-        self.app_limits = require_budget(self.application_cgroup, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
+        self.app_limits = require_budget(self.application_cgroup, cpu_tenths=budget['app_cpu_tenths'], memory_bytes=budget['app_memory'])
         if (self.application_cgroup / 'cgroup.procs').read_text().strip():
             raise ValueError('The application cgroup must be exclusively empty before the run.')
         self.generator_pid = os.getpid()
@@ -930,19 +945,19 @@ class RenderResourceProfile:
             raise ValueError('The load generator must remain outside the bounded application cgroup.')
         inspected = inspect_test_container(container, base_url)
         config = inspected['HostConfig']
-        if (config.get('NanoCpus') != 100_000_000 or config.get('Memory') != RENDER_DB_MEMORY_BYTES
-                or config.get('MemorySwap') != RENDER_DB_MEMORY_BYTES or not inspected['State'].get('Running')):
+        if (config.get('NanoCpus') != budget['db_cpu_tenths'] * 100_000_000 or config.get('Memory') != budget['db_memory']
+                or config.get('MemorySwap') != budget['db_memory'] or not inspected['State'].get('Running')):
             raise ValueError('The isolated PostgreSQL Docker service does not match the current Render resource budget.')
         self.database_cgroup = process_cgroup(inspected['State']['Pid'], docker_host_pid=True)
-        self.db_limits = require_budget(self.database_cgroup, cpu_tenths=1, memory_bytes=RENDER_DB_MEMORY_BYTES)
+        self.db_limits = require_budget(self.database_cgroup, cpu_tenths=budget['db_cpu_tenths'], memory_bytes=budget['db_memory'])
         if self.generator_cgroup == self.database_cgroup or self.application_cgroup == self.database_cgroup:
             raise ValueError('Application, database and load generator must have separate resource budgets.')
 
     def observe(self, app_pid, worker_pids):
         if process_cgroup(self.generator_pid) in {self.application_cgroup, self.database_cgroup}:
             raise RuntimeError('The load generator entered a constrained workload cgroup.')
-        require_budget(self.application_cgroup, cpu_tenths=5, memory_bytes=RENDER_APP_MEMORY_BYTES)
-        require_budget(self.database_cgroup, cpu_tenths=1, memory_bytes=RENDER_DB_MEMORY_BYTES)
+        require_budget(self.application_cgroup, cpu_tenths=self.budget['app_cpu_tenths'], memory_bytes=self.budget['app_memory'])
+        require_budget(self.database_cgroup, cpu_tenths=self.budget['db_cpu_tenths'], memory_bytes=self.budget['db_memory'])
         app = cgroup_snapshot(self.application_cgroup)
         owned = owned_process_pids(app_pid)
         # Observation starts at the verified Uvicorn exec PID, below sudo.
@@ -1111,6 +1126,9 @@ def main():
     parser.add_argument('--application-cgroup', type=Path,
                         help='Explicit CI-only Render-budget cgroup; the generator stays outside and all levels run even after failure.')
     args = parser.parse_args()
+    budget = resource_budget()
+    if budget['name'] != 'current' and not args.application_cgroup:
+        parser.error('Proposed resources require verified kernel cgroups, not an unconstrained run.')
     if args.profile_cpu and args.workers != 1:
         parser.error('Per-thread CPU diagnosis requires one isolated worker.')
     if args.application_cgroup and (args.profile_cpu or args.workers != RELEASE_WORKERS or not args.database_container):
@@ -1158,12 +1176,13 @@ def main():
         if args.application_cgroup:
             resource_profile = RenderResourceProfile(args.application_cgroup, args.database_container, base)
             report['runtime_resource_profile'] = {
-                'name': 'current_render_resource_budget', 'budget_configuration_verified': True,
+                'name': budget['name'] + '_render_resource_budget', 'budget_configuration_verified': True,
+                'paid_resource_change_approved': False, 'matches_current_plan_budget': budget['name'] == 'current',
                 'application_limits': resource_profile.app_limits, 'postgresql_limits': resource_profile.db_limits,
                 'generator_outside_workload_cgroups': True,
                 'complete_all_requested_levels_even_after_failure': True}
             report['comparability_limits'][1] = (
-                'Kernel CPU/memory limits match the current Render app and database resource budgets; '
+                'Kernel CPU/memory limits match the explicitly declared ' + budget['name'] + ' app and database resource budgets; '
                 'CPU model, provider storage, TLS, network latency and background jobs still differ from deployed Render.')
         with psycopg.connect(base, autocommit=True, row_factory=dict_row) as control:
             actual = control.execute('SELECT current_database() name,version() version').fetchone()
@@ -1264,10 +1283,11 @@ def main():
             report['recovery']['migration_preservation_verified'] = ready['data_preservation']['verified']
         fault_drills_ok = not args.database_container or report['database_fault_drills'].get('passed') is True
         if all(stage['passed'] for stage in report['stages']) and len(report['stages']) == len(levels) and report['recovery']['revision_matches'] and report['recovery']['migration_preservation_verified'] and report['recovery']['confirmed_orders_preserved'] and report['recovery']['worker_count_matches'] and fault_drills_ok:
-            report['status'] = 'PASS_REPRESENTATIVE_RESOURCE_GATE' if resource_profile else 'PASS_LOCAL_ENGINEERING_GATE'
+            report['status'] = ('PASS_PROPOSED_RESOURCE_GATE' if budget['name'] == 'proposed' else
+                               'PASS_REPRESENTATIVE_RESOURCE_GATE') if resource_profile else 'PASS_LOCAL_ENGINEERING_GATE'
             report['reason'] = 'All requested load levels and PostgreSQL business invariants passed; production hardware/provider validation remains separate.'
         elif resource_profile:
-            report['reason'] = 'Current Render resource-budget acceptance failed; every attempted stage and recovery outcome remains recorded.'
+            report['reason'] = budget['name'].capitalize() + ' Render resource-budget acceptance failed; every attempted stage and recovery outcome remains recorded.'
     except Exception as exc:
         # No exception values/DSNs are printed, because startup errors may
         # contain connection configuration. Detailed app errors are sanitized.
@@ -1294,7 +1314,7 @@ def main():
             report['status'] = 'NOT_READY'
         report['finished_at'] = datetime.now(timezone.utc).isoformat()
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    return 0 if report['status'] in {'PASS_LOCAL_ENGINEERING_GATE', 'PASS_REPRESENTATIVE_RESOURCE_GATE'} else 1
+    return 0 if report['status'] in {'PASS_LOCAL_ENGINEERING_GATE', 'PASS_REPRESENTATIVE_RESOURCE_GATE', 'PASS_PROPOSED_RESOURCE_GATE'} else 1
 
 
 if __name__ == '__main__':
