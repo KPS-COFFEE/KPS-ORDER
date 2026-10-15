@@ -31,7 +31,10 @@ def test_policies_public_controller_only_in_privacy_and_no_db(monkeypatch,lang,k
     assert r.text.count(CONTROLLER)==(1 if kind=='privacy' else 0)
     if kind=='privacy':
         assert CONTROLLER in r.text.split('id="data-controller"')[1].split('</section>')[0]
-        assert CR in r.text and 'Render' in r.text and 'Frankfurt' in r.text if lang=='en' else CR in r.text and 'فرانكفورت' in r.text
+        assert CR in r.text and '15-10-2026' in r.text
+        assert all(word not in r.text for word in ('Render','Frankfurt','Germany','فرانكفورت','ألمانيا'))
+        assert ('outside Saudi Arabia' if lang=='en' else 'خارج المملكة العربية السعودية') in r.text
+        assert ('Technology service providers may be used as needed' if lang=='en' else 'تتم الاستعانة بمزودي خدمات تقنية عند الحاجة') in r.text
     assert 'KPS COFFEE' in r.text and 'كبز قهوة مختصة' in r.text
     assert '2026-10-15' in r.text and 'mailto:' not in r.text
     assert not any(tag in ('script','input') for tag,_ in m.tags)

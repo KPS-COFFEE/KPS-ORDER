@@ -21,13 +21,24 @@ class LegalDetails(BaseModel):
     retention_policy:str=Field('',max_length=2000)
     transfer_safeguards:str=Field('',max_length=2000)
 
-@router.get('/api/customer/legal')
-def details(brand_id:str='kps'):
+def _internal_details(brand_id):
     with db.tx() as c:
         row=c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand_id,)).fetchone()
         config=(row or {}).get('settings',{}).get('customer_legal',{})
         entities=invoice_profiles.settings(c,brand_id)['entities']
         return {'details':config,'sellers':list(entities.values()),'complete':all(config.get(k) for k in LegalDetails.model_fields)}
+
+
+@router.get('/api/customer/legal')
+def details(brand_id:str='kps'):
+    # Compatibility metadata only: internal transfer notes and entity mappings
+    # belong to the authenticated owner route, never a public customer API.
+    return {'details': {}, 'sellers': [], 'complete': False,
+            'privacy_url': '/privacy', 'terms_url': '/terms', 'refunds_url': '/refunds'}
+
+@router.get('/api/customer/legal/internal')
+def internal_details(user=Depends(auth.require_roles('owner'))):
+    return _internal_details(user['brand_id'])
 
 @router.put('/api/customer/legal')
 def save(body:LegalDetails,user=Depends(auth.require_roles('owner'))):

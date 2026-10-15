@@ -78,6 +78,9 @@ def proposal_quote(c, o, p):
         quote['total_halalas'] = quote['subtotal_halalas'] + quote['delivery_fee_halalas']
     for key in ('receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow'):
         if key in o['snapshot']: quote[key] = o['snapshot'][key]
+    if 'channel_commercial' in o['snapshot']:
+        from .channel_commercial import amounts
+        quote['channel_commercial'] = amounts(o['snapshot']['channel_commercial'], quote)
     customer = dict(o['customer'])
     for key,value in p.customer.model_dump().items():
         if key in ('address','neighborhood','location','car') and (key in customer or value not in (None,'')):

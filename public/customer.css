@@ -79,10 +79,18 @@ html[dir="rtl"] .account-action::after{transform:rotate(-45deg)}
 .site-footer .legal-strip svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6;margin:0;flex-shrink:0}
 .social-icons,.site-footer .social-icons{display:flex;align-items:center;justify-content:center;gap:0;direction:ltr}
 .social-icons>a{width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px}
-.social-icons img{width:18px;height:18px;opacity:.7}
+.social-icons img{width:18px;height:18px;opacity:1}
 .social-icons a:hover,.legal-strip>a:hover,.legal-strip>button:hover{background:var(--surface-alt)}
 .public-contact-dialog{width:min(420px,calc(100% - 24px))}
 .contact-brand{margin-bottom:12px}.public-contact-dialog .social-icons{justify-content:flex-start;margin-block:8px}.public-contact-dialog .button{margin-top:14px}
 .legal-page{line-height:1.9}.legal-page section{margin-block:24px}.legal-page h2{font-size:18px;margin-bottom:8px}.policy-brand{margin-block:20px;color:var(--muted)}
 .legal-page .controller-details{font-size:13px;border-top:1px solid var(--line);padding-top:16px}.controller-details h2{font-size:16px}.controller-details dl{margin:0}.controller-details dt{font-weight:700}.controller-details dd{margin:0 0 8px;overflow-wrap:anywhere}
 @media(max-width:800px){body:has(.compact-legal-footer){padding-bottom:calc(170px + env(safe-area-inset-bottom))}.site-footer.compact-legal-footer{padding:4px 8px}.legal-strip>a,.legal-strip>button{font-size:11px}}
+
+/* Compact controller facts: labels remain readable without a large card. */
+.legal-page .controller-details{padding:13px;border:1px solid var(--line);border-radius:8px;font-size:12px;line-height:1.5;margin-block:16px}
+.legal-page .controller-details h2{font-size:16px;margin:0 0 7px}
+.controller-details dl{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
+.controller-details .controller-field:nth-child(-n+2){grid-column:1/-1}
+.controller-details dt{font-size:11px;font-weight:700}.controller-details dd{font-size:12px;margin:0}
+@media(max-width:360px){.controller-details dl{grid-template-columns:1fr}.controller-details .controller-field{grid-column:1}}

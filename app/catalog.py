@@ -47,6 +47,7 @@ def is_khaliya_branch(branch):
 
 def customer_quote_view(quote):
     result = dict(quote)
+    result.pop('channel_commercial', None)
     routing = result.pop('internal_routing', None)
     if routing:
         result.update(routing['selected_branch'])

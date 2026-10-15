@@ -177,11 +177,14 @@ def test_delivery_problem_transfers_full_context_and_other_customer_cannot_read(
     assert required.get('/api/conversations').json()['conversations']==[]
 
 @pytest.mark.postgres
-def test_legal_public_before_identity_and_missing_facts_are_visible(required):
+def test_legal_public_before_identity_and_internal_clearance_not_implied(required):
     for lang in ('ar','en'):
         for path in ('privacy','terms'):
             r=required.get('/'+path+'?lang='+lang)
-            assert r.status_code==200 and 'Render' in r.text if path=='privacy' else r.status_code==200
+            assert r.status_code==200
+            if path=='privacy':
+                assert ('outside Saudi Arabia' if lang=='en' else 'خارج المملكة العربية السعودية') in r.text
+                assert 'Render' not in r.text
             assert 'checkbox' not in r.text
     assert not required.get('/api/customer/legal').json()['complete']
     assert required.put('/api/customer/legal',json={'controller_name':'TEST'}).status_code==401

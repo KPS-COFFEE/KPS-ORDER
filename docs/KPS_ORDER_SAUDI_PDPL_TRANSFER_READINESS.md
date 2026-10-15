@@ -84,3 +84,10 @@ The live-preview PR currently has unrelated failing full CI/performance gates; *
 - Risk assessment owner/legal reviewer & date: PENDING
 - Retention and deletion policy approval & date: PENDING
 - Owner launch consent: **NOT GIVEN**
+
+
+## 8. Owner channel decision and customer presentation — 15 October 2026
+
+Owner supplied Reem CR 7037181620, VAT 311887526600003, EDPC7048 and its Dammam national address; Sami CR 7049120772. Reem is the KPS ORDER seller, collector, delivery operator and intended fiscal issuer. Branch ownership remains separate; no historical data is rewritten. These supplied facts do not certify fiscal readiness or international-transfer compliance.
+
+Public KPS policy wording is concise and omits the internal audit narrative and vendor/city names. It retains an explicit outside-Saudi-Arabia processing disclosure: PDPL Article 13(4) requires informing the data subject whether processing/disclosure/transfer occurs outside the Kingdom. Source checked 2026-10-15: https://dgp.sdaia.gov.sa/wps/portal/pdp/knowledgecenter/details/PDPL/ . The general service-provider sentence alone does not replace this disclosure. The facts, risks and pending evidence above remain OPEN; supplier-specific disclosure completeness, legal bases and retention schedules still require review before public launch. No claim of legal clearance is made. Internal details are now owner-only; public API metadata no longer exposes the full transfer register or Sami profiles.

@@ -51,9 +51,12 @@ def _branch_addresses(path, file_version):
     return addresses
 
 
-def capture(conn, brand_id, branch_id, *, brand_settings=None):
+def capture(conn, brand_id, branch_id, *, brand_settings=None, channel=None):
     config = (settings(conn, brand_id) if brand_settings is None else
               copy.deepcopy(brand_settings.get('invoice_profiles') or defaults(brand_id)))
+    if channel == 'kps_order' and brand_id == 'kps':
+        from .channel_commercial import seller_profile
+        return seller_profile(config)
     entity_id = config['assignments'].get(branch_id)
     entity = copy.deepcopy(config['entities'].get(entity_id, {}))
     # Addresses are source data, never inferred from the customer's destination.

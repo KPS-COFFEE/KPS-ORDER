@@ -66,6 +66,11 @@ def test_thermal_receipts_expand_and_keep_options(live_app, chromium_browser, la
                 assert receipt.locator('.receipt header').evaluate('(e)=>e.offsetHeight') < 230
                 expect(receipt.locator('.receipt-item').last).to_contain_text('TEST LAST NOTE')
                 receipt.emulate_media(media='screen')
+            if kind=='order':
+                from pathlib import Path
+                evidence=Path(__file__).resolve().parents[1]/'test-artifacts'
+                evidence.mkdir(exist_ok=True)
+                receipt.screenshot(path=str(evidence/f'legal-thermal-safe-{language}.png'),full_page=True)
             receipt.close()
         assert not errors
     finally:

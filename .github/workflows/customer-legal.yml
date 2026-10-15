@@ -3,6 +3,10 @@ on:
   push:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/channel_*.py
+      - app/internal_documents.py
+      - migrations/053_channel_allocations.sql
+      - tests/test_channel_closure.py
       - app/customer_legal.py
       - app/customer_policy_content.py
       - public/customer.js
@@ -50,6 +54,8 @@ jobs:
           tests/test_customer_experience.py tests/test_customer_experience_browser.py
           tests/test_customer_final_account.py tests/test_customer_final_account_browser.py
           tests/test_http_security.py tests/test_v5_identity.py
+          tests/test_channel_closure.py tests/test_invoice_profiles.py tests/test_invoice_profile_cache.py
+          tests/test_receipt_customer_privacy.py tests/test_thermal_receipt_browser.py
           tests/test_customer_language.py::test_customer_translation_codes_are_complete_and_keep_approved_source_immutable
           --junitxml=test-results/customer-legal.xml
       - uses: actions/upload-artifact@v4

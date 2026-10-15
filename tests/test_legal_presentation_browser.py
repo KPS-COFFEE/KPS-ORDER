@@ -78,5 +78,32 @@ def test_legal_before_after_accessibility_and_contact(live_app,chromium_browser,
         assert CONTROLLER not in page.locator('body').inner_text() if kind!='privacy' else page.locator('#data-controller').inner_text().count(CONTROLLER)==1
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.screenshot(path=str(EVIDENCE/f'legal-{kind}-{lang}-{width}.png'),full_page=True)
+        if kind=='privacy':
+            card=page.locator('#data-controller')
+            assert card.locator('h2').evaluate('e=>parseFloat(getComputedStyle(e).fontSize)')==16
+            assert card.bounding_box()['height']<300
+            card.screenshot(path=str(EVIDENCE/f'legal-controller-{lang}-{width}.png'))
+    assert not errors
+    context.close()
+
+
+@pytest.mark.parametrize('width',[390,1280])
+def test_internal_agreement_owner_browser_preview(live_app,chromium_browser,width):
+    from test_browser import _staff,_owner_login
+    from playwright.sync_api import expect
+    EVIDENCE.mkdir(exist_ok=True)
+    owner=_staff('owner')
+    context,page,errors=_context(chromium_browser,live_app)
+    _owner_login(context,live_app,owner)
+    page.set_viewport_size({'width':width,'height':900})
+    response=page.goto(live_app+'/api/internal-documents/kps-operating-agreement')
+    assert response.status==200
+    expect(page.locator('html')).to_have_attribute('dir','rtl')
+    assert page.locator('body').inner_text().count('15-10-2026')==2
+    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    cells=page.locator('table').first.locator('th').all()
+    assert cells[0].bounding_box()['x']>cells[1].bounding_box()['x']
+    page.locator('header img').evaluate('(img)=>img.decode()')
+    page.screenshot(path=str(EVIDENCE/f'legal-agreement-ar-{width}.png'),full_page=True)
     assert not errors
     context.close()
