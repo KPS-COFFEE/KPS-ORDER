@@ -19,6 +19,7 @@ def test_driver_fault_form_and_restricted_admin_maintenance_journey(live_app, ch
     _owner_login(context, live_app, driver)
     try:
         page.goto(live_app + '/ops')
+        page.get_by_role('button', name='أعطال المركبات والصيانة', exact=True).click()
         expect(page.get_by_role('button', name='رفع بلاغ عطل', exact=True)).to_be_visible()
         if language == 'en':
             page.get_by_role('button', name='English', exact=True).click()
@@ -27,7 +28,7 @@ def test_driver_fault_form_and_restricted_admin_maintenance_journey(live_app, ch
         modal = page.locator('#modal')
         expect(modal).to_be_visible()
         labels = modal.locator('select[name=category] option').all_text_contents()
-        assert len(labels) == 13
+        assert len(labels) == 19
         for _, ar, en in maintenance.CATEGORIES:
             assert f'{ar} / {en}' in labels
         modal.locator('select[name=category]').select_option('brakes')

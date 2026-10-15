@@ -53,6 +53,7 @@ def scope(user):
         clauses.append('r.driver_id=%s')
         params.append(user['id'])
     if user['role']=='delivery_manager':clauses.append("r.department='delivery'")
+    if user['role']=='admin':clauses.append("r.department='maintenance'")
     return clauses, params
 
 
@@ -114,7 +115,7 @@ class ReportUpdate(BaseModel):
 
 @router.get('/options')
 def options(user=Depends(participant)):
-    return {'categories': [{'code': code, 'ar': ar, 'en': en} for code, ar, en in CATEGORIES],
+    return {'categories': [{'code': code, 'ar': ar, 'en': en} for code, ar, en in CATEGORIES if user['role']!='delivery_manager' or code in DELIVERY_CATEGORIES],
             'can_manage': user['role']=='delivery_manager' or auth.has_permission(user, PERMISSION), 'can_create': user['role'] == 'driver'}
 
 

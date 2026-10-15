@@ -48,10 +48,10 @@ def test_atomic_accept_reconnect_and_private_offer(ops,monkeypatch):
     post('driver2','/api/dispatch/offers/'+offers[0]+'/decision',{'decision':'accept'},status=404)
     with db.tx() as c:users=[c.execute('SELECT * FROM users WHERE id=%s',('ops-'+n,)).fetchone() for n in ('driver','driver2')]
     def accept(i):
-        try:return dispatch.decide(offers[i],dispatch.Decision(decision='accept'),request('race-'+str(i)),users[i])
+        try:return dispatch.decide(offers[i],dispatch.Decision(decision='accept'),request('dispatch-race-'+str(i)),users[i])
         except HTTPException as e:return e.status_code
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(accept,[0,1]))
-    assert sum(isinstance(r,dict) and r.get('status')=='accepted' for r in results)==1
+    assert sum(isinstance(r,dict) and r.get('status')=='accepted' for r in results)==1, results
     assert 409 in results
     winner=next(i for i,r in enumerate(results) if isinstance(r,dict))
     assert accept(winner)==results[winner] # lost response / reconnect replay

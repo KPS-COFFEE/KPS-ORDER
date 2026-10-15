@@ -43,7 +43,9 @@ def change(client, identifier, status, version, note='ملاحظة اختبار 
 
 
 def test_categories_are_stable_bilingual_and_permissions_are_separate():
-    assert len(maintenance.CATEGORIES) == len(maintenance.CATEGORY_CODES) == 12
+    assert len(maintenance.CATEGORIES) == len(maintenance.CATEGORY_CODES) == 18
+    assert maintenance.CATEGORY_CODES - maintenance.DELIVERY_CATEGORIES == {'engine','transmission','brakes','tyres','battery','electrical','cooling','air_conditioning','oil_leak','accident','scheduled_service','other'}
+    assert maintenance.DELIVERY_CATEGORIES == {'order_problem','delay','customer_problem','payment_problem','branch_problem','general'}
     for code, ar, en in maintenance.CATEGORIES:
         assert any('\u0600' <= ch <= '\u06ff' for ch in ar)
         assert en.isascii() and en
@@ -68,7 +70,7 @@ def test_driver_submits_without_order_or_shift_only_sees_own_and_replay_is_safe(
     login(client, driver)
     options = client.get(PREFIX + '/options').json()
     assert options['can_create'] is True and options['can_manage'] is False
-    assert len(options['categories']) == 12
+    assert len(options['categories']) == 18
     key = uuid4().hex
     created = submit(client, key=key)
     assert created.status_code == 200, created.text
@@ -163,7 +165,7 @@ def test_scope_brand_permissions_and_replays_rechecked_on_every_request(client):
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize('role', ['delivery_manager', 'delivery_staff', 'branch_manager', 'admin'])
+@pytest.mark.parametrize('role', ['delivery_staff', 'branch_manager', 'admin'])
 def test_other_staff_have_no_implicit_maintenance_access(client, role):
     login(client, principal(role, permissions=['branches_manage'] if role == 'admin' else []))
     for path in (PREFIX + '/options', PREFIX + '/reports', PREFIX + '/reports/unknown'):
@@ -253,3 +255,17 @@ def test_synthetic_six_digit_invitation_activates_only_maintenance_permission(ow
     assert client.get('/api/admin/config').status_code == 403
     assert client.get('/api/identity/staff').status_code == 403
     assert client.get('/api/orders').status_code == 403
+
+
+@pytest.mark.postgres
+def test_delivery_manager_only_sees_delivery_reports_not_vehicle_maintenance(client):
+    login(client,principal())
+    vehicle=submit(client).json()['report']
+    operational=submit(client,{**PAYLOAD,'category':'delay'}).json()['report']
+    login(client,principal('delivery_manager'))
+    assert {r['id'] for r in client.get(PREFIX+'/reports').json()['reports']}=={operational['id']}
+    assert client.get(PREFIX+'/reports/'+vehicle['id']).status_code==404
+    assert change(client,vehicle['id'],'resolved',1).status_code==404
+    assert submit(client).status_code==403
+    assert {r['code'] for r in client.get(PREFIX+'/options').json()['categories']}==maintenance.DELIVERY_CATEGORIES
+    assert change(client,operational['id'],'in_progress',1).status_code==200
