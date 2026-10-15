@@ -53,7 +53,7 @@ def test_low_fuel_closure_requests_approval_without_losing_counted_cash(live_app
         mpage.locator('[data-action=fuel-inbox]').click();mpage.locator('[data-action=fuel-approve]').click()
         expect(mpage.locator('[data-action=fuel-approve]')).to_have_count(0)
         # No manual approval refresh: submission retrieves the exact approved reading.
-        form.locator('button[type=submit]').click();_acknowledge_driver_end(page)
+        form.locator('button[type=submit]').click();_acknowledge_driver_end(page,language)
         with db.tx() as c:
             s=c.execute('SELECT status,submission,vehicle_log FROM shifts WHERE id=%s',(sid,)).fetchone()
             assert s['status']=='submitted' and s['submission']['counted_halalas']==21100
