@@ -1164,8 +1164,6 @@ def save_closure_draft(sid:str,body:ClosureDraft,request:Request,user=Depends(au
         if shift['status'] not in ('open','closing'):fail(409,'لا تعدل مسودة تقفيلة مرسلة أو مقفلة')
         def perform():
             current=lock_shift(c,sid);shift_access(c,user,current)
-            from .fuel_exceptions import readiness_guard
-            if body.available:readiness_guard(current)
             if current['user_id']!=user['id'] or current['status'] not in ('open','closing'):fail(409,'لا تعدل مسودة تقفيلة مرسلة أو مقفلة')
             existing=c.execute('SELECT * FROM closure_drafts WHERE shift_id=%s FOR UPDATE',(sid,)).fetchone()
             if existing and body.revision!=existing['revision']:fail(409,'تغيرت مسودة التقفيلة؛ حدّثها قبل الحفظ')
@@ -1202,6 +1200,8 @@ def set_shift_availability(sid:str,body:AvailabilityUpdate,request:Request,user=
         def perform():
             current=lock_shift(c,sid);shift_access(c,user,current)
             if current['kind']!='driver' or current['status']!='open':fail(409,'التوفر يخص شفت سائق مفتوح فقط')
+            from .fuel_exceptions import readiness_guard
+            if body.available:readiness_guard(current)
             from .driver_breaks import guard as break_guard
             break_guard(c,sid)
             c.execute('UPDATE shifts SET available=%s WHERE id=%s',(body.available,sid))
