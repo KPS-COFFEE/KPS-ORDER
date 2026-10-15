@@ -1005,7 +1005,7 @@
   function receiptHTML(o, preparation=false,receiptLanguage='en') {
     const tr=(ar,en)=>receiptLanguage==='ar'?ar:en;
     const money=v=>new Intl.NumberFormat(receiptLanguage==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(Number(v||0)/100);
-    const datetime=v=>new Intl.DateTimeFormat(receiptLanguage==='ar'?'ar-SA':'en-GB',{timeZone:'Asia/Riyadh',dateStyle:'short',timeStyle:'short'}).format(new Date(v));
+    const datetime=v=>new Intl.DateTimeFormat(receiptLanguage==='ar'?'ar-SA':'en-GB',{timeZone:'Asia/Riyadh',dateStyle:'short',timeStyle:o.fiscal_document?'medium':'short'}).format(new Date(v));
     const fiscal=!preparation&&o.fiscal_document;
     const title=fiscal?tr(fiscal.kind==='credit_note'?'إشعار دائن مبسط':'فاتورة ضريبية مبسطة',fiscal.kind==='credit_note'?'Simplified credit note':'Simplified tax invoice'):tr(preparation?'فاتورة تحضير الطلب':'فاتورة طلب',preparation?'Preparation receipt':'Order receipt');
     const row=(label,value)=>`<div class="receipt-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;

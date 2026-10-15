@@ -157,3 +157,22 @@ def test_preview_access_and_incomplete_sale(fiscal_sale):
         assert client.post(path,headers={'Idempotency-Key':'fiscal-test-0002'}).status_code==403
     client.app.dependency_overrides[auth.current_user]=lambda:{**user,'brand_id':'other'}
     assert client.post(path,headers={'Idempotency-Key':'fiscal-test-0003'}).status_code==404
+
+@pytest.mark.postgres
+def test_concurrent_preview_retries_and_sami_fulfilment(fiscal_sale):
+    from concurrent.futures import ThreadPoolExecutor
+    client,oid,user=fiscal_sale
+    with db.tx() as c:c.execute("UPDATE orders SET branch_id='kps-branch-11' WHERE id=%s",(oid,))
+    def prepare(i):
+        return client.post(f'/api/fiscal/orders/{oid}/preview',headers={'Idempotency-Key':f'fiscal-concurrent-{i}'})
+    with ThreadPoolExecutor(max_workers=4) as pool:responses=list(pool.map(prepare,range(4)))
+    assert all(r.status_code==200 for r in responses),[r.text for r in responses]
+    assert len({r.json()['document']['number'] for r in responses})==1
+    assert all(r.json()['document']['seller']==fiscal.SELLER for r in responses)
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM fiscal_previews WHERE order_id=%s',(oid,)).fetchone()['n']==1
+        assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==0
+    before=responses[0].json()['document']
+    with db.tx() as c:
+        c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{items,0,name}','\"Changed operational text\"'::jsonb),amendment_revision=amendment_revision+1 WHERE id=%s",(oid,))
+    assert prepare(5).json()['document']==before

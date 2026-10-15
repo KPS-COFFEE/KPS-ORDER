@@ -231,12 +231,12 @@ def receipt(order, branch, kind, language, translations=None):
         if fiscal.get('original_number'): add(fiscal['original_number'],False,True)
     else:
         add(('فاتورة تحضير الطلب' if ar else 'Preparation receipt') if kind=='preparation' else ('فاتورة طلب' if ar else 'Order receipt'),True,True)
-    add('رقم الطلب' if ar else 'Order number',False,True,role='caption')
+    add(('رقم الفاتورة' if ar else 'Invoice number') if fiscal else ('رقم الطلب' if ar else 'Order number'),False,True,role='caption')
     add(snap.get('order_reference') or order['order_no'],True,True,role='reference')
     add(('مركز التوصيل' if ar else 'Delivery Center') if kind!='preparation' and snap.get('order_source')=='delivery_center' else branch['name'],False,True)
     local=order['created_at'].astimezone(ZoneInfo('Asia/Riyadh'))
     add(('التاريخ: ' if ar else 'Date: ')+local.strftime('%Y-%m-%d'),False,True)
-    add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M')+(' — الرياض' if ar else ' — Riyadh'),False,True)
+    add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M:%S' if fiscal else '%H:%M')+(' — الرياض' if ar else ' — Riyadh'),False,True)
     add('────────────────────',False,True)
     for item in snap.get('items',[]):
         labels=(translations or {}).get(item.get('product_id'),{})
