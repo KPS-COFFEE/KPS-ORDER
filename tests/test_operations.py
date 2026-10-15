@@ -409,10 +409,14 @@ def test_completed_driver_safe_replays_and_revoked_financial_lists(ops):
     collection=post('driver','/api/orders/'+oid+'/collect',body,key='replay-after-delivery')
     done={'status':'delivered','proof':'TEST العميل استلم'}
     outcome=post('driver','/api/tasks/'+task+'/transition',done,key='delivery-reconnect-key')
-    assert post('driver','/api/orders/'+oid+'/collect',body,key='replay-after-delivery')==collection
+    post('driver','/api/orders/'+oid+'/collect',body,key='replay-after-delivery',status=404)
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==1
+        assert c.execute('SELECT amount_halalas FROM collections WHERE id=%s',(collection['collection_id'],)).fetchone()['amount_halalas']==1000
     assert post('driver','/api/tasks/'+task+'/transition',done,key='delivery-reconnect-key')==outcome
     rows=actor('driver').get('/api/shifts/'+driver).json()['tasks']
-    assert 'notes' not in rows[0]['snapshot'] and 'note' not in rows[0]['snapshot']['items'][0]
+    assert rows==[]
+    assert actor('driver').get('/api/tasks').json()=={'tasks':[],'counts':{'completed':1}}
     with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-driver'")
     post('driver','/api/orders/'+oid+'/collect',body,key='replay-after-delivery',status=404)
     assert actor('driver').get('/api/shifts').json()['shifts']==[]
