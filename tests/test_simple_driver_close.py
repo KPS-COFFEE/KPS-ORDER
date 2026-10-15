@@ -67,7 +67,8 @@ def test_different_keys_race_cannot_repeat_financial_effects(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts()
     user=principal('manager')
-    body=operations.DriverClose(terminal_total_halalas=0,counted_halalas=0,received_halalas=0,confirmed=True,exception_reason='TEST unavailable')
+    from tests.test_shift_vehicle import inspection
+    body=operations.DriverClose(vehicle_inspection=inspection(1025,100),terminal_total_halalas=0,counted_halalas=0,received_halalas=0,confirmed=True,exception_reason='TEST unavailable')
     results=race([
         lambda:operations.simple_driver_close(driver,body,request('TEST-race-a'),user),
         lambda:operations.simple_driver_close(driver,body,request('TEST-race-b'),user),

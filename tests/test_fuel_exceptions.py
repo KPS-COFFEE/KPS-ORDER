@@ -94,3 +94,26 @@ def test_mobile_full_exception_request_and_manager_approval(live_app,chromium_br
             assert r['status']=='consumed' and r['consumed_shift_id']
         assert not errors and not merrors
     finally:ctx.close();mctx.close()
+
+@pytest.mark.postgres
+def test_rejection_vehicle_change_and_revoked_scope_fail_closed(ops):
+    actor,post,order,shifts=ops
+    mid=post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
+    body={'phase':'start','manager_shift_id':mid,'reason':'aldrees_balance_empty','fuel_percent':40,'odometer_km':1000}
+    r=post('driver','/api/fuel-exceptions',body)
+    post('manager','/api/fuel-exceptions/'+r['id'],{'decision':'rejected'})
+    opening={'kind':'driver','manager_shift_id':mid,'vehicle_inspection':{**inspection(1000,40),'fuel_exception_id':r['id']}}
+    post('driver','/api/shifts',opening,status=409)
+    r=post('driver','/api/fuel-exceptions',body)
+    post('manager','/api/fuel-exceptions/'+r['id'],{'decision':'approved'},key='scope-approved')
+    opening['vehicle_inspection']['fuel_exception_id']=r['id']
+    with db.tx() as c:c.execute("UPDATE users SET vehicle='{\"plate\":\"1234 ABC\"}' WHERE id='ops-driver'")
+    post('driver','/api/shifts',opening,status=409)
+    with db.tx() as c:
+        c.execute("UPDATE users SET vehicle='{}' WHERE id='ops-driver'")
+        c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-manager'")
+    post('manager','/api/fuel-exceptions/'+r['id'],{'decision':'approved'},key='scope-approved',status=403)
+    post('driver','/api/shifts',opening,status=409)
+    with db.tx() as c:
+        assert c.execute("SELECT count(*) n FROM shifts WHERE user_id='ops-driver'").fetchone()['n']==0
+        assert c.execute('SELECT status FROM fuel_exceptions WHERE id=%s',(r['id'],)).fetchone()['status']=='approved'

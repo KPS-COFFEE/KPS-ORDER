@@ -43,7 +43,7 @@ def request_exception(body:FuelRequest,request:Request,user=Depends(auth.current
         driver,m,vehicle=scope(c,user,user['id'],body.manager_shift_id,body.shift_id)
         def perform():
             driver,m,vehicle=scope(c,user,user['id'],body.manager_shift_id,body.shift_id)
-            if m['status']!='open':raise db.error(409,'FUEL_MANAGER_CLOSED','شفت المدير مغلق / Manager shift closed')
+            if m['status'] not in (('open',) if body.phase=='start' else ('open','closing')):raise db.error(409,'FUEL_MANAGER_CLOSED','شفت المدير مغلق / Manager shift closed')
             if body.shift_id:
                 if lock_shift(c,body.shift_id)['status'] not in ('open','closing'):raise db.error(409,'FUEL_SHIFT_CLOSED','الشفت منتهٍ / Shift ended')
             elif c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(user['id'],)).fetchone():raise db.error(409,'SHIFT_ALREADY_OPEN','يوجد شفت غير مقفل / Unclosed shift exists')
@@ -79,7 +79,7 @@ def decide(eid:str,body:Decision,request:Request,user=Depends(auth.current_user)
         def perform():
             r=c.execute('SELECT * FROM fuel_exceptions WHERE id=%s FOR UPDATE',(eid,)).fetchone()
             _,m,vehicle=scope(c,user,r['driver_id'],r['manager_shift_id'],r['shift_id'])
-            if r['status']!='requested' or m['status']!='open' or vehicle!=r['vehicle']:raise db.error(409,'FUEL_STALE','الطلب تغير؛ يلزم طلب جديد / Request changed; submit again')
+            if r['status']!='requested' or m['status'] not in (('open',) if r['phase']=='start' else ('open','closing')) or vehicle!=r['vehicle']:raise db.error(409,'FUEL_STALE','الطلب تغير؛ يلزم طلب جديد / Request changed; submit again')
             c.execute('UPDATE fuel_exceptions SET status=%s,decided_by=%s,decided_at=now() WHERE id=%s',(body.decision,user['id'],eid))
             db.audit(c,user['id'],'fuel.'+body.decision,'fuel_exception',eid,{'reason':r['reason'],'fuel_percent':r['fuel_percent']})
             return {'id':eid,'status':body.decision}

@@ -45,12 +45,15 @@ def test_new_driver_records_survive_full_restore(ops,monkeypatch):
     enable(monkeypatch);oid=order()
     fid=post('manager','/api/dispatch/offers',{'order_id':oid,'driver_shift_id':sid})['offer_id']
     post('driver','/api/dispatch/offers/'+fid+'/decision',{'decision':'accept'})
+    fuel=post('driver','/api/fuel-exceptions',{'phase':'end','shift_id':sid,'manager_shift_id':manager,'reason':'aldrees_limit_reached','fuel_percent':70,'odometer_km':1025})['id']
+    post('manager','/api/fuel-exceptions/'+fuel,{'decision':'approved'})
     with db.tx() as c:contents,manifest=build_archive(c,full=True)
     target='kps_restore_'+uuid4().hex;url=os.environ['TEST_DATABASE_URL']
     try:
         restore_archive(contents,target_url=url,target_schema=target)
         with psycopg.connect(url) as c:
             c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
+            assert c.execute('SELECT status,reason,fuel_percent,odometer_km FROM fuel_exceptions WHERE id=%s',(fuel,)).fetchone()==('approved','aldrees_limit_reached',70,1025)
             assert bytes(c.execute('SELECT data FROM driver_evidence WHERE id=%s',(eid,)).fetchone()[0])==saved_image
             assert c.execute('SELECT evidence_id FROM vehicle_reports WHERE id=%s',(report['id'],)).fetchone()[0]==eid
             assert c.execute('SELECT count(*) FROM driver_break_events WHERE break_id=%s',(bid,)).fetchone()[0]==2

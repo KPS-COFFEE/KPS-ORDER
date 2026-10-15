@@ -86,8 +86,7 @@ separate restoration schema. This does not access operational databases.
 
 ## Still required before claiming complete owner acceptance
 
-- Confirm the configured FULL fuel intake/return policy and authorized exceptions;
-  existing actual fuel-percent inspection is preserved, not newly certified as FULL enforcement.
+- FULL fuel intake/return and the three owner-approved Aldrees exceptions are implemented below; certification follows the dedicated PostgreSQL/browser acceptance.
 - Certify the complete requested mobile journey and every requested screenshot;
   current synthetic home screenshots are not deployed or physical-camera evidence.
 - Prove the existing Render environment is safe for a limited visual deployment,
