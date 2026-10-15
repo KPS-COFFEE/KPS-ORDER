@@ -23,6 +23,39 @@ def single_connection(monkeypatch):
 
 
 @pytest.mark.parametrize('pipeline', [False, True])
+def test_parameterized_plans_survive_reset_without_caching_identity(database, monkeypatch, pipeline):
+    single_connection(monkeypatch)
+    statement = 'SELECT active FROM brands WHERE id=%s'
+    for _ in range(16):
+        with db.tx(pipeline=pipeline) as conn:
+            assert conn.execute(statement, ('kps',)).fetchone()['active'] is True
+    with db.tx() as conn:
+        plans = conn.execute("SELECT generic_plans,custom_plans FROM pg_prepared_statements "
+                             "WHERE statement='SELECT active FROM brands WHERE id=$1'").fetchall()
+        assert len(plans) == 1 and plans[0]['generic_plans'] > 0
+        assert conn.prepared_max == 64
+        conn.execute("UPDATE brands SET active=false WHERE id='kps'")
+    with db.tx(pipeline=pipeline) as conn:
+        assert conn.execute(statement, ('kps',)).fetchone()['active'] is False
+        assert conn.execute(statement, ('missing-brand',)).fetchone() is None
+
+
+def test_reset_removes_listeners_cursors_and_sequence_state(database, monkeypatch):
+    single_connection(monkeypatch)
+    with db.tx() as conn:
+        conn.execute('LISTEN test_pool_channel')
+        conn.execute('DECLARE test_pool_cursor CURSOR WITH HOLD FOR SELECT 1')
+        conn.execute('CREATE SEQUENCE test_pool_sequence')
+        conn.execute("SELECT nextval('test_pool_sequence')")
+    with db.tx() as conn:
+        assert conn.execute('SELECT * FROM pg_listening_channels()').fetchall() == []
+        assert conn.execute("SELECT * FROM pg_cursors WHERE name='test_pool_cursor'").fetchall() == []
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            with conn.transaction():
+                conn.execute("SELECT currval('test_pool_sequence')")
+
+
+@pytest.mark.parametrize('pipeline', [False, True])
 def test_connections_are_reused_and_session_state_is_removed(database, monkeypatch, pipeline):
     single_connection(monkeypatch)
     with db.tx(pipeline=pipeline) as conn:

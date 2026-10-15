@@ -187,6 +187,52 @@ def test_same_customer_same_contents_different_keys_are_two_real_orders(checkout
 
 
 @pytest.mark.postgres
+def test_recent_contact_lookup_uses_selective_index_and_exact_basket(checkout):
+    client, user = checkout
+    response = create(client)
+    assert response.status_code == 200
+    order = response.json()['order']
+    with db.tx() as conn:
+        conn.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,"
+                     "subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) "
+                     "SELECT 'TEST index '||n,brand_id,branch_id,customer_id,service,delivery_status,payment_method,"
+                     "subtotal_halalas,delivery_fee_halalas,total_halalas,jsonb_set(snapshot,'{order_reference}',to_jsonb('TEST ref '||n)),"
+                     "jsonb_set(customer,'{phone}',to_jsonb('TEST phone '||n)) "
+                     "FROM orders CROSS JOIN generate_series(1,2000) n WHERE id=%s", (order['id'],))
+        conn.execute('ANALYZE orders')
+        query = ("SELECT id FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s "
+                 "AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1")
+        args = (user['brand_id'], order['branch_id'], order['customer']['phone'], db.json(order['snapshot']['items']))
+        plan = conn.execute('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+query,args).fetchone()['QUERY PLAN'][0]
+        assert 'orders_recent_contact' in str(plan)
+        assert conn.execute(query,args).fetchone()['id'] == order['id']
+        assert conn.execute(query,(*args[:3],db.json([]))).fetchone() is None
+        # Index is an optimization only: time, brand and contact boundaries stay exact.
+        assert conn.execute(query,(args[0],args[1],'unknown',args[3])).fetchone() is None
+        conn.execute("UPDATE orders SET created_at=now()-interval '16 minutes' WHERE id=%s",(order['id'],))
+        assert conn.execute(query,args).fetchone() is None
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('change', ['user', 'brand', 'session'])
+def test_warm_authorization_plans_do_not_cache_revoked_access(checkout, monkeypatch, change):
+    client, user = checkout
+    db.close_pools()
+    monkeypatch.setattr(db, 'POOL_MIN_SIZE', 1)
+    monkeypatch.setattr(db, 'POOL_MAX_SIZE', 1)
+    for _ in range(16):
+        assert client.get('/api/orders').status_code == 200
+    with db.tx() as conn:
+        if change == 'user':
+            conn.execute('UPDATE users SET active=false WHERE id=%s',(user['id'],))
+        elif change == 'brand':
+            conn.execute('UPDATE brands SET active=false WHERE id=%s',(user['brand_id'],))
+        else:
+            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(user['id'],))
+    assert client.get('/api/orders').status_code == 401
+
+
+@pytest.mark.postgres
 def test_failed_order_event_rolls_back_order_number_audit_and_key_then_same_key_retries(checkout):
     client, user = checkout
     key = uuid4().hex

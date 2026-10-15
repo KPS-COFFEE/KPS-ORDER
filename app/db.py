@@ -43,10 +43,19 @@ if hasattr(os, 'register_at_fork'):
 
 
 def _reset_connection(conn):
-    # Connections use autocommit outside tx(), so DISCARD ALL runs outside a
-    # transaction. It removes roles/GUCs/temp objects/session advisory locks.
-    # Startup DSN options (including test schema search_path/TLS) stay intact.
-    conn.execute('DISCARD ALL')
+    # Keep only bounded parameterized SQL plans, never results or identity.
+    # DISCARD ALL also deallocates plans and forced every fresh authorization
+    # lookup to be parsed/planned again. Reset all other session state using
+    # PostgreSQL's documented DISCARD ALL components, in one protocol message.
+    # Pool identity still includes the complete DSN, PID and schema options.
+    conn.execute('CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ALL; '
+                 'UNLISTEN *; SELECT pg_advisory_unlock_all(); '
+                 'DISCARD TEMP; DISCARD SEQUENCES', prepare=False)
+
+
+def _configure_connection(conn):
+    # Bound per-backend plan memory on the small database. No result caching.
+    conn.prepared_max = 64
 
 
 def _pool_for_url(url):
@@ -62,7 +71,8 @@ def _pool_for_url(url):
             pool = ConnectionPool(url, min_size=POOL_MIN_SIZE, max_size=POOL_MAX_SIZE,
                 timeout=POOL_CHECKOUT_SECONDS, max_waiting=200, open=False, name=name,
                 kwargs={'row_factory': dict_row, 'connect_timeout': 5, 'autocommit': True,
-                        'prepare_threshold': None, 'application_name': name},
+                        'prepare_threshold': 5, 'application_name': name},
+                configure=_configure_connection,
                 check=ConnectionPool.check_connection, reset=_reset_connection,
                 max_lifetime=600, max_idle=60, reconnect_timeout=10, num_workers=3)
             pool.open()

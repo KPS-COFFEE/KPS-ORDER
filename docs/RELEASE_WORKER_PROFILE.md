@@ -6,6 +6,18 @@ service, or a background job worker. PostgreSQL, durable idempotency keys,
 branch receipt counters and existing transactional outboxes remain shared.
 Each process owns its bounded pool (maximum 20 connections each).
 
+The pool retains at most 64 parameterized SQL plans per connection, not rows,
+prices, authorization results or sessions. Every request still reads current
+database state. Reset closes cursors, restores authorization and GUCs, removes
+listeners, releases advisory locks, and discards temporary and sequence state.
+The full DSN/schema and worker PID remain part of pool identity. The direct
+PostgreSQL connection must not be replaced with an incompatible transaction
+pooling proxy without separately validating prepared-statement support.
+
+Migration 052 adds a selective recent-contact index; exact basket equality,
+15-minute age, brand and branch checks remain unchanged. The index does not
+make a phone number proof of customer ownership.
+
 Both Docker and the isolated harness keep idle HTTP connections for 15 seconds,
 instead of closing them at the HTTP client's same five-second expiry boundary.
 This changes **idle socket lifetime only**, not the latency acceptance limits,
@@ -48,6 +60,6 @@ These are shared-runner engineering measurements, **not proof of 500-user
 capacity on the current Render 0.5-CPU / 512-MiB plan**. Two processes do not
 create additional CPU. Any paid capacity change needs separate owner approval
 and a representative isolated load test. Keep automatic deployment off, leave
-the official domain and customer ordering state unchanged, and keep customer
-SMS disabled. Deploy the existing experimental service only after both load
+the official domain, customer ordering and existing SMS state unchanged. Do not
+activate or send public SMS. Deploy the existing experimental service only after both load
 runs and full CI pass on its exact candidate SHA.
