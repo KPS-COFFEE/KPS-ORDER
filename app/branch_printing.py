@@ -232,7 +232,8 @@ def receipt(order, branch, kind, language, translations=None):
     add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True,role='brand')
     if fiscal:
         add(('إشعار دائن مبسط' if ar else 'Simplified credit note') if fiscal['kind']=='credit_note' else ('فاتورة ضريبية مبسطة' if ar else 'Simplified tax invoice'),True,True)
-        add('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued',True,True)
+        if fiscal.get('status')!='issued':
+            add('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued',True,True)
         add('VAT: '+fiscal['seller']['vat_number'],False,True)
         add(fiscal['seller']['address'].replace('حفر الباطن,حفر الباطن,', 'حفر الباطن,'),False,True)
         if fiscal.get('original_number'): add(fiscal['original_number'],False,True)

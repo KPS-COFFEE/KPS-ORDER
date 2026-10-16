@@ -328,8 +328,14 @@ def test_completed_driver_sale_automatically_issues_once_and_refunds(ops,method)
     post('driver',f'/api/tasks/{task}/transition',{'status':'delivered','proof':'synthetic delivery'},key='fiscal-driver-delivered')
     original=actor('owner').get(f'/api/fiscal/orders/{oid}/documents').json()['documents']
     assert len(original)==1 and original[0]['total_halalas']==3950 and original[0]['tax_halalas']==515
-    # Payment replay after delivery must not issue another original.
-    assert post('driver',f'/api/orders/{oid}/collect',payment,key='fiscal-driver-payment')==paid
+    # Completed orders leave the driver's current scope: preserve the canonical
+    # 404 contract and verify both money and the original remain unchanged.
+    post('driver',f'/api/orders/{oid}/collect',payment,key='fiscal-driver-payment',status=404)
+    with db.tx() as c:
+        collections=c.execute('SELECT id,amount_halalas FROM collections WHERE order_id=%s',(oid,)).fetchall()
+        assert collections==[{'id':paid['collection_id'],'amount_halalas':3950}]
+        assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==1
+    assert actor('owner').get(f'/api/fiscal/orders/{oid}/documents').json()['documents']==original
     refund={'amount_halalas':550,'method':method,'reason':'Authorized partial return','line_quantities':{}}
     first=post('manager',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')
     assert post('manager',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')==first
@@ -360,3 +366,12 @@ def test_disabling_policy_preserves_original_and_blocks_credit_money_effects(fis
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==1
         assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==0
+
+@pytest.mark.parametrize('language',['ar','en'])
+def test_issued_device_header_and_footer_never_mark_invoice_as_preview(language):
+    doc=fiscal.build(sample(),'KPS-SYNTHETIC',NOW)
+    doc['status']='issued'  # Rendering unit fixture, not an actual issuance.
+    lines=receipt(fiscal.print_order(doc),{'name':'Test'},'order',language)['lines']
+    assert not any('PREVIEW ONLY' in x['text'] or 'معاينة فقط' in x['text'] for x in lines)
+    assert any(('فاتورة ضريبية مبسطة' if language=='ar' else 'Simplified tax invoice')==x['text'] for x in lines)
+    assert next(x['matrix'] for x in lines if x['role']=='qr')==fiscal.qr(doc)['matrix']
