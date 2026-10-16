@@ -45,12 +45,19 @@ def test_quote_and_order_persist_optional_plate_and_replay(checkout, entered, ex
     assert read['customer']['car'] == {'model':'Corolla','color':'لؤلؤي خاص','plate':expected}
     # Reading a historical plate must not normalize or rewrite its saved text.
     historical = {'model':'Old','color':'Historical Pearl','plate':'١٢٣٤٥ / A'}
+    historical_id = 'historical-car-' + uuid4().hex
     with db.tx() as c:
-        c.execute('UPDATE orders SET customer=%s WHERE id=%s',
-                  (db.json({**read['customer'],'car':historical}),oid))
-    assert client.get('/api/orders/'+oid).json()['order']['customer']['car'] == historical
+        # Insert a pre-existing record, never bypass the immutable snapshot guard.
+        c.execute('''INSERT INTO orders(id,brand_id,branch_id,customer_id,service,
+                     payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+                     SELECT %s,brand_id,branch_id,customer_id,service,payment_method,
+                     subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot-'order_reference',%s
+                     FROM orders WHERE id=%s''',
+                  (historical_id,db.json({**read['customer'],'car':historical}),oid))
+    assert client.get('/api/orders/'+historical_id).json()['order']['customer']['car'] == historical
     with db.tx() as c:
-        assert c.execute('SELECT customer FROM orders WHERE id=%s',(oid,)).fetchone()['customer']['car'] == historical
+        assert c.execute('SELECT customer FROM orders WHERE id=%s',(historical_id,)).fetchone()['customer']['car'] == historical
+        assert c.execute('SELECT customer FROM orders WHERE id=%s',(oid,)).fetchone()['customer']['car']['plate'] == expected
 
 @pytest.mark.parametrize('language', ['ar','en'])
 @pytest.mark.parametrize('kind', ['order','preparation'])
