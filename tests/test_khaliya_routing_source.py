@@ -26,12 +26,16 @@ class Rows:
 
 
 class CatalogConnection:
-    def __init__(self,branches,products):self.branches=branches;self.products=products
+    def __init__(self,branches,products,brand_settings=None):
+        self.branches=branches;self.products=products
+        self.brand_settings={'branch_online_required':False} if brand_settings is None else brand_settings
     def pipeline(self):
         # Pure routing double; real PostgreSQL tests cover protocol and locks.
         return nullcontext()
     def execute(self,sql,args=None):
-        if 'FROM brands' in sql:return Rows({'id':'kps','settings':{}})
+        # This routing double exercises retained historical cash orders, not
+        # the new cashier-approved online checkout (tested independently).
+        if 'FROM brands' in sql:return Rows({'id':'kps','settings':self.brand_settings})
         if "branch_no=2" in sql:return Rows(self.branches.get('kps-branch-2'))
         if 'FROM branches' in sql:return Rows(self.branches.get(args[0]))
         if 'FROM products' in sql:return Rows(self.products.get(args[0]))
@@ -64,6 +68,15 @@ def test_explicit_pickup_switch_required_even_for_direct_api(service):
     assert error.value.detail['message']=='الخلية متوفرة للاستلام من فرع 2 فقط.'
     result=catalog.quote_order(conn,quote_body(service,'kps-branch-2'))
     assert result['branch_id']=='kps-branch-2' and 'internal_routing' not in result
+
+
+@pytest.mark.parametrize('service',['pickup','car'])
+def test_current_policy_still_blocks_legacy_cash_routing_without_activation(service):
+    branches,products=fixtures()
+    with pytest.raises(HTTPException) as error:
+        catalog.quote_order(CatalogConnection(branches,products,brand_settings={}),
+                            quote_body(service,'kps-branch-2'))
+    assert error.value.detail['code']=='BRAND_SERVICE_DISABLED'
 
 
 @pytest.mark.parametrize('mode',['closed','missing','wrong_city','stock','other_item','outside_coverage','payment'])
@@ -99,7 +112,7 @@ def test_customer_projection_does_not_mutate_staff_execution_snapshot():
 
 def test_nearest_respects_pickup_branch_and_delivery_target_stock():
     branches,products=fixtures();rows=list(branches.values());ps=list(products.values())
-    pickup=catalog.rank_nearest_branches(rows,{'lat':28,'lng':45},'pickup',{},ps,products)
+    pickup=catalog.rank_nearest_branches(rows,{'lat':28,'lng':45},'pickup',{'branch_online_required':False},ps,products)
     assert [b['branch_no'] for b in pickup['branches']]==[2]
     delivery=catalog.rank_nearest_branches(rows,{'lat':28,'lng':45},'delivery',{},ps,products)
     assert {b['branch_no'] for b in delivery['branches']}=={1,2}
