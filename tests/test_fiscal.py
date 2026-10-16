@@ -313,9 +313,17 @@ from test_operations import ops
 @pytest.mark.postgres
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
 @pytest.mark.parametrize('method',['cash','card'])
-def test_completed_driver_sale_automatically_issues_once_and_refunds(ops,method):
+@pytest.mark.parametrize('mode',['verified_phase1','owner_requested'])
+def test_completed_driver_sale_automatically_issues_once_and_refunds(ops,method,mode):
     actor,post,order,shifts=ops
-    activate_phase1(actor('owner'))
+    if mode=='verified_phase1':
+        activate_phase1(actor('owner'))
+    else:
+        result=actor('owner').post('/api/fiscal/policy',json={'enabled':True,'phase':'unconfirmed',
+            'issuance_mode':'owner_requested','reason':'Synthetic owner-requested issuance'},
+            headers={'Idempotency-Key':'owner-requested-completion'})
+        assert result.status_code==200,result.text
+        assert result.json()['issuance_enabled'] is True
     manager,driver=shifts()
     oid=order(total=3950)
     task=post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':driver})['task']['id']
@@ -407,3 +415,50 @@ def test_issued_refund_spans_multiple_collections_without_decimal_loss(fiscal_sa
         assert sum(row['line_quantities'].get('synthetic-brownie',0) for row in rows)==1
         assert sum(row['line_quantities'].get('synthetic-brownie-box',0) for row in rows)==1
         assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='refunded'
+
+
+@pytest.mark.postgres
+def test_owner_requested_issuance_all_registered_branches_without_invented_evidence(fiscal_sale):
+    client,oid,user=fiscal_sale
+    response=client.post('/api/fiscal/policy',json={
+        'enabled':True,'phase':'unconfirmed','issuance_mode':'owner_requested',
+        'reason':'Synthetic owner decision for every registered KPS branch'},
+        headers={'Idempotency-Key':'owner-requested-invoices'})
+    assert response.status_code==200,response.text
+    cfg=response.json()
+    assert cfg['issuance_enabled'] is True
+    assert cfg['official_issuance_enabled'] is False
+    assert cfg['phase']=='unconfirmed' and cfg['phase2_supported'] is False
+    with db.tx() as c:
+        branches=c.execute("SELECT id,name FROM branches WHERE brand_id='kps' ORDER BY id").fetchall()
+        assert len(branches)==20
+    for branch in branches:
+        target=db.new_id('all-branch-fiscal-')
+        snapshot=sample()['snapshot'] | {'branch_name':branch['name']}
+        with db.tx() as c:
+            c.execute("INSERT INTO orders(id,brand_id,branch_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps',%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}')",(target,branch['id'],db.json(snapshot)))
+        result=client.post(f'/api/fiscal/orders/{target}/issue',headers={'Idempotency-Key':'issue-'+target})
+        assert result.status_code==200,result.text
+        doc=result.json()['document']
+        assert doc['status']=='issued' and doc['applicability_status']=='unconfirmed'
+        assert doc['issuance_mode']=='owner_requested' and doc['zatca_integrated'] is False
+        assert doc['seller']==fiscal.SELLER and doc['branch_id']==branch['id']
+        assert doc['total_halalas']==3950 and doc['tax_halalas']==515
+        replay=client.post(f'/api/fiscal/orders/{target}/issue',headers={'Idempotency-Key':'replay-'+target})
+        assert replay.json()['document']==doc
+        saved=client.get(f'/api/orders/{target}').json()['order']['issued_receipt']
+        assert saved['fiscal_document']==doc
+        for language in ['ar','en']:
+            lines=receipt(fiscal.print_order(doc),branch,'order',language)['lines']
+            text='\n'.join(x['text'] for x in lines)
+            assert ('فاتورة ضريبية مبسطة' if language=='ar' else 'Simplified tax invoice') in text
+            assert '311887526600003' in text and '39912' in text
+            assert ('معاينة فقط' if language=='ar' else 'PREVIEW ONLY') not in text
+            assert any(x['role']=='qr' for x in lines)
+    # Explicit Phase 2 cannot be enabled through the new owner-requested mode.
+    rejected=client.post('/api/fiscal/policy',json={'enabled':True,'phase':'phase2',
+        'issuance_mode':'owner_requested','reason':'Synthetic unsupported mode',
+        'expected_policy_id':cfg['policy_id']},headers={'Idempotency-Key':'no-phase2-bypass'})
+    assert rejected.status_code==409
+    decision=client.get('/api/fiscal/policy').json()['decision']
+    assert decision['phase']=='unconfirmed' and not decision['evidence_reference']
