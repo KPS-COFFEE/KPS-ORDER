@@ -789,7 +789,7 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             remaining=body.amount_halalas;refund_ids=[]
             for source in cols:
                 if not remaining:break
-                amount=min(remaining,source['available']);rid=uid()
+                amount=min(remaining,int(source['available']));rid=uid()
                 from .fiscal_issuance import credit_before_refund
                 credit_before_refund(c,o,user,rid,amount,body.reason,amendment_id=body.amendment_id)
                 c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by,amendment_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,source['id'],oid,sid,body.method,amount,db.json(body.line_quantities if not refund_ids else {}),body.reason,user['id'],body.amendment_id))

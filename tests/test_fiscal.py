@@ -375,3 +375,29 @@ def test_issued_device_header_and_footer_never_mark_invoice_as_preview(language)
     assert not any('PREVIEW ONLY' in x['text'] or 'معاينة فقط' in x['text'] for x in lines)
     assert any(('فاتورة ضريبية مبسطة' if language=='ar' else 'Simplified tax invoice')==x['text'] for x in lines)
     assert next(x['matrix'] for x in lines if x['role']=='qr')==fiscal.qr(doc)['matrix']
+
+
+@pytest.mark.postgres
+def test_issued_refund_spans_multiple_collections_without_decimal_loss(fiscal_sale):
+    client,oid,user=fiscal_sale
+    activate_phase1(client)
+    with db.tx() as c:
+        c.execute("UPDATE orders SET payment_method='card' WHERE id=%s",(oid,))
+        for index,amount in enumerate((1000,2950)):
+            c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES(%s,%s,%s,'card',%s)",(f'multi-{index}-'+oid,oid,user['id'],amount))
+    issued=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'multi-issue'})
+    assert issued.status_code==200,issued.text
+    original=issued.json()['document']
+    body={'amount_halalas':3950,'method':'card','reason':'Full refund across two collections','line_quantities':{}}
+    result=client.post(f'/api/orders/{oid}/refund',json=body,headers={'Idempotency-Key':'multi-refund'})
+    assert result.status_code==200,result.text
+    assert client.post(f'/api/orders/{oid}/refund',json=body,headers={'Idempotency-Key':'multi-refund'}).json()==result.json()
+    docs=client.get(f'/api/fiscal/orders/{oid}/documents').json()['documents']
+    assert [d for d in docs if d['kind']=='invoice']==[original]
+    credits=[d for d in docs if d['kind']=='credit_note']
+    assert len(credits)==2
+    assert sorted(d['total_halalas'] for d in credits)==[1000,2950]
+    assert sum(d['tax_halalas'] for d in credits)==515
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==2
+        assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='refunded'
