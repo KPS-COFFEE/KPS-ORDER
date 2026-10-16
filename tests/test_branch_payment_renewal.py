@@ -12,6 +12,55 @@ from test_branch_payments import provider
 from test_backup import independent_restore_database
 
 
+@pytest.mark.parametrize('current_status',['superseded','verified','review_required'])
+def test_stale_pending_snapshot_cannot_release_checkout(monkeypatch,current_status):
+    from app import branch_checkout, branch_payments, orders
+    stale={'id':'pay_stale','order_id':'order','status':'pending',
+           'expires_at':datetime.now(timezone.utc)+timedelta(minutes=10),
+           'amount_halalas':1000,'order_revision':0}
+    locked=[]
+    def scoped(c,oid,user,lock=False):
+        assert lock
+        locked.append(True)
+        return {'preparation_status':'accepted','payment_status':'unpaid',
+                'total_halalas':1000,'amendment_revision':0}
+    class Connection:
+        def execute(self,query,args):
+            assert locked and args==('pay_stale',)
+            return self
+        def fetchone(self):return {**stale,'status':current_status}
+    monkeypatch.setattr(orders,'scoped_order',scoped)
+    monkeypatch.setattr(branch_payments,'require_sandbox',lambda order:None)
+    with pytest.raises(HTTPException) as error:
+        branch_checkout.eligible(Connection(),stale,{'id':'customer'})
+    assert error.value.detail['code']=='PAYMENT_CHECKOUT_UNAVAILABLE'
+
+
+@pytest.mark.postgres
+def test_checkout_rereads_attempt_after_renewal_wins_order_lock(checkout_case,monkeypatch):
+    from app import branch_checkout, orders
+    actor,post,oid,a,calls=checkout_case
+    post('customer','/api/branch-payments/attempts/'+a['id']+'/checkout')
+    with db.tx() as c:
+        customer=c.execute('SELECT customer_id FROM orders WHERE id=%s',(oid,)).fetchone()['customer_id']
+        user=c.execute('SELECT * FROM users WHERE id=%s',(customer,)).fetchone()
+    monkeypatch.setattr(payment_intents,'safe_unused_intent',lambda *args,**kw:'provider_canceled')
+    original=orders.scoped_order
+    renewed=[]
+    def competing_renewal(c,order_id,actor,lock=False):
+        if lock and not renewed:
+            # acquire() has already read pending. Another transaction completes
+            # renewal before this request obtains the canonical order lock.
+            renewed.append(branch_payment_renewal.renew(a['id'],user))
+        return original(c,order_id,actor,lock=lock)
+    monkeypatch.setattr(orders,'scoped_order',competing_renewal)
+    with pytest.raises(HTTPException) as error:
+        branch_checkout.acquire(a['id'],user)
+    assert error.value.detail['code']=='PAYMENT_CHECKOUT_UNAVAILABLE'
+    assert len(renewed)==1 and len(calls)==1
+    assert renewed[0]['attempt']['id']!=a['id']
+
+
 @pytest.fixture
 def intent_evidence(monkeypatch):
     context = payment_gateways.PaymentContext('brand','seller','order','attempt',1000)

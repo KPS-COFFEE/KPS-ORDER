@@ -24,7 +24,12 @@ def eligible(c, attempt, user):
     from .orders import scoped_order
     order = scoped_order(c,attempt['order_id'],user,lock=True)
     require_sandbox(order)
-    if (attempt['status']!='pending' or attempt['expires_at']<=datetime.now(timezone.utc)
+    # The caller's snapshot may predate waiting for the order lock. Renewal and
+    # verification acquire that same lock before changing attempt state; reread
+    # now so a superseded/paid attempt cannot release a cached client secret.
+    attempt = c.execute('SELECT * FROM branch_payment_attempts WHERE id=%s',
+                        (attempt['id'],)).fetchone()
+    if (not attempt or attempt['status']!='pending' or attempt['expires_at']<=datetime.now(timezone.utc)
             or order['preparation_status']!='accepted' or order['payment_status']!='unpaid'
             or order['total_halalas']!=attempt['amount_halalas']
             or order.get('amendment_revision',0)!=attempt['order_revision']):
