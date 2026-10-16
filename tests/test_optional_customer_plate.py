@@ -48,9 +48,9 @@ def test_quote_and_order_persist_optional_plate_and_replay(checkout, entered, ex
     historical_id = 'historical-car-' + uuid4().hex
     with db.tx() as c:
         # Insert a pre-existing record, never bypass the immutable snapshot guard.
-        c.execute('''INSERT INTO orders(id,brand_id,branch_id,customer_id,service,
+        c.execute('''INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,
                      payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
-                     SELECT %s,brand_id,branch_id,customer_id,service,payment_method,
+                     SELECT %s,brand_id,branch_id,customer_id,service,delivery_status,payment_method,
                      subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot-'order_reference',%s
                      FROM orders WHERE id=%s''',
                   (historical_id,db.json({**read['customer'],'car':historical}),oid))
