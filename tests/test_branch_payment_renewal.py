@@ -27,8 +27,12 @@ def intent_evidence(monkeypatch):
     original = httpx.Client
     def handle(request):
         calls.append(request)
-        assert request.method == 'GET'
-        assert str(request.url) == 'https://api.moyasar.com/v1/payment_intents/'+session['provider_intent_id']
+        suffix='/cancel' if request.method=='POST' else ''
+        assert str(request.url) == 'https://api.moyasar.com/v1/payment_intents/'+session['provider_intent_id']+suffix
+        if request.method=='POST':
+            data['status']=data.get('_cancel_state','canceled')
+            if data['status']=='fulfilled':data['fulfilled_at']=datetime.now(timezone.utc).isoformat()
+            if data.get('_cancel_timeout'):raise httpx.ReadTimeout('synthetic private provider data',request=request)
         return httpx.Response(200, json=data, headers={'Date': data.get('_response_date',format_datetime(datetime.now(timezone.utc),usegmt=True))})
     monkeypatch.setattr(payment_intents.httpx, 'Client', lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
     return context, session, data, calls
@@ -60,12 +64,35 @@ def test_unproven_or_consumed_session_never_permits_renewal(intent_evidence,chan
     assert len(calls)==1
 
 
+@pytest.mark.parametrize('outcome',['canceled','fulfilled','created'])
+def test_local_expiry_cancellation_requires_independent_provider_proof(intent_evidence,outcome):
+    context,session,data,calls=intent_evidence
+    data['expires_at']=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()
+    data['_cancel_state']=outcome
+    if outcome=='canceled':
+        assert payment_intents.safe_unused_intent(context,session,cancel_unused=True)=='provider_canceled'
+    else:
+        with pytest.raises(HTTPException):payment_intents.safe_unused_intent(context,session,cancel_unused=True)
+    assert [r.method for r in calls]==['GET','POST','GET']
+
+
+def test_lost_cancellation_response_recovers_by_get_not_another_post(intent_evidence):
+    context,session,data,calls=intent_evidence
+    data['expires_at']=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()
+    data['_cancel_timeout']=True
+    with pytest.raises(HTTPException) as error:
+        payment_intents.safe_unused_intent(context,session,cancel_unused=True)
+    assert 'private provider' not in str(error.value)
+    assert payment_intents.safe_unused_intent(context,session,cancel_unused=True)=='provider_canceled'
+    assert [r.method for r in calls]==['GET','POST','GET']
+
+
 @pytest.mark.postgres
 def test_renewal_preserves_history_and_old_attempt_cannot_checkout(checkout_case,monkeypatch):
     actor,post,oid,a,calls=checkout_case
     url='/api/branch-payments/attempts/'+a['id']
     post('customer',url+'/checkout')
-    monkeypatch.setattr(payment_intents,'safe_unused_intent',lambda context,session:'provider_expired')
+    monkeypatch.setattr(payment_intents,'safe_unused_intent',lambda context,session,**kw:'provider_expired')
     result=post('customer',url+'/renew')['attempt']
     assert result['id'] != a['id'] and result['provider_payment_id'] != a['provider_payment_id']
     assert post('customer',url+'/renew')['attempt']==result
@@ -114,7 +141,7 @@ def test_unconfirmed_proof_and_foreign_actor_do_not_retire_attempt(checkout_case
     actor,post,oid,a,calls=checkout_case
     url='/api/branch-payments/attempts/'+a['id']
     post('customer',url+'/checkout')
-    def fail(*args): raise db.error(409,'PAYMENT_RECONCILIATION_REQUIRED','Unconfirmed')
+    def fail(*args,**kw): raise db.error(409,'PAYMENT_RECONCILIATION_REQUIRED','Unconfirmed')
     monkeypatch.setattr(payment_intents,'safe_unused_intent',fail)
     post('customer',url+'/renew',status=409)
     post('owner',url+'/renew',status=403)
@@ -128,7 +155,7 @@ def test_verified_payment_winning_race_prevents_renewal(checkout_case,monkeypatc
     actor,post,oid,a,calls=checkout_case
     url='/api/branch-payments/attempts/'+a['id']
     post('customer',url+'/checkout')
-    def proof(context,session):
+    def proof(context,session,**kw):
         with monkeypatch.context() as stub:
             provider(stub,a['id'])
             post('customer',url+'/reconcile')

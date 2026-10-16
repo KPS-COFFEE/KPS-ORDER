@@ -15,6 +15,12 @@ must match. An expired application attempt alone is not proof. Neither 404,
 timeout nor a fulfilled intent authorizes a second payment. A delayed original
 worker cannot expose credentials after the attempt is superseded.
 
+If the application deadline has passed while the provider intent remains
+unused, renewal requests provider cancellation and independently fetches the
+result before retiring the attempt. A fulfillment winning that race prevents
+renewal. An uncertain cancellation never creates a replacement; a later GET
+can recover a confirmed cancellation without repeating any charge.
+
 The Arabic/English customer control requests a server decision; it cannot
 retire attempts or report payment success itself. No live-payment path or
 activation flag is enabled. Renewal records are preserved in exports/backups.

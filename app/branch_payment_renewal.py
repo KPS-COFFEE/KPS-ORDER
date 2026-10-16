@@ -34,7 +34,8 @@ def renew(aid: str, user=Depends(auth.require_roles('customer'))):
     # No lock is held during the provider GET. A timeout/404/fulfilled intent
     # cannot establish that another charge is safe and therefore cannot renew.
     if session and session['state'] == 'ready':
-        reason = payment_intents.safe_unused_intent(payments.context(attempt), session)
+        reason = payment_intents.safe_unused_intent(payments.context(attempt), session,
+                    cancel_unused=attempt['expires_at'] <= datetime.now(timezone.utc))
     elif not session or (session['state'] in {'creating','uncertain'} and
                           session['created_at'] < datetime.now(timezone.utc)-timedelta(seconds=60)):
         reason = 'never_exposed'

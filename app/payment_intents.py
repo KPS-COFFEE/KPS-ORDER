@@ -26,7 +26,7 @@ class CheckoutIntent:
     mode: str = 'test'
 
 
-def safe_unused_intent(context, session):
+def safe_unused_intent(context, session, *, cancel_unused=False):
     """Return only normalized retirement proof; do not expose fetched secrets."""
     if (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or
             os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true'):
@@ -57,6 +57,15 @@ def safe_unused_intent(context, session):
         if (data.get('status') == 'created' and observed.tzinfo is not None and
                 expiry.timestamp()+60 < observed.timestamp()):
             return 'provider_expired'
+        if data.get('status') == 'created' and cancel_unused:
+            # The application deadline may precede provider expiry. Cancel only
+            # an unused intent, then independently fetch conclusive proof. A
+            # concurrent fulfillment wins atomically at the provider and blocks
+            # renewal; neither a cancel response nor its browser claim is proof.
+            with httpx.Client(timeout=httpx.Timeout(10, connect=3), follow_redirects=False, trust_env=False) as client:
+                client.post('https://api.moyasar.com/v1/payment_intents/'+identifier+'/cancel',
+                            auth=(key, ''), headers={'Accept': 'application/json'})
+            return safe_unused_intent(context, session)
     except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
         pass
     raise db.error(409, 'PAYMENT_RECONCILIATION_REQUIRED', 'لم يتأكد انتهاء جلسة الدفع دون استخدام. لا تعاود الدفع.')
