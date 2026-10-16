@@ -1,5 +1,6 @@
 """Renew only provably unused sessions. No real merchant traffic."""
 from datetime import datetime, timezone, timedelta
+from email.utils import format_datetime
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 import httpx
@@ -28,7 +29,7 @@ def intent_evidence(monkeypatch):
         calls.append(request)
         assert request.method == 'GET'
         assert str(request.url) == 'https://api.moyasar.com/v1/payment_intents/'+session['provider_intent_id']
-        return httpx.Response(200, json=data)
+        return httpx.Response(200, json=data, headers={'Date': data.get('_response_date',format_datetime(datetime.now(timezone.utc),usegmt=True))})
     monkeypatch.setattr(payment_intents.httpx, 'Client', lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
     return context, session, data, calls
 
@@ -46,6 +47,8 @@ def test_expired_unused_and_canceled_intents_have_normalized_proof(intent_eviden
     {'amount':True}, {'amount':999}, {'currency':'USD'}, {'description':'other order'},
     {'callback_url':'https://other.invalid'}, {'id':str(uuid4())},
     {'expires_at':'invalid'}, {'expires_at':'2026-01-01T00:00:00'},
+    {'_response_date':''}, {'_response_date':'invalid'},
+    {'_response_date':format_datetime(datetime.now(timezone.utc)-timedelta(hours=1),usegmt=True)},
     {'expires_at':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()},
 ])
 def test_unproven_or_consumed_session_never_permits_renewal(intent_evidence,change):

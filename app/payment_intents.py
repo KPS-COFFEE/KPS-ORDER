@@ -6,6 +6,7 @@ Provider contract: https://docs.moyasar.com/api/payment_intents/01-create-paymen
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import os
 import re
 from urllib.parse import urlsplit
@@ -50,8 +51,11 @@ def safe_unused_intent(context, session):
             raise ValueError('Intent evidence mismatch')
         if data.get('status') == 'canceled':
             return 'provider_canceled'
-        # Use provider expiry with a clock-skew margin, never local attempt TTL.
-        if data.get('status') == 'created' and expiry.timestamp()+60 < datetime.now(timezone.utc).timestamp():
+        # An application clock running ahead must never retire a still-usable
+        # secret. Require the authenticated provider response's clock as well.
+        observed = parsedate_to_datetime(response.headers.get('Date', ''))
+        if (data.get('status') == 'created' and observed.tzinfo is not None and
+                expiry.timestamp()+60 < observed.timestamp()):
             return 'provider_expired'
     except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
         pass
