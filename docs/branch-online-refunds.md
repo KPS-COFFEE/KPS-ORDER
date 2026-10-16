@@ -9,8 +9,8 @@ Owner-only routes (existing session, CSRF, brand scope and idempotency rules):
 
 - `POST /api/branch-payments/orders/{order}/refunds`: authorize an exact amount
   and nonblank reason against the current order version and verified balance.
-- `POST /api/branch-payments/refunds/{refund}/execute`: commit a single-submit
-  claim, GET the current provider balance, send at most one refund POST, and
+- `POST /api/branch-payments/refunds/{refund}/execute`: GET the current provider
+  balance, then commit a single-submit claim, send at most one refund POST, and
   independently GET the outcome before recording a verified refund.
 - `POST /api/branch-payments/refunds/{refund}/reconcile`: GET only after a timeout
   or process restart. Never repeat an uncertain refund POST.
@@ -39,8 +39,9 @@ offer verification only; disabled configuration provides no submission control.
 
 Still open: branch accounting screens, refund
 webhook processing, automatic recovery of unresolved refunds, fiscal credit-note
-acceptance and real Moyasar sandbox acceptance. A failed preflight leaves a
-safe unresolved authorization rather than automatically resubmitting money.
+acceptance and real Moyasar sandbox acceptance. A failed read-only preflight
+leaves the unsent authorization retryable. Once the submission claim commits,
+uncertain outcomes permit GET reconciliation only, never a repeated refund POST.
 
 Provider contract inspected 2026-10-16:
 https://docs.moyasar.com/api/payments/05-refund-payment

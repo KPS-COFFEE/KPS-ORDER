@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from app import db, payment_intents, payment_gateways, branch_payment_renewal
 from test_branch_checkout import checkout_case, branch_payment, ops
 from test_branch_payments import provider
+from test_backup import independent_restore_database
 
 
 @pytest.fixture
@@ -134,3 +135,29 @@ def test_verified_payment_winning_race_prevents_renewal(checkout_case,monkeypatc
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM branch_payment_renewals').fetchone()['n']==0
         assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='paid'
+
+
+@pytest.mark.postgres
+def test_renewal_history_is_immutable_and_restorable(checkout_case,independent_restore_database,tmp_path):
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive,restore_archive
+    actor,post,oid,a,calls=checkout_case
+    post('customer','/api/branch-payments/attempts/'+a['id']+'/renew')
+    with db.tx() as c:
+        before=c.execute('SELECT * FROM branch_payment_renewals').fetchall()
+        attempts=c.execute('SELECT * FROM branch_payment_attempts ORDER BY id').fetchall()
+        archive,manifest=build_archive(c,full=True)
+    assert manifest['counts']['branch_payment_renewals']==1
+    for statement in ('DELETE FROM branch_payment_renewals',"UPDATE branch_payment_renewals SET reason='provider_expired'"):
+        with pytest.raises(psycopg.Error):
+            with db.tx() as c:c.execute(statement)
+    schema='kps_restore_'+uuid4().hex
+    assert restore_archive(archive,target_url=independent_restore_database,target_schema=schema,asset_directory=tmp_path/'assets')['verified']
+    with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
+        c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+        assert c.execute('SELECT * FROM branch_payment_renewals').fetchall()==before
+        assert c.execute('SELECT * FROM branch_payment_attempts ORDER BY id').fetchall()==attempts
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM branch_payment_renewals').fetchall()==before
