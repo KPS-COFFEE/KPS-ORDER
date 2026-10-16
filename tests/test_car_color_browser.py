@@ -26,6 +26,7 @@ def test_color_selection_custom_switching_and_history(engine,width,lang):
             expect(custom).to_be_visible()
             assert not custom.evaluate('e=>e.checkValidity()')
             custom.fill('   ')
+            assert not custom.evaluate('e=>e.checkValidity()')
             expect(page.locator('#car-color')).to_have_value('')
             custom.fill('  لؤلؤي خاص  ')
             expect(page.locator('#car-color')).to_have_value('لؤلؤي خاص')

@@ -34,6 +34,11 @@
     choice.append(new Option(en ? 'Other Color' : 'لون آخر', '__custom__'));
     choice.value = selected;
     caption.textContent = en ? 'Enter car color' : 'اكتب لون السيارة';
+    validateCustom();
+  }
+  function validateCustom() {
+    custom.setCustomValidity(choice.value === '__custom__' && !custom.value.trim()
+      ? (document.documentElement.lang === 'en' ? 'Enter car color' : 'اكتب لون السيارة') : '');
   }
   function sync(notify = true) {
     const other = choice.value === '__custom__';
@@ -42,6 +47,7 @@
     custom.disabled = !other;
     if (!other) custom.value = '';
     source.value = other ? custom.value.trim() : choice.value;
+    validateCustom();
     if (notify) source.dispatchEvent(new Event('input', {bubbles:true}));
   }
   language();

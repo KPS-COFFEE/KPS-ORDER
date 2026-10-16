@@ -245,6 +245,13 @@ def receipt(order, branch, kind, language, translations=None):
     local=order['created_at'].astimezone(ZoneInfo('Asia/Riyadh'))
     add(('التاريخ: ' if ar else 'Date: ')+local.strftime('%Y-%m-%d'),False,True)
     add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M:%S' if fiscal else '%H:%M')+(' — الرياض' if ar else ' — Riyadh'),False,True)
+    if order.get('service') == 'car':
+        car = (order.get('customer') or {}).get('car') or {}
+        for key, arabic, english in [('model', 'السيارة', 'Vehicle'),
+                                     ('color', 'لون السيارة', 'Car color'),
+                                     ('plate', 'لوحة السيارة', 'License plate')]:
+            if car.get(key):
+                row(arabic if ar else english, str(car[key]), True)
     add('────────────────────',False,True)
     for item in snap.get('items',[]):
         labels=(translations or {}).get(item.get('product_id'),{})
