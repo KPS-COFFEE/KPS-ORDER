@@ -14,8 +14,8 @@ def sample(method='cash', discount=0, delivery=0):
     return {'id': 'synthetic-fiscal-order', 'subtotal_halalas': 3950, 'discount_halalas': discount,
             'delivery_fee_halalas': delivery, 'total_halalas': 3950-discount+delivery,
             'payment_method': method, 'snapshot': {'items': [
-                {'name': 'Brownies Caramel', 'quantity': 1, 'line_total_halalas': 550, 'units': []},
-                {'name': 'Brownies Caramel Box', 'quantity': 1, 'line_total_halalas': 3400, 'units': []}]}}
+                {'product_id': 'synthetic-brownie', 'name': 'Brownies Caramel', 'quantity': 1, 'line_total_halalas': 550, 'units': []},
+                {'product_id': 'synthetic-brownie-box', 'name': 'Brownies Caramel Box', 'quantity': 1, 'line_total_halalas': 3400, 'units': []}]}}
 
 
 def decode(text):
@@ -391,7 +391,7 @@ def test_issued_refund_spans_multiple_collections_without_decimal_loss(fiscal_sa
     issued=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'multi-issue'})
     assert issued.status_code==200,issued.text
     original=issued.json()['document']
-    body={'amount_halalas':3950,'method':'card','reason':'Full refund across two collections','line_quantities':{}}
+    body={'amount_halalas':3950,'method':'card','reason':'Full refund across two collections','line_quantities':{'synthetic-brownie':1,'synthetic-brownie-box':1}}
     result=client.post(f'/api/orders/{oid}/refund',json=body,headers={'Idempotency-Key':'multi-refund'})
     assert result.status_code==200,result.text
     assert client.post(f'/api/orders/{oid}/refund',json=body,headers={'Idempotency-Key':'multi-refund'}).json()==result.json()
@@ -403,4 +403,7 @@ def test_issued_refund_spans_multiple_collections_without_decimal_loss(fiscal_sa
     assert sum(d['tax_halalas'] for d in credits)==515
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==2
+        rows=c.execute('SELECT line_quantities FROM refunds WHERE order_id=%s',(oid,)).fetchall()
+        assert sum(row['line_quantities'].get('synthetic-brownie',0) for row in rows)==1
+        assert sum(row['line_quantities'].get('synthetic-brownie-box',0) for row in rows)==1
         assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='refunded'
