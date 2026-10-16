@@ -37,3 +37,43 @@ def test_return_ignores_forged_browser_success(lang,state):
             assert page.locator('input').count()==0
             assert page.locator('html').get_attribute('dir')==('ltr' if lang=='en' else 'rtl')
         finally:browser.close()
+
+
+@pytest.mark.parametrize('lang',['ar','en'])
+@pytest.mark.parametrize('allowed',[True,False])
+def test_customer_explicit_renewal_uses_server_decision(lang,allowed):
+    with sync_playwright() as p:
+        browser=p.chromium.launch()
+        page=browser.new_page(viewport={'width':390,'height':844})
+        calls=[]
+        def route(request):
+            url=request.request.url
+            if '/api/auth/session' in url:
+                request.fulfill(json={'user':{'role':'customer'},'csrf_token':'synthetic-csrf'})
+            elif '/renew' in url:
+                calls.append(request.request)
+                request.fulfill(status=200 if allowed else 409,json={'attempt':{'id':'pay_successor'}})
+            elif '/checkout' in url:
+                request.fulfill(status=409,json={})
+            else:
+                request.fulfill(content_type='text/html',body='<p id="payment-state"></p><div class="mysr-form"></div><button id="verify-payment" hidden></button><a id="back-to-store"></a>')
+        page.route('https://fixture.invalid/**',route)
+        try:
+            page.goto('https://fixture.invalid/branch-payment?attempt=pay_fixture&lang='+lang)
+            page.add_script_tag(path=str(ROOT/'public/assets/branch-payment.js'))
+            button=page.locator('#renew-payment')
+            expect(button).to_be_visible()
+            expect(page.locator('#payment-state')).to_have_text(
+                'تعذر فتح الدفع. ارجع إلى طلبك وسجّل الدخول أو تواصل مع الفرع.' if lang=='ar' else
+                'Checkout could not open. Return to your order and sign in or contact the branch.')
+            button.click()
+            if allowed:
+                expect(page).to_have_url('https://fixture.invalid/branch-payment?attempt=pay_successor&lang='+lang)
+            else:
+                expect(page.locator('#payment-state')).to_have_text(
+                    'لا يمكن إعادة الدفع قبل حسم الجلسة السابقة. أعد التحقق أو تواصل مع الفرع.' if lang=='ar' else
+                    'Payment cannot be retried until the previous session is resolved. Verify again or contact the branch.')
+                expect(button).to_be_enabled()
+            assert len(calls)==1 and calls[0].method=='POST'
+            assert calls[0].headers['x-csrf-token']=='synthetic-csrf'
+        finally:browser.close()

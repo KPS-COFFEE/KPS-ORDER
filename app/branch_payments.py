@@ -60,7 +60,7 @@ def create_attempt(oid: str, body: AttemptBody, user=Depends(auth.require_roles(
                 raise db.error(409, 'ORDER_ALREADY_PAID', 'الطلب غير متاح لمحاولة دفع جديدة.')
             from .order_amendments import guard
             guard(c, order)
-            existing = c.execute('SELECT * FROM branch_payment_attempts WHERE order_id=%s', (oid,)).fetchone()
+            existing = c.execute("SELECT * FROM branch_payment_attempts WHERE order_id=%s AND status<>'superseded'", (oid,)).fetchone()
             if existing:
                 # Reuse the same provider given_id, including retries after an
                 # uncertain network outcome. Never create a second charge ID.

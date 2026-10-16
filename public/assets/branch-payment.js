@@ -9,6 +9,10 @@
   const text = (ar, english) => en ? english : ar;
   const status = document.getElementById('payment-state');
   const verify = document.getElementById('verify-payment');
+  const renew = document.createElement('button');
+  renew.type = 'button'; renew.id = 'renew-payment'; renew.hidden = true;
+  renew.textContent = text('التحقق من إمكانية إعادة الدفع', 'Check whether payment can be retried');
+  verify.after(renew);
   document.getElementById('back-to-store').textContent = text('العودة للمتجر', 'Back to store');
   verify.textContent = text('التحقق من الدفع', 'Verify payment');
   const aid = query.get('attempt') || '';
@@ -24,6 +28,7 @@
     verify.disabled = true;
     try {
       const result = await post('reconcile');
+      renew.hidden = ['verified', 'review_required'].includes(result.attempt.status);
       status.textContent = result.attempt.status === 'verified'
         ? text('تم الدفع بنجاح. تابع تجهيز طلبك من المتجر.', 'Payment verified. Follow preparation in the store.')
         : text('الدفع يحتاج مراجعة الفرع. لا تدفع مرة أخرى.', 'The payment needs branch review. Do not pay again.');
@@ -38,6 +43,18 @@
     if (!sessionResponse.ok || session.user?.role !== 'customer' || !session.csrf_token) throw new Error('Sign in required');
     csrf = session.csrf_token;
     verify.addEventListener('click', reconcile);
+    renew.hidden = false;
+    renew.addEventListener('click', async () => {
+      renew.disabled = true;
+      try {
+        const result = await post('renew');
+        if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(result.attempt?.id || '')) throw new Error('Invalid successor');
+        location.assign('/branch-payment?attempt='+encodeURIComponent(result.attempt.id)+'&lang='+(en?'en':'ar'));
+      } catch (_) {
+        status.textContent = text('لا يمكن إعادة الدفع قبل حسم الجلسة السابقة. أعد التحقق أو تواصل مع الفرع.', 'Payment cannot be retried until the previous session is resolved. Verify again or contact the branch.');
+        renew.disabled = false;
+      }
+    });
     if (location.pathname === '/payment-return') { verify.hidden = false; await reconcile(); return; }
     status.textContent = text('جارٍ فتح الدفع التجريبي الآمن…', 'Opening secure test checkout…');
     const config = await post('checkout');

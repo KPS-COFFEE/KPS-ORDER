@@ -32,7 +32,7 @@ def history(oid: str, user=Depends(auth.require_roles('owner'))):
         order = scoped_order(c, oid, user)
         if not payments.online_order(order):
             raise db.error(404, 'REFUND_NOT_FOUND', 'لا يوجد دفع إلكتروني لهذا الطلب.')
-        attempt = c.execute('SELECT * FROM branch_payment_attempts WHERE order_id=%s', (oid,)).fetchone()
+        attempt = c.execute("SELECT * FROM branch_payment_attempts WHERE order_id=%s AND status<>'superseded'", (oid,)).fetchone()
         rows = c.execute('SELECT * FROM branch_online_refunds WHERE order_id=%s ORDER BY created_at,id', (oid,)).fetchall()
         enabled = False
         if attempt and attempt['status'] in {'verified', 'review_required'}:
@@ -56,7 +56,7 @@ def authorize(oid: str, body: RefundBody, user=Depends(auth.require_roles('owner
         def perform():
             order = scoped_order(c, oid, user, lock=True)
             payments.require_sandbox(order)
-            attempt = c.execute('SELECT * FROM branch_payment_attempts WHERE order_id=%s', (oid,)).fetchone()
+            attempt = c.execute("SELECT * FROM branch_payment_attempts WHERE order_id=%s AND status<>'superseded'", (oid,)).fetchone()
             if not attempt or attempt['status'] not in {'verified', 'review_required'}:
                 raise db.error(409, 'CONFIRMED_PAYMENT_REQUIRED', 'تحقق من الدفع قبل الاسترداد.')
             payments.attempt_order(c, attempt, user)

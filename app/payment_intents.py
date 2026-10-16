@@ -25,6 +25,39 @@ class CheckoutIntent:
     mode: str = 'test'
 
 
+def safe_unused_intent(context, session):
+    """Return only normalized retirement proof; do not expose fetched secrets."""
+    if (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or
+            os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true'):
+        raise db.error(409, 'PAYMENT_SANDBOX_DISABLED', 'اختبار بوابة الدفع غير مفعل.')
+    if not gateways.sandbox_key_configured('moyasar', context.brand_id, context.entity_id):
+        raise db.error(503, 'PAYMENT_TEST_CREDENTIALS_REQUIRED', 'لم تضبط مفاتيح الاختبار لهذه المنشأة.')
+    key = os.environ[gateways.credential_prefix('moyasar', context.brand_id, context.entity_id)+'_TEST_SECRET_KEY']
+    try:
+        identifier = str(UUID(str(session['provider_intent_id'])))
+        with httpx.Client(timeout=httpx.Timeout(10, connect=3), follow_redirects=False, trust_env=False) as client:
+            response = client.get('https://api.moyasar.com/v1/payment_intents/'+identifier,
+                                  auth=(key, ''), headers={'Accept': 'application/json'})
+        if response.status_code != 200:
+            raise ValueError('No conclusive intent evidence')
+        data = response.json()
+        expiry = datetime.fromisoformat(data['expires_at'].replace('Z', '+00:00'))
+        if (data.get('id') != identifier or type(data.get('amount')) is not int or
+                data['amount'] != context.amount_halalas or data.get('currency') != context.currency or
+                data.get('description') != 'KPS order '+context.order_id+' / '+context.attempt_id or
+                data.get('callback_url') != session['callback_url'] or expiry.tzinfo is None or
+                data.get('fulfilled_at') is not None or 'fulfilled_at' not in data):
+            raise ValueError('Intent evidence mismatch')
+        if data.get('status') == 'canceled':
+            return 'provider_canceled'
+        # Use provider expiry with a clock-skew margin, never local attempt TTL.
+        if data.get('status') == 'created' and expiry.timestamp()+60 < datetime.now(timezone.utc).timestamp():
+            return 'provider_expired'
+    except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
+        pass
+    raise db.error(409, 'PAYMENT_RECONCILIATION_REQUIRED', 'لم يتأكد انتهاء جلسة الدفع دون استخدام. لا تعاود الدفع.')
+
+
 def create_moyasar_sandbox_intent(context: gateways.PaymentContext) -> CheckoutIntent:
     """One provider request, no automatic retry after an uncertain POST outcome."""
     if os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true':

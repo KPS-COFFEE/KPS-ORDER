@@ -51,6 +51,7 @@ jobs:
           tests/test_branch_payment_reports.py
           tests/test_branch_payment_policy.py
           tests/test_branch_payment_policy_browser.py
+          tests/test_branch_payment_renewal.py
           tests/test_backup.py tests/test_fiscal.py
           tests/test_http_security.py::test_checkout_router_precedence_is_disjoint_and_preserves_dependency_objects
           --junitxml=test-results/branch-services.xml
