@@ -2,10 +2,21 @@
 
 ## Deployment and regulatory boundary
 
-Official issuance is **disabled by default**. Migration and deployment do not
+Invoice issuance is **disabled by default**. Migration and deployment do not
 activate any fiscal policy or convert historical receipts into tax invoices.
 The application implements transactional Phase 1 simplified invoice and credit
 note generation; it also retains clearly labelled local previews.
+
+The owner's 16 October follow-up requests actual invoices across all registered
+KPS branches without treating an unverified regulatory phase as confirmed.
+An explicit `owner_requested` issuance mode therefore records `unconfirmed`
+applicability, an empty evidence reference, the real owner decision and no ZATCA
+integration claim. It uses the same immutable invoice/credit ledger and default
+printing path for completed paid deliveries in every KPS branch. It does not
+retroactively issue historical sales, invent an authority notice or enable Phase 2.
+`issuance_enabled` reports this operational setting separately from the existing
+`official_issuance_enabled` field, which remains false for unconfirmed applicability.
+This mode is not certification that the business meets its regulatory obligations.
 
 An append-only, owner-only policy decision records the applicable phase,
 evidence reference, reason, and optimistic revision. Phase 1 activation requires
@@ -63,7 +74,7 @@ address tag or former POS provider is used. Phase 2 is rejected by this encoder.
 ## Completed-sale issuance and credits
 
 Migration 061 adds `fiscal_documents` and `fiscal_policy_decisions`, both immutable.
-An enabled Phase 1 policy causes paid delivery completion to issue one original
+An enabled owner policy causes paid delivery completion to issue one original
 in the same database transaction. A unique original-sale index, canonical order
 lock, unified production number sequence, durable request replay and audit events
 prevent duplicate originals, including terminal-payment retries. Preview numbers
