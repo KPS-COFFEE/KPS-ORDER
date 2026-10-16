@@ -189,7 +189,9 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None) ->
     now = now or service_hours.now_riyadh()
     settings = branch['settings']
     service_key = 'car_pickup' if service == 'car' else service
-    if (brand_settings or {}).get('services', {}).get(service_key, True) is not True:
+    from .branch_payment_policy import required, blockers
+    online = service in {'pickup','car'} and brand_settings is not None and required(branch['brand_id'], brand_settings)
+    if (brand_settings or {}).get('services', {}).get(service_key, not online) is not True:
         return False, 'BRAND_SERVICE_DISABLED', 'هذه الخدمة موقوفة من إدارة البراند.'
     if settings.get('active', True) is not True:
         return False, 'BRANCH_DISABLED', 'الفرع متوقف عن استقبال الطلبات الجديدة.'
@@ -197,6 +199,8 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None) ->
         return False, 'DELIVERY_CITY_NOT_ELIGIBLE', 'هذا الفرع غير مشمول بخدمة التوصيل حاليًا.'
     if settings.get(service + '_enabled') is not True:
         return False, 'SERVICE_DISABLED', 'هذه الخدمة غير مفعلة لهذا الفرع.'
+    if online and blockers(branch):
+        return False, 'BRANCH_PAYMENT_NOT_READY', 'الدفع الإلكتروني لهذه الخدمة ينتظر استكمال الاعتماد والتفعيل.'
     if not (settings.get('operational_data_verified') is True or settings.get('ordering_verified') is True):
         return False, 'BRANCH_CONFIGURATION_UNVERIFIED', 'بيانات تشغيل هذا الفرع لم تُعتمد بعد.'
     if not settings.get('opening_hours'):
@@ -404,6 +408,8 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
             public_products.append(item)
 
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
+    from .branch_payment_policy import required
+    safe_brand['branch_online_required'] = required(brand_id, brand['settings'])
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
                            if key in {'accent', 'background', 'text', 'font', 'profile'}}
     # This allowlisted projection already consists entirely of JSON values.
@@ -435,8 +441,9 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
             available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
             item['services'][service] = {'available': available, 'code': code, 'reason': reason}
         result.append(item)
+    from .branch_payment_policy import required
     return {'branches': result,
-            'brand_services': {key: brand_settings.get('services', {}).get(key, True) is True
+            'brand_services': {key: brand_settings.get('services', {}).get(key, key=='delivery' or not required(brand_id, brand_settings)) is True
                                for key in ('delivery', 'pickup', 'car_pickup')}}
 
 
@@ -632,6 +639,10 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     if not available:
         raise db.error(409, code, reason)
     selected_branch = branch
+    from .branch_payment_policy import required
+    online = body.service in {'pickup','car'} and required(body.brand_id, brand['settings'])
+    if online and body.payment_method != 'card':
+        raise db.error(422, 'ONLINE_PAYMENT_REQUIRED', 'الدفع الإلكتروني بعد موافقة الكاشير هو الوسيلة المتاحة لهذه الخدمة.')
     contains_khaliya = body.brand_id == 'kps' and any(item.product_id in KHALIYA_SOURCES.values() for item in body.items)
     if contains_khaliya and body.service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
         branch = khaliya_branch(conn, lock)
@@ -714,6 +725,8 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
             'branch_id': selected_branch['id'], 'branch_no': selected_branch['branch_no'],
             'branch_name': selected_branch['name'], 'branch_city': selected_branch['city'],
             'branch_location': selected_branch['settings'].get('location')}}
+    if online:
+        result.update(branch_payment_mode='test', branch_payment_seller=branch['settings']['online_payment_seller'])
     return result
 
 

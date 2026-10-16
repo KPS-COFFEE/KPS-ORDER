@@ -159,8 +159,12 @@ def validate_options(groups, variants=None):
 
 def validate_branch_settings(settings, branch_city):
     allowed = {'active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
-               'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
+               'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified','online_payment_seller'}
     keys(settings, allowed)
+    if settings.get('online_payment_seller') is not None:
+        from .payment_gateways import IDENTIFIER
+        if not isinstance(settings['online_payment_seller'], str) or not IDENTIFIER.fullmatch(settings['online_payment_seller']):
+            raise db.error(422, 'PAYMENT_SELLER_INVALID', 'اختر معرف منشأة صحيحًا.')
     for field in ('active','pickup_enabled','car_enabled','delivery_enabled','ordering_verified','operational_data_verified','location_verified','map_url_verified'):
         if field in settings and type(settings[field]) is not bool:
             raise db.error(422, 'BOOLEAN_INVALID', 'إعداد التفعيل يجب أن يكون صحيحًا أو خطأ.')
@@ -253,6 +257,13 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
             branch_city = text(body.get('city',row['city']),100,'المدينة')
             changes = body.get('settings',{})
             validate_branch_settings(changes,branch_city)
+            if 'online_payment_seller' in changes:
+                from . import invoice_profiles
+                if user['role'] != 'owner':
+                    raise db.error(403, 'OWNER_REQUIRED', 'تحديد منشأة الدفع من صلاحيات المالك فقط.')
+                seller = changes['online_payment_seller']
+                if seller is not None and seller not in invoice_profiles.settings(conn, user['brand_id']).get('entities', {}):
+                    raise db.error(422, 'PAYMENT_SELLER_INVALID', 'المنشأة غير موجودة ضمن البراند.')
             settings = row['settings'] | changes
             if 'map_url' in changes and changes['map_url'] is None:
                 settings['map_url_verified'] = False
@@ -649,6 +660,8 @@ def create_branch(body:dict,user=Depends(owner),idem:str|None=Header(None,alias=
     if not name or not branch_city:
         raise db.error(422,'BRANCH_IDENTITY_REQUIRED','اسم الفرع ومدينته مطلوبان.')
     supplied_settings=body.get('settings',{})
+    if supplied_settings.get('online_payment_seller') is not None:
+        raise db.error(422, 'INITIAL_PAYMENT_SELLER_PENDING', 'اعتمد منشأة الدفع بعد إنشاء الفرع.')
     validate_branch_settings(supplied_settings,branch_city)
     if any(supplied_settings.get(key) for key in ('pickup_enabled','car_enabled','delivery_enabled')):
         raise db.error(422,'INITIAL_BRANCH_DISABLED','أنشئ الفرع متوقفًا ثم راجع بيانات تشغيله قبل التفعيل.')
