@@ -86,9 +86,10 @@ def load(c, rid, user):
     row = c.execute('SELECT * FROM branch_online_refunds WHERE id=%s', (rid,)).fetchone()
     if not row:
         raise db.error(404, 'REFUND_NOT_FOUND', 'الاسترداد غير موجود.')
-    scoped_order(c, row['order_id'], user, lock=True)
     attempt = c.execute('SELECT * FROM branch_payment_attempts WHERE id=%s', (row['attempt_id'],)).fetchone()
-    order = payments.attempt_order(c, attempt, user)
+    order = payments.attempt_order(c, attempt, user, lock=True)
+    if any(row[key] != attempt[key] for key in ('order_id', 'brand_id', 'branch_id')):
+        raise db.error(409, 'REFUND_SCOPE_MISMATCH', 'نطاق الاسترداد غير مطابق للطلب.')
     row = c.execute('SELECT * FROM branch_online_refunds WHERE id=%s FOR UPDATE', (rid,)).fetchone()
     return row, attempt, order
 
@@ -105,8 +106,10 @@ def confirmed(rid, user, observed):
             status = 'refunded' if observed == attempt['amount_halalas'] else 'partially_refunded'
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s', (status, order['id']))
         details = {'refund_id': rid, 'amount_halalas': row['amount_halalas'], 'mode': 'test'}
-        db.event(c, order['id'], user['id'], 'payment.refund.verified', details)
-        db.audit(c, user['id'], 'payment.refund.verified', 'order', order['id'], details)
+        actor_id = user['id'] if user is not None else None
+        details['authorized_by'] = row['authorized_by']
+        db.event(c, order['id'], actor_id, 'payment.refund.verified', details)
+        db.audit(c, actor_id, 'payment.refund.verified', 'order', order['id'], details)
         return {'refund': view(result)}
 
 

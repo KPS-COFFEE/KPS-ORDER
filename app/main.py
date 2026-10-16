@@ -44,6 +44,9 @@ async def lifespan(app):
             from . import branch_payment_webhooks
             if branch_payment_webhooks.worker_enabled() and os.getenv('APP_ENV') != 'testing':
                 background_tasks.append(asyncio.create_task(branch_payment_webhooks.poll_loop(), name='branch-payment-inbox'))
+            from . import branch_refund_reconciliation
+            if branch_refund_reconciliation.enabled() and os.getenv('APP_ENV') != 'testing':
+                background_tasks.append(asyncio.create_task(branch_refund_reconciliation.poll_loop(), name='branch-refund-reconciliation'))
         yield
     finally:
         try:

@@ -37,8 +37,12 @@ The bilingual owner order workspace shows authorized requests and their status.
 Authorization and provider submission are separate actions. Uncertain requests
 offer verification only; disabled configuration provides no submission control.
 
+The separately gated GET-only recovery worker is described in
+`branch-refund-reconciliation.md`; it recovers confirmed provider effects after
+lost responses or worker crashes without sending another refund.
+
 Still open: branch accounting screens, refund
-webhook processing, automatic recovery of unresolved refunds, fiscal credit-note
+webhook processing, safe resubmission of unresolved refunds, fiscal credit-note
 acceptance and real Moyasar sandbox acceptance. A failed read-only preflight
 leaves the unsent authorization retryable. Once the submission claim commits,
 uncertain outcomes permit GET reconciliation only, never a repeated refund POST.

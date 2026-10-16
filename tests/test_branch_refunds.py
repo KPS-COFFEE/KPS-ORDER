@@ -8,6 +8,21 @@ from app import db, payment_refunds, payment_gateways, order_amendments
 from test_branch_payments import branch_payment, accept, attempt, provider
 from test_operations import ops
 from test_backup import independent_restore_database
+from app import branch_refund_reconciliation as recovery
+
+
+@pytest.mark.parametrize('missing',[
+    'KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','KPS_BRANCH_PAYMENT_SANDBOX_ENABLED',
+    'KPS_BRANCH_PAYMENT_REFUNDS_ENABLED','KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED'])
+def test_refund_recovery_is_off_without_every_explicit_gate(monkeypatch,missing):
+    for flag in ('KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','KPS_BRANCH_PAYMENT_SANDBOX_ENABLED',
+                 'KPS_BRANCH_PAYMENT_REFUNDS_ENABLED','KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED'):
+        monkeypatch.setenv(flag,'true')
+    monkeypatch.delenv(missing)
+    def forbidden():raise AssertionError('Disabled worker must not access the database')
+    monkeypatch.setattr(db,'tx',forbidden)
+    assert recovery.enqueue_pending()==0
+    assert recovery.dispatch_once() is False
 
 
 @pytest.fixture
@@ -123,6 +138,79 @@ def test_timeout_recovery_reads_provider_without_second_post(paid_order, refund_
 
 
 @pytest.mark.postgres
+def test_worker_recovers_lost_response_once_without_owner_impersonation(paid_order,refund_provider,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    actor,post,oid,a,state,calls=configure_paid(paid_order,refund_provider)
+    row=authorize(post,oid)
+    state['timeout']=True
+    post('owner','/api/branch-payments/refunds/'+row['id']+'/execute',status=503)
+    monkeypatch.setenv('KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','true')
+    assert recovery.enqueue_pending()==1
+    assert recovery.enqueue_pending()==0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results=list(pool.map(lambda _:recovery.dispatch_once(),range(4)))
+    assert results.count(True)==1
+    assert [r.method for r in calls].count('POST')==1
+    assert [r.method for r in calls].count('GET')==2
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM branch_online_refunds WHERE id=%s',(row['id'],)).fetchone()['status']=='verified'
+        events=c.execute("SELECT * FROM order_events WHERE order_id=%s AND event_type='payment.refund.verified'",(oid,)).fetchall()
+        assert len(events)==1 and events[0]['actor_id'] is None
+        assert c.execute('SELECT processed_at FROM branch_refund_reconciliation WHERE refund_id=%s',(row['id'],)).fetchone()['processed_at']
+
+
+@pytest.mark.postgres
+def test_unapplied_refund_remains_unresolved_and_later_get_recovers(paid_order,refund_provider,monkeypatch):
+    actor,post,oid,a,state,calls=configure_paid(paid_order,refund_provider)
+    row=authorize(post,oid)
+    # A crash after the durable claim but before provider POST must never cause
+    # this worker to submit money. A delayed matching result may later recover.
+    with db.tx() as c:
+        c.execute("UPDATE branch_online_refunds SET status='submitting' WHERE id=%s",(row['id'],))
+    monkeypatch.setenv('KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','true')
+    assert recovery.enqueue_pending()==1
+    assert recovery.dispatch_once() is False
+    with db.tx() as c:
+        job=c.execute('SELECT * FROM branch_refund_reconciliation WHERE refund_id=%s',(row['id'],)).fetchone()
+        assert job['attempts']==1 and job['processed_at'] is None and job['lease_id'] is None
+        assert c.execute('SELECT status FROM branch_online_refunds WHERE id=%s',(row['id'],)).fetchone()['status']=='submitting'
+        c.execute("UPDATE branch_refund_reconciliation SET next_attempt_at=now()-interval '1 second' WHERE refund_id=%s",(row['id'],))
+    state['refunded']=1000
+    assert recovery.dispatch_once() is True
+    assert [r.method for r in calls]==['GET','GET']
+
+
+@pytest.mark.postgres
+def test_recovery_never_executes_unsent_authorization(paid_order,refund_provider,monkeypatch):
+    actor,post,oid,a,state,calls=configure_paid(paid_order,refund_provider)
+    row=authorize(post,oid)
+    monkeypatch.setenv('KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','true')
+    assert recovery.enqueue_pending()==0
+    # Even an incorrectly queued authorization is not permission to pay/refund.
+    with db.tx() as c:
+        c.execute("INSERT INTO branch_refund_reconciliation(refund_id,brand_id) VALUES(%s,'ops-brand')",(row['id'],))
+    assert recovery.dispatch_once() is False
+    assert not calls
+
+
+@pytest.mark.postgres
+def test_crashed_refund_worker_lease_expires_safely(paid_order,refund_provider,monkeypatch):
+    actor,post,oid,a,state,calls=configure_paid(paid_order,refund_provider)
+    row=authorize(post,oid)
+    state['timeout']=True
+    post('owner','/api/branch-payments/refunds/'+row['id']+'/execute',status=503)
+    monkeypatch.setenv('KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','true')
+    assert recovery.enqueue_pending()==1
+    with db.tx() as c:
+        c.execute("UPDATE branch_refund_reconciliation SET lease_id='crashed',lease_until=now()+interval '60 seconds' WHERE refund_id=%s",(row['id'],))
+    assert recovery.dispatch_once() is False
+    with db.tx() as c:
+        c.execute("UPDATE branch_refund_reconciliation SET lease_until=now()-interval '1 second' WHERE refund_id=%s",(row['id'],))
+    assert recovery.dispatch_once() is True
+    assert [r.method for r in calls].count('POST')==1
+
+
+@pytest.mark.postgres
 def test_preflight_outage_leaves_unsent_refund_safely_retryable(paid_order, refund_provider):
     actor, post, oid, a, state, calls = configure_paid(paid_order, refund_provider)
     row = authorize(post, oid)
@@ -182,7 +270,7 @@ def test_parallel_refund_execute_sends_once(paid_order, refund_provider):
 
 
 @pytest.mark.postgres
-def test_completed_order_unchanged_and_refund_survives_restore(paid_order, refund_provider, independent_restore_database, tmp_path):
+def test_completed_order_unchanged_and_refund_survives_restore(paid_order, refund_provider, independent_restore_database, tmp_path, monkeypatch):
     import psycopg
     from psycopg import sql
     from psycopg.rows import dict_row
@@ -193,20 +281,30 @@ def test_completed_order_unchanged_and_refund_survives_restore(paid_order, refun
         c.execute("UPDATE orders SET preparation_status='completed',completed_at=now() WHERE id=%s", (oid,))
         original = c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
     row = authorize(post, oid)
-    post('owner', '/api/branch-payments/refunds/'+row['id']+'/execute')
+    state['timeout'] = True
+    post('owner', '/api/branch-payments/refunds/'+row['id']+'/execute', status=503)
+    monkeypatch.setenv('KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','true')
+    assert recovery.enqueue_pending()==1
+    assert recovery.dispatch_once() is True
     with db.tx() as c:
         assert c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone() == original
         before = c.execute('SELECT * FROM branch_online_refunds').fetchall()
+        jobs_before = c.execute('SELECT * FROM branch_refund_reconciliation').fetchall()
         enriched = dict(original)
         enrich_orders(c, [enriched])
         assert enriched['online_refunded_halalas'] == 1000 and enriched['online_payment_verified'] is False
         archive, manifest = build_archive(c, full=True)
+        _, business_manifest = build_archive(c, brand_id='ops-brand')
     assert manifest['counts']['branch_online_refunds'] == 1
+    assert manifest['counts']['branch_refund_reconciliation'] == 1
+    assert 'branch_refund_reconciliation' in business_manifest['excluded_tables']
     schema = 'kps_restore_'+uuid4().hex
     assert restore_archive(archive, target_url=independent_restore_database, target_schema=schema,
                            asset_directory=tmp_path/'assets')['verified']
     with psycopg.connect(independent_restore_database, row_factory=dict_row) as c:
         c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
         assert c.execute('SELECT * FROM branch_online_refunds').fetchall() == before
+        assert c.execute('SELECT * FROM branch_refund_reconciliation').fetchall() == jobs_before
     with db.tx() as c:
         assert c.execute('SELECT * FROM branch_online_refunds').fetchall() == before
+        assert c.execute('SELECT * FROM branch_refund_reconciliation').fetchall() == jobs_before
