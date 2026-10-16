@@ -129,36 +129,43 @@
       }
     }
   },
-  "captured_at": "2026-10-16T23:19:23.494174+00:00",
+  "captured_at": "2026-10-16T23:22:39.628259+00:00",
   "base_sha": "4f4485d4c74b38ab651c30764775e2634759bbf7",
   "contracts": [
     {
       "file": "KPS-ORDER/.github/workflows/driver-float.yml",
-      "all_acceptance_jobs_triggers_permissions_and_evidence_unchanged": true,
-      "allowed_change": "superseded PR concurrency only",
+      "acceptance_commands_contexts_permissions_triggers_retention_unchanged": true,
+      "eligibility_expansion_only": true,
       "before_sha256": "15802ba6e8d1feee79eb1db7635363226edaceece516f98077930a0be24f1e5a",
-      "after_sha256": "cda9b5b2d4744ed904937f11e91231d5789041fb75fc2674826eb52b2390ab6e"
+      "after_sha256": "3f25ba3703ebc820584072f9c8a47a21a3844299872b80b563b2fad8b7febea2"
+    },
+    {
+      "file": "KPS-ORDER/.github/workflows/emergency-v4.yml",
+      "acceptance_commands_contexts_permissions_triggers_retention_unchanged": true,
+      "eligibility_expansion_only": true,
+      "before_sha256": "a97b63e718d1eb1b843f3761a759f0c6c03518660f9144410ba53e854be919ac",
+      "after_sha256": "ce4308f585a9c964a9fd2a3a49636a04ac8948173dfa76c2abd9c98c4f407ef6"
     },
     {
       "file": "KPS-ORDER/.github/workflows/fleet-operating-log.yml",
-      "all_acceptance_jobs_triggers_permissions_and_evidence_unchanged": true,
-      "allowed_change": "superseded PR concurrency only",
+      "acceptance_commands_contexts_permissions_triggers_retention_unchanged": true,
+      "eligibility_expansion_only": false,
       "before_sha256": "7fc01dd3ab9a09feee1835a4e90bbcd9874d127e4b503ce28d260719d35755f8",
       "after_sha256": "207a949df3ed5ff37a3a42698dc225c32862c2fedf7a26cda7469a382c28d011"
     },
     {
       "file": "KPS-ORDER/.github/workflows/order-amendments.yml",
-      "all_acceptance_jobs_triggers_permissions_and_evidence_unchanged": true,
-      "allowed_change": "superseded PR concurrency only",
+      "acceptance_commands_contexts_permissions_triggers_retention_unchanged": true,
+      "eligibility_expansion_only": true,
       "before_sha256": "66fa31a8c08ba685441c5e634b9d783475b806ea4738b811794abf662ee57a5c",
-      "after_sha256": "b51ce1911a5d744c05a967b2d5de8b246644ea2668b6cf11e8cb304bec16b628"
+      "after_sha256": "d416583ba6f73b70d033c8c4a7b2d23982d5009a3f76810ebd4ec2e70bfa9009"
     },
     {
       "file": "KPS-ORDER/.github/workflows/software-hardening.yml",
-      "all_acceptance_jobs_triggers_permissions_and_evidence_unchanged": true,
-      "allowed_change": "pip download cache only",
+      "acceptance_commands_contexts_permissions_triggers_retention_unchanged": true,
+      "eligibility_expansion_only": true,
       "before_sha256": "f614c9601b4cb58540bff9daff05712da5918438e7b784f28e4f054b77d73f70",
-      "after_sha256": "ec56616accf5ef5f96933bf8f92e6a8e4341b51edc0e2fa358c6108394e6de10"
+      "after_sha256": "ae0d636197c87795a6e7f245661c7f9c6cbc1990faa895aca73ea6e809c5b648"
     }
   ],
   "run_sources": [
