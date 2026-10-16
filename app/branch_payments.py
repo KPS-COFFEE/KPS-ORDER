@@ -68,7 +68,10 @@ def create_attempt(oid: str, body: AttemptBody, user=Depends(auth.require_roles(
                     raise db.error(409, 'PAYMENT_RECONCILIATION_REQUIRED', 'يلزم تسوية محاولة الدفع السابقة.')
                 return {'attempt': view(existing)}
             attempt_id = db.new_id('pay_')
-            gateways.PaymentContext(order['brand_id'], seller, oid, attempt_id, order['total_halalas'])
+            try:
+                gateways.PaymentContext(order['brand_id'], seller, oid, attempt_id, order['total_halalas'])
+            except ValueError:
+                raise db.error(422,'PAYMENT_AMOUNT_INVALID','مبلغ الطلب غير صالح للدفع الإلكتروني.') from None
             row = c.execute("INSERT INTO branch_payment_attempts(id,order_id,brand_id,branch_id,seller_id,provider,provider_payment_id,mode,amount_halalas,currency,order_revision,accepted_by) VALUES(%s,%s,%s,%s,%s,'moyasar',%s,'test',%s,'SAR',%s,%s) RETURNING *",
                 (attempt_id,oid,order['brand_id'],order['branch_id'],seller,str(uuid4()),order['total_halalas'],order.get('amendment_revision',0),acceptance['actor_id'])).fetchone()
             db.audit(c,user['id'],'payment.attempt.created','order',oid,{'attempt_id':attempt_id,'mode':'test','amount_halalas':row['amount_halalas']})

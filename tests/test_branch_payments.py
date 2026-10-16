@@ -1,5 +1,6 @@
 """Real PostgreSQL ledger with synthetic provider HTTP, never a merchant charge."""
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 import psycopg
@@ -116,3 +117,39 @@ def test_disabled_scope_and_immutable_records(branch_payment,monkeypatch):
     post('customer','/api/branch-payments/attempts/'+a['id']+'/reconcile')
     with pytest.raises(psycopg.errors.RaiseException):
         with db.tx() as c:c.execute('UPDATE branch_online_receipts SET amount_halalas=1')
+
+
+def test_parallel_attempt_creation_and_retry_reuse_provider_reference(branch_payment):
+    actor,post,oid=branch_payment
+    version=accept(post,oid)
+    client=actor('customer')
+    def submit(_):
+        result=client.post('/api/branch-payments/orders/'+oid+'/attempt',json={'version':version},headers={'Idempotency-Key':uuid4().hex})
+        assert result.status_code==200,result.text
+        return result.json()['attempt']
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        rows=list(executor.map(submit,range(4)))
+    assert len({r['id'] for r in rows})==1
+    assert len({r['provider_payment_id'] for r in rows})==1
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM branch_payment_attempts WHERE order_id=%s',(oid,)).fetchone()['n']==1
+
+
+def test_paid_flag_without_provider_receipt_cannot_prepare(branch_payment):
+    actor,post,oid=branch_payment
+    version=accept(post,oid)
+    with db.tx() as c:c.execute("UPDATE orders SET payment_status='paid' WHERE id=%s",(oid,))
+    post('owner','/api/orders/'+oid+'/preparation',{'status':'preparing','version':version},status=409)
+
+
+def test_provider_timeout_preserves_pending_attempt_and_retry_identity(branch_payment,monkeypatch):
+    actor,post,oid=branch_payment
+    version=accept(post,oid); a=attempt(post,oid,version)
+    original=httpx.Client
+    def fail(request): raise httpx.ReadTimeout('Synthetic timeout',request=request)
+    monkeypatch.setattr(payment_gateways.httpx,'Client',lambda **kw: original(transport=httpx.MockTransport(fail),**kw))
+    post('customer','/api/branch-payments/attempts/'+a['id']+'/reconcile',status=503)
+    assert attempt(post,oid,version)==a
+    with db.tx() as c:
+        assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='unpaid'
+        assert c.execute('SELECT count(*) n FROM branch_online_receipts').fetchone()['n']==0
