@@ -432,11 +432,12 @@ def test_owner_requested_issuance_all_registered_branches_without_invented_evide
     with db.tx() as c:
         branches=c.execute("SELECT id,name FROM branches WHERE brand_id='kps' ORDER BY id").fetchall()
         assert len(branches)==20
+        customer_id=c.execute('SELECT customer_id FROM orders WHERE id=%s',(oid,)).fetchone()['customer_id']
     for branch in branches:
         target=db.new_id('all-branch-fiscal-')
         snapshot=sample()['snapshot'] | {'branch_name':branch['name']}
         with db.tx() as c:
-            c.execute("INSERT INTO orders(id,brand_id,branch_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps',%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}')",(target,branch['id'],db.json(snapshot)))
+            c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps',%s,%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}')",(target,branch['id'],customer_id,db.json(snapshot)))
         result=client.post(f'/api/fiscal/orders/{target}/issue',headers={'Idempotency-Key':'issue-'+target})
         assert result.status_code==200,result.text
         doc=result.json()['document']
