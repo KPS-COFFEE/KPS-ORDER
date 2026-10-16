@@ -21,7 +21,7 @@ def policy(conn, brand_id):
 def status(conn, brand_id):
     p = policy(conn, brand_id)
     d = p['decision']
-    enabled = d.get('enabled') is True and d.get('phase') == 'phase1' and bool(d.get('evidence_reference'))
+    enabled = brand_id == 'kps' and d.get('enabled') is True and d.get('phase') == 'phase1' and bool(d.get('evidence_reference'))
     return {'official_issuance_enabled': enabled, 'phase': d.get('phase', 'unconfirmed'),
             'policy_id': p['id'], 'phase2_supported': False,
             'remaining_requirements': [] if enabled else ['verified_phase_applicability_and_owner_activation'],
@@ -38,10 +38,18 @@ class PolicyDecision(BaseModel):
     expected_policy_id: str | None = None
 
 
+@router.get('/policy')
+def read_policy(user=Depends(fiscal.owner)):
+    with db.tx() as conn:
+        return {**status(conn,user['brand_id']), 'decision':policy(conn,user['brand_id'])['decision']}
+
+
 @router.post('/policy')
 def configure(body: PolicyDecision, user=Depends(fiscal.owner), idem: str | None=Header(None, alias='Idempotency-Key')):
     if user['brand_id'] != 'kps':
         raise db.error(403, 'FISCAL_SELLER_SCOPE', 'هذه الهوية الضريبية خاصة بكبز.')
+    if not body.reason.strip():
+        raise db.error(422,'FISCAL_POLICY_REASON','يلزم سبب واضح للقرار.')
     if body.enabled and (body.phase != 'phase1' or not body.evidence_reference.strip()):
         raise db.error(409, 'FISCAL_ISSUANCE_DISABLED', 'يلزم إثبات انطباق المرحلة الأولى؛ المرحلة الثانية غير مهيأة.')
     with db.tx() as conn:
@@ -80,6 +88,8 @@ def issue_sale(conn, order_id, actor, *, required=False):
     if conn.execute('SELECT 1 FROM refunds WHERE order_id=%s AND amendment_id IS NULL LIMIT 1',(order_id,)).fetchone():
         raise db.error(409,'FISCAL_HISTORICAL_REVIEW','لا يمكن إصدار أصل جديد لطلب له مرتجعات تاريخية.')
     n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
+    from . import print_translations
+    order['print_labels_en'] = print_translations.for_order(conn,order)
     try:
         doc = fiscal.build(order,'KPS-'+str(n),datetime.now(timezone.utc))
     except ValueError as exc:
@@ -101,7 +111,7 @@ def credit_before_refund(conn, order, actor, refund_id, amount, reason, *, amend
         raise db.error(409,'FISCAL_ISSUED_ADJUSTMENT','الطلب المصدر لا يعدل؛ استخدم مرتجعًا مرتبطًا بالفاتورة.')
     if not status(conn,order['brand_id'])['official_issuance_enabled']:
         raise db.error(409,'FISCAL_CREDIT_DISABLED','تعذر إصدار الإشعار الدائن؛ لم يسجل الاسترداد.')
-    prior = conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0) n FROM fiscal_documents WHERE original_number=%s", (source['number'],)).fetchone()['n']
+    prior = conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0)::bigint n FROM fiscal_documents WHERE original_number=%s", (source['number'],)).fetchone()['n']
     n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
     try: doc = fiscal.credit(source,amount,prior,'KPS-CN-'+str(n),datetime.now(timezone.utc),refund_id,reason)
     except ValueError as exc:

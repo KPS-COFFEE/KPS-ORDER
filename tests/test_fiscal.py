@@ -339,3 +339,24 @@ def test_completed_driver_sale_automatically_issues_once_and_refunds(ops,method)
     assert [d for d in documents if d['kind']=='invoice']==original
     assert sum(d['tax_halalas'] for d in documents if d['kind']=='credit_note')==515
     assert sum(d['total_halalas'] for d in documents if d['kind']=='credit_note')==3950
+
+@pytest.mark.postgres
+def test_disabling_policy_preserves_original_and_blocks_credit_money_effects(fiscal_sale):
+    from app import fiscal_issuance
+    client,oid,user=fiscal_sale
+    cfg=activate_phase1(client)
+    first=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'enable-then-disable-issue'})
+    assert first.status_code==200,first.text
+    response=client.post('/api/fiscal/policy',json={'enabled':False,'phase':'phase2','reason':'Phase 2 applicability discovered','expected_policy_id':cfg['policy_id']},headers={'Idempotency-Key':'disable-for-phase2'})
+    assert response.status_code==200 and response.json()['official_issuance_enabled'] is False
+    # Existing documents stay available and keep their original identity.
+    assert client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'read-after-disable'}).json()==first.json()
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as failure:
+        with db.tx() as c:
+            order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone()
+            fiscal_issuance.credit_before_refund(c,order,user,'not-recorded',100,'test')
+    assert failure.value.detail['code']=='FISCAL_CREDIT_DISABLED'
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==1
+        assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==0

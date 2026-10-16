@@ -212,6 +212,9 @@ def receipt(order, branch, kind, language, translations=None):
     ar = language=='ar'
     snap=order['snapshot']; lines=[]
     fiscal = order.get('fiscal_document') if kind == 'order' else None
+    if fiscal:
+        translations=fiscal.get('print_labels_en',{})
+        branch={**branch,'name':fiscal.get('branch_name') or branch['name']}
     def add(text,bold=False,center=False,role='',label='',value=''):
         lines.append({'text':str(text),'bold':bold,'center':center,
                       'role':role,'label':label,'value':value})

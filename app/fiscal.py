@@ -77,6 +77,10 @@ def build(order, number, issued_at):
     doc = {**values, 'schema_version': 1, 'phase': 1, 'kind': 'invoice', 'status': 'local_preview_only',
            'number': number, 'issued_at': issued_at.astimezone(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
            'seller': deepcopy(SELLER), 'order_id': order['id'], 'items': items,
+           'service': order.get('service','delivery'), 'brand_id': order.get('brand_id','kps'),
+           'branch_id': order.get('branch_id'), 'branch_name': order['snapshot'].get('branch_name',''),
+           'notes': order.get('notes') or order['snapshot'].get('notes',''),
+           'print_labels_en': deepcopy(order.get('print_labels_en',{})),
            'payment_method': order['payment_method'], 'source_revision': order.get('amendment_revision', 0),
            'receipt_occasion_style': deepcopy(order['snapshot'].get('receipt_occasion_style', {})),
            'prices_include_vat': True, 'receipt_occasion_text': order['snapshot'].get('receipt_occasion_text', '')}
@@ -108,7 +112,7 @@ def print_order(doc):
             'created_at': datetime.fromisoformat(doc['issued_at'].replace('Z', '+00:00')),
             'snapshot': {**deepcopy(doc), 'order_reference': doc['number']},
             'order_reference': doc['number'], 'fiscal_document': deepcopy(doc),
-            'payment_status': 'paid', 'receipt_qr': qr(doc)}
+            'payment_status': 'refunded' if doc['kind']=='credit_note' else 'paid', 'receipt_qr': qr(doc)}
 
 
 def save_preview(conn, order, actor):
