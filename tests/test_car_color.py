@@ -30,11 +30,13 @@ def test_each_color_persists_and_remains_readable(checkout, color):
     body['customer']['car'] = {'model':'Corolla','plate':'ABC 1234','color':color}
     response = client.post('/api/orders', json=body, headers={'Idempotency-Key':uuid4().hex})
     assert response.status_code == 200, response.text
-    oid = response.json()['id']
+    oid = response.json()['order']['id']
     with db.tx() as conn:
         saved = conn.execute('SELECT customer FROM orders WHERE id=%s', (oid,)).fetchone()
     assert saved['customer']['car'] == body['customer']['car']
-    assert client.get('/api/orders/'+oid).status_code == 200
+    read = client.get('/api/orders/'+oid)
+    assert read.status_code == 200
+    assert read.json()['order']['customer']['car'] == body['customer']['car']
 
 
 @pytest.mark.parametrize('language', ['ar', 'en'])
