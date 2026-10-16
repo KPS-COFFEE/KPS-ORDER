@@ -260,10 +260,10 @@ def test_non_http_is_passed_through_unchanged(monkeypatch):
 
 
 def test_checkout_router_precedence_is_disjoint_and_preserves_dependency_objects():
-    from app import catalog, orders
+    from app import branch_payments, catalog, orders
     from app.main import app
-    routers = (orders.router, catalog.router, auth.router)
+    routers = (orders.router, branch_payments.router, catalog.router, auth.router)
     namespaces = [{r.path.split('/')[2] for r in router.routes} for router in routers]
     assert all(not a & b for i, a in enumerate(namespaces) for b in namespaces[i + 1:])
     included = [r.original_router for r in app.routes if hasattr(r, 'original_router')]
-    assert included[:3] == list(routers)
+    assert included[:len(routers)] == list(routers)
