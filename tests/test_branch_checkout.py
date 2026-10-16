@@ -126,6 +126,18 @@ def test_payment_page_authorization_and_narrow_csp(checkout_case,monkeypatch):
     normal=actor('customer').get('/')
     assert 'https://api.moyasar.com' not in normal.headers['content-security-policy']
     assert actor('owner').get('/branch-payment').status_code==403
+    # Provider returns do not carry Strict cookies. The neutral shell is public;
+    # protected reconciliation still requires a valid customer session and CSRF.
+    from app import auth
+    anonymous=actor('customer')
+    saved=anonymous.app.dependency_overrides.pop(auth.current_user)
+    try:
+        shell=anonymous.get('/payment-return?status=paid&attempt='+a['id'])
+        assert shell.status_code==200
+        assert 'pi_secret_' not in shell.text and 'pk_test_' not in shell.text
+        assert anonymous.post('/api/branch-payments/attempts/'+a['id']+'/reconcile').status_code==401
+    finally:
+        anonymous.app.dependency_overrides[auth.current_user]=saved
     monkeypatch.delenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED')
     assert actor('customer').get('/branch-payment').status_code==404
     assert not calls
