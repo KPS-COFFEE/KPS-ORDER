@@ -1343,7 +1343,7 @@
         if(identity!==state.session.user?.id)throw new Error(t('error_SESSION_CHANGED'));
         state.cart=lines;state.branchId=target?selected:'';state.service=service;
         if(service==='delivery'&&!state.location){const c=order.customer||{};$('address').value=c.address||'';$('neighborhood').value=c.neighborhood||'';state.location=c.location||null;}
-        if(service==='car'){for(const field of ['model','color','plate'])if(!$('car-'+field).value)$('car-'+field).value=order.customer?.car?.[field]||'';}
+        if(service==='car'){for(const field of ['model','color','plate'])if(!$('car-'+field).value)$('car-'+field).value=order.customer?.car?.[field]||'';$('car-color').dispatchEvent(new Event('change'));}
         state.branchCatalogRevision++;state.products=result.products||[];state.branchCatalogId=state.branchId;state.branchCatalogPending=false;
         renderBranches();renderService();renderProducts();cartChanged();
         closeDialog('confirm-dialog');closeDialog('orders-dialog');$('basket').scrollIntoView({behavior:prefersLessMotion()?'auto':'smooth'});toast(t('reorder_added'));

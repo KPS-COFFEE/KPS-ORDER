@@ -347,7 +347,7 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         expect(page.locator('#product-dialog')).not_to_be_visible()
         page.locator('input[name=service][value=car]').check()
         page.locator('#car-model').fill('سيارة اختبار')
-        page.locator('#car-color').fill('أبيض')
+        page.locator('#car-color-choice').select_option('أبيض')
         page.locator('#car-plate').fill('TEST-ONLY')
         page.locator('#customer-name').fill('عميل اختبار متصفح فقط')
         page.locator('#order-notes').fill('طلب تجريبي معزول؛ لا يُجهز أو يُسلّم فعليًا.')

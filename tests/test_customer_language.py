@@ -88,7 +88,7 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
         page.locator('#branch-select').select_option('kps-branch-1')
         page.locator('input[name=service][value=car]').check()
         page.locator('#car-model').fill('Test car')
-        page.locator('#car-color').fill('White')
+        page.locator('#car-color-choice').select_option('أبيض')
         page.locator('#car-plate').fill('TEST-ONLY')
         page.locator('.product-card[data-product-id="kps-30"] .product-image-button').click()
         page.locator('#product-options select').select_option('BLU')

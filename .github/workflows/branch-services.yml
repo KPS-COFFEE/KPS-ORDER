@@ -1,0 +1,50 @@
+name: Branch services acceptance
+on:
+  push:
+    branches: [agent/kps-order-emergency-v4]
+    paths: ['app/**', 'public/**', 'migrations/**', 'tests/**', '.github/workflows/branch-services.yml']
+permissions:
+  contents: read
+jobs:
+  branch-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_branch_services
+          POSTGRES_USER: branch_test
+          POSTGRES_PASSWORD: isolated-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U branch_test -d test_branch_services"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://branch_test:isolated-ci-only@127.0.0.1:5432/test_branch_services
+      TEST_BROWSER: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium webkit
+      - name: Verify car identity and preserved branch and delivery behavior
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_car_color.py tests/test_car_color_browser.py
+          tests/test_customer_language.py tests/test_branch_opening_hours.py
+          tests/test_saudi_plate.py tests/test_saudi_plate_integration_browser.py
+          tests/test_payment_preparation.py tests/test_hardening_orders.py
+          --junitxml=test-results/branch-services.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: branch-services-evidence
+          path: test-results/branch-services.xml
+          if-no-files-found: error
