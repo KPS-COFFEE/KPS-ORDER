@@ -252,6 +252,8 @@ def receipt(order, branch, kind, language, translations=None):
                                      ('plate', 'لوحة السيارة', 'License plate')]:
             if car.get(key):
                 row(arabic if ar else english, str(car[key]), True)
+            elif key == 'plate':
+                row(arabic if ar else english, 'لم يُدخل رقم اللوحة' if ar else 'No plate entered', True)
     add('────────────────────',False,True)
     for item in snap.get('items',[]):
         labels=(translations or {}).get(item.get('product_id'),{})

@@ -76,9 +76,8 @@ def test_location_requires_a_real_json_number(field, value):
         catalog.Location.model_validate(location)
 
 
-@pytest.mark.parametrize('field', ['plate', 'color'])
-def test_car_pickup_requires_nonblank_plate_and_color(field):
-    car = {'plate': 'TEST', 'color': 'black'} | {field: '  '}
+def test_car_pickup_requires_nonblank_color():
+    car = {'plate': '', 'color': '  '}
     with pytest.raises(ValidationError):
         catalog.Car.model_validate(car)
 

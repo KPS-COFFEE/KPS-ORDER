@@ -483,17 +483,28 @@ class Location(_CheckoutModel):
 
 class Car(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
-    plate: str = Field(min_length=1, max_length=30)
+    plate: str = Field(default='', max_length=30)
     color: str = Field(min_length=1, max_length=40)
     model: str = Field(default='', max_length=60)
 
-    @field_validator('plate', 'color')
+    @field_validator('color')
     @classmethod
     def car_identification_required(cls, value):
         value = value.strip()
         if not value:
-            raise ValueError('Car plate and color are required.')
+            raise ValueError('Car color is required.')
         return value
+
+    @field_validator('plate')
+    @classmethod
+    def flexible_optional_plate(cls, value):
+        # New checkout values only; never rewrite historical order snapshots.
+        value = value.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789'))
+        if any(not (c in ' -/' or '0' <= c <= '9' or 'A' <= c <= 'Z' or
+                    'a' <= c <= 'z' or '\u0621' <= c <= '\u063a' or
+                    '\u0641' <= c <= '\u064a') for c in value):
+            raise ValueError('Plate may contain Arabic/English letters, digits, spaces, hyphens or slashes.')
+        return ' '.join(value.split())
 
 
 class CustomerInfo(_CheckoutModel):
