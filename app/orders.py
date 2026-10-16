@@ -339,6 +339,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             period_info = {'start': low.isoformat(), 'end': high.isoformat(), 'operational_day_configured': configured}
         rows = conn.execute('SELECT o.*,b.name branch_name,b.branch_no FROM orders o JOIN branches b ON b.id=o.branch_id WHERE ' + ' AND '.join(conditions) + ' ORDER BY ' + ordering + ' LIMIT %s OFFSET %s',
                             (*params, limit + 1, offset)).fetchall()
+        from .branch_payments import enrich_orders as enrich_payments
+        enrich_payments(conn, rows[:limit])
         if user['role']!='customer':
             performance.enrich_orders(conn,rows[:limit])
         else:
@@ -351,6 +353,8 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
     with db.tx(pipeline=user['role'] == 'customer') as conn:
         row = scoped_order(conn, order_id, user)
         events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
+        from .branch_payments import enrich_orders as enrich_payments
+        enrich_payments(conn, [row])
         if user['role']!='customer':
             performance.enrich_orders(conn,[row])
             row['print_labels_en']=print_translations.for_order(conn,row)

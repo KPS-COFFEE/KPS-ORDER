@@ -123,3 +123,16 @@ def require_verified(c, order):
             "SELECT 1 FROM branch_online_receipts WHERE order_id=%s AND amount_halalas=%s AND disposition='applied'",
             (order['id'],order['total_halalas'])).fetchone()):
         raise db.error(409,'VERIFIED_ONLINE_PAYMENT_REQUIRED','يلزم دفع إلكتروني موثق قبل التجهيز والتسليم.')
+
+
+def enrich_orders(c, rows):
+    targets = [row for row in rows if online_order(row)]
+    if not targets:
+        return
+    receipts = {r['order_id']:r for r in c.execute(
+        "SELECT order_id,amount_halalas,disposition FROM branch_online_receipts WHERE order_id=ANY(%s)",
+        ([row['id'] for row in targets],)).fetchall()}
+    for row in targets:
+        receipt = receipts.get(row['id']) or {}
+        row['online_payment_verified'] = (row['payment_status']=='paid' and
+            receipt.get('disposition')=='applied' and receipt.get('amount_halalas')==row['total_halalas'])
