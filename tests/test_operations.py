@@ -107,6 +107,9 @@ def ops(client, request):
     fiscal_scope = getattr(request,"param",None) == "fiscal-kps"
     brand_id,branch_id = ("kps","kps-branch-1") if fiscal_scope else ("ops-brand","ops-branch")
     with db.tx() as c:
+        if fiscal_scope:
+            from test_core import _branch
+            c.execute('UPDATE branches SET settings=settings||%s WHERE id=%s',(db.json(_branch(branch_id)['settings']),branch_id))
         c.execute("INSERT INTO brands(id,name) VALUES('ops-brand','تجريبي'),('ops-other','اختبار آخر')")
         c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-branch',1,'ops-source','ops-brand','فرع اختبار','حفر الباطن','{}'),('ops-branch-other',1,'other-source','ops-other','فرع آخر','رفحاء','{}')")
         for name,role,brand,branch in [('owner','owner','ops-brand','ops-branch'),('manager','delivery_manager','ops-brand','ops-branch'),('driver','driver','ops-brand','ops-branch'),('driver2','driver','ops-brand','ops-branch'),('customer','customer','ops-brand','ops-branch'),('branch','branch_manager','ops-brand','ops-branch'),('other','owner','ops-other','ops-branch-other')]:
