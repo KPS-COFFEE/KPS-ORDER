@@ -107,13 +107,16 @@ from uuid import uuid4
 @pytest.fixture
 def fiscal_sale(client, request):
     branch = getattr(request, "param", "kps-branch-1")
+    snapshot = sample()['snapshot']
+    if isinstance(branch, dict) and 'order_reference' in branch:
+        snapshot = {**snapshot, 'order_reference': branch['order_reference']}
     revision = branch.get('amendment_revision',0) if isinstance(branch,dict) else 0
     branch = branch.get('branch','kps-branch-1') if isinstance(branch,dict) else branch
     uid = 'fiscal-owner-'+uuid4().hex
     oid = 'fiscal-order-'+uuid4().hex
     with db.tx() as c:
         c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,'Fiscal test','owner','kps','[\"kps-branch-1\"]')", (uid,))
-        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,amendment_revision) VALUES(%s,'kps',%s,%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}',%s)", (oid,branch,uid,db.json(sample()['snapshot']),revision))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,amendment_revision) VALUES(%s,'kps',%s,%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}',%s)", (oid,branch,uid,db.json(snapshot),revision))
         user = c.execute('SELECT * FROM users WHERE id=%s',(uid,)).fetchone()
     client.app.dependency_overrides[auth.current_user]=lambda:user
     yield client,oid,user
@@ -520,11 +523,10 @@ def test_branch_invoice_reference_preserves_saved_ledger_and_qr(reference):
     assert printed['receipt_qr']['text']==before['qr_text']
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('fiscal_sale', [{'order_reference':'KFJ11-261016-0004'}], indirect=True)
 def test_new_invoice_uses_canonical_branch_order_reference(fiscal_sale):
     client,oid,user=fiscal_sale
     reference='KFJ11-261016-0004'
-    with db.tx() as c:
-        c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{order_reference}',%s::jsonb) WHERE id=%s",(db.json(reference),oid))
     activate_phase1(client)
     r=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'branch-reference-invoice'})
     assert r.status_code==200,r.text

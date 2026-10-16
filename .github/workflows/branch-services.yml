@@ -43,6 +43,7 @@ jobs:
           tests/test_payment_preparation.py tests/test_hardening_orders.py
           tests/test_branch_seller_decision.py tests/test_owner_closure.py
           tests/test_branch_payments.py tests/test_branch_payment_browser.py
+          tests/test_backup.py tests/test_fiscal.py
           --junitxml=test-results/branch-services.xml
       - uses: actions/upload-artifact@v4
         if: always()

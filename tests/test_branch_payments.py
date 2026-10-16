@@ -153,3 +153,45 @@ def test_provider_timeout_preserves_pending_attempt_and_retry_identity(branch_pa
     with db.tx() as c:
         assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='unpaid'
         assert c.execute('SELECT count(*) n FROM branch_online_receipts').fetchone()['n']==0
+
+
+from test_backup import independent_restore_database
+
+
+def test_payment_ledger_export_and_independent_restore(branch_payment, monkeypatch, independent_restore_database, tmp_path):
+    """Nonempty immutable payment evidence survives backup without crossing brands."""
+    import io
+    import json
+    import zipfile
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive, restore_archive
+    actor, post, oid = branch_payment
+    a = attempt(post, oid, accept(post, oid))
+    provider(monkeypatch, a['id'])
+    post('customer', '/api/branch-payments/attempts/'+a['id']+'/reconcile')
+    with db.tx() as c:
+        before = {table: c.execute('SELECT * FROM '+table+' WHERE order_id=%s', (oid,)).fetchone()
+                  for table in ('branch_payment_attempts', 'branch_online_receipts')}
+        archive, manifest = build_archive(c, full=True)
+        other, _ = build_archive(c, brand_id='other-brand')
+        own, _ = build_archive(c, brand_id='ops-brand')
+    for contents, expected in [(own, 1), (other, 0)]:
+        with zipfile.ZipFile(io.BytesIO(contents)) as zipped:
+            for table in before:
+                rows = json.loads(zipped.read('data/'+table+'.json'))
+                assert len(rows) == expected
+                if rows:
+                    assert rows[0]['provider_payment_id'] == str(before[table]['provider_payment_id'])
+    schema = 'kps_restore_'+uuid4().hex
+    result = restore_archive(archive, target_url=independent_restore_database,
+                             target_schema=schema, asset_directory=tmp_path/'assets')
+    assert result['verified']
+    with psycopg.connect(independent_restore_database, row_factory=dict_row) as c:
+        c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+        for table, row in before.items():
+            assert c.execute('SELECT * FROM '+table+' WHERE order_id=%s', (oid,)).fetchone() == row
+        assert c.execute('SELECT payment_status FROM orders WHERE id=%s', (oid,)).fetchone()['payment_status']=='paid'
+    with db.tx() as c:
+        for table, row in before.items():
+            assert c.execute('SELECT * FROM '+table+' WHERE order_id=%s', (oid,)).fetchone() == row
