@@ -382,9 +382,9 @@ def test_issued_refund_spans_multiple_collections_without_decimal_loss(fiscal_sa
     client,oid,user=fiscal_sale
     activate_phase1(client)
     with db.tx() as c:
-        c.execute("UPDATE orders SET payment_method='card' WHERE id=%s",(oid,))
+        c.execute("UPDATE orders SET payment_method='card',amendment_revision=1 WHERE id=%s",(oid,))
         for index,amount in enumerate((1000,2950)):
-            c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES(%s,%s,%s,'card',%s)",(f'multi-{index}-'+oid,oid,user['id'],amount))
+            c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas,amendment_revision) VALUES(%s,%s,%s,'card',%s,%s)",(f'multi-{index}-'+oid,oid,user['id'],amount,index))
     issued=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'multi-issue'})
     assert issued.status_code==200,issued.text
     original=issued.json()['document']
