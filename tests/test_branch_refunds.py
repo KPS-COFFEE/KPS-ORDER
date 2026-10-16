@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app import db, payment_refunds, payment_gateways, order_amendments
 from test_branch_payments import branch_payment, accept, attempt, provider
 from test_operations import ops
+from test_backup import independent_restore_database
 
 
 @pytest.fixture
@@ -136,3 +137,52 @@ def test_refund_permissions_scope_and_fulfillment_hold(paid_order, refund_provid
     post('owner', url, body | {'version': version+1}, status=409)
     post('owner', '/api/orders/'+oid+'/preparation', {'version': version+1, 'status': 'preparing'}, status=409)
     assert not calls
+
+
+@pytest.mark.postgres
+def test_parallel_refund_execute_sends_once(paid_order, refund_provider):
+    from concurrent.futures import ThreadPoolExecutor
+    from app import branch_refunds
+    actor, post, oid, a, state, calls = configure_paid(paid_order, refund_provider)
+    row = authorize(post, oid)
+    with db.tx() as c:
+        user = c.execute("SELECT * FROM users WHERE id='ops-owner'").fetchone()
+    def run(_):
+        try: return branch_refunds.execute(row['id'], user)['refund']['status']
+        except HTTPException as exc:
+            assert exc.status_code == 409
+            return 'pending'
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(run, range(4)))
+    assert 'verified' in results and [r.method for r in calls].count('POST') == 1
+
+
+@pytest.mark.postgres
+def test_completed_order_unchanged_and_refund_survives_restore(paid_order, refund_provider, independent_restore_database, tmp_path):
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive, restore_archive
+    from app.branch_payments import enrich_orders
+    actor, post, oid, a, state, calls = configure_paid(paid_order, refund_provider)
+    with db.tx() as c:
+        c.execute("UPDATE orders SET preparation_status='completed',completed_at=now() WHERE id=%s", (oid,))
+        original = c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
+    row = authorize(post, oid)
+    post('owner', '/api/branch-payments/refunds/'+row['id']+'/execute')
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone() == original
+        before = c.execute('SELECT * FROM branch_online_refunds').fetchall()
+        enriched = dict(original)
+        enrich_orders(c, [enriched])
+        assert enriched['online_refunded_halalas'] == 1000 and enriched['online_payment_verified'] is False
+        archive, manifest = build_archive(c, full=True)
+    assert manifest['counts']['branch_online_refunds'] == 1
+    schema = 'kps_restore_'+uuid4().hex
+    assert restore_archive(archive, target_url=independent_restore_database, target_schema=schema,
+                           asset_directory=tmp_path/'assets')['verified']
+    with psycopg.connect(independent_restore_database, row_factory=dict_row) as c:
+        c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+        assert c.execute('SELECT * FROM branch_online_refunds').fetchall() == before
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM branch_online_refunds').fetchall() == before

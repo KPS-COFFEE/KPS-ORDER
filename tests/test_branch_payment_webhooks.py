@@ -154,3 +154,22 @@ def test_webhook_queue_survives_independent_backup_restore(webhook, independent_
         assert c.execute('SELECT * FROM branch_payment_webhooks').fetchall() == before
     with db.tx() as c:
         assert c.execute('SELECT * FROM branch_payment_webhooks').fetchall() == before
+
+
+@pytest.mark.postgres
+def test_sweep_recovers_payment_without_callback_and_without_new_charge(webhook, monkeypatch):
+    client, oid, a, body = webhook
+    calls = provider(monkeypatch, a['id'])
+    monkeypatch.delenv('KPS_BRANCH_PAYMENT_WEBHOOKS_ENABLED')
+    with db.tx() as c:
+        c.execute("INSERT INTO branch_checkout_sessions(attempt_id,brand_id,state,created_at) VALUES(%s,'ops-brand','creating',now()-interval '2 minutes')", (a['id'],))
+    assert hooks.enqueue_pending() == 0  # Sweeping is separately OFF by default.
+    monkeypatch.setenv('KPS_BRANCH_PAYMENT_RECONCILIATION_ENABLED', 'true')
+    assert hooks.enqueue_pending() == 1
+    assert hooks.enqueue_pending() == 0
+    assert client.post('/paymenthooks/moyasar', json=body).status_code == 404
+    assert hooks.dispatch_once() is True
+    assert len(calls) == 1 and calls[0].method == 'GET'
+    with db.tx() as c:
+        assert c.execute('SELECT payment_status FROM orders WHERE id=%s', (oid,)).fetchone()['payment_status'] == 'paid'
+        assert c.execute('SELECT event_type FROM branch_payment_webhooks').fetchone()['event_type'] == 'reconciliation_requested'

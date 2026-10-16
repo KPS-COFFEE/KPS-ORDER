@@ -156,9 +156,16 @@ def enrich_orders(c, rows):
     receipts = {r['order_id']:r for r in c.execute(
         "SELECT order_id,amount_halalas,disposition FROM branch_online_receipts WHERE order_id=ANY(%s)",
         ([row['id'] for row in targets],)).fetchall()}
+    refunds = {r['order_id']:r for r in c.execute(
+        "SELECT order_id,coalesce(sum(amount_halalas) FILTER(WHERE status='verified'),0) amount,bool_or(status<>'verified') pending FROM branch_online_refunds WHERE order_id=ANY(%s) GROUP BY order_id",
+        ([row['id'] for row in targets],)).fetchall()}
     for row in targets:
         receipt = receipts.get(row['id']) or {}
+        refund = refunds.get(row['id']) or {}
+        row['online_refunded_halalas'] = int(refund.get('amount', 0))
+        row['online_refund_pending'] = bool(refund.get('pending', False))
         row['online_payment_verified'] = (row['payment_status']=='paid' and
+            not row['online_refunded_halalas'] and not row['online_refund_pending'] and
             receipt.get('disposition')=='applied' and receipt.get('amount_halalas')==row['total_halalas'])
 
 

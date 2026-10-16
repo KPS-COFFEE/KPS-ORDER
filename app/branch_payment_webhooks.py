@@ -19,6 +19,33 @@ def enabled():
             os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') == 'true')
 
 
+def worker_enabled():
+    return (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') == 'true' and
+            (os.getenv('KPS_BRANCH_PAYMENT_WEBHOOKS_ENABLED') == 'true' or
+             os.getenv('KPS_BRANCH_PAYMENT_RECONCILIATION_ENABLED') == 'true'))
+
+
+def enqueue_pending():
+    """Recover missing callbacks and paid attempts after a checkout process crash.
+
+    A persistent verification request does not create another checkout or charge.
+    Sweep at most 100 previously unseen attempts; failure/backoff uses the inbox.
+    """
+    if not worker_enabled() or os.getenv('KPS_BRANCH_PAYMENT_RECONCILIATION_ENABLED') != 'true':
+        return 0
+    with db.tx() as c:
+        rows = c.execute("""INSERT INTO branch_payment_webhooks
+            (id,brand_id,attempt_id,provider_event_id,event_type)
+            SELECT 'sweep_'||a.id,a.brand_id,a.id,'system_reconcile','reconciliation_requested'
+            FROM branch_payment_attempts a
+            JOIN branch_checkout_sessions s ON s.attempt_id=a.id
+            WHERE a.status='pending' AND a.mode='test' AND s.created_at<now()-interval '30 seconds'
+            AND NOT EXISTS (SELECT 1 FROM branch_payment_webhooks w WHERE w.attempt_id=a.id AND w.provider_event_id='system_reconcile')
+            ORDER BY a.created_at,a.id LIMIT 100
+            ON CONFLICT(attempt_id,provider_event_id) DO NOTHING RETURNING id""").fetchall()
+        return len(rows)
+
+
 def notification(body):
     """Discard all unneeded provider fields, including card data and secrets."""
     if not isinstance(body, dict) or body.get('live') is not False:
@@ -62,7 +89,7 @@ async def receive(request: Request):
 
 
 def dispatch_once():
-    if not enabled():
+    if not worker_enabled():
         return False
     lease = db.new_id('lease_')
     with db.tx() as c:
@@ -77,7 +104,7 @@ def dispatch_once():
         # Never log provider response, payload, exception text or token. Retry
         # durable work after outages; a process crash is recovered by its lease.
         with db.tx() as c:
-            c.execute("UPDATE branch_payment_webhooks SET lease_id=NULL,lease_until=NULL,next_attempt_at=now()+interval '60 seconds' WHERE id=%s AND lease_id=%s AND processed_at IS NULL", (row['id'], lease))
+            c.execute("UPDATE branch_payment_webhooks SET lease_id=NULL,lease_until=NULL,next_attempt_at=now()+least(3600,60*greatest(attempts,1))*interval '1 second' WHERE id=%s AND lease_id=%s AND processed_at IS NULL", (row['id'], lease))
         return False
     with db.tx() as c:
         c.execute('UPDATE branch_payment_webhooks SET processed_at=now(),lease_id=NULL,lease_until=NULL WHERE id=%s AND lease_id=%s AND processed_at IS NULL', (row['id'], lease))
@@ -87,6 +114,7 @@ def dispatch_once():
 async def poll_loop():
     while True:
         try:
+            await asyncio.to_thread(enqueue_pending)
             await asyncio.to_thread(dispatch_once)
         except Exception:
             logging.getLogger('kps_order').error('branch_payment_worker_unavailable')

@@ -44,7 +44,7 @@ reconciliation and multiple notifications race. System processing records a
 null system actor; it never impersonates a customer. Expired or cancelled-order
 success remains `review_required` and does not resume fulfillment.
 
-Verification failure leaves the event pending for retry after 60 seconds.
+Verification failure leaves the event pending with backoff from 60 seconds to one hour.
 Crashes recover after lease expiry. A crash after financial commit but before
 inbox acknowledgement safely replays the terminal attempt. Database failures
 do not acknowledge undurable notifications. Only a fixed error code is logged.
@@ -57,9 +57,14 @@ confirmed seller ownership, event subscription, real provider delivery, refund
 and decline/expiry retry workflows, uncertain checkout-session recovery, normal
 new-order payment gating, and complete end-to-end acceptance remain open.
 
-The polling worker is not a general sweep of every pending payment: it recovers
-received notifications. A separate reconciliation sweep is still required for
-missing notifications. No live payment or public-service activation is implied.
+With the separate OFF-default `KPS_BRANCH_PAYMENT_RECONCILIATION_ENABLED=true`,
+the worker also queues pending attempts whose checkout claims are at least 30
+seconds old, including interrupted or uncertain claims. Each attempt gets one
+durable `reconciliation_requested` work item. This sweep only performs provider
+GET verification: it never recreates checkout credentials or repeats a charge.
+It can run with webhook reception disabled. No live payment or public-service
+activation is implied. Recovery of an uncharged, unusable checkout intent still
+requires a separate safe renewal workflow.
 
 Provider reference inspected 2026-10-16:
 https://docs.moyasar.com/api/other/webhooks/webhook-reference

@@ -42,7 +42,7 @@ async def lifespan(app):
             if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
             from . import branch_payment_webhooks
-            if branch_payment_webhooks.enabled() and os.getenv('APP_ENV') != 'testing':
+            if branch_payment_webhooks.worker_enabled() and os.getenv('APP_ENV') != 'testing':
                 background_tasks.append(asyncio.create_task(branch_payment_webhooks.poll_loop(), name='branch-payment-inbox'))
         yield
     finally:
