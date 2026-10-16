@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   dependency-security:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
+    if: "!cancelled() && (github.event_name == 'push' || (github.head_ref == 'agent/kps-order-emergency-v4' || (github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'agent/kps-order-emergency-v4' && startsWith(github.head_ref, 'agent/ci-actions-cost-optimization-'))))"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,6 +28,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
       - name: Audit resolved runtime and test dependencies without waivers
         run: |
           python -m pip install pip-audit==2.10.1
@@ -40,7 +44,7 @@ jobs:
           path: test-artifacts/dependency-audit.json
 
   isolated-load-recovery:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
+    if: "!cancelled() && (github.event_name == 'push' || (github.head_ref == 'agent/kps-order-emergency-v4' || (github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'agent/kps-order-emergency-v4' && startsWith(github.head_ref, 'agent/ci-actions-cost-optimization-'))))"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -89,7 +93,7 @@ jobs:
             test-artifacts/diagnostic/
 
   isolated-two-worker-capacity:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
+    if: "!cancelled() && (github.event_name == 'push' || (github.head_ref == 'agent/kps-order-emergency-v4' || (github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'agent/kps-order-emergency-v4' && startsWith(github.head_ref, 'agent/ci-actions-cost-optimization-'))))"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -134,7 +138,7 @@ jobs:
 
   proposed-capacity-budget:
     name: proposed-capacity-budget (${{ matrix.repetition }})
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
+    if: "!cancelled() && (github.event_name == 'push' || (github.head_ref == 'agent/kps-order-emergency-v4' || (github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'agent/kps-order-emergency-v4' && startsWith(github.head_ref, 'agent/ci-actions-cost-optimization-'))))"
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -202,7 +206,7 @@ jobs:
 
   representative-render-budget:
     name: representative-render-budget (${{ matrix.repetition }})
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
+    if: "!cancelled() && (github.event_name == 'push' || (github.head_ref == 'agent/kps-order-emergency-v4' || (github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'agent/kps-order-emergency-v4' && startsWith(github.head_ref, 'agent/ci-actions-cost-optimization-'))))"
     runs-on: ubuntu-latest
     # Allow all original levels and recovery to finish on the smaller budget;
     # request timeouts and latency/error acceptance thresholds stay unchanged.

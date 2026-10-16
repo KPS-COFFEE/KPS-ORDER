@@ -2,9 +2,15 @@ name: Driver float and privacy acceptance
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+concurrency:
+  # Superseded development only; pin release PRs with ci-preserve-certification.
+  # No acceptance steps, required contexts or evidence rules are changed.
+  group: driver-float-ci-v2-${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-preserve-certification') && format('pr-{0}', github.event.pull_request.number) || format('isolated-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-preserve-certification') }}
+
 jobs:
   driver-float-postgres:
-    if: github.head_ref == 'agent/kps-order-emergency-v4'
+    if: (github.head_ref == 'agent/kps-order-emergency-v4' || (github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'agent/kps-order-emergency-v4' && startsWith(github.head_ref, 'agent/ci-actions-cost-optimization-')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
