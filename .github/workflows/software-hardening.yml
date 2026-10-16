@@ -28,6 +28,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
       - name: Audit resolved runtime and test dependencies without waivers
         run: |
           python -m pip install pip-audit==2.10.1

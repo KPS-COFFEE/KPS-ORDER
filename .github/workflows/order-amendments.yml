@@ -2,6 +2,12 @@ name: Order amendment acceptance
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+concurrency:
+  # Superseded development only; pin release PRs with ci-preserve-certification.
+  # No acceptance steps, required contexts or evidence rules are changed.
+  group: order-amendments-ci-v2-${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-preserve-certification') && format('pr-{0}', github.event.pull_request.number) || format('isolated-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-preserve-certification') }}
+
 jobs:
   amendments-postgres:
     if: github.head_ref == 'agent/kps-order-emergency-v4'
