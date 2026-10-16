@@ -107,11 +107,13 @@ from uuid import uuid4
 @pytest.fixture
 def fiscal_sale(client, request):
     branch = getattr(request, "param", "kps-branch-1")
+    revision = branch.get('amendment_revision',0) if isinstance(branch,dict) else 0
+    branch = branch.get('branch','kps-branch-1') if isinstance(branch,dict) else branch
     uid = 'fiscal-owner-'+uuid4().hex
     oid = 'fiscal-order-'+uuid4().hex
     with db.tx() as c:
         c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,'Fiscal test','owner','kps','[\"kps-branch-1\"]')", (uid,))
-        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps',%s,%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}')", (oid,branch,uid,db.json(sample()['snapshot'])))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,amendment_revision) VALUES(%s,'kps',%s,%s,'delivery','delivered','paid','cash',3950,0,3950,%s,'{}',%s)", (oid,branch,uid,db.json(sample()['snapshot']),revision))
         user = c.execute('SELECT * FROM users WHERE id=%s',(uid,)).fetchone()
     client.app.dependency_overrides[auth.current_user]=lambda:user
     yield client,oid,user
@@ -378,11 +380,12 @@ def test_issued_device_header_and_footer_never_mark_invoice_as_preview(language)
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('fiscal_sale',[{'amendment_revision':1}],indirect=True)
 def test_issued_refund_spans_multiple_collections_without_decimal_loss(fiscal_sale):
     client,oid,user=fiscal_sale
     activate_phase1(client)
     with db.tx() as c:
-        c.execute("UPDATE orders SET payment_method='card',amendment_revision=1 WHERE id=%s",(oid,))
+        c.execute("UPDATE orders SET payment_method='card' WHERE id=%s",(oid,))
         for index,amount in enumerate((1000,2950)):
             c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas,amendment_revision) VALUES(%s,%s,%s,'card',%s,%s)",(f'multi-{index}-'+oid,oid,user['id'],amount,index))
     issued=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'multi-issue'})
