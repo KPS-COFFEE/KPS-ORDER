@@ -89,6 +89,11 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
         page.locator('input[name=service][value=car]').check()
         page.locator('#car-model').fill('Test car')
         page.locator('#car-color-choice').select_option('أبيض')
+        saved_color = 'أبيض'
+        if width == 1280:
+            page.locator('#car-color-choice').select_option('__custom__')
+            page.locator('#car-color-custom').fill('  لؤلؤي خاص  ')
+            saved_color = 'لؤلؤي خاص'
         page.locator('#car-plate').fill('TEST-ONLY')
         page.locator('.product-card[data-product-id="kps-30"] .product-image-button').click()
         page.locator('#product-options select').select_option('BLU')
@@ -140,10 +145,23 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
             assert len(orders) == 1
             order = orders[0]
             assert order['service'] == 'car'
+            assert order['customer']['car'] == {'model': 'Test car', 'plate': 'TEST-ONLY', 'color': saved_color}
             assert order['snapshot']['items'][0]['units'][0]['options']['COLOR'] == 'BLU'
         _evidence(page, f'customer-language-en-order-{width}', language='en', order='synthetic car pickup')
         page.get_by_role('button', name='I have arrived at the branch', exact=True).click()
         expect(page.get_by_role('button', name='I have arrived at the branch', exact=True)).to_have_count(0)
+        branch_context, branch_page, branch_errors = _context(chromium_browser, live_app)
+        try:
+            _owner_login(branch_context, live_app, _staff('branch_manager'))
+            branch_page.goto('/ops.html')
+            branch_page.locator('[data-page=orders]').click()
+            branch_page.locator('[data-action=order-detail][data-id="'+order['id']+'"]').click()
+            card = branch_page.locator('.order-detail-card')
+            for value in ['Test car', 'TEST-ONLY', saved_color, 'وصلت السيارة']:
+                expect(card).to_contain_text(value)
+            assert not branch_errors
+        finally:
+            branch_context.close()
         page.locator('#order-detail').get_by_role('button', name='Order conversation', exact=True).click()
         expect(page.locator('#chat-dialog')).to_be_visible()
         expect(page.locator('#send-message')).to_have_text('Send')
