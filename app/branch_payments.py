@@ -143,6 +143,8 @@ def verify_attempt(attempt, user=None):
 
 
 def require_verified(c, order):
+    if online_order(order) and c.execute('SELECT 1 FROM branch_online_refunds WHERE order_id=%s', (order['id'],)).fetchone():
+        raise db.error(409,'REFUND_FULFILLMENT_BLOCKED','طلب الاسترداد يمنع استمرار التجهيز والتسليم.')
     if online_order(order) and (order['payment_status'] != 'paid' or not c.execute(
             "SELECT 1 FROM branch_online_receipts WHERE order_id=%s AND amount_halalas=%s AND disposition='applied'",
             (order['id'],order['total_halalas'])).fetchone()):

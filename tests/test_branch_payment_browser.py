@@ -51,3 +51,47 @@ def test_cashier_only_offers_preparation_with_durable_payment_proof(live_app,chr
         assert not errors
     finally:
         context.close()
+
+
+@pytest.mark.parametrize('lang', ['ar', 'en'])
+@pytest.mark.parametrize('refund_state', ['disabled', 'requested', 'uncertain'])
+def test_owner_refund_controls_never_resubmit_uncertain_payment(live_app, chromium_browser, lang, refund_state):
+    """Real owner screen; synthetic refund API, not provider acceptance."""
+    staff = _staff('owner')
+    customer, _, _ = _customer_session()
+    oid = 'refund-ui-'+uuid4().hex
+    with db.tx() as c:
+        snap = {'items': [], 'branch_payment_mode': 'test', 'branch_payment_seller': 'fixture-seller'}
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,payment_status,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'pickup','accepted','not_applicable','card','refund_pending',1000,0,1000,%s,'{}')", (oid, customer, db.json(snap)))
+    context, page, errors = _context(chromium_browser, live_app)
+    page.set_viewport_size({'width': 390, 'height': 900})
+    requests = []
+    data = {'enabled': refund_state != 'disabled', 'available_halalas': 1000, 'version': 1,
+            'refunds': [{'id': 'fixture-refund', 'order_id': oid, 'amount_halalas': 1000,
+                         'previous_refunded_halalas': 0, 'status': refund_state if refund_state != 'disabled' else 'requested'}]}
+    page.route('**/api/branch-payments/orders/'+oid+'/refunds', lambda route: route.fulfill(json=data))
+    def action(route):
+        requests.append(route.request.url)
+        data['refunds'][0]['status'] = 'verified'
+        route.fulfill(json={'refund': data['refunds'][0]})
+    page.route('**/api/branch-payments/refunds/fixture-refund/*', action)
+    try:
+        _owner_login(context, live_app, staff)
+        page.goto('/ops.html')
+        if lang == 'en': page.locator('#language').click()
+        page.locator('[data-page=orders]').click()
+        page.locator('[data-action=order-detail][data-id="'+oid+'"]').click()
+        page.locator('.order-detail-card [data-action=online-refund]').click()
+        if refund_state == 'disabled':
+            expect(page.locator('[data-action=online-refund-execute]')).to_have_count(0)
+            expect(page.locator('[data-action=online-refund-reconcile]')).to_have_count(0)
+        else:
+            selected = 'execute' if refund_state == 'requested' else 'reconcile'
+            other = 'reconcile' if selected == 'execute' else 'execute'
+            expect(page.locator('[data-action=online-refund-'+other+']')).to_have_count(0)
+            page.locator('[data-action=online-refund-'+selected+']').click()
+            expect(page.locator('#modal-body')).to_contain_text('Refund verified' if lang == 'en' else 'استرداد مؤكد')
+            assert len(requests) == 1 and requests[0].endswith('/'+selected)
+        assert not errors
+    finally:
+        context.close()

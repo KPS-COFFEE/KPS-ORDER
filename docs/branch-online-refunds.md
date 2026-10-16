@@ -33,7 +33,11 @@ The new financial table is included in scoped business exports, full backup and
 preservation manifests. It is not inserted into Delivery cash/card custody.
 Fiscal-document orders are blocked pending the matching fiscal credit-note flow.
 
-Still open: owner-facing refund controls and branch accounting screens, refund
+The bilingual owner order workspace shows authorized requests and their status.
+Authorization and provider submission are separate actions. Uncertain requests
+offer verification only; disabled configuration provides no submission control.
+
+Still open: branch accounting screens, refund
 webhook processing, automatic recovery of unresolved refunds, fiscal credit-note
 acceptance and real Moyasar sandbox acceptance. A failed preflight leaves a
 safe unresolved authorization rather than automatically resubmitting money.

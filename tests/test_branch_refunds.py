@@ -133,6 +133,11 @@ def test_refund_permissions_scope_and_fulfillment_hold(paid_order, refund_provid
     post('owner', url, body | {'amount_halalas': 1001}, status=422)
     post('owner', url, body | {'reason': '   '}, status=422)
     first = post('owner', url, body, key='stable-refund')
+    history = actor('owner').get(url)
+    assert history.status_code == 200 and history.json()['enabled'] is True
+    assert history.json()['refunds'] == [first['refund']]
+    assert actor('customer').get(url).status_code == 403
+    assert actor('other').get(url).status_code == 404
     assert post('owner', url, body, key='stable-refund') == first
     post('owner', url, body | {'version': version+1}, status=409)
     post('owner', '/api/orders/'+oid+'/preparation', {'version': version+1, 'status': 'preparing'}, status=409)

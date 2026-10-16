@@ -1,5 +1,6 @@
 """Owner-authorized sandbox refund ledger. Existing Delivery refunds are untouched."""
 from fastapi import APIRouter, Depends, Header
+from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 from . import auth, db, branch_payments as payments, payment_refunds as provider
 from .orders import scoped_order
@@ -23,6 +24,28 @@ class RefundBody(BaseModel):
 
 def view(row):
     return {k: row[k] for k in ('id', 'order_id', 'status', 'amount_halalas', 'previous_refunded_halalas')}
+
+
+@router.get('/orders/{oid}/refunds')
+def history(oid: str, user=Depends(auth.require_roles('owner'))):
+    with db.tx() as c:
+        order = scoped_order(c, oid, user)
+        if not payments.online_order(order):
+            raise db.error(404, 'REFUND_NOT_FOUND', 'لا يوجد دفع إلكتروني لهذا الطلب.')
+        attempt = c.execute('SELECT * FROM branch_payment_attempts WHERE order_id=%s', (oid,)).fetchone()
+        rows = c.execute('SELECT * FROM branch_online_refunds WHERE order_id=%s ORDER BY created_at,id', (oid,)).fetchall()
+        enabled = False
+        if attempt and attempt['status'] in {'verified', 'review_required'}:
+            try:
+                payments.require_sandbox(order)
+                provider.configuration(payments.context(attempt))
+                enabled = not bool(c.execute('SELECT 1 FROM fiscal_documents WHERE order_id=%s', (oid,)).fetchone())
+            except HTTPException:
+                pass
+        verified = sum(r['amount_halalas'] for r in rows if r['status']=='verified')
+        available = max(0, attempt['amount_halalas']-verified) if attempt and attempt['status'] in {'verified','review_required'} else 0
+        return {'refunds': [view(r) for r in rows], 'enabled': enabled,
+                'available_halalas': available, 'version': order['version']}
 
 
 @router.post('/orders/{oid}/refunds')
