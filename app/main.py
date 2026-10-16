@@ -92,6 +92,8 @@ from . import branch_payment_webhooks
 app.include_router(branch_payment_webhooks.router)
 from . import branch_refunds
 app.include_router(branch_refunds.router)
+from . import branch_payment_reports
+app.include_router(branch_payment_reports.router)
 # Components are separate files within this one service and share canonical tables.
 for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'channel_settlement', 'internal_documents'):
     module = importlib.import_module('.' + name, __package__)
