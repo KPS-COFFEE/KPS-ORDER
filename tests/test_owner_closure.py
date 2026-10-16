@@ -82,7 +82,9 @@ def test_independent_color_stop_global_and_branch_rechecks_order_and_preserves_h
     assert 'channel_commercial' not in historical['snapshot']
     with db.tx() as conn:
         original_internal_snapshot = conn.execute('SELECT snapshot FROM orders WHERE id=%s', (historical['id'],)).fetchone()['snapshot']
-    assert 'channel_commercial' in original_internal_snapshot
+    assert 'channel_commercial' not in original_internal_snapshot
+    assert original_internal_snapshot['receipt_profile']['entity_id'] is None
+    assert original_internal_snapshot['receipt_profile']['issuance_status'] == 'seller_decision_pending'
     assert original_internal_snapshot['items'] == historical['snapshot']['items']
     _restore(client, owner_cookies, owner_csrf)
 

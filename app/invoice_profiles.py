@@ -52,6 +52,12 @@ def _branch_addresses(path, file_version):
 
 
 def capture(conn, brand_id, branch_id, *, brand_settings=None, channel=None):
+    if channel in {'pickup', 'car'}:
+        # Branch ownership is not evidence of the legal seller for a new sales
+        # channel. Keep this explicit until the owner confirms its issuer.
+        return {'entity_id': None, 'issuance_status': 'seller_decision_pending',
+                'channel': channel, 'branch_id': branch_id,
+                'prices_include_vat': None}
     config = (settings(conn, brand_id) if brand_settings is None else
               copy.deepcopy(brand_settings.get('invoice_profiles') or defaults(brand_id)))
     if channel == 'kps_order' and brand_id == 'kps':

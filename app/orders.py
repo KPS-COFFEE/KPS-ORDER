@@ -167,8 +167,9 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             # counter. The allocation remains in this same atomic transaction,
             # while its mandatory serial section contains only durable writes.
             quote['receipt_profile'] = invoice_profiles.capture(
-                conn, body.brand_id, execution_branch_id, brand_settings=(config or {}).get('settings', {}), channel='kps_order')
-            if body.brand_id == 'kps':
+                conn, body.brand_id, execution_branch_id, brand_settings=(config or {}).get('settings', {}),
+                channel='kps_order' if body.service == 'delivery' else body.service)
+            if body.brand_id == 'kps' and body.service == 'delivery':
                 from . import channel_commercial
                 profiles = (config or {}).get('settings', {}).get('invoice_profiles') or invoice_profiles.defaults('kps')
                 quote['channel_commercial'] = channel_commercial.capture(profiles, execution_branch_id, quote, user['id'])
