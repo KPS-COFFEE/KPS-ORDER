@@ -119,16 +119,25 @@ def execute(rid: str, user=Depends(auth.require_roles('owner'))):
             return {'refund': view(row)}
         if row['status'] != 'requested':
             raise db.error(409, 'REFUND_RECONCILIATION_REQUIRED', 'تحقق من الاسترداد دون إعادة إرساله.')
+    # A failed read-only preflight has not sent money. Leave the authorization
+    # retryable until that read succeeds; never claim a POST before this GET.
+    expected = payments.context(attempt)
+    pid = str(attempt['provider_payment_id'])
+    before = provider.request(expected, pid)
+    target = row['previous_refunded_halalas']+row['amount_halalas']
+    if before not in (row['previous_refunded_halalas'], target):
+        raise db.error(409, 'REFUND_RECONCILIATION_REQUIRED', 'رصيد المزود يحتاج مراجعة.')
+    with db.tx() as c:
+        row, attempt, order = load(c, rid, user)
+        provider.configuration(payments.context(attempt))
+        if row['status'] == 'verified':
+            return {'refund': view(row)}
+        if row['status'] != 'requested':
+            raise db.error(409, 'REFUND_RECONCILIATION_REQUIRED', 'تحقق من الاسترداد دون إعادة إرساله.')
         c.execute("UPDATE branch_online_refunds SET status='submitting' WHERE id=%s", (rid,))
     # Committed single-submit claim: another process/retry cannot repeat the POST.
     try:
-        expected = payments.context(attempt)
-        pid = str(attempt['provider_payment_id'])
-        before = provider.request(expected, pid)
-        target = row['previous_refunded_halalas']+row['amount_halalas']
         if before != target:
-            if before != row['previous_refunded_halalas']:
-                raise db.error(409, 'REFUND_RECONCILIATION_REQUIRED', 'رصيد المزود يحتاج مراجعة.')
             provider.request(expected, pid, row['amount_halalas'])
         # Even a successful POST response is checked with a separate GET.
         return confirmed(rid, user, provider.request(expected, pid))

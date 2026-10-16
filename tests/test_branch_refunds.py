@@ -23,6 +23,8 @@ def refund_provider(monkeypatch):
     def handle(request):
         calls.append(request)
         assert str(request.url).startswith('https://api.moyasar.com/v1/payments/'+state['pid'])
+        if request.method == 'GET' and state.get('read_timeout'):
+            raise httpx.ReadTimeout('sensitive_provider_response', request=request)
         if request.method == 'POST':
             state['refunded'] += json.loads(request.content)['amount']
             if state['timeout']:
@@ -117,6 +119,23 @@ def test_timeout_recovery_reads_provider_without_second_post(paid_order, refund_
     post('owner', base+'/execute', status=503)
     post('owner', base+'/execute', status=409)
     assert post('owner', base+'/reconcile')['refund']['status'] == 'verified'
+    assert [r.method for r in calls].count('POST') == 1
+
+
+@pytest.mark.postgres
+def test_preflight_outage_leaves_unsent_refund_safely_retryable(paid_order, refund_provider):
+    actor, post, oid, a, state, calls = configure_paid(paid_order, refund_provider)
+    row = authorize(post, oid)
+    base = '/api/branch-payments/refunds/'+row['id']
+    state['read_timeout'] = True
+    post('owner', base+'/execute', status=503)
+    assert [r.method for r in calls] == ['GET']
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM branch_online_refunds WHERE id=%s', (row['id'],)).fetchone()['status'] == 'requested'
+        assert c.execute('SELECT payment_status FROM orders WHERE id=%s', (oid,)).fetchone()['payment_status'] == 'refund_pending'
+    state['read_timeout'] = False
+    assert post('owner', base+'/execute')['refund']['status'] == 'verified'
+    assert post('owner', base+'/execute')['refund']['status'] == 'verified'
     assert [r.method for r in calls].count('POST') == 1
 
 
