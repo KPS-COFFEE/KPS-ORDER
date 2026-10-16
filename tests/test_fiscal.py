@@ -177,9 +177,14 @@ def test_concurrent_preview_retries_and_sami_fulfilment(fiscal_sale):
         assert c.execute('SELECT count(*) n FROM fiscal_previews WHERE order_id=%s',(oid,)).fetchone()['n']==1
         assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==0
     before=responses[0].json()['document']
+    import psycopg
+    with pytest.raises(psycopg.errors.RaiseException, match='approved immutable revision'):
+        with db.tx() as c:
+            c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{items,0,name}','\"Changed operational text\"'::jsonb),amendment_revision=amendment_revision+1 WHERE id=%s",(oid,))
     with db.tx() as c:
-        c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{items,0,name}','\"Changed operational text\"'::jsonb),amendment_revision=amendment_revision+1 WHERE id=%s",(oid,))
+        c.execute("UPDATE orders SET payment_method='card' WHERE id=%s",(oid,))
     assert prepare(5).json()['document']==before
+
 
 
 def test_occasion_header_frozen_and_kept_out_of_fiscal_qr():
