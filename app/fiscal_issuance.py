@@ -1,4 +1,4 @@
-"""Transactional Phase 1 issuance. Disabled until an evidenced owner decision.
+"""Transactional invoice issuance with separately recorded applicability.
 
 Phase 2 cannot be selected as an enabled mode without a real signing/reporting
 implementation. This module never treats a five-tag QR as Phase 2 compliance.
@@ -21,16 +21,19 @@ def policy(conn, brand_id):
 def status(conn, brand_id):
     p = policy(conn, brand_id)
     d = p['decision']
-    enabled = brand_id == 'kps' and d.get('enabled') is True and d.get('phase') == 'phase1' and bool(d.get('evidence_reference'))
-    return {'official_issuance_enabled': enabled, 'phase': d.get('phase', 'unconfirmed'),
+    verified = d.get('phase') == 'phase1' and bool(d.get('evidence_reference'))
+    owner_requested = d.get('issuance_mode') == 'owner_requested' and d.get('phase') == 'unconfirmed'
+    enabled = brand_id == 'kps' and d.get('enabled') is True and (verified or owner_requested)
+    return {'issuance_enabled': enabled, 'official_issuance_enabled': enabled and verified, 'phase': d.get('phase', 'unconfirmed'),
             'policy_id': p['id'], 'phase2_supported': False,
-            'remaining_requirements': [] if enabled else ['verified_phase_applicability_and_owner_activation'],
+            'remaining_requirements': ([] if verified else ['phase_applicability_unconfirmed']) + ([] if enabled else ['owner_activation']),
             'phase2_gaps': ['UBL_XML', 'hash_chain', 'onboarded_CSID_and_private_key',
                             'cryptographic_stamp_and_QR_tags_6_to_9', 'reporting_and_recovery']}
 
 
 class PolicyDecision(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    issuance_mode: Literal['verified_phase1', 'owner_requested'] = 'verified_phase1'
     enabled: StrictBool = False
     phase: Literal['unconfirmed', 'phase1', 'phase2'] = 'unconfirmed'
     evidence_reference: str = Field(default='', max_length=1000)
@@ -50,7 +53,9 @@ def configure(body: PolicyDecision, user=Depends(fiscal.owner), idem: str | None
         raise db.error(403, 'FISCAL_SELLER_SCOPE', 'هذه الهوية الضريبية خاصة بكبز.')
     if not body.reason.strip():
         raise db.error(422,'FISCAL_POLICY_REASON','يلزم سبب واضح للقرار.')
-    if body.enabled and (body.phase != 'phase1' or not body.evidence_reference.strip()):
+    owner_requested = body.issuance_mode == 'owner_requested' and body.phase == 'unconfirmed'
+    verified_phase1 = body.issuance_mode == 'verified_phase1' and body.phase == 'phase1' and bool(body.evidence_reference.strip())
+    if body.enabled and not (verified_phase1 or owner_requested):
         raise db.error(409, 'FISCAL_ISSUANCE_DISABLED', 'يلزم إثبات انطباق المرحلة الأولى؛ المرحلة الثانية غير مهيأة.')
     with db.tx() as conn:
         conn.execute('SELECT id FROM brands WHERE id=%s FOR UPDATE', (user['brand_id'],))
@@ -80,7 +85,7 @@ def issue_sale(conn, order_id, actor, *, required=False):
         return None
     conn.execute('SELECT id FROM brands WHERE id=%s FOR SHARE', (order['brand_id'],))
     p = policy(conn,order['brand_id'])
-    if not status(conn,order['brand_id'])['official_issuance_enabled']:
+    if not status(conn,order['brand_id'])['issuance_enabled']:
         if required: raise db.error(409,'FISCAL_ISSUANCE_DISABLED','الإصدار معطل حتى توثيق المرحلة النظامية واعتماد التفعيل.')
         return None
     if order['payment_status'] != 'paid' or order['delivery_status'] != 'delivered':
@@ -94,7 +99,10 @@ def issue_sale(conn, order_id, actor, *, required=False):
         doc = fiscal.build(order,'KPS-'+str(n),datetime.now(timezone.utc))
     except ValueError as exc:
         raise db.error(409,'FISCAL_TOTAL_MISMATCH','مبالغ الطلب غير متطابقة؛ لم يتم الإصدار.') from exc
-    doc.update(status='issued', uuid=str(uuid4()), policy_id=p['id'], supply_at=str(order.get('completed_at') or doc['issued_at']))
+    doc.update(status='issued', uuid=str(uuid4()), policy_id=p['id'], supply_at=str(order.get('completed_at') or doc['issued_at']),
+               applicability_status=p['decision'].get('phase', 'unconfirmed'),
+               issuance_mode=p['decision'].get('issuance_mode', 'verified_phase1'),
+               zatca_integrated=False)
     conn.execute("INSERT INTO fiscal_documents(number,order_id,kind,policy_id,document) VALUES(%s,%s,'invoice',%s,%s)",
                  (doc['number'],order_id,p['id'],db.json(doc)))
     db.audit(conn,actor['id'],'fiscal.invoice_issued','order',order_id,{'number':doc['number'],'uuid':doc['uuid']})
@@ -109,7 +117,7 @@ def credit_before_refund(conn, order, actor, refund_id, amount, reason, *, amend
     conn.execute('SELECT id FROM brands WHERE id=%s FOR SHARE', (order['brand_id'],))
     if amendment_id:
         raise db.error(409,'FISCAL_ISSUED_ADJUSTMENT','الطلب المصدر لا يعدل؛ استخدم مرتجعًا مرتبطًا بالفاتورة.')
-    if not status(conn,order['brand_id'])['official_issuance_enabled']:
+    if not status(conn,order['brand_id'])['issuance_enabled']:
         raise db.error(409,'FISCAL_CREDIT_DISABLED','تعذر إصدار الإشعار الدائن؛ لم يسجل الاسترداد.')
     prior = conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0)::bigint n FROM fiscal_documents WHERE original_number=%s", (source['number'],)).fetchone()['n']
     n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
