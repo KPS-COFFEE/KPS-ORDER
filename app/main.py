@@ -133,6 +133,14 @@ def customer_page(request: Request):
     return HTMLResponse(customer_html(path.read_text(), request), headers={'Cache-Control': 'no-store'})
 
 
+@app.get('/branch-payment')
+@app.get('/payment-return')
+def branch_payment_page(user=Depends(auth.require_roles('customer'))):
+    if os.getenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED') != 'true':
+        raise db.error(404,'PAYMENT_PAGE_DISABLED','الدفع الإلكتروني غير مفعل.')
+    return FileResponse(PUBLIC / 'branch-payment.html',media_type='text/html',headers={'Cache-Control':'no-store'})
+
+
 @app.get('/ops')
 @app.get('/ops.html')
 def operations_page():

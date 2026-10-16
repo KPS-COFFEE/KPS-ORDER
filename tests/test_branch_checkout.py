@@ -115,3 +115,17 @@ def test_encrypted_checkout_full_restore_and_business_export_exclusion(checkout_
         assert c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()==before
     with db.tx() as c:
         assert c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()==before
+
+
+def test_payment_page_authorization_and_narrow_csp(checkout_case,monkeypatch):
+    actor,post,oid,a,calls=checkout_case
+    page=actor('customer').get('/branch-payment?attempt='+a['id'])
+    assert page.status_code==200
+    assert page.headers['cache-control']=='no-store'
+    assert 'https://api.moyasar.com' in page.headers['content-security-policy']
+    normal=actor('customer').get('/')
+    assert 'https://api.moyasar.com' not in normal.headers['content-security-policy']
+    assert actor('owner').get('/branch-payment').status_code==403
+    monkeypatch.delenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED')
+    assert actor('customer').get('/branch-payment').status_code==404
+    assert not calls

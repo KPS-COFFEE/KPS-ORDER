@@ -83,6 +83,14 @@ class SecurityMiddleware:
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
                     "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+                if path in {'/branch-payment','/payment-return'} and os.getenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED') == 'true':
+                    headers['Content-Security-Policy'] = (
+                        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/moyasar-payment-form@2.3.0/dist/moyasar.umd.min.js; "
+                        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/moyasar-payment-form@2.3.0/dist/moyasar.css; "
+                        "img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.moyasar.com; "
+                        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://api.moyasar.com")
+                    headers['Cache-Control'] = 'no-store'
+                    headers['Referrer-Policy'] = 'no-referrer'
                 if os.getenv('APP_ENV', 'production') == 'production':
                     headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
                 public_image = (path.startswith(('/api/product-assets/', '/api/banner-assets/'))
