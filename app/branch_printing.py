@@ -320,7 +320,7 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
                     from .fiscal_issuance import original
                     from .fiscal import print_order
                     doc=original(conn,order_id)
-                    if doc: printable={**order,**print_order(doc)}
+                    if doc: printable={**order,**print_order(doc,order)}
                 payload=receipt(printable,branch,kind,body.language,translations)
                 if destination['id'] != branch['id']:
                     payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})

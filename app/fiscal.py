@@ -107,12 +107,15 @@ def credit(original, amount, prior_gross, number, issued_at, refund_id, reason):
     return doc
 
 
-def print_order(doc):
-    return {**deepcopy(doc), 'id': doc['order_id'], 'order_no': doc['number'],
+def print_order(doc, operational=None):
+    result = {**deepcopy(doc), 'id': doc['order_id'], 'order_no': doc['number'],
             'created_at': datetime.fromisoformat(doc['issued_at'].replace('Z', '+00:00')),
             'snapshot': {**deepcopy(doc), 'order_reference': doc['number']},
             'order_reference': doc['number'], 'fiscal_document': deepcopy(doc),
             'payment_status': doc.get('payment_status', 'refunded' if doc['kind']=='credit_note' else 'paid'), 'receipt_qr': qr(doc)}
+    if operational is not None and doc['kind']=='invoice':
+        result.update({k:operational[k] for k in ('payment_status','payment_method','preparation_status') if k in operational})
+    return result
 
 
 def save_preview(conn, order, actor):

@@ -142,9 +142,9 @@ def credit_before_refund(conn, order, actor, refund_id, amount, reason, *, amend
 def documents(order_id: str, user=Depends(auth.current_user)):
     from .orders import scoped_order
     with db.tx() as conn:
-        scoped_order(conn,order_id,user)
+        order = scoped_order(conn,order_id,user)
         rows = conn.execute('SELECT document FROM fiscal_documents WHERE order_id=%s ORDER BY created_at,number',(order_id,)).fetchall()
-        return {'documents':[r['document'] for r in rows], 'orders':[fiscal.print_order(r['document']) for r in rows]}
+        return {'documents':[r['document'] for r in rows], 'orders':[fiscal.print_order(r['document'],order) for r in rows]}
 
 
 @router.post('/orders/{order_id}/print')

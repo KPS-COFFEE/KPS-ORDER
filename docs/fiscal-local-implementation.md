@@ -130,3 +130,20 @@ Sources checked 16 October 2026:
 - https://zatca.gov.sa/en/e-invoicing/introduction/guidelines/documents/e-invoicing_detailed__guideline.pdf
 - https://zatca.gov.sa/en/E-Invoicing/Documents/Einvoicing_FAQ_EN.pdf
 - https://zatca.gov.sa/ar/E-Invoicing/SystemsDevelopers/Documents/QRCodeCreation.pdf
+
+## Owner-requested invoice at standard printing (16 October 2026)
+
+For the already enabled `owner_requested` mode, the standard staff receipt button
+now POSTs to the scoped fiscal print endpoint. It persists one invoice on first
+printing, even before collection/delivery. It never creates a collection or changes
+payment status. Reprints reuse the saved invoice/QR; collection status is a live
+annotation. Verified phase-one mode retains its completion gate.
+
+Printed headers retain the existing thermal layout and original KPS logo, with VAT
+number, certificate address, separate postal code, net value and VAT 15%. Arabic
+and English and 58/80 mm widths remain supported. Preparation printing is separate.
+
+Issued amounts/items cannot subsequently be edited. Finish pending amendments
+before first issuance. Unpaid cancellation creates a linked credit note, without a
+cash refund; paid refunds retain the existing credit-before-refund transaction.
+No authority integration or Phase 2 compliance is asserted by this change.

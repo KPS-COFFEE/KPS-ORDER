@@ -498,3 +498,12 @@ def test_unpaid_print_issues_once_without_collection_and_cancellation_credit(fis
     assert client.post(path,headers={'Idempotency-Key':'customer-no-issue'}).status_code==403
     client.app.dependency_overrides[auth.current_user]=lambda:{**user,'brand_id':'other'}
     assert client.post(path,headers={'Idempotency-Key':'other-no-issue'}).status_code==404
+
+
+def test_print_annotation_keeps_saved_invoice_and_live_payment_separate():
+    doc=fiscal.build(sample(),'SAMPLE',NOW)
+    doc.update(status='issued',payment_status='unpaid')
+    before=deepcopy(doc)
+    printed=fiscal.print_order(doc,{'payment_status':'paid','payment_method':'card','preparation_status':'completed'})
+    assert printed['payment_status']=='paid' and printed['payment_method']=='card'
+    assert printed['fiscal_document']==before and doc==before
