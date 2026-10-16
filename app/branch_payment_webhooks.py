@@ -16,11 +16,16 @@ router = APIRouter(prefix='/paymenthooks')
 
 def enabled():
     return (os.getenv('KPS_BRANCH_PAYMENT_WEBHOOKS_ENABLED') == 'true' and
-            os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') == 'true')
+            runtime_enabled())
+
+
+def runtime_enabled():
+    return (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') == 'true' or
+            os.getenv('KPS_BRANCH_PAYMENT_LIVE_ENABLED') == 'true')
 
 
 def worker_enabled():
-    return (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') == 'true' and
+    return (runtime_enabled() and
             (os.getenv('KPS_BRANCH_PAYMENT_WEBHOOKS_ENABLED') == 'true' or
              os.getenv('KPS_BRANCH_PAYMENT_RECONCILIATION_ENABLED') == 'true'))
 
@@ -39,16 +44,16 @@ def enqueue_pending():
             SELECT 'sweep_'||a.id,a.brand_id,a.id,'system_reconcile','reconciliation_requested'
             FROM branch_payment_attempts a
             JOIN branch_checkout_sessions s ON s.attempt_id=a.id
-            WHERE a.status='pending' AND a.mode='test' AND s.created_at<now()-interval '30 seconds'
+            WHERE a.status='pending' AND s.created_at<now()-interval '30 seconds'
             AND NOT EXISTS (SELECT 1 FROM branch_payment_webhooks w WHERE w.attempt_id=a.id AND w.provider_event_id='system_reconcile')
             ORDER BY a.created_at,a.id LIMIT 100
             ON CONFLICT(attempt_id,provider_event_id) DO NOTHING RETURNING id""").fetchall()
         return len(rows)
 
 
-def notification(body):
+def notification(body, mode='test'):
     """Discard all unneeded provider fields, including card data and secrets."""
-    if not isinstance(body, dict) or body.get('live') is not False:
+    if mode not in {'test','live'} or not isinstance(body, dict) or body.get('live') is not (mode=='live'):
         raise ValueError('Invalid sandbox notification')
     event = body.get('id')
     kind = body.get('type')
@@ -67,14 +72,16 @@ async def receive(request: Request):
     if not enabled():
         raise db.error(404, 'PAYMENT_WEBHOOK_DISABLED', 'الخدمة غير مفعلة.')
     try:
-        event, kind, token, payment_id = notification(await request.json())
+        body = await request.json()
+        mode = 'live' if isinstance(body,dict) and body.get('live') is True else 'test'
+        event, kind, token, payment_id = notification(body,mode)
     except (ValueError, TypeError, KeyError, AttributeError):
         raise db.error(400, 'PAYMENT_WEBHOOK_INVALID', 'إشعار غير صالح.') from None
     # No network I/O in this transaction. A 202 is sent only after durable commit.
     with db.tx() as c:
-        attempt = c.execute("SELECT * FROM branch_payment_attempts WHERE provider='moyasar' AND provider_payment_id=%s AND mode='test'", (payment_id,)).fetchone()
+        attempt = c.execute("SELECT * FROM branch_payment_attempts WHERE provider='moyasar' AND provider_payment_id=%s AND mode=%s", (payment_id,mode)).fetchone()
         secret = '' if not attempt else os.getenv(payment_gateways.credential_prefix(
-            'moyasar', attempt['brand_id'], attempt['seller_id']) + '_TEST_WEBHOOK_SECRET', '')
+            'moyasar', attempt['brand_id'], attempt['seller_id']) + '_'+mode.upper()+'_WEBHOOK_SECRET', '')
         if not 32 <= len(secret) <= 512 or not hmac.compare_digest(token.encode(), secret.encode()):
             raise db.error(401, 'PAYMENT_WEBHOOK_UNAUTHORIZED', 'إشعار غير مصرح.')
         branch_payments.attempt_order(c, attempt)
@@ -84,7 +91,7 @@ async def receive(request: Request):
                         (db.new_id('pwh_'), attempt['brand_id'], attempt['id'], event, kind)).fetchone()
         if row:
             db.audit(c, None, 'payment.webhook.received', 'order', attempt['order_id'],
-                     {'event_id': event, 'event_type': kind, 'attempt_id': attempt['id'], 'mode': 'test'})
+                     {'event_id': event, 'event_type': kind, 'attempt_id': attempt['id'], 'mode': attempt['mode']})
     return {'accepted': True, 'queued': True}
 
 

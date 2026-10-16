@@ -56,15 +56,17 @@
       }
     });
     if (location.pathname === '/payment-return') { verify.hidden = false; await reconcile(); return; }
-    status.textContent = text('جارٍ فتح الدفع التجريبي الآمن…', 'Opening secure test checkout…');
+    status.textContent = text('جارٍ فتح الدفع الآمن…', 'Opening secure checkout…');
     const config = await post('checkout');
-    if (config.mode !== 'test' || !config.publishable_api_key.startsWith('pk_test_') || !window.Moyasar) throw new Error('Checkout unavailable');
+    if (!['test','live'].includes(config.mode) || !config.publishable_api_key.startsWith('pk_'+config.mode+'_') || !window.Moyasar) throw new Error('Checkout unavailable');
     window.Moyasar.init({...config, element:'.mysr-form', language:en?'en':'ar', fixed_width:false,
       description:'KPS order payment', use_payment_intent:true, methods:['creditcard'],
       supported_networks:['mada','visa','mastercard'],
       on_failure:() => { status.textContent=text('لم يكتمل الدفع. تحقق من حالته قبل إعادة المحاولة.', 'Payment did not complete. Verify its status before retrying.'); verify.hidden=false; }
     });
-    status.textContent = text('دفع تجريبي — لا تستخدم بطاقة حقيقية.', 'Test payment — do not use a real card.');
+    status.textContent = config.mode === 'test'
+      ? text('دفع تجريبي — لا تستخدم بطاقة حقيقية.', 'Test payment — do not use a real card.')
+      : text('أكمل الدفع الآمن، ثم انتظر تأكيد العملية.', 'Complete secure payment, then wait for verification.');
   } catch (_) {
     status.textContent = text('تعذر فتح الدفع. ارجع إلى طلبك وسجّل الدخول أو تواصل مع الفرع.', 'Checkout could not open. Return to your order and sign in or contact the branch.');
   }

@@ -726,7 +726,8 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
             'branch_name': selected_branch['name'], 'branch_city': selected_branch['city'],
             'branch_location': selected_branch['settings'].get('location')}}
     if online:
-        result.update(branch_payment_mode='test', branch_payment_seller=branch['settings']['online_payment_seller'])
+        from .payment_runtime import mode
+        result.update(branch_payment_mode=mode(), branch_payment_seller=branch['settings']['online_payment_seller'])
     return result
 
 

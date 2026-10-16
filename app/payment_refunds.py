@@ -7,12 +7,13 @@ from . import db, payment_gateways as gateways
 
 def configuration(context):
     if (os.getenv('KPS_BRANCH_PAYMENT_REFUNDS_ENABLED') != 'true' or
-            os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or
-            os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true'):
+            (context.mode == 'test' and (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or
+             os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true'))):
         raise db.error(409, 'PAYMENT_REFUND_DISABLED', 'الاسترداد التجريبي غير مفعل.')
-    if not gateways.sandbox_key_configured('moyasar', context.brand_id, context.entity_id):
+    if context.mode == 'test' and not gateways.sandbox_key_configured('moyasar', context.brand_id, context.entity_id):
         raise db.error(503, 'PAYMENT_TEST_CREDENTIALS_REQUIRED', 'مفاتيح المنشأة التجريبية غير مهيأة.')
-    return os.environ[gateways.credential_prefix('moyasar', context.brand_id, context.entity_id)+'_TEST_SECRET_KEY']
+    from .payment_runtime import secret
+    return secret(context)
 
 
 def request(context, payment_id, amount=None):
@@ -31,7 +32,7 @@ def request(context, payment_id, amount=None):
                 raise ValueError('Unconfirmed provider response')
             payload = response.json()
         if (not isinstance(payload, dict) or payload.get('id') != identifier or
-                payload.get('live') is not False or payload.get('currency') != context.currency or
+                payload.get('live') is not (context.mode == 'live') or payload.get('currency') != context.currency or
                 type(payload.get('amount')) is not int or payload['amount'] != context.amount_halalas or
                 type(payload.get('refunded')) is not int or not 0 <= payload['refunded'] <= context.amount_halalas or
                 payload.get('status') not in {'paid', 'refunded'} or

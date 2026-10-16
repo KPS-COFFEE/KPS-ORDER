@@ -1,4 +1,4 @@
-"""Server-approved sandbox checkout intents; no card data or live activation.
+"""Server-approved checkout intents; no card data or implicit live activation.
 
 The caller must durably own an accepted order/payment attempt before calling.
 This adapter alone does not expose a checkout route or authorize a payment.
@@ -28,12 +28,13 @@ class CheckoutIntent:
 
 def safe_unused_intent(context, session, *, cancel_unused=False):
     """Return only normalized retirement proof; do not expose fetched secrets."""
-    if (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or
+    if context.mode == 'test' and (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or
             os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true'):
         raise db.error(409, 'PAYMENT_SANDBOX_DISABLED', 'اختبار بوابة الدفع غير مفعل.')
-    if not gateways.sandbox_key_configured('moyasar', context.brand_id, context.entity_id):
+    if context.mode == 'test' and not gateways.sandbox_key_configured('moyasar', context.brand_id, context.entity_id):
         raise db.error(503, 'PAYMENT_TEST_CREDENTIALS_REQUIRED', 'لم تضبط مفاتيح الاختبار لهذه المنشأة.')
-    key = os.environ[gateways.credential_prefix('moyasar', context.brand_id, context.entity_id)+'_TEST_SECRET_KEY']
+    from .payment_runtime import secret as provider_secret
+    key = provider_secret(context)
     try:
         identifier = str(UUID(str(session['provider_intent_id'])))
         with httpx.Client(timeout=httpx.Timeout(10, connect=3), follow_redirects=False, trust_env=False) as client:
@@ -72,10 +73,22 @@ def safe_unused_intent(context, session, *, cancel_unused=False):
 
 
 def create_moyasar_sandbox_intent(context: gateways.PaymentContext) -> CheckoutIntent:
+    if context.mode != 'test':
+        raise db.error(409, 'PAYMENT_MODE_INVALID', 'وضع الدفع لا يطابق مسار الاختبار.')
+    return _create_intent(context)
+
+
+def create_moyasar_live_intent(context: gateways.PaymentContext) -> CheckoutIntent:
+    if context.mode != 'live':
+        raise db.error(409, 'PAYMENT_MODE_INVALID', 'وضع الدفع لا يطابق المسار الفعلي.')
+    return _create_intent(context)
+
+
+def _create_intent(context):
     """One provider request, no automatic retry after an uncertain POST outcome."""
-    if os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true':
+    if context.mode == 'test' and (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED') != 'true' or os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true'):
         raise db.error(409, 'PAYMENT_SANDBOX_DISABLED', 'اختبار بوابة الدفع غير مفعل.')
-    if not gateways.sandbox_key_configured('moyasar', context.brand_id, context.entity_id):
+    if context.mode == 'test' and not gateways.sandbox_key_configured('moyasar', context.brand_id, context.entity_id):
         raise db.error(503, 'PAYMENT_TEST_CREDENTIALS_REQUIRED', 'لم تضبط مفاتيح الاختبار لهذه المنشأة.')
     base = os.getenv('PUBLIC_BASE_URL', '').rstrip('/')
     try:
@@ -92,7 +105,8 @@ def create_moyasar_sandbox_intent(context: gateways.PaymentContext) -> CheckoutI
     payload = {'amount': context.amount_halalas, 'currency': context.currency,
                'description': 'KPS order '+context.order_id+' / '+context.attempt_id,
                'callback_url': callback}
-    key = os.environ[gateways.credential_prefix('moyasar', context.brand_id, context.entity_id)+'_TEST_SECRET_KEY']
+    from .payment_runtime import secret as provider_secret
+    key = provider_secret(context)
     try:
         with httpx.Client(timeout=httpx.Timeout(10, connect=3), follow_redirects=False, trust_env=False) as client:
             response = client.post('https://api.moyasar.com/v1/payment_intents',
@@ -111,4 +125,4 @@ def create_moyasar_sandbox_intent(context: gateways.PaymentContext) -> CheckoutI
     except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
         # Never forward provider bodies, credentials or card-related diagnostics.
         raise db.error(503, 'PAYMENT_INTENT_UNCONFIRMED', 'تعذر تأكيد جلسة الدفع. يلزم التحقق قبل إعادة المحاولة.') from None
-    return CheckoutIntent('moyasar', identifier, context, expires, callback, secret)
+    return CheckoutIntent('moyasar', identifier, context, expires, callback, secret, mode=context.mode)

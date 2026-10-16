@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlsplit
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends
-from . import auth, db, invoice_profiles, payment_gateways as gateways
+from . import auth, db, invoice_profiles, payment_gateways as gateways, payment_runtime
 
 router = APIRouter(prefix='/api/admin/branch-payment-policy')
 
@@ -23,16 +23,21 @@ def blockers(branch):
     revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT')
     if not revision or not re.fullmatch(r'[0-9a-f]{40}', revision) or os.getenv('KPS_BRANCH_PAYMENT_ACCEPTANCE_SHA') != revision:
         result.append('exact_release_payment_acceptance_required')
-    for name in ('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED', 'KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED',
-                 'KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED', 'KPS_BRANCH_PAYMENT_REFUNDS_ENABLED'):
+    mode = payment_runtime.mode()
+    flags = ['KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED', 'KPS_BRANCH_PAYMENT_REFUNDS_ENABLED']
+    if mode == 'test':
+        flags += ['KPS_BRANCH_PAYMENT_SANDBOX_ENABLED', 'KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED']
+    else:
+        result.extend(payment_runtime.live_blockers(branch['brand_id'],seller))
+    for name in flags:
         if os.getenv(name) != 'true': result.append(name.lower()+'_required')
     if os.getenv('KPS_BRANCH_PAYMENT_RECONCILIATION_ENABLED') != 'true':
         result.append('reconciliation_required')
     prefix = gateways.credential_prefix('moyasar', branch['brand_id'], seller)
-    if not gateways.sandbox_key_configured('moyasar', branch['brand_id'], seller):
-        result.append('seller_test_secret_required')
-    if not re.fullmatch(r'pk_test_[A-Za-z0-9_-]{8,256}', os.getenv(prefix+'_TEST_PUBLIC_KEY', '')):
-        result.append('seller_test_public_key_required')
+    if not re.fullmatch('sk_'+mode+r'_[A-Za-z0-9_-]{8,256}', os.getenv(prefix+'_'+mode.upper()+'_SECRET_KEY', '')):
+        result.append('seller_'+mode+'_secret_required')
+    if not re.fullmatch('pk_'+mode+r'_[A-Za-z0-9_-]{8,256}', os.getenv(prefix+'_'+mode.upper()+'_PUBLIC_KEY', '')):
+        result.append('seller_'+mode+'_public_key_required')
     try: Fernet(os.environ['KPS_PAYMENT_CHECKOUT_ENCRYPTION_KEY'].encode())
     except (KeyError, ValueError, TypeError): result.append('encrypted_checkout_storage_required')
     try:
@@ -51,7 +56,7 @@ def readiness(user=Depends(auth.require_roles('owner'))):
         branches = c.execute('SELECT id,brand_id,name,settings FROM branches WHERE brand_id=%s ORDER BY branch_no,id', (user['brand_id'],)).fetchall()
         profiles = invoice_profiles.settings(c, user['brand_id'])
     services = brand['settings'].get('services', {})
-    return {'mode': 'test', 'live_payments_available': False,
+    return {'mode': payment_runtime.mode(), 'live_payments_available': payment_runtime.mode()=='live' and any(not blockers(row) for row in branches),
             'sellers': [{'id': key, 'name': value.get('legal_name', key)} for key, value in profiles.get('entities', {}).items()],
             'branches': [{'id': row['id'], 'name': row['name'], 'seller_id': row['settings'].get('online_payment_seller'),
                           'payment_ready': not blockers(row), 'blockers': blockers(row),

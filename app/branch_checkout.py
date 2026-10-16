@@ -13,8 +13,12 @@ def settings(attempt):
         cipher = Fernet(os.environ['KPS_PAYMENT_CHECKOUT_ENCRYPTION_KEY'].encode())
     except (KeyError, ValueError, TypeError):
         raise db.error(503,'PAYMENT_SECRET_STORAGE_REQUIRED','لم يهيأ الحفظ الآمن لجلسة الدفع.') from None
-    key = os.getenv(gateways.credential_prefix(attempt['provider'],attempt['brand_id'],attempt['seller_id'])+'_TEST_PUBLIC_KEY','')
-    if not re.fullmatch(r'pk_test_[A-Za-z0-9_-]{8,256}',key):
+    mode = attempt['mode']
+    if mode == 'live':
+        from .payment_runtime import require_live
+        require_live(attempt['brand_id'],attempt['seller_id'])
+    key = os.getenv(gateways.credential_prefix(attempt['provider'],attempt['brand_id'],attempt['seller_id'])+'_'+mode.upper()+'_PUBLIC_KEY','')
+    if mode not in {'test','live'} or not re.fullmatch('pk_'+mode+r'_[A-Za-z0-9_-]{8,256}',key):
         raise db.error(503,'PAYMENT_TEST_CREDENTIALS_REQUIRED','لم تضبط مفاتيح الاختبار لهذه المنشأة.')
     return cipher,key
 
@@ -46,7 +50,7 @@ def present(row, attempt, cipher, public_key):
         secret = cipher.decrypt(bytes(row['encrypted_secret'])).decode()
     except (InvalidToken, UnicodeError):
         raise db.error(503,'PAYMENT_SECRET_STORAGE_REQUIRED','تعذر فتح جلسة الدفع الآمنة.') from None
-    return {'provider':'moyasar','mode':'test','amount':attempt['amount_halalas'],'currency':attempt['currency'],
+    return {'provider':'moyasar','mode':attempt['mode'],'amount':attempt['amount_halalas'],'currency':attempt['currency'],
             'given_id':str(attempt['provider_payment_id']),'metadata':gateways.PaymentContext(
                 attempt['brand_id'],attempt['seller_id'],attempt['order_id'],attempt['id'],attempt['amount_halalas']).metadata,
             'publishable_api_key':public_key,'callback_url':row['callback_url'],
@@ -68,10 +72,11 @@ def acquire(aid, user):
         if row:
             return present(row,attempt,cipher,public_key)
         c.execute('INSERT INTO branch_checkout_sessions(attempt_id,brand_id) VALUES(%s,%s)',(aid,attempt['brand_id']))
-        db.audit(c,user['id'],'payment.checkout.claimed','order',attempt['order_id'],{'attempt_id':aid,'mode':'test'})
+        db.audit(c,user['id'],'payment.checkout.claimed','order',attempt['order_id'],{'attempt_id':aid,'mode':attempt['mode']})
     try:
-        intent = payment_intents.create_moyasar_sandbox_intent(context(attempt))
-        if intent.context!=context(attempt) or intent.provider!=attempt['provider'] or intent.mode!='test':
+        create = payment_intents.create_moyasar_sandbox_intent if attempt['mode']=='test' else payment_intents.create_moyasar_live_intent
+        intent = create(context(attempt))
+        if intent.context!=context(attempt) or intent.provider!=attempt['provider'] or intent.mode!=attempt['mode']:
             raise db.error(409,'PAYMENT_EVIDENCE_MISMATCH','جلسة الدفع لا تطابق المحاولة.')
     except Exception:
         with db.tx() as c:
@@ -82,7 +87,7 @@ def acquire(aid, user):
                         (intent.intent_id,cipher.encrypt(intent.client_secret.encode()),intent.callback_url,intent.expires_at,aid)).fetchone()
         if not row:
             raise db.error(409,'PAYMENT_CHECKOUT_RECONCILIATION_REQUIRED','يلزم التحقق من جلسة الدفع.')
-        db.audit(c,user['id'],'payment.checkout.prepared','order',attempt['order_id'],{'attempt_id':aid,'mode':'test'})
+        db.audit(c,user['id'],'payment.checkout.prepared','order',attempt['order_id'],{'attempt_id':aid,'mode':attempt['mode']})
     # A cancellation during provider I/O must not release a payment credential.
     with db.tx() as c:
         latest=c.execute('SELECT * FROM branch_payment_attempts WHERE id=%s',(aid,)).fetchone()

@@ -77,7 +77,7 @@ def authorize(oid: str, body: RefundBody, user=Depends(auth.require_roles('owner
             if order['preparation_status'] != 'completed':
                 c.execute("UPDATE orders SET payment_status='refund_pending',version=version+1 WHERE id=%s", (oid,))
             db.audit(c, user['id'], 'payment.refund.authorized', 'order', oid,
-                     {'refund_id': row['id'], 'amount_halalas': body.amount_halalas, 'reason': body.reason, 'mode': 'test'})
+                     {'refund_id': row['id'], 'amount_halalas': body.amount_halalas, 'reason': body.reason, 'mode': attempt['mode']})
             return {'refund': view(row)}
         return db.idempotent(c, user['id'], idem, 'branch.refund:'+oid, body.model_dump(), perform)
 
@@ -105,7 +105,7 @@ def confirmed(rid, user, observed):
         if order['preparation_status'] != 'completed':
             status = 'refunded' if observed == attempt['amount_halalas'] else 'partially_refunded'
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s', (status, order['id']))
-        details = {'refund_id': rid, 'amount_halalas': row['amount_halalas'], 'mode': 'test'}
+        details = {'refund_id': rid, 'amount_halalas': row['amount_halalas'], 'mode': attempt['mode']}
         actor_id = user['id'] if user is not None else None
         details['authorized_by'] = row['authorized_by']
         db.event(c, order['id'], actor_id, 'payment.refund.verified', details)

@@ -10,11 +10,12 @@ from . import db, branch_refunds, branch_payments, payment_refunds
 
 
 def enabled():
-    return all(os.getenv(flag) == 'true' for flag in (
+    provider_ready = (os.getenv('KPS_BRANCH_PAYMENT_LIVE_ENABLED')=='true' or
+        (os.getenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED')=='true' and
+         os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED')=='true'))
+    return provider_ready and all(os.getenv(flag) == 'true' for flag in (
         'KPS_BRANCH_REFUND_RECONCILIATION_ENABLED',
-        'KPS_BRANCH_PAYMENT_SANDBOX_ENABLED',
-        'KPS_BRANCH_PAYMENT_REFUNDS_ENABLED',
-        'KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED'))
+        'KPS_BRANCH_PAYMENT_REFUNDS_ENABLED'))
 
 
 def enqueue_pending():

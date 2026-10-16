@@ -1,7 +1,7 @@
 """Provider-neutral payment preparation. Customer charging is not enabled.
 
 An adapter is explicit code, never a URL or module name supplied by a browser.
-The first adapter prepares read-only Moyasar sandbox verification; it does not
+The first adapter provides gated, read-only Moyasar test/live verification; it does not
 create charges, update orders, or write driver collection/custody records.
 """
 from __future__ import annotations
@@ -36,13 +36,14 @@ class PaymentContext:
     attempt_id: str
     amount_halalas: int
     currency: str = 'SAR'
+    mode: str = 'test'
 
     def __post_init__(self):
         identifiers = (self.brand_id, self.entity_id, self.order_id, self.attempt_id)
         if (any(not isinstance(v, str) or not IDENTIFIER.fullmatch(v) for v in identifiers)
                 or type(self.amount_halalas) is not int
                 or not 100 <= self.amount_halalas <= 1_000_000_000
-                or self.currency != 'SAR'):
+                or self.currency != 'SAR' or self.mode not in {'test', 'live'}):
             raise ValueError('Invalid server payment context')
 
     @property
@@ -55,7 +56,7 @@ class PaymentContext:
         # Future create/refund adapters can reuse this durable attempt identity.
         # The caller must persist the attempt before contacting its provider.
         return db.digest({**self.metadata, 'amount': self.amount_halalas,
-                          'currency': self.currency})
+                          'currency': self.currency, 'mode': self.mode})
 
 
 @dataclass(frozen=True)
@@ -121,19 +122,29 @@ class MoyasarVerificationAdapter:
 
     def verify_sandbox_payment(self, context: PaymentContext,
                                payment_id: str) -> VerifiedPayment:
-        # This release has no live switch, checkout endpoint or charge request.
-        # Merely supplying credentials must never cause any provider traffic.
-        if os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true':
+        if context.mode != 'test':
+            raise db.error(409, 'PAYMENT_MODE_INVALID', 'وضع الدفع لا يطابق مسار الاختبار.')
+        return self._verify(context, payment_id)
+
+    def verify_live_payment(self, context: PaymentContext,
+                            payment_id: str) -> VerifiedPayment:
+        if context.mode != 'live':
+            raise db.error(409, 'PAYMENT_MODE_INVALID', 'وضع الدفع لا يطابق المسار الفعلي.')
+        return self._verify(context, payment_id)
+
+    def _verify(self, context, payment_id):
+        from .payment_runtime import secret
+        key = secret(context)
+        # Credentials alone never authorize provider traffic in either mode.
+        if context.mode == 'test' and os.getenv('KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED') != 'true':
             raise db.error(409, 'PAYMENT_SANDBOX_DISABLED', 'اختبار بوابة الدفع غير مفعل.')
-        if not sandbox_key_configured(self.provider_id, context.brand_id, context.entity_id):
+        if context.mode == 'test' and not sandbox_key_configured(self.provider_id, context.brand_id, context.entity_id):
             raise db.error(503, 'PAYMENT_TEST_CREDENTIALS_REQUIRED',
                            'لم تُضبط مفاتيح اختبار مستقلة لهذه المنشأة.')
         try:
             identifier = str(UUID(payment_id))
         except (ValueError, TypeError, AttributeError):
             raise db.error(422, 'PAYMENT_REFERENCE_INVALID', 'مرجع الدفع غير صالح.') from None
-        key = os.environ[credential_prefix(self.provider_id, context.brand_id,
-                                           context.entity_id) + '_TEST_SECRET_KEY']
         try:
             with httpx.Client(timeout=httpx.Timeout(10, connect=3),
                               follow_redirects=False, trust_env=False) as client:
@@ -158,12 +169,12 @@ class MoyasarVerificationAdapter:
                 or payment.get('currency') != context.currency
                 or type(payment.get('refunded')) is not int
                 or payment['refunded'] != 0
-                or payment.get('live', False) is not False
+                or payment.get('live', False) is not (context.mode == 'live')
                 or not isinstance(payment.get('metadata'), dict)
                 or any(payment['metadata'].get(k) != v for k, v in context.metadata.items())):
             raise db.error(409, 'PAYMENT_EVIDENCE_MISMATCH',
                            'لم يتطابق إثبات الدفع مع الطلب والمنشأة والمبلغ.')
-        return VerifiedPayment(self.provider_id, payment_id, context, 'test')
+        return VerifiedPayment(self.provider_id, payment_id, context, context.mode)
 
 
 register_adapter(MoyasarVerificationAdapter())

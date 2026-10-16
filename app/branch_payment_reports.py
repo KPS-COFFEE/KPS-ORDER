@@ -6,6 +6,7 @@ cash-flow totals are not labelled fiscal sales, invoices or bank settlement.
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends
+from typing import Literal
 from . import auth, db
 
 router = APIRouter(prefix='/api/branch-payments')
@@ -30,31 +31,31 @@ def period(start: date | None, end: date | None):
 
 @router.get('/report')
 def report(branch_id: str, start: date | None=None, end: date | None=None,
-           user=Depends(access)):
+           user=Depends(access), mode: Literal['test','live']='test'):
     begin, until = period(start, end)
     with db.tx() as c:
         branch = c.execute('SELECT id,name FROM branches WHERE id=%s AND brand_id=%s', (branch_id, user['brand_id'])).fetchone()
         if not branch or (user['role'] != 'owner' and branch_id not in user.get('branch_ids', [])):
             raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع خارج نطاق صلاحياتك.')
-        params = (user['brand_id'], branch_id, begin, until)
+        params = (user['brand_id'], branch_id, begin, until, mode)
         receipts = c.execute("""SELECT o.service,r.seller_id,count(*) payment_count,
             sum(r.amount_halalas) received_halalas,
             coalesce(sum(r.amount_halalas) FILTER(WHERE r.disposition='review_required'),0) review_halalas
             FROM branch_online_receipts r JOIN orders o ON o.id=r.order_id
             WHERE r.brand_id=%s AND r.branch_id=%s AND r.created_at>=%s AND r.created_at<%s
-            AND o.service IN ('pickup','car') GROUP BY o.service,r.seller_id""", params).fetchall()
+            AND r.mode=%s AND o.service IN ('pickup','car') GROUP BY o.service,r.seller_id""", params).fetchall()
         refunds = c.execute("""SELECT o.service,a.seller_id,count(*) refund_count,
             sum(r.amount_halalas) refunded_halalas
             FROM branch_online_refunds r JOIN orders o ON o.id=r.order_id
             JOIN branch_payment_attempts a ON a.id=r.attempt_id
             WHERE r.brand_id=%s AND r.branch_id=%s AND r.verified_at>=%s AND r.verified_at<%s
-            AND r.status='verified' AND o.service IN ('pickup','car') GROUP BY o.service,a.seller_id""", params).fetchall()
+            AND a.mode=%s AND r.status='verified' AND o.service IN ('pickup','car') GROUP BY o.service,a.seller_id""", params).fetchall()
         pending = c.execute("""SELECT o.service,a.seller_id,count(*) pending_refund_count,
             sum(r.amount_halalas) pending_refund_halalas
             FROM branch_online_refunds r JOIN orders o ON o.id=r.order_id
             JOIN branch_payment_attempts a ON a.id=r.attempt_id
             WHERE r.brand_id=%s AND r.branch_id=%s AND r.created_at>=%s AND r.created_at<%s
-            AND r.status<>'verified' AND o.service IN ('pickup','car') GROUP BY o.service,a.seller_id""", params).fetchall()
+            AND a.mode=%s AND r.status<>'verified' AND o.service IN ('pickup','car') GROUP BY o.service,a.seller_id""", params).fetchall()
         fields = ('payment_count','received_halalas','review_halalas','refund_count','refunded_halalas',
                   'pending_refund_count','pending_refund_halalas')
         groups = {}
@@ -69,5 +70,5 @@ def report(branch_id: str, start: date | None=None, end: date | None=None,
         totals = {k: sum(row[k] for row in rows) for k in (*fields, 'net_movement_halalas')}
         return {'branch': dict(branch), 'start': begin.date().isoformat(),
                 'end': (until-timedelta(days=1)).date().isoformat(), 'timezone': 'Asia/Riyadh',
-                'currency': 'SAR', 'mode': 'test', 'basis': 'verified_online_money_movements',
+                'currency': 'SAR', 'mode': mode, 'basis': 'verified_online_money_movements',
                 'fiscal_issuance': 'not_certified', 'rows': rows, 'totals': totals}

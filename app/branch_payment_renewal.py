@@ -55,7 +55,7 @@ def renew(aid: str, user=Depends(auth.require_roles('customer'))):
             (db.new_id('pay_'), attempt['order_id'], attempt['brand_id'], attempt['branch_id'], attempt['seller_id'], attempt['provider'], str(uuid4()), attempt['mode'], attempt['amount_halalas'], attempt['currency'], attempt['order_revision'], attempt['accepted_by'])).fetchone()
         c.execute('INSERT INTO branch_payment_renewals(previous_attempt_id,next_attempt_id,brand_id,reason,actor_id) VALUES(%s,%s,%s,%s,%s)',
             (aid, successor['id'], attempt['brand_id'], reason, user['id']))
-        details = {'previous_attempt_id': aid, 'next_attempt_id': successor['id'], 'reason': reason, 'mode': 'test'}
+        details = {'previous_attempt_id': aid, 'next_attempt_id': successor['id'], 'reason': reason, 'mode': attempt['mode']}
         db.event(c, attempt['order_id'], user['id'], 'payment.attempt.renewed', details)
         db.audit(c, user['id'], 'payment.attempt.renewed', 'order', attempt['order_id'], details)
         return {'attempt': payments.view(successor)}
