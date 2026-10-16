@@ -3,7 +3,10 @@ import os
 import re
 from urllib.parse import urlsplit
 from cryptography.fernet import Fernet
-from . import payment_gateways as gateways
+from fastapi import APIRouter, Depends
+from . import auth, db, invoice_profiles, payment_gateways as gateways
+
+router = APIRouter(prefix='/api/admin/branch-payment-policy')
 
 
 def required(brand_id, settings):
@@ -39,3 +42,19 @@ def blockers(branch):
             result.append('secure_callback_required')
     except ValueError: result.append('secure_callback_required')
     return result
+
+
+@router.get('')
+def readiness(user=Depends(auth.require_roles('owner'))):
+    with db.tx() as c:
+        brand = c.execute('SELECT settings FROM brands WHERE id=%s', (user['brand_id'],)).fetchone()
+        branches = c.execute('SELECT id,brand_id,name,settings FROM branches WHERE brand_id=%s ORDER BY branch_no,id', (user['brand_id'],)).fetchall()
+        profiles = invoice_profiles.settings(c, user['brand_id'])
+    services = brand['settings'].get('services', {})
+    return {'mode': 'test', 'live_payments_available': False,
+            'sellers': [{'id': key, 'name': value.get('legal_name', key)} for key, value in profiles.get('entities', {}).items()],
+            'branches': [{'id': row['id'], 'name': row['name'], 'seller_id': row['settings'].get('online_payment_seller'),
+                          'payment_ready': not blockers(row), 'blockers': blockers(row),
+                          'pickup_owner_enabled': services.get('pickup') is True and row['settings'].get('pickup_enabled') is True,
+                          'car_owner_enabled': services.get('car_pickup') is True and row['settings'].get('car_enabled') is True}
+                         for row in branches]}
