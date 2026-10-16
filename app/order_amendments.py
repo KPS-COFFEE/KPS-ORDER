@@ -36,7 +36,10 @@ def balance(c, o):
     return int(row['net'])
 
 
-def editable(o):
+def editable(o, c):
+    from .fiscal_issuance import original
+    if original(c,o['id']):
+        raise db.error(409, 'FISCAL_ISSUED_ADJUSTMENT', 'صدرت فاتورة لهذا الطلب؛ ألغِ الطلب أو استخدم المرتجع بدل تغيير الفاتورة المحفوظة.')
     if o.get('completed_at') or o['preparation_status'] in ('completed', 'cancelled', 'rejected') or o['delivery_status'] in ('delivered', 'cancelled'):
         raise db.error(409, 'AMENDMENT_CLOSED', 'الطلب منتهٍ؛ استخدم الشكوى أو الاسترداد بدل التعديل.')
 
@@ -118,7 +121,7 @@ def preview(oid: str, body: Proposal, user=Depends(auth.require_roles('customer'
     check_staff(user)
     with db.tx() as c:
         o=scoped_order(c,oid,user,lock=True)
-        editable(o)
+        editable(o, c)
         if user['role']!='customer' and not reviewer(o,user):raise db.error(403,'AMENDMENT_REVIEWER','راجع مسؤول الطلب المختص.')
         q=proposal_quote(c,o,body)
         return {'quote':catalog.customer_quote_view(q['snapshot']) if user['role']=='customer' else q['snapshot']}
@@ -138,7 +141,7 @@ def request_amendment(oid: str, body: Proposal, user=Depends(auth.require_roles(
         scoped_order(c, oid, user)
         def perform():
             o = scoped_order(c, oid, user, lock=True)
-            editable(o)
+            editable(o, c)
             if user['role'] != 'customer' and not reviewer(o, user):
                 raise db.error(403, 'AMENDMENT_REVIEWER', 'طلب التوصيل يتبع مدير التوصيل، والاستلام يتبع الفرع.')
             if o['version'] != body.version or active(c, oid):
@@ -170,7 +173,7 @@ def decide(aid: str, body: Decision, user=Depends(auth.require_roles('customer',
             row = active(c,o['id'])
             if not row or row['id'] != aid or row['base_revision'] != o['amendment_revision']:
                 raise db.error(409,'AMENDMENT_EXPIRED','انتهى أو تغير طلب التعديل؛ حدّث الصفحة.')
-            editable(o)
+            editable(o, c)
             action = body.action
             staff = reviewer(o,user)
             if action == 'withdraw':

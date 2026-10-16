@@ -21,7 +21,10 @@ def test_owner_issued_invoice_preserves_thermal_layout(live_app,chromium_browser
     from app import fiscal_issuance
     with db.tx() as c:
         c.execute("INSERT INTO fiscal_policy_decisions(id,brand_id,actor_id,decision) VALUES('synthetic-browser-policy','kps',%s,%s)",(owner['id'],db.json({'enabled':True,'phase':'phase1' if mode=='verified_phase1' else 'unconfirmed','issuance_mode':mode,'evidence_reference':'Synthetic browser test only' if mode=='verified_phase1' else ''})))
-        fiscal_issuance.issue_sale(c,oid,{'id':owner['id']},required=True)
+        if mode=='verified_phase1':
+            fiscal_issuance.issue_sale(c,oid,{'id':owner['id']},required=True)
+        else:
+            c.execute("UPDATE orders SET payment_status='unpaid',delivery_status='unassigned',preparation_status='new' WHERE id=%s",(oid,))
     context,page,errors=_context(chromium_browser,live_app)
     _owner_login(context,live_app,owner)
     try:
@@ -44,6 +47,9 @@ def test_owner_issued_invoice_preserves_thermal_layout(live_app,chromium_browser
         assert popup.locator('.receipt-logo').evaluate('(img)=>img.naturalWidth')==1181
         with db.tx() as c:
             document=c.execute('SELECT document FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['document']
+        if mode=='owner_requested':
+            expect(popup.locator('body')).to_contain_text('غير محصل' if language=='ar' else 'Unpaid')
+            assert document['issued_before_collection'] is True
         for width in (80,58):
             popup.emulate_media(media="screen")
             popup.locator('#paper-width').select_option(str(width));popup.emulate_media(media='print')

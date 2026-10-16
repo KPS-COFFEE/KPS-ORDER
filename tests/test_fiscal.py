@@ -463,3 +463,38 @@ def test_owner_requested_issuance_all_registered_branches_without_invented_evide
     assert rejected.status_code==409
     decision=client.get('/api/fiscal/policy').json()['decision']
     assert decision['phase']=='unconfirmed' and not decision['evidence_reference']
+
+@pytest.mark.postgres
+def test_unpaid_print_issues_once_without_collection_and_cancellation_credit(fiscal_sale):
+    client,oid,user=fiscal_sale
+    with db.tx() as c:
+        c.execute("UPDATE orders SET payment_status='unpaid',delivery_status='unassigned',preparation_status='new' WHERE id=%s",(oid,))
+    r=client.post('/api/fiscal/policy',json={'enabled':True,'phase':'unconfirmed','issuance_mode':'owner_requested','reason':'Owner requested invoice at printing'},headers={'Idempotency-Key':'early-print-policy'})
+    assert r.status_code==200,r.text
+    path=f'/api/fiscal/orders/{oid}/print'
+    r=client.post(path,headers={'Idempotency-Key':'early-print-first'})
+    assert r.status_code==200,r.text
+    printed=r.json()['order'];doc=printed['fiscal_document']
+    assert printed['payment_status']=='unpaid' and printed['preparation_status']=='new'
+    assert doc['status']=='issued' and doc['issued_before_collection']
+    assert decode(doc['qr_text'])[4]=='39.50'
+    again=client.post(path,headers={'Idempotency-Key':'early-print-second'})
+    assert again.json()['order']['fiscal_document']==doc
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==0
+        assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==1
+        from app.order_amendments import editable
+        with pytest.raises(Exception) as exc: editable(c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone(),c)
+        assert 'FISCAL_ISSUED_ADJUSTMENT' in str(exc.value.detail)
+        from app.fiscal_issuance import credit_on_cancellation
+        order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone()
+        credit_on_cancellation(c,order,user,'Unpaid cancellation')
+        credit_on_cancellation(c,order,user,'Cancellation retry')
+        assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==0
+        credit=c.execute("SELECT document FROM fiscal_documents WHERE order_id=%s AND kind='credit_note'",(oid,)).fetchone()['document']
+        assert credit['total_halalas']==3950 and credit['tax_halalas']==515
+        assert credit['refund_id'] is None and credit['credit_reason']=='order_cancelled'
+    client.app.dependency_overrides[auth.current_user]=lambda:{**user,'role':'customer'}
+    assert client.post(path,headers={'Idempotency-Key':'customer-no-issue'}).status_code==403
+    client.app.dependency_overrides[auth.current_user]=lambda:{**user,'brand_id':'other'}
+    assert client.post(path,headers={'Idempotency-Key':'other-no-issue'}).status_code==404

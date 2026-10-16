@@ -632,6 +632,9 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status=='delivered':
                 from .fiscal_issuance import issue_sale
                 issue_sale(c,t['order_id'],user)
+            if body.status=='cancelled':
+                from .fiscal_issuance import credit_on_cancellation
+                credit_on_cancellation(c,o,user,body.reason)
             if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
             db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status'],'photo_id':body.photo_id})
             if body.contact_method:

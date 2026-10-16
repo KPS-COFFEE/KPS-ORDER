@@ -98,7 +98,7 @@ def credit(original, amount, prior_gross, number, issued_at, refund_id, reason):
         return int((Decimal(original['tax_halalas'])*v/gross).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
     tax = allocated(prior_gross+amount)-allocated(prior_gross)
     doc = {**deepcopy(original), 'kind': 'credit_note', 'number': number, 'original_number': original['number'],
-           'refund_id': refund_id, 'reason': reason,
+           'refund_id': refund_id, 'reason': reason, 'payment_status': 'refunded' if refund_id else 'unpaid',
            'issued_at': issued_at.astimezone(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
            'total_halalas': amount, 'tax_halalas': tax, 'net_halalas': amount-tax,
            'subtotal_halalas': amount, 'discount_halalas': 0, 'delivery_fee_halalas': 0,
@@ -112,7 +112,7 @@ def print_order(doc):
             'created_at': datetime.fromisoformat(doc['issued_at'].replace('Z', '+00:00')),
             'snapshot': {**deepcopy(doc), 'order_reference': doc['number']},
             'order_reference': doc['number'], 'fiscal_document': deepcopy(doc),
-            'payment_status': 'refunded' if doc['kind']=='credit_note' else 'paid', 'receipt_qr': qr(doc)}
+            'payment_status': doc.get('payment_status', 'refunded' if doc['kind']=='credit_note' else 'paid'), 'receipt_qr': qr(doc)}
 
 
 def save_preview(conn, order, actor):

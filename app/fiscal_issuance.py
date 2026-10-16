@@ -88,7 +88,12 @@ def issue_sale(conn, order_id, actor, *, required=False):
     if not status(conn,order['brand_id'])['issuance_enabled']:
         if required: raise db.error(409,'FISCAL_ISSUANCE_DISABLED','الإصدار معطل حتى توثيق المرحلة النظامية واعتماد التفعيل.')
         return None
-    if order['payment_status'] != 'paid' or order['delivery_status'] != 'delivered':
+    if order['preparation_status'] in ('cancelled','rejected') or order['delivery_status'] == 'cancelled':
+        raise db.error(409,'FISCAL_CANCELLED_ORDER','لا يمكن إصدار فاتورة جديدة لطلب ملغى.')
+    if conn.execute("SELECT 1 FROM order_amendments WHERE order_id=%s AND status IN ('requested','branch_confirmed','offered') AND expires_at>now()",(order_id,)).fetchone():
+        raise db.error(409,'FISCAL_PENDING_AMENDMENT','أكمل تعديل الطلب قبل إصدار الفاتورة.')
+    early = p['decision'].get('issuance_mode') == 'owner_requested'
+    if not early and (order['payment_status'] != 'paid' or order['delivery_status'] != 'delivered'):
         raise db.error(409,'FISCAL_SALE_NOT_COMPLETE','يلزم إتمام التسليم والتحصيل قبل إصدار فاتورة البيع.')
     if conn.execute('SELECT 1 FROM refunds WHERE order_id=%s AND amendment_id IS NULL LIMIT 1',(order_id,)).fetchone():
         raise db.error(409,'FISCAL_HISTORICAL_REVIEW','لا يمكن إصدار أصل جديد لطلب له مرتجعات تاريخية.')
@@ -102,7 +107,9 @@ def issue_sale(conn, order_id, actor, *, required=False):
     doc.update(status='issued', uuid=str(uuid4()), policy_id=p['id'], supply_at=str(order.get('completed_at') or doc['issued_at']),
                applicability_status=p['decision'].get('phase', 'unconfirmed'),
                issuance_mode=p['decision'].get('issuance_mode', 'verified_phase1'),
-               zatca_integrated=False)
+               zatca_integrated=False, payment_status=order['payment_status'],
+               preparation_status=order['preparation_status'],
+               issued_before_collection=order['payment_status'] != 'paid')
     conn.execute("INSERT INTO fiscal_documents(number,order_id,kind,policy_id,document) VALUES(%s,%s,'invoice',%s,%s)",
                  (doc['number'],order_id,p['id'],db.json(doc)))
     db.audit(conn,actor['id'],'fiscal.invoice_issued','order',order_id,{'number':doc['number'],'uuid':doc['uuid']})
@@ -138,3 +145,42 @@ def documents(order_id: str, user=Depends(auth.current_user)):
         scoped_order(conn,order_id,user)
         rows = conn.execute('SELECT document FROM fiscal_documents WHERE order_id=%s ORDER BY created_at,number',(order_id,)).fetchall()
         return {'documents':[r['document'] for r in rows], 'orders':[fiscal.print_order(r['document']) for r in rows]}
+
+
+@router.post('/orders/{order_id}/print')
+def print_invoice(order_id: str, user=Depends(auth.require_roles('owner','admin','delivery_manager','delivery_staff','branch_manager','driver')), idem: str | None=Header(None, alias='Idempotency-Key')):
+    from .orders import scoped_order
+    from . import invoice_profiles, print_translations
+    with db.tx() as conn:
+        order = scoped_order(conn,order_id,user,lock=True)
+        def perform():
+            existing = original(conn,order_id)
+            if existing:
+                return {'number':existing['number']}
+            if order['brand_id']=='kps' and order['service']=='delivery' and status(conn,'kps')['issuance_enabled']:
+                doc = issue_sale(conn,order_id,user,required=True)
+                return {'number':doc['number']}
+            return {'number':None}
+        db.idempotent(conn,user['id'],idem,'fiscal.print',{'order_id':order_id},perform)
+        doc = original(conn,order_id)
+        if doc:
+            printed = fiscal.print_order(doc)
+            # Collection and operational status are live annotations, never fabricated payment.
+            printed.update(payment_status=order['payment_status'],payment_method=order['payment_method'],preparation_status=order['preparation_status'])
+            return {'order':{**order,**printed}}
+        order['print_labels_en']=print_translations.for_order(conn,order)
+        order['receipt_qr']=invoice_profiles.ordinary_qr(order)
+        return {'order':order}
+
+
+def credit_on_cancellation(conn, order, actor, reason):
+    source = original(conn,order['id'])
+    if not source: return
+    prior = conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0)::bigint n FROM fiscal_documents WHERE original_number=%s",(source['number'],)).fetchone()['n']
+    amount = source['total_halalas']-prior
+    if amount <= 0: return
+    n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
+    doc = fiscal.credit(source,amount,prior,'KPS-CN-'+str(n),datetime.now(timezone.utc),None,reason)
+    doc.update(uuid=str(uuid4()),original_uuid=source['uuid'],credit_reason='order_cancelled',payment_status='unpaid')
+    conn.execute("INSERT INTO fiscal_documents(number,order_id,kind,original_number,policy_id,document) VALUES(%s,%s,'credit_note',%s,%s,%s)",(doc['number'],order['id'],source['number'],source['policy_id'],db.json(doc)))
+    db.audit(conn,actor['id'],'fiscal.cancellation_credit_issued','order',order['id'],{'number':doc['number'],'original_number':source['number']})

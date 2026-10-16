@@ -357,7 +357,8 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
             from .fiscal_issuance import original
             from .fiscal import print_order
             doc=original(conn,order_id)
-            if doc: row['issued_receipt']=print_order(doc)
+            if doc:
+                row['issued_receipt']={**print_order(doc), 'payment_status':row['payment_status'], 'payment_method':row['payment_method'], 'preparation_status':row['preparation_status']}
         else:
             row=customer_order_view(row)
     result = {'order': row, 'events': events}
@@ -416,6 +417,9 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                 if not conn.execute("SELECT to_regclass('driver_tasks') AS n").fetchone()['n'] or not conn.execute(
                         "SELECT 1 FROM driver_tasks WHERE order_id=%s AND status IN ('accepted','picked_up')", (order_id,)).fetchone():
                     raise db.error(409, 'DRIVER_ACCEPTANCE_REQUIRED', 'يلزم سائق مسند وقابل للمهمة قبل التسليم.')
+            if body.status == 'cancelled':
+                from .fiscal_issuance import credit_on_cancellation
+                credit_on_cancellation(conn,order,user,body.reason)
             row = conn.execute("UPDATE orders SET preparation_status=%s,version=version+1,completed_at=CASE WHEN %s='completed' THEN now() ELSE completed_at END "
                                "WHERE id=%s RETURNING *", (body.status, body.status, order_id)).fetchone()
             if body.status == 'cancelled' and order['service'] == 'delivery':
