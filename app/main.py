@@ -41,6 +41,9 @@ async def lifespan(app):
                 background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
             if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
+            from . import branch_payment_webhooks
+            if branch_payment_webhooks.enabled() and os.getenv('APP_ENV') != 'testing':
+                background_tasks.append(asyncio.create_task(branch_payment_webhooks.poll_loop(), name='branch-payment-inbox'))
         yield
     finally:
         try:
@@ -85,6 +88,8 @@ app.include_router(auth.router)
 # Provider callbacks use their own signed timestamped verification, rather than
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
+from . import branch_payment_webhooks
+app.include_router(branch_payment_webhooks.router)
 # Components are separate files within this one service and share canonical tables.
 for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'channel_settlement', 'internal_documents'):
     module = importlib.import_module('.' + name, __package__)

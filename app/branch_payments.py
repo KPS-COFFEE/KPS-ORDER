@@ -91,13 +91,36 @@ def reconcile(aid: str, user=Depends(auth.require_roles('customer','owner','bran
             return {'attempt':view(attempt)}
         if not db.rate_limit(c,'payment-reconcile:'+user['id'],30,60):
             raise db.error(429,'PAYMENT_RATE_LIMIT','انتظر قليلًا قبل التحقق مرة أخرى.')
+    return verify_attempt(attempt, user)
+
+
+def attempt_order(c, attempt, user=None, lock=False):
+    """Internal workers use persisted scope, never a fabricated customer role."""
+    if user is not None:
+        order = scoped_order(c, attempt['order_id'], user, lock=lock)
+    else:
+        order = c.execute('SELECT * FROM orders WHERE id=%s' + (' FOR UPDATE' if lock else ''),
+                          (attempt['order_id'],)).fetchone()
+    if (not order or order['brand_id'] != attempt['brand_id'] or
+            order['branch_id'] != attempt['branch_id'] or require_sandbox(order) != attempt['seller_id']):
+        raise db.error(409, 'PAYMENT_SCOPE_MISMATCH', 'نطاق الدفع غير مطابق للطلب.')
+    return order
+
+
+def verify_attempt(attempt, user=None):
+    """Shared provider verification; callbacks are not evidence of payment."""
+    aid = attempt['id']
+    with db.tx() as c:
+        attempt_order(c, attempt, user)
+        current = c.execute('SELECT * FROM branch_payment_attempts WHERE id=%s', (aid,)).fetchone()
+        if current['status'] != 'pending':
+            return {'attempt': view(current)}
     expected = context(attempt)
     proof = gateways.adapter_for(attempt['provider']).verify_sandbox_payment(expected, str(attempt['provider_payment_id']))
     if proof.context != expected or proof.payment_id != str(attempt['provider_payment_id']) or proof.mode != 'test' or proof.provider != attempt['provider']:
         raise db.error(409,'PAYMENT_EVIDENCE_MISMATCH','إثبات الدفع لا يطابق المحاولة.')
     with db.tx() as c:
-        order = scoped_order(c, attempt['order_id'], user, lock=True)
-        require_sandbox(order)
+        order = attempt_order(c, attempt, user, lock=True)
         current = c.execute('SELECT *,expires_at<now() expired FROM branch_payment_attempts WHERE id=%s FOR UPDATE',(aid,)).fetchone()
         if current['status'] != 'pending':
             return {'attempt':view(current)}
@@ -113,8 +136,9 @@ def reconcile(aid: str, user=Depends(auth.require_roles('customer','owner','bran
         if applicable:
             c.execute("UPDATE orders SET payment_status='paid',version=version+1 WHERE id=%s",(order['id'],))
         details={'attempt_id':aid,'provider':proof.provider,'payment_reference':proof.payment_id,'mode':'test','disposition':disposition}
-        db.event(c,order['id'],user['id'],'payment.verified',details)
-        db.audit(c,user['id'],'payment.verified','order',order['id'],details)
+        actor_id = user['id'] if user is not None else None
+        db.event(c,order['id'],actor_id,'payment.verified',details)
+        db.audit(c,actor_id,'payment.verified','order',order['id'],details)
         return {'attempt':view(row)}
 
 
