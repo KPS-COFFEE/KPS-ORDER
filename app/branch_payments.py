@@ -136,3 +136,10 @@ def enrich_orders(c, rows):
         receipt = receipts.get(row['id']) or {}
         row['online_payment_verified'] = (row['payment_status']=='paid' and
             receipt.get('disposition')=='applied' and receipt.get('amount_halalas')==row['total_halalas'])
+
+
+@router.post('/attempts/{aid}/checkout')
+def checkout(aid: str, user=Depends(auth.require_roles('customer'))):
+    from fastapi.responses import JSONResponse
+    from .branch_checkout import acquire
+    return JSONResponse(acquire(aid,user),headers={'Cache-Control':'no-store','Pragma':'no-cache'})
