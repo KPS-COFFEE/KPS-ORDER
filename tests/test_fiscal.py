@@ -507,3 +507,29 @@ def test_print_annotation_keeps_saved_invoice_and_live_payment_separate():
     printed=fiscal.print_order(doc,{'payment_status':'paid','payment_method':'card','preparation_status':'completed'})
     assert printed['payment_status']=='paid' and printed['payment_method']=='card'
     assert printed['fiscal_document']==before and doc==before
+
+
+@pytest.mark.parametrize('reference',['KFJ11-261016-0004','RFH19-261016-0001','KPS01-261017-0001'])
+def test_branch_invoice_reference_preserves_saved_ledger_and_qr(reference):
+    doc=fiscal.build(sample(),'KPS-1',NOW)
+    doc.update(status='issued')
+    before=deepcopy(doc)
+    printed=fiscal.print_order(doc,{'snapshot':{'order_reference':reference},'payment_status':'unpaid'})
+    assert printed['order_reference']==printed['snapshot']['order_reference']==reference
+    assert printed['fiscal_document']==before and doc==before
+    assert printed['receipt_qr']['text']==before['qr_text']
+
+@pytest.mark.postgres
+def test_new_invoice_uses_canonical_branch_order_reference(fiscal_sale):
+    client,oid,user=fiscal_sale
+    reference='KFJ11-261016-0004'
+    with db.tx() as c:
+        c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{order_reference}',%s::jsonb) WHERE id=%s",(db.json(reference),oid))
+    activate_phase1(client)
+    r=client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':'branch-reference-invoice'})
+    assert r.status_code==200,r.text
+    assert r.json()['document']['number']==reference
+    again=client.post(f'/api/fiscal/orders/{oid}/print',headers={'Idempotency-Key':'branch-reference-print'})
+    assert again.status_code==200,again.text
+    assert again.json()['order']['order_reference']==reference
+    assert again.json()['order']['fiscal_document']==r.json()['document']

@@ -1041,7 +1041,7 @@
   }
   async function fiscalDocuments(id) {
     const d=await api(`/api/fiscal/orders/${encodeURIComponent(id)}/documents`);
-    modal(tr('الفواتير والإشعارات الدائنة','Invoices and credit notes'),d.documents.length?`<div class="stack">${d.documents.map((doc,i)=>`<button type="button" class="quiet" data-fiscal-index="${i}">${esc(doc.number)} — ${esc(doc.kind==='invoice'?tr('فاتورة','Invoice'):tr('إشعار دائن','Credit note'))} — ${esc(money(doc.total_halalas))}</button>`).join('')}</div>`:notice(tr('لم تصدر فاتورة ضريبية لهذا الطلب. المعاينة ليست إصدارًا.','No tax invoice has been issued for this order. A preview is not an issued invoice.')));
+    modal(tr('الفواتير والإشعارات الدائنة','Invoices and credit notes'),d.documents.length?`<div class="stack">${d.documents.map((doc,i)=>`<button type="button" class="quiet" data-fiscal-index="${i}">${esc(orderLabel(d.orders[i]))} — ${esc(doc.kind==='invoice'?tr('فاتورة','Invoice'):tr('إشعار دائن','Credit note'))} — ${esc(money(doc.total_halalas))}</button>`).join('')}</div>`:notice(tr('لم تصدر فاتورة ضريبية لهذا الطلب. المعاينة ليست إصدارًا.','No tax invoice has been issued for this order. A preview is not an issued invoice.')));
     document.querySelectorAll('#modal-body [data-fiscal-index]').forEach(button=>button.addEventListener('click',()=>{
       const win=window.open('','_blank');if(!win)return;
       win.document.write(receiptHTML(normalizeOrder(d.orders[Number(button.dataset.fiscalIndex)]),false,state.lang));win.document.close();bindReceiptWindow(win);

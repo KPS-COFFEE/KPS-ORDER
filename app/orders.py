@@ -358,7 +358,7 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
             from .fiscal import print_order
             doc=original(conn,order_id)
             if doc:
-                row['issued_receipt']={**print_order(doc), 'payment_status':row['payment_status'], 'payment_method':row['payment_method'], 'preparation_status':row['preparation_status']}
+                row['issued_receipt']={**print_order(doc,row), 'payment_status':row['payment_status'], 'payment_method':row['payment_method'], 'preparation_status':row['preparation_status']}
         else:
             row=customer_order_view(row)
     result = {'order': row, 'events': events}

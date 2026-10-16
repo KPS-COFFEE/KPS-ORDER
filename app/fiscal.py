@@ -115,6 +115,13 @@ def print_order(doc, operational=None):
             'payment_status': doc.get('payment_status', 'refunded' if doc['kind']=='credit_note' else 'paid'), 'receipt_qr': qr(doc)}
     if operational is not None and doc['kind']=='invoice':
         result.update({k:operational[k] for k in ('payment_status','payment_method','preparation_status') if k in operational})
+        # Existing issued ledger identifiers stay immutable; present the linked
+        # canonical branch/date/order reference on every invoice copy.
+        reference = operational.get('snapshot',{}).get('order_reference')
+        if reference:
+            result['order_reference'] = reference
+            result['snapshot']['order_reference'] = reference
+            result['order_no'] = reference
     return result
 
 

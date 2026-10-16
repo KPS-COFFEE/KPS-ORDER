@@ -101,7 +101,7 @@ def issue_sale(conn, order_id, actor, *, required=False):
     from . import print_translations
     order['print_labels_en'] = print_translations.for_order(conn,order)
     try:
-        doc = fiscal.build(order,'KPS-'+str(n),datetime.now(timezone.utc))
+        doc = fiscal.build(order,order['snapshot'].get('order_reference') or 'KPS-'+str(n),datetime.now(timezone.utc))
     except ValueError as exc:
         raise db.error(409,'FISCAL_TOTAL_MISMATCH','مبالغ الطلب غير متطابقة؛ لم يتم الإصدار.') from exc
     doc.update(status='issued', uuid=str(uuid4()), policy_id=p['id'], supply_at=str(order.get('completed_at') or doc['issued_at']),
@@ -164,7 +164,7 @@ def print_invoice(order_id: str, user=Depends(auth.require_roles('owner','admin'
         db.idempotent(conn,user['id'],idem,'fiscal.print',{'order_id':order_id},perform)
         doc = original(conn,order_id)
         if doc:
-            printed = fiscal.print_order(doc)
+            printed = fiscal.print_order(doc,order)
             # Collection and operational status are live annotations, never fabricated payment.
             printed.update(payment_status=order['payment_status'],payment_method=order['payment_method'],preparation_status=order['preparation_status'])
             return {'order':{**order,**printed}}
