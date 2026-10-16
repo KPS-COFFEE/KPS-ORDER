@@ -629,6 +629,9 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             sql="UPDATE driver_tasks SET status=%s,proof=%s,reason=%s" + (f',{timestamp}=coalesce({timestamp},now())' if timestamp else '')+' WHERE id=%s'
             c.execute(sql,(body.status,body.proof,body.reason,tid))
             c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
+            if body.status=='delivered':
+                from .fiscal_issuance import issue_sale
+                issue_sale(c,t['order_id'],user)
             if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
             db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status'],'photo_id':body.photo_id})
             if body.contact_method:
@@ -787,6 +790,8 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             for source in cols:
                 if not remaining:break
                 amount=min(remaining,source['available']);rid=uid()
+                from .fiscal_issuance import credit_before_refund
+                credit_before_refund(c,o,user,rid,amount,body.reason,amendment_id=body.amendment_id)
                 c.execute('INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,line_quantities,reason,authorized_by,amendment_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(rid,source['id'],oid,sid,body.method,amount,db.json(body.line_quantities if not refund_ids else {}),body.reason,user['id'],body.amendment_id))
                 refund_ids.append(rid);remaining-=amount
                 if sid and body.method=='cash':event(c,sid,-amount,'refund',rid,user['id'],body.reason)

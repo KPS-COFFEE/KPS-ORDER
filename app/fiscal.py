@@ -129,7 +129,9 @@ def save_preview(conn, order, actor):
 
 @router.get('/readiness')
 def get_readiness(user=Depends(owner)):
-    return readiness()
+    from .fiscal_issuance import status
+    with db.tx() as conn:
+        return status(conn,user['brand_id'])
 
 
 @router.post('/orders/{order_id}/preview')
@@ -172,8 +174,12 @@ def prepare_credits(order_id: str, user=Depends(owner), idem: str | None=Header(
 
 
 @router.post('/orders/{order_id}/issue')
-def issue(order_id: str, user=Depends(owner)):
+def issue(order_id: str, user=Depends(owner), idem: str | None=Header(None, alias='Idempotency-Key')):
     from .operations import order_access
+    from .fiscal_issuance import issue_sale
     with db.tx() as conn:
         order_access(conn, user, conn.execute('SELECT * FROM orders WHERE id=%s', (order_id,)).fetchone())
-    raise db.error(409, 'FISCAL_ISSUANCE_DISABLED', 'الإصدار الرسمي معطل حتى استكمال المتطلبات واعتماد التفعيل.')
+        def perform():
+            doc = issue_sale(conn,order_id,user,required=True)
+            return {'document':doc,'order':print_order(doc)}
+        return db.idempotent(conn,user['id'],idem,'fiscal.issue',{'order_id':order_id},perform)

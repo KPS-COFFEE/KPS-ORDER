@@ -215,3 +215,127 @@ def test_occasion_style_is_frozen_and_used_by_device_renderer():
     assert rendered['occasion_style'] == {'font':'Tahoma','size':26,'bold':False,'align':'right'}
     line = next(line for line in rendered['lines'] if line['role']=='occasion')
     assert line['align']=='right' and line['bold'] is False and line['center'] is False
+
+
+def activate_phase1(client):
+    response=client.post('/api/fiscal/policy',json={'enabled':True,'phase':'phase1',
+        'evidence_reference':'Synthetic Phase 1 applicability evidence — isolated test only',
+        'reason':'Isolated synthetic acceptance'},headers={'Idempotency-Key':'fiscal-policy-test-01'})
+    assert response.status_code==200,response.text
+    assert response.json()['official_issuance_enabled'] is True
+    return response.json()
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('method',['cash','card'])
+def test_actual_issuance_and_credit_before_refund_atomicity(fiscal_sale,method):
+    from app import fiscal_issuance
+    import psycopg
+    client,oid,user=fiscal_sale
+    activate_phase1(client)
+    with db.tx() as c:
+        c.execute('UPDATE orders SET payment_method=%s WHERE id=%s',(method,oid))
+        c.execute('INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES(%s,%s,%s,%s,3950)',('actual-col-'+oid,oid,user['id'],method))
+    def issue(key):
+        return client.post(f'/api/fiscal/orders/{oid}/issue',headers={'Idempotency-Key':key})
+    first=issue('actual-invoice-0001')
+    assert first.status_code==200,first.text
+    doc=first.json()['document']
+    assert doc['status']=='issued' and doc['number'].startswith('KPS-')
+    assert doc['seller']==fiscal.SELLER and doc['payment_method']==method
+    assert issue('actual-invoice-0001').json()==first.json()
+    assert issue('actual-invoice-0002').json()==first.json()
+    # A missing refund causes deferred FK failure; the credit must roll back.
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with db.tx() as c:
+            order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone()
+            fiscal_issuance.credit_before_refund(c,order,user,'absent-refund',550,'test rollback')
+    with db.tx() as c:
+        assert c.execute("SELECT count(*) n FROM fiscal_documents WHERE order_id=%s AND kind='credit_note'",(oid,)).fetchone()['n']==0
+    # Bypassing credit generation cannot commit a refund against an issued sale.
+    with pytest.raises(psycopg.errors.RaiseException,match='matching fiscal credit'):
+        with db.tx() as c:
+            c.execute("INSERT INTO refunds(id,collection_id,order_id,method,amount_halalas,reason,authorized_by) VALUES(%s,%s,%s,%s,100,'bypass',%s)",('bypass-'+oid,'actual-col-'+oid,oid,method,user['id']))
+    for i,amount in enumerate([550,3400]):
+        with db.tx() as c:
+            order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone()
+            rid=f'actual-refund-{i}-'+oid
+            note=fiscal_issuance.credit_before_refund(c,order,user,rid,amount,'Accepted return')
+            assert note['original_number']==doc['number'] and note['original_uuid']==doc['uuid']
+            assert c.execute('SELECT 1 FROM refunds WHERE id=%s',(rid,)).fetchone() is None
+            c.execute("INSERT INTO refunds(id,collection_id,order_id,method,amount_halalas,reason,authorized_by) VALUES(%s,%s,%s,%s,%s,'Accepted return',%s)",(rid,'actual-col-'+oid,oid,method,amount,user['id']))
+    result=client.get(f'/api/fiscal/orders/{oid}/documents')
+    assert result.status_code==200,result.text
+    docs=result.json()['documents']
+    assert len(docs)==3 and sum(d['tax_halalas'] for d in docs if d['kind']=='credit_note')==515
+    assert sum(d['total_halalas'] for d in docs if d['kind']=='credit_note')==3950
+    assert client.get(f'/api/orders/{oid}').json()['order']['issued_receipt']['fiscal_document']==doc
+    for d in docs:
+        symbol=fiscal.qr(d)['matrix']; side=len(symbol)
+        image=Image.new('L',(side,side),255)
+        image.putdata([0 if v=='1' else 255 for row in symbol for v in row])
+        decoded=zxingcpp.read_barcode(image.resize((544,544),Image.Resampling.NEAREST))
+        assert decoded and decode(decoded.text)=={1:d['seller']['legal_name'],2:d['seller']['vat_number'],3:d['issued_at'],4:fiscal.money(d['total_halalas']),5:fiscal.money(d['tax_halalas'])}
+        for lang in ['ar','en']:
+            lines=receipt(fiscal.print_order(d),{'name':'Test'},'order',lang)['lines']
+            assert not any('PREVIEW ONLY' in x['text'] or 'معاينة فقط' in x['text'] for x in lines)
+    for sql in ['DELETE FROM fiscal_documents WHERE order_id=%s',"UPDATE fiscal_documents SET document='{}' WHERE order_id=%s"]:
+        with pytest.raises(psycopg.errors.RaiseException):
+            with db.tx() as c:c.execute(sql,(oid,))
+
+
+@pytest.mark.postgres
+def test_issuance_disabled_phase2_scope_policy_permissions_and_races(fiscal_sale):
+    from concurrent.futures import ThreadPoolExecutor
+    client,oid,user=fiscal_sale
+    path=f'/api/fiscal/orders/{oid}/issue'
+    assert client.post(path,headers={'Idempotency-Key':'disabled-issue-01'}).status_code==409
+    for phase in ['phase2','unconfirmed']:
+        r=client.post('/api/fiscal/policy',json={'enabled':True,'phase':phase,'reason':'test','evidence_reference':'test'},headers={'Idempotency-Key':'disabled-policy-'+phase})
+        assert r.status_code==409
+    for role in ['driver','delivery_manager','branch_manager','customer']:
+        client.app.dependency_overrides[auth.current_user]=lambda:{**user,'role':role}
+        assert client.post('/api/fiscal/policy',json={'reason':'test'},headers={'Idempotency-Key':'deny-policy-'+role}).status_code==403
+    client.app.dependency_overrides[auth.current_user]=lambda:user
+    activate_phase1(client)
+    def call(i):return client.post(path,headers={'Idempotency-Key':f'concurrent-issued-{i}'})
+    with ThreadPoolExecutor(max_workers=4) as pool:results=list(pool.map(call,range(4)))
+    assert all(r.status_code==200 for r in results),[r.text for r in results]
+    assert len({r.json()['document']['number'] for r in results})==1
+    client.app.dependency_overrides[auth.current_user]=lambda:{**user,'brand_id':'other'}
+    assert client.get(f'/api/fiscal/orders/{oid}/documents').status_code==404
+    assert call(5).status_code==404
+
+from test_operations import ops
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
+@pytest.mark.parametrize('method',['cash','card'])
+def test_completed_driver_sale_automatically_issues_once_and_refunds(ops,method):
+    actor,post,order,shifts=ops
+    activate_phase1(actor('owner'))
+    manager,driver=shifts()
+    oid=order(total=3950)
+    task=post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':driver})['task']['id']
+    post('driver',f'/api/tasks/{task}/transition',{'status':'accepted'})
+    with db.tx() as c:c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(oid,))
+    post('driver',f'/api/tasks/{task}/transition',{'status':'picked_up'})
+    payment={'method':method,'amount_halalas':3950,'tendered_halalas':3950,'reference':'synthetic-terminal'}
+    paid=post('driver',f'/api/orders/{oid}/collect',payment,key='fiscal-driver-payment')
+    assert post('driver',f'/api/orders/{oid}/collect',payment,key='fiscal-driver-payment')==paid
+    post('driver',f'/api/orders/{oid}/collect',payment,key='fiscal-driver-duplicate',status=409)
+    with db.tx() as c:assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==0
+    post('driver',f'/api/tasks/{task}/transition',{'status':'delivered','proof':'synthetic delivery'},key='fiscal-driver-delivered')
+    original=actor('owner').get(f'/api/fiscal/orders/{oid}/documents').json()['documents']
+    assert len(original)==1 and original[0]['total_halalas']==3950 and original[0]['tax_halalas']==515
+    # Payment replay after delivery must not issue another original.
+    assert post('driver',f'/api/orders/{oid}/collect',payment,key='fiscal-driver-payment')==paid
+    refund={'amount_halalas':550,'method':method,'reason':'Authorized partial return','line_quantities':{}}
+    first=post('manager',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')
+    assert post('manager',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')==first
+    post('manager',f'/api/orders/{oid}/refund',{**refund,'amount_halalas':3400},key='fiscal-driver-refund-rest')
+    documents=actor('owner').get(f'/api/fiscal/orders/{oid}/documents').json()['documents']
+    assert len(documents)==3
+    assert [d for d in documents if d['kind']=='invoice']==original
+    assert sum(d['tax_halalas'] for d in documents if d['kind']=='credit_note')==515
+    assert sum(d['total_halalas'] for d in documents if d['kind']=='credit_note')==3950

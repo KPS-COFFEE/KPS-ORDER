@@ -354,6 +354,10 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
             performance.enrich_orders(conn,[row])
             row['print_labels_en']=print_translations.for_order(conn,row)
             row['receipt_qr']=invoice_profiles.ordinary_qr(row)
+            from .fiscal_issuance import original
+            from .fiscal import print_order
+            doc=original(conn,order_id)
+            if doc: row['issued_receipt']=print_order(doc)
         else:
             row=customer_order_view(row)
     result = {'order': row, 'events': events}

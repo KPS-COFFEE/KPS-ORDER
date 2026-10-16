@@ -103,12 +103,14 @@ def test_structured_print_saved_finances_references_and_escaping():
     assert 'data-print-report' in page and '<script src="/report.js" defer></script>' in page and 'onclick=' not in page
 
 @pytest.fixture
-def ops(client):
+def ops(client, request):
+    fiscal_scope = getattr(request,"param",None) == "fiscal-kps"
+    brand_id,branch_id = ("kps","kps-branch-1") if fiscal_scope else ("ops-brand","ops-branch")
     with db.tx() as c:
         c.execute("INSERT INTO brands(id,name) VALUES('ops-brand','تجريبي'),('ops-other','اختبار آخر')")
         c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-branch',1,'ops-source','ops-brand','فرع اختبار','حفر الباطن','{}'),('ops-branch-other',1,'other-source','ops-other','فرع آخر','رفحاء','{}')")
         for name,role,brand,branch in [('owner','owner','ops-brand','ops-branch'),('manager','delivery_manager','ops-brand','ops-branch'),('driver','driver','ops-brand','ops-branch'),('driver2','driver','ops-brand','ops-branch'),('customer','customer','ops-brand','ops-branch'),('branch','branch_manager','ops-brand','ops-branch'),('other','owner','ops-other','ops-branch-other')]:
-            c.execute('INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,%s,%s,%s,%s)',('ops-'+name,name,role,brand,db.json([branch])))
+            c.execute('INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,%s,%s,%s,%s)',('ops-'+name,name,role,brand_id if brand=='ops-brand' else brand,db.json([branch_id if branch=='ops-branch' else branch])))
     def actor(name):
         with db.tx() as c:u=c.execute('SELECT * FROM users WHERE id=%s',('ops-'+name,)).fetchone()
         client.app.dependency_overrides[auth.current_user]=lambda:u
@@ -116,7 +118,7 @@ def ops(client):
     def order(service='delivery',total=1000,name=None,items=None,notes=''):
         oid=name or 'ops-order-'+uuid4().hex
         snap={'items':items if items is not None else [{'product_id':'ops-product','name':'قهوة تجربة','quantity':1,'unit_price_halalas':total,'line_total_halalas':total,'units':[],'note':''}],'branch_name':'فرع اختبار','notes':notes}
-        with db.tx() as c:c.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s)',(oid,'ops-brand','ops-branch','ops-customer',service,'ready','pending' if service=='delivery' else 'not_applicable','cash',total,total,db.json(snap),db.json({'name':'اختبار'})))
+        with db.tx() as c:c.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s)',(oid,brand_id,branch_id,'ops-customer',service,'ready','pending' if service=='delivery' else 'not_applicable','cash',total,total,db.json(snap),db.json({'name':'اختبار'})))
         return oid
     def post(who,path,body=None,key=None,status=200):
         # Successful journeys submit explicit synthetic readings; missing-data tests use the client directly.
@@ -141,8 +143,8 @@ def ops(client):
         assert r.status_code==status,r.text
         return r.json()
     def shifts():
-        manager=post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
-        driver=post('driver','/api/shifts',{'kind':'driver','branch_ids':['ops-branch'],'manager_shift_id':manager})['shift']['id']
+        manager=post('manager','/api/shifts',{'kind':'manager','branch_ids':[branch_id]})['shift']['id']
+        driver=post('driver','/api/shifts',{'kind':'driver','branch_ids':[branch_id],'manager_shift_id':manager})['shift']['id']
         return manager,driver
     yield actor,post,order,shifts
     client.app.dependency_overrides.clear()

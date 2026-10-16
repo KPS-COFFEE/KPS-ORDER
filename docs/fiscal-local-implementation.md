@@ -1,7 +1,6 @@
 # KPS ORDER local fiscal implementation
 
-Official issuance is disabled. This change prepares immutable **local previews**;
-it does not certify a Phase 1 or Phase 2 production invoicing system.
+Deployment default: official issuance remains disabled pending evidenced phase applicability and owner activation. The application now includes a transactional Phase 1 issuance engine as well as immutable local previews. This is not Phase 2 certification.
 No merge, deployment, live activation, terminal payment, customer data change,
 provider integration, DNS change or Render change is part of this stream.
 
@@ -96,3 +95,44 @@ The printed preview uses only the existing large brand heading (كبز قهوة 
 Owner operating settings accept receipt_occasion_text (plain text, up to 240 characters / 6 lines; blank disables). New orders freeze it in their snapshot, amendments preserve it, fiscal previews and credits inherit it. Browser and device receipts print large centered bold lines above the original logo; preparation tickets and QR fields are unchanged. No operational setting was enabled by this code change.
 
 Owner-only occasion formatting: Arial, Tahoma or Times New Roman; 12–32 pt; bold/regular; physical right/center/left alignment. Text and formatting are frozen in each new order and inherited by fiscal previews/credits. Browser and Windows bridge consume the saved formatting. Installed device fonts may use system fallback. Physical printer and Windows compilation validation remain pending.
+
+
+## Completion follow-up: transactional issuance engine
+
+Migration 061 introduces a separate immutable fiscal document ledger and append-only
+owner policy decisions. Production documents never reuse preview numbers. A saved
+owner decision with Phase 1 applicability evidence is required for issuance. No
+policy is inserted or enabled by migration or deployment. Phase 2 activation is
+rejected: real XML, cryptography, CSID and reporting are still unavailable.
+
+The delivery completion transaction issues the original after paid delivery when
+the policy permits it. Collection from a driver terminal does not issue another
+invoice. Order locking, a unique original-sale index, durable request idempotency
+and immutable documents protect retries, concurrent workers and reprints.
+Manual owner issuance provides recovery for an eligible completed sale; it does
+not backdate its issuance timestamp or rewrite historical preview documents.
+Historical sales with existing regular refunds require review and cannot be
+silently turned into new originals.
+
+Before recording each authorized refund against an issued invoice, the canonical
+refund transaction saves its corresponding credit note. The deferred refund FK
+requires both records to commit together. A database constraint trigger prevents
+refund callers from bypassing the credit. Full refunds reverse the original VAT
+exactly; partial credit allocation uses cumulative Decimal rounding. Existing
+post-completion amendment prevention stays in force; issued invoices are never
+edited or deleted. Disabling issuance also blocks new credits and associated
+refunds against issued sales until the issuance capability is restored.
+
+Saved originals feed existing browser and device print mechanisms. The new
+Invoices and credit notes action retrieves saved originals and credits with the
+same order authorization. Preview labels remain on previews only; no preview is
+promoted to an issued document. Customer reads of documents use canonical order
+ownership, while owner policy and issuance are restricted server-side. Backup,
+tenant filtering, deferred references and sequence restoration include the ledger.
+
+New acceptance tests exercise real delivery/collection/refund endpoints for cash
+and card; duplicate payment/retry requests; issuance concurrency; immutable rows;
+refund/credit rollback; direct refund bypass rejection; disabled/Phase 2 guards;
+role/brand isolation; Arabic/English thermal data; real symbol decoding against
+saved original and credit fields. CI results must be recorded against the exact
+commit before claiming these PostgreSQL cases pass.

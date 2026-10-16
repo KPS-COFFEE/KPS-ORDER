@@ -271,7 +271,7 @@ def receipt(order, branch, kind, language, translations=None):
         statuses={'paid':('تم التحصيل','Paid'),'unpaid':('لم يتم التحصيل','Unpaid'),'partially_refunded':('مسترد جزئيًا','Partially refunded'),'refunded':('مسترد','Refunded')}
         row('حالة التحصيل' if ar else 'Collection',statuses.get(order['payment_status'],('راجع حالة التحصيل بالنظام','Check collection status in system'))[0 if ar else 1],True)
         add('────────────────────',False,True)
-        add(('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued') if fiscal else ('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice'),False,True,role='caption')
+        add(('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued') if fiscal and fiscal.get('status')!='issued' else ('نسخة محفوظة' if ar else 'Archived invoice') if fiscal else ('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice'),False,True,role='caption')
         if order.get('id'):
             if fiscal:
                 from .fiscal import qr as fiscal_qr
@@ -310,7 +310,14 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
             for kind in (('order','preparation') if body.kind=='both' else (body.kind,)):
                 previous=conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s AND kind=%s AND status<>'cancelled' LIMIT 1",(order_id,kind)).fetchone()
                 if previous and not body.reprint_reason.strip():raise db.error(409,'PRINT_REPRINT_REASON','سبق إرسال هذه الفاتورة؛ تحقق من الطابعة وأدخل سبب إعادة الطباعة لمنع التكرار.')
-                identifier=db.new_id('print_');payload=receipt(order,branch,kind,body.language,translations)
+                identifier=db.new_id('print_')
+                printable=order
+                if kind=='order':
+                    from .fiscal_issuance import original
+                    from .fiscal import print_order
+                    doc=original(conn,order_id)
+                    if doc: printable={**order,**print_order(doc)}
+                payload=receipt(printable,branch,kind,body.language,translations)
                 if destination['id'] != branch['id']:
                     payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})
                 if previous:payload['lines'].insert(0,{'text':('إعادة طباعة' if body.language=='ar' else 'REPRINT'),'bold':True,'center':True})
