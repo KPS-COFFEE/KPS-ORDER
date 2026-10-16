@@ -88,3 +88,30 @@ def test_missing_configuration_does_not_contact_provider(checkout_case,monkeypat
     monkeypatch.delenv(key)
     post('customer','/api/branch-payments/attempts/'+a['id']+'/checkout',status=409 if key.endswith('ENABLED') else 503)
     assert not calls
+
+
+from test_backup import independent_restore_database
+
+
+def test_encrypted_checkout_full_restore_and_business_export_exclusion(checkout_case, independent_restore_database, tmp_path):
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive, restore_archive
+    actor,post,oid,a,calls=checkout_case
+    post('customer','/api/branch-payments/attempts/'+a['id']+'/checkout')
+    with db.tx() as c:
+        before=c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()
+        contents,manifest=build_archive(c,full=True)
+        business,public_manifest=build_archive(c,brand_id='ops-brand')
+    assert 'branch_checkout_sessions' not in public_manifest['table_order']
+    assert 'branch_checkout_sessions' in public_manifest['excluded_tables']
+    assert manifest['counts']['branch_checkout_sessions']==1
+    schema='kps_restore_'+uuid4().hex
+    result=restore_archive(contents,target_url=independent_restore_database,target_schema=schema,asset_directory=tmp_path/'assets')
+    assert result['verified']
+    with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
+        c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+        assert c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()==before
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM branch_checkout_sessions WHERE attempt_id=%s',(a['id'],)).fetchone()==before
