@@ -33,10 +33,17 @@ def active(c, oid):
 
 def balance(c, o):
     row = c.execute('SELECT (SELECT coalesce(sum(amount_halalas),0) FROM collections WHERE order_id=%s) - (SELECT coalesce(sum(amount_halalas),0) FROM refunds WHERE order_id=%s) AS net', (o['id'], o['id'])).fetchone()
-    return int(row['net'])
+    net = int(row['net'])
+    from .branch_payments import online_order
+    if online_order(o):
+        net += int(c.execute('SELECT coalesce(sum(amount_halalas),0) AS net FROM branch_online_receipts WHERE order_id=%s',(o['id'],)).fetchone()['net'])
+    return net
 
 
 def editable(o, c):
+    from .branch_payments import online_order
+    if online_order(o) and c.execute('SELECT 1 FROM branch_payment_attempts WHERE order_id=%s',(o['id'],)).fetchone():
+        raise db.error(409,'PAYMENT_RECONCILIATION_REQUIRED','يلزم تسوية محاولة الدفع قبل تعديل مبلغ الطلب.')
     from .fiscal_issuance import original
     if original(c,o['id']):
         raise db.error(409, 'FISCAL_ISSUED_ADJUSTMENT', 'صدرت فاتورة لهذا الطلب؛ ألغِ الطلب أو استخدم المرتجع بدل تغيير الفاتورة المحفوظة.')
@@ -79,7 +86,7 @@ def proposal_quote(c, o, p):
         quote['items'] = o['snapshot']['items']
         quote['subtotal_halalas'] = o['subtotal_halalas']
         quote['total_halalas'] = quote['subtotal_halalas'] + quote['delivery_fee_halalas']
-    for key in ('receipt_occasion_style', 'receipt_occasion_text', 'receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow'):
+    for key in ('receipt_occasion_style', 'receipt_occasion_text', 'receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow', 'branch_payment_mode', 'branch_payment_seller'):
         if key in o['snapshot']: quote[key] = o['snapshot'][key]
     if 'channel_commercial' in o['snapshot']:
         from .channel_commercial import amounts

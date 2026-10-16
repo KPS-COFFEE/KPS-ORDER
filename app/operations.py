@@ -715,6 +715,9 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
     with db.tx() as c:
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+            from .branch_payments import online_order
+            if online_order(o):
+                raise db.error(409,'ONLINE_PAYMENT_ONLY','هذا الطلب يتطلب دفعًا إلكترونيًا موثقًا؛ التحصيل اليدوي غير متاح.')
             if o['payment_status']!='unpaid' or o['preparation_status'] in ('cancelled','rejected'):fail(409,'الطلب غير قابل للتحصيل')
             from .order_amendments import guard,balance as paid_balance
             guard(c,o,driver_id=user['id'] if user['role']=='driver' else None)
@@ -767,6 +770,9 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             from .order_amendments import active,balance as paid_balance
+            from .branch_payments import online_order
+            if online_order(o):
+                raise db.error(409,'PROVIDER_REFUND_REQUIRED','استرداد الدفع الإلكتروني يتطلب تأكيد مزود الدفع.')
             if active(c,oid):fail(409,'أكمل مراجعة التعديل قبل الاسترداد')
             if user['role']=='branch_manager' and o['service']=='delivery':fail(403,'تسوية التوصيل من مدير التوصيل')
             cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()

@@ -78,6 +78,8 @@ async def database_unavailable(request: Request, exc):
 # routes first without changing a route's dependencies or relative precedence
 # within its router. No permission/session result is cached.
 app.include_router(orders.router)
+from . import branch_payments
+app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
 # Provider callbacks use their own signed timestamped verification, rather than

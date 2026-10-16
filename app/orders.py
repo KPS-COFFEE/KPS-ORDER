@@ -395,6 +395,9 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                            'preparing': {'ready', 'cancelled'}, 'ready': {'handed_over', 'completed', 'cancelled'}}
             if body.status not in transitions.get(current, set()):
                 raise db.error(409, 'PREPARATION_TRANSITION_INVALID', 'انتقال حالة التجهيز غير مسموح.')
+            if body.status in {'preparing','ready','completed'}:
+                from .branch_payments import require_verified
+                require_verified(conn, order)
             if body.status in {'accepted','preparing'} and order['customer'].get('requires_operational_confirmation'):
                 if not conn.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' AND details->>'result'='reached'",(order_id,)).fetchone():
                     raise db.error(409,'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED','تتطلب سياسة الطلب اتصالًا تشغيليًا موثقًا قبل التجهيز. لا يعتبر ذلك توثيق جوال.')
