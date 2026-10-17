@@ -36,7 +36,7 @@ def download(eid:str,user=Depends(auth.current_user)):
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(r['shift_id'],)).fetchone()
         if user['role']=='admin' and (auth.has_permission(user,'vehicle_maintenance_manage') or auth.has_permission(user,'accounting_reports')):
             if not set(s['branch_ids'])<=set(user.get('branch_ids',[])):raise db.error(404,'EVIDENCE_SCOPE','الصورة خارج النطاق.')
-            receipt=any(x.get('receipt_id')==eid for x in (s.get('vehicle_log') or {}).get('refuels',[]))
+            receipt=any(x.get('receipt_id')==eid for part in [s.get('vehicle_log') or {},*(s.get('vehicle_log') or {}).get('previous_segments',[])] for x in part.get('refuels',[]))
             report=c.execute("SELECT 1 FROM vehicle_reports WHERE evidence_id=%s AND department='maintenance'",(eid,)).fetchone()
             if not ((receipt and auth.has_permission(user,'accounting_reports')) or (report and auth.has_permission(user,'vehicle_maintenance_manage'))):raise db.error(404,'EVIDENCE_SCOPE','الصورة خارج صلاحية القسم.')
         else:shift_access(c,user,s)

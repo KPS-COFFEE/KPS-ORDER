@@ -369,6 +369,12 @@ def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(
                 validate(c,body.receipt_id,user,sid)
             entry={**shift_vehicle.stamp(c,user,body),'id':uid()}
             log['refuels']=[*log.get('refuels',[]),entry]
+            if body.confirm_full and log.get('awaiting_refuel'):
+                if s['status']!='open':raise db.error(409,'SHIFT_NOT_OPEN','الشفت ليس مفتوحًا.')
+                if not body.receipt_id:raise db.error(422,'REFUEL_RECEIPT_REQUIRED','أرفق فاتورة التعبئة لتأكيد امتلاء الخزان.')
+                log['fuel_readiness']={**entry,'fuel_percent':100}
+                log['awaiting_refuel']=False
+                db.audit(c,user['id'],'fuel.ready','shift',sid,log['fuel_readiness'])
             c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
             db.audit(c,user['id'],'shift.refuel','shift',sid,entry)
             return {'shift_id':sid,'refuel':entry,'vehicle_summary':shift_vehicle.summary(log)}

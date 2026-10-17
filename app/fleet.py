@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
-from . import auth, db, accounting_export, service_hours, vehicle_profile, fleet_management
+from . import auth, db, accounting_export, service_hours, vehicle_profile, fleet_management, shift_vehicle
 
 router=APIRouter(prefix='/api/fleet',tags=['fleet'])
 PERMISSION='vehicle_maintenance_manage'
@@ -38,19 +38,19 @@ def scoped(user):
         clauses.append('s.branch_ids <@ %s::jsonb AND jsonb_array_length(s.branch_ids)>0');args.append(db.json(user.get('branch_ids') or []))
     return clauses,args
 
-BASE=""" FROM vehicle_operating_logs l JOIN shifts s ON s.id=l.shift_id
+BASE=""" FROM fleet_operating_segments l JOIN shifts s ON s.id=l.shift_id
  JOIN fleet_vehicles v ON v.id=l.vehicle_id AND v.brand_id=s.brand_id JOIN users u ON u.id=s.user_id
- LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id ORDER BY revision DESC LIMIT 1) correction ON true
- LEFT JOIN LATERAL(SELECT * FROM fleet_route_readings WHERE shift_id=l.shift_id ORDER BY revision DESC LIMIT 1) route_reading ON true """
-METRICS="fleet_distance_review(coalesce(correction.after_metrics,l.metrics),route_reading.expected_km,s.opened_at,coalesce((s.vehicle_log->'end'->>'recorded_at')::timestamptz,s.submitted_at,s.closed_at))"
-SELECT=f"""SELECT l.shift_id,l.vehicle_id,l.operating_day,l.revision,v.plate,v.details,u.id driver_id,u.display_name driver_name,
- s.branch_ids,s.opened_at received_at,coalesce((s.vehicle_log->'end'->>'recorded_at')::timestamptz,(s.vehicle_log->'end_exception'->>'recorded_at')::timestamptz,s.submitted_at) returned_at,
+ LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) correction ON true
+ LEFT JOIN LATERAL(SELECT * FROM fleet_route_readings WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) route_reading ON true """
+METRICS="fleet_distance_review(coalesce(correction.after_metrics,l.metrics),route_reading.expected_km,l.received_at,l.returned_at)"
+SELECT=f"""SELECT l.segment_no,l.multi_vehicle,l.shift_id,l.vehicle_id,l.operating_day,l.revision,v.plate,v.details,u.id driver_id,u.display_name driver_name,
+ s.branch_ids,l.received_at,l.returned_at,
  {METRICS} metrics,route_reading.source_url route_source_url,route_reading.itinerary route_itinerary,route_reading.created_at route_recorded_at,
- (SELECT count(DISTINCT t.order_id) FROM driver_tasks t WHERE t.shift_id=s.id) orders,
+ CASE WHEN l.multi_vehicle THEN NULL ELSE (SELECT count(DISTINCT t.order_id) FROM driver_tasks t WHERE t.shift_id=s.id) END orders,
  GREATEST((SELECT count(*) FROM vehicle_reports r WHERE r.brand_id=s.brand_id AND r.driver_id=s.user_id
  AND r.branch_id IN (SELECT jsonb_array_elements_text(s.branch_ids))
  AND regexp_replace(upper(r.vehicle_plate),'[[:space:]]','','g')=v.plate_key
- AND r.created_at>=s.opened_at AND r.created_at<coalesce(s.submitted_at,s.closed_at,now())),
+ AND r.created_at>=l.received_at AND r.created_at<coalesce(l.returned_at,now())),
  ((EXISTS(SELECT 1 FROM jsonb_each_text(coalesce(s.vehicle_log->'start'->'checks','{{}}')) check_start WHERE check_start.value='issue')
  OR EXISTS(SELECT 1 FROM jsonb_each_text(coalesce(s.vehicle_log->'end'->'checks','{{}}')) check_end WHERE check_end.value='issue'))::int)) faults
  """
@@ -254,8 +254,13 @@ def detail(vid:str,sid:str,user=Depends(access)):
         return {'log':row,'corrections':events,'route_reading':reading}
 
 def log_access(c,user,vid,sid,lock=False):
+    if lock:
+        c.execute('SELECT id FROM shifts WHERE id=%s FOR UPDATE',(sid,))
+    split=c.execute("SELECT vehicle_log ? 'previous_segments' split FROM shifts WHERE id=%s",(sid,)).fetchone()
+    if split and split['split']:
+        raise db.error(409,'VEHICLE_SEGMENT_HISTORY','هذا الشفت يتضمن تسليم مركبات؛ القراءات محفوظة لكل فترة في جدول السجل، والتفاصيل في ملخص الشفت.')
     clauses,args=scoped(user);clauses+=['l.vehicle_id=%s','l.shift_id=%s'];args +=[vid,sid]
-    row=c.execute('SELECT l.*,s.status shift_status,'+METRICS+' effective_metrics'+BASE+' WHERE '+' AND '.join(clauses)+(' FOR UPDATE OF l' if lock else ''),args).fetchone()
+    row=c.execute('SELECT l.*,s.status shift_status,'+METRICS+' effective_metrics'+BASE+' WHERE '+' AND '.join(clauses),args).fetchone()
     if not row:raise db.error(404,'VEHICLE_LOG_NOT_FOUND','السجل غير موجود ضمن نطاقك.')
     return row
 
@@ -285,7 +290,9 @@ def correct(vid:str,sid:str,body:Correction,request:Request,user=Depends(access)
 
 class ManagementAction(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
-    action:Literal['assign','swap','release','pause','resume']
+    action:Literal['assign','swap','release','pause','resume','handover']
+    outgoing:shift_vehicle.Inspection|None=None
+    incoming:shift_vehicle.Inspection|None=None
     revision:StrictInt=Field(ge=0)
     driver_id:str|None=Field(default=None,max_length=150)
     reason:str=Field(min_length=1,max_length=2000)
@@ -355,3 +362,28 @@ def save_google_reading(vid:str,sid:str,body:GoogleRouteReading,request:Request,
             db.audit(c,user['id'],'vehicle_log.google_reading','vehicle_log',sid,{'vehicle_id':vid,**body.model_dump(mode='json')})
             return {'shift_id':sid,'revision':revision}
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'vehicle_log.google_reading:'+sid,body.model_dump(mode='json'),perform)
+
+class CreateVehicle(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    vehicle:dict
+    branch_ids:list[str]=Field(min_length=1)
+
+@router.post('/vehicles')
+def create_vehicle(body:CreateVehicle,request:Request,user=Depends(access)):
+    import hashlib
+    profile=vehicle_profile.validate(body.vehicle)
+    key=fleet_management.plate(profile)
+    if not key or not profile.get('type') or 'odometer_km' not in profile:
+        raise db.error(422,'VEHICLE_REQUIRED','أدخل لوحة المركبة ونوعها وقراءة العداد.')
+    with db.tx() as c:
+        def perform():
+            branches=c.execute('SELECT id FROM branches WHERE brand_id=%s AND id=ANY(%s)',(user['brand_id'],body.branch_ids)).fetchall()
+            if set(body.branch_ids)!={b['id'] for b in branches} or (user['role']!='owner' and not set(body.branch_ids)<=set(user.get('branch_ids') or [])):
+                raise db.error(403,'BRANCH_SCOPE','اختر فروعًا ضمن نطاق صلاحيتك.')
+            vid='veh_'+hashlib.md5((user['brand_id']+':'+key).encode()).hexdigest()
+            details={**profile,'management_branch_ids':sorted(set(body.branch_ids)),'management_revision':0}
+            created=c.execute('INSERT INTO fleet_vehicles(id,brand_id,plate_key,plate,details) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id',(vid,user['brand_id'],key,profile['plate'],db.json(details))).fetchone()
+            if not created:raise db.error(409,'VEHICLE_EXISTS','هذه اللوحة مسجلة بالفعل؛ افتح بطاقة المركبة للإسناد.')
+            db.audit(c,user['id'],'fleet.create','vehicle',vid,details)
+            return {'vehicle_id':vid}
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'fleet.create',body.model_dump(),perform)
