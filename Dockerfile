@@ -13,7 +13,8 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends fonts-dejavu-core \
     # PostgreSQL is the only application store. Neither SQLite nor infocmp is
     # used by the runtime; remove their actual packages, never scanner metadata.
-    && apt-get purge --yes libsqlite3-0 ncurses-bin \
+    # ncurses-bin is Debian-essential for general terminals, not this web image.
+    && apt-get purge --yes --allow-remove-essential libsqlite3-0 ncurses-bin \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 kpsorder \
     && useradd --uid 10001 --gid kpsorder --no-create-home kpsorder

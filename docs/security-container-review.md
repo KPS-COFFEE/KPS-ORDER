@@ -91,7 +91,10 @@ none has a Bookworm FixedVersion in the original raw scan. The pinned base and
 compile an unreviewed replacement crypto stack, or add CVE exclusions.
 
 The runtime removes the actual unused SQLite library and ncurses-bin/infocmp
-packages using apt, with package inventory retained. The application contains no
+packages using apt, with package inventory retained. ncurses-bin is marked
+Essential by Debian for a general terminal system; the explicit build-only
+allow-remove-essential applies only to this named package in the disposable
+image. No general upgrade, autoremove or production package operation is used. The application contains no
 SQLite consumer and its persistence contract is PostgreSQL. Python sqlite3 is
 therefore intentionally unavailable in the resulting minimal runtime; no claim
 that SQLite itself was patched is made. The immutable image must pass the entire
