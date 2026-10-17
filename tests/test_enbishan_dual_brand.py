@@ -27,7 +27,7 @@ def dual(request, monkeypatch, safe_test_environment):
             c.execute('INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES(%s,%s,%s,%s,%s,%s)',
                 ('dual-'+brand, brand, 'TEST ONLY '+brand, 'TEST', 1000 if brand=='kps' else 2000,
                  db.json({'enabled': True, 'source_verified': True})))
-        accounts = [('dual-owner','owner','kps'),('dual-manager','delivery_manager','kps'),('dual-driver','driver','kps'),
+        accounts = [('dual-owner','owner','kps'),('dual-accountant','admin','kps'),('dual-manager','delivery_manager','kps'),('dual-driver','driver','kps'),
                     ('dual-kps-customer','customer','kps'),('dual-enbishan-customer','customer','enbishan')]
         for identifier, role, brand in accounts:
             c.execute('INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,%s,%s,%s,%s)',
@@ -35,6 +35,9 @@ def dual(request, monkeypatch, safe_test_environment):
             if role != 'customer':
                 c.execute('INSERT INTO staff_brand_memberships(user_id,brand_id,branch_ids,granted_by) VALUES(%s,%s,%s,%s)',
                           (identifier, 'enbishan', db.json(['enbishan-test-1','enbishan-test-2']), 'dual-owner'))
+            if role == 'admin':
+                c.execute('UPDATE users SET permissions=%s WHERE id=%s',
+                          (db.json(['accounting_reports','accounting_review']),identifier))
     credentials = {}
     def actor(name, brand=None):
         identifier = 'dual-'+name
@@ -67,7 +70,7 @@ def dual(request, monkeypatch, safe_test_environment):
         branch = 'kps-branch-1' if brand=='kps' else 'enbishan-test-1'
         with db.tx() as c:
             c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,'delivery','ready','pending','cash',1000,0,1000,%s,%s)",
-                (identifier,brand,branch,'dual-'+brand+'-customer',db.json({'items':[],'branch_name':branch}),db.json({'name':'SYNTHETIC'})))
+                (identifier,brand,branch,'dual-'+brand+'-customer',db.json({'items':[],'branch_name':branch,'delivery_workflow':'manager_dispatch'}),db.json({'name':'SYNTHETIC'})))
         return identifier
     return client, actor, post, shifts, order
 
@@ -214,21 +217,40 @@ def test_current_verified_checkout_order_history_and_replay_for_both_brands(dual
 
 
 @pytest.mark.postgres
-def test_collections_settlements_and_database_reject_cross_brand_cash(dual):
+@pytest.mark.parametrize('method',['cash','card','split'])
+def test_collections_settlements_and_database_reject_cross_brand_cash(dual,method):
     import psycopg
     _, actor, post, shifts, order=dual
     ks=shifts('kps');es=shifts('enbishan')
     ko,eo=order('kps'),order('enbishan')
     for brand,oid,shift in [('kps',ko,ks[1]),('enbishan',eo,es[1])]:
         result=post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':shift},brand)
-        with db.tx() as c:c.execute("UPDATE driver_tasks SET status='picked_up' WHERE id=%s",(result['task']['id'],))
-        paid=post('driver','/api/orders/'+oid+'/collect',{'method':'cash','amount_halalas':1000,'tendered_halalas':2000},brand)
-        assert paid['change_halalas']==1000
+        import base64,io
+        from PIL import Image
+        task=result['task']['id']
+        post('driver','/api/tasks/'+task+'/transition',{'status':'accepted'},brand)
+        image=io.BytesIO();Image.new('RGB',(12,12),'white').save(image,'PNG')
+        def photo(stage):
+            return post('driver','/api/tasks/'+task+'/photos',{'stage':stage,'content_type':'image/png',
+                'data_base64':base64.b64encode(image.getvalue()).decode()},brand)['id']
+        post('driver','/api/tasks/'+task+'/transition',{'status':'picked_up','photo_id':photo('picked_up')},brand)
+        payment={'method':method,'amount_halalas':1000}
+        if method=='cash':payment['tendered_halalas']=2000
+        if method=='card':payment['reference']='SYNTHETIC-CARD'
+        if method=='split':payment.update(cash_halalas=400,card_halalas=600,tendered_halalas=500,reference='SYNTHETIC-SPLIT')
+        paid=post('driver','/api/orders/'+oid+'/collect',payment,brand)
+        assert paid['change_halalas']=={'cash':1000,'card':0,'split':100}[method]
+        post('driver','/api/tasks/'+task+'/transition',{'status':'delivered','photo_id':photo('delivered'),'proof':'SYNTHETIC handover'},brand)
         with db.tx() as c:
             rows=c.execute('SELECT s.brand_id,ce.amount_halalas FROM custody_events ce JOIN shifts s ON s.id=ce.shift_id WHERE ce.shift_id=%s',(shift,)).fetchall()
-            assert rows and all(r['brand_id']==brand for r in rows)
+            assert all(r['brand_id']==brand for r in rows)
+            assert sum(r['amount_halalas'] for r in rows)=={'cash':1000,'card':0,'split':400}[method]
         report=actor('owner',brand).get('/api/dashboard')
         assert report.status_code==200,report.text
+        accounting=actor('accountant',brand).get('/api/accounting/reports')
+        assert accounting.status_code==200,accounting.text
+        assert accounting.json()['totals']['cash']=={'cash':1000,'card':0,'split':400}[method]
+        assert accounting.json()['totals']['card']=={'cash':0,'card':1000,'split':600}[method]
     with pytest.raises(psycopg.Error):
         with db.tx() as c:
             c.execute("INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,recipient_user_id,amount_halalas,reference,created_by) VALUES(%s,%s,%s,'dual-manager',1,'SYNTHETIC','dual-driver')",(uuid4().hex,ks[1],es[0]))
@@ -350,3 +372,17 @@ def test_first_staff_login_returns_selected_brand_and_same_identity(dual):
     assert client.get('/api/session').json()['user']['brand_id']=='enbishan'
     client.headers['X-Operations-Brand']='kps'
     assert client.get('/api/session').json()['user']['id']=='dual-manager'
+
+
+@pytest.mark.postgres
+def test_shared_administration_preserves_accountant_role_and_permissions(dual):
+    _,actor,post,_,_=dual
+    for brand in ['kps','enbishan']:
+        session=actor('accountant',brand).get('/api/session')
+        assert session.status_code==200,session.text
+        user=session.json()['user']
+        assert user['id']=='dual-accountant' and user['role']=='admin' and user['brand_id']==brand
+        assert actor('accountant',brand).get('/api/accounting/reports').status_code==200
+        assert actor('accountant',brand).get('/api/multibrand/pool').status_code==403
+        post('accountant','/api/multibrand/memberships',{'user_id':'dual-driver','brand_id':'enbishan',
+             'branch_ids':['enbishan-test-1']},brand,method='put',status=403)
