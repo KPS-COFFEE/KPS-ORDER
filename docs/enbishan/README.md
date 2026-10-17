@@ -66,9 +66,25 @@ FAIL**. This run remains FAIL; it is not a release certificate. Local Chromium
 could not launch because the execution sandbox prohibits its singleton socket;
 actual mobile browser execution was therefore performed in GitHub.
 
-Later local dual-brand execution added independent closures/reports and
-pre-connection isolation rejection: **14 PASS**. Additional final denial,
-concurrency and driver-mobile scenarios require the final exact-SHA run.
+Final verified application/test revision:
+`2732fc955112571fd1e17a2f742b873fd543efd6`.
+[Run 39001158500](https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39001158500)
+completed successfully: **25 dual-brand/security/mobile PASS + 185 KPS
+regression PASS = 210 PASS**, zero failures/errors/skips. This includes actual
+Arabic/English and RTL/LTR assertions, shared accountant access, concurrent
+orders, separate closures/reports, actual photo-backed task transitions and
+cash/card/split collection for both brands. The JUnit and screenshots artifact
+is `enbishan-dual-brand-2732fc955112571fd1e17a2f742b873fd543efd6`.
+
+Public production `/health` was read without mutation: HTTP 200, revision
+`ca67811e94eb5d0605355bc3253640209a8a6248`. GitHub comparison verifies that it
+is an ancestor of the source baseline (32 commits ahead, zero behind). The KPS
+launch branch remained at `8b7fdb8`; it was not changed by this stream. Passing
+isolated tests do not certify the live deployment or its hosting capacity.
+
+**READY FOR OWNER REVIEW: isolated synthetic-data development only.** Real
+Enbishan launch data remains outstanding as listed above. No production
+integration is authorized or performed. See [Arabic verification](VERIFICATION.md).
 
 ## Reproduce
 
