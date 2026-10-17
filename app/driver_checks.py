@@ -66,6 +66,9 @@ def row(c,user,rid):
     d=c.execute('SELECT * FROM users WHERE id=%s',(r['driver_id'],)).fetchone()
     if not d or (user['role']=='driver' and d['id']!=user['id']) or (user['role']!='driver' and not fleet_management.driver_scope(user,d)):
         raise db.error(404,'CHECK_SCOPE','الطلب خارج النطاق / Request outside scope')
+    s=c.execute('SELECT branch_ids FROM shifts WHERE id=%s',(r['shift_id'],)).fetchone()
+    if user['role']!='owner' and (not s or not s['branch_ids'] or not set(s['branch_ids'])<=set(user['branch_ids'])):
+        raise db.error(404,'CHECK_SCOPE','فروع الطلب خارج النطاق / Request branches outside scope')
     return r
 
 @router.get('')
@@ -176,7 +179,7 @@ def decide(rid:str,body:Decision,request:Request,user=Depends(auth.current_user)
                     if body.value is not None:raise db.error(422,'CHECK_FUEL','اعتمد مستوى السائق كما هو / Approve the reported fuel level')
                     log=dict(s['vehicle_log']);value=r['response']['value']
                     if (log.get('fuel_readiness') or {}).get('recorded_at','')>r['responded_at'].isoformat():raise db.error(409,'CHECK_STALE','تم تحديث الوقود بعد الرد؛ أرسل طلبًا جديدًا / Fuel was updated after this response')
-                    log['fuel_readiness']={'fuel_percent':value,'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat(),'recorded_by':user['id'],
+                    log['fuel_readiness']={'fuel_percent':value if value else None,'fuel_level':'below_quarter' if value==0 else 'reported_percent','recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat(),'recorded_by':user['id'],
                         'driver_check_id':rid,'temporary_exception':value<100,'reason':body.reason or 'temporary_owner_authorized_review','reported_at':r['responded_at'].isoformat()}
                     log['awaiting_refuel']=False
                     c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),s['id']))

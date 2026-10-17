@@ -95,3 +95,28 @@ def test_older_reply_cannot_overwrite_newer_reading_or_branch_scope(ops):
     with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-fawzi'")
     assert not actor('fawzi').get('/api/driver-checks').json()['requests']
     post('fawzi',f'/api/driver-checks/{rid}/decision',{'decision':'approved'},status=404)
+
+def test_request_readings_survive_isolated_backup_restore(ops):
+    import os
+    from uuid import uuid4
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive,restore_archive
+    actor,post,sid=setup(ops);rid=request(post)
+    post('driver',f'/api/driver-checks/{rid}/reply',{'value':1010})
+    post('fawzi',f'/api/driver-checks/{rid}/decision',{'decision':'approved'})
+    request(post,'fuel')
+    with db.tx() as c:
+        contents,manifest=build_archive(c,full=True)
+        rows=c.execute('SELECT * FROM driver_check_requests ORDER BY id').fetchall()
+    target_schema='kps_restore_'+uuid4().hex;url=os.environ['TEST_DATABASE_URL']
+    try:
+        result=restore_archive(contents,target_url=url,target_schema=target_schema)
+        assert result['verified'] and result['counts']==manifest['counts']
+        with psycopg.connect(url,row_factory=dict_row) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target_schema)))
+            assert c.execute('SELECT * FROM driver_check_requests ORDER BY id').fetchall()==rows
+    finally:
+        with psycopg.connect(url,autocommit=True) as c:
+            c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(target_schema)))

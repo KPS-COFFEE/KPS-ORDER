@@ -59,7 +59,8 @@ def perform(c,user,vid,body):
         if v:
             profile={k:val for k,val in v['details'].items() if k in vehicle_profile.FIELDS}
             profile['plate']=v['plate']
-            last=c.execute("SELECT max((coalesce(x.after_metrics,l.metrics)->>'end_odometer')::numeric) km FROM fleet_operating_segments l LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) x ON true WHERE l.vehicle_id=%s",(v['id'],)).fetchone()['km']
+            checkpoint=v['details'].get('odometer_checkpoint') or {}
+            last=c.execute("SELECT max((coalesce(x.after_metrics,l.metrics)->>'end_odometer')::numeric) km FROM fleet_operating_segments l LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) x ON true WHERE l.vehicle_id=%s AND (%s::timestamptz IS NULL OR l.returned_at>%s::timestamptz)",(v['id'],checkpoint.get('recorded_at'),checkpoint.get('recorded_at'))).fetchone()['km']
             if last is not None:profile['odometer_km']=max(int(last),profile.get('odometer_km',0) or 0)
         else:profile={}
         c.execute('UPDATE users SET vehicle=%s,updated_at=now() WHERE id=%s',(db.json(profile),d['id']))
