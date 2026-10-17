@@ -45,7 +45,7 @@ def test_internal_reason_with_same_generic_public_response(monkeypatch,mode,expe
     monkeypatch.setattr(employee_sms,'provider_ready',lambda *a:'tawked')
     user={'id':'synthetic-user','role':'owner'}
     monkeypatch.setattr(employee_sms,'_eligible',lambda *a:None if mode=='unknown' else user)
-    monkeypatch.setattr(employee_sms.sms_rollout,'employee_sms_enabled',lambda u:mode!='rollout')
+    monkeypatch.setattr(employee_sms.sms_rollout,'employee_sms_enabled',lambda u,*,conn:mode!='rollout')
     monkeypatch.setattr(employee_sms.portals,'enabled',lambda:mode=='portal')
     calls=[]
     def fail(*args):

@@ -19,7 +19,7 @@ pytestmark = pytest.mark.postgres
 
 def paired(ops):
     actor, post, _, _ = ops
-    pair = post('manager', '/api/printing/devices',
+    pair = post('owner', '/api/printing/devices',
                 {'branch_id': 'ops-branch', 'label': 'Isolated print hardening'})
     response = actor('customer').post('/api/printing/bridge/pair', json={
         'pairing_code': pair['pairing_code'], 'printer_name': 'Synthetic isolated spooler'})
@@ -51,7 +51,7 @@ def outcome(call):
 def test_initial_print_concurrent_different_event_keys_has_one_effect(ops):
     _, _, order, _ = ops
     device_id, _, user, _ = paired(ops)
-    oid = order('pickup')
+    oid = order('delivery')
     body = branch_printing.JobBody(device_id=device_id, kind='both')
     results = together(8, lambda index: outcome(lambda: branch_printing.enqueue(
         oid, body, user=user, idem='print-distinct-event-' + str(index))))
@@ -70,7 +70,7 @@ def test_initial_print_concurrent_different_event_keys_has_one_effect(ops):
 def test_concurrent_request_and_claim_replay_have_one_durable_job(ops):
     _, _, order, _ = ops
     device_id, _, user, device = paired(ops)
-    oid = order('pickup')
+    oid = order('delivery')
     body = branch_printing.JobBody(device_id=device_id)
     results = together(8, lambda index: branch_printing.enqueue(
         oid, body, user=user, idem='print-concurrent-stable-request'))
@@ -88,7 +88,7 @@ def test_concurrent_request_and_claim_replay_have_one_durable_job(ops):
 def test_lost_claim_or_ack_response_never_dispatches_again(ops):
     actor, post, order, _ = ops
     device_id, token, _, device = paired(ops)
-    oid = order('pickup')
+    oid = order('delivery')
     job = post('manager', '/api/printing/orders/' + oid, {'device_id': device_id})
     headers = {'Authorization': 'Bearer ' + token}
     # Simulate the claim response being lost: no automatic queue retry is safe.
@@ -112,7 +112,7 @@ def test_lost_claim_or_ack_response_never_dispatches_again(ops):
 def test_uncertain_failure_requires_authorized_reason_and_replays_reprint(ops):
     actor, post, order, _ = ops
     device_id, token, _, device = paired(ops)
-    oid = order('pickup')
+    oid = order('delivery')
     path = '/api/printing/orders/' + oid
     original = post('manager', path, {'device_id': device_id})
     assert branch_printing.claim(device=device)['job']['id'] == original['id']
@@ -150,7 +150,7 @@ def test_other_branch_bridge_cannot_claim_or_ack_order_print(ops):
     other = actor('customer').post('/api/printing/bridge/pair', json={
         'pairing_code': pair['pairing_code'], 'printer_name': 'Synthetic other branch'}).json()
     approve_test_device(actor, post, pair['id'], other['token'], who='owner')
-    oid = order('pickup')
+    oid = order('delivery')
     job = post('manager', '/api/printing/orders/' + oid, {'device_id': device_id})
     headers = {'Authorization': 'Bearer ' + other['token']}
     assert actor('customer').post('/api/printing/bridge/next', json={}, headers=headers).json()['job'] is None
@@ -168,7 +168,8 @@ def test_khaliya_entire_order_prints_execution_branch_with_unchanged_total(clien
         prepare(conn)
         conn.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,phone) "
                      "VALUES('print-routing-customer','TEST','customer','kps','[]','+966500000001'),"
-                     "('print-routing-manager','TEST','delivery_manager','kps',%s,NULL)",
+                     "('print-routing-manager','TEST','delivery_manager','kps',%s,NULL),"
+                     "('print-routing-owner','TEST','owner','kps','[]',NULL)",
                      (db.json(['kps-branch-1', 'kps-branch-2']),))
         conn.execute("INSERT INTO shifts(id,user_id,brand_id,kind,branch_ids,status) "
                      "VALUES('print-routing-duty','print-routing-manager','kps','manager',%s,'open')",
@@ -183,7 +184,7 @@ def test_khaliya_entire_order_prints_execution_branch_with_unchanged_total(clien
     assert response.status_code == 200, response.text
     public = response.json()['order']
     oid = public['id']
-    actor('print-routing-manager')
+    actor('print-routing-owner')
     pair = client.post('/api/printing/devices', json={
         'branch_id': 'kps-branch-2', 'label': 'Khaliya fulfillment'}).json()
     response = client.post('/api/printing/bridge/pair', json={
@@ -196,6 +197,7 @@ def test_khaliya_entire_order_prints_execution_branch_with_unchanged_total(clien
     assert client.post('/api/printing/bridge/jobs/' + test['id'] + '/ack', json={'status': 'submitted'}, headers=headers).status_code == 200
     assert client.post('/api/printing/devices/' + pair['id'] + '/approve',
         json={'job_id': test['id'], 'paper_confirmed': True}).status_code == 200
+    actor('print-routing-manager')
     response = client.post('/api/printing/orders/' + oid, json={
         'device_id': pair['id'], 'kind': 'both', 'language': 'ar'},
         headers={'Idempotency-Key': 'khaliya-fulfillment-both-print'})

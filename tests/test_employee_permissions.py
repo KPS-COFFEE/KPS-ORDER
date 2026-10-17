@@ -48,7 +48,7 @@ def _save(client, user, enabled, expected=None):
     ('driver', 'reports_view', '/api/reports'),
     ('driver', 'vehicle_faults_report', '/api/vehicle-maintenance/options'),
     ('delivery_manager', 'orders_view', '/api/orders'),
-    ('delivery_manager', 'drivers_view', '/api/identity/staff'),
+    ('delivery_manager', 'drivers_view', '/api/operations/drivers'),
     ('delivery_manager', 'chat_view', '/api/conversations'),
     ('delivery_staff', 'dashboard_view', '/api/dashboard'),
     ('branch_manager', 'orders_view', '/api/orders'),

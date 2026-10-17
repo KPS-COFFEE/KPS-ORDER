@@ -28,6 +28,9 @@ def test_full_gate_manager_only_exact_readings_and_single_use(ops,reason):
     opening['vehicle_inspection']['fuel_percent']=65
     sid=post('driver','/api/shifts',opening,key='fuel-open-once')['shift']['id']
     assert post('driver','/api/shifts',opening,key='fuel-open-once')['shift']['id']==sid
+    # The fuel scenario starts closing only after explicit early-close approval.
+    early=post('driver','/api/driver-closure/'+sid+'/request',{'reason':'Synthetic end-of-fuel scenario'})
+    post('manager','/api/driver-closure/'+sid+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'Approved synthetic closure'})
     post('driver','/api/shifts/'+sid+'/closing')
     close={'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':inspection(1025,50),'handover':{'recipient_user_id':'ops-manager','to_shift_id':mid,'reference':'FUEL-TEST'}}
     post('driver','/api/shifts/'+sid+'/submit',close,status=409)
@@ -111,7 +114,12 @@ def test_low_fuel_opens_shift_but_blocks_all_assignment_until_ready(ops,exceptio
     mid=post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
     body={'kind':'driver','manager_shift_id':mid,'vehicle_inspection':inspection(1000,40)}
     s=post('driver','/api/shifts',body,key='open-for-refuel')['shift'];sid=s['id']
-    assert s['status']=='open' and not s['available'] and s['vehicle_log']['awaiting_refuel']
+    # available is the independent manager pause flag, not fuel readiness.
+    assert s['status']=='open' and s['available'] is True and s['vehicle_log']['awaiting_refuel']
+    roster=actor('manager').get('/api/operations/drivers').json()['drivers']
+    driver=next(row for row in roster if row['id']=='ops-driver')
+    assert driver['availability']=='waiting_for_fuel' and driver['assignment_eligible'] is False
+    assert driver['eligible_branch_ids']==[]
     assert post('driver','/api/shifts',body,key='open-for-refuel')['shift']['id']==sid
     oid=order()
     post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':sid},status=409)

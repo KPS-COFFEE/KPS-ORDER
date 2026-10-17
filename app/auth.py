@@ -90,9 +90,9 @@ def verify_password(password: str, encoded: str | None) -> bool:
         return False
 
 
-def public_user(user: dict) -> dict:
+def public_user(user: dict, conn=None) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials')}
-    output['employee_sms_email_retired'] = staff_email_retired(user.get('brand_id','kps'))
+    output['employee_sms_email_retired'] = staff_email_retired(user.get('brand_id','kps'), conn=conn)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
     return output
@@ -116,9 +116,9 @@ def check_origin(request: Request):
         raise db.error(403, 'ORIGIN_REJECTED', 'مصدر الطلب غير مسموح.')
 
 
-def context_cookies_enabled():
+def context_cookies_enabled(conn=None):
     from . import sms_rollout
-    return sms_rollout.context_cookies_enabled()
+    return sms_rollout.context_cookies_enabled(conn)
 
 
 def session_context(request):
@@ -146,7 +146,7 @@ def context_cookie_names(context):
 
 
 def _find_session(conn, request: Request):
-    context=session_context(request) if context_cookies_enabled() else None
+    context=session_context(request) if context_cookies_enabled(conn) else None
     cookie_name,csrf_name=context_cookie_names(context) if context else (COOKIE,CSRF_COOKIE)
     token=request.cookies.get(cookie_name)
     # A context tombstone deliberately prevents reviving an older legacy login.
@@ -244,11 +244,11 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
                  'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END,CASE WHEN %s THEN now() ELSE NULL END)',
                  (db.new_id('session_'), token_hash(token), token_hash(csrf), user['id'], expiry,
                   bool(owner_step_up and user['role'] == 'owner'), bool(customer_verified and user['role'] == 'customer')))
-    cookie_name,csrf_name=context_cookie_names('customer' if user['role']=='customer' else 'work') if context_cookies_enabled() else (COOKIE,CSRF_COOKIE)
+    cookie_name,csrf_name=context_cookie_names('customer' if user['role']=='customer' else 'work') if context_cookies_enabled(conn) else (COOKIE,CSRF_COOKIE)
     response.set_cookie(cookie_name, token, max_age=hours * 3600, httponly=True, secure=secure_cookie(), samesite='strict', path='/')
     response.set_cookie(csrf_name, csrf, max_age=hours * 3600, httponly=False, secure=secure_cookie(), samesite='strict', path='/')
     db.audit(conn, user['id'], 'session.created', 'user', user['id'])
-    return {'user': public_user(user), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
+    return {'user': public_user(user, conn=conn), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
 
 
 @router.get('/session')
@@ -921,11 +921,11 @@ class EmailRequestBody(BaseModel):
     purpose:Literal['customer_link','email_login','staff_login','owner_link','recovery']='email_login'
 
 
-def staff_email_retired(brand='kps'):
+def staff_email_retired(brand='kps', conn=None):
     # Retire only after an explicit rollout decision with the SMS path enabled.
     # Neither switch alone may cut off the existing owner recovery path.
     from . import sms_rollout
-    return sms_rollout.email_retired(brand)
+    return sms_rollout.email_retired(brand, conn=conn)
 
 
 @router.post('/identity/email/request')

@@ -127,7 +127,7 @@ def request_sms(body: EmployeeSMSRequest, request: Request):
         user = _eligible(conn,body.brand_id,phone)
         outcome = 'eligible' if user else 'account_ineligible_or_ambiguous'
         diagnostic_user_id = user['id'] if user else None
-        if user and not sms_rollout.employee_sms_enabled(user):
+        if user and not sms_rollout.employee_sms_enabled(user, conn=conn):
             outcome = 'rollout_denied'
             user=None
         if user and portals.enabled() and user['role'] not in portals.PORTAL_ROLES.get(request.url.hostname,frozenset()):

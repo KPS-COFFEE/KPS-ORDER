@@ -30,7 +30,7 @@ DEFINITIONS = [
     ('task_photos', 'رفع صور إثبات التسليم', 'Upload delivery evidence photos', 'delivery', {'driver'}),
     ('operational_alerts', 'عرض تنبيهات التشغيل', 'View operational alerts', 'delivery', DELIVERY),
     ('drivers_view', 'عرض السائقين وبياناتهم', 'View drivers and profiles', 'staff', DELIVERY),
-    ('drivers_manage', 'دعوة السائقين وتعديل بياناتهم وفروعهم', 'Invite drivers and edit their profiles and branches', 'staff', MANAGER),
+    ('drivers_manage', 'دعوة السائقين وتعديل بياناتهم وفروعهم', 'Invite drivers and edit their profiles and branches', 'staff', set()),
     ('drivers_availability', 'تفعيل وإيقاف استقبال السائق للمهام', 'Control driver task availability', 'staff', MANAGER),
     ('driver_terminal', 'إدارة جهاز الشبكة المسند للسائق', 'Manage assigned driver payment terminal', 'staff', MANAGER),
     ('driver_terminal_view', 'عرض بيانات جهاز الشبكة المسند', 'View assigned payment terminal', 'cash', MANAGER | {'driver'}),
@@ -41,7 +41,7 @@ DEFINITIONS = [
     ('shifts_delegate_close', 'إقفال شفت السائق بالنيابة مع سبب', 'Close a driver shift on their behalf with a reason', 'shifts', MANAGER),
     ('shifts_handover', 'تسليم واستلام مسؤولية مناوبة المدير', 'Hand over or receive manager shift responsibility', 'shifts', MANAGER),
     ('payments_collect', 'تسجيل تحصيل الكاش والشبكة', 'Record cash and card collection', 'cash', MANAGER | {'driver', 'branch_manager'}),
-    ('refunds_manage', 'اعتماد وتسجيل استرداد الزبون', 'Authorize and record customer refunds', 'cash', MANAGER),
+    ('refunds_manage', 'اعتماد وتسجيل استرداد الزبون', 'Authorize and record customer refunds', 'cash', set()),
     ('custody_view', 'عرض استلام وتسليم النقد', 'View cash handovers', 'cash', FIELD),
     ('custody_transfer', 'تسجيل تسليم النقد وتأكيد الاستلام', 'Record cash handover and confirm receipt', 'cash', MANAGER | {'driver', 'branch_manager'}),
     ('reports_view', 'عرض تقارير التقفيلة وطباعتها وتصديرها', 'View, print and export closure reports', 'reports', FIELD),
@@ -51,10 +51,11 @@ DEFINITIONS = [
     ('support_manage', 'إدارة تذاكر الشكاوى والمطالبات والتعويض', 'Manage complaint and compensation tickets', 'support', MANAGER),
     ('branch_availability', 'إيقاف واستئناف توفر الصنف بالفرع', 'Pause or resume branch item availability', 'configuration', {'branch_manager'}),
     ('vehicle_refuel', 'تسجيل تعبئة الوقود أثناء الشفت', 'Record shift refuelling', 'vehicles', MANAGER | {'driver'}),
-    ('vehicle_register', 'تسجيل مركبتك أول مرة', 'Register your vehicle for the first time', 'vehicles', {'driver'}),
+    ('vehicle_register', 'تسجيل مركبتك أول مرة', 'Register your vehicle for the first time', 'vehicles', set()),
     ('vehicle_faults_report', 'رفع بلاغ عطل المركبة ومتابعته', 'Report and view your vehicle faults', 'vehicles', {'driver'}),
     ('vehicle_maintenance_manage', 'إدارة السيارات وسجل التشغيل والأعطال والصيانة', 'Manage vehicles, operating logs and maintenance', 'vehicles', {'admin'}),
-    ('branch_printers_manage', 'إدارة الطابعات وطباعة وإعادة طباعة الطلبات', 'Manage printers, print and reprint orders', 'configuration', {'admin', 'delivery_manager'}),
+    ('branch_printers_manage', 'إدارة الطابعات', 'Manage printers', 'configuration', {'admin'}),
+    ('orders_print', 'طباعة وإعادة طباعة الطلبات', 'Print and reprint orders', 'orders', MANAGER),
     ('accounting_reports', 'تقارير المحاسبة والتصدير', 'Accounting reports and exports', 'reports', {'admin'}),
     ('accounting_review', 'مراجعة العجز وإقفال الشهر وتسجيل الملاحظات', 'Review variances, close months and record incidents', 'reports', {'admin'}),
     ('accounting_cases_followup', 'متابعة ملاحظات المحاسبة والمركبات', 'Follow up accounting and vehicle incidents', 'reports', {'admin', 'delivery_manager'}),
@@ -146,10 +147,11 @@ ROUTES = {
         'vehicles', 'options', 'report', 'vehicle', 'export', 'detail', 'correct')},
     'branch_printing': {name: 'branch_printers_manage' for name in (
         'pair_device', 'devices', 'guided_setup', 'revoke', 'test_printer', 'approve_printer',
-        'enqueue', 'jobs', 'download_bridge')},
+        'jobs', 'download_bridge')},
     'accounting': {name: {'delivery_manager': 'accounting_cases_followup'} for name in (
         'options', 'cases', 'detail', 'followup', 'upload', 'download')},
 }
+ROUTES['branch_printing'].update({'enqueue': 'orders_print', 'operational_devices': 'orders_print'})
 
 
 def required_for(endpoint, role):

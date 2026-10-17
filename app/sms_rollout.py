@@ -22,12 +22,12 @@ def _read_policy(brand='kps'):
         return _policy(conn, brand)
 
 
-def employee_sms_enabled(user=None, *, brand='kps', phone=None, request=None):
+def employee_sms_enabled(user=None, *, brand='kps', phone=None, request=None, conn=None):
     if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true':
         return True
     if user:
         brand = user.get('brand_id', brand)
-    policy = _read_policy(brand)
+    policy = _policy(conn, brand) if conn is not None else _read_policy(brand)
     if policy.get('mode') == 'active':
         return True
     if policy.get('mode') != 'pilot' or not policy.get('pilot_user_id'):
@@ -48,20 +48,24 @@ def employee_sms_enabled(user=None, *, brand='kps', phone=None, request=None):
     return False
 
 
-def email_retired(brand='kps'):
+def email_retired(brand='kps', conn=None):
     if brand != 'kps':
         return False
     if os.getenv('EMPLOYEE_SMS_EMAIL_RETIRED') == 'true' and os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true':
         return True
-    policy = _read_policy(brand)
+    policy = _policy(conn, brand) if conn is not None else _read_policy(brand)
     return policy.get('mode') == 'active' and policy.get('email_retired') is True
 
 
-def context_cookies_enabled():
+def context_cookies_enabled(conn=None):
     override = os.getenv('SESSION_CONTEXT_COOKIES_ENABLED')
     if override is not None:
         return override == 'true'
-    return _read_policy().get('mode') in {'pilot', 'active'}
+    # Authentication already owns a pooled connection. Reuse that transaction
+    # instead of holding one slot while waiting for a second policy connection.
+    # The policy remains a fresh database read, never a process-wide cache.
+    policy = _policy(conn) if conn is not None else _read_policy()
+    return policy.get('mode') in {'pilot', 'active'}
 
 
 def record_employee_proof(conn, user, challenge_id):

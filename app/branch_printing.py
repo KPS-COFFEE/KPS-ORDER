@@ -18,7 +18,7 @@ operators = auth.require_roles('owner', 'delivery_manager')
 
 
 def can_manage_printers(user):
-    return user['role'] in {'owner','delivery_manager'} or auth.has_permission(user,'branch_printers_manage')
+    return user['role'] == 'owner' or (user['role'] == 'admin' and auth.has_permission(user,'branch_printers_manage'))
 
 
 def printer_admin(user=Depends(auth.current_user)):
@@ -120,6 +120,25 @@ def devices(user=Depends(printer_admin), order_id: str | None = None):
             visible=[r for r in visible if same_print_city(source,branches.get(r['branch_id'],{}))]
         for row in visible:
             row['connection_status']=connection_status(row)
+        return {'devices':visible}
+
+
+@router.get('/operational-devices')
+def operational_devices(order_id: str, user=Depends(operators)):
+    with db.tx() as conn:
+        order=conn.execute('SELECT * FROM orders WHERE id=%s AND brand_id=%s',
+                           (order_id,user['brand_id'])).fetchone()
+        if not order or not auth.can_access_order(user,order,conn):
+            raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود ضمن صلاحياتك.')
+        source=scope(conn,user,order['branch_id'])
+        rows=conn.execute('SELECT d.id,d.branch_id,d.label,d.printer_name,d.paper_mm,b.city '
+                          'FROM branch_print_devices d JOIN branches b ON b.id=d.branch_id '
+                          'WHERE d.brand_id=%s AND d.revoked_at IS NULL AND d.approved_at IS NOT NULL '
+                          'AND d.token_hash IS NOT NULL ORDER BY d.created_at DESC',
+                          (user['brand_id'],)).fetchall()
+        visible=[{k:v for k,v in row.items() if k!='city'} for row in rows
+                 if (user['role']=='owner' or row['branch_id'] in user.get('branch_ids',[]))
+                 and same_print_city(source,row)]
         return {'devices':visible}
 
 
@@ -306,7 +325,8 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
     with db.tx() as conn:
         # Recheck authorization before replaying any saved result.
         order=conn.execute('SELECT * FROM orders WHERE id=%s AND brand_id=%s FOR UPDATE',(order_id,user['brand_id'])).fetchone()
-        if not order:raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود.')
+        if not order or not auth.can_access_order(user,order,conn):
+            raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود ضمن صلاحياتك.')
         branch=scope(conn,user,order['branch_id'])
         device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(body.device_id,user['brand_id'])).fetchone()
         if not device:raise db.error(409,'PRINT_NOT_PAIRED','اربط طابعة هذا الفرع أولًا.')

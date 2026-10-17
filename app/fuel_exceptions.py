@@ -67,6 +67,13 @@ def listing(user=Depends(auth.current_user)):
                 from fastapi import HTTPException
                 if isinstance(exc,HTTPException):continue
                 raise
+            _,manager,vehicle=scope(c,user,r['driver_id'],r['manager_shift_id'],r['shift_id'])
+            shift=c.execute('SELECT status FROM shifts WHERE id=%s',(r['shift_id'],)).fetchone() if r['shift_id'] else None
+            r['state_reason']=('vehicle_changed' if vehicle!=r['vehicle'] else
+                'manager_shift_ended' if manager['status'] not in (('open',) if r['phase']=='start' else ('open','closing')) else
+                'driver_shift_ended' if shift and shift['status'] not in ('open','closing') else None)
+            r['ui_status']='stale' if r['state_reason'] else r['status']
+            r['requires_resubmission']=r['ui_status'] in ('stale','rejected')
             visible.append(r)
         return {'requests':safe(visible)}
 
@@ -125,7 +132,7 @@ def confirm_ready(sid:str,body:ReadyFuel,request:Request,user=Depends(auth.curre
             consume(c,user,s,body,'activation',log.get('vehicle') or {})
             from .shift_vehicle import stamp
             log['fuel_readiness']=stamp(c,user,body);log['awaiting_refuel']=False
-            c.execute('UPDATE shifts SET vehicle_log=%s,available=true WHERE id=%s',(db.json(log),sid))
+            c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
             db.audit(c,user['id'],'fuel.ready','shift',sid,log['fuel_readiness'])
-            return {'shift_id':sid,'available':True}
+            return {'shift_id':sid,'available':s['available']}
         return mutate(c,user,request,'fuel.ready:'+sid,body.model_dump(),perform)
