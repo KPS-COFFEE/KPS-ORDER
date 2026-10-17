@@ -4,7 +4,14 @@ import pytest
 from fastapi import HTTPException
 from app import auth, db, employee_sms, sms_rollout, sms_verification
 from tests.test_core import _authenticate, _make_user
-from tests.test_owner_phone_link import setup as owner_setup
+from tests.sms_policy_helpers import sms_step_up, sms_login
+
+
+def owner_setup(client, monkeypatch):
+    user = _make_user('owner')
+    token, _ = _authenticate(client, user)
+    sms_step_up(client, user, monkeypatch, phone='+966507778898')
+    return user, token
 
 
 def setup(client,monkeypatch):
@@ -14,6 +21,7 @@ def setup(client,monkeypatch):
     response=client.post('/api/identity/owner-phone/request',json={'phone':'0507778899'})
     assert response.status_code==200,response.text
     assert client.post('/api/identity/owner-phone/verify',json={'challenge_id':response.json()['challenge_id'],'code':'0123'}).status_code==200
+    sms_step_up(client, user, monkeypatch, phone='+966507778899')
     return user,token
 
 
@@ -45,16 +53,16 @@ def test_pilot_only_owner_preserves_email_and_no_automatic_sms(client,monkeypatc
     user,_=setup(client,monkeypatch)
     sends=[]
     monkeypatch.setattr(sms_verification,'start',lambda *a:sends.append(a))
-    assert pilot(client)=={'mode':'pilot','email_retired':False,'sms_sent':False}
+    assert pilot(client)=={'mode':'pilot','email_retired':True,'sms_sent':False}
     assert sends==[]
     assert sms_rollout.employee_sms_enabled(user)
-    assert not sms_rollout.employee_sms_enabled(phone='+966507778899')
+    assert sms_rollout.employee_sms_enabled(phone='+966507778899')
     other=_make_user('driver')
-    assert not sms_rollout.employee_sms_enabled(other)
-    assert not sms_rollout.employee_sms_enabled(phone='+966500000000')
-    assert not sms_rollout.email_retired()
+    assert sms_rollout.employee_sms_enabled(other)
+    assert sms_rollout.employee_sms_enabled(phone='+966500000000')
+    assert sms_rollout.email_retired()
     public=client.get('/api/identity/staff/login-policy').json()
-    assert public=={'channel':'email','code_length':6}
+    assert public=={'channel':'sms','code_length':4,'sms_required':True,'password_login_allowed':False,'password_step_up_allowed':False}
     assert user['id'] not in str(public)
 
 
@@ -67,7 +75,7 @@ def test_pilot_requires_linked_proof_fresh_stepup_and_csrf(client,monkeypatch):
     assert client.post('/api/identity/owner/sms/rollout/pilot').status_code==403
     client.headers.pop('X-CSRF-Token')
     assert client.post('/api/identity/owner/sms/rollout/pilot').status_code==403
-    assert not sms_rollout.employee_sms_enabled(user)
+    assert sms_rollout.employee_sms_enabled(user)  # Failed pilot cannot reopen password/email.
 
 
 @pytest.mark.postgres
@@ -85,7 +93,7 @@ def test_general_activation_needs_actual_pilot_login_and_sensitive_sms(client,mo
     assert activated.json()=={'mode':'active','email_retired':True,'sms_sent':False}
     assert sms_rollout.employee_sms_enabled(_make_user('driver'))
     assert sms_rollout.email_retired()
-    assert client.get('/api/identity/staff/login-policy').json()=={'channel':'sms','code_length':4}
+    assert client.get('/api/identity/staff/login-policy').json()=={'channel':'sms','code_length':4,'sms_required':True,'password_login_allowed':False,'password_step_up_allowed':False}
     with db.tx() as conn:
         assert conn.execute('SELECT email_verified_at FROM users WHERE id=%s',(user['id'],)).fetchone()['email_verified_at'] is None
 
@@ -120,7 +128,7 @@ def test_provider_send_failure_keeps_same_generic_request_response(client,monkey
     assert response.json()['accepted'] is True
     assert 'provider' not in response.text.lower()
     with db.tx() as conn:
-        assert conn.execute('SELECT count(*) n FROM otp_challenges').fetchone()['n']==0
+        assert conn.execute("SELECT count(*) n FROM otp_challenges WHERE id LIKE 'employee_otp_%%'").fetchone()['n']==0
 
 
 def test_context_cookie_explicit_test_override(monkeypatch):
@@ -137,15 +145,19 @@ def test_anonymous_pilot_requests_do_not_disclose_sms_enrollment(client,monkeypa
     pilot(client)
     client.cookies.clear()
     sends=[]
-    monkeypatch.setattr(sms_verification,'start',lambda *a:sends.append(a))
+    from datetime import datetime, timedelta, timezone
+    def send_stub(*args):
+        sends.append(args)
+        return args[1], datetime.now(timezone.utc)+timedelta(minutes=5)
+    monkeypatch.setattr(sms_verification,'start',send_stub)
     known=client.post('/api/identity/staff/code/request',json={'phone':'0507778899'})
     unknown=client.post('/api/identity/staff/code/request',json={'phone':'0500000000'})
-    # The legacy email channel is unconfigured in this fixture; both requests
-    # must follow that same path, and neither may send a pilot SMS.
-    assert known.status_code==unknown.status_code
-    assert known.json().get('code_length')!=4
-    assert unknown.json().get('code_length')!=4
-    assert sends==[]
+    # Mandatory KPS SMS returns the same generic shape for known/unknown numbers.
+    # Only the known account can cause a synthetic provider send.
+    assert known.status_code==unknown.status_code==200
+    assert known.json().get('code_length')==unknown.json().get('code_length')==4
+    assert set(known.json()) == set(unknown.json())
+    assert len(sends)==1
 
 
 @pytest.mark.postgres
@@ -171,7 +183,7 @@ def test_employee_send_account_budget_survives_approved_phone_change(client,monk
 
 
 @pytest.mark.postgres
-def test_concurrent_session_creation_uses_owned_connections_and_fresh_rollout(database, monkeypatch):
+def test_concurrent_session_creation_uses_owned_connections_and_fresh_rollout(client, monkeypatch):
     """A full auth pool must not acquire a second connection for rollout reads."""
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
@@ -181,6 +193,12 @@ def test_concurrent_session_creation_uses_owned_connections_and_fresh_rollout(da
     monkeypatch.delenv('EMPLOYEE_SMS_EMAIL_RETIRED', raising=False)
     monkeypatch.delenv('EMPLOYEE_SMS_LOGIN_ENABLED', raising=False)
     users = [_make_user('owner') for _ in range(db.POOL_MAX_SIZE)]
+    challenges = {}
+    for user in users:
+        sms_login(client, user, monkeypatch)
+        with db.tx() as conn:
+            challenges[user['id']] = conn.execute("SELECT id FROM otp_challenges WHERE source_user_id=%s AND id LIKE 'employee_otp_%%' AND verified_at IS NOT NULL ORDER BY created_at DESC LIMIT 1", (user['id'],)).fetchone()['id']
+            user.update(conn.execute('SELECT * FROM users WHERE id=%s',(user['id'],)).fetchone())
     with db.tx() as conn:
         conn.execute("UPDATE app_settings SET settings=settings||%s WHERE brand_id='kps'",
                      (db.json({'employee_sms_rollout': {'mode': 'active', 'email_retired': True}}),))
@@ -191,7 +209,7 @@ def test_concurrent_session_creation_uses_owned_connections_and_fresh_rollout(da
         with db.tx() as conn:
             # Every pool slot is owned before cookie/public-user policy reads.
             barrier.wait(timeout=10)
-            result = auth.establish_session(conn, user, response)
+            result = auth.establish_session(conn, user, response, employee_sms_challenge=challenges[user['id']])
         assert result['user']['employee_sms_email_retired'] is True
         assert 'kps_work_session=' in response.headers['set-cookie']
         return result['user']['id']
@@ -200,8 +218,8 @@ def test_concurrent_session_creation_uses_owned_connections_and_fresh_rollout(da
         assert set(workers.map(establish, users)) == {user['id'] for user in users}
     with db.tx() as conn:
         assert conn.execute('SELECT count(*) AS n FROM sessions WHERE user_id=ANY(%s)',
-                            ([user['id'] for user in users],)).fetchone()['n'] == len(users)
+                            ([user['id'] for user in users],)).fetchone()['n'] == 2*len(users)
         conn.execute("UPDATE app_settings SET settings=settings||%s WHERE brand_id='kps'",
                      (db.json({'employee_sms_rollout': {'mode': 'inactive', 'email_retired': False}}),))
-        assert not sms_rollout.context_cookies_enabled(conn)
-        assert not auth.public_user(users[0], conn=conn)['employee_sms_email_retired']
+        assert sms_rollout.context_cookies_enabled(conn)
+        assert auth.public_user(users[0], conn=conn)['employee_sms_email_retired']

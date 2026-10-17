@@ -36,11 +36,17 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'closure_drafts', 'report_renderings', 'report_notifications',
           'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations', 'driver_evidence', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
-          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings', 'driver_check_requests')
+          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings', 'driver_check_requests',
+          'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache')
 AUTH_TABLES = {'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
-               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices'}
+               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
+               'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
                          'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations'}
+# Private full archives preserve exact evidence; restore retires these anonymous
+# capabilities/budgets and location cache only after validating the snapshot.
+MAP_RUNTIME_TABLES = {'map_resolution_state', 'map_resolution_clients',
+                      'map_resolution_leases', 'map_resolution_cache'}
 PUBLIC = db.ROOT / 'public' / 'assets'
 MAX_WEB_EXPORT = 64 * 1024 * 1024
 INDEPENDENT_RESTORE_DATABASE_ID = 'dpg-db50dcdckfvc738gsrhg-a'
@@ -168,6 +174,7 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                                                  'products': ['id', 'settings.source_id'], 'orders': ['id', 'snapshot']},
                     'deduplication': 'Preserve primary/source IDs; verify counts/totals before import. Never replay sales or collections.',
                     'credentials_included': bool(full),
+                    'map_runtime_import_policy': 'Private database archives only; verify then discard signing key, counters, leases and location cache on isolated restore.',
                     'excluded_tables': [] if full else sorted(AUTH_TABLES),
                     'infrastructure_tables': [table for table in selected if table in INFRASTRUCTURE_TABLES],
                     'infrastructure_import_policy': 'Preserve observations and failure queues as historical source records; do not activate source hosting configuration or replay alerts.'}
@@ -271,6 +278,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     destination, files_restored = Path(asset_directory) if asset_directory is not None else None, 0
     discarded_worker_pulses = 0
     discarded_monitor_states = 0
+    discarded_map_runtime = {}
     if destination and (destination.exists() or destination.is_symlink()):
         raise ValueError('Static asset restoration refuses existing destinations.')
     with psycopg.connect(target_url, row_factory=dict_row, connect_timeout=10) as conn:
@@ -346,6 +354,12 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             # Verify archived counts/identifiers first, then retire only this
             # newly restored schema's ephemeral runtime pulses. Historical
             # provider backup observations and owner alerts stay preserved.
+            for table in sorted(MAP_RUNTIME_TABLES & actual):
+                discarded_map_runtime[table] = counts.get(table, 0)
+                conn.execute(sql.SQL('DELETE FROM {}').format(sql.Identifier(table)))
+            if any(discarded_map_runtime.values()):
+                db.audit(conn, None, 'restore.map_runtime_discarded', 'runtime', target_schema,
+                         {'tables': discarded_map_runtime})
             if 'recovery_worker_observations' in actual:
                 discarded_worker_pulses = counts['recovery_worker_observations']
                 discarded_monitor_states = counts.get('recovery_monitor_state', 0)
@@ -383,6 +397,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             'static_files_restored': files_restored, 'static_restore_verified': destination is not None,
             'ephemeral_worker_observations_discarded': discarded_worker_pulses,
             'ephemeral_monitor_state_discarded': discarded_monitor_states,
+            'ephemeral_map_runtime_discarded': discarded_map_runtime,
             'archive_sha256': hashlib.sha256(contents).hexdigest(), 'elapsed_seconds': round(time.monotonic() - started, 3)}
 
 

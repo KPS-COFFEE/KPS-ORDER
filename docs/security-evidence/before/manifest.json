@@ -1,0 +1,17 @@
+{
+  "audited_sha": "466bb9868768002d35f277a8aa4628fefc431126",
+  "original_report": "KPS_ORDER_Security_Audit_20261018.html",
+  "report_sha256": "f38a8343487759ed77edc04050163ab7ec8b3cd12a08827c7e5273c635729ce2",
+  "original_results": "Authoritative report aggregate: 560 cases,551 PASS,9 FAIL. security-consolidated.xml is corrected run evidence (465cases/9FAIL); security-final.xml is earlier raw evidence (465cases/12FAIL) with three test-harness issues resolved by documented reruns. Supplemental files retain independent/provider runs separately; do not add overlapping reruns.",
+  "scope": "Synthetic isolated audit evidence; original probes demonstrate pre-fix behavior, not a post-fix certification. Original report retained separately unchanged.",
+  "files": {
+    "independent-final.xml": "36dff554fdbbdf6df99bd4ef31d52352fec3f2083d830eb0c16af002f13ecc3c",
+    "security-final.xml": "de44f7ce8c4c56d99db84f1b12a0b3c6f588e001bf667d05a3c58d0613cf24ec",
+    "employee-sms.xml": "1fa80e3b2eb5136f005ed16a52431463dd78d5e930f38439bc01112db58b6bb1",
+    "original-audit-probes.py.txt": "7058efdf2452fe45d7fd4e06eecf9e12b12da222fea2a7fa54bcc840a417857b",
+    "profile-environment-corrected.xml": "50d3a26d9b67531646b2e81501b9c954d5445d3b08a68df69bd03db9d022a052",
+    "security-consolidated.xml": "fec4e363c735e8f2dc66d7f7974c62d5b278a5671b88b0160040b2c62efb131d",
+    "pip-audit.json": "249747e98bfdc14ab4aa4709917e361a013f4f84b16cb1d3961b00a6953b2ab5",
+    "independent-confirmed.xml": "bf82b7db4772c3fb9982e825ac5d5591bdf7553161e423c7ff59b02dc06b2db2"
+  }
+}

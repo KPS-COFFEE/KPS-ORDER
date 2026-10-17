@@ -1,0 +1,194 @@
+name: Isolated security closure PostgreSQL18 and image
+on:
+  push:
+    branches: [agent/kps-order-security-closure-20261018]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: security-closure-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  isolated-candidate:
+    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_security_closure
+          POSTGRES_USER: security_test
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U security_test -d test_security_closure"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_security_closure
+      APP_ENV: testing
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      REPORT_WORKER_ENABLED: 'false'
+      EMAIL_WORKER_ENABLED: 'false'
+      RECOVERY_POLL_ENABLED: 'false'
+      DISPATCH_AUTO_ASSIGN_ENABLED: 'false'
+      DISPATCH_OFFER_ACCEPT_ENABLED: 'false'
+      RUNTIME_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Locked runtime and test tools
+        run: |
+          mkdir -p evidence ci-safety
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock
+          python -m pip freeze > evidence/host-python-packages.txt
+          python -c "import psycopg; c=psycopg.connect('$TEST_DATABASE_URL'); print(c.execute('select version()').fetchone()[0]); c.close()" > evidence/postgresql-version.txt
+          python --version > evidence/host-python-version.txt
+          git rev-parse HEAD > evidence/source-sha.txt
+          sha256sum Dockerfile .dockerignore requirements.lock requirements-security-tests.lock > evidence/build-input-sha256.txt
+          cat > ci-safety/sitecustomize.py <<'PY'
+          import socket
+          _connect = socket.socket.connect
+          _connect_ex = socket.socket.connect_ex
+          _sendto = socket.socket.sendto
+          def check(address):
+              if isinstance(address, tuple) and address[0] not in ('127.0.0.1', '::1', 'localhost'):
+                  raise RuntimeError('SECURITY TEST: external network disabled')
+          def connect(self, address):
+              check(address)
+              return _connect(self, address)
+          def connect_ex(self, address):
+              check(address)
+              return _connect_ex(self, address)
+          def sendto(self, data, *args):
+              if args: check(args[-1])
+              return _sendto(self, data, *args)
+          socket.socket.connect = connect
+          socket.socket.connect_ex = connect_ex
+          socket.socket.sendto = sendto
+          PY
+      - name: Focused tests on PostgreSQL18
+        env:
+          PYTHONPATH: ci-safety:.
+        run: |
+          mapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' docs/security-closure-tests.txt)
+          python -m pytest -q "${suites[@]}" --junitxml=evidence/security-focused.xml | tee evidence/security-focused.log
+          node tests/test_mandatory_sms_ui.cjs
+          node tests/test_driver_collection_ui.cjs
+          node tests/test_driver_simple_ui.cjs
+      - name: Two real browser policy cases
+        env:
+          TEST_BROWSER: '1'
+          PYTHONPATH: ci-safety:.
+        run: |
+          browser=$(command -v google-chrome || command -v google-chrome-stable || true)
+          if [ -n "$browser" ]; then
+            export TEST_CHROMIUM_EXECUTABLE="$browser"
+          else
+            python -m playwright install --with-deps chromium
+          fi
+          python -m pytest -q tests/test_sms_mandatory_policy.py -k real_browser --junitxml=evidence/security-browser.xml | tee evidence/security-browser.log
+      - name: Build exact candidate Dockerfile without push
+        run: |
+          image="kps-order-security-review:$GITHUB_SHA"
+          docker buildx build --platform linux/amd64 --load --provenance=false \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --metadata-file evidence/build-metadata.json --tag "$image" . > evidence/image-build.log 2>&1
+          image_id=$(docker image inspect --format '{{.Id}}' "$image")
+          printf '%s\n' "$image_id" > evidence/candidate-image-id.txt
+          printf 'SECURITY_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
+          docker image inspect "$image_id" > evidence/candidate-image-inspect.json
+          docker image save --output "$RUNNER_TEMP/candidate-image.tar" "$image_id"
+          sha256sum "$RUNNER_TEMP/candidate-image.tar" > evidence/candidate-image-archive-sha256.txt
+      - name: Focused suites inside the same immutable image
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/security-test-tools" -r requirements-security-tests.lock
+          chmod 0777 evidence
+          mapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' docs/security-closure-tests.txt)
+          docker run --rm --network host --entrypoint python \
+            --mount "type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/security-test-tools,dst=/security-test-tools,readonly" \
+            --mount "type=bind,src=$PWD/tests,dst=/app/tests,readonly" \
+            --mount "type=bind,src=$PWD/docs,dst=/app/docs,readonly" \
+            --mount "type=bind,src=$PWD/Dockerfile,dst=/app/Dockerfile,readonly" \
+            --mount "type=bind,src=$PWD/.dockerignore,dst=/app/.dockerignore,readonly" \
+            --mount "type=bind,src=$PWD/requirements.txt,dst=/app/requirements.txt,readonly" \
+            --mount "type=bind,src=$PWD/tools/profile_checkout.py,dst=/app/tools/profile_checkout.py,readonly" \
+            --mount "type=bind,src=$PWD/tools/hardening_load.py,dst=/app/tools/hardening_load.py,readonly" \
+            --mount "type=bind,src=$(readlink -f "$(command -v node)"),dst=/usr/local/bin/node,readonly" \
+            --mount "type=bind,src=$PWD/evidence,dst=/evidence" \
+            --env PYTHONPATH=/security-safety:/security-test-tools:/app \
+            --env TEST_DATABASE_URL="$TEST_DATABASE_URL" --env APP_ENV=testing \
+            --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \
+            --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false \
+            --env RECOVERY_POLL_ENABLED=false --env RUNTIME_REVISION="$GITHUB_SHA" \
+            "$SECURITY_IMAGE_ID" -m pytest -q "${suites[@]}" \
+            -p no:cacheprovider --junitxml=/evidence/container-security-focused.xml \
+            | tee evidence/container-security-focused.log
+      - name: Exact image runtime health and readiness
+        env:
+          PYTHONPATH: ci-safety:.
+        run: |
+          docker run --detach --name security-candidate --network host \
+            --mount "type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly" \
+            --env PYTHONPATH=/security-safety:/app \
+            --env DATABASE_URL="$TEST_DATABASE_URL" --env APP_ENV=testing \
+            --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \
+            --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false \
+            --env RECOVERY_POLL_ENABLED=false --env DISPATCH_AUTO_ASSIGN_ENABLED=false \
+            --env DISPATCH_OFFER_ACCEPT_ENABLED=false \
+            --env APP_ALLOWED_HOSTS=localhost,127.0.0.1 \
+            --env PORT=18080 --env RUNTIME_REVISION="$GITHUB_SHA" "$SECURITY_IMAGE_ID"
+          python - <<'PY' | tee evidence/container-smoke.json
+          import json, os, time, urllib.request
+          for attempt in range(90):
+              try:
+                  result = {}
+                  for endpoint in ('health', 'ready'):
+                      with urllib.request.urlopen('http://127.0.0.1:18080/' + endpoint, timeout=2) as r:
+                          assert r.status == 200
+                          result[endpoint] = json.load(r)
+                          assert result[endpoint]['revision'] == os.environ['GITHUB_SHA']
+                  print(json.dumps(result, indent=2)); break
+              except Exception:
+                  if attempt == 89: raise
+                  time.sleep(1)
+          PY
+          docker inspect --format '{{.Image}}' security-candidate > evidence/running-container-image-id.txt
+          cmp evidence/candidate-image-id.txt evidence/running-container-image-id.txt
+          docker logs security-candidate > evidence/container-runtime.log 2>&1
+          docker stop security-candidate
+      - name: Verify scanner tools and scan this exact image
+        run: |
+          mkdir -p "$RUNNER_TEMP/security-scanners"
+          cd "$RUNNER_TEMP/security-scanners"
+          curl --fail --location --retry 2 --max-time 120 -o syft.tar.gz https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
+          echo 'c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47  syft.tar.gz' | sha256sum -c -
+          curl --fail --location --retry 2 --max-time 120 -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz
+          echo 'e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7  trivy.tar.gz' | sha256sum -c -
+          tar -xzf syft.tar.gz syft
+          tar -xzf trivy.tar.gz trivy
+          ./syft version > "$GITHUB_WORKSPACE/evidence/syft-version.txt"
+          ./trivy version > "$GITHUB_WORKSPACE/evidence/trivy-version.txt"
+          ./syft scan "docker-archive:$RUNNER_TEMP/candidate-image.tar" -o "cyclonedx-json=$GITHUB_WORKSPACE/evidence/candidate-image.cdx.json"
+          ./trivy image --input "$RUNNER_TEMP/candidate-image.tar" --scanners vuln,secret \
+            --format json --output "$GITHUB_WORKSPACE/evidence/candidate-image-scan.json" \
+            --exit-code 1 --severity HIGH,CRITICAL
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs security-candidate > evidence/container-runtime-final.log 2>&1 || true
+          docker rm -f security-candidate 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-closure-${{ github.sha }}
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: error

@@ -1,4 +1,4 @@
-"""KPS SMS policy cannot retire another brand's existing email identity."""
+"""KPS policy is brand scoped; an explicit global SMS mandate covers all brands."""
 import pytest
 from app import auth,db,sms_rollout
 from tests.test_core import _make_user
@@ -7,18 +7,18 @@ from tests.test_final_identity import _code
 
 
 def test_kps_database_retirement_never_applies_to_secondary_brand(monkeypatch):
-    monkeypatch.setattr(sms_rollout,'_read_policy',lambda brand='kps':{'mode':'active','email_retired':True})
+    monkeypatch.setattr(sms_rollout,'_read_policy',lambda brand='kps':{'mode':'active','email_retired':True} if brand == 'kps' else {})
     assert sms_rollout.email_retired('kps')
     assert not sms_rollout.email_retired('enbishan')
     assert auth.public_user({'role':'owner','brand_id':'enbishan'})['employee_sms_email_retired'] is False
 
 
-def test_kps_environment_retirement_never_applies_to_secondary_brand(monkeypatch):
+def test_explicit_global_sms_environment_requires_secondary_brand_sms(monkeypatch):
     monkeypatch.setenv('EMPLOYEE_SMS_LOGIN_ENABLED','true')
     monkeypatch.setenv('EMPLOYEE_SMS_EMAIL_RETIRED','true')
     assert auth.staff_email_retired('kps')
-    assert not auth.staff_email_retired('enbishan')
-    assert not auth.staff_sms_account_approved({'brand_id':'enbishan','identity_kind':'staff_owner_approved','invitation_status':'active','phone':'0507778899'})
+    assert auth.staff_email_retired('enbishan')
+    assert auth.staff_sms_account_approved({'brand_id':'enbishan','identity_kind':'staff_owner_approved','invitation_status':'active','phone':'0507778899'})
 
 
 @pytest.mark.postgres

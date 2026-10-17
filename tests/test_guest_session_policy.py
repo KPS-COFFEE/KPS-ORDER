@@ -18,14 +18,19 @@ from app import auth
 ])
 def test_guest_persistence_does_not_extend_staff_sessions(monkeypatch, role, kind, hours):
     monkeypatch.setenv('SESSION_COOKIE_SECURE', 'true')
+    # TTL is a legacy session serialization unit contract; KPS mandatory SMS
+    # requires real proof and is covered through canonical endpoints separately.
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED', 'false')
     monkeypatch.setattr(auth.db, 'audit', Mock())
     conn, response = Mock(), Response()
     before = datetime.now(timezone.utc)
     result = auth.establish_session(conn, {
-        'id': 'synthetic-user', 'role': role, 'identity_kind': kind, 'brand_id': 'kps',
+        'id': 'synthetic-user', 'role': role, 'identity_kind': kind, 'brand_id': 'synthetic-legacy',
     }, response)
-    sql, params = conn.execute.call_args.args
-    assert 'INSERT INTO sessions' in sql
+    inserted = [call.args for call in conn.execute.call_args_list
+                if call.args[0].startswith('INSERT INTO sessions')]
+    assert len(inserted) == 1
+    sql, params = inserted[0]
     assert hours * 3600 <= (params[4] - before).total_seconds() < hours * 3600 + 5
     cookies = response.headers.getlist('set-cookie')
     session = next(c for c in cookies if c.startswith(auth.COOKIE + '='))

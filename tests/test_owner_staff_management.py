@@ -1,8 +1,9 @@
 """Owner lifecycle: retain history, revoke access and re-invite with real proof."""
 import pytest
 from app import db
-from tests.test_core import _authenticate, _make_user
-from tests.test_v5_identity import _mail_setup, _invite
+from tests.test_core import _authenticate, _make_user as _core_make_user
+from tests.legacy_identity_helpers import make_legacy_user as _make_user
+from tests.test_v5_identity import _legacy_mail_setup as _mail_setup, _legacy_invite as _invite
 
 PASSWORD='TestStaffControls!2026'
 
@@ -86,7 +87,7 @@ def test_pause_and_role_change_block_open_shift(ops):
         row=conn.execute("SELECT u.id FROM users u JOIN shifts s ON s.user_id=u.id WHERE u.role='driver' AND s.status='open' LIMIT 1").fetchone()
     client=actor('owner')
     client.app.dependency_overrides.clear()
-    owner=_make_user('owner',brand='ops-brand',username='ops-control-owner',password=PASSWORD)
+    owner=_core_make_user('owner',brand='ops-brand',username='ops-control-owner',password=PASSWORD)
     _authenticate(client,owner)
     assert client.post('/api/identity/step-up',json={'password':PASSWORD}).status_code==200
     for action in ('pause','archive','reinvite'):

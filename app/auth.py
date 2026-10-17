@@ -229,9 +229,18 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
     return False
 
 
-def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False) -> dict:
+def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False, employee_sms_challenge=None) -> dict:
     from .storefront_scope import require_brand
     require_brand(user['brand_id'])
+    from .sms_rollout import work_sms_required
+    if user['role'] != 'customer' and work_sms_required(user['brand_id'], conn=conn):
+        # Only the canonical successful employee SMS verifier supplies this
+        # challenge. No HTTP request body can choose a proof or bypass policy.
+        proof = conn.execute("SELECT 1 FROM otp_challenges WHERE id=%s AND id LIKE 'employee_otp_%%' AND source_user_id=%s AND brand_id=%s AND phone=normalized_identity_phone(%s) AND source_session_id IS NULL AND delivery_channel='sms' AND provider_name IN ('twilio_verify','tawked') AND verified_at>now()-interval '5 minutes' AND expires_at>now()", (employee_sms_challenge,user['id'],user['brand_id'],user.get('phone'))).fetchone() if employee_sms_challenge else None
+        if not proof:
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
+        # An ordinary work login must never double as sensitive owner proof.
+        owner_step_up = False
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a
@@ -327,6 +336,8 @@ def login(body: LoginBody, request: Request, response: Response):
         valid = verify_password(body.password, user['password_hash'] if user else None)
         if not valid or not user:
             raise db.error(401, 'INVALID_CREDENTIALS', 'بيانات الدخول غير صحيحة.')
+        if staff_email_retired(user['brand_id'], conn=conn):
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
         from .portals import enforce_role
         enforce_role(request, user)
         return establish_session(conn, user, response)
@@ -855,6 +866,8 @@ def identity_mail_authorized(conn, mail):
     if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(row['brand_id'],)).fetchone():
         return False
     user=conn.execute('SELECT * FROM users WHERE id=%s',(row['user_id'],)).fetchone() if row['user_id'] else None
+    if staff_email_retired(row['brand_id'], conn=conn) and ((user and user['role'] != 'customer') or row['purpose'] in {'staff_login','invitation','add_owner','owner_link'}):
+        return False
     if row['purpose'] in {'staff_login','invitation','add_owner'}:
         return _staff_token_authorized(conn,row,user)
     if user and (not user['active'] or user['brand_id']!=row['brand_id']):
@@ -881,6 +894,10 @@ def identity_mail_authorized(conn, mail):
 
 def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,created_by=None):
     email=email_delivery.normalize_email(email)
+    if staff_email_retired(brand, conn=conn):
+        target = conn.execute('SELECT role FROM users WHERE id=%s',(user_id,)).fetchone() if user_id else None
+        if (target and target['role'] != 'customer') or purpose in {'staff_login','invitation','add_owner','owner_link'}:
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
     conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(brand+':email-token:'+email+':'+purpose,))
     identifier=db.new_id('email_')
     secret=secrets.token_urlsafe(32)
@@ -922,8 +939,7 @@ class EmailRequestBody(BaseModel):
 
 
 def staff_email_retired(brand='kps', conn=None):
-    # Retire only after an explicit rollout decision with the SMS path enabled.
-    # Neither switch alone may cut off the existing owner recovery path.
+    # One server-side mandatory policy governs every work authentication path.
     from . import sms_rollout
     return sms_rollout.email_retired(brand, conn=conn)
 
@@ -1072,7 +1088,7 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         if not row:
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط منتهي أو غير صالح أو مستخدم.')
         user=conn.execute('SELECT * FROM users WHERE id=%s FOR UPDATE',(row['user_id'],)).fetchone() if row['user_id'] else None
-        if staff_email_retired(row['brand_id']) and ((user and user['role'] != 'customer')
+        if staff_email_retired(row['brand_id'], conn=conn) and ((user and user['role'] != 'customer')
                                       or row['purpose'] in {'staff_login','invitation','add_owner','owner_link'}):
             # Pending links cannot reactivate employees or grant owner step-up.
             # Keep customer verification and operational correspondence intact.
@@ -1138,6 +1154,14 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
 
 
 def require_owner_step_up(conn,user):
+    if staff_email_retired(user.get('brand_id','kps'), conn=conn):
+        # A timestamp created by a pre-cutover password/email proof is not SMS.
+        # Proof must be bound to this owner, this exact live session and the
+        # current registered mobile, with a distinct sensitive challenge.
+        proof = conn.execute("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id JOIN otp_challenges c ON c.source_session_id=s.id AND c.source_user_id=u.id AND c.brand_id=u.brand_id WHERE s.id=%s AND u.id=%s AND u.role='owner' AND u.active AND s.revoked_at IS NULL AND s.expires_at>now() AND s.step_up_at>now()-interval '10 minutes' AND c.id LIKE 'owner_sms_%%' AND c.phone=normalized_identity_phone(u.phone) AND c.delivery_channel='sms' AND c.provider_name IN ('twilio_verify','tawked') AND c.verified_at>now()-interval '10 minutes'", (user.get('session_id'),user['id'])).fetchone() if user['role']=='owner' and user.get('session_id') else None
+        if not proof:
+            raise db.error(403,'OWNER_STEP_UP_REQUIRED','أعد تحقق المالك برسالة SMS قبل الإجراء الحساس. / Verify an owner SMS code before the sensitive action.')
+        return
     if user['role']!='owner' or not user.get('session_id') or not conn.execute("SELECT 1 FROM sessions WHERE id=%s AND user_id=%s AND revoked_at IS NULL AND expires_at>now() AND step_up_at>now()-interval '10 minutes'",(user.get('session_id'),user['id'])).fetchone():
         raise db.error(403,'OWNER_STEP_UP_REQUIRED','أعد تحقق المالك قبل دعوة مالك أو مدير إضافي.')
 
@@ -1154,6 +1178,8 @@ def owner_step_up(body:StepUpBody,user=Depends(require_roles('owner'))):
     if not allowed:
         raise db.error(429,'STEP_UP_RATE_LIMIT','انتظر قبل إعادة التحقق.')
     with db.tx() as conn:
+        if staff_email_retired(user['brand_id'], conn=conn):
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS للتحقق الحساس. / Use SMS for sensitive verification.')
         if not verify_password(body.password,user.get('password_hash')):
             raise db.error(401,'INVALID_CREDENTIALS','تعذر إعادة التحقق من الحساب.')
         conn.execute('UPDATE sessions SET step_up_at=now() WHERE id=%s AND revoked_at IS NULL',(user['session_id'],))

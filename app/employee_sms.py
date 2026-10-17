@@ -220,7 +220,7 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
         _diagnostic(body.challenge_id, 'verification_approved', conn=conn, user_id=user['id'])
         db.audit(conn,user['id'],'employee.sms.verified','user',user['id'])
         sms_rollout.record_employee_proof(conn,user,body.challenge_id)
-        return {**auth.establish_session(conn,user,response),'portal_url':portals.home_for_role(user['role'])}
+        return {**auth.establish_session(conn,user,response,employee_sms_challenge=body.challenge_id),'portal_url':portals.home_for_role(user['role'])}
 
 
 # A sensitive proof belongs to one existing owner session, never to login.

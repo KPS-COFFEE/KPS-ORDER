@@ -1,13 +1,14 @@
 """Synthetic contacts and provider; isolated PostgreSQL only."""
 import pytest
 from app import auth, db, owner_phone, sms_verification
-from tests.test_core import _make_user, _authenticate
-from tests.test_tawked_otp import setup_provider
+from tests.test_core import _authenticate
+from tests.legacy_identity_helpers import make_legacy_user as _make_user
+from tests.sms_policy_helpers import configure_sms
 
 
 def setup(client,monkeypatch,role='owner'):
-    setup_provider(monkeypatch)
     user=_make_user(role)
+    configure_sms(monkeypatch, user['brand_id'])
     token,_=_authenticate(client,user)
     with db.tx() as conn:
         conn.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s',(user['id'],))

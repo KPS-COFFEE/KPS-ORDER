@@ -7,11 +7,12 @@ from tests.test_employee_sms_portals import request
 
 
 @pytest.mark.parametrize('sms,retired,expected',[
-    ('false','false',False),('true','false',False),('false','true',False),('true','true',True)])
-def test_email_retirement_requires_both_rollout_switches(monkeypatch,sms,retired,expected):
+    ('false','false',False),('true','false',True),('false','true',False),('true','true',True)])
+def test_kps_email_retirement_cannot_be_disabled_by_rollout_switches(monkeypatch,sms,retired,expected):
     monkeypatch.setenv('EMPLOYEE_SMS_LOGIN_ENABLED',sms)
     monkeypatch.setenv('EMPLOYEE_SMS_EMAIL_RETIRED',retired)
-    assert auth.staff_email_retired() is expected
+    assert auth.staff_email_retired('kps') is True
+    assert auth.staff_email_retired('synthetic-legacy') is expected
 
 
 def retirement(monkeypatch):
@@ -118,8 +119,8 @@ def test_sms_invitation_and_reactivation_without_email_on_postgresql(client,monk
     retirement(monkeypatch)
     owner=_make_user('owner')
     _authenticate(client,owner)
-    with db.tx() as conn:
-        conn.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s',(owner['id'],))
+    from tests.sms_policy_helpers import sms_step_up
+    sms_step_up(client, owner, monkeypatch)
     response=client.post('/api/identity/staff/invitations',json={'display_name':'Synthetic SMS Driver','phone':'0507778899','role':'driver','branch_ids':['kps-branch-1']})
     assert response.status_code==200,response.text
     result=response.json()
