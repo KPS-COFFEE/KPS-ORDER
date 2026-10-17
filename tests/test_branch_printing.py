@@ -5,7 +5,7 @@ from app import auth, db
 from test_operations import ops
 
 
-def approve_test_device(actor, post, device, token, who='manager'):
+def approve_test_device(actor, post, device, token, who='owner'):
     job=post(who,'/api/printing/devices/'+device+'/test')
     post(who,'/api/printing/devices/'+device+'/approve',{'job_id':job['id'],'paper_confirmed':True},status=409)
     headers={'Authorization':'Bearer '+token}
@@ -20,9 +20,10 @@ def approve_test_device(actor, post, device, token, who='manager'):
 @pytest.mark.postgres
 def test_branch_print_device_queue_isolation_and_no_automatic_reprint(ops):
     actor,post,order,shifts=ops
-    oid=order('pickup')
+    oid=order('delivery')
     post('driver','/api/printing/devices',{'branch_id':'ops-branch','label':'Denied'},status=403)
-    pair=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Synthetic Windows'})
+    post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Forbidden'},status=403)
+    pair=post('owner','/api/printing/devices',{'branch_id':'ops-branch','label':'Synthetic Windows'})
     client=actor('customer')
     result=client.post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Synthetic printer'})
     assert result.status_code==200,result.text
@@ -53,22 +54,27 @@ def test_branch_print_device_queue_isolation_and_no_automatic_reprint(ops):
     with db.tx() as conn:
         assert conn.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='ready'
         assert conn.execute('SELECT token_hash FROM branch_print_devices WHERE id=%s',(device,)).fetchone()['token_hash']==auth.token_hash(token)
-    post('manager','/api/printing/devices/'+device+'/revoke',{'reason':'Replace branch computer'})
+    post('owner','/api/printing/devices/'+device+'/revoke',{'reason':'Replace branch computer'})
     assert actor('customer').post('/api/printing/bridge/next',json={},headers=headers).status_code==401
     assert actor('customer').get('/api/printing/windows-bridge.zip').status_code==403
-    bundle=actor('manager').get('/api/printing/windows-bridge.zip')
+    bundle=actor('owner').get('/api/printing/windows-bridge.zip')
     assert bundle.status_code==200 and bundle.content.startswith(b'PK')
 
 
 @pytest.mark.postgres
-def test_vehicle_initial_entry_then_manager_only_changes(ops):
+def test_vehicle_profile_is_owner_managed_and_legacy_writes_are_forbidden(ops):
     actor,post,order,shifts=ops
-    body={'plate':'TEST 123','owned_by_kps':False,'odometer_km':100}
-    client=actor('driver')
-    assert client.put('/api/identity/driver/vehicle',json=body).status_code==200
-    assert client.put('/api/identity/driver/vehicle',json={**body,'plate':'OTHER'}).status_code==409
+    body={'plate':'TEST 123','owned_by_kps':False}
+    assert actor('driver').put('/api/identity/driver/vehicle',json=body).status_code==403
     assert actor('customer').put('/api/identity/driver/vehicle',json=body).status_code==403
-    assert actor('driver2').put('/api/identity/driver/vehicle',json={**body,'owned_by_kps':'false'}).status_code==422
+    assert actor('manager').patch('/api/identity/staff/ops-driver',json={'vehicle':body}).status_code==403
+    response=actor('owner').patch('/api/identity/staff/ops-driver',json={'vehicle':body})
+    assert response.status_code==200,response.text
+    assert response.json()['user']['vehicle']['plate']=='TEST 123'
+    assert response.json()['user']['vehicle']['owned_by_kps'] is False
+    assert actor('driver').put('/api/identity/driver/vehicle',json={**body,'plate':'OTHER'}).status_code==403
+    with db.tx() as conn:
+        assert conn.execute("SELECT vehicle FROM users WHERE id='ops-driver'").fetchone()['vehicle']==response.json()['user']['vehicle']
 
 
 @pytest.mark.postgres
@@ -95,7 +101,7 @@ def test_manager_selects_destination_and_settings_are_locked(ops):
     oid = order()
     body = {'device_id':pair['id']}
     post('manager', '/api/printing/orders/'+oid, body, status=404)
-    for who in ('branch','driver','customer'):
+    for who in ('manager','branch','driver','customer'):
         assert actor(who).get('/api/printing/devices').status_code == 403
         post(who, '/api/printing/devices', {'branch_id':'ops-branch','label':'Forbidden'}, status=403)
     with db.tx() as conn:
@@ -109,11 +115,11 @@ def test_manager_selects_destination_and_settings_are_locked(ops):
     with db.tx() as conn:
         assert conn.execute('SELECT branch_id FROM orders WHERE id=%s',(oid,)).fetchone()['branch_id'] == 'ops-branch'
         assert conn.execute('SELECT branch_id FROM branch_print_jobs WHERE id=%s',(job['id'],)).fetchone()['branch_id'] == 'ops-second'
-    post('manager','/api/printing/devices',{'branch_id':'ops-second','label':'Replacement'},status=422)
+    post('owner','/api/printing/devices',{'branch_id':'ops-second','label':'Replacement'},status=422)
     for reason in ({}, {'reason':'  '}):
-        post('manager','/api/printing/devices/'+pair['id']+'/revoke',reason,status=422)
+        post('owner','/api/printing/devices/'+pair['id']+'/revoke',reason,status=422)
     post('branch','/api/printing/devices/'+pair['id']+'/revoke',{'reason':'Unauthorized'},status=403)
-    post('manager','/api/printing/devices/'+pair['id']+'/revoke',{'reason':'Replace faulty computer'})
+    post('owner','/api/printing/devices/'+pair['id']+'/revoke',{'reason':'Replace faulty computer'})
     with db.tx() as conn:
         event = conn.execute("SELECT details FROM audit_events WHERE action='printer.revoked' AND entity_id=%s",(pair['id'],)).fetchone()
         assert event['details']['reason'] == 'Replace faulty computer'
@@ -122,7 +128,7 @@ def test_manager_selects_destination_and_settings_are_locked(ops):
 @pytest.mark.postgres
 def test_physical_acceptance_scope_and_retest_gate(ops):
     actor,post,order,_=ops
-    paired=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Acceptance'})
+    paired=post('owner','/api/printing/devices',{'branch_id':'ops-branch','label':'Acceptance'})
     token=actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':paired['pairing_code'],'printer_name':'Synthetic'}).json()['token']
     device=paired['id'];oid=order();body={'device_id':device}
     for who in ('branch','driver'):
@@ -131,14 +137,14 @@ def test_physical_acceptance_scope_and_retest_gate(ops):
     post('other','/api/printing/devices/'+device+'/test',status=404)
     approve_test_device(actor,post,device,token)
     queued=post('manager','/api/printing/orders/'+oid,body)
-    test=post('manager','/api/printing/devices/'+device+'/test',key='test-replay')
-    assert post('manager','/api/printing/devices/'+device+'/test',key='test-replay')==test
+    test=post('owner','/api/printing/devices/'+device+'/test',key='test-replay')
+    assert post('owner','/api/printing/devices/'+device+'/test',key='test-replay')==test
     post('manager','/api/printing/orders/'+order(),body,status=409)
     headers={'Authorization':'Bearer '+token}
     received=actor('customer').post('/api/printing/bridge/next',json={},headers=headers).json()['job']
     assert received['id']==test['id']  # pending orders stay gated during retest
     actor('customer').post('/api/printing/bridge/jobs/'+test['id']+'/ack',json={'status':'uncertain'},headers=headers)
-    post('manager','/api/printing/devices/'+device+'/approve',{'job_id':test['id'],'paper_confirmed':True},status=409)
+    post('owner','/api/printing/devices/'+device+'/approve',{'job_id':test['id'],'paper_confirmed':True},status=409)
     approve_test_device(actor,post,device,token)
     assert actor('customer').post('/api/printing/bridge/next',json={},headers=headers).json()['job']['id']==queued['id']
 
@@ -166,8 +172,8 @@ def test_printer_only_admin_has_no_other_operational_access(ops):
 @pytest.mark.postgres
 def test_both_receipts_are_atomic_ordered_and_replay_safe(ops):
     actor,post,order,shifts=ops
-    oid=order('pickup')
-    pair=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Two receipts'})
+    oid=order('delivery')
+    pair=post('owner','/api/printing/devices',{'branch_id':'ops-branch','label':'Two receipts'})
     client=actor('customer')
     token=client.post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Synthetic'}).json()['token']
     approve_test_device(actor,post,pair['id'],token)
@@ -185,7 +191,7 @@ def test_both_receipts_are_atomic_ordered_and_replay_safe(ops):
     assert client.post('/api/printing/bridge/next',json={},headers=headers).json()['job'] is None
     post('manager','/api/printing/orders/'+oid,body,status=409)
     # An existing preparation receipt must roll back the first insert in a pair.
-    second=order('pickup')
+    second=order('delivery')
     post('manager','/api/printing/orders/'+second,{'device_id':pair['id'],'kind':'preparation'})
     post('manager','/api/printing/orders/'+second,body,status=409)
     with db.tx() as conn:
@@ -199,7 +205,7 @@ def test_product_print_translation_edit_is_scoped_and_used_in_queue(ops):
     with db.tx() as conn:
         conn.execute("INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES('ops-product','ops-brand','قهوة تجربة','Test',1000,%s)",
                      (db.json({'enabled':False,'lifecycle':'draft'}),))
-    oid=order('pickup')
+    oid=order('delivery')
     body={'settings':{'print_labels_en':{'قهوة تجربة':'Test Coffee'}}}
     assert actor('driver').patch('/api/admin/products/ops-product',json=body,headers={'Idempotency-Key':str(uuid4())}).status_code==403
     assert actor('other').patch('/api/admin/products/ops-product',json=body,headers={'Idempotency-Key':str(uuid4())}).status_code==404
@@ -209,7 +215,7 @@ def test_product_print_translation_edit_is_scoped_and_used_in_queue(ops):
     assert detail['print_labels_en']['ops-product']['قهوة تجربة']=='Test Coffee'
     assert actor('other').get('/api/orders/'+oid).status_code==404
     assert actor('owner').patch('/api/admin/products/ops-product',json={'settings':{'print_labels_en':{'x':[]}}},headers={'Idempotency-Key':str(uuid4())}).status_code==422
-    pair=post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Translation test'})
+    pair=post('owner','/api/printing/devices',{'branch_id':'ops-branch','label':'Translation test'})
     paired=actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Test'}).json()
     approve_test_device(actor,post,pair['id'],paired['token'])
     post('manager','/api/printing/orders/'+oid,{'device_id':pair['id'],'kind':'both'})
@@ -230,13 +236,13 @@ def test_guided_setup_is_branch_bound_private_and_reports_real_connectivity(ops)
     body={'branch_id':'ops-branch','label':'Guided test','reason':'Replace synthetic setup'}
     post('driver','/api/printing/setup',body,status=403)
     post('other','/api/printing/setup',body,status=404)
-    package=post('manager','/api/printing/setup',body)
+    package=post('owner','/api/printing/setup',body)
     with zipfile.ZipFile(io.BytesIO(base64.b64decode(package['bundle']))) as bundle:
         config=json.loads(bundle.read('setup.json'))
         assert config['branch_id']=='ops-branch'
         assert {'Start.cmd','KpsPrintBridge.cs','logo.png'} <= set(bundle.namelist())
     def device():
-        return next(x for x in actor('manager').get('/api/printing/devices').json()['devices'] if x['id']==package['id'])
+        return next(x for x in actor('owner').get('/api/printing/devices').json()['devices'] if x['id']==package['id'])
     assert device()['connection_status']=='pending'
     redemption={'pairing_code':config['pairing_code'],'printer_name':'Synthetic Windows printer'}
     response=actor('customer').post('/api/printing/bridge/pair',json=redemption)
@@ -249,6 +255,6 @@ def test_guided_setup_is_branch_bound_private_and_reports_real_connectivity(ops)
     token=response.json()['token']
     actor('customer').post('/api/printing/bridge/next',json={},headers={'Authorization':'Bearer '+token})
     assert device()['connection_status']=='online'
-    post('manager','/api/printing/devices/'+package['id']+'/revoke',{'reason':'Reset synthetic pairing'})
+    post('owner','/api/printing/devices/'+package['id']+'/revoke',{'reason':'Reset synthetic pairing'})
     assert device()['connection_status']=='revoked'
     assert actor('customer').post('/api/printing/bridge/next',json={},headers={'Authorization':'Bearer '+token}).status_code==401

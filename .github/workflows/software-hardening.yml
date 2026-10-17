@@ -27,13 +27,13 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - id: scope
-        name: Respect owner-requested payment-only closure without recertifying capacity
+        name: Respect owner-requested focused closure without recertifying capacity
         shell: bash
         run: |
-          if git log -1 --format=%s | grep -Fq '[payment-closure-only]'; then
+          if git log -1 --format=%s | grep -Eq '\[(payment-closure-only|prelaunch-focused)\]'; then
             echo 'run=false' >> "$GITHUB_OUTPUT"
             echo '## Capacity NOT CERTIFIED on this SHA' >> "$GITHUB_STEP_SUMMARY"
-            echo 'Owner requested focused payment closure without repeating expensive load tests. Prior capacity failures remain blockers. No load threshold, scenario or command is changed.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Owner requested focused closure without repeating expensive load tests. Prior capacity failures remain blockers. No load threshold, scenario or command is changed.' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'run=true' >> "$GITHUB_OUTPUT"
           fi

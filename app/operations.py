@@ -382,6 +382,8 @@ def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
             s=lock_shift(c,sid); shift_access(c,user,s)
             from .driver_breaks import guard as break_guard
             break_guard(c,sid)
+            from .driver_closure import guard as closure_guard
+            closure_guard(c,user,s)
             if s['status']=='open': c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
             elif s['status']!='closing': fail(409,'الشفت ليس مفتوحا')
             db.audit(c,user['id'],'shift.closing','shift',sid)
@@ -764,7 +766,8 @@ class Refund(OperationBody):
 
 @router.post('/orders/{oid}/refund')
 def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager','branch_manager')
+    # Check authority before idempotency lookup, including previously successful retries.
+    roles(user,'owner','branch_manager')
     if user['role']=='branch_manager' and not body.amendment_id:fail(403,'الاسترداد الاعتيادي يتطلب المدير')
     with db.tx() as c:
         def perform():
@@ -1144,7 +1147,9 @@ def driver_roster(user=Depends(auth.current_user)):
             if user['role']!='owner':
                 row['branch_ids']=[bid for bid in row['branch_ids'] if bid in user['branch_ids']]
                 if not row['branch_ids']:continue
-            row['availability']='inactive' if not row['active'] else ('no_open_shift' if not row['shift_id'] else ('available' if row['shift_status']=='open' and row.get('shift_available') and not row['active_tasks'] else 'busy'))
+            from .driver_readiness import describe
+            row['availability'],row['readiness_action'],row['eligible_branch_ids']=describe(c,row)
+            row['assignment_eligible']=row['availability']=='available'
             visible.append(row)
         return safe({'drivers':visible})
 

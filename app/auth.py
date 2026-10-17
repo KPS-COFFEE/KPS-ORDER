@@ -124,6 +124,8 @@ def _find_session(conn, request: Request):
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
     if user:
+        from .portals import enforce_role
+        enforce_role(request, user)
         from .storefront_scope import require_brand
         require_brand(user["brand_id"])
     return user
@@ -276,6 +278,8 @@ def login(body: LoginBody, request: Request, response: Response):
         valid = verify_password(body.password, user['password_hash'] if user else None)
         if not valid or not user:
             raise db.error(401, 'INVALID_CREDENTIALS', 'بيانات الدخول غير صحيحة.')
+        from .portals import enforce_role
+        enforce_role(request, user)
         return establish_session(conn, user, response)
 
 
@@ -314,9 +318,13 @@ def provider_config() -> tuple[str, str, str]:
     return sid, secret, service
 
 
-def _provider_post(path: str, data: dict):
+def _provider_post(path: str, data: dict, *, service_sid: str | None = None):
     sid, secret, service = (os.getenv(name, '') for name in ('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID'))
     _provider_ready('twilio_verify')
+    if service_sid is not None:
+        if not re.fullmatch(r'VA[a-fA-F0-9]{32}',service_sid):
+            raise db.error(503,'OTP_PROVIDER_UNAVAILABLE','مزود التحقق غير مهيأ بعد.')
+        service=service_sid
     try:
         with httpx.Client(timeout=12, follow_redirects=False) as client:
             result = client.post(f'https://verify.twilio.com/v2/Services/{service}/{path}', data=data, auth=(sid, secret))
@@ -439,6 +447,10 @@ class OTPVerifyBody(BaseModel):
 @router.post('/auth/otp/verify')
 def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     check_origin(request)
+    # Employee SMS and customer SMS share storage, never proof purpose. Reject
+    # before attempts/provider calls, independent of host or rollout settings.
+    if body.challenge_id.startswith('employee_otp_'):
+        raise db.error(400,'OTP_PURPOSE_MISMATCH','طلب التحقق لا يخص تسجيل دخول العملاء.')
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         allowed = db.rate_limit(conn, 'otp-verify-ip:' + ip, 20, 600)
@@ -735,8 +747,9 @@ def _same_email(left, right):
 
 def _invitation_authorized(conn, row, user):
     inviter=conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id WHERE u.id=%s AND u.active AND b.active',(row['created_by'],)).fetchone()
-    normal=bool(inviter and inviter['brand_id']==row['brand_id'] and inviter['role'] in {'owner','delivery_manager'} and
-                (inviter['role']=='owner' or (user['role']=='driver' and set(user['branch_ids'])<=set(inviter['branch_ids']))))
+    # Pending invitations are rechecked at send and acceptance time. A manager
+    # invitation from the former policy needs a fresh owner-issued invitation.
+    normal=bool(inviter and inviter['brand_id']==row['brand_id'] and inviter['role']=='owner')
     # Preserve the explicit, audited first-owner invitation for a newly provisioned brand.
     first_owner=bool(inviter and inviter['role']=='owner' and row['purpose']=='add_owner' and user['role']=='owner' and
         conn.execute("SELECT 1 FROM audit_events WHERE actor_id=%s AND action='brand.created' AND entity_type='brand' AND entity_id=%s AND details->>'owner_user_id'=%s",(inviter['id'],row['brand_id'],user['id'])).fetchone() and
@@ -825,7 +838,12 @@ def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,
     base=os.getenv('PUBLIC_BASE_URL','').rstrip('/')
     if not base.startswith(('https://','http://')) or (not base.startswith('https://') and os.getenv('APP_ENV') not in {'testing','development'}):
         raise db.error(503,'PUBLIC_ORIGIN_UNCONFIGURED','عنوان البريد الآمن غير مهيأ.')
-    link=base+'/#identity_challenge='+identifier+'&identity_token='+secret
+    from . import portals
+    if portals.enabled() and user_id:
+        recipient=conn.execute('SELECT role FROM users WHERE id=%s',(user_id,)).fetchone()
+        if recipient:
+            base=portals.home_for_role(recipient['role']).rstrip('/')
+    link=base+('/#' if not portals.enabled() else '#')+'identity_challenge='+identifier+'&identity_token='+secret
     text='طلب تحقق قصير الصلاحية لمرة واحدة. إذا لم تطلبه فتجاهله.\n'
     if code:
         text+='كود التفعيل والدخول: '+code+'\nصالح لمدة 15 دقيقة، ويستخدم مرة واحدة فقط. أدخل الكود في شاشة دخول الموظفين برقم جوالك المسجل.\n'
@@ -894,6 +912,9 @@ class StaffCodeRequestBody(BaseModel):
 
 @router.post('/identity/staff/code/request')
 def request_staff_code(body:StaffCodeRequestBody,request:Request):
+    if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true':
+        from .employee_sms import EmployeeSMSRequest, request_sms
+        return request_sms(EmployeeSMSRequest(**body.model_dump()),request)
     check_origin(request)
     phone=normalize_phone(body.phone)
     ip=request.client.host if request.client else 'unknown'
@@ -928,6 +949,14 @@ class StaffCodeVerifyBody(BaseModel):
 
 @router.post('/identity/staff/code/verify')
 def verify_staff_code(body:StaffCodeVerifyBody,request:Request,response:Response):
+    if body.challenge_id.startswith('employee_otp_'):
+        if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') != 'true':
+            raise db.error(503,'EMPLOYEE_SMS_NOT_CERTIFIED','رسائل الموظفين غير معتمدة بعد. / Employee SMS is not certified yet.')
+        from .employee_sms import EmployeeSMSVerify, verify_sms
+        code=body.code.translate(IDENTITY_DIGITS).strip()
+        if not re.fullmatch(r'[0-9]{6}',code):
+            raise db.error(422,'STAFF_CODE_INVALID','أدخل رمز SMS من 6 أرقام. / Enter the six-digit SMS code.')
+        return verify_sms(EmployeeSMSVerify(challenge_id=body.challenge_id,code=code),request,response)
     check_origin(request)
     code=body.code.translate(IDENTITY_DIGITS).strip()
     ip=request.client.host if request.client else 'unknown'
@@ -1023,6 +1052,8 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE id=%s',(row['session_id'],))
         # Proof belongs only to the session created by this challenge. An
         # independent older browser session must never inherit this step-up.
+        from .portals import enforce_role
+        enforce_role(request,user)
         result=establish_session(conn,user,response,owner_step_up=user['role']=='owner')
         db.audit(conn,user['id'],'identity.email.verified','user',user['id'],{'purpose':row['purpose']})
         return result
@@ -1123,22 +1154,13 @@ def _vehicle(value):
 
 @router.put('/identity/driver/vehicle')
 def register_driver_vehicle(body: dict, user=Depends(require_roles('driver'))):
-    if {'baseline_kml','baseline_note'} & body.keys():
-        raise db.error(403,'VEHICLE_MANAGER_ONLY','معدل الوقود يحدده مدير التوصيل.')
-    vehicle = _vehicle(body)
-    if not str(vehicle.get('plate','')).strip() or 'owned_by_kps' not in vehicle:
-        raise db.error(422,'VEHICLE_REQUIRED','أدخل لوحة المركبة وحدد هل هي تابعة لكبز.')
-    with db.tx() as conn:
-        previous = conn.execute('SELECT vehicle FROM users WHERE id=%s FOR UPDATE',(user['id'],)).fetchone()['vehicle'] or {}
-        if previous.get('plate'):
-            raise db.error(409,'VEHICLE_MANAGER_ONLY','بيانات مركبتك مسجلة؛ تعديلها متاح لمدير التوصيل فقط.')
-        conn.execute('UPDATE users SET vehicle=%s,updated_at=now() WHERE id=%s',(db.json(vehicle),user['id']))
-        db.audit(conn,user['id'],'driver.vehicle.registered','user',user['id'],{'vehicle':vehicle})
-        return {'vehicle':vehicle}
+    # Vehicle ownership belongs to the owner-managed employee profile. Keep the
+    # legacy route fail-closed for old installed clients and existing sessions.
+    raise db.error(403,'VEHICLE_OWNER_REQUIRED','تسجيل المركبة وملكية المركبة من إدارة المالك فقط.')
 
 
 @router.post('/identity/staff/invitations')
-def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner','delivery_manager'))):
+def invite_staff(body:StaffInvitationBody,user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         allowed=db.rate_limit(conn,'staff-invite:'+user['id'],30,3600)
     if not allowed:
@@ -1159,8 +1181,8 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
         body=StaffInvitationBody.model_validate(body)
     user=conn.execute('SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id '
                       'WHERE u.id=%s AND u.active AND b.active', (actor['id'],)).fetchone()
-    if not user or user['role'] not in {'owner','delivery_manager'}:
-        raise db.error(403,'ROLE_FORBIDDEN','إنشاء الدعوة يتطلب مالكًا أو مدير توصيل مخولًا.')
+    if not user or user['role'] != 'owner':
+        raise db.error(403,'ROLE_FORBIDDEN','إنشاء حسابات الموظفين ودعواتهم للمالك فقط.')
     if user['brand_id']!=actor.get('brand_id'):
         raise db.error(403,'BRAND_SCOPE_FORBIDDEN','الدعوة خارج نطاق البراند المخول.')
     user=dict(user,session_id=actor.get('session_id'))
@@ -1213,11 +1235,9 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
 
 
 @router.get('/identity/staff')
-def staff_list(user=Depends(require_roles('owner','delivery_manager'))):
+def staff_list(user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         rows=conn.execute("SELECT * FROM users WHERE brand_id=%s AND role<>'customer' ORDER BY role,display_name LIMIT 500",(user['brand_id'],)).fetchall()
-        if user['role']=='delivery_manager':
-            rows=[r for r in rows if r['invitation_status']!='archived' and r['role']=='driver' and set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
         return {'users':[staff_public(conn,row) for row in rows], 'permission_catalog':employee_permissions.catalog()}
 
 
@@ -1328,7 +1348,7 @@ class StaffUpdateBody(BaseModel):
 
 
 @router.patch('/identity/staff/{identifier}')
-def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles('owner','delivery_manager'))):
+def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         row=_staff_record(conn,identifier,user)
         if row['invitation_status']=='archived':
@@ -1446,7 +1466,7 @@ def manage_staff(identifier:str,body:StaffLifecycleBody,user=Depends(require_rol
 
 
 @router.post('/identity/staff/{identifier}/resend')
-def resend_invitation(identifier:str,user=Depends(require_roles('owner','delivery_manager'))):
+def resend_invitation(identifier:str,user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         allowed=db.rate_limit(conn,'invite-resend:'+identifier,3,600)
     if not allowed:
@@ -1464,7 +1484,7 @@ def resend_invitation(identifier:str,user=Depends(require_roles('owner','deliver
 
 
 @router.post('/identity/staff/{identifier}/revoke-invitation')
-def revoke_invitation(identifier:str,user=Depends(require_roles('owner','delivery_manager'))):
+def revoke_invitation(identifier:str,user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         row=_staff_record(conn,identifier,user)
         if row['invitation_status'] not in {'pending_email','draft'}:

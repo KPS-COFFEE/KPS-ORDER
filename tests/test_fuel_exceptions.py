@@ -28,6 +28,9 @@ def test_full_gate_manager_only_exact_readings_and_single_use(ops,reason):
     opening['vehicle_inspection']['fuel_percent']=65
     sid=post('driver','/api/shifts',opening,key='fuel-open-once')['shift']['id']
     assert post('driver','/api/shifts',opening,key='fuel-open-once')['shift']['id']==sid
+    # The fuel scenario starts closing only after explicit early-close approval.
+    early=post('driver','/api/driver-closure/'+sid+'/request',{'reason':'Synthetic end-of-fuel scenario'})
+    post('manager','/api/driver-closure/'+sid+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'Approved synthetic closure'})
     post('driver','/api/shifts/'+sid+'/closing')
     close={'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':inspection(1025,50),'handover':{'recipient_user_id':'ops-manager','to_shift_id':mid,'reference':'FUEL-TEST'}}
     post('driver','/api/shifts/'+sid+'/submit',close,status=409)

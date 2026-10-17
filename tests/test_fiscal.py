@@ -350,9 +350,10 @@ def test_completed_driver_sale_automatically_issues_once_and_refunds(ops,method,
         assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==1
     assert actor('owner').get(f'/api/fiscal/orders/{oid}/documents').json()['documents']==original
     refund={'amount_halalas':550,'method':method,'reason':'Authorized partial return','line_quantities':{}}
-    first=post('manager',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')
-    assert post('manager',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')==first
-    post('manager',f'/api/orders/{oid}/refund',{**refund,'amount_halalas':3400},key='fiscal-driver-refund-rest')
+    post('manager',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-forbidden',status=403)
+    first=post('owner',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')
+    assert post('owner',f'/api/orders/{oid}/refund',refund,key='fiscal-driver-refund')==first
+    post('owner',f'/api/orders/{oid}/refund',{**refund,'amount_halalas':3400},key='fiscal-driver-refund-rest')
     documents=actor('owner').get(f'/api/fiscal/orders/{oid}/documents').json()['documents']
     assert len(documents)==3
     assert [d for d in documents if d['kind']=='invoice']==original

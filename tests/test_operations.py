@@ -164,6 +164,8 @@ def delivered(post,order,driver):
     return oid
 
 def close_driver(post,driver,manager,counted=1000):
+    early=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'Synthetic completed-shift journey'})
+    post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'Verified synthetic end of shift'})
     post('driver','/api/shifts/'+driver+'/closing')
     with db.tx() as c:
         recipient=c.execute('SELECT user_id FROM shifts WHERE id=%s',(manager,)).fetchone()['user_id']
