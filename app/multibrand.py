@@ -43,6 +43,8 @@ def isolation_guard():
         parts = {}
     name = parts.get('dbname', '')
     if (os.getenv('APP_ENV') != 'testing' or parts.get('host') not in {'127.0.0.1', 'localhost', '::1'}
+            or parts.get('hostaddr', '127.0.0.1') not in {'127.0.0.1', '::1'}
+            or parts.get('service')
             or not name.startswith('test_enbishan_')):
         raise RuntimeError('Enbishan development requires its own local test_enbishan_* database.')
     # Credentials must never be inherited by the isolated application.
@@ -140,6 +142,9 @@ def context(user=Depends(auth.current_user)):
 @router.get('/inbox')
 def inbox(user=Depends(auth.require_roles('owner', 'delivery_manager', 'delivery_staff', 'driver'))):
     isolation_guard()
+    permission = 'tasks_view' if user['role']=='driver' else 'orders_view'
+    if not auth.has_permission(user, permission):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية عرض الطلبات متوقفة لحسابك.')
     with db.tx() as conn:
         result = []
         for brand in available(conn, user):
@@ -158,6 +163,8 @@ def inbox(user=Depends(auth.require_roles('owner', 'delivery_manager', 'delivery
 @router.get('/pool')
 def pool(user=Depends(auth.require_roles('owner', 'delivery_manager'))):
     isolation_guard()
+    if not auth.has_permission(user, 'drivers_view'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية عرض السائقين متوقفة لحسابك.')
     with db.tx() as conn:
         brands = available(conn, user)
         rows = conn.execute("SELECT * FROM users WHERE active AND role='driver' ORDER BY display_name,id").fetchall()
@@ -180,6 +187,8 @@ def pool(user=Depends(auth.require_roles('owner', 'delivery_manager'))):
 @router.get('/driver-tasks')
 def driver_tasks(user=Depends(auth.require_roles('driver'))):
     isolation_guard()
+    if not auth.has_permission(user, 'tasks_view'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية عرض المهام متوقفة لحسابك.')
     from . import operations
     with db.tx() as conn:
         principals = [(brand, project(conn, user, brand['id'])) for brand in available(conn, user)]
@@ -243,6 +252,8 @@ class Dedication(BaseModel):
 @router.post('/dedications')
 def dedicate(body: Dedication, request: Request, user=Depends(auth.require_roles('owner', 'delivery_manager'))):
     isolation_guard()
+    if not auth.has_permission(user, 'delivery_assign'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية تخصيص السائقين متوقفة لحسابك.')
     if body.ends_at <= body.starts_at:
         raise db.error(422, 'DEDICATION_PERIOD_INVALID', 'نهاية الفترة يجب أن تكون بعد بدايتها.')
     with db.tx() as conn:

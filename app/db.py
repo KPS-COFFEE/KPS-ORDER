@@ -285,6 +285,10 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
 
 
 def migrate():
+    from . import multibrand
+    if multibrand.enabled():
+        # Reject a bad test DSN before opening a connection or acquiring locks.
+        multibrand.isolation_guard()
     with tx() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
         baseline = preservation_snapshot(conn)

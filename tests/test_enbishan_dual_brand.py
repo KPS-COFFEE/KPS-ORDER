@@ -114,6 +114,10 @@ def test_both_catalogs_branches_quotes_and_foreign_item_rejection(dual):
         assert quote['total_halalas']==(1500 if brand=='kps' else 2500)
         body['items'][0]['product_id']='dual-'+('enbishan' if brand=='kps' else 'kps')
         assert client.post('/api/quote',json=body).status_code==422
+        body['items'][0]['product_id']='dual-'+brand
+        body['customer']['location']={'lat':29.0,'lng':46.9}
+        outside=client.post('/api/quote',json=body)
+        assert outside.status_code==409 and outside.json()['detail']['code']=='OUTSIDE_COVERAGE'
 
 
 @pytest.mark.postgres
@@ -175,7 +179,7 @@ def test_receipt_number_sequences_are_distinct_and_kps_format_preserved(dual):
 def test_current_verified_checkout_order_history_and_replay_for_both_brands(dual):
     client, actor, post, shifts, _=dual
     shifts('kps');shifts('enbishan')
-    orders={}
+    orders={};parallel=[]
     for brand in ['kps','enbishan']:
         with db.tx() as c:
             c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":true}'::jsonb WHERE brand_id=%s",(brand,))
@@ -193,6 +197,18 @@ def test_current_verified_checkout_order_history_and_replay_for_both_brands(dual
         orders[brand]=first.json()['order']
         assert orders[brand]['snapshot']['order_reference'].startswith('ENB-' if brand=='enbishan' else 'HFR1-')
         assert all(o['brand_id']==brand for o in client.get('/api/orders').json()['orders'])
+        parallel.append((body,dict(client.cookies),dict(client.headers)))
+    def create_concurrently(case):
+        from fastapi.testclient import TestClient
+        body,cookies,headers=case
+        isolated_client=TestClient(client.app,headers=headers)
+        isolated_client.cookies.update(cookies)
+        return isolated_client.post('/api/orders',json=body,headers={'Idempotency-Key':uuid4().hex})
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        concurrent=list(workers.map(create_concurrently,parallel))
+    assert all(r.status_code==200 for r in concurrent),[r.text for r in concurrent]
+    assert {r.json()['order']['brand_id'] for r in concurrent}=={'kps','enbishan'}
+    assert len({r.json()['order']['id'] for r in concurrent})==2
     assert actor('kps-customer').get('/api/orders/'+orders['enbishan']['id']).status_code==404
     assert actor('enbishan-customer').get('/api/orders/'+orders['kps']['id']).status_code==404
 
@@ -271,3 +287,49 @@ def test_persisted_enbishan_tax_invoice_and_foreign_read_are_isolated(dual):
     assert actor('owner','kps').get('/api/fiscal/orders/dual-tax-enb/documents').status_code==404
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM fiscal_documents WHERE order_id='dual-tax-enb'").fetchone()['n']==1
+
+
+@pytest.mark.postgres
+def test_both_brand_driver_closures_and_saved_reports_are_independent(dual):
+    _,actor,post,shifts,_=dual
+    ks=shifts('kps');es=shifts('enbishan')
+    from app.shift_vehicle import CHECKS
+    for brand,(manager,driver) in [('enbishan',es),('kps',ks)]:
+        post('driver','/api/shifts/'+driver+'/closing',{},brand,status=409)
+        asked=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'SYNTHETIC finished test shift'},brand)
+        post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved',
+             'request_id':asked['authorization']['id'],'reason':'SYNTHETIC manager approval'},brand)
+        post('driver','/api/shifts/'+driver+'/closing',{},brand)
+        post('driver','/api/shifts/'+driver+'/submit',{'counted_halalas':0,'handover_halalas':0,'terminal_total_halalas':0,
+             'handover':{'recipient_user_id':'dual-manager','to_shift_id':manager,'reference':'TEST ONLY'},
+             'vehicle_inspection':{'odometer_km':1020,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}}},brand)
+        with db.tx() as c:
+            transfer=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['id']
+        post('manager','/api/custody/'+transfer+'/confirm',{},brand)
+        result=post('manager','/api/shifts/'+driver+'/approve',{},brand)
+        assert actor('owner',brand).get('/api/reports/'+result['report_id']).status_code==200
+        assert actor('owner','kps' if brand=='enbishan' else 'enbishan').get('/api/reports/'+result['report_id']).status_code==404
+
+
+def test_bad_isolated_startup_never_opens_a_database_connection(monkeypatch):
+    monkeypatch.setenv('ENBISHAN_ISOLATED_ENABLED','true')
+    monkeypatch.setenv('APP_ENV','testing')
+    monkeypatch.setenv('DATABASE_URL','postgresql://synthetic@remote.invalid/kps_live')
+    def forbidden(*args,**kwargs):raise AssertionError('A database connection was attempted')
+    monkeypatch.setattr(db,'tx',forbidden)
+    with pytest.raises(RuntimeError):db.migrate()
+
+
+@pytest.mark.postgres
+def test_shared_endpoints_keep_employee_permission_denials(dual):
+    _,actor,post,_,_=dual
+    with db.tx() as c:
+        c.execute("UPDATE users SET permission_denials='[\"tasks_view\"]' WHERE id='dual-driver'")
+        c.execute("UPDATE users SET permission_denials='[\"orders_view\",\"drivers_view\",\"delivery_assign\"]' WHERE id='dual-manager'")
+    assert actor('driver').get('/api/multibrand/driver-tasks').status_code==403
+    assert actor('driver','enbishan').get('/api/multibrand/inbox').status_code==403
+    assert actor('manager').get('/api/multibrand/inbox').status_code==403
+    assert actor('manager','enbishan').get('/api/multibrand/pool').status_code==403
+    now=datetime.now(timezone.utc)
+    post('manager','/api/multibrand/dedications',{'driver_id':'dual-driver','brand_id':'enbishan',
+        'starts_at':now.isoformat(),'ends_at':(now+timedelta(hours=1)).isoformat(),'reason':'SYNTHETIC'},status=403)

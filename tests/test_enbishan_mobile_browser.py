@@ -89,3 +89,28 @@ def test_same_manager_account_switches_brands_on_mobile(dual_http):
             assert not errors,errors
             context.close()
         finally:browser.close()
+
+
+@pytest.mark.postgres
+def test_shared_driver_sees_other_brand_task_and_switches_without_new_login(dual_http):
+    base,(_,actor,post,shifts,order)=dual_http
+    ks=shifts('kps');es=shifts('enbishan')
+    post('manager','/api/orders/'+order('kps')+'/assign',{'driver_shift_id':ks[1]})
+    post('manager','/api/orders/'+order('enbishan')+'/assign',{'driver_shift_id':es[1]},'enbishan')
+    client=actor('driver')
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'),args=['--no-sandbox'])
+        try:
+            context=browser.new_context(viewport={'width':390,'height':844})
+            context.add_cookies([{'name':name,'value':client.cookies.get(name),'url':base} for name in [auth.COOKIE,auth.CSRF_COOKIE]])
+            page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+            page.goto(base+'/ops')
+            other=page.locator('a[href="/ops?operations_brand=enbishan"]')
+            expect(other).to_contain_text('ENBISHAN TEST ONLY')
+            other.click()
+            expect(page.locator('#operations-brand-switch select')).to_have_value('enbishan')
+            expect(page.locator('.brand>span')).to_contain_text('ENBISHAN TEST ONLY')
+            assert not errors,errors
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+            context.close()
+        finally:browser.close()

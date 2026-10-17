@@ -36,3 +36,18 @@ BEGIN
  RETURN NEW;
 END; $$ LANGUAGE plpgsql;
 CREATE TRIGGER dual_transfer_brand BEFORE INSERT ON custody_transfers FOR EACH ROW EXECUTE FUNCTION guard_dual_transfer_brand();
+CREATE FUNCTION guard_dual_fiscal_brand() RETURNS trigger AS $$
+DECLARE sale_brand text;
+BEGIN
+ SELECT brand_id INTO sale_brand FROM orders WHERE id=NEW.order_id;
+ IF NOT EXISTS(SELECT 1 FROM fiscal_policy_decisions WHERE id=NEW.policy_id AND brand_id=sale_brand)
+   OR NEW.document->>'brand_id' IS DISTINCT FROM sale_brand THEN
+   RAISE EXCEPTION 'Fiscal policy or document belongs to another brand';
+ END IF;
+ IF NEW.original_number IS NOT NULL AND NOT EXISTS(
+   SELECT 1 FROM fiscal_documents d JOIN orders o ON o.id=d.order_id
+   WHERE d.number=NEW.original_number AND o.brand_id=sale_brand AND d.order_id=NEW.order_id
+ ) THEN RAISE EXCEPTION 'Credit note crosses order or brand'; END IF;
+ RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER dual_fiscal_brand BEFORE INSERT ON fiscal_documents FOR EACH ROW EXECUTE FUNCTION guard_dual_fiscal_brand();
