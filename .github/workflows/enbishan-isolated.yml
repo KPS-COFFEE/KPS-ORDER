@@ -2,6 +2,7 @@ name: Enbishan isolated dual-brand regression
 on:
   push:
     branches: [agent/enbishan-isolated-development-20261017]
+    paths-ignore: ['docs/**']
   workflow_dispatch:
 permissions:
   contents: read

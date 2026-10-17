@@ -333,3 +333,20 @@ def test_shared_endpoints_keep_employee_permission_denials(dual):
     now=datetime.now(timezone.utc)
     post('manager','/api/multibrand/dedications',{'driver_id':'dual-driver','brand_id':'enbishan',
         'starts_at':now.isoformat(),'ends_at':(now+timedelta(hours=1)).isoformat(),'reason':'SYNTHETIC'},status=403)
+
+
+@pytest.mark.postgres
+def test_first_staff_login_returns_selected_brand_and_same_identity(dual):
+    client,_,_,_,_=dual
+    with db.tx() as c:
+        c.execute("UPDATE users SET username='synthetic.dual.manager',password_hash=%s WHERE id='dual-manager'",
+                  (auth.hash_password('Synthetic-only-password!'),))
+    client.headers['X-Operations-Brand']='enbishan'
+    result=client.post('/api/auth/login',json={'username':'synthetic.dual.manager','password':'Synthetic-only-password!'})
+    assert result.status_code==200,result.text
+    user=result.json()['user']
+    assert user['id']=='dual-manager' and user['brand_id']=='enbishan'
+    assert {b['id'] for b in user['operations_brands']}=={'kps','enbishan'}
+    assert client.get('/api/session').json()['user']['brand_id']=='enbishan'
+    client.headers['X-Operations-Brand']='kps'
+    assert client.get('/api/session').json()['user']['id']=='dual-manager'

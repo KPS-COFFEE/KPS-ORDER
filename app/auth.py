@@ -199,6 +199,14 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
 def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False) -> dict:
     from .storefront_scope import require_brand
     require_brand(user['brand_id'])
+    from . import multibrand
+    if multibrand.enabled() and user.get('role') != 'customer':
+        selected = multibrand.operation_brand.get()
+        if selected:
+            user = multibrand.project(conn, user, selected)
+            if not user:
+                raise db.error(403, 'OPERATIONS_BRAND_FORBIDDEN', 'البراند غير مخول لحسابك.')
+        user = dict(user, operations_brands=multibrand.available(conn, user))
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a
