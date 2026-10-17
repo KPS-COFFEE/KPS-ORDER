@@ -35,7 +35,10 @@ def test_archive_restore_and_reinvite_preserve_identity_and_revoke_access(client
             assert client.post(path+'/owner-activate',json={'reason':'Cannot bypass restore'}).status_code==409
             manager=_make_user('delivery_manager',branches=invited['branch_ids'])
             _authenticate(client,manager)
-            assert identifier not in [u['id'] for u in client.get('/api/identity/staff').json()['users']]
+            # Account administration is owner-only in the approved delivery scope.
+            directory=client.get('/api/identity/staff')
+            assert directory.status_code==403
+            assert 'users' not in directory.json()
             assert client.post(path+'/manage',json={'action':'restore','reason':'Forbidden restore'}).status_code==403
             _authenticate(client,owner);client.post('/api/identity/step-up',json={'password':PASSWORD})
     with db.tx() as conn:

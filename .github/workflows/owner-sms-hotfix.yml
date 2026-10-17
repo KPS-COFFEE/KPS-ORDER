@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 0a4d0957825b67c7e0cbe90f16ff9eeaa1ac49aa
+          ref: 2bbd536843f19731e46244a659d027057537c908
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -40,12 +40,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "0a4d0957825b67c7e0cbe90f16ff9eeaa1ac49aa"
+          test "$(git rev-parse HEAD)" = "2bbd536843f19731e46244a659d027057537c908"
           node --check public/ops.js
-          python -m pytest -q --tb=short --junitxml=test-results/owner-sms.xml tests/test_additional_password_owner.py tests/test_owner_sensitive_sms.py tests/test_owner_phone_link.py tests/test_owner_staff_management.py tests/test_employee_sms_portals.py tests/test_employee_sms_diagnostics.py tests/test_sms_email_retirement.py tests/test_sms_retirement_brand_scope.py tests/test_employee_sms_browser.py
+          python -m pytest -q --tb=short --junitxml=test-results/owner-sms.xml tests/test_delivery_manager_operations_only.py tests/test_additional_password_owner.py tests/test_owner_sensitive_sms.py tests/test_owner_phone_link.py tests/test_owner_staff_management.py tests/test_employee_sms_portals.py tests/test_employee_sms_diagnostics.py tests/test_sms_email_retirement.py tests/test_sms_retirement_brand_scope.py tests/test_employee_sms_browser.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: owner-sms-0a4d0957825b67c7e0cbe90f16ff9eeaa1ac49aa
+          name: owner-sms-2bbd536843f19731e46244a659d027057537c908
           path: test-results/
           retention-days: 14
