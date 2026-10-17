@@ -132,7 +132,7 @@ def confirm_ready(sid:str,body:ReadyFuel,request:Request,user=Depends(auth.curre
             consume(c,user,s,body,'activation',log.get('vehicle') or {})
             from .shift_vehicle import stamp
             log['fuel_readiness']=stamp(c,user,body);log['awaiting_refuel']=False
-            c.execute('UPDATE shifts SET vehicle_log=%s,available=true WHERE id=%s',(db.json(log),sid))
+            c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
             db.audit(c,user['id'],'fuel.ready','shift',sid,log['fuel_readiness'])
-            return {'shift_id':sid,'available':True}
+            return {'shift_id':sid,'available':s['available']}
         return mutate(c,user,request,'fuel.ready:'+sid,body.model_dump(),perform)

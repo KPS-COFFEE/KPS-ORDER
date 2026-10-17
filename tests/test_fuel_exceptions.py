@@ -114,7 +114,12 @@ def test_low_fuel_opens_shift_but_blocks_all_assignment_until_ready(ops,exceptio
     mid=post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
     body={'kind':'driver','manager_shift_id':mid,'vehicle_inspection':inspection(1000,40)}
     s=post('driver','/api/shifts',body,key='open-for-refuel')['shift'];sid=s['id']
-    assert s['status']=='open' and not s['available'] and s['vehicle_log']['awaiting_refuel']
+    # available is the independent manager pause flag, not fuel readiness.
+    assert s['status']=='open' and s['available'] is True and s['vehicle_log']['awaiting_refuel']
+    roster=actor('manager').get('/api/operations/drivers').json()['drivers']
+    driver=next(row for row in roster if row['id']=='ops-driver')
+    assert driver['availability']=='waiting_for_fuel' and driver['assignment_eligible'] is False
+    assert driver['eligible_branch_ids']==[]
     assert post('driver','/api/shifts',body,key='open-for-refuel')['shift']['id']==sid
     oid=order()
     post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':sid},status=409)

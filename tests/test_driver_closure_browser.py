@@ -40,7 +40,9 @@ def test_low_fuel_closure_requests_approval_without_losing_counted_cash(live_app
         with db.tx() as c:
             assert c.execute('SELECT count(*) n FROM fuel_exceptions WHERE shift_id=%s',(sid,)).fetchone()['n']==1
             assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='closing'
-        mpage.goto(live_app+'/ops');mpage.locator('[data-action=fuel-inbox]').click()
+        mpage.goto(live_app+'/ops')
+        expect(mpage.locator('[data-action=fuel-inbox]')).to_have_count(1)
+        mpage.locator('[data-action=fuel-inbox]').click()
         mpage.locator('[data-action=fuel-reject]').click()
         expect(mpage.locator('[data-action=fuel-reject]')).to_have_count(0)
         form.locator('button[type=submit]').click()

@@ -252,7 +252,6 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
                 vehicle_log['awaiting_refuel']=body.vehicle_inspection.fuel_percent<100 and not body.vehicle_inspection.fuel_exception_id
                 c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
-                if vehicle_log['awaiting_refuel']:c.execute('UPDATE shifts SET available=false WHERE id=%s',(sid,))
             for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
             db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'previous_carry_halalas':sum(x['amount_halalas'] for x in carryovers),'permanent_float':permanent_float,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
             return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}

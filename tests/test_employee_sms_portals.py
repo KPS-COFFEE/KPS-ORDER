@@ -115,7 +115,7 @@ def sms_setup(monkeypatch,phone='+966507778899',active=True):
     def provider(path,data,**kw):
         calls.append((path,data,kw))
         if path=='Verifications':return {'sid':'VEfixture','status':'pending','to':phone,'channel':'sms'}
-        return {'status':'approved','to':phone,'channel':'sms'}
+        return {'sid':'VEfixture','status':'approved','to':phone,'channel':'sms'}
     monkeypatch.setattr(auth,'_provider_post',provider)
     return user,calls
 
@@ -182,6 +182,22 @@ def test_sms_expiry_and_bad_code_attempt_limits(client,monkeypatch):
         assert conn.execute('SELECT attempts FROM otp_challenges WHERE id=%s',(sent['challenge_id'],)).fetchone()['attempts']==3
         conn.execute("UPDATE otp_challenges SET expires_at=now()-interval '1 second',attempts=0 WHERE id=%s",(sent['challenge_id'],))
     assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'012345'}).status_code==400
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('returned_reference', [None, 'VEanother-challenge'])
+def test_employee_sms_approval_must_prove_the_requested_provider_reference(client,monkeypatch,returned_reference):
+    from app import db
+    user,calls=sms_setup(monkeypatch)
+    sent=client.post('/api/identity/staff/code/request',json={'phone':'0507778899'}).json()
+    monkeypatch.setattr(auth,'_provider_post',lambda *a,**kw:{
+        'sid':returned_reference,'status':'approved','to':'+966507778899','channel':'sms'})
+    result=client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'012345'})
+    assert result.status_code==400,result.text
+    assert result.json()['detail']['code']=='OTP_INVALID'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM sessions').fetchone()['n']==0
+        assert conn.execute('SELECT verified_at FROM otp_challenges WHERE id=%s',(sent['challenge_id'],)).fetchone()['verified_at'] is None
 
 
 @pytest.mark.postgres

@@ -110,7 +110,10 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
             raise db.error(403,'EMPLOYEE_LOGIN_UNAVAILABLE','تعذر تسجيل الدخول. / Login unavailable.')
         portals.enforce_role(request,user)
     result = auth._provider_post('VerificationCheck',{'VerificationSid':challenge['provider_reference'],'Code':body.code},service_sid=os.environ['EMPLOYEE_TWILIO_VERIFY_SERVICE_SID'])
-    if result.get('status') != 'approved' or result.get('to') != challenge['phone'] or result.get('channel') != 'sms':
+    if (result.get('status') != 'approved'
+            or result.get('sid') != challenge['provider_reference']
+            or result.get('to') != challenge['phone']
+            or result.get('channel') != 'sms'):
         raise db.error(400,'OTP_INVALID','رمز غير صحيح. / Invalid code.')
     with db.tx() as conn:
         provider_ready(conn,challenge['brand_id'])

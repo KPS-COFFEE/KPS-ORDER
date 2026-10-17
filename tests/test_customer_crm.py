@@ -44,14 +44,14 @@ def test_real_auth_revocation_and_cross_brand_customer_scope(database):
         assert client.get('/api/crm/overview').status_code == 401
 
 
-def seed_order(c, customer, *, area='District', amount=1900, refund=0, status='delivered', selected='kps-branch-2', sandbox=False):
+def seed_order(c, customer, *, area='District', amount=1900, refund=0, status='delivered', selected='kps-branch-2', sandbox=False, created_at=None, test_data=False):
     oid, collection = db.new_id('o_'), db.new_id('collection_')
     c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,
       delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,
-      snapshot,customer,completed_at) VALUES(%s,'kps','kps-branch-1',%s,'delivery','handed_over',%s,
-      'paid','cash',%s,0,%s,%s,%s,now())""", (oid, customer['id'], status, amount, amount,
-      db.json({'internal_routing': {'selected_branch': {'branch_id': selected}}, **({'branch_payment_mode': 'test'} if sandbox else {})}),
-      db.json({'name': 'Historical name', 'city': 'City', 'neighborhood': area, 'location': {'lat':28.4,'lng':45.9}})))
+      snapshot,customer,completed_at,created_at) VALUES(%s,'kps','kps-branch-1',%s,'delivery','handed_over',%s,
+      'paid','cash',%s,0,%s,%s,%s,now(),COALESCE(%s::timestamptz,now()))""", (oid, customer['id'], status, amount, amount,
+      db.json({'internal_routing': {'selected_branch': {'branch_id': selected}}, 'test_data':test_data, **({'branch_payment_mode': 'test'} if sandbox else {})}),
+      db.json({'name': 'Historical name', 'city': 'City', 'neighborhood': area, 'location': {'lat':28.4,'lng':45.9}}),created_at))
     c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES(%s,%s,%s,'cash',%s)",
               (collection, oid, customer['id'], amount))
     if refund:
@@ -106,3 +106,57 @@ def test_verified_ids_net_refunds_branches_areas_and_no_raw_pins(database):
         claimed = client.get('/api/crm/customers/'+people[0]['id']).json()
         assert sum(r['qualifying_orders'] for r in claimed['branch_channels']) == 3
         assert sum(r['net_spending_halalas'] for r in claimed['branch_channels']) == 1600+1900+9999
+
+
+@pytest.mark.postgres
+def test_certified_period_excludes_retained_history_without_mutating_orders(database):
+    owner = _make_user('owner')
+    live, registered_only, historical, alias = [_make_user() for _ in range(4)]
+    with db.tx() as c:
+        for person in (live, registered_only, historical):
+            c.execute('UPDATE users SET phone_verified_at=now(),phone_sms_verified_at=now() WHERE id=%s', (person['id'],))
+        old = seed_order(c, live, created_at='2026-10-16T23:59:59Z')
+        current = seed_order(c, live, created_at='2026-10-17T00:00:00Z',refund=300)
+        test = seed_order(c, live, created_at='2026-10-17T01:00:00Z',test_data=True)
+        retained = seed_order(c, historical, created_at='2026-10-17T01:00:00Z')
+        linked = seed_order(c, alias, created_at='2026-10-17T01:00:00Z')
+        c.execute('INSERT INTO customer_identity_links(source_id,customer_id,brand_id) VALUES(%s,%s,%s)', (alias['id'],live['id'],'kps'))
+        before=c.execute('SELECT id,snapshot,customer,total_halalas FROM orders WHERE id=ANY(%s) ORDER BY id',([old,current,test,retained,linked],)).fetchall()
+        c.execute("UPDATE brands SET settings=settings||%s WHERE id='kps'", (db.json({'operational_period_started_at':'2026-10-17T00:00:00Z','historical_test_customer_ids':[historical['id'],alias['id']]}),))
+    with app_client() as client:
+        _authenticate(client, owner)
+        overview=client.get('/api/crm/overview')
+        assert overview.status_code==200,overview.text
+        data=overview.json()
+        assert data['operating_period']['configured'] is True
+        assert data['operating_period']['period_valid'] is True
+        assert data['totals']['registered_customers']==2
+        assert data['totals']['purchasing_customers']==1
+        assert data['totals']['qualifying_orders']==1
+        assert data['totals']['net_spending_halalas']==1600
+        assert client.get('/api/crm/customers/'+historical['id']).status_code==404
+        profiles=client.get('/api/crm/customers').json()['customers']
+        assert {p['id'] for p in profiles}=={live['id'],registered_only['id']}
+        stats=next(p for p in profiles if p['id']==live['id'])
+        assert stats['first_order_at']==stats['latest_order_at']
+        assert stats['first_order_at'].startswith('2026-10-17T00:00:00')
+    with db.tx() as c:
+        after=c.execute('SELECT id,snapshot,customer,total_halalas FROM orders WHERE id=ANY(%s) ORDER BY id',([old,current,test,retained,linked],)).fetchall()
+        assert after==before
+
+
+@pytest.mark.postgres
+def test_invalid_period_is_visible_and_fails_closed_instead_of_reusing_history(database):
+    owner, person=_make_user('owner'),_make_user()
+    with db.tx() as c:
+        c.execute('UPDATE users SET phone_verified_at=now(),phone_sms_verified_at=now() WHERE id=%s',(person['id'],))
+        seed_order(c,person)
+        c.execute("UPDATE brands SET settings=settings||%s WHERE id='kps'",(db.json({'operational_period_started_at':'invalid-period'}),))
+    with app_client() as client:
+        _authenticate(client,owner)
+        response=client.get('/api/crm/overview')
+        assert response.status_code==200,response.text
+        data=response.json()
+        assert data['operating_period']['period_valid'] is False
+        assert data['totals']['qualifying_orders']==0
+        assert data['totals']['net_spending_halalas']==0

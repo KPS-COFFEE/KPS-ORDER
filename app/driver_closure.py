@@ -26,6 +26,9 @@ class Schedule(Reason):
             raise ValueError('Timezone required')
         return value
 
+class Withdrawal(Reason):
+    request_id: str
+
 class Decision(Reason):
     decision: Literal['approved', 'rejected']
     request_id: str
@@ -126,3 +129,29 @@ def decide(sid: str, body: Decision, request: Request, user=Depends(auth.current
             db.audit(c, user['id'], 'driver_closure.'+body.decision, 'shift', sid, approval)
             return {'shift_id': sid, 'status': 'open', 'authorization': approval}
         return mutate(c, user, request, 'driver_closure.decision:'+sid, body.model_dump(), perform)
+
+
+@router.post('/{sid}/withdraw')
+def withdraw(sid: str, body: Withdrawal, request: Request, user=Depends(auth.current_user)):
+    roles(user, 'driver')
+    if not auth.has_permission(user, 'shifts_close'):
+        raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مصرح / Forbidden')
+    with db.tx() as c:
+        s = driver_shift(c, user, sid)
+        if s['user_id'] != user['id']:
+            raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مصرح / Forbidden')
+        def perform():
+            s = driver_shift(c, user, sid)
+            old = s.get('closure_authorization') or {}
+            if old.get('id') != body.request_id:
+                raise db.error(409, 'CLOSURE_REQUEST_STALE', 'طلب تغير؛ حدّث الشاشة / Request changed; refresh')
+            if old.get('status') == 'withdrawn':
+                return {'shift_id': sid, 'status': 'open', 'authorization': old}
+            if old.get('status') not in ('requested', 'approved'):
+                raise db.error(409, 'CLOSURE_REQUEST_STALE', 'لا يوجد طلب قابل للسحب / No request to withdraw')
+            approval = {**old, 'status': 'withdrawn', 'withdrawal_reason': body.reason,
+                        'withdrawn_by': user['id'], 'withdrawn_at': c.execute('SELECT now() n').fetchone()['n'].isoformat()}
+            c.execute('UPDATE shifts SET closure_authorization=%s WHERE id=%s', (db.json(approval), sid))
+            db.audit(c, user['id'], 'driver_closure.withdraw', 'shift', sid, approval)
+            return {'shift_id': sid, 'status': 'open', 'authorization': approval}
+        return mutate(c, user, request, 'driver_closure.withdraw:'+sid, body.model_dump(), perform)
