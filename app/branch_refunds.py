@@ -104,7 +104,8 @@ def authorize(oid: str, body: RefundBody, user=Depends(auth.require_roles('owner
             db.audit(c, user['id'], 'payment.refund.authorized', 'order', oid,
                      {'refund_id': row['id'], 'amount_halalas': body.amount_halalas, 'reason': body.reason, 'mode': attempt['mode']})
             return {'refund': view(row)}
-        return db.idempotent(c, user['id'], idem, 'branch.refund:'+oid, body.model_dump(), perform)
+        # Omitted optional attempt selection preserves pre-upgrade replay hashes.
+        return db.idempotent(c, user['id'], idem, 'branch.refund:'+oid, body.model_dump(exclude_none=True), perform)
 
 
 def load(c, rid, user):

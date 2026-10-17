@@ -11,6 +11,13 @@ from test_backup import independent_restore_database
 from app import branch_refund_reconciliation as recovery
 
 
+def test_optional_payment_selection_preserves_legacy_refund_digest():
+    from app.branch_refunds import RefundBody
+    legacy={'version':1,'amount_halalas':1000,'reason':'Preserved reason'}
+    assert RefundBody(**legacy).model_dump(exclude_none=True)==legacy
+    assert RefundBody(**legacy,attempt_id='pay_old').model_dump(exclude_none=True)==dict(legacy,attempt_id='pay_old')
+
+
 @pytest.mark.parametrize('missing',[
     'KPS_BRANCH_REFUND_RECONCILIATION_ENABLED','KPS_BRANCH_PAYMENT_SANDBOX_ENABLED',
     'KPS_BRANCH_PAYMENT_REFUNDS_ENABLED','KPS_PAYMENTS_SANDBOX_REQUESTS_ENABLED'])
