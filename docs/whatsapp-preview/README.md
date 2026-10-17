@@ -1,3 +1,7 @@
+## Latest owner decision — 2026-10-18 Riyadh
+
+Cookie image approved as the selected store-link preview. Croissant retained unchanged as the alternative. Live-only release commit: `9c9c194da90d999f544b449272084e910d4c3d94`, based on prior live preview release `6f2a223`. The historical record below describes the previous selection.
+
 # KPS WhatsApp link preview — review candidate
 
 Original approved preview restored from saved commit `728868db1884f8f99c94f03a944b394a500b1f9e` onto current branch HEAD `f8172242608444a0ee5401e5c37d51276b8e36d1`, without replacing newer files or reverting other streams.

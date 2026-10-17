@@ -30,11 +30,11 @@ def test_server_html_has_one_approved_preview_without_body_ad():
     assert meta['og:title'] == 'KPS COFFEE | كبز للقهوة المختصة'
     assert meta['og:description'] == 'قهوتك صارت أقرب… اطلبها بكل سهولة ☕🧡'
     assert meta['og:url'] == 'https://order.kps.sa'
-    assert meta['og:image'] == 'https://order.kps.sa/assets/kps-whatsapp-cf8b1309a87e.jpeg'
+    assert meta['og:image'] == 'https://order.kps.sa/assets/kps-whatsapp-cookie-815deea7ce4d.png'
     assert meta['og:image:secure_url'] == meta['og:image']
-    assert meta['og:image:type'] == 'image/jpeg'
+    assert meta['og:image:type'] == 'image/png'
     assert 'kps-whatsapp-' not in body
-    assert 'cookie-815' not in head
+    assert 'cf8b1309' not in head
 
 
 @pytest.mark.parametrize('name,mime,digest', [
