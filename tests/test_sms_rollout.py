@@ -168,3 +168,40 @@ def test_employee_send_account_budget_survives_approved_phone_change(client,monk
         assert conn.execute('SELECT count(*) n FROM otp_challenges WHERE source_user_id=%s',(user['id'],)).fetchone()['n']==3
         assert conn.execute('SELECT sum(hits) n FROM rate_limits WHERE bucket=%s',(hashlib.sha256(('employee-sms-send-account:'+user['id']).encode()).hexdigest(),)).fetchone()['n']==4
         assert conn.execute('SELECT 1 FROM otp_challenges WHERE id=%s',(result.json()['challenge_id'],)).fetchone() is None
+
+
+@pytest.mark.postgres
+def test_concurrent_session_creation_uses_owned_connections_and_fresh_rollout(database, monkeypatch):
+    """A full auth pool must not acquire a second connection for rollout reads."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from fastapi import Response
+
+    monkeypatch.delenv('SESSION_CONTEXT_COOKIES_ENABLED', raising=False)
+    monkeypatch.delenv('EMPLOYEE_SMS_EMAIL_RETIRED', raising=False)
+    monkeypatch.delenv('EMPLOYEE_SMS_LOGIN_ENABLED', raising=False)
+    users = [_make_user('owner') for _ in range(db.POOL_MAX_SIZE)]
+    with db.tx() as conn:
+        conn.execute("UPDATE app_settings SET settings=settings||%s WHERE brand_id='kps'",
+                     (db.json({'employee_sms_rollout': {'mode': 'active', 'email_retired': True}}),))
+    barrier = Barrier(db.POOL_MAX_SIZE)
+
+    def establish(user):
+        response = Response()
+        with db.tx() as conn:
+            # Every pool slot is owned before cookie/public-user policy reads.
+            barrier.wait(timeout=10)
+            result = auth.establish_session(conn, user, response)
+        assert result['user']['employee_sms_email_retired'] is True
+        assert 'kps_work_session=' in response.headers['set-cookie']
+        return result['user']['id']
+
+    with ThreadPoolExecutor(max_workers=db.POOL_MAX_SIZE) as workers:
+        assert set(workers.map(establish, users)) == {user['id'] for user in users}
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) AS n FROM sessions WHERE user_id=ANY(%s)',
+                            ([user['id'] for user in users],)).fetchone()['n'] == len(users)
+        conn.execute("UPDATE app_settings SET settings=settings||%s WHERE brand_id='kps'",
+                     (db.json({'employee_sms_rollout': {'mode': 'inactive', 'email_retired': False}}),))
+        assert not sms_rollout.context_cookies_enabled(conn)
+        assert not auth.public_user(users[0], conn=conn)['employee_sms_email_retired']
