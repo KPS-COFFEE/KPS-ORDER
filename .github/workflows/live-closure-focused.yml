@@ -8,7 +8,7 @@ name: KPS ORDER Exact Candidate Live Closure
 permissions:
   contents: read
 concurrency:
-  group: kps-live-closure-2129127a626eb546dd1a69b3b228c48e3f50dec6-${{ github.sha }}
+  group: kps-live-closure-0154ea9c7a439fcb076fa3c0c947cc954c85140d-${{ github.sha }}
   cancel-in-progress: false
 jobs:
   auth-concurrency:
@@ -30,28 +30,27 @@ jobs:
       TEST_BROWSER: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       NO_PROXY: 127.0.0.1,localhost,::1
-      no_proxy: 127.0.0.1,localhost,::1
-      RUNTIME_REVISION: 2129127a626eb546dd1a69b3b228c48e3f50dec6
+      RUNTIME_REVISION: 0154ea9c7a439fcb076fa3c0c947cc954c85140d
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 2129127a626eb546dd1a69b3b228c48e3f50dec6
+        ref: 0154ea9c7a439fcb076fa3c0c947cc954c85140d
         persist-credentials: false
     - name: Record and verify immutable candidate identity
       shell: bash
       run: 'mkdir -p test-artifacts
 
-        printf ''%s\n'' ''2129127a626eb546dd1a69b3b228c48e3f50dec6'' > test-artifacts/expected-sha.txt
+        printf ''%s\n'' ''0154ea9c7a439fcb076fa3c0c947cc954c85140d'' > test-artifacts/expected-sha.txt
 
         git rev-parse HEAD > test-artifacts/actual-sha.txt
 
         git rev-parse ''HEAD^{tree}'' > test-artifacts/actual-tree.txt
 
-        test "$(git rev-parse HEAD)" = ''2129127a626eb546dd1a69b3b228c48e3f50dec6''
+        test "$(git rev-parse HEAD)" = ''0154ea9c7a439fcb076fa3c0c947cc954c85140d''
 
-        test "$(git rev-parse ''HEAD^{tree}'')" = ''c329df037d49ebf27d7a7f326dbda35c70d4ebe4''
+        test "$(git rev-parse ''HEAD^{tree}'')" = ''9cfac58ac9cf8ed91f71eeb5ec1cb730e9d2af99''
 
-        printf ''%s\n'' ''Candidate 2129127a626eb546dd1a69b3b228c48e3f50dec6; this workflow is focused functional
+        printf ''%s\n'' ''Candidate 0154ea9c7a439fcb076fa3c0c947cc954c85140d; this workflow is focused functional
         evidence, not capacity certification.'' >> "$GITHUB_STEP_SUMMARY"'
     - uses: actions/setup-python@v5
       with:
@@ -71,7 +70,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: live-closure-auth-concurrency-2129127a626eb546dd1a69b3b228c48e3f50dec6
+        name: live-closure-auth-concurrency-0154ea9c7a439fcb076fa3c0c947cc954c85140d
         path: test-artifacts/
         if-no-files-found: error
         retention-days: 14
@@ -94,28 +93,27 @@ jobs:
       TEST_BROWSER: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       NO_PROXY: 127.0.0.1,localhost,::1
-      no_proxy: 127.0.0.1,localhost,::1
-      RUNTIME_REVISION: 2129127a626eb546dd1a69b3b228c48e3f50dec6
+      RUNTIME_REVISION: 0154ea9c7a439fcb076fa3c0c947cc954c85140d
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 2129127a626eb546dd1a69b3b228c48e3f50dec6
+        ref: 0154ea9c7a439fcb076fa3c0c947cc954c85140d
         persist-credentials: false
     - name: Record and verify immutable candidate identity
       shell: bash
       run: 'mkdir -p test-artifacts
 
-        printf ''%s\n'' ''2129127a626eb546dd1a69b3b228c48e3f50dec6'' > test-artifacts/expected-sha.txt
+        printf ''%s\n'' ''0154ea9c7a439fcb076fa3c0c947cc954c85140d'' > test-artifacts/expected-sha.txt
 
         git rev-parse HEAD > test-artifacts/actual-sha.txt
 
         git rev-parse ''HEAD^{tree}'' > test-artifacts/actual-tree.txt
 
-        test "$(git rev-parse HEAD)" = ''2129127a626eb546dd1a69b3b228c48e3f50dec6''
+        test "$(git rev-parse HEAD)" = ''0154ea9c7a439fcb076fa3c0c947cc954c85140d''
 
-        test "$(git rev-parse ''HEAD^{tree}'')" = ''c329df037d49ebf27d7a7f326dbda35c70d4ebe4''
+        test "$(git rev-parse ''HEAD^{tree}'')" = ''9cfac58ac9cf8ed91f71eeb5ec1cb730e9d2af99''
 
-        printf ''%s\n'' ''Candidate 2129127a626eb546dd1a69b3b228c48e3f50dec6; this workflow is focused functional
+        printf ''%s\n'' ''Candidate 0154ea9c7a439fcb076fa3c0c947cc954c85140d; this workflow is focused functional
         evidence, not capacity certification.'' >> "$GITHUB_STEP_SUMMARY"'
     - uses: actions/setup-python@v5
       with:
@@ -134,11 +132,11 @@ jobs:
         tests/test_operations.py tests/test_fuel_exceptions.py tests/test_employee_permissions.py tests/test_branch_printing.py
         tests/test_hardening_printing.py tests/test_printer_city.py tests/test_simple_driver_close.py tests/test_accounting.py
         tests/test_fiscal.py tests/test_driver_cash_handover.py tests/test_driver_float.py tests/test_v5_reports.py
-        tests/test_test_carryover_archive.py 2>&1 | tee test-artifacts/operations-money.stdout.log'
+        tests/test_test_carryover_archive.py tests/test_backup_owner_phone_archive.py 2>&1 | tee test-artifacts/operations-money.stdout.log'
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: live-closure-operations-money-2129127a626eb546dd1a69b3b228c48e3f50dec6
+        name: live-closure-operations-money-0154ea9c7a439fcb076fa3c0c947cc954c85140d
         path: test-artifacts/
         if-no-files-found: error
         retention-days: 14
@@ -161,28 +159,27 @@ jobs:
       TEST_BROWSER: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       NO_PROXY: 127.0.0.1,localhost,::1
-      no_proxy: 127.0.0.1,localhost,::1
-      RUNTIME_REVISION: 2129127a626eb546dd1a69b3b228c48e3f50dec6
+      RUNTIME_REVISION: 0154ea9c7a439fcb076fa3c0c947cc954c85140d
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 2129127a626eb546dd1a69b3b228c48e3f50dec6
+        ref: 0154ea9c7a439fcb076fa3c0c947cc954c85140d
         persist-credentials: false
     - name: Record and verify immutable candidate identity
       shell: bash
       run: 'mkdir -p test-artifacts
 
-        printf ''%s\n'' ''2129127a626eb546dd1a69b3b228c48e3f50dec6'' > test-artifacts/expected-sha.txt
+        printf ''%s\n'' ''0154ea9c7a439fcb076fa3c0c947cc954c85140d'' > test-artifacts/expected-sha.txt
 
         git rev-parse HEAD > test-artifacts/actual-sha.txt
 
         git rev-parse ''HEAD^{tree}'' > test-artifacts/actual-tree.txt
 
-        test "$(git rev-parse HEAD)" = ''2129127a626eb546dd1a69b3b228c48e3f50dec6''
+        test "$(git rev-parse HEAD)" = ''0154ea9c7a439fcb076fa3c0c947cc954c85140d''
 
-        test "$(git rev-parse ''HEAD^{tree}'')" = ''c329df037d49ebf27d7a7f326dbda35c70d4ebe4''
+        test "$(git rev-parse ''HEAD^{tree}'')" = ''9cfac58ac9cf8ed91f71eeb5ec1cb730e9d2af99''
 
-        printf ''%s\n'' ''Candidate 2129127a626eb546dd1a69b3b228c48e3f50dec6; this workflow is focused functional
+        printf ''%s\n'' ''Candidate 0154ea9c7a439fcb076fa3c0c947cc954c85140d; this workflow is focused functional
         evidence, not capacity certification.'' >> "$GITHUB_STEP_SUMMARY"'
     - uses: actions/setup-python@v5
       with:
@@ -216,7 +213,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: live-closure-browser-2129127a626eb546dd1a69b3b228c48e3f50dec6
+        name: live-closure-browser-0154ea9c7a439fcb076fa3c0c947cc954c85140d
         path: test-artifacts/
         if-no-files-found: error
         retention-days: 14
