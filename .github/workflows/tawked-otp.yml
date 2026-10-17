@@ -1,0 +1,37 @@
+name: Tawked OTP acceptance
+on:
+  push:
+    branches: [agent/kps-order-emergency-v4]
+    paths: [app/auth.py, app/sms_verification.py, migrations/044_sms_verification_provider.sql, tests/test_tawked_otp.py, tests/test_v5_identity.py, .github/workflows/tawked-otp.yml]
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_otp
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d test_otp" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-test-only@127.0.0.1:5432/test_otp
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: node --check public/ops.js && node --check public/customer.js
+      - run: python -m pytest -q tests/test_tawked_otp.py tests/test_v5_identity.py tests/test_final_identity.py tests/test_core.py --junitxml=test-results/otp.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: otp-acceptance
+          path: test-results/

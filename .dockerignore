@@ -1,0 +1,32 @@
+# Runtime allowlist: never send credentials, backups, user data, the private
+# handoff, local environments, or the historical site to a container build.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!app/
+!app/**
+!migrations/
+!migrations/**
+!data/
+!data/**
+!public/
+!public/**
+!docs/
+!docs/metrics.md
+
+# Defense in depth even inside an allowed runtime directory.
+**/__pycache__/**
+**/*.pyc
+**/.env
+**/.env.*
+**/*backup*
+**/*.dump
+**/*.sql.gz
+**/*.sqlite*
+**/*HANDOFF*
+
+# This private operator CLI is code, not backup data. Other legacy tools and
+# generated archives remain excluded; the exception must follow *backup*.
+!tools/
+!tools/portable_backup.py

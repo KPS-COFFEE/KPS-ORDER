@@ -1,0 +1,21 @@
+
+    <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1100" viewBox="0 0 900 1100">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#171717"/>
+          <stop offset="100%" stop-color="#2b160e"/>
+        </linearGradient>
+        <pattern id="hex" width="80" height="70" patternUnits="userSpaceOnUse">
+          <path d="M20 2h40l18 33-18 33H20L2 35Z" fill="none" stroke="#f26532" stroke-opacity=".15" stroke-width="3"/>
+        </pattern>
+      </defs>
+      <rect width="900" height="1100" rx="44" fill="url(#bg)"/>
+      <rect width="900" height="1100" rx="44" fill="url(#hex)"/>
+      <circle cx="450" cy="310" r="165" fill="#f26532" opacity=".12"/>
+      <path d="M350 270h200l70 120-70 120H350l-70-120Z" fill="#f26532" opacity=".95"/>
+      <path d="M380 300h140l48 90-48 90H380l-48-90Z" fill="#171717"/>
+      <text x="450" y="690" text-anchor="middle" font-family="Tahoma,Arial" font-size="72" font-weight="700" fill="#fff">خلية كلاسيك</text>
+      <text x="450" y="790" text-anchor="middle" font-family="Tahoma,Arial" font-size="46" font-weight="700" fill="#f26532">19.50 ر.س</text>
+      <text x="450" y="900" text-anchor="middle" font-family="Tahoma,Arial" font-size="36" fill="#ddd">متوفر في حفرالباطن فقط</text>
+    </svg>
+    
