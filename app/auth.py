@@ -1378,6 +1378,7 @@ class AdditionalOwnerBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     display_name:str=Field(min_length=1,max_length=100)
     username:str=Field(min_length=3,max_length=150)
+    phone:str|None=Field(default=None,min_length=8,max_length=30)
     password:str=Field(min_length=8,max_length=200,repr=False)
     password_confirmation:str=Field(min_length=8,max_length=200,repr=False)
     reason:str=Field(min_length=3,max_length=500)
@@ -1394,11 +1395,18 @@ def create_additional_password_owner(body:AdditionalOwnerBody,user=Depends(requi
             raise db.error(422,'OWNER_PROFILE_INVALID','أدخل الاسم واسم مستخدم صحيحًا وسبب الإضافة.')
         if body.password!=body.password_confirmation:
             raise db.error(422,'PASSWORD_CONFIRMATION','كلمتا المرور غير متطابقتين.')
+        phone=normalize_phone(body.phone) if body.phone else None
+        if staff_email_retired(user['brand_id'],conn=conn) and not phone:
+            raise db.error(422,'OWNER_PHONE_REQUIRED','أدخل جوال المالك الجديد للدخول برسالة SMS. / Enter the new owner mobile for SMS sign-in.')
+        if phone and not re.fullmatch(r'\+9665[0-9]{8}',phone):
+            raise db.error(422,'PHONE_INVALID','أدخل رقم جوال سعودي صحيحًا. / Enter a valid Saudi mobile.')
+        if phone:
+            _assert_staff_phone_available(conn,user['brand_id'],phone)
         conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('staff-username:'+username.casefold(),))
         if conn.execute('SELECT 1 FROM users WHERE lower(username)=lower(%s)',(username,)).fetchone():
             raise db.error(409,'USERNAME_UNAVAILABLE','اسم المستخدم مستخدم بالفعل؛ اختر اسمًا آخر. لم يتغير أي حساب.')
         identifier=db.new_id('owner_')
-        row=conn.execute("INSERT INTO users(id,username,display_name,password_hash,role,brand_id,active,invitation_status,identity_kind) VALUES(%s,%s,%s,%s,'owner',%s,true,'active','staff_password') RETURNING *",(identifier,username,name,hash_password(body.password,min_length=8),user['brand_id'])).fetchone()
+        row=conn.execute("INSERT INTO users(id,username,display_name,password_hash,role,brand_id,active,invitation_status,identity_kind,phone) VALUES(%s,%s,%s,%s,'owner',%s,true,'active','staff_password',%s) RETURNING *",(identifier,username,name,hash_password(body.password,min_length=8),user['brand_id'],phone)).fetchone()
         db.audit(conn,user['id'],'owner.password_account.created','user',identifier,{'reason':body.reason.strip(),'username':username,'role':'owner'})
         return {'user':public_user(row),'username':username}
 
@@ -1487,13 +1495,17 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             active=False
         if active and (row['invitation_status'] not in {'active','paused'} or not row['email_verified_at']):
             # Legacy active staff remain during migration, but cannot be activated by bypassing proof.
-            if not sms_approved and not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
+            existing_password_owner=(row['active'] and row['role']=='owner' and role=='owner'
+                                     and row['identity_kind']=='staff_password' and row['invitation_status']=='active')
+            if not sms_approved and not existing_password_owner and not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
                 raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
         ensure_safe_staff_scope_change(conn,row,scope,active)
         name=body.display_name.strip() if body.display_name is not None else row['display_name']
         if not name or '\x00' in name:
             raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')
         phone=normalize_phone(body.phone) if body.phone else row['phone']
+        if phone!=row['phone'] and row['role']=='owner':
+            require_owner_step_up(conn,user)
         if row['phone_verified_at'] and phone!=row['phone']:
             raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','رقم موثق يحتاج تحققًا مستقلًا لتغييره.')
         if phone and (body.phone is not None or email_changed):
