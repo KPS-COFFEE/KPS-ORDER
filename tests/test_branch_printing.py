@@ -22,7 +22,6 @@ def test_branch_print_device_queue_isolation_and_no_automatic_reprint(ops):
     actor,post,order,shifts=ops
     oid=order('delivery')
     post('driver','/api/printing/devices',{'branch_id':'ops-branch','label':'Denied'},status=403)
-    post('manager','/api/printing/devices',{'branch_id':'ops-branch','label':'Forbidden'},status=403)
     pair=post('owner','/api/printing/devices',{'branch_id':'ops-branch','label':'Synthetic Windows'})
     client=actor('customer')
     result=client.post('/api/printing/bridge/pair',json={'pairing_code':pair['pairing_code'],'printer_name':'Synthetic printer'})
@@ -101,7 +100,9 @@ def test_manager_selects_destination_and_settings_are_locked(ops):
     oid = order()
     body = {'device_id':pair['id']}
     post('manager', '/api/printing/orders/'+oid, body, status=404)
-    for who in ('manager','branch','driver','customer'):
+    assert actor('manager').get('/api/printing/devices').json()['devices'] == []
+    post('manager', '/api/printing/devices', {'branch_id':'ops-second','label':'Outside scope'}, status=404)
+    for who in ('branch','driver','customer'):
         assert actor(who).get('/api/printing/devices').status_code == 403
         post(who, '/api/printing/devices', {'branch_id':'ops-branch','label':'Forbidden'}, status=403)
     with db.tx() as conn:
@@ -167,6 +168,31 @@ def test_printer_only_admin_has_no_other_operational_access(ops):
         conn.execute("UPDATE users SET permissions='[]' WHERE id='ops-printeradmin'")
     assert actor('printeradmin').get('/api/printing/devices').status_code==403
     assert actor('customer').post('/api/printing/bridge/pair',json={'pairing_code':pending['pairing_code'],'printer_name':'Revoked permission'}).status_code==403
+
+
+@pytest.mark.postgres
+def test_manager_printer_management_is_scoped_revocable_and_requires_paper_acceptance(ops):
+    actor, post, order, _ = ops
+    pair = post('manager', '/api/printing/devices', {'branch_id':'ops-branch','label':'Manager setup'})
+    post('manager', '/api/printing/devices', {'branch_id':'ops-branch-other','label':'Other brand'}, status=404)
+    assert [d['id'] for d in actor('manager').get('/api/printing/devices').json()['devices']] == [pair['id']]
+    assert actor('manager').get('/api/printing/windows-bridge.zip').status_code == 200
+    client = actor('customer')
+    result = client.post('/api/printing/bridge/pair', json={'pairing_code':pair['pairing_code'],'printer_name':'Synthetic manager printer'})
+    assert result.status_code == 200
+    approve_test_device(actor, post, pair['id'], result.json()['token'], who='manager')
+    pending = post('manager', '/api/printing/devices', {'branch_id':'ops-branch','label':'Pending','reason':'Replacement'})
+    with db.tx() as conn:
+        conn.execute("UPDATE users SET permission_denials=%s WHERE id='ops-manager'", (db.json(['branch_printers_manage']),))
+    assert actor('manager').get('/api/printing/devices').status_code == 403
+    post('manager', '/api/printing/devices/'+pair['id']+'/test', status=403)
+    post('manager', '/api/printing/devices/'+pair['id']+'/revoke', {'reason':'Denied'}, status=403)
+    assert client.post('/api/printing/bridge/pair', json={'pairing_code':pending['pairing_code'],'printer_name':'Denied'}).status_code == 403
+    with db.tx() as conn:
+        conn.execute("UPDATE users SET permission_denials='[]',branch_ids='[]' WHERE id='ops-manager'")
+    assert actor('manager').get('/api/printing/devices').json()['devices'] == []
+    post('manager', '/api/printing/devices/'+pair['id']+'/test', status=404)
+    post('manager', '/api/printing/devices/'+pair['id']+'/revoke', {'reason':'Outside scope'}, status=404)
 
 
 @pytest.mark.postgres

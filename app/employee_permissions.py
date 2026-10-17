@@ -54,7 +54,7 @@ DEFINITIONS = [
     ('vehicle_register', 'تسجيل مركبتك أول مرة', 'Register your vehicle for the first time', 'vehicles', set()),
     ('vehicle_faults_report', 'رفع بلاغ عطل المركبة ومتابعته', 'Report and view your vehicle faults', 'vehicles', {'driver'}),
     ('vehicle_maintenance_manage', 'إدارة السيارات وسجل التشغيل والأعطال والصيانة', 'Manage vehicles, operating logs and maintenance', 'vehicles', {'admin'}),
-    ('branch_printers_manage', 'إدارة الطابعات', 'Manage printers', 'configuration', {'admin'}),
+    ('branch_printers_manage', 'إدارة الطابعات', 'Manage printers', 'configuration', {'admin', 'delivery_manager'}),
     ('orders_print', 'طباعة وإعادة طباعة الطلبات', 'Print and reprint orders', 'orders', MANAGER),
     ('accounting_reports', 'تقارير المحاسبة والتصدير', 'Accounting reports and exports', 'reports', {'admin'}),
     ('accounting_review', 'مراجعة العجز وإقفال الشهر وتسجيل الملاحظات', 'Review variances, close months and record incidents', 'reports', {'admin'}),

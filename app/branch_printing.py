@@ -18,7 +18,7 @@ operators = auth.require_roles('owner', 'delivery_manager')
 
 
 def can_manage_printers(user):
-    return user['role'] == 'owner' or (user['role'] == 'admin' and auth.has_permission(user,'branch_printers_manage'))
+    return user['role'] == 'owner' or (user['role'] in {'admin', 'delivery_manager'} and auth.has_permission(user,'branch_printers_manage'))
 
 
 def printer_admin(user=Depends(auth.current_user)):
