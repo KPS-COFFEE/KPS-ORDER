@@ -506,6 +506,39 @@ def _authenticated_post(context,base,path,body=None):
     return response.json()
 
 
+
+def _approve_driver_closure_from_browser(page, manager_context, base, shift_id):
+    """Exercise refusal, driver UI request and assigned-manager decision before closing."""
+    from playwright.sync_api import expect
+    with db.tx() as conn:
+        before=conn.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(shift_id,)).fetchone()
+        transfers=conn.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(shift_id,)).fetchone()['n']
+    session=page.context.request.get(base+'/api/session').json()
+    refused=page.context.request.post(base+'/api/shifts/'+shift_id+'/closing',headers={
+        'Origin':base,'X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data={})
+    assert refused.status==409 and refused.json()['detail']['code']=='EARLY_CLOSURE_APPROVAL_REQUIRED'
+    form=page.locator('#modal form')
+    expect(form.locator('[name=reason]')).to_be_visible()
+    form.locator('[name=reason]').fill('Synthetic browser shift-end request; financial receipt stays separate')
+    form.locator('button[type=submit]').click()
+    expect(page.locator('#modal [data-action=withdraw-driver-close]')).to_be_visible()
+    with db.tx() as conn:
+        authorization=conn.execute('SELECT closure_authorization FROM shifts WHERE id=%s',(shift_id,)).fetchone()['closure_authorization']
+        assert authorization['status']=='requested'
+        assert conn.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(shift_id,)).fetchone()==before
+    decision=_authenticated_post(manager_context,base,'/api/driver-closure/'+shift_id+'/decision',{
+        'decision':'approved','request_id':authorization['id'],'reason':'Assigned manager permits beginning closure only'})
+    assert decision['status']=='open'
+    with db.tx() as conn:
+        assert conn.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(shift_id,)).fetchone()==before
+        assert conn.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(shift_id,)).fetchone()['n']==transfers
+        assert conn.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(shift_id,)).fetchone()['n']==0
+    page.locator('#modal form button[type=submit]').click()
+    expect(page.locator('#modal form button[type=submit].danger')).to_be_visible()
+    page.locator('#modal form button[type=submit].danger').click()
+    expect(page.locator('#blind-closure-form')).to_be_visible()
+
+
 def _acknowledge_driver_end(page, language='ar'):
     from playwright.sync_api import expect
     title = 'انتهى دوامك بنجاح' if language=='ar' else 'Your shift has ended'
@@ -690,7 +723,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
 
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
-        driver.locator('[data-confirm-driver-close]').click()
+        _approve_driver_closure_from_browser(driver,contexts['manager'],live_app,driver_shift)
         expect(driver.locator('#blind-closure-form')).to_be_visible()
         expect(driver.locator('#modal-body')).not_to_contain_text('الرصيد المتوقع')
         expect(driver.locator('#modal-body')).to_contain_text('إجمالي الكاش شامل العهدة')

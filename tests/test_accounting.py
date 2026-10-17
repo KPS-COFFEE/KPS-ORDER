@@ -39,7 +39,7 @@ def test_reports_split_payments_refund_and_scope(ops):
     assert actor('driver').get(url).status_code==403
     assert actor('accountant').get(url+'?branch_ids=ops-branch-other').status_code==403
     refund={'amount_halalas':200,'method':'cash','reason':'TEST REFUND','line_quantities':{}}
-    post('manager',f'/api/orders/{oid}/refund',refund,status=404)
+    post('manager',f'/api/orders/{oid}/refund',refund,status=403)
     post('owner',f'/api/orders/{oid}/refund',refund)
     r=actor('accountant').get(url).json();assert r['totals']['correct']==0 and r['totals']['processed']==1 and r['totals']['total']==800
     assert actor('accountant').get(url+'?group=actions').json()['rows'][0]['amount']==200

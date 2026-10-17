@@ -1,7 +1,7 @@
 from uuid import uuid4
 import pytest
 from app import db
-from tests.test_operations import ops, delivered
+from tests.test_operations import ops, delivered, begin_driver_closure
 
 
 def submit_cash(post, driver, manager, counted=0, *, branch=False, reference='TEST-BAG'):
@@ -21,7 +21,7 @@ def test_all_cities_require_linked_manager_receipt_and_scope(ops,city):
     actor,post,order,shifts=ops
     with db.tx() as c:c.execute('UPDATE branches SET city=%s WHERE id=%s',(city,'ops-branch'))
     manager,driver=shifts()
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     _,tid=submit_cash(post,driver,manager)
     branch_body={'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'REJECT BRANCH','closure':True}
     post('driver','/api/custody',branch_body,status=403)
@@ -46,7 +46,7 @@ def test_all_cities_require_linked_manager_receipt_and_scope(ops,city):
 def test_manager_approves_driver_shortage_match_surplus_after_receipt(ops,counted):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     submitted,tid=submit_cash(post,driver,manager,counted)
     assert 'difference_halalas' not in submitted['submission']
     sub=actor('manager').get(f'/api/shifts/{driver}').json()['shift']['submission']
@@ -69,7 +69,7 @@ def test_remote_driver_bag_requires_real_branch_account_not_manager(ops):
     with db.tx() as c:c.execute("UPDATE brands SET settings=settings || '{\"driver_cash_receipt_policy\":\"branch_by_city\"}'::jsonb WHERE id='ops-brand'")
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     manager,driver=shifts();delivered(post,order,driver)
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     _,tid=submit_cash(post,driver,manager,1000,branch=True,reference='RAF-BAG-1')
     body={'from_shift_id':driver,'recipient_user_id':'ops-branch','amount_halalas':1000,'reference':'RAF-BAG-1','closure':True,'receiving_branch_id':'ops-branch'}
     post('driver','/api/custody',{**body,'to_shift_id':manager},status=403)
@@ -91,7 +91,7 @@ def test_hafar_cannot_use_branch_bag_and_revoked_branch_cannot_confirm(ops):
     actor,post,order,shifts=ops
     with db.tx() as c:c.execute("UPDATE brands SET settings=settings || '{\"driver_cash_receipt_policy\":\"branch_by_city\"}'::jsonb WHERE id='ops-brand'")
     manager,driver=shifts()
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     body={'from_shift_id':driver,'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','amount_halalas':0,'reference':'ZERO','closure':True}
     from app.shift_vehicle import CHECKS
     post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1025,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}},'handover':{'recipient_user_id':'ops-branch','receiving_branch_id':'ops-branch','reference':'ZERO'}},status=403)
@@ -113,7 +113,7 @@ def test_terminal_manager_only_frozen_at_submission_and_in_report(ops):
     put('manager',body)
     assert actor('driver').get(path).json()['payment_terminal']['terminal_id']=='TID-001'
     manager,driver=shifts()
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     submitted,tid=submit_cash(post,driver,manager)
     sub=submitted['submission']
     assert sub['payment_terminal']['terminal_id']=='TID-001'
@@ -132,7 +132,7 @@ def test_branch_receipt_replay_cannot_bypass_revoked_scope(ops):
     with db.tx() as c:c.execute("UPDATE brands SET settings=settings || '{\"driver_cash_receipt_policy\":\"branch_by_city\"}'::jsonb WHERE id='ops-brand'")
     with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     manager,driver=shifts()
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     _,tid=submit_cash(post,driver,manager,branch=True,reference='REPLAY-BAG')
     post('branch',f'/api/custody/{tid}/confirm',key='receipt-once')
     with db.tx() as c:
@@ -147,7 +147,7 @@ def test_branch_receipt_replay_cannot_bypass_revoked_scope(ops):
 def test_delegated_closure_notifies_owner_and_preserves_receipt_gate(ops,counted,retained):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
-    post('manager',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver,closing_actor='manager')
     body={'terminal_total_halalas':0,'counted_halalas':counted,'handover_halalas':counted-retained,'retained_halalas':retained,
           'exception_reason':'TEST driver unavailable',
           'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST DELEGATED'}}
@@ -194,7 +194,7 @@ def test_atomic_driver_submission_rolls_back_bad_handover_and_routes_actual_rece
     if remote:
         with db.tx() as c:c.execute("UPDATE branches SET city='رفحاء' WHERE id='ops-branch'")
     manager,driver=shifts()
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     from app.shift_vehicle import CHECKS
     body={'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':{'odometer_km':1000,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}},
           'handover':{'recipient_user_id':'ops-other','reference':'TEST BAD'}}
