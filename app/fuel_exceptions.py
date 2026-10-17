@@ -2,7 +2,7 @@
 from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from . import auth, db
+from . import auth, db, shift_vehicle
 from .operations import roles, mutate, safe, uid, lock_shift, shift_access
 router=APIRouter(prefix='/api/fuel-exceptions',tags=['fuel-exceptions'])
 
@@ -94,7 +94,7 @@ def decide(eid:str,body:Decision,request:Request,user=Depends(auth.current_user)
                 s=lock_shift(c,r['shift_id']);log=dict(s.get('vehicle_log') or {})
                 if s['status']!='open' or not log.get('awaiting_refuel'):
                     raise db.error(409,'FUEL_STALE','تغيرت جاهزية الشفت؛ حدّث الصفحة.')
-                floor=max([log.get('start',{}).get('odometer_km',0)]+[x['odometer_km'] for x in log.get('refuels',[])])
+                floor=shift_vehicle.odometer_floor(log)
                 if r['odometer_km']<floor:raise db.error(409,'FUEL_STALE','تغيرت قراءة العداد؛ اطلب استثناء جديدًا.')
                 log['fuel_readiness']={'odometer_km':r['odometer_km'],'fuel_percent':r['fuel_percent'],'fuel_exception_id':eid,'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
                 log['awaiting_refuel']=False
@@ -141,7 +141,7 @@ def confirm_ready(sid:str,body:ReadyFuel,request:Request,user=Depends(auth.curre
             if s['user_id']!=user['id'] or s['status']!='open' or not log.get('awaiting_refuel'):raise db.error(409,'FUEL_ALREADY_READY','الشفت غير متاح للتأكيد / Shift not awaiting fuel')
             from .driver_breaks import guard
             guard(c,sid)
-            floor=max([log.get('start',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
+            floor=shift_vehicle.odometer_floor(log)
             if body.odometer_km<floor:raise db.error(422,'ODOMETER_DECREASE','قراءة العداد أقل من آخر قراءة / Odometer decreased')
             if body.fuel_percent==100 and not log.get('refuels'):raise db.error(409,'REFUEL_RECORD_REQUIRED','سجل تعبئة البنزين أولاً / Record refuelling first')
             consume(c,user,s,body,'activation',log.get('vehicle') or {})

@@ -88,7 +88,7 @@ def handover(c,user,car,old,target,body):
     log=dict(shift.get('vehicle_log') or {})
     if plate(log.get('vehicle'))!=old['plate_key']:
         raise db.error(409,'VEHICLE_CHANGED','حدّث بيانات السائق؛ المركبة الحالية تغيرت.')
-    floor=max([log.get('start',{}).get('odometer_km',0),log.get('fuel_readiness',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
+    floor=shift_vehicle.odometer_floor(log)
     if body.outgoing.odometer_km<floor:
         raise db.error(422,'ODOMETER_DECREASE','عداد تسليم المركبة أقل من آخر قراءة مسجلة لها.')
     profile={k:v for k,v in car['details'].items() if k in vehicle_profile.FIELDS}

@@ -98,6 +98,9 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
+from . import driver_checks
+app.include_router(driver_checks.router)
+
 
 def revision():
     return os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'

@@ -362,7 +362,7 @@ def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(
             if s['kind']!='driver' or s['status'] not in ('open','closing'):fail(409,'تسجيل الوقود متاح لشفت سائق مفتوح أو تحت التقفيلة فقط')
             if user['role'] not in ('driver','owner','delivery_manager'):fail(403,'الصلاحية غير كافية')
             log=dict(s.get('vehicle_log') or {})
-            floor=max([log.get('start',{}).get('odometer_km',0),log.get('fuel_readiness',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
+            floor=shift_vehicle.odometer_floor(log)
             if body.odometer_km<floor:fail(422,'قراءة العداد أقل من آخر قراءة مسجلة')
             if body.receipt_id:
                 from .driver_evidence import validate
