@@ -94,6 +94,8 @@ def public_user(user: dict) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials')}
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
+    if 'operations_brands' in user:
+        output['operations_brands'] = user['operations_brands']
     return output
 
 
@@ -124,10 +126,15 @@ def _find_session(conn, request: Request):
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
     if user:
+        from .multibrand import request_user
+        user = request_user(conn, request, user)
         from .portals import enforce_role
         enforce_role(request, user)
         from .storefront_scope import require_brand
         require_brand(user["brand_id"])
+        from . import multibrand
+        if multibrand.enabled() and user['role'] != 'customer':
+            user['operations_brands'] = multibrand.available(conn, user)
     return user
 
 

@@ -628,6 +628,8 @@ def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list
 
 
 def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
+    from .storefront_scope import require_brand
+    require_brand(body.brand_id)
     lock = ' FOR SHARE' if for_update else ''
     with conn.pipeline():
         brand_query = conn.execute('SELECT id,settings FROM brands WHERE id=%s AND active' + lock, (body.brand_id,))

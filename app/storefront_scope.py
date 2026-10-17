@@ -15,6 +15,14 @@ def bound_brand(request):
     # The configured deployment binding survives a forged Host header.
     # Forwarded host headers never select a tenant.
     configured = urlsplit(os.getenv('PUBLIC_BASE_URL', '')).hostname
+    from .multibrand import enabled, isolation_guard
+    if enabled():
+        isolation_guard()
+        mapping = {'order.enbishan.com': 'enbishan', 'enbishan.test': 'enbishan', 'kps.test': 'kps'}
+        if configured in mapping:
+            return mapping[configured]
+        if configured not in KPS_HOSTS and request.url.hostname in mapping:
+            return mapping[request.url.hostname]
     return 'kps' if configured in KPS_HOSTS or request.url.hostname in KPS_HOSTS else None
 
 
@@ -44,10 +52,12 @@ def validate_scope(request, body):
 
 def customer_html(source, request):
     brands = request.query_params.getlist('brand_id')
-    brand = brands[0] if len(brands) == 1 else ('kps' if not brands else None)
+    brand = brands[0] if len(brands) == 1 else (current_brand.get() or 'kps' if not brands else None)
     if brand != 'kps':
         # Remove private-to-brand fragments before sending HTML, not just
         # visually hiding them after JavaScript executes.
-        return re.sub(r'<!-- KPS_CONTACT_START -->.*?<!-- KPS_CONTACT_END -->',
-                      '', source, flags=re.S)
+        source = re.sub(r'<!-- KPS_CONTACT_START -->.*?<!-- KPS_CONTACT_END -->', '', source, flags=re.S)
+        if brand == 'enbishan':
+            source = source.replace('<html lang="ar" dir="rtl">', '<html lang="ar" dir="rtl" data-storefront-brand="enbishan">')
+        return source
     return source

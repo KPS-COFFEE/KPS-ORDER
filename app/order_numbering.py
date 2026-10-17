@@ -14,11 +14,12 @@ NEXT_NUMBER_SQL = ('INSERT INTO order_branch_counters(branch_id,last_number) VAL
 
 def reference_prefix(branch, moment=None):
     day = service_hours.delivery_operational_date(moment)
-    return CITY_CODES.get(branch['city'], 'BR') + str(branch['branch_no']) + f'-{day:%y%m%d}-'
+    brand_prefix = 'ENB-' if branch.get('brand_id') == 'enbishan' else ''
+    return brand_prefix + CITY_CODES.get(branch['city'], 'BR') + str(branch['branch_no']) + f'-{day:%y%m%d}-'
 
 
 def allocate(conn, branch_id, moment=None):
-    branch = conn.execute('SELECT city,branch_no FROM branches WHERE id=%s', (branch_id,)).fetchone()
+    branch = conn.execute('SELECT city,branch_no,brand_id FROM branches WHERE id=%s', (branch_id,)).fetchone()
     prefix = reference_prefix(branch, moment)
     seq = conn.execute(NEXT_NUMBER_SQL, (branch_id,)).fetchone()['last_number']
     return f'{prefix}{seq:04d}'

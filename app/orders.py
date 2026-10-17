@@ -54,6 +54,15 @@ def _ensure_manager_duty(conn, brand_id, branch_id):
     if not table:
         raise db.error(409, 'DELIVERY_DUTY_UNAVAILABLE', 'لا توجد مناوبة توصيل مهيأة لاستقبال الطلبات.')
     # Exact operations schema is shared with the delivery implementation.
+    from . import multibrand
+    if multibrand.enabled():
+        multibrand.isolation_guard()
+        shifts = conn.execute("SELECT s.* FROM shifts s WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' AND s.branch_ids ? %s FOR SHARE", (brand_id,branch_id)).fetchall()
+        for shift in shifts:
+            principal = multibrand.project(conn,conn.execute('SELECT * FROM users WHERE id=%s',(shift['user_id'],)).fetchone(),brand_id)
+            if principal and principal['role'] in ('owner','delivery_manager') and (principal['role']=='owner' or branch_id in principal['branch_ids']):
+                return
+        raise db.error(409, 'DELIVERY_DUTY_UNAVAILABLE', 'خدمة التوصيل مغلقة حاليًا لعدم وجود مناوبة مستلمة.')
     exists = conn.execute("SELECT 1 FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' "
                           "AND s.branch_ids ? %s AND u.brand_id=s.brand_id AND u.active AND u.role IN ('owner','delivery_manager') "
                           "AND (u.role='owner' OR u.branch_ids ? %s) FOR SHARE OF s,u",
@@ -182,7 +191,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             # Allocate the canonical number and insert in one database command.
             # No Python round trip holds the counter before saving the order.
             # These branch fields come from the quote's authoritative SHARE read.
-            prefix = order_numbering.reference_prefix({'city': quote['branch_city'], 'branch_no': quote['branch_no']})
+            prefix = order_numbering.reference_prefix({'city': quote['branch_city'], 'branch_no': quote['branch_no'], 'brand_id': body.brand_id})
             # Prepare the canonical privacy projection before acquiring the
             # branch counter; do not duplicate routing/privacy rules in SQL.
             public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})

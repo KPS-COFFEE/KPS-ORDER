@@ -90,6 +90,8 @@ from . import branch_payments, branch_payment_renewal
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
+from . import multibrand
+app.include_router(multibrand.router)
 # Provider callbacks use their own signed timestamped verification, rather than
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)

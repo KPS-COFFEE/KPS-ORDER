@@ -105,6 +105,8 @@ class SecurityMiddleware:
             # disconnect handling and server extensions without relay tasks.
             await send(message)
 
+        from .multibrand import operation_brand
+        operations_token = operation_brand.set(request.headers.get('x-operations-brand'))
         brand_token = storefront_scope.current_brand.set(storefront_scope.bound_brand(request))
         try:
             if path.startswith('/api/') and method not in {'GET', 'HEAD', 'OPTIONS'}:
@@ -117,6 +119,10 @@ class SecurityMiddleware:
                 return
 
             storefront_scope.validate_scope(request, buffered_request.get('body', b''))
+            # Enbishan host defaults are server-owned. Forwarded headers and
+            # caller-supplied foreign brands still fail validation above.
+            if storefront_scope.current_brand.get() == 'enbishan' and 'brand_id' not in request.query_params:
+                scope['query_string'] = scope.get('query_string', b'') + (b'&' if scope.get('query_string') else b'') + b'brand_id=enbishan'
 
             async def bounded_receive():
                 nonlocal buffered_request
@@ -143,3 +149,4 @@ class SecurityMiddleware:
 
         finally:
             storefront_scope.current_brand.reset(brand_token)
+            operation_brand.reset(operations_token)

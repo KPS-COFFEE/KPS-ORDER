@@ -638,7 +638,7 @@
     toggle.setAttribute('aria-label',language==='ar'?'Switch to English':'التبديل إلى العربية');
   }
   const brandParameters=new URLSearchParams(location.search);
-  const brandValue=brandParameters.has('brand_id')?brandParameters.get('brand_id'):'kps';
+  const brandValue=brandParameters.has('brand_id')?brandParameters.get('brand_id'):(document.documentElement.dataset.storefrontBrand||'kps');
   const requestedBrandId=brandParameters.getAll('brand_id').length<=1&&/^[a-z][a-z0-9_-]{1,59}$/.test(brandValue||'')?brandValue:null;
   const basketStorageKey=`kps-unconfirmed-basket-v2:${requestedBrandId||'invalid'}`;
   const state = {products: [], branches: [], brandServices: {delivery:false,pickup:false,car_pickup:false}, brand: {id: requestedBrandId||'', name: requestedBrandId==='kps'?'KPS COFFEE':t("orders")}, sourceVerified: false, identityReady: false, session: {user: null, csrf_token: null}, branchId: '', service: 'pickup', location: null, cart: [], quote: null, quoteError: '', quotePending: false, quoteRevision: 0, category: '', product: null, optionValues: [], banners: [], bannerIndex: 0, bannerTimer: null, presentation: null, tickerPaused: false, conversation: null, chatSequence: 0, chatTimer: null, ordersTimer: null, orders: [], nextOrdersOffset: null, activeOrder: null, challenge: null, afterLogin: null, confirmation: null, conversations: [], contactOrders: [], nextConversationOffset: null};

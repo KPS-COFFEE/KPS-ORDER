@@ -64,7 +64,15 @@ def qr(doc):
             base64.b64encode(invoice_profiles.qr_svg(matrix).encode()).decode()}
 
 
-def build(order, number, issued_at):
+def build(order, number, issued_at, *, seller=None):
+    if order.get('brand_id') == 'enbishan':
+        import re
+        if (not seller or not seller.get('legal_name') or not seller.get('address')
+                or seller.get('vat_enabled') is not True
+                or not re.fullmatch(r'3[0-9]{13}3', seller.get('vat_number', ''))):
+            raise ValueError('An explicit Enbishan VAT seller and address are required.')
+    else:
+        seller = SELLER
     values = totals(order['subtotal_halalas'], order.get('discount_halalas', 0), order['delivery_fee_halalas'])
     if values['total_halalas'] != order['total_halalas']: raise ValueError('Order totals do not reconcile')
     items = deepcopy(order['snapshot'].get('items', []))
@@ -76,7 +84,7 @@ def build(order, number, issued_at):
     if issued_at.utcoffset() is None: raise ValueError('Timezone required')
     doc = {**values, 'schema_version': 1, 'phase': 1, 'kind': 'invoice', 'status': 'local_preview_only',
            'number': number, 'issued_at': issued_at.astimezone(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
-           'seller': deepcopy(SELLER), 'order_id': order['id'], 'items': items,
+           'seller': deepcopy(seller), 'order_id': order['id'], 'items': items,
            'service': order.get('service','delivery'), 'brand_id': order.get('brand_id','kps'),
            'branch_id': order.get('branch_id'), 'branch_name': order['snapshot'].get('branch_name',''),
            'notes': order.get('notes') or order['snapshot'].get('notes',''),

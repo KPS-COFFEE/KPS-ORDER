@@ -59,6 +59,8 @@ def guard(c, user, shift):
     schedule = safe(shift.get('scheduled_end_at'))
     if approval.get('status') == 'approved' and approval.get('scheduled_end_at') == schedule:
         principal = c.execute('SELECT * FROM users WHERE id=%s', (approval.get('decided_by'),)).fetchone()
+        from . import multibrand
+        if multibrand.enabled():principal=multibrand.project(c,principal,shift['brand_id'])
         if principal and principal['active'] and principal['role'] in ('owner', 'delivery_manager'):
             manager(c, principal, shift)
             return

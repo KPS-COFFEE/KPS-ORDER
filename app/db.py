@@ -222,6 +222,8 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
                encoded_response: bool = False) -> dict | str | DeferredAtomicResponse:
     if not key or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', key):
         raise error(400, 'IDEMPOTENCY_KEY_REQUIRED', 'أرسل مفتاح منع تكرار صحيحًا للعملية.')
+    from .multibrand import replay_operation
+    operation = replay_operation(conn, user_id, operation)
     lock_key = hashlib.sha256(f'{user_id}:{operation}:{key}'.encode()).digest()[:8]
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (int.from_bytes(lock_key, 'big', signed=True),))
     # An opted-in HTTP caller can send the database's already-authorized JSON
@@ -349,6 +351,8 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
         conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (file.name, checksum))
     if seed:
         seed_initial(conn)
+    from . import multibrand
+    multibrand.migrate(conn)
     # Explicit one-time owner decisions apply to the intended imported identities.
     # Existing seeds stay immutable; subsequent boots never reset admin edits.
     if owner_decisions:
