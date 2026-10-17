@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 989be03657990d5cb4780fab5503fefd5aa1a448
+          ref: cee244541a8b041ea5b30a0c2ffd78bf69665306
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -36,16 +36,16 @@ jobs:
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - name: Install isolated browser
         run: python -m playwright install --with-deps chromium
-      - name: Verify source and focused owner and SMS regressions
+      - name: Verify source and scoped printer regressions
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "989be03657990d5cb4780fab5503fefd5aa1a448"
+          test "$(git rev-parse HEAD)" = "cee244541a8b041ea5b30a0c2ffd78bf69665306"
           node --check public/ops.js
           python -m pytest -q --tb=short --junitxml=test-results/printer-manager.xml tests/test_delivery_manager_operations_only.py tests/test_branch_printing.py tests/test_printer_city.py tests/test_hardening_printing.py tests/test_printer_setup_browser.py tests/test_employee_permissions.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: printer-manager-989be03657990d5cb4780fab5503fefd5aa1a448
+          name: printer-manager-cee244541a8b041ea5b30a0c2ffd78bf69665306
           path: test-results/
           retention-days: 14
