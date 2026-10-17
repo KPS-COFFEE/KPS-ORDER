@@ -63,16 +63,13 @@ one active, owner-authorized employee in an active brand. A pending invitation i
 not activated by SMS. Unknown, inactive and ambiguous records receive the same
 accepted response, without a message or identity creation.
 
-The existing Tawked customer adapter uses four digits. Its certificate does not
-prove the required six-digit employee contract. The candidate supports the
-existing Twilio Verify adapter only if that provider is already selected and its
-SMS channel is active with delivery proof. It additionally requires
-`EMPLOYEE_TWILIO_VERIFY_SERVICE_SID`, a distinct, approved six-digit Verify service
-under the existing account. This prevents changing the customer's four-digit
-service. No provider service is created, purchased or altered. Service GET must
-confirm the exact service SID and `code_length=6` before any employee send.
+Employee SMS uses exactly four digits as text, preserving leading zeros. The
+existing Tawked adapter’s four-digit contract is reused without changing customer
+verification. Alternatively, the existing Twilio adapter requires a dedicated
+`EMPLOYEE_TWILIO_VERIFY_SERVICE_SID`, distinct from the customer service; a read-only
+service GET must confirm `code_length=4`. No service is created or altered.
 
-Codes expire locally in five minutes, have three attempts, and are consumed
+Codes expire locally in five minutes, have three attempts per challenge and three account attempts per ten-minute window across resends, and are consumed
 atomically once. Provider reference, normalized registered phone and SMS channel
 must all match. A fresh employee check before session creation rejects revoked,
 inactive, changed or unauthorized records. Employee updates after challenge
@@ -80,10 +77,15 @@ issuance invalidate it. Sessions reuse the existing canonical session machinery;
 no role, branch, activation or account property is inferred from a typed number.
 Employee SMS does not grant owner step-up. Existing owner emergency recovery stays.
 
-Live dependency: approved provider credentials, dedicated six-digit service,
+Live dependency: approved provider credentials, approved four-digit provider configuration,
 actual employee SMS receipt/verification on a separately approved test number,
 mobile/desktop bilingual UAT and owner rollout authorization. None is represented
 as live PASS. Do not enable SMS merely because mocked tests pass.
 
 Provider contract source: https://www.twilio.com/docs/verify/api/service
-(Verify service code length can be 4–10; this candidate requires exactly 6.)
+(Verify service code length can be 4–10; this candidate requires exactly 4.)
+
+Owner decision 2026-10-17: the four-digit employee SMS contract supersedes the
+previous six-digit employee SMS requirement; existing email/recovery remains
+six digits and customer verification policy is unchanged. This code/test change
+does not establish live delivery, live verification, or production activation.

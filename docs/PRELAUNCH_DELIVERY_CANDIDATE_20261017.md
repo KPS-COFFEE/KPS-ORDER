@@ -51,7 +51,7 @@ cashback and uncertified integrations in test. Preserve their code. Keep
 separate approved rollout. Verify actual per-brand service/payment policy in the
 private source before any rollout; code defaults are not proof of live settings.
 
-Employee SMS needs an approved existing six-digit provider configuration and a
+Employee SMS needs an approved existing four-digit provider configuration and a
 specifically authorized test recipient for real receipt/verification. Synthetic
 provider tests do not establish delivery. Do not alter the existing customer
 provider contract or silently fall back to email in SMS mode.

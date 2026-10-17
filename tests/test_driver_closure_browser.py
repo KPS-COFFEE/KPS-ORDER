@@ -156,6 +156,10 @@ def test_owner_driver_closure_is_clear_read_only(live_app,chromium_browser,lang,
         expect(page.locator('[data-action=simple-driver-close][data-id="'+sid+'"]')).to_have_count(0)
         page.locator('[data-action=shift-detail][data-id="'+sid+'"]').click()
         expect(page.locator('#modal-body')).to_contain_text('للمتابعة فقط' if lang=='ar' else 'View only')
+        expect(page.locator('#modal-body .driver-closure-identity')).to_contain_text('تقفيلة السائق' if lang=='ar' else 'Driver closure')
+        expect(page.locator('#modal-body .driver-closure-identity')).to_contain_text('يوم التشغيل' if lang=='ar' else 'Operational day')
+        expect(page.locator('#modal-body .driver-closure-identity')).to_contain_text('لم تسجل' if lang=='ar' else 'Not recorded')
+        _capture(page,'TEST_ONLY_closure_identity_'+lang+'_'+status)
         for selector in ['#closure-form','[data-action=approve-shift]','[data-action=return-shift]','[data-action=final-custody]']:
             expect(page.locator('#modal-body').locator(selector)).to_have_count(0)
         with db.tx() as c:

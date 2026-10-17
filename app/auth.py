@@ -92,6 +92,7 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 def public_user(user: dict) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials')}
+    output['employee_sms_email_retired'] = staff_email_retired()
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
     return output
@@ -449,7 +450,7 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     check_origin(request)
     # Employee SMS and customer SMS share storage, never proof purpose. Reject
     # before attempts/provider calls, independent of host or rollout settings.
-    if body.challenge_id.startswith('employee_otp_'):
+    if body.challenge_id.startswith(('employee_otp_', 'owner_sms_')):
         raise db.error(400,'OTP_PURPOSE_MISMATCH','طلب التحقق لا يخص تسجيل دخول العملاء.')
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
@@ -862,6 +863,13 @@ class EmailRequestBody(BaseModel):
     purpose:Literal['customer_link','email_login','staff_login','owner_link','recovery']='email_login'
 
 
+def staff_email_retired():
+    # Retire only after an explicit rollout decision with the SMS path enabled.
+    # Neither switch alone may cut off the existing owner recovery path.
+    return (os.getenv('EMPLOYEE_SMS_EMAIL_RETIRED') == 'true'
+            and os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true')
+
+
 @router.post('/identity/email/request')
 def email_request(body:EmailRequestBody,request:Request):
     check_origin(request)
@@ -873,6 +881,8 @@ def email_request(body:EmailRequestBody,request:Request):
     if not allowed:
         raise db.error(429,'EMAIL_RATE_LIMIT','انتظر قبل إعادة طلب البريد.')
     identifier=db.new_id('email_')  # Same response for unknown/disabled accounts.
+    if staff_email_retired() and body.purpose in {'staff_login','owner_link'}:
+        return {'accepted':True,'challenge_id':identifier,'expires_in':900}
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
             return {'accepted':True,'challenge_id':identifier,'expires_in':900}
@@ -891,6 +901,8 @@ def email_request(body:EmailRequestBody,request:Request):
         else:
             account=conn.execute('SELECT * FROM users WHERE brand_id=%s AND lower(email)=%s AND active AND email_verified_at IS NOT NULL AND invitation_status=%s',(body.brand_id,email,'active')).fetchone()
             valid=account and (body.purpose=='recovery' or (body.purpose=='staff_login' and account['role']!='customer') or (body.purpose=='email_login' and account['role']=='customer'))
+            if staff_email_retired() and account and account['role'] != 'customer':
+                valid=False
             if valid or (body.purpose=='email_login' and not conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s',(body.brand_id,email)).fetchone()):
                 identifier=_create_email_token(conn,brand=body.brand_id,email=email,purpose=body.purpose,user_id=account['id'] if valid else None)
     return {'accepted':True,'challenge_id':identifier,'expires_in':900}
@@ -943,20 +955,24 @@ def request_staff_code(body:StaffCodeRequestBody,request:Request):
 class StaffCodeVerifyBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     challenge_id:str=Field(min_length=5,max_length=80)
-    code:str=Field(min_length=6,max_length=12)
+    code:str=Field(min_length=4,max_length=12)
     display_name:str|None=Field(default=None,min_length=1,max_length=100)
 
 
 @router.post('/identity/staff/code/verify')
 def verify_staff_code(body:StaffCodeVerifyBody,request:Request,response:Response):
+    if body.challenge_id.startswith(('otp_', 'owner_sms_')):
+        raise db.error(400,'OTP_PURPOSE_MISMATCH','رمز التحقق غير مخصص لدخول الموظفين. / Code is not for employee sign-in.')
     if body.challenge_id.startswith('employee_otp_'):
         if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') != 'true':
             raise db.error(503,'EMPLOYEE_SMS_NOT_CERTIFIED','رسائل الموظفين غير معتمدة بعد. / Employee SMS is not certified yet.')
         from .employee_sms import EmployeeSMSVerify, verify_sms
         code=body.code.translate(IDENTITY_DIGITS).strip()
-        if not re.fullmatch(r'[0-9]{6}',code):
-            raise db.error(422,'STAFF_CODE_INVALID','أدخل رمز SMS من 6 أرقام. / Enter the six-digit SMS code.')
+        if not re.fullmatch(r'[0-9]{4}',code):
+            raise db.error(422,'STAFF_CODE_INVALID','أدخل رمز SMS من 4 أرقام. / Enter the four-digit SMS code.')
         return verify_sms(EmployeeSMSVerify(challenge_id=body.challenge_id,code=code),request,response)
+    if staff_email_retired():
+        raise db.error(400,'STAFF_EMAIL_LOGIN_RETIRED','استخدم رمز SMS للدخول. / Use SMS to sign in.')
     check_origin(request)
     code=body.code.translate(IDENTITY_DIGITS).strip()
     ip=request.client.host if request.client else 'unknown'
@@ -998,11 +1014,16 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         row=conn.execute('SELECT * FROM identity_tokens WHERE id=%s AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE',(challenge['id'],)).fetchone()
         if not row:
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط منتهي أو غير صالح أو مستخدم.')
+        user=conn.execute('SELECT * FROM users WHERE id=%s FOR UPDATE',(row['user_id'],)).fetchone() if row['user_id'] else None
+        if staff_email_retired() and ((user and user['role'] != 'customer')
+                                      or row['purpose'] in {'staff_login','invitation','add_owner','owner_link'}):
+            # Pending links cannot reactivate employees or grant owner step-up.
+            # Keep customer verification and operational correspondence intact.
+            raise db.error(400,'STAFF_EMAIL_LOGIN_RETIRED','استخدم رمز SMS للدخول. / Use SMS to sign in.')
         if row['session_id']:
             current=_optional_identity(request,conn)
             if not current or current['session_id']!=row['session_id'] or current['id']!=row['user_id']:
                 raise db.error(403,'LINK_SESSION_REQUIRED','افتح الرابط من جلسة الحساب الذي طلب ربط البريد.')
-        user=conn.execute('SELECT * FROM users WHERE id=%s FOR UPDATE',(row['user_id'],)).fetchone() if row['user_id'] else None
         invitation=row['purpose'] in {'invitation','add_owner'}
         if user and ((not user['active'] and not invitation) or user['brand_id']!=row['brand_id']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
@@ -1100,6 +1121,15 @@ def _assert_staff_phone_available(conn,brand,phone,exclude=None):
         raise db.error(409,'STAFF_IDENTITY_CONFLICT','رقم الجوال مسجل لحساب موظف آخر؛ لا يتم تكرار هوية الموظف.')
 
 
+def staff_sms_account_approved(row):
+    if not staff_email_retired() or row.get('identity_kind') != 'staff_owner_approved' or row.get('invitation_status') not in {'active','paused'}:
+        return False
+    try:
+        return bool(row.get('phone') and normalize_phone(row['phone']))
+    except HTTPException:
+        return False
+
+
 def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
     """Never strand a running task or the driver's custody by removing its executor."""
     if row['role']=='owner' and not new_active:
@@ -1137,7 +1167,7 @@ def staff_public(conn,row):
 class StaffInvitationBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     display_name:str=Field(min_length=1,max_length=100)
-    email:str=Field(min_length=3,max_length=254)
+    email:str|None=Field(default=None,min_length=3,max_length=254)
     phone:str=Field(min_length=8,max_length=30)
     branch_ids:list[str]=Field(default_factory=list,max_length=500)
     employee_ref:str|None=Field(default=None,max_length=80)
@@ -1200,7 +1230,10 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
         raise db.error(403,'STAFF_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الموظفين.')
     if permissions and body.role != 'admin':
         raise db.error(422, 'ADMIN_ROLE_REQUIRED', 'صلاحيات الإدارة مخصصة لدور أدمن فقط.')
-    email=email_delivery.normalize_email(body.email)
+    sms_approved=staff_email_retired() and not draft_only
+    if not body.email and not staff_email_retired():
+        raise db.error(422,'STAFF_EMAIL_REQUIRED','أدخل البريد الإلكتروني.')
+    email=email_delivery.normalize_email(body.email) if body.email else None
     phone=normalize_phone(body.phone)
     name=body.display_name.strip()
     if not name or '\x00' in name:
@@ -1209,29 +1242,31 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
         raise db.error(403,'DRIVER_ROLE_ONLY','مدير التوصيل يدعو سائقًا فقط.')
     vehicle=_vehicle(body.vehicle)
     channel=_channel(conn,user['brand_id'],'email')
-    ready=not draft_only and email_delivery.configuration()['configured'] and (
+    ready=not draft_only and not sms_approved and email_delivery.configuration()['configured'] and (
         channel['state']=='testing' or (channel['state']=='active' and channel['enabled']))
     scope=_staff_scope(conn,user,body.branch_ids)
     if body.role!='owner' and not scope:
         raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
-    if (body.role in {'owner','admin','delivery_manager'} or denials) and not draft_only:
+    if (sms_approved or body.role in {'owner','admin','delivery_manager'} or denials) and not draft_only:
         require_owner_step_up(conn,user)
     # Serialize identity conflicts without revealing the matched account's attributes.
-    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
+    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+(email or ''),))
     if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(btrim(email))=%s',(user['brand_id'],email)).fetchone():
         raise db.error(409,'STAFF_IDENTITY_CONFLICT','تعذر إنشاء الدعوة. راجع البريد أو الدعوات المخولة.')
     _assert_staff_phone_available(conn,user['brand_id'],phone)
     identifier=db.new_id('staff_')
-    invitation_state='pending_email' if ready else 'draft'
+    invitation_state='active' if sms_approved else 'pending_email' if ready else 'draft'
     row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
+    if sms_approved:
+        row=conn.execute("UPDATE users SET active=true,identity_kind='staff_owner_approved',invitation_status='active' WHERE id=%s RETURNING *",(identifier,)).fetchone()
     row=conn.execute('UPDATE users SET permissions=%s,permission_denials=%s WHERE id=%s RETURNING *',(db.json(permissions),db.json(denials),identifier)).fetchone()
     challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
     details={'role':body.role,'branch_ids':scope,'permissions':permissions,'permission_denials':denials}
     if draft_only:
         details['owner_decision']=maintenance_provenance
-    db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,details)
+    db.audit(conn,user['id'],'staff.sms.owner_approved' if sms_approved else 'staff.invited' if ready else 'staff.draft.created','user',identifier,details)
     return {'user':staff_public(conn,row),'challenge_id':challenge,'invitation_status':invitation_state,
-            'delivery_status':'queued' if ready else 'draft_only' if draft_only else 'channel_unavailable'}
+            'delivery_status':'sms_on_demand' if sms_approved else 'queued' if ready else 'draft_only' if draft_only else 'channel_unavailable'}
 
 
 @router.get('/identity/staff')
@@ -1376,11 +1411,14 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
                 require_owner_step_up(conn,user)
         scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
         active=body.active if body.active is not None else row['active']
-        if role_changed and not row['email_verified_at']:
+        sms_approved=staff_sms_account_approved(row)
+        if active and not row['active'] and sms_approved:
+            require_owner_step_up(conn,user)
+        if role_changed and not row['email_verified_at'] and not sms_approved:
             active=False
         email=email_delivery.normalize_email(body.email) if body.email is not None else row['email']
         email_changed=email!=row['email']
-        if email_changed:
+        if email_changed and not staff_email_retired():
             if row['role']=='owner':
                 require_owner_step_up(conn,user)
             if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(row['id'],)).fetchone():
@@ -1392,7 +1430,7 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             active=False
         if active and (row['invitation_status'] not in {'active','paused'} or not row['email_verified_at']):
             # Legacy active staff remain during migration, but cannot be activated by bypassing proof.
-            if not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
+            if not sms_approved and not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
                 raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
         ensure_safe_staff_scope_change(conn,row,scope,active)
         name=body.display_name.strip() if body.display_name is not None else row['display_name']
@@ -1405,7 +1443,7 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             _assert_staff_phone_available(conn,user['brand_id'],normalize_phone(phone),identifier)
         vehicle=_vehicle(body.vehicle) if body.vehicle is not None else row['vehicle']
         status=row['invitation_status'] if active else 'paused' if row['invitation_status']=='active' else row['invitation_status']
-        if active and row['email_verified_at']:
+        if active and (row['email_verified_at'] or sms_approved):
             status='active'
         output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
         if body.permissions is not None or role_changed:
@@ -1416,9 +1454,11 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
                 _invalidate_staff_tokens(conn,identifier)
         if role_changed:
             output=conn.execute('UPDATE users SET role=%s WHERE id=%s RETURNING *',(role,identifier)).fetchone()
-            if not row['email_verified_at']:
+            if not row['email_verified_at'] and not sms_approved:
                 output=conn.execute("UPDATE users SET invitation_status='draft' WHERE id=%s RETURNING *",(identifier,)).fetchone()
-        if email_changed:
+        if email_changed and staff_email_retired():
+            output=conn.execute('UPDATE users SET email=%s,email_verified_at=NULL WHERE id=%s RETURNING *',(email,identifier)).fetchone()
+        elif email_changed:
             output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
         if role_changed or scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone'] or permissions!=(row.get('permissions') or []):
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))

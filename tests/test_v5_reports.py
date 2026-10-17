@@ -209,3 +209,22 @@ def test_separate_driver_sheet_keeps_rows_and_compact_main():
     assert len(reporting.output_tables(snap,'compact','drivers')[0]['rows'])==8
     assert _pdf_pages(reporting.make_v5_pdf(snap,part='main'))==1
     assert _pdf_pages(reporting.make_v5_pdf(snap,part='drivers'))==1
+
+
+def test_driver_closure_display_keeps_day_and_distinguishes_work_end_from_approval():
+    snap=sample();snap['shift'].update(shift_no=1,delivery_operational_date='2026-10-09',submitted_at='2026-10-10T00:15:00+00:00',closed_at='2026-10-10T02:30:00+00:00')
+    original=deepcopy(snap)
+    table=next(t for t in reporting.v5_tables(snap) if t['key']=='shift')
+    rows=dict(table['rows'])
+    assert rows['يوم التشغيل']=='2026-10-09'
+    assert rows['نهاية الدوام - الرياض']==reporting.v5_stamp(snap['shift']['submitted_at'])
+    assert rows['نهاية الدوام - الرياض']!=reporting.v5_stamp(snap['shift']['closed_at'])
+    assert 'D-000001' in rows['مرجع الشفت / حالة الاعتماد']
+    assert snap==original
+    snap['shift']['vehicle_log']={'end':{'recorded_at':'2026-10-09T23:55:00+00:00'}}
+    rows=dict(next(t for t in reporting.v5_tables(snap) if t['key']=='shift')['rows'])
+    assert rows['نهاية الدوام - الرياض']==reporting.v5_stamp('2026-10-09T23:55:00+00:00')
+    del snap['shift']['vehicle_log']
+    del snap['shift']['submitted_at']
+    rows=dict(next(t for t in reporting.v5_tables(snap) if t['key']=='shift')['rows'])
+    assert rows['نهاية الدوام - الرياض']==reporting.v5_stamp(None)
