@@ -109,7 +109,7 @@ def chromium_browser():
     from playwright.sync_api import sync_playwright
     ARTIFACTS.mkdir(exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'])
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'], executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None)
         try:
             yield browser
         finally:

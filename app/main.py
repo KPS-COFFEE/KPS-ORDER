@@ -60,6 +60,8 @@ if hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
 
+from . import portals
+app.add_middleware(portals.PortalBoundaryMiddleware)
 app.add_middleware(SecurityMiddleware)
 
 
@@ -84,6 +86,10 @@ app.include_router(catalog.router)
 app.include_router(auth.router)
 from . import owner_phone
 app.include_router(owner_phone.router)
+from . import employee_sms, sms_rollout, sms_pilot_ui
+app.include_router(employee_sms.router)
+app.include_router(sms_rollout.router)
+app.include_router(sms_pilot_ui.router)
 # Provider callbacks use their own signed timestamped verification, rather than
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)

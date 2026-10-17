@@ -85,7 +85,7 @@ class TestFinalStaffIdentity:
 
     def test_activation_code_reuses_one_driver_with_multi_branch_scope_and_inviter(self,client,monkeypatch):
         _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        manager=_make_user('owner',branches=['kps-branch-1','kps-branch-5'])
         _authenticate(client,manager)
         invitation=_invite(client).json()
         challenge=invitation['challenge_id']
@@ -143,10 +143,10 @@ class TestFinalStaffIdentity:
         assert result.status_code==400 and result.json()['detail']['code']=='STAFF_CODE_INVALID'
         with db.tx() as conn:assert conn.execute('SELECT count(*) n FROM sessions').fetchone()['n']==0
 
-    @pytest.mark.parametrize('mutation',["active=false","branch_ids='[\"kps-branch-1\"]'::jsonb","role='branch_manager'"])
+    @pytest.mark.parametrize('mutation',["active=false","role='delivery_manager'","role='branch_manager'"])
     def test_pending_driver_cannot_activate_after_inviter_loses_authority(self,client,monkeypatch,mutation):
         _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        manager=_make_user('owner',branches=['kps-branch-1','kps-branch-5'])
         _authenticate(client,manager)
         invited=_invite(client).json()
         with db.tx() as conn:conn.execute('UPDATE users SET '+mutation+' WHERE id=%s',(manager['id'],))
@@ -249,3 +249,15 @@ class TestFinalStaffIdentity:
         with ThreadPoolExecutor(max_workers=2) as pool:
             assert sorted(pool.map(consume,range(2)))==[200,400]
         with db.tx() as conn:assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(driver['id'],)).fetchone()['n']==1
+
+
+@pytest.mark.postgres
+def test_delivery_manager_cannot_manage_employee_identity(client):
+    manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+    driver=_make_user('driver',branches=['kps-branch-1'])
+    _authenticate(client,manager)
+    assert _invite(client).status_code==403
+    assert client.get('/api/identity/staff').status_code==403
+    assert client.patch('/api/identity/staff/'+driver['id'],json={'display_name':'Forbidden change'}).status_code==403
+    assert client.post('/api/identity/staff/'+driver['id']+'/resend').status_code==403
+    assert client.post('/api/identity/staff/'+driver['id']+'/revoke-invitation').status_code==403

@@ -686,7 +686,7 @@
   function closeDialog(dialog) { if (typeof dialog === 'string') dialog = $(dialog); if (dialog.open) { if(dialog.id==='confirm-dialog')clearConfirmation(); dialog.close(); } }
   async function api(path, {method='GET', data, idempotency, signal} = {}) {
     const principal=state.session.user?.id;
-    const headers = {'Accept': 'application/json'};
+    const headers = {'Accept': 'application/json', 'X-KPS-Context':'customer'};
     if (data !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && method !== 'HEAD') { if (state.session.csrf_token) headers['X-CSRF-Token'] = state.session.csrf_token; headers['Idempotency-Key'] = idempotency || key(); }
     let response;
