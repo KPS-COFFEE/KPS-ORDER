@@ -738,7 +738,7 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
                 if body.cash_halalas is not None or body.card_halalas is not None:fail(422,'مبالغ التقسيم مخصصة للكاش والشبكة معًا')
                 parts=[(body.method,body.amount_halalas)]
             cash=next((amount for method,amount in parts if method=='cash'),0)
-            if any(method=='card' for method,_ in parts) and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
+            if not (user['role']=='driver' and o['service']=='delivery') and any(method=='card' for method,_ in parts) and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
             if cash and (body.tendered_halalas is None or body.tendered_halalas<cash):fail(422,'المبلغ النقدي المسلم غير كاف')
             sid=None
             if o['service']=='delivery':
