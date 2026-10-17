@@ -74,6 +74,10 @@ async def receive(request: Request):
     try:
         body = await request.json()
         mode = 'live' if isinstance(body,dict) and body.get('live') is True else 'test'
+        # Preserve the sandbox-only rejection boundary: a live notification is
+        # not an enabled contract until explicitly allowed, even before DB lookup.
+        if mode == 'live' and os.getenv('KPS_BRANCH_PAYMENT_LIVE_ENABLED') != 'true':
+            raise ValueError('Live notification contract disabled')
         event, kind, token, payment_id = notification(body,mode)
     except (ValueError, TypeError, KeyError, AttributeError):
         raise db.error(400, 'PAYMENT_WEBHOOK_INVALID', 'إشعار غير صالح.') from None

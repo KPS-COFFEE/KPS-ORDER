@@ -58,6 +58,21 @@ def test_live_approval_is_exact_release_and_seller_scoped(monkeypatch):
     assert len(runtime.live_blockers('ops-brand','fixture-seller'))==2
 
 
+def test_disabled_live_notification_rejected_before_database(monkeypatch):
+    import asyncio
+    from app import branch_payment_webhooks as webhooks
+    monkeypatch.setenv('KPS_BRANCH_PAYMENT_SANDBOX_ENABLED','true')
+    monkeypatch.setenv('KPS_BRANCH_PAYMENT_WEBHOOKS_ENABLED','true')
+    monkeypatch.delenv('KPS_BRANCH_PAYMENT_LIVE_ENABLED',raising=False)
+    monkeypatch.setattr(db,'tx',lambda:pytest.fail('Disabled live callback reached database'))
+    class Notification:
+        async def json(self):
+            return {'live':True}
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(webhooks.receive(Notification()))
+    assert failure.value.status_code==400
+
+
 @pytest.mark.parametrize('mode',['','LIVE','production','unknown'])
 def test_invalid_runtime_mode_fails_closed(monkeypatch,mode):
     monkeypatch.setenv('KPS_BRANCH_PAYMENT_MODE',mode)
