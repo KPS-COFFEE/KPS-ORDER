@@ -62,30 +62,83 @@ def _eligible(conn, brand, phone, identifier=None, created_at=None):
     return rows[0] if len(rows) == 1 else None
 
 
+_DIAGNOSTIC_REASONS = frozenset({
+    'eligible', 'account_ineligible_or_ambiguous', 'rollout_denied', 'portal_denied',
+    'account_send_rate_limited', 'request_rate_limited', 'provider_accepted',
+    'provider_unconfigured', 'provider_rejected', 'provider_transport_error',
+    'provider_invalid_response', 'provider_failure_unclassified',
+    'verification_rate_limited', 'challenge_unavailable', 'verification_rejected',
+    'verification_approved',
+})
+
+
+def _diagnostic(challenge_id, outcome, *, conn=None, user_id=None, provider=None, reference=None):
+    """Restricted audit only: never phone, code, headers, bodies or credentials."""
+    if outcome not in _DIAGNOSTIC_REASONS:
+        outcome = 'provider_failure_unclassified'
+    details = {'outcome': outcome}
+    if provider in {'tawked', 'twilio_verify'}:
+        details['provider'] = provider
+    if reference and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(reference)):
+        details['provider_reference'] = str(reference)
+    if conn is None:
+        with db.tx() as audit_conn:
+            db.audit(audit_conn, user_id, 'employee.sms.diagnostic', 'otp_challenge', challenge_id, details)
+    else:
+        db.audit(conn, user_id, 'employee.sms.diagnostic', 'otp_challenge', challenge_id, details)
+
+
+def _provider_failure(challenge_id, error, *, user_id=None, provider=None):
+    code = error.detail.get('code') if isinstance(error.detail, dict) else None
+    fallback = ('provider_unconfigured' if code in {'OTP_PROVIDER_UNAVAILABLE',
+                'EMPLOYEE_SMS_NOT_CERTIFIED', 'EMPLOYEE_OTP_DEDICATED_SERVICE_REQUIRED',
+                'EMPLOYEE_OTP_PROVIDER_CONFIGURATION'} else
+                'provider_invalid_response' if code == 'OTP_NOT_SENT' else
+                'provider_failure_unclassified')
+    _diagnostic(challenge_id, getattr(error, 'sms_failure_reason', fallback),
+                user_id=user_id, provider=provider)
+
+
 def request_sms(body: EmployeeSMSRequest, request: Request):
     auth.check_origin(request)
     phone = auth.normalize_phone(body.phone)
+    challenge_id = db.new_id('employee_otp_')
     ip = request.client.host if request.client else 'unknown'
-    with db.tx() as conn:
-        allowed = db.rate_limit(conn,'employee-sms-ip:'+ip,10,600)
-        allowed = db.rate_limit(conn,'employee-sms-phone:'+phone,3,600) and allowed
-        provider = provider_ready(conn,body.brand_id)
+    try:
+        with db.tx() as conn:
+            allowed = db.rate_limit(conn,'employee-sms-ip:'+ip,10,600)
+            allowed = db.rate_limit(conn,'employee-sms-phone:'+phone,3,600) and allowed
+            provider = provider_ready(conn,body.brand_id)
+            if not allowed:
+                _diagnostic(challenge_id, 'request_rate_limited', conn=conn)
+    except HTTPException as error:
+        _provider_failure(challenge_id, error)
+        raise
     if not allowed:
         raise db.error(429,'OTP_RATE_LIMIT','انتظر قبل المحاولة مجددًا. / Wait before trying again.')
     if provider == 'twilio_verify':
-        verify_service_length()
-    challenge_id = db.new_id('employee_otp_')
+        try:
+            verify_service_length()
+        except HTTPException as error:
+            _provider_failure(challenge_id, error, provider=provider)
+            raise
     expires = datetime.now(timezone.utc) + timedelta(minutes=5)
     with db.tx() as conn:
         user = _eligible(conn,body.brand_id,phone)
+        outcome = 'eligible' if user else 'account_ineligible_or_ambiguous'
+        diagnostic_user_id = user['id'] if user else None
         if user and not sms_rollout.employee_sms_enabled(user):
+            outcome = 'rollout_denied'
             user=None
         if user and portals.enabled() and user['role'] not in portals.PORTAL_ROLES.get(request.url.hostname,frozenset()):
+            outcome = 'portal_denied'
             user=None
         if user and not db.rate_limit(conn,'employee-sms-send-account:'+user['id'],3,600):
             # A registered phone change must not reset the account send budget.
             # Commit the budget and return the same generic accepted response.
+            outcome = 'account_send_rate_limited'
             user=None
+        _diagnostic(challenge_id, outcome, conn=conn, user_id=diagnostic_user_id, provider=provider)
     if user:
         try:
             if provider == 'tawked':
@@ -96,10 +149,12 @@ def request_sms(body: EmployeeSMSRequest, request: Request):
                 if result.get('status') != 'pending' or result.get('to') != phone or result.get('channel') != 'sms' or not result.get('sid'):
                     raise db.error(503,'OTP_NOT_SENT','لم يؤكد المزود إرسال الرمز. / SMS delivery was not accepted.')
                 reference = result['sid']
-        except HTTPException:
+        except HTTPException as error:
+            _provider_failure(challenge_id, error, user_id=user['id'], provider=provider)
             # Do not expose existence through provider failures. The generic
             # accepted response does not assert sending or delivery.
             return {'accepted':True,'challenge_id':challenge_id,'expires_in':300,'channel':'sms','code_length':4}
+        _diagnostic(challenge_id, 'provider_accepted', user_id=user['id'], provider=provider, reference=reference)
         with db.tx() as conn:
             if provider_ready(conn,body.brand_id) != provider:
                 raise db.error(503,'EMPLOYEE_SMS_NOT_CERTIFIED','تغير إعداد مزود الرسائل. / SMS provider configuration changed.')
@@ -119,8 +174,10 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
         allowed = db.rate_limit(conn,'employee-sms-verify-ip:'+ip,20,600)
         challenge = conn.execute("UPDATE otp_challenges SET attempts=attempts+1 WHERE id=%s AND source_user_id IS NOT NULL AND delivery_channel='sms' AND provider_name IN ('twilio_verify','tawked') AND verified_at IS NULL AND expires_at>now() AND attempts<3 RETURNING *",(body.challenge_id,)).fetchone() if allowed else None
     if not allowed:
+        _diagnostic(body.challenge_id, 'verification_rate_limited')
         raise db.error(429,'OTP_RATE_LIMIT','انتظر قبل المحاولة مجددًا. / Wait before trying again.')
     if not challenge:
+        _diagnostic(body.challenge_id, 'challenge_unavailable')
         raise db.error(400,'OTP_EXPIRED','الرمز منتهي أو مستهلك. / Code expired or already used.')
     if not sms_rollout.employee_sms_enabled({'id':challenge['source_user_id'],'brand_id':challenge['brand_id']}):
         raise db.error(503,'EMPLOYEE_SMS_NOT_CERTIFIED','رسائل الموظفين غير معتمدة بعد. / Employee SMS is not certified yet.')
@@ -134,14 +191,20 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
     with db.tx() as conn:
         account_allowed = db.rate_limit(conn,'employee-sms-verify-account:'+challenge['source_user_id'],3,600)
     if not account_allowed:
+        _diagnostic(body.challenge_id, 'verification_rate_limited', user_id=challenge['source_user_id'])
         raise db.error(429,'OTP_RATE_LIMIT','انتظر قبل المحاولة مجددًا. / Wait before trying again.')
-    if challenge['provider_name'] == 'tawked':
-        approved = sms_verification.check(challenge['provider_reference'], body.code)
-    else:
-        result = auth._provider_post('VerificationCheck',{'VerificationSid':challenge['provider_reference'],'Code':body.code},service_sid=os.environ['EMPLOYEE_TWILIO_VERIFY_SERVICE_SID'])
-        approved = (result.get('status') == 'approved' and result.get('sid') == challenge['provider_reference']
-                    and result.get('to') == challenge['phone'] and result.get('channel') == 'sms')
+    try:
+        if challenge['provider_name'] == 'tawked':
+            approved = sms_verification.check(challenge['provider_reference'], body.code)
+        else:
+            result = auth._provider_post('VerificationCheck',{'VerificationSid':challenge['provider_reference'],'Code':body.code},service_sid=os.environ['EMPLOYEE_TWILIO_VERIFY_SERVICE_SID'])
+            approved = (result.get('status') == 'approved' and result.get('sid') == challenge['provider_reference']
+                        and result.get('to') == challenge['phone'] and result.get('channel') == 'sms')
+    except HTTPException as error:
+        _provider_failure(body.challenge_id, error, user_id=challenge['source_user_id'], provider=challenge['provider_name'])
+        raise
     if not approved:
+        _diagnostic(body.challenge_id, 'verification_rejected', user_id=challenge['source_user_id'])
         raise db.error(400,'OTP_INVALID','رمز غير صحيح. / Invalid code.')
     with db.tx() as conn:
         if provider_ready(conn,challenge['brand_id']) != challenge['provider_name']:
@@ -154,6 +217,7 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
         if not claimed:
             raise db.error(409,'OTP_ALREADY_USED','تم استخدام الرمز. / Code already used.')
         # Proof never changes activation, identity, permission, role or branch access.
+        _diagnostic(body.challenge_id, 'verification_approved', conn=conn, user_id=user['id'])
         db.audit(conn,user['id'],'employee.sms.verified','user',user['id'])
         sms_rollout.record_employee_proof(conn,user,body.challenge_id)
         return {**auth.establish_session(conn,user,response),'portal_url':portals.home_for_role(user['role'])}
