@@ -235,7 +235,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
             elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
             sid=uid()
-            carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL FOR UPDATE',(target['id'],)).fetchall()
+            carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL FOR UPDATE',(target['id'],)).fetchall()
             carried=sum(x['amount_halalas'] for x in carryovers)
             permanent_float=None
             if body.kind=='driver':
