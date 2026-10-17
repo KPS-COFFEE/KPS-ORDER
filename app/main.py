@@ -94,6 +94,9 @@ from . import owner_phone
 app.include_router(owner_phone.router)
 from . import employee_sms
 app.include_router(employee_sms.router)
+from . import sms_rollout, sms_pilot_ui
+app.include_router(sms_rollout.router)
+app.include_router(sms_pilot_ui.router)
 # Provider callbacks use their own signed timestamped verification, rather than
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)

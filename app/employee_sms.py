@@ -9,9 +9,9 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 import httpx
-from fastapi import Request, Response
+from fastapi import Request, Response, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from . import auth, db, portals, sms_verification
+from . import auth, db, portals, sms_verification, sms_rollout
 
 
 
@@ -78,17 +78,28 @@ def request_sms(body: EmployeeSMSRequest, request: Request):
     expires = datetime.now(timezone.utc) + timedelta(minutes=5)
     with db.tx() as conn:
         user = _eligible(conn,body.brand_id,phone)
+        if user and not sms_rollout.employee_sms_enabled(user):
+            user=None
         if user and portals.enabled() and user['role'] not in portals.PORTAL_ROLES.get(request.url.hostname,frozenset()):
             user=None
+        if user and not db.rate_limit(conn,'employee-sms-send-account:'+user['id'],3,600):
+            # A registered phone change must not reset the account send budget.
+            # Commit the budget and return the same generic accepted response.
+            user=None
     if user:
-        if provider == 'tawked':
-            reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
-            expires = min(expires, provider_expiry)
-        else:
-            result = auth._provider_post('Verifications',{'To':phone,'Channel':'sms','Locale':body.lang},service_sid=os.environ['EMPLOYEE_TWILIO_VERIFY_SERVICE_SID'])
-            if result.get('status') != 'pending' or result.get('to') != phone or result.get('channel') != 'sms' or not result.get('sid'):
-                raise db.error(503,'OTP_NOT_SENT','لم يؤكد المزود إرسال الرمز. / SMS delivery was not accepted.')
-            reference = result['sid']
+        try:
+            if provider == 'tawked':
+                reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
+                expires = min(expires, provider_expiry)
+            else:
+                result = auth._provider_post('Verifications',{'To':phone,'Channel':'sms','Locale':body.lang},service_sid=os.environ['EMPLOYEE_TWILIO_VERIFY_SERVICE_SID'])
+                if result.get('status') != 'pending' or result.get('to') != phone or result.get('channel') != 'sms' or not result.get('sid'):
+                    raise db.error(503,'OTP_NOT_SENT','لم يؤكد المزود إرسال الرمز. / SMS delivery was not accepted.')
+                reference = result['sid']
+        except HTTPException:
+            # Do not expose existence through provider failures. The generic
+            # accepted response does not assert sending or delivery.
+            return {'accepted':True,'challenge_id':challenge_id,'expires_in':300,'channel':'sms','code_length':4}
         with db.tx() as conn:
             if provider_ready(conn,body.brand_id) != provider:
                 raise db.error(503,'EMPLOYEE_SMS_NOT_CERTIFIED','تغير إعداد مزود الرسائل. / SMS provider configuration changed.')
@@ -111,6 +122,8 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
         raise db.error(429,'OTP_RATE_LIMIT','انتظر قبل المحاولة مجددًا. / Wait before trying again.')
     if not challenge:
         raise db.error(400,'OTP_EXPIRED','الرمز منتهي أو مستهلك. / Code expired or already used.')
+    if not sms_rollout.employee_sms_enabled({'id':challenge['source_user_id'],'brand_id':challenge['brand_id']}):
+        raise db.error(503,'EMPLOYEE_SMS_NOT_CERTIFIED','رسائل الموظفين غير معتمدة بعد. / Employee SMS is not certified yet.')
     with db.tx() as conn:
         if provider_ready(conn,challenge['brand_id']) != challenge['provider_name']:
             raise db.error(400,'OTP_INVALID','رمز غير صحيح. / Invalid code.')
@@ -142,6 +155,7 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
             raise db.error(409,'OTP_ALREADY_USED','تم استخدام الرمز. / Code already used.')
         # Proof never changes activation, identity, permission, role or branch access.
         db.audit(conn,user['id'],'employee.sms.verified','user',user['id'])
+        sms_rollout.record_employee_proof(conn,user,body.challenge_id)
         return {**auth.establish_session(conn,user,response),'portal_url':portals.home_for_role(user['role'])}
 
 
@@ -166,8 +180,8 @@ class OwnerSMSVerify(BaseModel):
         return normalized
 
 
-def _owner_sms_enabled():
-    if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') != 'true':
+def _owner_sms_enabled(user=None):
+    if not sms_rollout.employee_sms_enabled(user):
         raise db.error(503, 'EMPLOYEE_SMS_NOT_CERTIFIED', 'رسائل الموظفين غير معتمدة بعد. / Employee SMS is not certified yet.')
 
 
@@ -193,7 +207,7 @@ def _current_owner(conn, request, expected):
 
 @router.post('/request')
 def request_owner_sms(request: Request, user=Depends(auth.require_roles('owner'))):
-    _owner_sms_enabled()
+    _owner_sms_enabled(user)
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         current, phone = _current_owner(conn, request, user)
@@ -226,7 +240,7 @@ def request_owner_sms(request: Request, user=Depends(auth.require_roles('owner')
 
 @router.post('/verify')
 def verify_owner_sms(body: OwnerSMSVerify, request: Request, user=Depends(auth.require_roles('owner'))):
-    _owner_sms_enabled()
+    _owner_sms_enabled(user)
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         current, phone = _current_owner(conn, request, user)

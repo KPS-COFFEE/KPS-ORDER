@@ -19,9 +19,16 @@ def retirement(monkeypatch):
     monkeypatch.setenv('EMPLOYEE_SMS_EMAIL_RETIRED','true')
 
 
-def test_retired_numeric_email_code_fails_before_database(monkeypatch):
+def test_retired_numeric_email_code_uses_challenge_brand_before_acceptance(monkeypatch):
     retirement(monkeypatch)
-    monkeypatch.setattr(auth.db,'tx',lambda *a,**k:pytest.fail('Retired email code must not reach storage'))
+    monkeypatch.setattr(auth,'check_origin',lambda *a:None)
+    monkeypatch.setattr(auth.db,'rate_limit',lambda *a:True)
+    class Connection:
+        def execute(self,*a):return self
+        def fetchone(self):return {'brand_id':'kps'}
+    @contextmanager
+    def tx():yield Connection()
+    monkeypatch.setattr(auth.db,'tx',tx)
     with pytest.raises(HTTPException) as exc:
         auth.verify_staff_code(auth.StaffCodeVerifyBody(challenge_id='email_fixture',code='123456'),request('admin.kps.sa'),Response())
     assert exc.value.detail['code']=='STAFF_EMAIL_LOGIN_RETIRED'
@@ -38,7 +45,7 @@ def test_pending_owner_email_cannot_login_activate_or_grant_step_up(monkeypatch,
         def execute(self,query,args):
             statements.append(query)
             assert query.startswith('SELECT'), 'Retired token cannot mutate account, session, or token'
-            return Result({'id':'email_fixture','purpose':purpose,'user_id':'synthetic_owner','session_id':None} if 'identity_tokens' in query else {'id':'synthetic_owner','role':'owner'})
+            return Result({'id':'email_fixture','brand_id':'kps','purpose':purpose,'user_id':'synthetic_owner','session_id':None} if 'identity_tokens' in query else {'id':'synthetic_owner','role':'owner'})
     @contextmanager
     def tx():yield Connection()
     monkeypatch.setattr(auth.db,'tx',tx)
