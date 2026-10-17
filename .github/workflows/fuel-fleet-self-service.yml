@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 68a51b95fbe89d106361fc251bdc8e5e17e88314
+          ref: 6982f35811684a36883a2e2691c342bf7ebe7072
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -40,13 +40,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "68a51b95fbe89d106361fc251bdc8e5e17e88314"
+          test "$(git rev-parse HEAD)" = "6982f35811684a36883a2e2691c342bf7ebe7072"
           node --check public/ops.js
-          python -m pytest -q --tb=short --junitxml=test-results/fuel-fleet.xml tests/test_fleet_self_service.py tests/test_fleet.py tests/test_fleet_math.py tests/test_fleet_browser.py tests/test_fuel_exceptions.py tests/test_shift_vehicle.py tests/test_employee_permissions.py tests/test_operations.py
+          node --check public/assets/driver-checks.js
+          python -m pytest -q --tb=short --junitxml=test-results/fuel-fleet.xml tests/test_driver_checks.py tests/test_driver_checks_browser.py tests/test_fleet_self_service.py tests/test_fleet.py tests/test_fleet_math.py tests/test_fleet_browser.py tests/test_fuel_exceptions.py tests/test_shift_vehicle.py tests/test_employee_permissions.py tests/test_operations.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fuel-fleet-68a51b95fbe89d106361fc251bdc8e5e17e88314
+          name: fuel-fleet-6982f35811684a36883a2e2691c342bf7ebe7072
           path: |
             test-results/
             test-artifacts/
