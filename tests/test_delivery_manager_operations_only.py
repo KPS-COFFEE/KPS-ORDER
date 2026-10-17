@@ -13,12 +13,13 @@ from app.main import app
 def test_manager_has_operational_capabilities_but_no_account_or_financial_administration():
     manager = {'role':'delivery_manager', 'permissions':list(policy.REGISTRY)}
     effective = policy.effective(manager)
-    assert not effective & {'drivers_manage','refunds_manage','branch_printers_manage','vehicle_register',
+    assert not effective & {'drivers_manage','refunds_manage','vehicle_register',
                             'accounting_reports','accounting_review','vehicle_maintenance_manage'}
     assert {'drivers_view','drivers_availability','driver_terminal','shifts_approve',
             'delivery_assign','shifts_delegate_close','custody_transfer','support_manage',
-            'orders_print','reports_view'} <= effective
-    assert not branch_printing.can_manage_printers(manager)
+            'orders_print','reports_view','branch_printers_manage'} <= effective
+    assert branch_printing.can_manage_printers(manager)
+    assert not branch_printing.can_manage_printers({**manager, 'permission_denials':['branch_printers_manage']})
     assert branch_printing.can_manage_printers({'role':'owner'})
     assert branch_printing.can_manage_printers({'role':'admin','permissions':['branch_printers_manage']})
 
@@ -55,7 +56,7 @@ def test_existing_manager_session_and_retried_keys_fail_before_writes(monkeypatc
     monkeypatch.setattr(auth,'_find_session',lambda conn, request:{
         'id':'existing-manager','role':'delivery_manager','brand_id':'kps',
         'branch_ids':['kps-branch-1'],'active':True,'csrf_hash':auth.token_hash('proof'),
-        'permissions':list(policy.REGISTRY)})
+        'permissions':list(policy.REGISTRY), 'permission_denials':['branch_printers_manage']})
     with TestClient(app,base_url='http://testserver',headers={
             'Origin':'http://testserver','X-CSRF-Token':'proof','Idempotency-Key':'previous-success-key'}) as client:
         for _ in range(2):
