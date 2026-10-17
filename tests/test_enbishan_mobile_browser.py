@@ -52,8 +52,11 @@ def test_mobile_storefront_catalog_brand_and_language(dual_http,brand,lang):
         browser=p.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'),args=['--no-sandbox'])
         try:
             context=browser.new_context(viewport={'width':390,'height':844})
+            context.add_init_script("localStorage.setItem('kps_customer_lang', '"+lang+"')")
             page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(base+'/?brand_id='+brand+'&lang='+lang)
+            expect(page.locator('html')).to_have_attribute('lang',lang)
+            expect(page.locator('html')).to_have_attribute('dir','rtl' if lang=='ar' else 'ltr')
             expect(page.locator('.product-card').first).to_be_visible()
             if brand=='enbishan':
                 expect(page.locator('.product-card')).to_have_count(1)
