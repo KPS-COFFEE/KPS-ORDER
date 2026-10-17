@@ -163,6 +163,25 @@ def delivered(post,order,driver):
     post('driver','/api/tasks/'+task+'/transition',{'status':'delivered','proof':'اختبار استلام العميل'})
     return oid
 
+def begin_driver_closure(post, driver, *, driver_actor='driver', manager_actor='manager', closing_actor=None):
+    """Explicit authorization precedes closing; it never approves the finances."""
+    with db.tx() as c:
+        before=c.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(driver,)).fetchone()
+        transfers=c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['n']
+    denied=post(closing_actor or driver_actor,'/api/shifts/'+driver+'/closing',status=409)
+    assert denied['detail']['code']=='EARLY_CLOSURE_APPROVAL_REQUIRED'
+    early=post(driver_actor,'/api/driver-closure/'+driver+'/request',{'reason':'Synthetic legacy journey requests early end'})
+    with db.tx() as c:
+        assert c.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(driver,)).fetchone()==before
+    decision=post(manager_actor,'/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'Authorize end review; financial receipt remains separate'})
+    assert decision['status']=='open'
+    with db.tx() as c:
+        assert c.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(driver,)).fetchone()==before
+        assert c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['n']==transfers
+        assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==0
+    return post(closing_actor or driver_actor,'/api/shifts/'+driver+'/closing')
+
+
 def close_driver(post,driver,manager,counted=1000):
     early=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'Synthetic completed-shift journey'})
     post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'Verified synthetic end of shift'})

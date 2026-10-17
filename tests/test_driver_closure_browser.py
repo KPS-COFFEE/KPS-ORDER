@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from app import db
 from app.shift_vehicle import CHECKS
-from test_browser import _capture,_context,_owner_login,_staff,_acknowledge_driver_end,chromium_browser,live_app,synthetic_mail
+from test_browser import _capture,_context,_owner_login,_staff,_acknowledge_driver_end,_approve_driver_closure_from_browser,chromium_browser,live_app,synthetic_mail
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated browser acceptance')]
 
 @pytest.mark.parametrize('language',['ar','en'])
@@ -95,7 +95,11 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
             form.locator('[name=exception_reason]').fill('TEST driver phone unavailable')
         else:
             page.locator('.shift-card [data-action=start-closing][data-id="'+sid+'"]').click()
-            page.locator('[data-confirm-driver-close]').click()
+            manager_context=chromium_browser.new_context(base_url=live_app)
+            try:
+                _owner_login(manager_context,live_app,manager)
+                _approve_driver_closure_from_browser(page,manager_context,live_app,sid)
+            finally:manager_context.close()
             form=page.locator('#blind-closure-form');expect(form).to_be_visible()
             form.locator('[name=inspection_odometer]').fill('1020')
             form.locator('[name=inspection_fuel]').fill('100')
