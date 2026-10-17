@@ -7,6 +7,7 @@ from . import auth, db, branch_payments as payments, payment_intents
 
 def eligible(c, attempt, user):
     order = payments.attempt_order(c, attempt, user, lock=True)
+    payments.guard_review(c, order['id'])
     if (order['preparation_status'] != 'accepted' or order['payment_status'] != 'unpaid'
             or order['total_halalas'] != attempt['amount_halalas']
             or order.get('amendment_revision', 0) != attempt['order_revision']):

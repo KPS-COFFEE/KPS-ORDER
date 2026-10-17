@@ -45,12 +45,19 @@ merchant ownership. Real acceptance requires authorized credentials and evidence
 2. If a refund claim commits but its POST never takes effect, GET-only recovery
    preserves it as unresolved. Safe resubmission requires a provider-approved
    idempotency/reconciliation contract; blind refund retries remain forbidden.
-3. Contradictory late success on a superseded intent has no dedicated exception
-   ledger workflow. Normal renewal requires provider evidence of non-usability;
-   this exceptional scenario is not certified as handled end-to-end.
+3. Late success on a superseded attempt is now recorded as an immutable review
+   receipt without changing retirement history or paying/fulfilling the order.
+   Duplicate notifications converge on one receipt. The owner selects the exact
+   payment for independently verified refund; unresolved extra funds block new
+   checkout/renewal/fulfillment. Multiple receipts and refund relationships remain
+   in the existing backup/reporting architecture. Exact-candidate CI must pass.
 
-These are specific limitations, not a claim that all remaining work is merely
-merchant paperwork. Do not mark DEVELOPMENT CLOSED while they remain unresolved.
+Items 1 and 2 remain provider-contract acceptance dependencies, not permission to
+invent an unsafe retry. The documented Moyasar idempotency mechanism covers payment
+creation via given_id, not a refund retry key. Its published intent GET schema does
+not supply a linked payment identifier. Obtain provider-confirmed contracts and
+authorized sandbox evidence before implementing those automatic resubmissions.
+Do not mark those cases PASS based only on simulation or merchant paperwork.
 
 ## External dependencies
 

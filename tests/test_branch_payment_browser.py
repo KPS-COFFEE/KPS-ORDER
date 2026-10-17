@@ -14,20 +14,21 @@ pytestmark = [pytest.mark.postgres, pytest.mark.skipif(os.getenv('TEST_BROWSER')
 
 @pytest.mark.parametrize('lang,width',[('ar',390),('en',1280)])
 @pytest.mark.parametrize('state',['unpaid','unverified_paid','verified'])
-def test_cashier_only_offers_preparation_with_durable_payment_proof(live_app,chromium_browser,lang,width,state):
+@pytest.mark.parametrize('mode',['test','live'])
+def test_cashier_only_offers_preparation_with_durable_payment_proof(live_app,chromium_browser,lang,width,state,mode):
     staff=_staff('branch_manager')
     customer,_,_=_customer_session()
     oid='payment-ui-'+uuid4().hex
     with db.tx() as c:
-        snap={'items':[],'branch_name':'Synthetic branch','branch_payment_mode':'test',
+        snap={'items':[],'branch_name':'Synthetic branch','branch_payment_mode':mode,
               'branch_payment_seller':'fixture-seller','order_reference':'TEST-ONLINE-001'}
         c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,payment_status,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'pickup','accepted','not_applicable','card',%s,1000,0,1000,%s,'{}')",
                   (oid,customer,'unpaid' if state=='unpaid' else 'paid',db.json(snap)))
         db.event(c,oid,staff['id'],'preparation.accepted',{})
         if state=='verified':
             aid='pay_'+uuid4().hex; pid=str(uuid4())
-            c.execute("INSERT INTO branch_payment_attempts(id,order_id,brand_id,branch_id,seller_id,provider,provider_payment_id,mode,amount_halalas,currency,order_revision,accepted_by,status,verified_at) VALUES(%s,%s,'kps','kps-branch-1','fixture-seller','moyasar',%s,'test',1000,'SAR',0,%s,'verified',now())",(aid,oid,pid,staff['id']))
-            c.execute("INSERT INTO branch_online_receipts(id,attempt_id,order_id,brand_id,branch_id,seller_id,provider,provider_payment_id,mode,amount_halalas,currency,disposition) VALUES(%s,%s,%s,'kps','kps-branch-1','fixture-seller','moyasar',%s,'test',1000,'SAR','applied')",('receipt_'+uuid4().hex,aid,oid,pid))
+            c.execute("INSERT INTO branch_payment_attempts(id,order_id,brand_id,branch_id,seller_id,provider,provider_payment_id,mode,amount_halalas,currency,order_revision,accepted_by,status,verified_at) VALUES(%s,%s,'kps','kps-branch-1','fixture-seller','moyasar',%s,%s,1000,'SAR',0,%s,'verified',now())",(aid,oid,pid,mode,staff['id']))
+            c.execute("INSERT INTO branch_online_receipts(id,attempt_id,order_id,brand_id,branch_id,seller_id,provider,provider_payment_id,mode,amount_halalas,currency,disposition) VALUES(%s,%s,%s,'kps','kps-branch-1','fixture-seller','moyasar',%s,%s,1000,'SAR','applied')",('receipt_'+uuid4().hex,aid,oid,pid,mode))
     context,page,errors=_context(chromium_browser,live_app)
     page.set_viewport_size({'width':width,'height':900})
     try:
@@ -51,6 +52,40 @@ def test_cashier_only_offers_preparation_with_durable_payment_proof(live_app,chr
         assert not errors
     finally:
         context.close()
+
+
+@pytest.mark.parametrize('lang',['ar','en'])
+def test_owner_selects_exact_late_payment_for_refund(live_app,chromium_browser,lang):
+    staff=_staff('owner'); customer,_,_=_customer_session(); oid='late-ui-'+uuid4().hex
+    with db.tx() as c:
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,payment_status,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'pickup','accepted','not_applicable','card','paid',1000,0,1000,%s,'{}')",
+            (oid,customer,db.json({'items':[],'branch_payment_mode':'live'})))
+    context,page,errors=_context(chromium_browser,live_app)
+    data={'enabled':True,'available_halalas':1000,'version':1,'refunds':[],
+          'payments':[{'attempt_id':'pay_active','payment_reference':'ACTIVE-REF','available_halalas':1000,'review_required':False},
+                      {'attempt_id':'pay_late','payment_reference':'LATE-REF','available_halalas':500,'review_required':True}]}
+    submitted=[]
+    def handle(route):
+        if route.request.method=='POST':
+            submitted.append(route.request.post_data_json)
+            data['refunds']=[{'id':'refund_late','amount_halalas':500,'status':'requested'}]
+            route.fulfill(json={'refund':data['refunds'][0]})
+        else:route.fulfill(json=data)
+    page.route('**/api/branch-payments/orders/'+oid+'/refunds',handle)
+    try:
+        _owner_login(context,live_app,staff); page.goto('/ops.html')
+        if lang=='en':page.locator('#language').click()
+        page.locator('[data-page=orders]').click()
+        page.locator('[data-action=order-detail][data-id="'+oid+'"]').click()
+        page.locator('.order-detail-card [data-action=online-refund]').click()
+        page.locator('#modal-body select[name=attempt_id]').select_option('pay_late')
+        page.locator('#modal-body input[name=amount]').fill('5')
+        page.locator('#modal-body textarea[name=reason]').fill('Late receipt refund')
+        page.locator('#modal-body form button[type=submit]').click()
+        expect(page.locator('[data-action=online-refund-execute]')).to_be_visible()
+        assert submitted==[{'version':1,'amount_halalas':500,'reason':'Late receipt refund','attempt_id':'pay_late'}]
+        assert not errors
+    finally:context.close()
 
 
 @pytest.mark.parametrize('lang', ['ar', 'en'])

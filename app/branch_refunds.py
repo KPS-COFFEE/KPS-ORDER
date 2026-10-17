@@ -13,6 +13,7 @@ class RefundBody(BaseModel):
     version: StrictInt = Field(ge=1)
     amount_halalas: StrictInt = Field(ge=1)
     reason: str = Field(min_length=1, max_length=2000)
+    attempt_id: str | None = Field(default=None, min_length=1, max_length=80)
 
     @field_validator('reason')
     @classmethod
@@ -23,7 +24,7 @@ class RefundBody(BaseModel):
 
 
 def view(row):
-    return {k: row[k] for k in ('id', 'order_id', 'status', 'amount_halalas', 'previous_refunded_halalas')}
+    return {k: row[k] for k in ('id', 'order_id', 'attempt_id', 'status', 'amount_halalas', 'previous_refunded_halalas')}
 
 
 @router.get('/orders/{oid}/refunds')
@@ -44,8 +45,29 @@ def history(oid: str, user=Depends(auth.require_roles('owner'))):
                 pass
         verified = sum(r['amount_halalas'] for r in rows if r['status']=='verified')
         available = max(0, attempt['amount_halalas']-verified) if attempt and attempt['status'] in {'verified','review_required'} else 0
+        confirmed = c.execute("""SELECT a.id,a.provider_payment_id,r.amount_halalas,
+            r.disposition,a.status,
+            r.amount_halalas-coalesce((SELECT sum(f.amount_halalas) FROM branch_online_refunds f
+                WHERE f.attempt_id=a.id AND f.status='verified'),0) available_halalas
+            FROM branch_online_receipts r JOIN branch_payment_attempts a ON a.id=r.attempt_id
+            WHERE r.order_id=%s ORDER BY (a.status='superseded'),r.created_at,a.id""", (oid,)).fetchall()
+        choices = []
+        for payment in confirmed:
+            if payment['available_halalas'] <= 0:
+                continue
+            choices.append({'attempt_id': payment['id'], 'payment_reference': str(payment['provider_payment_id']),
+                'available_halalas': int(payment['available_halalas']), 'review_required': payment['disposition']=='review_required'})
+        if choices:
+            available = choices[0]['available_halalas']
+            try:
+                payments.require_sandbox(order)
+                selected = c.execute('SELECT * FROM branch_payment_attempts WHERE id=%s', (choices[0]['attempt_id'],)).fetchone()
+                provider.configuration(payments.context(selected))
+                enabled = not bool(c.execute('SELECT 1 FROM fiscal_documents WHERE order_id=%s', (oid,)).fetchone())
+            except HTTPException:
+                enabled = False
         return {'refunds': [view(r) for r in rows], 'enabled': enabled,
-                'available_halalas': available, 'version': order['version']}
+                'available_halalas': available, 'payments': choices, 'version': order['version']}
 
 
 @router.post('/orders/{oid}/refunds')
@@ -56,8 +78,11 @@ def authorize(oid: str, body: RefundBody, user=Depends(auth.require_roles('owner
         def perform():
             order = scoped_order(c, oid, user, lock=True)
             payments.require_sandbox(order)
-            attempt = c.execute("SELECT * FROM branch_payment_attempts WHERE order_id=%s AND status<>'superseded'", (oid,)).fetchone()
-            if not attempt or attempt['status'] not in {'verified', 'review_required'}:
+            if body.attempt_id:
+                attempt = c.execute('SELECT * FROM branch_payment_attempts WHERE id=%s AND order_id=%s', (body.attempt_id,oid)).fetchone()
+            else:
+                attempt = c.execute("SELECT * FROM branch_payment_attempts WHERE order_id=%s AND status<>'superseded'", (oid,)).fetchone()
+            if not attempt or not c.execute('SELECT 1 FROM branch_online_receipts WHERE attempt_id=%s', (attempt['id'],)).fetchone():
                 raise db.error(409, 'CONFIRMED_PAYMENT_REQUIRED', 'تحقق من الدفع قبل الاسترداد.')
             payments.attempt_order(c, attempt, user)
             provider.configuration(payments.context(attempt))
@@ -67,14 +92,14 @@ def authorize(oid: str, body: RefundBody, user=Depends(auth.require_roles('owner
                 raise db.error(409, 'FISCAL_REFUND_REVIEW_REQUIRED', 'يلزم مسار الإشعار الدائن قبل الاسترداد.')
             if c.execute("SELECT 1 FROM branch_online_refunds WHERE order_id=%s AND status<>'verified'", (oid,)).fetchone():
                 raise db.error(409, 'REFUND_RECONCILIATION_REQUIRED', 'تحقق من الاسترداد السابق أولًا.')
-            previous = c.execute("SELECT coalesce(sum(amount_halalas),0) n FROM branch_online_refunds WHERE order_id=%s AND status='verified'", (oid,)).fetchone()['n']
+            previous = c.execute("SELECT coalesce(sum(amount_halalas),0) n FROM branch_online_refunds WHERE attempt_id=%s AND status='verified'", (attempt['id'],)).fetchone()['n']
             if previous+body.amount_halalas > attempt['amount_halalas']:
                 raise db.error(422, 'REFUND_AMOUNT_INVALID', 'مبلغ الاسترداد أكبر من الرصيد المدفوع.')
             row = c.execute('INSERT INTO branch_online_refunds(id,attempt_id,order_id,brand_id,branch_id,amount_halalas,previous_refunded_halalas,reason,authorized_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
                 (db.new_id('or_'), attempt['id'], oid, order['brand_id'], order['branch_id'], body.amount_halalas, previous, body.reason, user['id'])).fetchone()
             # Freeze further fulfillment while funds are being returned; never
             # rewrite completed order snapshots or their historical status.
-            if order['preparation_status'] != 'completed':
+            if order['preparation_status'] != 'completed' and attempt['status'] != 'superseded':
                 c.execute("UPDATE orders SET payment_status='refund_pending',version=version+1 WHERE id=%s", (oid,))
             db.audit(c, user['id'], 'payment.refund.authorized', 'order', oid,
                      {'refund_id': row['id'], 'amount_halalas': body.amount_halalas, 'reason': body.reason, 'mode': attempt['mode']})
@@ -102,7 +127,7 @@ def confirmed(rid, user, observed):
         if observed != row['previous_refunded_halalas']+row['amount_halalas']:
             raise db.error(409, 'REFUND_RECONCILIATION_REQUIRED', 'لم يتأكد مبلغ الاسترداد المطابق.')
         result = c.execute("UPDATE branch_online_refunds SET status='verified',verified_at=now() WHERE id=%s RETURNING *", (rid,)).fetchone()
-        if order['preparation_status'] != 'completed':
+        if order['preparation_status'] != 'completed' and attempt['status'] != 'superseded':
             status = 'refunded' if observed == attempt['amount_halalas'] else 'partially_refunded'
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s', (status, order['id']))
         details = {'refund_id': rid, 'amount_halalas': row['amount_halalas'], 'mode': attempt['mode']}

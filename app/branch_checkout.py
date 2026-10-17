@@ -24,7 +24,7 @@ def settings(attempt):
 
 
 def eligible(c, attempt, user):
-    from .branch_payments import require_sandbox
+    from .branch_payments import require_sandbox, guard_review
     from .orders import scoped_order
     order = scoped_order(c,attempt['order_id'],user,lock=True)
     require_sandbox(order)
@@ -38,6 +38,7 @@ def eligible(c, attempt, user):
             or order['total_halalas']!=attempt['amount_halalas']
             or order.get('amendment_revision',0)!=attempt['order_revision']):
         raise db.error(409,'PAYMENT_CHECKOUT_UNAVAILABLE','جلسة الدفع غير متاحة لهذا الطلب.')
+    guard_review(c, order['id'])
     return order
 
 

@@ -44,7 +44,7 @@ def enqueue_pending():
             SELECT 'sweep_'||a.id,a.brand_id,a.id,'system_reconcile','reconciliation_requested'
             FROM branch_payment_attempts a
             JOIN branch_checkout_sessions s ON s.attempt_id=a.id
-            WHERE a.status='pending' AND s.created_at<now()-interval '30 seconds'
+            WHERE a.status IN ('pending','superseded') AND s.created_at<now()-interval '30 seconds'
             AND NOT EXISTS (SELECT 1 FROM branch_payment_webhooks w WHERE w.attempt_id=a.id AND w.provider_event_id='system_reconcile')
             ORDER BY a.created_at,a.id LIMIT 100
             ON CONFLICT(attempt_id,provider_event_id) DO NOTHING RETURNING id""").fetchall()
