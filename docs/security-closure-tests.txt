@@ -34,3 +34,6 @@ tests/test_owner_staff_management.py
 tests/test_owner_driver_activation.py
 tests/test_guest_session_policy.py
 tests/test_backup.py
+tests/test_employee_sms_portals.py
+tests/test_employee_sms_diagnostics.py
+tests/test_tawked_otp.py

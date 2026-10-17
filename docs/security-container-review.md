@@ -82,3 +82,33 @@ isolated PostgreSQL18 service. Never point these tests at a production DSN.
 - PGDG package index: https://apt.postgresql.org/pub/repos/apt/dists/noble-pgdg/main/binary-amd64/Packages.gz
 - Syft releases: https://github.com/anchore/syft/releases
 - Trivy releases: https://github.com/aquasecurity/trivy/releases
+
+## Final release continuation (2026-10-18 Riyadh)
+
+The 63 original HIGH/CRITICAL rows cover 16 unique CVEs, all in OS packages;
+none has a Bookworm FixedVersion in the original raw scan. The pinned base and
+35 application distributions remain unchanged. We do not change distributions,
+compile an unreviewed replacement crypto stack, or add CVE exclusions.
+
+The runtime removes the actual unused SQLite library and ncurses-bin/infocmp
+packages using apt, with package inventory retained. The application contains no
+SQLite consumer and its persistence contract is PostgreSQL. Python sqlite3 is
+therefore intentionally unavailable in the resulting minimal runtime; no claim
+that SQLite itself was patched is made. The immutable image must pass the entire
+mandatory PostgreSQL18 suite before this removal can be accepted. Build-time
+pip and ensurepip are removed only after the hashed application lock installs.
+All setuid/setgid file permissions are stripped; this mitigates privilege paths,
+but is not a patch or a CVE waiver.
+
+The CI captures component presence/features in that exact image, scans ALL
+severities into candidate-image-scan.json, and separately enforces the unchanged
+HIGH/CRITICAL exit-code-1 gate. The exact image archive is retained for 14 days
+as a workflow artifact (not deployed/published). A remaining raw HIGH/CRITICAL
+result stays a release blocker even when the triage documents reduced exposure.
+Do not confuse absence of an application code path with absence of vulnerable
+code. No blanket ignore, VEX filter, or ignore-unfixed switch is used.
+
+Three additional existing employee/provider OTP suites are mandatory in both
+host and image runs; none of the previous suites was removed. Real SMS delivery
+and a safe immutable fallback remain separate pre-deployment gates, as detailed
+in security-release-otp-rollback.md.

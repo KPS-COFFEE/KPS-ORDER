@@ -106,6 +106,21 @@ jobs:
           docker image inspect "$image_id" > evidence/candidate-image-inspect.json
           docker image save --output "$RUNNER_TEMP/candidate-image.tar" "$image_id"
           sha256sum "$RUNNER_TEMP/candidate-image.tar" > evidence/candidate-image-archive-sha256.txt
+      - name: Record exact runtime component applicability
+        run: |
+          docker run --rm --entrypoint /bin/sh "$SECURITY_IMAGE_ID" -c '
+            set -eu
+            dpkg-query -W -f="\${Package} \${Version}\n"
+            printf "\nAffected component checks\n"
+            for command in infocmp systemd-homed nsenter mount gzip; do command -v "$command" || true; done
+            nsenter --help || true
+            mount --help || true
+            perl -MArchive::Tar -e "print \$Archive::Tar::VERSION" 2>&1 || true
+            find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -print
+            python -c "import importlib.util, ssl; print(ssl.OPENSSL_VERSION); assert importlib.util.find_spec(\"pip\") is None"
+            ! dpkg-query -W -f="\${db:Status-Status}" libsqlite3-0 2>/dev/null | grep -qx installed
+            ! command -v infocmp
+          ' > evidence/runtime-components.txt 2>&1
       - name: Focused suites inside the same immutable image
         run: |
           python -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/security-test-tools" -r requirements-security-tests.lock
@@ -179,6 +194,9 @@ jobs:
           ./syft scan "docker-archive:$RUNNER_TEMP/candidate-image.tar" -o "cyclonedx-json=$GITHUB_WORKSPACE/evidence/candidate-image.cdx.json"
           ./trivy image --input "$RUNNER_TEMP/candidate-image.tar" --scanners vuln,secret \
             --format json --output "$GITHUB_WORKSPACE/evidence/candidate-image-scan.json" \
+            --exit-code 0
+          ./trivy image --input "$RUNNER_TEMP/candidate-image.tar" --scanners vuln,secret \
+            --format json --output "$GITHUB_WORKSPACE/evidence/candidate-image-high-critical.json" \
             --exit-code 1 --severity HIGH,CRITICAL
       - name: Container logs and cleanup
         if: always()
@@ -191,4 +209,13 @@ jobs:
           name: security-closure-${{ github.sha }}
           path: evidence/
           retention-days: 7
+          if-no-files-found: error
+      - name: Preserve the exact candidate image for later authorized review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-image-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate-image.tar
+          retention-days: 14
+          compression-level: 1
           if-no-files-found: error

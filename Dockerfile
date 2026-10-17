@@ -11,12 +11,20 @@ WORKDIR /app
 # PostgreSQL, including attachment and report bytes; this image needs no disk.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends fonts-dejavu-core \
+    # PostgreSQL is the only application store. Neither SQLite nor infocmp is
+    # used by the runtime; remove their actual packages, never scanner metadata.
+    && apt-get purge --yes libsqlite3-0 ncurses-bin \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 kpsorder \
     && useradd --uid 10001 --gid kpsorder --no-create-home kpsorder
 
 COPY requirements.lock ./requirements.lock
-RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock
+RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock \
+    # Packaging tools are build-time only; the final runtime cannot install code.
+    && python -m pip uninstall --yes pip \
+    && rm -rf /usr/local/lib/python3.12/ensurepip \
+    # The web service never needs a setuid/setgid executable.
+    && find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod a-s {} +
 
 COPY --chown=kpsorder:kpsorder app/ ./app/
 COPY --chown=kpsorder:kpsorder migrations/ ./migrations/
