@@ -108,11 +108,12 @@ jobs:
           sha256sum "$RUNNER_TEMP/candidate-image.tar" > evidence/candidate-image-archive-sha256.txt
       - name: Record exact runtime component applicability
         run: |
-          docker run --rm --entrypoint /bin/sh "$SECURITY_IMAGE_ID" -c '
+          docker run --rm --network none --read-only --user 0 --entrypoint /bin/sh "$SECURITY_IMAGE_ID" -c '
             set -eu
             dpkg-query -W -f="\${Package} \${Version}\n"
             printf "\nAffected component checks\n"
             for command in infocmp systemd-homed nsenter mount gzip; do command -v "$command" || true; done
+            find /usr /lib -type f \( -name systemd-homed -o -path "*/Archive/Tar.pm" -o -iname "*minizip*" \) -print
             nsenter --help || true
             mount --help || true
             perl -MArchive::Tar -e "print \$Archive::Tar::VERSION" 2>&1 || true
