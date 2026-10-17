@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 69758cfae65f4335ff3ff5bda91085359c72a007
+          ref: 68a51b95fbe89d106361fc251bdc8e5e17e88314
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -36,16 +36,18 @@ jobs:
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - name: Install isolated browser
         run: python -m playwright install --with-deps chromium
-      - name: Verify source and scoped printer regressions
+      - name: Verify source, fuel and fleet transitions
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "69758cfae65f4335ff3ff5bda91085359c72a007"
+          test "$(git rev-parse HEAD)" = "68a51b95fbe89d106361fc251bdc8e5e17e88314"
           node --check public/ops.js
-          python -m pytest -q --tb=short --junitxml=test-results/fuel-fleet.xml tests/test_fleet_self_service.py tests/test_fleet.py tests/test_fleet_math.py tests/test_fleet_browser.py tests/test_fuel_exceptions.py tests/test_shift_vehicle.py tests/test_employee_permissions.py
+          python -m pytest -q --tb=short --junitxml=test-results/fuel-fleet.xml tests/test_fleet_self_service.py tests/test_fleet.py tests/test_fleet_math.py tests/test_fleet_browser.py tests/test_fuel_exceptions.py tests/test_shift_vehicle.py tests/test_employee_permissions.py tests/test_operations.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fuel-fleet-69758cfae65f4335ff3ff5bda91085359c72a007
-          path: test-results/
+          name: fuel-fleet-68a51b95fbe89d106361fc251bdc8e5e17e88314
+          path: |
+            test-results/
+            test-artifacts/
           retention-days: 14
