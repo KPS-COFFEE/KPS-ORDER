@@ -307,7 +307,7 @@
     const box=form.querySelector('.vehicle-inspection');if(!box||box.dataset.phase==='start'||state.user.role!=='driver')return;
     const input=box.querySelector('[name=inspection_fuel]');if(input.value===''||Number(input.value)>=100)return;
     const approved=await fuelRequest(box.querySelector('[data-action=fuel-check]'),true);
-    if(approved?.status==='approved')return;
+    if(approved?.status==='approved'||(box.dataset.phase==='activation'&&approved?.status==='consumed'))return;
     const help=form.querySelector('.fuel-submit-help');if(help){help.hidden=false;help.scrollIntoView({block:'center'});help.querySelector('button').focus({preventScroll:true});}
     throw new Error(approved?.status==='rejected'?tr('طلب الوقود مرفوض؛ راجع مدير التوصيل.','Fuel exception rejected; contact your delivery manager.'):approved?tr('بانتظار موافقة مدير التوصيل؛ بعد الموافقة اضغط تأكيد وإنهاء الدوام مرة أخرى.','Waiting for manager approval; after approval, submit again.'):tr('اضغط «طلب موافقة مدير التوصيل» ثم أعد التأكيد بعد موافقته.','Select “Request delivery manager approval”, then submit again after approval.'));
   }

@@ -256,12 +256,12 @@ def detail(vid:str,sid:str,user=Depends(access)):
 def log_access(c,user,vid,sid,lock=False):
     if lock:
         c.execute('SELECT id FROM shifts WHERE id=%s FOR UPDATE',(sid,))
-    split=c.execute("SELECT vehicle_log ? 'previous_segments' split FROM shifts WHERE id=%s",(sid,)).fetchone()
-    if split and split['split']:
-        raise db.error(409,'VEHICLE_SEGMENT_HISTORY','هذا الشفت يتضمن تسليم مركبات؛ القراءات محفوظة لكل فترة في جدول السجل، والتفاصيل في ملخص الشفت.')
     clauses,args=scoped(user);clauses+=['l.vehicle_id=%s','l.shift_id=%s'];args +=[vid,sid]
     row=c.execute('SELECT l.*,s.status shift_status,'+METRICS+' effective_metrics'+BASE+' WHERE '+' AND '.join(clauses),args).fetchone()
     if not row:raise db.error(404,'VEHICLE_LOG_NOT_FOUND','السجل غير موجود ضمن نطاقك.')
+    split=c.execute("SELECT vehicle_log ? 'previous_segments' split FROM shifts WHERE id=%s",(sid,)).fetchone()
+    if split and split['split']:
+        raise db.error(409,'VEHICLE_SEGMENT_HISTORY','هذا الشفت يتضمن تسليم مركبات؛ القراءات محفوظة لكل فترة في جدول السجل، والتفاصيل في ملخص الشفت.')
     return row
 
 @router.post('/vehicles/{vid}/logs/{sid}/corrections')

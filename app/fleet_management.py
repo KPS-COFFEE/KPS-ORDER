@@ -23,6 +23,7 @@ def car_scope(c,user,car,drivers):
 def perform(c,user,vid,body):
     # Consistent user-before-vehicle lock order matches staff edits/shift opening.
     drivers=c.execute("SELECT * FROM users WHERE brand_id=%s AND role='driver' ORDER BY id FOR UPDATE",(user['brand_id'],)).fetchall()
+    c.execute("SELECT id FROM shifts WHERE brand_id=%s AND kind='driver' AND status IN ('open','closing') ORDER BY id FOR UPDATE",(user['brand_id'],)).fetchall()
     cars=c.execute('SELECT * FROM fleet_vehicles WHERE brand_id=%s ORDER BY id FOR UPDATE',(user['brand_id'],)).fetchall()
     car=next((v for v in cars if v['id']==vid),None)
     if not car or not car_scope(c,user,car,drivers):raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')

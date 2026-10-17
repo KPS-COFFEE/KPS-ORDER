@@ -15,12 +15,12 @@ def test_fawzi_create_handover_preserves_shift_and_vehicle_intervals(ops):
     mid,sid=shifts()
     client=delegate(actor)
     body={'vehicle':{'plate':'TEST NEW 123','type':'Test car','odometer_km':5000},'branch_ids':['ops-branch']}
-    response=client.post('/api/fleet/vehicles',json=body,headers={'Idempotency-Key':'new-car'})
+    response=client.post('/api/fleet/vehicles',json=body,headers={'Idempotency-Key':'new-car-once'})
     assert response.status_code==200,response.text
     vid=response.json()['vehicle_id']
-    assert client.post('/api/fleet/vehicles',json=body,headers={'Idempotency-Key':'new-car'}).json()==response.json()
-    assert client.post('/api/fleet/vehicles',json=body).status_code==409
-    assert client.post('/api/fleet/vehicles',json={**body,'branch_ids':['ops-other-branch']}).status_code==403
+    assert client.post('/api/fleet/vehicles',json=body,headers={'Idempotency-Key':'new-car-once'}).json()==response.json()
+    assert client.post('/api/fleet/vehicles',json=body,headers={'Idempotency-Key':'duplicate-car-test'}).status_code==409
+    assert client.post('/api/fleet/vehicles',json={**body,'branch_ids':['ops-other-branch']},headers={'Idempotency-Key':'out-of-scope-car'}).status_code==403
     with db.tx() as c:
         before=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()
         start=before['vehicle_log']['start']['odometer_km']
@@ -46,7 +46,7 @@ def test_fawzi_create_handover_preserves_shift_and_vehicle_intervals(ops):
     assert history.json()['rows'][0]['start_odometer']==5000
     # Released original car is usable while the same financial shift stays open.
     old=next(v for v in client.get('/api/fleet/vehicles').json()['vehicles'] if v['plate']==old_plate)
-    assign=client.post('/api/fleet/vehicles/'+old['id']+'/management',json={'action':'assign','revision':old['details']['management_revision'],'driver_id':'ops-driver2','reason':'TEST released vehicle'})
+    assign=client.post('/api/fleet/vehicles/'+old['id']+'/management',json={'action':'assign','revision':old['details']['management_revision'],'driver_id':'ops-driver2','reason':'TEST released vehicle'},headers={'Idempotency-Key':'assign-released-car'})
     assert assign.status_code==200,assign.text
     actor('driver')
     assert client.post('/api/fleet/vehicles',json={**body,'vehicle':{**body['vehicle'],'plate':'TEST DENIED'}}).status_code==403
@@ -59,7 +59,7 @@ def test_single_step_refuel_and_manager_exception_preserve_manual_pause(ops):
     with db.tx() as c:c.execute('UPDATE shifts SET available=false WHERE id=%s',(sid,))
     receipt=io.BytesIO();Image.new('RGB',(12,12),'white').save(receipt,'PNG')
     client=actor('driver')
-    upload=client.post('/api/driver-evidence/shifts/'+sid,json={'data_base64':base64.b64encode(receipt.getvalue()).decode(),'content_type':'image/png'})
+    upload=client.post('/api/driver-evidence/shifts/'+sid,json={'data_base64':base64.b64encode(receipt.getvalue()).decode(),'content_type':'image/png'},headers={'Idempotency-Key':'fuel-receipt-test'})
     assert upload.status_code==200,upload.text
     payload={'liters':'10','odometer_km':1010,'receipt_id':upload.json()['id'],'confirm_full':True}
     response=post('driver','/api/shifts/'+sid+'/refuel',payload,key='full-once')
