@@ -30,14 +30,15 @@ def test_server_html_has_one_approved_preview_without_body_ad():
     assert meta['og:title'] == 'KPS COFFEE | كبز للقهوة المختصة'
     assert meta['og:description'] == 'قهوتك صارت أقرب… اطلبها بكل سهولة ☕🧡'
     assert meta['og:url'] == 'https://order.kps.sa'
-    assert meta['og:image'] == 'https://order.kps.sa/assets/kps-whatsapp-cookie-815deea7ce4d.png'
+    assert meta['og:image'] == 'https://order.kps.sa/assets/kps-whatsapp-cookie-2e1553c18c2e.jpg'
     assert meta['og:image:secure_url'] == meta['og:image']
-    assert meta['og:image:type'] == 'image/png'
+    assert meta['og:image:type'] == 'image/jpeg'
     assert 'kps-whatsapp-' not in body
     assert 'cf8b1309' not in head
 
 
 @pytest.mark.parametrize('name,mime,digest', [
+    ('kps-whatsapp-cookie-2e1553c18c2e.jpg', 'image/jpeg', '2e1553c18c2e94174d7a8ce4e7f1d05ac0471d99ee2a1982aa4761c7906407a5'),
     ('kps-whatsapp-cf8b1309a87e.jpeg', 'image/jpeg', 'cf8b1309a87eea6fe219d26ea2dce98c25c017c714762af933241504a45e6384'),
     ('kps-whatsapp-cookie-815deea7ce4d.png', 'image/png', '815deea7ce4d56c203874f2d666086c776e2e6734290c4d7a472e333b263e1ae'),
 ])
@@ -46,6 +47,8 @@ def test_public_image_bytes_and_media_type(name, mime, digest):
     assert response.status_code == 200
     assert response.headers['content-type'] == mime
     assert hashlib.sha256(response.content).hexdigest() == digest
+    if name.endswith('.jpg'):
+        assert len(response.content) < 280000
     from PIL import Image
     from io import BytesIO
     image = Image.open(BytesIO(response.content))
