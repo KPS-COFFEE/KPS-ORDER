@@ -151,6 +151,9 @@ def test_delegated_closure_concurrent_replay_notifies_owner_once_and_is_immutabl
     manager, driver = shifts()
     delivered(post, order, driver)
     user = principal('manager')
+    assert outcome(lambda: operations.request_close(driver, request('race-close-before-approval'), user))[0] == 409
+    early = post('driver', '/api/driver-closure/'+driver+'/request', {'reason':'Synthetic delegated closure review'})
+    post('manager', '/api/driver-closure/'+driver+'/decision', {'decision':'approved', 'request_id':early['authorization']['id'], 'reason':'Authorize operational closure review; financial assertions remain below'})
     operations.request_close(driver, request('race-close-request'), user)
     invalid = operations.ClosureSubmit(terminal_total_halalas=0, counted_halalas=900, handover_halalas=800, retained_halalas=100)
     assert outcome(lambda: operations.submit_close(driver, invalid, request('race-close-no-reason'), user))[0] == 422
