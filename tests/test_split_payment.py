@@ -98,7 +98,7 @@ def test_delivery_split_only_cash_enters_custody(v5,method,cash,card,reference):
     if method=='split': data.update(cash_halalas=cash,card_halalas=card)
     if reference is not None: data['reference']=reference
     assert call('driver', 'POST', f'/api/orders/{oid}/collect', data).status_code == 409
-    assert call('owner', 'POST', f'/api/orders/{oid}/collect', data).status_code == 403
+    assert call('owner', 'POST', f'/api/orders/{oid}/collect', data | {'reference':'TEST-AUTHORIZATION'}).status_code == 403
     with db.tx() as c:
         c.execute("UPDATE driver_tasks SET status='picked_up' WHERE id=%s", (tid,))
         c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s", (oid,))
