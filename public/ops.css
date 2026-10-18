@@ -431,3 +431,50 @@ dialog:has(.order-detail-events){width:min(1180px,calc(100vw - 24px))}
 .order-summary-card button{white-space:normal;overflow-wrap:anywhere;max-width:100%}
 @media(max-width:650px){.order-summary-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.order-summary-card{padding:14px}.order-summary-head time{margin-inline-start:0}.order-summary-actions button{width:100%}}
 @media(max-width:360px){.order-summary-fields{grid-template-columns:1fr}}
+
+/* Compact order surfaces: presentation only; existing actions and permissions stay intact. */
+dialog:has(.order-detail-layout){width:min(920px,calc(100vw - 24px));padding:18px;scrollbar-gutter:stable}
+dialog:has(.order-detail-layout) .modal-head{position:sticky;top:-18px;background:var(--surface);z-index:3;padding:10px 0;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.order-detail-layout{gap:12px;align-content:start}
+.order-detail-card{padding:16px;gap:10px;box-shadow:none;align-items:stretch}
+.order-detail-card .card-head{padding-bottom:8px;align-items:center}
+.order-detail-card .card-meta{gap:6px 12px}
+.order-detail-card>.items li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;padding:9px 12px;align-items:center}
+.order-detail-card>.items li>strong{grid-column:1;grid-row:1;font-size:15px}
+.order-detail-card>.items li>small{grid-column:2;grid-row:1;margin:0;font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums}
+.order-detail-card>.items li>div{grid-column:1/-1}
+.order-detail-card>.data-grid{gap:8px}
+.order-detail-card>.data-grid .financial{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px}
+.order-detail-card>.data-grid dd{margin:0;font-size:18px}
+.order-detail-card>.actions{grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:8px}
+.order-detail-card>.actions button{font-size:14px;min-height:44px;padding:8px 10px}
+.order-detail-card>.actions [data-action="print-order"],.order-detail-card>.actions [data-action="remote-print"]{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.order-detail-card>.actions [data-action="refund-order"]{border-color:#d6aaaa;color:var(--bad)}
+.order-detail-section{padding:14px}
+.order-detail-section .data-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.order-detail-section h3{margin-bottom:10px}
+.order-detail-section .financial{padding:8px 10px}
+.order-detail-section dt{font-size:12px}.order-detail-section dd{font-size:14px}
+.order-summary-list{gap:8px}
+.order-summary-card{padding:12px 14px;gap:9px;border-radius:10px}
+.order-summary-head{padding-bottom:7px;gap:6px 12px}
+.order-summary-fields{grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.order-summary-fields>div{padding:6px 8px}
+.order-summary-fields dd{font-size:14px;line-height:1.65}
+.order-summary-status{padding-top:7px;gap:6px}
+.order-summary-status .pill{font-size:12px}
+.order-summary-notes{padding:8px 10px}
+.order-summary-actions button{min-height:44px;padding:7px 12px}
+@media(max-width:1000px){.order-summary-fields{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:600px){
+ dialog:has(.order-detail-layout){padding:12px}
+ dialog:has(.order-detail-layout) .modal-head{top:-12px}
+ .order-detail-card{padding:12px}
+ .order-detail-section .data-grid,.order-detail-card>.data-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .order-detail-card>.data-grid .financial{display:block}
+ .order-detail-card>.actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .order-detail-card>.actions button{font-size:13px}
+ .order-summary-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .order-summary-actions button{width:auto;flex:1 1 140px}
+}
+@media(max-width:360px){.order-detail-section .data-grid,.order-detail-card>.data-grid,.order-detail-card>.actions{grid-template-columns:1fr}}
