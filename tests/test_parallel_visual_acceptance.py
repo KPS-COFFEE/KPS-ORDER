@@ -120,12 +120,12 @@ def test_authorized_customer_records_real_http_postgres(sms_browser_app, chromiu
         assert form.locator('[name=branch_id] option[value="CRM_OTHER_BRAND_BRANCH"]').count() == 0
         form.locator('[name=branch_id]').select_option('kps-branch-1')
         form.locator('[name=phone]').fill('0500111222')
-        with page.expect_response(lambda response: '/api/orders/customer-lookup?' in response.url and response.request.method == 'GET') as looked_up:
+        with page.expect_response(lambda response: '/api/orders/customer-search?' in response.url and response.request.method == 'GET') as looked_up:
             form.locator('button[type=submit]').click()
         response = looked_up.value
         assert response.status == 200
         payload = response.json()
-        assert payload['phone'] == phone and len(payload['contacts']) == 1
+        assert len(payload['contacts']) == 1 and payload['contacts'][0]['phone'] == phone
         assert payload['contacts'][0]['name'] == name
         assert payload['verified'] is False
         cards = page.locator('#customer-records-results article')

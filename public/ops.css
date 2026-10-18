@@ -326,3 +326,19 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 .table-wrap .fleet-log-table th,.table-wrap .fleet-log-table td{min-width:130px}
 .table-wrap .fleet-log-table th:last-child,.table-wrap .fleet-log-table td:last-child{min-width:150px}
 .table-wrap .fleet-log-table td:nth-child(22){min-width:220px}
+/* Staff directory uses the existing panel, badge and action vocabulary. */
+.staff-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.staff-card{display:flex;flex-direction:column;min-width:0;gap:14px;margin:0}
+.staff-card .card-head{align-items:flex-start;gap:12px}
+.staff-card h2{font-size:1.15rem;margin:0;white-space:normal;overflow-wrap:anywhere}
+.staff-card h3{font-size:1rem;margin:0 0 8px}
+.staff-card .data-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin:0}
+.staff-card dt,.staff-card dd,.staff-card p{white-space:normal;overflow-wrap:anywhere}
+.staff-card dd{margin-inline-start:0}
+.staff-card footer{margin-top:auto;display:flex;flex-wrap:wrap;gap:8px}
+.staff-card footer details{min-width:0;max-width:100%}
+.staff-card button,.staff-card summary{white-space:normal;overflow-wrap:anywhere;max-width:100%}
+.staff-card .branch-picker{max-width:100%}
+.customer-contact-card{min-width:0}
+.customer-contact-card h2{overflow-wrap:anywhere;white-space:normal}
+@media(max-width:480px){.staff-card .data-grid{grid-template-columns:1fr}.staff-card footer>button{flex:1 1 100%}}

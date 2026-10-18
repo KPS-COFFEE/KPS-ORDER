@@ -37,21 +37,21 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
             row=conn.execute('SELECT * FROM users WHERE id=%s',(driver['id'],)).fetchone()
             assert row['role']=='driver' and row['branch_ids']==['kps-branch-1']
             assert row['extra_permissions']==['branch_printers_manage']
-        # Approved full-text rows can grow vertically; no clipped names, badges or actions.
+        # Approved staff cards grow vertically; no clipped names, badges or actions.
         for listing_width in (390,768,1280):
             page.set_viewport_size({'width':listing_width,'height':900})
             layout=page.locator('.staff-directory').evaluate('''root=>{
-                const cells=[...root.querySelectorAll('td')];
+                const cells=[...root.querySelectorAll('.staff-card h2,.staff-card dd,.staff-card button')];
                 const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
-                const name=root.querySelector('tbody td:first-child'),header=root.querySelector('thead th:first-child');
-                return {nameReadableWidth:Math.min(name.clientWidth,header.clientWidth)>=220,readable:cells.filter(visible).every(e=>{
+                const name=root.querySelector('.staff-card h2');
+                return {nameReadableWidth:name.clientWidth>=140,readable:cells.filter(visible).every(e=>{
                     const s=getComputedStyle(e);
                     return s.whiteSpace==='normal'&&s.textOverflow!=='ellipsis'&&
                         e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1;
                 }),pageOverflow:document.documentElement.scrollWidth>innerWidth};
             }''')
             assert layout=={'nameReadableWidth':True,'readable':True,'pageOverflow':False}
-            page.screenshot(path=str(ARTIFACTS/f'focused-staff-table-{language}-{listing_width}.png'),full_page=True)
+            page.screenshot(path=str(ARTIFACTS/f'focused-staff-cards-{language}-{listing_width}.png'),full_page=True)
         page.set_viewport_size({'width':width,'height':900})
         page.locator('[data-action=invite-staff]').click()
         form=modal.locator('form')

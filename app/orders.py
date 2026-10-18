@@ -396,6 +396,45 @@ def customer_lookup_scope(conn,user,branch_id):
         raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير متاح.')
 
 
+@router.get('/customer-search')
+def customer_search(phone: str=Query(min_length=1,max_length=30),branch_id: str|None=None,
+                    user=Depends(auth.require_roles('owner','delivery_manager','delivery_staff','branch_manager'))):
+    """Bounded staff-only discovery; never implies identity or account ownership."""
+    import re
+    digits=phone.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹','01234567890123456789'))
+    if re.search(r'[^0-9+\s()-]',digits):raise db.error(422,'PHONE_INVALID','أدخل أرقام الجوال فقط.')
+    digits=re.sub(r'\D','',digits)
+    normalized=search_phone(phone)
+    if not normalized and len(digits)<3:
+        raise db.error(422,'PHONE_SEARCH_SHORT','أدخل ثلاثة أرقام على الأقل للبحث.')
+    if len(digits)>15:raise db.error(422,'PHONE_INVALID','راجع رقم الجوال.')
+    fragment=digits[2:] if digits.startswith('00966') else digits[1:] if digits.startswith('05') else digits
+    with db.tx() as conn:
+        if not auth.has_permission(user,'orders_view'):raise db.error(403,'ROLE_FORBIDDEN','الوصول غير مسموح.')
+        if branch_id:customer_lookup_scope(conn,user,branch_id)
+        if not db.rate_limit(conn,'customer-search:'+user['id'],30,60):
+            raise db.error(429,'CUSTOMER_LOOKUP_RATE_LIMIT','محاولات بحث كثيرة. انتظر قليلًا.')
+        clauses=['o.brand_id=%s'];args=[user['brand_id']]
+        if branch_id:clauses.append('o.branch_id=%s');args.append(branch_id)
+        elif user['role']!='owner':clauses.append('o.branch_id=ANY(%s)');args.append(user.get('branch_ids') or [])
+        if user['role'] in {'delivery_manager','delivery_staff'}:clauses.append("o.service='delivery'")
+        clauses.append('normalized_identity_phone(o.customer->>\'phone\') '+('=%s' if normalized else 'LIKE %s'))
+        args.append(normalized or '%'+fragment+'%')
+        # DISTINCT is scoped before grouping: no account-wide or other-branch addresses.
+        rows=conn.execute("SELECT DISTINCT ON (o.branch_id,normalized_identity_phone(o.customer->>'phone')) "
+            "o.branch_id,b.name branch_name,b.city,o.customer,o.created_at "
+            "FROM orders o JOIN branches b ON b.id=o.branch_id AND b.brand_id=o.brand_id WHERE "+' AND '.join(clauses)+
+            " ORDER BY o.branch_id,normalized_identity_phone(o.customer->>'phone'),o.created_at DESC,o.id DESC LIMIT 21",args).fetchall()
+        contacts=[]
+        for row in rows[:20]:
+            c=row['customer'];contacts.append({**{k:c.get(k) for k in ('name','address','neighborhood','location')},
+                'phone':search_phone(c.get('phone','')),'branch_id':row['branch_id'],
+                'branch_name':row['branch_name'],'city':row['city']})
+        db.audit(conn,user['id'],'customer.contact.search','branch',branch_id or 'authorized',
+                 {'phone_suffix':digits[-4:],'result_count':len(contacts),'partial':not bool(normalized)})
+        return {'contacts':contacts,'has_more':len(rows)>20,'verified':False}
+
+
 @router.get('/customer-lookup')
 def customer_lookup(phone: str=Query(min_length=8,max_length=30),branch_id: str=Query(min_length=1,max_length=80),
                     user=Depends(auth.require_roles('owner','delivery_manager','delivery_staff','branch_manager'))):

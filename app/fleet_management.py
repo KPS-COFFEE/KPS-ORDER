@@ -30,7 +30,7 @@ def perform(c,user,vid,body):
     if int(car['details'].get('management_revision',0))!=body.revision:raise db.error(409,'VEHICLE_CHANGED','حدث بطاقات السيارات قبل التنفيذ.')
     assigned=[d for d in drivers if plate(d['vehicle'])==car['plate_key']]
     affected=[car];changes=[]
-    if body.action in ('assign','swap','handover'):
+    if body.action in ('assign','transfer','swap','handover'):
         if car['details'].get('operating_status')=='paused':raise db.error(409,'VEHICLE_PAUSED','السيارة موقوفة؛ أعد تشغيلها أولًا.')
         target=next((d for d in drivers if d['id']==body.driver_id and d['active'] and driver_scope(user,d)),None)
         if not target:raise db.error(404,'DRIVER_NOT_FOUND','السائق غير موجود أو غير مفعل ضمن نطاقك.')
@@ -38,7 +38,12 @@ def perform(c,user,vid,body):
         if old and not car_scope(c,user,old,drivers):raise db.error(404,'VEHICLE_NOT_FOUND','السيارة الحالية خارج نطاقك.')
         if old and old['id']==vid:raise db.error(409,'VEHICLE_ALREADY_ASSIGNED','السيارة مسندة لهذا السائق بالفعل.')
         if old:affected.append(old)
-        if body.action=='swap':
+        if body.action=='transfer':
+            if body.expected_driver_ids is None or sorted(body.expected_driver_ids)!=sorted(d['id'] for d in assigned):
+                raise db.error(409,'VEHICLE_CHANGED','تغير إسناد السيارة؛ حدّث القائمة وأكد النقل مجددًا.')
+            if any(not driver_scope(user,d) for d in assigned):raise db.error(404,'DRIVER_NOT_FOUND','السائق خارج نطاقك.')
+            changes=[(d,None) for d in assigned]+[(target,car)]
+        elif body.action=='swap':
             if len(assigned)!=1 or not old or old['details'].get('operating_status')=='paused':raise db.error(409,'VEHICLE_SWAP_INVALID','التبديل يحتاج سيارتين عاملتين، لكل منهما سائق واحد.')
             if len([d for d in drivers if plate(d['vehicle'])==old['plate_key']])!=1:raise db.error(409,'VEHICLE_ASSIGNMENT_CONFLICT','راجع الإسناد المتكرر للسيارة أولًا.')
             changes=[(assigned[0],old),(target,car)]
