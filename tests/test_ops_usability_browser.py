@@ -74,3 +74,37 @@ def test_add_staff_sms_provider_failure_can_retry_without_losing_fields(live_app
             assert len(rows)==1 and rows[0]['display_name']=='موظف اختبار إعادة المحاولة'
         assert not errors,errors
     finally:context.close()
+
+
+@pytest.mark.parametrize('width',[390,768,1280])
+def test_driver_card_vehicle_transfer_ui(live_app,chromium_browser,width):
+    from playwright.sync_api import expect
+    owner=_staff();previous=_staff('driver');target=_staff('driver')
+    context,page,errors=_context(chromium_browser,live_app)
+    try:
+        headers=_owner_login(context,live_app,owner)
+        created=context.request.post(live_app+'/api/fleet/vehicles',headers={**headers,'Idempotency-Key':'ui-transfer-vehicle'},data={'vehicle':{'plate':'TEST UI 123','type':'Synthetic','odometer_km':1000},'branch_ids':['kps-branch-1']})
+        assert created.ok,created.text()
+        with db.tx() as c:
+            c.execute("UPDATE users SET display_name='سائق سابق للاختبار',vehicle=%s WHERE id=%s",(db.json({'plate':'TEST UI 123'}),previous['id']))
+            c.execute("UPDATE users SET display_name='سائق جديد للاختبار' WHERE id=%s",(target['id'],))
+        page.set_viewport_size({'width':width,'height':950})
+        page.goto(live_app+'/ops',wait_until='networkidle')
+        page.locator('#navigation [data-page=drivers]').click()
+        page.locator(f'.staff-card[data-staff-id="{target["id"]}"] [data-action=staff-vehicle]').click()
+        form=page.locator('#modal form')
+        form.locator('[name=vehicle_id]').select_option(created.json()['vehicle_id'])
+        expect(page.locator('#vehicle-assignment-review')).to_contain_text('سائق سابق للاختبار')
+        form.locator('[name=reason]').fill('نقل صناعي مصرح به لاختبار الواجهة')
+        form.locator('[name=confirm_transfer]').check()
+        page.screenshot(path=str(ARTIFACTS/f'vehicle-transfer-ar-{width}.png'),full_page=True)
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        form.locator('button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        expect(page.locator(f'.staff-card[data-staff-id="{previous["id"]}"]')).to_contain_text('يلزم إسناد سيارة')
+        expect(page.locator(f'.staff-card[data-staff-id="{target["id"]}"]')).to_contain_text('TEST UI 123')
+        with db.tx() as c:
+            assert c.execute('SELECT vehicle FROM users WHERE id=%s',(previous['id'],)).fetchone()['vehicle']=={}
+            assert c.execute("SELECT vehicle->>'plate' plate FROM users WHERE id=%s",(target['id'],)).fetchone()['plate']=='TEST UI 123'
+        assert not errors,errors
+    finally:context.close()

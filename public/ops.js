@@ -1288,9 +1288,9 @@
     return users.length ? `<div class="staff-cards">${users.map(u=>`<article class="panel staff-card" data-staff-id="${esc(u.id)}">
       <header class="card-head"><div><h2>${esc(u.display_name)}</h2><p class="muted">${esc(roleName(u.role))}</p></div><span class="pill ${u.active?'good':'warn'}">${esc(u.active?tr('مفعل','Active'):tr('متوقف','Paused'))}</span></header>
       <dl class="data-grid">${dataItem(tr('الجوال','Mobile'),u.phone||'—')}${dataItem(tr('الشفت','Shift'),u.open_shift?statusName(u.open_shift.status):tr('لا يوجد شفت مفتوح','No open shift'))}${u.email?dataItem(tr('البريد — اختياري','Email — optional'),u.email):''}
-      ${dataItem(tr('حالة التسجيل','Registration status'),staffIdentityStatus(u))}${u.role==='driver'?dataItem(tr('السيارة','Vehicle'),u.vehicle?.plate||tr('يلزم إسناد سيارة','Vehicle assignment required')):''}</dl>
+      ${dataItem(tr('حالة التسجيل','Registration status'),staffIdentityStatus(u))}${dataItem(tr('التوفر','Availability'),u.available?tr('متاح','Available'):tr('غير متاح','Unavailable'))}${u.role==='driver'?dataItem(tr('السيارة','Vehicle'),u.vehicle?.plate||tr('يلزم إسناد سيارة','Vehicle assignment required')):''}</dl>
       <section><h3>${esc(tr('الفروع','Branches'))}</h3>${staffBranchCell(u)}</section>
-      <details><summary>${esc(tr('الصلاحيات','Permissions'))}</summary>${staffPermissionSummary(u)}</details>
+      <section><h3>${esc(tr('الصلاحيات','Permissions'))}</h3>${staffPermissionSummary(u)}</section>
       <footer class="actions">${staffActions(u)}${u.role==='driver'&&can('vehicle_maintenance_manage')?`<button class="quiet" data-action="staff-vehicle" data-id="${esc(u.id)}">${esc(tr('إسناد سيارة','Assign vehicle'))}</button>`:''}</footer>
     </article>`).join('')}</div>` : empty(tr('لا توجد بيانات ضمن هذا النطاق.','No records in this scope.'));
   }
