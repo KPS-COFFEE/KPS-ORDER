@@ -81,6 +81,31 @@ def make_pdf(report, lang='ar'):
     cv.setTitle('KPS ORDER - Driver work hours')
     rows = export_rows(report, lang)
     y = height - 35
+    column_width = (width-50)/len(COLUMNS)
+    def cell_lines(value):
+        # Preserve every character, including long names without word breaks.
+        # Measure the shaped line because Arabic glyph widths change by context.
+        lines = []
+        for paragraph in str(value).split('\n'):
+            line = ''
+            for word in paragraph.split():
+                candidate = (line + ' ' + word) if line else word
+                if line and pdfmetrics.stringWidth(visual(candidate), 'KPSHours', 8) > column_width-6:
+                    lines.append(line)
+                    line = word
+                else:
+                    line = candidate
+                # A pathological unbroken identifier still cannot escape its cell.
+                if pdfmetrics.stringWidth(visual(line), 'KPSHours', 8) > column_width-6:
+                    chunk = ''
+                    for character in line:
+                        if chunk and pdfmetrics.stringWidth(visual(chunk+character), 'KPSHours', 8) > column_width-6:
+                            lines.append(chunk)
+                            chunk = ''
+                        chunk += character
+                    line = chunk
+            lines.append(line)
+        return lines
     def header():
         nonlocal y
         cv.setFont('KPSHours', 12)
@@ -89,17 +114,31 @@ def make_pdf(report, lang='ar'):
         cv.setFont('KPSHours', 8)
         cv.drawRightString(width-25, y, visual(f"{report['start']} → {report['end']} · Asia/Riyadh · {report.get('operational_day_start', '')}"))
         y -= 28
+    def draw_lines(cells, first, count):
+        nonlocal y
+        cv.setFont('KPSHours', 8)
+        for line_index in range(first, first+count):
+            for index, lines in enumerate(cells):
+                if line_index < len(lines):
+                    cv.drawRightString(width-25-index*column_width, y, visual(lines[line_index]))
+            y -= 13
+        y -= 9
     header()
-    for row in rows:
-        if y < 40:
-            cv.showPage(); y = height-35; header()
-        for index, value in enumerate(row):
-            value = str(value)
-            available = (width-50)/len(COLUMNS)-6
-            while pdfmetrics.stringWidth(visual(value), 'KPSHours', 8) > available and len(value)>1:
-                value = value[:-2]+'…'
-            cv.drawRightString(width-25-index*(width-50)/len(COLUMNS), y, visual(value))
-        y -= 22
+    column_labels = [cell_lines(value) for value in rows[0]]
+    draw_lines(column_labels, 0, max(map(len, column_labels)))
+    for row in rows[1:]:
+        cells = [cell_lines(value) for value in row]
+        line_count = max(map(len, cells))
+        first = 0
+        while first < line_count:
+            remaining = int((y-40)//13)
+            if remaining < 1 or (first == 0 and line_count <= 25 and remaining < line_count):
+                cv.showPage(); y = height-35; header()
+                draw_lines(column_labels, 0, max(map(len, column_labels)))
+                remaining = int((y-40)//13)
+            count = min(remaining, line_count-first)
+            draw_lines(cells, first, count)
+            first += count
     y -= 12
     note = ('الرحلات غير المؤكدة العودة مستبعدة من التوصيل المعتمد. لا أثر تلقائي على الرواتب.' if lang=='ar'
             else 'Trips awaiting return confirmation are excluded from approved delivery totals. No automatic payroll impact.')

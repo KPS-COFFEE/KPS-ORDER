@@ -60,3 +60,7 @@ tests/test_driver_work_hours_unit.py
 tests/test_driver_work_hours_postgres.py
 tests/test_driver_hours_reports.py
 tests/test_owner_dispatch_readiness_contract.py
+
+tests/test_operational_customer_lookup.py
+tests/test_delivery_center_matching.py
+tests/test_driver_work_hours_backup.py

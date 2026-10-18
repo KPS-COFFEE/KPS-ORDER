@@ -39,6 +39,27 @@ def test_arabic_pdf_has_embedded_font_and_real_pdf():
     assert b'/FontFile2' in value
 
 
+def test_pdf_wraps_complete_driver_names_and_repeats_table_headers():
+    from pypdf import PdfReader
+    report = fixture()
+    name = 'Mohammed Abdulrahman Alharbi Complete Driver Name Preserved'
+    report['drivers'] = [dict(report['drivers'][0], name=name) for _ in range(45)]
+    document = PdfReader(io.BytesIO(make_pdf(report, 'en')))
+    assert len(document.pages) > 1
+    text = ''.join(page.extract_text() for page in document.pages)
+    # Line wrapping can split even a single long word but may never remove it.
+    name_fragments = []
+    for page in document.pages:
+        # Read the name column separately from adjacent numeric cells.
+        page.extract_text(visitor_text=lambda value, cm, tm, font, size:
+                          name_fragments.append(value) if tm[4] > 737 else None)
+    compact = ''.join(''.join(name_fragments).split())
+    assert ''.join(name.split()) in compact
+    assert '…' not in text
+    for page in document.pages:
+        assert 'Driver' in page.extract_text() and 'Orders' in page.extract_text()
+
+
 def test_four_cards_match_ops_identity_and_responsive_contract():
     root=Path(__file__).resolve().parents[1]
     js=(root/'public/assets/driver-hours.js').read_text()

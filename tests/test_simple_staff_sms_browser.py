@@ -37,6 +37,21 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
             row=conn.execute('SELECT * FROM users WHERE id=%s',(driver['id'],)).fetchone()
             assert row['role']=='driver' and row['branch_ids']==['kps-branch-1']
             assert row['extra_permissions']==['branch_printers_manage']
+        # Approved full-text rows can grow vertically; no clipped names, badges or actions.
+        for listing_width in (390,768,1280):
+            page.set_viewport_size({'width':listing_width,'height':900})
+            layout=page.locator('.staff-directory').evaluate('''root=>{
+                const cells=[...root.querySelectorAll('td')];
+                const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+                return {readable:cells.filter(visible).every(e=>{
+                    const s=getComputedStyle(e);
+                    return s.whiteSpace==='normal'&&s.textOverflow!=='ellipsis'&&
+                        e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1;
+                }),pageOverflow:document.documentElement.scrollWidth>innerWidth};
+            }''')
+            assert layout=={'readable':True,'pageOverflow':False}
+            page.screenshot(path=str(ARTIFACTS/f'focused-staff-table-{language}-{listing_width}.png'),full_page=True)
+        page.set_viewport_size({'width':width,'height':900})
         page.locator('[data-action=invite-staff]').click()
         form=modal.locator('form')
         expect(form.locator('input[type=password]')).to_have_count(0)

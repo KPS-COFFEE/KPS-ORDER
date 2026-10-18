@@ -88,7 +88,11 @@ class SecurityMiddleware:
                 public_image = (path.startswith(('/api/product-assets/', '/api/banner-assets/'))
                                 and method in ('GET', 'HEAD') and status == 200)
                 if path.startswith(('/api/', '/ops')) and not public_image:
-                    headers['Cache-Control'] = 'no-store'
+                    # Retain a route's explicit private classification while
+                    # enforcing no-store and dropping cacheable directives.
+                    directives = {item.strip().split('=', 1)[0].lower()
+                                  for item in headers.get('Cache-Control', '').split(',')}
+                    headers['Cache-Control'] = 'private, no-store' if 'private' in directives else 'no-store'
                 if path.startswith('/assets/') and status in (200, 304):
                     headers['Cache-Control'] = 'public, max-age=86400'
                 monitoring.record_response(status)

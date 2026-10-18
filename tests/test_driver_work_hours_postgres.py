@@ -69,3 +69,35 @@ def test_authorized_task_transfer_keeps_each_driver_trip_evidence(ops):
     assert first['trip']['id']!=second['trip']['id']
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM driver_work_trip_orders WHERE order_id=%s',(oid,)).fetchone()['n']==2
+
+
+@pytest.mark.postgres
+def test_operational_boundary_multiorder_cross_branch_trip_reconciles(ops):
+    actor, post, order, shifts = ops
+    _, sid = shifts()
+    orders = [order(), order()]
+    with db.tx() as c:
+        c.execute("UPDATE brands SET settings=settings||'{\"operational_day_start\":\"05:30\"}'::jsonb WHERE id='ops-brand'")
+        c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city) VALUES('hours-return-branch',2,'hours-return-source','ops-brand','فرع العودة','حفر الباطن')")
+        c.execute("UPDATE shifts SET opened_at='2026-10-17 05:00+03',submitted_at='2026-10-17 07:00+03',branch_ids='[\"ops-branch\",\"hours-return-branch\"]'::jsonb WHERE id=%s", (sid,))
+        c.execute("INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,return_branch_id,departed_at,returned_at,departure_evidence,return_evidence) VALUES('boundary-trip','ops-brand',%s,'ops-driver','ops-branch','hours-return-branch','2026-10-17 05:15+03','2026-10-17 06:00+03','{\"source\":\"synthetic_test\"}','{\"source\":\"synthetic_test\"}')", (sid,))
+        for index, oid in enumerate(orders):
+            c.execute("INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES('boundary-trip',%s)", (oid,))
+            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at,delivered_at) VALUES(%s,%s,'ops-driver',%s,'delivered','ops-manager','2026-10-17 05:15+03','2026-10-17 05:45+03')", ('boundary-task-'+str(index),oid,sid))
+    reports = []
+    for start, end in [('2026-10-16','2026-10-16'),('2026-10-17','2026-10-17'),('2026-10-16','2026-10-17')]:
+        result = actor('owner').get('/api/driver-work-hours/report', params={'start':start,'end':end})
+        assert result.status_code == 200, result.text
+        reports.append(result.json())
+    earlier, later, combined = reports
+    assert earlier['totals']['delivery_seconds'] == 900
+    assert later['totals']['delivery_seconds'] == 1800
+    assert combined['totals']['delivery_seconds'] == 2700
+    assert combined['totals']['order_count'] == 2
+    assert combined['totals']['trip_count'] == 1
+    for key in ('shift_seconds','actual_seconds','delivery_seconds','waiting_seconds','break_seconds'):
+        assert earlier['totals'][key] + later['totals'][key] == combined['totals'][key]
+    trip = combined['drivers'][0]['trips'][0]
+    assert trip['order_count'] == 2 and trip['duration_seconds'] == 2700
+    assert trip['departure_branch_id'] == 'ops-branch'
+    assert trip['return_branch_id'] == 'hours-return-branch'

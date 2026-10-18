@@ -6,7 +6,7 @@ from typing import Literal
 import hashlib
 import json
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, HTTPException
 from fastapi.responses import Response
 from .responses import DatabaseJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
@@ -144,11 +144,9 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 manager_shift_id=delivery_center_scope(conn,user,execution_branch_id)
                 # An opaque contact principal owns this order. A typed phone number
                 # never grants access to an existing customer's account or history.
-                customer_owner_id=db.new_id('customer_')
-                conn.execute("INSERT INTO users(id,display_name,phone,role,brand_id,identity_kind) VALUES(%s,%s,%s,'customer',%s,'guest')",
-                             (customer_owner_id,customer['name'],customer['phone'],body.brand_id))
+                customer_owner_id=operational_contact(conn,body.brand_id,customer,user['id'])
                 customer.update(identity_kind='guest',phone_verified=False,phone_sms_verified=False,phone_whatsapp_verified=False)
-                quote.update(order_source='delivery_center',created_by_staff_id=user['id'],manager_shift_id=manager_shift_id)
+                quote.update(order_source='delivery_center',created_by_staff_id=user['id'],manager_shift_id=manager_shift_id,registration_source='delivery')
             else:
                 customer.update(auth.identity_snapshot(user))
             if supplied_phone and customer['phone'] != user.get('phone'):
@@ -233,6 +231,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 neighborhood: str | None = Query(default=None, max_length=120),
                 driver_id: str | None = Query(default=None, max_length=80),
                 search: str | None = Query(default=None, max_length=80),
+                phone: str | None = Query(default=None, min_length=8, max_length=30),
                 manager_view: str | None = None,
                 customer_view: Literal['active','history','cancelled'] | None = None):
     conditions, params = ['o.brand_id=%s'], [user['brand_id']]
@@ -282,9 +281,16 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
     if driver_id:
         conditions.append("EXISTS(SELECT 1 FROM driver_tasks td WHERE td.order_id=o.id AND td.driver_id=%s AND td.status<>'transferred')")
         params.append(driver_id)
+    if phone:
+        normalized_phone=search_phone(phone)
+        if not normalized_phone:raise db.error(422,'PHONE_INVALID','أدخل رقم جوال سعودي كاملًا.')
+        conditions.append("normalized_identity_phone(o.customer->>'phone')=%s")
+        params.append(normalized_phone)
     if search:
-        conditions.append("(o.order_no::text=%s OR o.id=%s OR o.snapshot->>'order_reference'=%s)")
-        params.extend([search.strip(),search.strip(),search.strip()])
+        term=search.strip()
+        phone=search_phone(term)
+        conditions.append("(o.order_no::text=%s OR o.id=%s OR o.snapshot->>'order_reference'=%s" + (" OR normalized_identity_phone(o.customer->>'phone')=%s)" if phone else ")"))
+        params.extend([term,term,term]+([phone] if phone else []))
     sort = sort or ('newest' if user['role']=='customer' else 'active_oldest')
     if sort not in {'newest','oldest','active_oldest'}:
         raise db.error(422,'ORDER_SORT_INVALID','ترتيب الطلبات غير صحيح.')
@@ -346,6 +352,127 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         else:
             rows=[customer_order_view(row) for row in rows]
     return {'sort':sort, 'orders': rows[:limit], 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info}
+
+
+def search_phone(value):
+    """Only a complete contact number is searchable; never a prefix oracle."""
+    import re
+    compact=re.sub(r'[\s()-]','',value.translate(auth.IDENTITY_DIGITS))
+    if compact.startswith('9665') and len(compact)==12:compact='+'+compact
+    try:phone=auth.normalize_phone(compact)
+    except HTTPException:return None
+    return phone if re.fullmatch(r'\+9665[0-9]{8}',phone) else None
+
+
+def operational_contact(conn,brand_id,customer,actor_id):
+    # Separate from authenticated identities: no sessions, links or proof are
+    # created from staff-typed contact data. Concurrent orders reuse one opaque
+    # operational principal; verified users are never selected or merged by phone.
+    identifier='customer_contact_'+hashlib.sha256((brand_id+'\0'+customer['phone']).encode()).hexdigest()
+    row=conn.execute("INSERT INTO users(id,display_name,phone,role,brand_id,identity_kind) VALUES(%s,%s,%s,'customer',%s,'guest') ON CONFLICT(id) DO UPDATE SET updated_at=users.updated_at RETURNING id,active,identity_kind,brand_id",
+        (identifier,customer['name'],customer['phone'],brand_id)).fetchone()
+    if not row or not row['active'] or row['identity_kind']!='guest' or row['brand_id']!=brand_id:
+        raise db.error(409,'CONTACT_UNAVAILABLE','تعذر استخدام سجل الاتصال التشغيلي.')
+    return row['id']
+
+
+def customer_lookup_scope(conn,user,branch_id):
+    if user['role'] not in {'owner','delivery_manager','delivery_staff','branch_manager'} or not auth.has_permission(user,'orders_view'):
+        raise db.error(403,'ROLE_FORBIDDEN','الوصول غير مسموح.')
+    if user['role']!='owner' and branch_id not in user.get('branch_ids',[]):
+        raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير متاح.')
+    if not conn.execute('SELECT 1 FROM branches WHERE id=%s AND brand_id=%s',(branch_id,user['brand_id'])).fetchone():
+        raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير متاح.')
+
+
+@router.get('/customer-lookup')
+def customer_lookup(phone: str=Query(min_length=8,max_length=30),branch_id: str=Query(min_length=1,max_length=80),
+                    user=Depends(auth.require_roles('owner','delivery_manager','delivery_staff','branch_manager'))):
+    normalized=search_phone(phone)
+    if not normalized:raise db.error(422,'PHONE_INVALID','أدخل رقم جوال سعودي كاملًا.')
+    with db.tx() as conn:
+        customer_lookup_scope(conn,user,branch_id)
+        if not db.rate_limit(conn,'customer-lookup:'+user['id'],30,60):
+            raise db.error(429,'CUSTOMER_LOOKUP_RATE_LIMIT','محاولات بحث كثيرة. انتظر قليلًا.')
+        # Existing authorized order snapshots are the branch-scoped address book.
+        # Do not expose all addresses of an account shared with another branch.
+        rows=conn.execute("SELECT customer_id,customer FROM orders WHERE brand_id=%s AND branch_id=%s AND normalized_identity_phone(customer->>'phone')=%s"+
+            (" AND service='delivery'" if user['role'] in {'delivery_manager','delivery_staff'} else '')+
+            ' ORDER BY created_at DESC,id DESC LIMIT 50',(user['brand_id'],branch_id,normalized)).fetchall()
+        contacts=[];seen=set();principals=set()
+        for row in rows:
+            principal=row['customer_id'];principals.add(principal)
+            c=row['customer'];entry={k:c.get(k) for k in ('name','address','neighborhood','location')}
+            entry['phone']=normalized
+            key=json.dumps(entry,sort_keys=True)
+            if key in seen:continue
+            seen.add(key);contacts.append({**entry,'addresses':[dict(entry)]})
+        db.audit(conn,user['id'],'customer.contact.lookup','branch',branch_id,{'phone_suffix':normalized[-4:],'result_count':len(contacts)})
+        return {'phone':normalized,'contacts':contacts,'ambiguous':len(principals)>1,'verified':False}
+
+
+class DeliveryLocationChange(catalog._CheckoutModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    address: str=Field(min_length=1,max_length=500)
+    neighborhood: str=Field(min_length=2,max_length=120)
+    location: catalog.Location
+    expected_location: catalog.Location
+    reason: str=Field(min_length=3,max_length=500)
+    whatsapp_reference: str|None=Field(default=None,max_length=300)
+
+
+def apply_delivery_location_revision(conn,row,customer,user,body):
+    # Keep the canonical immutable revision/consent chain. This address-only
+    # operational path cannot change prices, fiscal values, ownership or items.
+    from . import order_amendments
+    order_amendments.check_staff(user)
+    order_amendments.editable(row,conn)
+    if order_amendments.active(conn,row['id']):
+        raise db.error(409,'AMENDMENT_CONFLICT','يوجد تعديل قيد المراجعة؛ أكمله أولًا.')
+    aid=db.new_id('amend_');revision=row['amendment_revision']+1
+    consent_note=body.reason+(' | WhatsApp reference: '+body.whatsapp_reference if body.whatsapp_reference else '')
+    proposal={'snapshot':row['snapshot'],'customer':customer,'items_changed':False,'whatsapp_verified':False}
+    conn.execute("INSERT INTO order_amendments(id,order_id,requested_by,base_revision,proposal,status,reason,reviewed_by,consent_by,consent_channel,consent_note) VALUES(%s,%s,%s,%s,%s,'applied',%s,%s,%s,'whatsapp',%s)",
+        (aid,row['id'],user['id'],row['amendment_revision'],db.json(proposal),body.reason,user['id'],user['id'],consent_note))
+    conn.execute("INSERT INTO order_revisions(order_id,revision,amendment_id,before_snapshot,before_customer,after_snapshot,after_customer,before_total,after_total,approved_by,consent_by,consent_channel) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'whatsapp')",
+        (row['id'],revision,aid,db.json(row['snapshot']),db.json(row['customer']),db.json(row['snapshot']),db.json(customer),row['total_halalas'],row['total_halalas'],user['id'],user['id']))
+    conn.execute('UPDATE orders SET customer=%s,amendment_revision=%s,version=version+1 WHERE id=%s',(db.json(customer),revision,row['id']))
+    conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE order_id=%s AND status='queued'",(row['id'],))
+
+
+@router.post('/{order_id}/delivery-location')
+def change_delivery_location(order_id: str,body: DeliveryLocationChange,
+        user=Depends(auth.require_roles('owner','delivery_manager')),idempotency_key: str|None=Header(default=None)):
+    if not auth.has_permission(user,'orders_amend'):
+        raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','هذه الصلاحية متوقفة لحسابك.')
+    with db.tx() as conn:
+        row=scoped_order(conn,order_id,user,lock=True)
+        def perform():
+            if row['service']!='delivery' or row['preparation_status'] in {'completed','cancelled'} or row['delivery_status'] in {'delivered','cancelled'}:
+                raise db.error(409,'ORDER_LOCATION_LOCKED','لا يمكن تعديل موقع طلب مكتمل أو مقفل.')
+            # Do not reroute an accepted/live driver journey via an address edit.
+            if conn.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','reassigned','transferred')",(order_id,)).fetchone():
+                raise db.error(409,'ORDER_LOCATION_LOCKED','ألغِ إسناد السائق وفق الإجراء المعتمد قبل تعديل الموقع.')
+            if row['customer'].get('location')!=body.expected_location.model_dump():
+                raise db.error(409,'ORDER_LOCATION_CHANGED','تغير الموقع. حدّث الطلب وراجع الموقع قبل الحفظ.')
+            branch=conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s FOR SHARE',(row['branch_id'],user['brand_id'])).fetchone()
+            if not branch:raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير موجود.')
+            allowed,code,reason=catalog.branch_service(branch,'delivery')
+            if not allowed:raise db.error(409,code,reason)
+            if not catalog.covered(branch['settings']['coverage'],body.location.model_dump()):
+                raise db.error(409,'OUTSIDE_COVERAGE','العنوان خارج نطاق توصيل هذا الفرع.')
+            if branch['settings']['delivery_fee_halalas']!=row['delivery_fee_halalas']:
+                raise db.error(409,'DELIVERY_FEE_CHANGED','تغيرت رسوم التوصيل. يلزم إجراء تعديل مالي معتمد.')
+            old={k:row['customer'].get(k) for k in ('address','neighborhood','location')}
+            new={'address':body.address,'neighborhood':body.neighborhood,'location':body.location.model_dump()}
+            details={'previous':old,'new':new,'reason':body.reason,'request_source':'whatsapp_customer_request',
+                'whatsapp_reference':body.whatsapp_reference,'whatsapp_verified':False,'branch_id':row['branch_id']}
+            customer={**row['customer'],**new}
+            apply_delivery_location_revision(conn,row,customer,user,body)
+            db.event(conn,order_id,user['id'],'order.delivery_location.changed',details)
+            db.audit(conn,user['id'],'order.delivery_location.changed','order',order_id,details)
+            return {'order_id':order_id,'previous':old,'new':new,'permanent_address_changed':False,'whatsapp_verified':False}
+        return db.idempotent(conn,user['id'],idempotency_key,'order.delivery_location:'+order_id,body.model_dump(),perform)
 
 
 @router.get('/{order_id}')

@@ -289,3 +289,17 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 @media(max-width:600px){.driver-home-tasks{grid-template-columns:1fr}.driver-home-tasks .actions button{flex:1 1 45%}.driver-home-summary .data-grid{grid-template-columns:1fr 1fr}}
 
 .driver-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.driver-tools button,.driver-offer button{min-height:48px}button.danger{background:#b42318;color:#fff;border-color:#b42318}button.danger:hover{background:#8f1d14}.driver-break-state{border:2px solid #c46a10}
+
+/* Approved integration: preserve KPS typography and cards while allowing all prose to wrap. */
+.staff-directory td,.staff-directory th{white-space:normal;overflow-wrap:anywhere!important;word-break:normal!important}
+.printer-directory td,#printer-live td,.fleet-log-table td{white-space:normal;overflow-wrap:anywhere;word-break:normal}
+.printer-directory button,.printer-directory .pill{white-space:normal;overflow-wrap:anywhere}
+.task-card .data-grid dd,.order-detail-card>.data-grid dd,.shift-card .data-grid dd{white-space:normal;overflow-wrap:anywhere}
+.card-head{flex-wrap:wrap}.card-head>.pill{flex-shrink:1;white-space:normal}.metric,.hours-kpis .panel{min-width:0;overflow-wrap:anywhere}
+.table-wrap table{table-layout:auto}.table-wrap td{height:auto;max-width:560px;white-space:normal;overflow-wrap:anywhere;line-height:1.65}
+.table-wrap td.money{white-space:nowrap;direction:ltr;unicode-bidi:isolate;text-align:end;font-variant-numeric:tabular-nums}
+.customer-address-choice{display:block;text-align:start;width:100%;margin-top:10px;white-space:normal;overflow-wrap:anywhere;font-weight:400}
+.customer-address-choice[aria-pressed=true]{background:var(--accent-light);border-color:var(--accent);color:var(--accent)}
+#staff-customer-lookup p+p{margin-top:6px}#staff-order-form fieldset{max-width:100%;min-width:0}
+#staff-order-form .actions>span{min-width:0;flex:1;overflow-wrap:anywhere}
+@media(max-width:768px){.topbar{flex-wrap:wrap}.header-actions{max-width:100%}.order-detail-card>.data-grid dd{font-size:17px}.table-wrap td{max-width:380px}.hours-kpis strong{overflow-wrap:anywhere}}

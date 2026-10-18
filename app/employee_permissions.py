@@ -89,7 +89,7 @@ EXTRA_API_CONTRACTS = {
     'orders_operational_view': {'methods':['GET'], 'paths':['/api/staff/scoped/orders','/api/staff/scoped/orders/{order_id}/history'], 'scope':'current_brand_and_assigned_branches_operational_projection'},
     'driver_hours_reports': {'methods':['GET'], 'paths':['/driver-hours','/api/driver-work-hours/report','/api/driver-work-hours/export.xlsx','/api/driver-work-hours/export.pdf'], 'scope':'current_brand_and_assigned_branches_reports_only'},
     'branch_availability': {'methods':['POST'], 'paths':['/api/branches/{branch_id}/products/{product_id}/availability'], 'scope':'current_brand_and_assigned_branches_stock_only'},
-    'branch_printers_manage': {'methods':['GET','POST'], 'paths':['/api/printing/devices','/api/printing/setup','/api/printing/devices/{identifier}/revoke','/api/printing/devices/{identifier}/test','/api/printing/devices/{identifier}/approve','/api/printing/jobs','/api/printing/windows-bridge.zip'], 'scope':'current_brand_and_assigned_branches_printer_management_only'},
+    'branch_printers_manage': {'methods':['GET','POST'], 'paths':['/api/printing/devices','/api/printing/setup','/api/printing/devices/{identifier}/revoke','/api/printing/devices/{identifier}/test','/api/printing/devices/{identifier}/approve','/api/printing/jobs','/api/printing/windows-bridge.zip','/api/printing/migration-status'], 'scope':'current_brand_and_assigned_branches_printer_management_only'},
 }
 
 
@@ -181,7 +181,7 @@ ROUTES = {
         'vehicles', 'options', 'report', 'vehicle', 'export', 'detail', 'correct')},
     'branch_printing': {name: 'branch_printers_manage' for name in (
         'pair_device', 'devices', 'guided_setup', 'revoke', 'test_printer', 'approve_printer',
-        'jobs', 'download_bridge')},
+        'jobs', 'download_bridge', 'migration_status')},
     'accounting': {name: {'delivery_manager': 'accounting_cases_followup'} for name in (
         'options', 'cases', 'detail', 'followup', 'upload', 'download')},
 }

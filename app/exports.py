@@ -25,7 +25,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
-          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
+          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports', 'manager_financial_matches',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
@@ -78,6 +78,10 @@ def _scoped_sql(table, brand):
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
         return 'brand_id=%s', (brand,)
+    if table == 'driver_work_trips':
+        return 'brand_id=%s', (brand,)
+    if table in {'driver_work_trip_orders', 'driver_work_trip_events'}:
+        return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
     if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:

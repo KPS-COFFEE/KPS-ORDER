@@ -45,6 +45,43 @@ def test_manager_duty_modes_and_existing_orders_unchanged(v5):
         assert result.json()['detail']['code'] == 'DELIVERY_DUTY_UNAVAILABLE'
 
 
+def test_manager_free_mode_keeps_disabled_services_and_existing_snapshots(v5):
+    actor, call, body, _ = v5
+    original = call('customer', 'POST', '/api/orders', body('pickup')).json()['order']
+    assert call('owner', 'PATCH', '/api/admin/brand-services',
+                {'services': {'pickup': False, 'delivery': False},
+                 'reason': 'TEST preserve disabled services'}).status_code == 200
+    assert call('owner', 'PATCH', '/api/admin/settings',
+                {'delivery_workflow': 'branch_without_manager'}).status_code == 200
+    for service in ('pickup', 'delivery'):
+        rejected = call('customer', 'POST', '/api/orders', body(service))
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()['detail']['code'] == 'BRAND_SERVICE_DISABLED'
+    # An operating-policy change must not rewrite an accepted customer's order.
+    saved = actor('owner').get(f"/api/orders/{original['id']}").json()['order']
+    assert saved['snapshot'] == original['snapshot']
+    assert saved['total_halalas'] == original['total_halalas']
+    assert saved['preparation_status'] == 'new'
+
+
+def test_branch_transition_replay_requires_current_branch_scope(v5):
+    _, call, body, _ = v5
+    order = call('customer', 'POST', '/api/orders', body('pickup')).json()['order']
+    payload = {'status': 'accepted', 'version': order['version']}
+    path = f"/api/orders/{order['id']}/preparation"
+    accepted = call('branch', 'POST', path, payload, key='TEST-branch-accept-replay')
+    assert accepted.status_code == 200, accepted.text
+    assert call('branch', 'POST', path, payload,
+                key='TEST-branch-accept-replay').json() == accepted.json()
+    with db.tx() as c:
+        assert c.execute("SELECT count(*) n FROM order_events WHERE order_id=%s "
+                         "AND event_type='preparation.accepted'", (order['id'],)).fetchone()['n'] == 1
+        c.execute("UPDATE users SET branch_ids='[]'::jsonb WHERE id='v5-branch'")
+    # A previously successful response must not leak order data after revocation.
+    denied = call('branch', 'POST', path, payload, key='TEST-branch-accept-replay')
+    assert denied.status_code == 404, denied.text
+
+
 def test_pickup_branch_employee_full_existing_flow_and_scope(v5):
     actor, call, body, _ = v5
     created = call('customer', 'POST', '/api/orders', body('pickup'))
@@ -63,7 +100,10 @@ def test_pickup_branch_employee_full_existing_flow_and_scope(v5):
     outside = call('customer', 'POST', '/api/orders', body('pickup', branch='v5-b')).json()['order']
     assert transition(call, outside, 'accepted').status_code == 404
     with db.tx() as c:
-        c.execute("UPDATE orders SET brand_id='kps' WHERE id=%s", (outside['id'],))
+        # Existing order ownership is immutable. Exercise cross-brand access by
+        # moving only the synthetic employee's scope, not the confirmed order.
+        c.execute("UPDATE users SET brand_id='kps',branch_ids='[\"v5-b\"]'::jsonb "
+                  "WHERE id='v5-branch'")
     assert transition(call, outside, 'accepted').status_code == 404
 
 
