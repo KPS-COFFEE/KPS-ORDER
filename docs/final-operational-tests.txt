@@ -14,6 +14,7 @@ tests/test_storefront_scope.py
 tests/test_employee_permissions.py
 tests/test_driver_order_scope.py
 tests/test_order_amendments.py
+tests/test_order_requests.py
 tests/test_hardening_orders.py
 tests/test_hardening_order_pipeline.py
 tests/test_split_payment.py

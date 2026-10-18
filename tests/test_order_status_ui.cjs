@@ -1,7 +1,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync('public/ops.js','utf8');
 const ctx={state:{user:{role:'owner'}},can:()=>true,tr:(ar,en)=>en,esc:x=>String(x??''),badge:x=>`[${x}]`,statusName:x=>x};
-vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('  function orderStatusBadge('),source.indexOf('  function orderCard(')),ctx);
+vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('  function requestInboxLabel('),source.indexOf('  function orderCard(')),ctx);
 const base={id:'test',service:'delivery',preparation_status:'handed_over'};
 assert.match(ctx.orderStatusBadge({...base,delivery_status:'problem'}),/Delivery manager action required/);
 assert.match(ctx.orderStatusBadge({...base,delivery_status:'problem'}),/resolve-order-problem/);
@@ -9,6 +9,11 @@ assert.match(ctx.orderStatusBadge({...base,delivery_status:'picked_up'}),/\[pick
 assert.match(ctx.orderStatusBadge({...base,delivery_status:'delivered'}),/\[delivered\]/);
 assert.ok(!ctx.orderStatusBadge({...base,delivery_status:'delivered'}).includes('action required'));
 assert.match(ctx.orderStatusBadge({...base,delivery_status:'pending'}),/Handed to driver/);
+ctx.state.requestInbox=[{id:'test',request_id:'req-test',request_kind:'cancel',status:'requested'}];
+assert.match(ctx.orderStatusBadge(base),/Cancellation request — Awaiting processing/);
+assert.match(ctx.orderStatusBadge(base),/data-action="amend-order"/);
+ctx.state.requestInbox=[];
+assert.ok(!ctx.orderStatusBadge(base).includes('Awaiting processing'));
 ctx.state.user.role='driver';assert.ok(!ctx.orderStatusBadge({...base,delivery_status:'problem'}).includes('resolve-order-problem'));
 assert.equal(ctx.orderEventDescription({event_type:'order.created',details:{}}),'Order created');
 assert.match(ctx.orderEventDescription({event_type:'task.accepted',details:{previous:'assigned',status:'accepted',reason:'A recorded manager decision'}}),/assigned → accepted.*A recorded manager decision/);

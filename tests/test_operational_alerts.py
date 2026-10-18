@@ -65,7 +65,7 @@ def test_alert_sound_requires_gesture_repeats_and_stops(live_app,chromium_browse
     from playwright.sync_api import expect
     owner=_staff();context,page,errors=_context(chromium_browser,live_app)
     _owner_login(context,live_app,owner)
-    context.add_init_script("localStorage.setItem('kps_ops_lang', '"+language+"');window.testBeeps=0;window.testContinuousStopped=0;window.AudioContext=class{constructor(){this.state='suspended';this.currentTime=0;this.destination={}}async resume(){if(!navigator.userActivation.isActive)throw Error('Synthetic browser autoplay block');this.state='running'}createOscillator(){return {connect(){},disconnect(){},frequency:{value:0},start(){window.testBeeps++},stop(at){if(at===undefined){window.testContinuousStopped++;this.onended?.()}else queueMicrotask(()=>this.onended?.())}}}createGain(){return {connect(){},disconnect(){},gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}}}}};")
+    context.add_init_script("localStorage.setItem('kps_ops_lang', '"+language+"');window.testGestureSeen=false;document.addEventListener('pointerdown',e=>{if(e.isTrusted)window.testGestureSeen=true},true);document.addEventListener('keydown',e=>{if(e.isTrusted)window.testGestureSeen=true},true);window.testBeeps=0;window.testContinuousStopped=0;window.AudioContext=class{constructor(){this.state='suspended';this.currentTime=0;this.destination={}}async resume(){if(!window.testGestureSeen||!navigator.userActivation.isActive)throw Error('Synthetic browser autoplay block');this.state='running'}createOscillator(){return {connect(){},disconnect(){},frequency:{value:0},start(){window.testBeeps++},stop(at){if(at===undefined){window.testContinuousStopped++;this.onended?.()}else queueMicrotask(()=>this.onended?.())}}}createGain(){return {connect(){},disconnect(){},gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}}}}};")
     pending=[{'id':'synthetic-alert','order_no':123}]
     page.route('**/api/operations/alerts',lambda route:route.fulfill(json={'unassigned':pending if kind=='order' else [],'problems':[],'printing':[]}))
     page.route('**/api/conversations/alerts',lambda route:route.fulfill(json={'awaiting_reply':pending if kind=='chat' else []}))
@@ -74,10 +74,14 @@ def test_alert_sound_requires_gesture_repeats_and_stops(live_app,chromium_browse
     try:
         page.clock.install();page.goto(live_app+'/ops')
         expect(page.locator('#operational-alerts')).to_contain_text(marker)
+        # Playwright evaluates with CDP userGesture=true. Count only trusted
+        # pointer/key input, not activation introduced by assertion polling.
+        assert page.evaluate('window.testGestureSeen') is False
         assert page.evaluate('window.testBeeps')==0
         expect(page.locator('[data-action=alert-sound]')).to_be_hidden()
         # Any normal page gesture enables sound: no employee sound settings.
         page.locator('#page-heading').click()
+        assert page.evaluate('window.testGestureSeen') is True
         expect(page.locator('#alert-audio-blocked')).to_be_hidden()
         page.wait_for_function('(expected) => window.testBeeps === expected', arg=tones)
         page.clock.run_for(31000)
