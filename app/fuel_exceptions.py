@@ -2,7 +2,7 @@
 from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
-from . import auth, db
+from . import auth, db, shift_vehicle
 from .operations import roles, mutate, safe, uid, lock_shift, shift_access
 router=APIRouter(prefix='/api/fuel-exceptions',tags=['fuel-exceptions'])
 
@@ -62,7 +62,7 @@ def request_exception(body:FuelRequest,request:Request,user=Depends(auth.current
 def listing(user=Depends(auth.current_user)):
     roles(user,'driver','delivery_manager')
     with db.tx() as c:
-        rows=c.execute("SELECT e.*,u.display_name FROM fuel_exceptions e JOIN users u ON u.id=e.driver_id JOIN shifts m ON m.id=e.manager_shift_id WHERE e.brand_id=%s AND e.status IN ('requested','approved','rejected') AND "+('e.driver_id=%s' if user['role']=='driver' else 'm.user_id=%s')+' ORDER BY e.created_at DESC LIMIT 100',(user['brand_id'],user['id'])).fetchall()
+        rows=c.execute("SELECT e.*,u.display_name FROM fuel_exceptions e JOIN users u ON u.id=e.driver_id JOIN shifts m ON m.id=e.manager_shift_id WHERE e.brand_id=%s AND (e.status IN ('requested','approved','rejected') OR (e.status='consumed' AND e.phase='activation')) AND "+('e.driver_id=%s' if user['role']=='driver' else 'm.user_id=%s')+' ORDER BY e.created_at DESC LIMIT 100',(user['brand_id'],user['id'])).fetchall()
         visible=[]
         for r in rows:
             try:scope(c,user,r['driver_id'],r['manager_shift_id'],r['shift_id'])
@@ -88,10 +88,22 @@ def decide(eid:str,body:Decision,request:Request,user=Depends(auth.current_user)
         if not row:raise db.error(404,'FUEL_SCOPE','الطلب غير متاح / Request unavailable')
         scope(c,user,row['driver_id'],row['manager_shift_id'],row['shift_id'])
         def perform():
+            if row['shift_id']:lock_shift(c,row['shift_id'])
             r=c.execute('SELECT * FROM fuel_exceptions WHERE id=%s FOR UPDATE',(eid,)).fetchone()
             _,m,vehicle=scope(c,user,r['driver_id'],r['manager_shift_id'],r['shift_id'])
             if r['status']!='requested' or m['status'] not in (('open',) if r['phase']=='start' else ('open','closing')) or vehicle!=r['vehicle']:raise db.error(409,'FUEL_STALE','الطلب تغير؛ يلزم طلب جديد / Request changed; submit again')
             c.execute('UPDATE fuel_exceptions SET status=%s,decided_by=%s,decided_at=now() WHERE id=%s',(body.decision,user['id'],eid))
+            if body.decision=='approved' and r['phase']=='activation':
+                s=lock_shift(c,r['shift_id']);log=dict(s.get('vehicle_log') or {})
+                if s['status']!='open' or not log.get('awaiting_refuel'):
+                    raise db.error(409,'FUEL_STALE','تغيرت جاهزية الشفت؛ حدّث الصفحة.')
+                floor=shift_vehicle.odometer_floor(log)
+                if r['odometer_km']<floor:raise db.error(409,'FUEL_STALE','تغيرت قراءة العداد؛ اطلب استثناء جديدًا.')
+                log['fuel_readiness']={'odometer_km':r['odometer_km'],'fuel_percent':r['fuel_percent'],'fuel_exception_id':eid,'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
+                log['awaiting_refuel']=False
+                c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),s['id']))
+                c.execute("UPDATE fuel_exceptions SET status='consumed',consumed_shift_id=%s,consumed_at=now() WHERE id=%s",(s['id'],eid))
+                db.audit(c,user['id'],'fuel.ready','shift',s['id'],log['fuel_readiness'])
             db.audit(c,user['id'],'fuel.'+body.decision,'fuel_exception',eid,{'reason':r['reason'],'fuel_percent':r['fuel_percent']})
             return {'id':eid,'status':body.decision}
         return mutate(c,user,request,'fuel.decision:'+eid,body.model_dump(),perform)
@@ -128,10 +140,13 @@ def confirm_ready(sid:str,body:ReadyFuel,request:Request,user=Depends(auth.curre
         def perform():
             s=lock_shift(c,sid);shift_access(c,user,s)
             log=dict(s.get('vehicle_log') or {})
+            ready=log.get('fuel_readiness') or {}
+            if s['user_id']==user['id'] and s['status']=='open' and not log.get('awaiting_refuel') and body.fuel_exception_id and all(ready.get(k)==getattr(body,k) for k in ('fuel_exception_id','odometer_km','fuel_percent')):
+                return {'shift_id':sid,'available':s['available']}
             if s['user_id']!=user['id'] or s['status']!='open' or not log.get('awaiting_refuel'):raise db.error(409,'FUEL_ALREADY_READY','الشفت غير متاح للتأكيد / Shift not awaiting fuel')
             from .driver_breaks import guard
             guard(c,sid)
-            floor=max([log.get('start',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
+            floor=shift_vehicle.odometer_floor(log)
             if body.odometer_km<floor:raise db.error(422,'ODOMETER_DECREASE','قراءة العداد أقل من آخر قراءة / Odometer decreased')
             if body.fuel_percent==100 and not log.get('refuels'):raise db.error(409,'REFUEL_RECORD_REQUIRED','سجل تعبئة البنزين أولاً / Record refuelling first')
             consume(c,user,s,body,'activation',log.get('vehicle') or {})

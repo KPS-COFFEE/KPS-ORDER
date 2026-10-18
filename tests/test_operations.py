@@ -163,6 +163,25 @@ def delivered(post,order,driver):
     post('driver','/api/tasks/'+task+'/transition',{'status':'delivered','proof':'اختبار استلام العميل'})
     return oid
 
+def begin_driver_closure(post, driver, *, driver_actor='driver', manager_actor='manager', closing_actor=None):
+    """Explicit authorization precedes closing; it never approves the finances."""
+    with db.tx() as c:
+        before=c.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(driver,)).fetchone()
+        transfers=c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['n']
+    denied=post(closing_actor or driver_actor,'/api/shifts/'+driver+'/closing',status=409)
+    assert denied['detail']['code']=='EARLY_CLOSURE_APPROVAL_REQUIRED'
+    early=post(driver_actor,'/api/driver-closure/'+driver+'/request',{'reason':'Synthetic legacy journey requests early end'})
+    with db.tx() as c:
+        assert c.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(driver,)).fetchone()==before
+    decision=post(manager_actor,'/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'Authorize end review; financial receipt remains separate'})
+    assert decision['status']=='open'
+    with db.tx() as c:
+        assert c.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(driver,)).fetchone()==before
+        assert c.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['n']==transfers
+        assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==0
+    return post(closing_actor or driver_actor,'/api/shifts/'+driver+'/closing')
+
+
 def close_driver(post,driver,manager,counted=1000):
     early=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'Synthetic completed-shift journey'})
     post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'Verified synthetic end of shift'})
@@ -226,8 +245,8 @@ def test_closing_freezes_assignment_and_pending_tasks_gate(ops):
     actor,post,order,shifts=ops;manager,driver=shifts()
     oid=order();post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':driver})
     post('driver','/api/shifts/'+driver+'/closing',status=409)
-    early=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'TEST approved regression prerequisite'})
-    post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'TEST manager verified closure'})
+    request=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'Synthetic pending-task closure review'})
+    post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':request['authorization']['id'],'reason':'Review pending tasks before financial close'})
     post('driver','/api/shifts/'+driver+'/closing')
     post('driver','/api/shifts/'+driver+'/submit',{'counted_halalas':0,'handover_halalas':0},status=409)
     post('manager','/api/orders/'+order()+'/assign',{'driver_shift_id':driver},status=409)
@@ -260,8 +279,8 @@ def test_discrepancy_partial_handover_retained_carryover(ops):
     partial=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':400,'reference':'PARTIAL'})['transfer']['id']
     post('manager','/api/custody/'+partial+'/confirm')
     post('driver','/api/shifts/'+driver+'/closing',status=409)
-    early=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'TEST approved regression prerequisite'})
-    post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'TEST manager verified closure'})
+    request=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'Synthetic retained-cash closure review'})
+    post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved','request_id':request['authorization']['id'],'reason':'Authorize closure review without approving its finances'})
     post('driver','/api/shifts/'+driver+'/closing')
     post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':500,'handover_halalas':400,'retained_halalas':100},status=422)
     sub=post('manager','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':500,'handover_halalas':400,'retained_halalas':100,'exception_reason':'TEST manager witnessed retained cash'})
@@ -285,8 +304,9 @@ def test_dashboard_setting_midnight_refund_and_card_split(ops):
     with db.tx() as c:
         c.execute("INSERT INTO app_settings(brand_id,settings) VALUES('ops-brand',%s)",(db.json({'operational_day_start':'05:30','late_after_minutes':60}),))
         c.execute("UPDATE orders SET created_at='2026-10-09 22:00:00+00' WHERE id=%s",(oid,)) # 01:00 Riyadh next calendar day
-    post('manager','/api/orders/'+oid+'/refund',{'amount_halalas':200,'method':'cash','reason':'TEST جزئي','line_quantities':{}},status=403)
-    post('owner','/api/orders/'+oid+'/refund',{'amount_halalas':200,'method':'cash','reason':'TEST جزئي','line_quantities':{}})
+    refund={'amount_halalas':200,'method':'cash','reason':'TEST جزئي','line_quantities':{}}
+    post('manager','/api/orders/'+oid+'/refund',refund,status=403)
+    post('owner','/api/orders/'+oid+'/refund',refund)
     dash=actor('owner').get('/api/dashboard?start=2026-10-09T05:30:00&end=2026-10-10T05:30:00').json()
     assert dash['summary']['completed']==1 and dash['summary']['net_completed_halalas']==800
     assert dash['top_items'][0]['net_halalas']==800 and dash['top_items'][0]['quantity']==1
@@ -366,8 +386,9 @@ def test_duplicate_product_lines_refund_subtracted_once(ops):
     base={'product_id':'ops-product','name':'كوب تجربة','quantity':1,'unit_price_halalas':500,'line_total_halalas':500,'note':''}
     items=[{**base,'units':[{'options':{'color':'black'}}]},{**base,'units':[{'options':{'color':'white'}}]}]
     oid=delivered(post,lambda:order(items=items),driver)
-    post('manager','/api/orders/'+oid+'/refund',{'amount_halalas':500,'method':'cash','reason':'TEST كوب واحد','line_quantities':{'ops-product':1}},status=403)
-    post('owner','/api/orders/'+oid+'/refund',{'amount_halalas':500,'method':'cash','reason':'TEST كوب واحد','line_quantities':{'ops-product':1}})
+    refund={'amount_halalas':500,'method':'cash','reason':'TEST كوب واحد','line_quantities':{'ops-product':1}}
+    post('manager','/api/orders/'+oid+'/refund',refund,status=403)
+    post('owner','/api/orders/'+oid+'/refund',refund)
     item=actor('owner').get('/api/dashboard').json()['top_items'][0]
     assert item['quantity']==1 and item['net_halalas']==500
 
@@ -388,8 +409,8 @@ def test_task_transfer_across_manager_reports_does_not_duplicate_completed_sale(
     snap=actor('owner').get('/api/reports/'+source['report_id']).json()['report']['snapshot']
     assert snap['summary']['completed_orders']==0 and snap['summary']['gross_completed_halalas']==0
     post('driver2','/api/shifts/'+driver2+'/closing',status=409)
-    early=post('driver2','/api/driver-closure/'+driver2+'/request',{'reason':'TEST approved regression prerequisite'})
-    post('manager2','/api/driver-closure/'+driver2+'/decision',{'decision':'approved','request_id':early['authorization']['id'],'reason':'TEST manager verified closure'})
+    request=post('driver2','/api/driver-closure/'+driver2+'/request',{'reason':'Synthetic transferred-task closure review'})
+    post('manager2','/api/driver-closure/'+driver2+'/decision',{'decision':'approved','request_id':request['authorization']['id'],'reason':'Authorize receiving driver closure review'})
     post('driver2','/api/shifts/'+driver2+'/closing')
     post('driver2','/api/shifts/'+driver2+'/submit',{'terminal_total_halalas':1000,'counted_halalas':0,'handover_halalas':0,'handover':{'recipient_user_id':'ops-manager2','to_shift_id':manager2,'reference':'ZERO-CARD'}})
     with db.tx() as c:tid=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver2,)).fetchone()['id']

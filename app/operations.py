@@ -246,7 +246,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
             elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
             sid=uid()
-            carryovers=c.execute('SELECT r.* FROM retained_carryovers r JOIN shifts s ON s.id=r.from_shift_id WHERE r.user_id=%s AND s.brand_id=%s AND r.to_shift_id IS NULL FOR UPDATE OF r',(target['id'],brand)).fetchall()
+            carryovers=c.execute('SELECT r.* FROM retained_carryovers r JOIN shifts s ON s.id=r.from_shift_id WHERE r.user_id=%s AND s.brand_id=%s AND r.to_shift_id IS NULL AND r.archived_test_at IS NULL FOR UPDATE OF r',(target['id'],brand)).fetchall()
             carried=sum(x['amount_halalas'] for x in carryovers)
             permanent_float=None
             if body.kind=='driver':
@@ -378,13 +378,19 @@ def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(
             if s['kind']!='driver' or s['status'] not in ('open','closing'):fail(409,'تسجيل الوقود متاح لشفت سائق مفتوح أو تحت التقفيلة فقط')
             if user['role'] not in ('driver','owner','delivery_manager'):fail(403,'الصلاحية غير كافية')
             log=dict(s.get('vehicle_log') or {})
-            floor=max([log.get('start',{}).get('odometer_km',0),log.get('fuel_readiness',{}).get('odometer_km',0)]+[r['odometer_km'] for r in log.get('refuels',[])])
+            floor=shift_vehicle.odometer_floor(log)
             if body.odometer_km<floor:fail(422,'قراءة العداد أقل من آخر قراءة مسجلة')
             if body.receipt_id:
                 from .driver_evidence import validate
                 validate(c,body.receipt_id,user,sid)
             entry={**shift_vehicle.stamp(c,user,body),'id':uid()}
             log['refuels']=[*log.get('refuels',[]),entry]
+            if body.confirm_full and log.get('awaiting_refuel'):
+                if s['status']!='open':raise db.error(409,'SHIFT_NOT_OPEN','الشفت ليس مفتوحًا.')
+                if not body.receipt_id:raise db.error(422,'REFUEL_RECEIPT_REQUIRED','أرفق فاتورة التعبئة لتأكيد امتلاء الخزان.')
+                log['fuel_readiness']={**entry,'fuel_percent':100}
+                log['awaiting_refuel']=False
+                db.audit(c,user['id'],'fuel.ready','shift',sid,log['fuel_readiness'])
             c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),sid))
             db.audit(c,user['id'],'shift.refuel','shift',sid,entry)
             return {'shift_id':sid,'refuel':entry,'vehicle_summary':shift_vehicle.summary(log)}
@@ -755,7 +761,7 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
                 if body.cash_halalas is not None or body.card_halalas is not None:fail(422,'مبالغ التقسيم مخصصة للكاش والشبكة معًا')
                 parts=[(body.method,body.amount_halalas)]
             cash=next((amount for method,amount in parts if method=='cash'),0)
-            if any(method=='card' for method,_ in parts) and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
+            if not (user['role']=='driver' and o['service']=='delivery') and any(method=='card' for method,_ in parts) and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
             if cash and (body.tendered_halalas is None or body.tendered_halalas<cash):fail(422,'المبلغ النقدي المسلم غير كاف')
             sid=None
             if o['service']=='delivery':

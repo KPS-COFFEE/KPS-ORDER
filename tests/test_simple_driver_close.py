@@ -1,7 +1,7 @@
 """Actual receipt and closure are atomic, scoped and safe to retry."""
 import pytest
 from app import db, operations
-from tests.test_operations import ops, delivered
+from tests.test_operations import ops, delivered, begin_driver_closure
 from tests.test_hardening_operations import request, principal, race
 from tests.test_driver_cash_handover import submit_cash
 
@@ -12,7 +12,7 @@ pytestmark=pytest.mark.postgres
 def test_submitted_receipt_and_approval_once(ops,counted,transfer_exists):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     if transfer_exists:
         submit_cash(post,driver,manager,counted)
     else:
@@ -35,7 +35,7 @@ def test_submitted_receipt_and_approval_once(ops,counted,transfer_exists):
 def test_delegated_close_and_notification(ops,status):
     actor,post,order,shifts=ops
     manager,driver=shifts()
-    if status=='closing':post('driver',f'/api/shifts/{driver}/closing')
+    if status=='closing':begin_driver_closure(post,driver)
     body={'terminal_total_halalas':0,'counted_halalas':0,'received_halalas':0,'confirmed':True,'exception_reason':'TEST phone unavailable'}
     url=f'/api/shifts/{driver}/driver-close'
     post('manager',url,{**body,'exception_reason':''},status=422)
@@ -81,7 +81,7 @@ def test_different_keys_race_cannot_repeat_financial_effects(ops):
 def test_failed_approval_does_not_confirm_or_move_cash(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     _,tid=submit_cash(post,driver,manager,900,reference='TEST atomic receipt')
     post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':900,'confirmed':True},status=422)
     with db.tx() as c:
@@ -93,7 +93,7 @@ def test_failed_approval_does_not_confirm_or_move_cash(ops):
 def test_retained_cash_requires_explicit_reason_and_keeps_count(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200},status=422)
     post('manager',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200,'exception_reason':'TEST authorized manager retained count'})
     url=f'/api/shifts/{driver}/driver-close'
@@ -119,7 +119,7 @@ def test_owner_monitoring_does_not_claim_manager_receipt(ops,submitted):
     actor,post,order,shifts=ops
     manager,driver=shifts()
     if submitted:
-        post('driver',f'/api/shifts/{driver}/closing')
+        begin_driver_closure(post,driver)
         submit_cash(post,driver,manager)
     body={'terminal_total_halalas':None if submitted else 0,'received_halalas':0,'counted_halalas':None if submitted else 0,
           'confirmed':True,'exception_reason':'TEST unavailable' if not submitted else ''}
@@ -135,7 +135,7 @@ def test_owner_monitoring_does_not_claim_manager_receipt(ops,submitted):
 def test_legacy_other_recipient_is_explained_without_moving_cash(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts()
-    post('driver',f'/api/shifts/{driver}/closing')
+    begin_driver_closure(post,driver)
     _,tid=submit_cash(post,driver,manager,reference='TEST legacy recipient')
     # Synthetic legacy record only; the runtime never rewrites a recipient.
     with db.tx() as c:c.execute("UPDATE custody_transfers SET recipient_user_id='ops-owner' WHERE id=%s",(tid,))

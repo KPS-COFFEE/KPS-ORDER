@@ -382,7 +382,10 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
                 raise db.error(403,'STAFF_ROLE_INVITATION_REQUIRED','تغيير دور الموظف يحتاج مسار دعوة مخول.')
             if role == 'owner' and row['role'] != 'owner':
                 raise db.error(403,'OWNER_INVITATION_REQUIRED','إضافة مالك تحتاج دعوة بريد واعتماد المالك الحالي.')
-            if active and (row.get('invitation_status') not in {'active','paused'} or not row.get('email_verified_at')) and not (row['active'] and row.get('identity_kind')=='legacy'):
+            sms_approved = auth.staff_sms_account_approved(row)
+            if active and not row['active'] and sms_approved:
+                auth.require_owner_step_up(conn,user)
+            if active and (row.get('invitation_status') not in {'active','paused'} or not (row.get('email_verified_at') or sms_approved)) and not (row['active'] and row.get('identity_kind')=='legacy'):
                 raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','يلزم تحقق الموظف من بريده قبل التفعيل.')
             conn.execute('SELECT id FROM users WHERE brand_id=%s AND role=%s AND active ORDER BY id FOR UPDATE',(user['brand_id'],'owner')).fetchall()
             if row['role']=='owner' and (role!='owner' or not active):
@@ -397,7 +400,7 @@ def update_user(record_id: str, body: dict, user=Depends(owner), idem: str | Non
                 raise db.error(409,'OPEN_SHIFT_ROLE_PROTECTED','أغلق أو سلّم مسؤولية الشفت قبل تغيير الدور.')
             hashed = auth.hash_password(body['password']) if body.get('password') else row['password_hash']
             name = text(body.get('display_name',row['display_name']),200,'الاسم')
-            status = 'active' if active and row.get('email_verified_at') else 'paused' if not active and row.get('invitation_status')=='active' else row.get('invitation_status')
+            status = 'active' if active and (row.get('email_verified_at') or sms_approved) else 'paused' if not active and row.get('invitation_status')=='active' else row.get('invitation_status')
             updated = conn.execute('UPDATE users SET display_name=%s,role=%s,branch_ids=%s,active=%s,password_hash=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING id,username,display_name,role,brand_id,branch_ids,phone,active',(name,role,db.json(scope),active,hashed,status,record_id)).fetchone()
             conn.execute('UPDATE users SET permissions=%s WHERE id=%s',(db.json(permissions),record_id))
             updated['permissions']=permissions

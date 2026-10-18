@@ -114,8 +114,12 @@ def test_competing_full_refunds_cannot_overdraw_collection_or_duplicate_cash(ops
     actor, post, order, shifts = ops
     manager, driver = shifts()
     oid = delivered(post, order, driver)
-    user = principal('manager')
+    user = principal('owner')
     body = operations.Refund(method='cash', amount_halalas=1000, reason='Verified full customer refund')
+    assert outcome(lambda: operations.refund(oid, body, request('manager-full-refund-denied'), principal('manager')))[0] == 403
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM refunds WHERE order_id=%s', (oid,)).fetchone()['n'] == 0
+        assert operations.balance(conn, {'id': driver, 'opening_halalas': 0}) == 1000
     calls = [lambda key=key: operations.refund(oid, body, request(key), user) for key in ('race-refund-first', 'race-refund-second')]
     results = race(calls)
     assert sorted(code for code, result in results) == [200, 422], results
@@ -133,8 +137,12 @@ def test_partial_refund_reconnect_replays_once_and_distinct_refund_remains_possi
     actor, post, order, shifts = ops
     manager, driver = shifts()
     oid = delivered(post, order, driver)
-    user = principal('manager')
+    user = principal('owner')
     body = operations.Refund(method='cash', amount_halalas=100, reason='Verified missing item refund')
+    assert outcome(lambda: operations.refund(oid, body, request('manager-partial-refund-denied'), principal('manager')))[0] == 403
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM refunds WHERE order_id=%s', (oid,)).fetchone()['n'] == 0
+        assert operations.balance(conn, {'id': driver, 'opening_halalas': 0}) == 1000
     results = race([lambda: operations.refund(oid, body, request('race-partial-reconnect'), user)] * 4)
     assert all(code == 200 for code, result in results), results
     assert len({result['refund_id'] for code, result in results}) == 1
@@ -151,6 +159,9 @@ def test_delegated_closure_concurrent_replay_notifies_owner_once_and_is_immutabl
     manager, driver = shifts()
     delivered(post, order, driver)
     user = principal('manager')
+    assert outcome(lambda: operations.request_close(driver, request('race-close-before-approval'), user))[0] == 409
+    early = post('driver', '/api/driver-closure/'+driver+'/request', {'reason':'Synthetic delegated closure review'})
+    post('manager', '/api/driver-closure/'+driver+'/decision', {'decision':'approved', 'request_id':early['authorization']['id'], 'reason':'Authorize operational closure review; financial assertions remain below'})
     operations.request_close(driver, request('race-close-request'), user)
     invalid = operations.ClosureSubmit(terminal_total_halalas=0, counted_halalas=900, handover_halalas=800, retained_halalas=100)
     assert outcome(lambda: operations.submit_close(driver, invalid, request('race-close-no-reason'), user))[0] == 422

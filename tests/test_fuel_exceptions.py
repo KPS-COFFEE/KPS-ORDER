@@ -137,10 +137,10 @@ def test_low_fuel_opens_shift_but_blocks_all_assignment_until_ready(ops,exceptio
         post('manager','/api/fuel-exceptions/'+r['id'],{'decision':'approved'})
     else:
         post('driver','/api/shifts/'+sid+'/refuel',{'liters':'20','odometer_km':1005})
-    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',{**ready,'odometer_km':999},status=422)
+    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',{**ready,'odometer_km':999},status=409 if exception else 422)
     post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,key='fuel-ready-once')
     post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,key='fuel-ready-once')
-    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,status=409)
+    post('driver','/api/fuel-exceptions/shifts/'+sid+'/ready',ready,status=200 if exception else 409)
     post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':sid})
     with db.tx() as c:
         log=c.execute('SELECT vehicle_log FROM shifts WHERE id=%s',(sid,)).fetchone()['vehicle_log']

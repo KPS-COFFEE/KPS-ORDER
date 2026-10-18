@@ -92,6 +92,12 @@ app.include_router(catalog.router)
 app.include_router(auth.router)
 from . import multibrand
 app.include_router(multibrand.router)
+from . import owner_phone
+app.include_router(owner_phone.router)
+from . import employee_sms, sms_rollout, sms_pilot_ui
+app.include_router(employee_sms.router)
+app.include_router(sms_rollout.router)
+app.include_router(sms_pilot_ui.router)
 # Provider callbacks use their own signed timestamped verification, rather than
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
@@ -107,6 +113,9 @@ app.include_router(branch_payment_policy.router)
 for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'channel_settlement', 'internal_documents', 'driver_closure', 'customer_crm'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
+
+from . import driver_checks
+app.include_router(driver_checks.router)
 
 
 def revision():

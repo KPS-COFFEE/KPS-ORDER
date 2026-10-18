@@ -1,4 +1,4 @@
-"""Final phone-user / emailed-code flows on isolated PostgreSQL; no real email sends."""
+"""Retained legacy non-SMS tenant email-code security; KPS SMS tests are separate."""
 from __future__ import annotations
 
 import re
@@ -9,8 +9,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import auth, db, email_delivery
-from tests.test_core import _authenticate, _make_user
-from tests.test_v5_identity import _invite, _mail_setup, _secret
+from tests.test_core import _make_user as _core_make_user
+from tests.test_v5_identity import _authenticate
+from tests.legacy_identity_helpers import BRAND as LEGACY_BRAND, make_legacy_user as _make_user
+from tests.test_v5_identity import _legacy_invite as _invite, _legacy_mail_setup as _mail_setup, _secret
 
 
 @pytest.mark.parametrize('phone',[
@@ -28,7 +30,7 @@ def test_phone_username_rejects_ambiguous_text(phone):
 
 
 def _staff(role='driver',phone='+966507778899',email='driver@fixture.invalid',branches=None):
-    user=_make_user(role,branches=branches or ['kps-branch-1','kps-branch-5'],
+    user=_make_user(role,branches=branches or ['legacy-security-branch-1','legacy-security-branch-5'],
                     username='fixture-legacy-owner' if role=='owner' else None,
                     password='Preserved!OwnerPassword1' if role=='owner' else None)
     with db.tx() as conn:
@@ -36,7 +38,7 @@ def _staff(role='driver',phone='+966507778899',email='driver@fixture.invalid',br
 
 
 def _request(client,phone='0507778899'):
-    result=client.post('/api/identity/staff/code/request',json={'phone':phone})
+    result=client.post('/api/identity/staff/code/request',json={'brand_id':LEGACY_BRAND,'phone':phone})
     assert result.status_code==200,result.text
     return result.json()['challenge_id']
 
@@ -59,12 +61,12 @@ class TestFinalStaffIdentity:
     def test_code_login_uses_registered_email_and_never_accepts_alternate_recipient(self,client,monkeypatch):
         _mail_setup(monkeypatch)
         driver=_staff(phone='٠٥٠٧٧٧٨٨٩٩')
-        request=client.post('/api/identity/staff/code/request',json={'phone':'00966507778899'})
-        unknown=client.post('/api/identity/staff/code/request',json={'phone':'0500000001'})
+        request=client.post('/api/identity/staff/code/request',json={'brand_id':LEGACY_BRAND,'phone':'00966507778899'})
+        unknown=client.post('/api/identity/staff/code/request',json={'brand_id':LEGACY_BRAND,'phone':'0500000001'})
         assert request.status_code==unknown.status_code==200
         assert set(request.json())==set(unknown.json())=={'accepted','challenge_id','expires_in','code_length'}
         assert request.json()['code_length']==6 and '@' not in request.text and driver['email'] not in request.text
-        assert client.post('/api/identity/staff/code/request',json={'phone':'0507778899','email':'attacker@fixture.invalid'}).status_code==422
+        assert client.post('/api/identity/staff/code/request',json={'brand_id':LEGACY_BRAND,'phone':'0507778899','email':'attacker@fixture.invalid'}).status_code==422
         challenge=request.json()['challenge_id']
         code=_code(challenge)
         with db.tx() as conn:
@@ -85,7 +87,7 @@ class TestFinalStaffIdentity:
 
     def test_activation_code_reuses_one_driver_with_multi_branch_scope_and_inviter(self,client,monkeypatch):
         _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        manager=_make_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
         invitation=_invite(client).json()
         challenge=invitation['challenge_id']
@@ -93,7 +95,7 @@ class TestFinalStaffIdentity:
         assert result.status_code==200,result.text
         user=result.json()['user']
         assert user['id']==invitation['user']['id'] and user['active']
-        assert user['branch_ids']==['kps-branch-1','kps-branch-5']
+        assert user['branch_ids']==['legacy-security-branch-1','legacy-security-branch-5']
         assert user['email_verified_at'] and user['phone_verified_at'] is None
         with db.tx() as conn:
             assert conn.execute("SELECT count(*) n FROM users WHERE role='driver'").fetchone()['n']==1
@@ -127,11 +129,11 @@ class TestFinalStaffIdentity:
         assert _verify(client,second).status_code==400
         _request(client,'00966507778899')
         db.migrate()
-        assert client.post('/api/identity/staff/code/request',json={'phone':'+966507778899'}).status_code==429
+        assert client.post('/api/identity/staff/code/request',json={'brand_id':LEGACY_BRAND,'phone':'+966507778899'}).status_code==429
 
     @pytest.mark.parametrize('mutation',[
         "active=false","invitation_status='paused'","email='other@fixture.invalid'",
-        "branch_ids='[\"kps-branch-7\"]'::jsonb","role='owner'","phone='+966500000009'",
+        "branch_ids='[\"legacy-security-branch-7\"]'::jsonb","role='owner'","phone='+966500000009'",
     ])
     def test_code_rechecks_current_account_and_original_grant(self,client,monkeypatch,mutation):
         _mail_setup(monkeypatch)
@@ -143,15 +145,15 @@ class TestFinalStaffIdentity:
         assert result.status_code==400 and result.json()['detail']['code']=='STAFF_CODE_INVALID'
         with db.tx() as conn:assert conn.execute('SELECT count(*) n FROM sessions').fetchone()['n']==0
 
-    @pytest.mark.parametrize('mutation',["active=false","branch_ids='[\"kps-branch-1\"]'::jsonb","role='branch_manager'"])
+    @pytest.mark.parametrize('mutation',["active=false","role='delivery_manager'","role='branch_manager'"])
     def test_pending_driver_cannot_activate_after_inviter_loses_authority(self,client,monkeypatch,mutation):
         _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        manager=_make_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
         invited=_invite(client).json()
         with db.tx() as conn:conn.execute('UPDATE users SET '+mutation+' WHERE id=%s',(manager['id'],))
         assert _verify(client,invited['challenge_id']).status_code==400
-        assert client.post('/api/identity/staff/code/request',json={'phone':'0507778899'}).status_code==200
+        assert client.post('/api/identity/staff/code/request',json={'brand_id':LEGACY_BRAND,'phone':'0507778899'}).status_code==200
         with db.tx() as conn:
             assert not conn.execute('SELECT active FROM users WHERE id=%s',(invited['user']['id'],)).fetchone()['active']
             assert conn.execute('SELECT count(*) n FROM identity_tokens WHERE user_id=%s',(invited['user']['id'],)).fetchone()['n']==1
@@ -161,16 +163,16 @@ class TestFinalStaffIdentity:
         _mail_setup(monkeypatch)
         _staff()
         challenge=_request(client)
-        with db.tx() as conn:conn.execute("UPDATE identity_channels SET state=%s,enabled=false WHERE brand_id='kps' AND channel='email'",(channel_state,))
+        with db.tx() as conn:conn.execute("UPDATE identity_channels SET state=%s,enabled=false WHERE brand_id='legacy-security-fixture' AND channel='email'",(channel_state,))
         assert _verify(client,challenge).status_code==400
-        assert client.post('/api/identity/staff/code/request',json={'phone':'0507778899'}).status_code==503
+        assert client.post('/api/identity/staff/code/request',json={'brand_id':LEGACY_BRAND,'phone':'0507778899'}).status_code==503
         def blocked_send(row):
             pytest.fail('A disabled active/paused email channel must not dispatch an existing queued code.')
         monkeypatch.setattr(email_delivery,'_send',blocked_send)
         assert email_delivery.dispatch_once()['attempted']==0
         with db.tx() as conn:
-            conn.execute("UPDATE identity_channels SET state='testing' WHERE brand_id='kps' AND channel='email'")
-            conn.execute("UPDATE brands SET active=false WHERE id='kps'")
+            conn.execute("UPDATE identity_channels SET state='testing' WHERE brand_id='legacy-security-fixture' AND channel='email'")
+            conn.execute("UPDATE brands SET active=false WHERE id='legacy-security-fixture'")
         assert _verify(client,challenge).status_code==400
 
     def test_duplicate_legacy_phone_fails_closed_and_new_invitation_rejects_duplicate(self,client,monkeypatch):
@@ -211,7 +213,7 @@ class TestFinalStaffIdentity:
         owner=_make_user('owner',username='legacy-owner',password='Preserved!OwnerPassword1')
         _,csrf=_authenticate(client,owner)
         saved_cookies=dict(client.cookies)
-        link=client.post('/api/identity/email/request',json={'email':'original@fixture.invalid','purpose':'owner_link'}).json()
+        link=client.post('/api/identity/email/request',json={'brand_id':LEGACY_BRAND,'email':'original@fixture.invalid','purpose':'owner_link'}).json()
         body={'challenge_id':link['challenge_id'],'token':_secret(link['challenge_id']),'phone':'٠٥٠٧٧٧٨٨٩٩'}
         client.cookies.clear()
         assert client.post('/api/identity/email/verify',json=body).status_code==403
@@ -227,9 +229,9 @@ class TestFinalStaffIdentity:
 
     def test_customer_email_link_remains_session_bound_and_has_no_staff_code(self,client,monkeypatch):
         _mail_setup(monkeypatch)
-        guest=client.post('/api/identity/guest',json={'display_name':'ضيف','phone':'0507778899'}).json()
+        guest=client.post('/api/identity/guest',json={'brand_id':LEGACY_BRAND,'display_name':'ضيف','phone':'0507778899'}).json()
         client.headers['X-CSRF-Token']=guest['csrf_token']
-        linked=client.post('/api/identity/email/request',json={'email':'guest@fixture.invalid','purpose':'customer_link'}).json()
+        linked=client.post('/api/identity/email/request',json={'brand_id':LEGACY_BRAND,'email':'guest@fixture.invalid','purpose':'customer_link'}).json()
         assert _verify(client,linked['challenge_id'],'123456').status_code==400
         result=client.post('/api/identity/email/verify',json={'challenge_id':linked['challenge_id'],'token':_secret(linked['challenge_id'])})
         assert result.status_code==200 and result.json()['user']['id']==guest['user']['id']
@@ -249,3 +251,18 @@ class TestFinalStaffIdentity:
         with ThreadPoolExecutor(max_workers=2) as pool:
             assert sorted(pool.map(consume,range(2)))==[200,400]
         with db.tx() as conn:assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(driver['id'],)).fetchone()['n']==1
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('brand',['kps',LEGACY_BRAND])
+def test_delivery_manager_cannot_manage_employee_identity(client,brand):
+    make_user = _core_make_user if brand == 'kps' else _make_user
+    branches = ['kps-branch-1','kps-branch-5'] if brand == 'kps' else ['legacy-security-branch-1','legacy-security-branch-5']
+    manager=make_user('delivery_manager',branches=branches)
+    driver=make_user('driver',branches=branches[:1])
+    _authenticate(client,manager)
+    assert _invite(client).status_code==403
+    assert client.get('/api/identity/staff').status_code==403
+    assert client.patch('/api/identity/staff/'+driver['id'],json={'display_name':'Forbidden change'}).status_code==403
+    assert client.post('/api/identity/staff/'+driver['id']+'/resend').status_code==403
+    assert client.post('/api/identity/staff/'+driver['id']+'/revoke-invitation').status_code==403

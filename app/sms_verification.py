@@ -11,9 +11,16 @@ def configured():
     return bool(re.fullmatch(r'tk_(?:live|test)_[A-Za-z0-9_-]+', os.getenv('TAWKED_API_KEY', '')))
 
 
+def _failure(reason, code='OTP_PROVIDER_FAILURE', message='تعذر الاتصال بمزود التحقق. حاول لاحقًا.'):
+    error = db.error(503, code, message)
+    # Internal metadata only; HTTPException.detail remains unchanged.
+    error.sms_failure_reason = reason
+    return error
+
+
 def _call(path, payload, *, idempotency_key=None):
     if not configured():
-        raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
+        raise _failure('provider_unconfigured', 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
     headers = {'Authorization': 'Bearer ' + os.environ['TAWKED_API_KEY']}
     if idempotency_key:
         headers['Idempotency-Key'] = idempotency_key
@@ -21,14 +28,15 @@ def _call(path, payload, *, idempotency_key=None):
         with httpx.Client(timeout=12, follow_redirects=False) as client:
             response = client.post('https://tawked.com/v1/verify/' + path, json=payload, headers=headers)
         if response.status_code not in {200, 201}:
-            raise ValueError('provider rejected request')
+            raise _failure('provider_rejected')
         result = response.json()
         if not isinstance(result, dict):
             raise ValueError('invalid response')
         return result
-    except (httpx.HTTPError, ValueError):
-        # Never expose provider bodies, bearer tokens, phone numbers or OTPs.
-        raise db.error(503, 'OTP_PROVIDER_FAILURE', 'تعذر الاتصال بمزود التحقق. حاول لاحقًا.') from None
+    except httpx.HTTPError:
+        raise _failure('provider_transport_error') from None
+    except ValueError:
+        raise _failure('provider_invalid_response') from None
 
 
 def start(phone, reference, lang='ar'):
@@ -43,7 +51,7 @@ def start(phone, reference, lang='ar'):
                 or expiry.tzinfo is None or expiry <= datetime.now(timezone.utc)):
             raise ValueError('invalid verification')
     except (KeyError, TypeError, ValueError, AttributeError):
-        raise db.error(503, 'OTP_NOT_SENT', 'لم يؤكد المزود إرسال رمز التحقق.') from None
+        raise _failure('provider_invalid_response', 'OTP_NOT_SENT', 'لم يؤكد المزود إرسال رمز التحقق.') from None
     return result['id'], expiry
 
 

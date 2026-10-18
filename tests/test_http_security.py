@@ -262,8 +262,61 @@ def test_non_http_is_passed_through_unchanged(monkeypatch):
 def test_checkout_router_precedence_is_disjoint_and_preserves_dependency_objects():
     from app import branch_payments, catalog, orders
     from app.main import app
+    from fastapi.routing import APIRoute
+
+    # The real composition inserts branch payments between orders and catalog.
+    # Compare router identities, not a stale count that misses inserted routers.
     routers = (orders.router, branch_payments.router, catalog.router, auth.router)
     namespaces = [{r.path.split('/')[2] for r in router.routes} for router in routers]
     assert all(not a & b for i, a in enumerate(namespaces) for b in namespaces[i + 1:])
     included = [r.original_router for r in app.routes if hasattr(r, 'original_router')]
-    assert included[:len(routers)] == list(routers)
+    assert included[:4] == list(routers)
+    assert all(included.count(router) == 1 for router in routers)
+
+    def calls(dependant):
+        return {dependant.call} | {call for dependency in dependant.dependencies
+                                  for call in calls(dependency)}
+
+    # Inclusion must retain actual endpoint and dependency objects. This guards
+    # against wrappers that accidentally lose authentication or role checks.
+    protected = (
+        (orders.router, '/api/orders', 'GET', auth.current_user),
+        (orders.router, '/api/orders', 'POST', auth.current_user),
+        (branch_payments.router, '/api/branch-payments/orders/{oid}/attempt', 'POST', auth.current_user),
+        (branch_payments.router, '/api/branch-payments/attempts/{aid}/reconcile', 'POST', auth.current_user),
+        (auth.router, '/api/auth/logout', 'POST', auth.current_user),
+        (auth.router, '/api/identity/staff/invitations', 'POST', auth.current_user),
+    )
+    for router, path, method, required in protected:
+        source = next(route for route in router.routes
+                      if isinstance(route, APIRoute) and route.path == path and method in route.methods)
+        composed = next(item.original_router for item in app.routes
+                        if getattr(item, 'original_router', None) is router)
+        target = next(route for route in composed.routes
+                      if isinstance(route, APIRoute) and route.path == path and method in route.methods)
+        assert target is source
+        assert target.endpoint is source.endpoint
+        assert target.dependant is source.dependant
+        assert required in calls(target.dependant)
+        if path.endswith('/invitations') or (router in (orders.router, branch_payments.router) and method == 'POST'):
+            assert target.dependant.dependencies[0].call is not auth.current_user
+            assert auth.current_user in calls(target.dependant.dependencies[0])
+
+    role_contracts = (
+        (orders.router, '/api/orders', {'customer'}),
+        (branch_payments.router, '/api/branch-payments/orders/{oid}/attempt', {'customer'}),
+        (branch_payments.router, '/api/branch-payments/attempts/{aid}/reconcile', {'customer','owner','branch_manager'}),
+        (auth.router, '/api/identity/staff/invitations', {'owner'}),
+    )
+    for router, path, permitted in role_contracts:
+        route = next(route for route in router.routes if route.path == path and 'POST' in route.methods)
+        guard = route.dependant.dependencies[0].call
+        for role in ('customer','owner','driver','delivery_manager','branch_manager'):
+            principal = {'role':role}
+            if role in permitted:
+                assert asyncio.run(guard(user=principal)) is principal
+            else:
+                with pytest.raises(HTTPException) as denied:
+                    asyncio.run(guard(user=principal))
+                assert denied.value.status_code == 403
+                assert denied.value.detail['code'] == 'ROLE_FORBIDDEN'

@@ -482,7 +482,7 @@ def report_list(offset:int=0,user=Depends(auth.current_user)):
     with db.tx() as c:
         clause='brand_id=%s' if user['role']=='owner' else "brand_id=%s AND (user_id=%s OR snapshot->>'manager_user_id'=%s)"
         p=[user['brand_id']] if user['role']=='owner' else [user['brand_id'],user['id'],user['id'] if user['role']=='delivery_manager' else '']
-        rows=c.execute('SELECT id,shift_id,kind,brand_id,branch_ids,user_id,version,pdf_status,pdf_error,created_at,(SELECT shift_no FROM shifts WHERE shifts.id=closure_reports.shift_id) shift_no FROM closure_reports WHERE '+clause+' ORDER BY created_at DESC LIMIT 50 OFFSET %s',[*p,offset]).fetchall()
+        rows=c.execute("SELECT id,shift_id,kind,brand_id,branch_ids,user_id,version,pdf_status,pdf_error,created_at,snapshot->'display_users'->>(snapshot->'shift'->>'user_id') driver_name,coalesce(snapshot->'shift'->>'delivery_operational_date',snapshot->>'operational_date') operational_date,(SELECT shift_no FROM shifts WHERE shifts.id=closure_reports.shift_id) shift_no FROM closure_reports WHERE "+clause+' ORDER BY created_at DESC LIMIT 50 OFFSET %s',[*p,offset]).fetchall()
         if user['role']!='owner':rows=[r for r in rows if set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
         return safe({'reports':rows,'offset':offset,'limit':50})
 
@@ -580,8 +580,9 @@ def v5_tables(snap,view='compact'):
         if not rows and not total:return
         tables.append({'key':key,'title':title,'columns':columns,'rows':rows,'total':total})
     table('shift','الشفت والاعتماد',['البيان','القيمة'],[
-        ['صاحب الشفت',name(shift.get('user_id'))],['التاريخ التشغيلي',snap.get('operational_date','غير مسجل')],
-        ['الفترة - وقت الرياض',v5_stamp(shift.get('opened_at'))+' ← '+v5_stamp(shift.get('closed_at'))],
+        ['تقفيلة السائق' if shift.get('kind')=='driver' else 'صاحب الشفت',name(shift.get('user_id'))],['يوم التشغيل',shift.get('delivery_operational_date') or snap.get('operational_date','غير مسجل')],
+        ['بداية الدوام - الرياض',v5_stamp(shift.get('opened_at'))],
+        ['نهاية الدوام - الرياض',v5_stamp((shift.get('vehicle_log') or {}).get('end',{}).get('recorded_at') or shift.get('submitted_at')) if shift.get('kind')=='driver' else v5_stamp(shift.get('closed_at'))],
         ['الفروع', ' / '.join(branch(bid) for bid in shift.get('branch_ids',[])) or 'لا توجد'],
         ['مرجع الشفت / حالة الاعتماد',(snap.get('closure_label') or display_shift_label(shift))+' / '+label(shift.get('status'))],
         ['المعد / المعتمد',name(snap.get('prepared_by'))+' / '+name(snap.get('approved_by'))],
@@ -664,7 +665,10 @@ def v5_tables(snap,view='compact'):
             ['إجمالي التعبئة (لتر)',vehicle['fuel_liters']],['عدد التعبئات',vehicle['refuel_count']]])
         status=lambda v:'سليم' if v=='ok' else 'يحتاج متابعة' if v=='issue' else 'غير مسجل'
         table('inspections','الفحص اليومي للمركبة',['البند','بداية الشفت','نهاية الشفت'],[[label,status(begin.get('checks',{}).get(key)),status(end.get('checks',{}).get(key))] for key,label in CHECKS.items()]+[['ملاحظات',begin.get('notes',''),end.get('notes','')]])
-        table('refuels','سجل تعبئة البنزين',['الوقت - الرياض','لتر','العداد (كم)','ملاحظات'],[[v5_stamp(r['recorded_at']),r['liters'],r['odometer_km'],r.get('notes','')] for r in log.get('refuels',[])])
+        parts=[*log.get('previous_segments',[]),log]
+        if log.get('previous_segments'):
+            table('vehicle-handovers','المركبات خلال الشفت',['المركبة','عداد الاستلام','عداد التسليم','بنزين الاستلام %','بنزين التسليم %','سبب التبديل'],[[(part.get('vehicle') or {}).get('plate',''),part.get('start',{}).get('odometer_km'),part.get('end',{}).get('odometer_km'),part.get('start',{}).get('fuel_percent'),part.get('end',{}).get('fuel_percent'),part.get('handover',{}).get('reason','')] for part in parts])
+        table('refuels','سجل تعبئة البنزين',['الوقت - الرياض','المركبة','لتر','العداد (كم)','ملاحظات'],[[v5_stamp(r['recorded_at']),part.get('vehicle',{}).get('plate',''),r['liters'],r['odometer_km'],r.get('notes','')] for part in parts for r in part.get('refuels',[])])
     if snap.get('support_tickets'):
         from .order_support import CATEGORIES,STATES
         table('support-tickets','تذاكر المتابعة والمشكلات',['التذكرة','الطلب','الفرع','التصنيف','الحالة','الملاحظة / الحل'],[[t['reference'],t['order_reference'],branch(t['branch_id']),CATEGORIES.get(t['category'],t['category']),STATES.get(t['status'],t['status']),t['note']+' / '+t.get('resolution','')] for t in snap['support_tickets']])
@@ -885,6 +889,11 @@ def make_v5_pdf(snap,view='compact',part='all'):
         field_table=view=='compact' and table['columns']==['البيان','القيمة']
         if field_table and len(table['rows'])>1:
             source=table['rows']
+            if table['key']=='shift':
+                # Keep both explicitly labelled times in one compact PDF field;
+                # HTML keeps separate rows. Do not shrink text or remove data.
+                source=[*source[:2],['بداية / نهاية الدوام - الرياض',
+                    source[2][1]+' ← '+source[3][1]],*source[4:]]
             table={**table,'columns':['البيان','القيمة','البيان','القيمة'],
                    'rows':[source[i]+(source[i+1] if i+1<len(source) else ['','']) for i in range(0,len(source),2)]}
         # PDF rightmost column is the first semantic column, matching the RTL HTML.

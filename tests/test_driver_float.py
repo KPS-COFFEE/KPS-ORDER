@@ -6,7 +6,7 @@ from psycopg import sql
 import pytest
 from app import db
 from app.exports import build_archive, restore_archive
-from test_operations import ops, delivered
+from test_operations import ops, delivered, begin_driver_closure
 
 pytestmark = pytest.mark.postgres
 
@@ -23,7 +23,7 @@ def approve_float(post, amount=20000, base=None):
 
 
 def submit(post, driver, manager, counted, retained):
-    post('driver','/api/shifts/'+driver+'/closing')
+    begin_driver_closure(post,driver)
     return post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':counted,'handover_halalas':counted-retained,'retained_halalas':retained,'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST-RECEIPT'}})
 
 

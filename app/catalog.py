@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import asyncio
 import hashlib
 import json
 import re
@@ -12,7 +13,8 @@ from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, parse_qs, urlencode, unquote, urljoin
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from .responses import DatabaseJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
@@ -925,12 +927,53 @@ class MapURLBody(BaseModel):
 
 
 @router.post('/location/parse-map-url')
+async def parse_map_url_http(body: MapURLBody, request: Request, response: Response):
+    from . import map_resolution
+    value = safe_map_url(body.url)
+    if not value:
+        raise db.error(422, 'MAP_URL_NOT_ALLOWED', 'اختر دبوسًا أو رابط Google Maps معتمدًا.')
+    if urlsplit(value).hostname not in map_resolution.SHORT_HOSTS:
+        return _parse_map_pin(value)
+    admission = await run_in_threadpool(map_resolution.admit, value, request.cookies.get(map_resolution.COOKIE))
+    result = None
+    try:
+        if admission.get('error'):
+            raise admission['error']
+        if 'result' in admission:
+            output = JSONResponse(admission['result'])
+        else:
+            result = _parse_map_pin(await map_resolution.resolve_short_map_url(value))
+            output = JSONResponse(result)
+    except HTTPException as error:
+        # Expected errors must retain the anonymous identity too. Otherwise a
+        # failed link would bootstrap a new per-browser rate bucket each time.
+        output = JSONResponse({'detail': error.detail}, status_code=error.status_code, headers=error.headers)
+    finally:
+        # Cancellation must not strand a live worker's lease. The short cleanup
+        # task remains scheduled even if the HTTP task is cancelled a second time.
+        cleanup = asyncio.create_task(run_in_threadpool(map_resolution.finish, admission, result))
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            await asyncio.shield(cleanup)
+            raise
+    output.set_cookie(map_resolution.COOKIE, admission['cookie'], max_age=86400,
+                      httponly=True, secure=auth.secure_cookie(), samesite='strict', path='/api/location')
+    output.headers['Cache-Control'] = 'no-store'
+    return output
+
+
 def parse_map_url(body: MapURLBody):
+    """Compatibility parser for source-level callers; HTTP uses guarded async route."""
     value = safe_map_url(body.url)
     if not value:
         raise db.error(422, 'MAP_URL_NOT_ALLOWED', 'اختر دبوسًا أو رابط Google Maps معتمدًا.')
     if urlsplit(value).hostname in {'maps.app.goo.gl', 'goo.gl'}:
         value = resolve_short_map_url(value)
+    return _parse_map_pin(value)
+
+
+def _parse_map_pin(value):
     parsed = urlsplit(value)
     query = parse_qs(parsed.query)
     candidate = (query.get('destination') or query.get('query') or query.get('q') or [None])[0]

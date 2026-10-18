@@ -4,6 +4,7 @@
 !Dockerfile
 !.dockerignore
 !requirements.txt
+!requirements.lock
 !app/
 !app/**
 !migrations/
@@ -30,3 +31,11 @@
 # generated archives remain excluded; the exception must follow *backup*.
 !tools/
 !tools/portable_backup.py
+
+# Runtime bridge is an explicit Dockerfile COPY input.
+!tools/windows-print-bridge/
+!tools/windows-print-bridge/**
+
+# Build-only rootfs packager; not copied into the runtime.
+!tools/security_runtime_root.py
+!tools/container_entrypoint.py

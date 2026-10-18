@@ -85,3 +85,43 @@ def test_fawzi_vehicle_history_report_summary_exports_correction(live_app,chromi
         _capture(page,'fleet_audit_'+language)
         assert errors==[]
     finally:context.close()
+
+@pytest.mark.parametrize('language',['ar','en'])
+def test_fawzi_self_service_create_and_handover(live_app,chromium_browser,language):
+    from playwright.sync_api import expect
+    from app.shift_vehicle import CHECKS
+    admin=_staff('admin');driver=_staff('driver')
+    with db.tx() as c:
+        c.execute('UPDATE users SET permissions=%s WHERE id=%s',(db.json(['vehicle_maintenance_manage']),admin['id']))
+        c.execute('UPDATE users SET vehicle=%s WHERE id=%s',(db.json({'plate':'TEST OLD','type':'Test old'}),driver['id']))
+        seed(c,'browser-handover','TEST OLD',17,driver=driver['id'],brand='kps',bids=['kps-branch-1'],state='open',km=0,liters=0)
+    context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,admin)
+    try:
+        page.goto(live_app+'/ops')
+        if language=='en':page.get_by_role('button',name='English',exact=True).click()
+        page.locator('[data-page=fleet]').click()
+        page.locator('[data-fleet-create]').click()
+        form=page.locator('#modal form')
+        form.locator('[name=plate]').fill('ABC 1234');form.locator('[name=type]').fill('TEST New Car')
+        form.locator('[name=odometer_km]').fill('5000');form.locator('[name=branch_id]').select_option('kps-branch-1')
+        form.locator('button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        expect(page.locator('#content')).to_contain_text('TEST New Car')
+        page.locator('[data-fleet-manage]').click()
+        form=page.locator('#modal form');form.locator('[name=action]').select_option('handover')
+        form.locator('[name=driver_id]').select_option(driver['id'])
+        for side,km in [('outgoing','1020'),('incoming','5000')]:
+            form.locator('[name='+side+'_km]').fill(km)
+            form.locator('[name='+side+'_fuel]').fill('100')
+            for key in CHECKS:form.locator('[name='+side+'_'+key+']').select_option('ok')
+        form.locator('[name=reason]').fill('TEST ONLY mid-shift replacement')
+        _capture(page,'TEST_ONLY_fawzi_handover_'+language)
+        form.locator('button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        expect(page.locator('[data-fleet-row]')).to_have_count(1)
+        with db.tx() as c:
+            s=c.execute("SELECT * FROM shifts WHERE id='browser-handover'").fetchone()
+            assert s['status']=='open' and len(s['vehicle_log']['previous_segments'])==1
+            assert s['vehicle_log']['start']['odometer_km']==5000
+        assert errors==[]
+    finally:context.close()

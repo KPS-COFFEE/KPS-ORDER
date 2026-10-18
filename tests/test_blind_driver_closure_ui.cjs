@@ -1,12 +1,13 @@
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync('public/ops.js','utf8');
 const floatHelpers=source.slice(source.indexOf('  function fixedFloatMarkup('),source.indexOf('  async function floatRegister('));
-const helper=floatHelpers+source.slice(source.indexOf('  function terminalComparison('),source.indexOf('  async function shiftDetail('));
+const identityHelpers=source.slice(source.indexOf('  function driverClosureStatus('),source.indexOf('  function orderLabel('));
+const helper=identityHelpers+floatHelpers+source.slice(source.indexOf('  function terminalComparison('),source.indexOf('  async function shiftDetail('));
 (async()=>{
  for(const lang of ['ar','en']) for(const float of [0,20000,80000]){
   let markup='',submit,sent;const elements=new Map();
   const element=selector=>{if(!elements.has(selector))elements.set(selector,{value:'0',textContent:'',addEventListener(){}});return elements.get(selector)};
-  const ctx={state:{user:{id:'driver',role:'driver'}},tr:(ar,en)=>lang==='ar'?ar:en,esc:String,num:String,money:String,shiftLabel:()=> 'D1',statusName:String,
+  const ctx={state:{user:{id:'driver',role:'driver'}},tr:(ar,en)=>lang==='ar'?ar:en,esc:String,num:String,money:String,datetime:String,dataItem:(k,v)=>`${k}: ${v}`,shiftLabel:()=> 'D1',statusName:String,
    api:async()=>({draft:null}),people:async()=>({closure_manager_shifts:[{id:'m',user_id:'manager',display_name:'Manager'}]}),
    notice:String,amountField:(label,name)=>`<label>${label}<input name="${name}"></label>`,inspectionFields:()=>'<section>Vehicle inspection</section>',inspectionValue:()=>({odometer_km:100}),
    check:(label,name)=>`<input type="checkbox" name="${name}">${label}`,formEnd:()=>'<p class="form-error"></p><button type="submit">Submit</button>',

@@ -53,6 +53,9 @@ jobs:
           tests/test_operations.py tests/test_smart_dispatch.py tests/test_fiscal.py
           tests/test_invoice_profiles.py tests/test_split_payment.py
           tests/test_customer_crm.py tests/test_employee_permissions.py
+          tests/test_context_cookie_isolation.py tests/test_map_resolution_security.py
+          tests/test_driver_checks.py tests/test_driver_prelaunch_guards_unit.py
+
           --junitxml=test-results/enbishan/kps-regression.xml
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}

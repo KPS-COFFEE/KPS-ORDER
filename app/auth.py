@@ -90,8 +90,9 @@ def verify_password(password: str, encoded: str | None) -> bool:
         return False
 
 
-def public_user(user: dict) -> dict:
+def public_user(user: dict, conn=None) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials')}
+    output['employee_sms_email_retired'] = staff_email_retired(user.get('brand_id','kps'), conn=conn)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
     if 'operations_brands' in user:
@@ -117,8 +118,43 @@ def check_origin(request: Request):
         raise db.error(403, 'ORIGIN_REJECTED', 'مصدر الطلب غير مسموح.')
 
 
+def context_cookies_enabled(conn=None):
+    from . import sms_rollout
+    return sms_rollout.context_cookies_enabled(conn)
+
+
+def session_context(request):
+    """A UI context selects a credential; it never grants a role or OTP purpose."""
+    path=request.url.path
+    context=request.headers.get('x-kps-context')
+    if context is not None and context not in {'work','customer'}:
+        raise db.error(400,'SESSION_CONTEXT_INVALID','اختر سياق الدخول الصحيح. / Invalid session context.')
+    if path.startswith('/api/fiscal/orders/') and path.endswith('/documents'):
+        return context
+    if (path.startswith(('/api/auth/otp/','/api/customer/profile','/api/customer/addresses')) or path in {'/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
+        return 'customer'
+    if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
+            '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
+            '/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
+            '/api/reports','/api/crm','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
+            '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
+            or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/customer-crm','/docs/metrics'))):
+        return 'work'
+    return context
+
+
+def context_cookie_names(context):
+    return ('kps_'+context+'_session','kps_'+context+'_csrf')
+
+
 def _find_session(conn, request: Request):
-    token = request.cookies.get(COOKIE)
+    context=session_context(request) if context_cookies_enabled(conn) else None
+    cookie_name,csrf_name=context_cookie_names(context) if context else (COOKIE,CSRF_COOKIE)
+    token=request.cookies.get(cookie_name)
+    # A context tombstone deliberately prevents reviving an older legacy login.
+    if not token and context:
+        cookie_name,csrf_name=COOKIE,CSRF_COOKIE
+        token=request.cookies.get(COOKIE)
     if not token or not re.fullmatch(r'[A-Za-z0-9_-]{40,100}', token):
         return None
     user = conn.execute("SELECT u.*,COALESCE(a.settings->'customer_phone_required',to_jsonb(u.brand_id='kps'))<>'false'::jsonb AS customer_phone_required,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
@@ -126,6 +162,10 @@ def _find_session(conn, request: Request):
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
     if user:
+        if context and (user['role']=='customer') != (context=='customer'):
+            return None
+        user['_session_cookie_name']=cookie_name
+        user['_csrf_cookie_name']=csrf_name
         from .multibrand import request_user
         user = request_user(conn, request, user)
         from .portals import enforce_role
@@ -196,9 +236,18 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
     return False
 
 
-def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False) -> dict:
+def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False, employee_sms_challenge=None) -> dict:
     from .storefront_scope import require_brand
     require_brand(user['brand_id'])
+    from .sms_rollout import work_sms_required
+    if user['role'] != 'customer' and work_sms_required(user['brand_id'], conn=conn):
+        # Only the canonical successful employee SMS verifier supplies this
+        # challenge. No HTTP request body can choose a proof or bypass policy.
+        proof = conn.execute("SELECT 1 FROM otp_challenges WHERE id=%s AND id LIKE 'employee_otp_%%' AND source_user_id=%s AND brand_id=%s AND phone=normalized_identity_phone(%s) AND source_session_id IS NULL AND delivery_channel='sms' AND provider_name IN ('twilio_verify','tawked') AND verified_at>now()-interval '5 minutes' AND expires_at>now()", (employee_sms_challenge,user['id'],user['brand_id'],user.get('phone'))).fetchone() if employee_sms_challenge else None
+        if not proof:
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
+        # An ordinary work login must never double as sensitive owner proof.
+        owner_step_up = False
     from . import multibrand
     if multibrand.enabled() and user.get('role') != 'customer':
         selected = multibrand.operation_brand.get()
@@ -219,10 +268,11 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
                  'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END,CASE WHEN %s THEN now() ELSE NULL END)',
                  (db.new_id('session_'), token_hash(token), token_hash(csrf), user['id'], expiry,
                   bool(owner_step_up and user['role'] == 'owner'), bool(customer_verified and user['role'] == 'customer')))
-    response.set_cookie(COOKIE, token, max_age=hours * 3600, httponly=True, secure=secure_cookie(), samesite='strict', path='/')
-    response.set_cookie(CSRF_COOKIE, csrf, max_age=hours * 3600, httponly=False, secure=secure_cookie(), samesite='strict', path='/')
+    cookie_name,csrf_name=context_cookie_names('customer' if user['role']=='customer' else 'work') if context_cookies_enabled(conn) else (COOKIE,CSRF_COOKIE)
+    response.set_cookie(cookie_name, token, max_age=hours * 3600, httponly=True, secure=secure_cookie(), samesite='strict', path='/')
+    response.set_cookie(csrf_name, csrf, max_age=hours * 3600, httponly=False, secure=secure_cookie(), samesite='strict', path='/')
     db.audit(conn, user['id'], 'session.created', 'user', user['id'])
-    return {'user': public_user(user), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
+    return {'user': public_user(user, conn=conn), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
 
 
 @router.get('/session')
@@ -231,10 +281,18 @@ def session(request: Request, response: Response):
     with db.tx() as conn:
         user = _find_session(conn, request)
     if not user:
-        response.delete_cookie(COOKIE, path='/')
-        response.delete_cookie(CSRF_COOKIE, path='/')
+        context=session_context(request) if context_cookies_enabled() else None
+        if context:
+            cookie_name,csrf_name=context_cookie_names(context)
+            response.set_cookie(cookie_name,'logged_out',max_age=30*24*3600,httponly=True,secure=secure_cookie(),samesite='strict',path='/')
+            response.delete_cookie(csrf_name,path='/')
+        elif not context_cookies_enabled():
+            response.delete_cookie(COOKIE,path='/')
+            response.delete_cookie(CSRF_COOKIE,path='/')
         return {'user': None, 'csrf_token': None}
-    csrf = request.cookies.get(CSRF_COOKIE, '')
+    cookie_name=user.get('_session_cookie_name',COOKIE)
+    csrf_name=user.get('_csrf_cookie_name',CSRF_COOKIE)
+    csrf = request.cookies.get(csrf_name, '')
     if not csrf or not hmac.compare_digest(token_hash(csrf), user['csrf_hash']):
         # Do not reconstruct secret CSRF tokens from their hashes.
         return {'user': public_user(user), 'csrf_token': None, 'reauthentication_required': True}
@@ -252,9 +310,9 @@ def session(request: Request, response: Response):
                     (user['session_id'],user['customer_verified_at'])).fetchone()
             if upgraded:
                 remaining=max(1,int((upgraded['expires_at']-datetime.now(timezone.utc)).total_seconds()))
-                response.set_cookie(COOKIE,request.cookies[COOKIE],max_age=remaining,
+                response.set_cookie(cookie_name,request.cookies[cookie_name],max_age=remaining,
                                     httponly=True,secure=secure_cookie(),samesite='strict',path='/')
-                response.set_cookie(CSRF_COOKIE,csrf,max_age=remaining,
+                response.set_cookie(csrf_name,csrf,max_age=remaining,
                                     httponly=False,secure=secure_cookie(),samesite='strict',path='/')
     if user['role'] == 'customer' and user.get('identity_kind') == 'guest' and not user.get('customer_verified_at'):
         # Refresh only an already valid browser session, never by phone lookup.
@@ -265,9 +323,9 @@ def session(request: Request, response: Response):
                 "WHERE id=%s AND revoked_at IS NULL AND expires_at>now() RETURNING id",
                 (user['session_id'],)).fetchone()
         if renewed:
-            response.set_cookie(COOKIE, request.cookies[COOKIE], max_age=GUEST_SESSION_SECONDS,
+            response.set_cookie(cookie_name, request.cookies[cookie_name], max_age=GUEST_SESSION_SECONDS,
                                 httponly=True, secure=secure_cookie(), samesite='strict', path='/')
-            response.set_cookie(CSRF_COOKIE, csrf, max_age=GUEST_SESSION_SECONDS,
+            response.set_cookie(csrf_name, csrf, max_age=GUEST_SESSION_SECONDS,
                                 httponly=False, secure=secure_cookie(), samesite='strict', path='/')
     return {'user': public_user(user), 'csrf_token': csrf, 'customer_verified': bool(user.get('customer_verified_at') and user['customer_verified_at'] + timedelta(days=30) > datetime.now(timezone.utc))}
 
@@ -293,6 +351,8 @@ def login(body: LoginBody, request: Request, response: Response):
         valid = verify_password(body.password, user['password_hash'] if user else None)
         if not valid or not user:
             raise db.error(401, 'INVALID_CREDENTIALS', 'بيانات الدخول غير صحيحة.')
+        if staff_email_retired(user['brand_id'], conn=conn):
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
         from .portals import enforce_role
         enforce_role(request, user)
         return establish_session(conn, user, response)
@@ -303,8 +363,18 @@ def logout(request: Request, response: Response, user=Depends(current_user)):
     with db.tx() as conn:
         conn.execute('UPDATE sessions SET revoked_at=now() WHERE id=%s AND user_id=%s', (user['session_id'], user['id']))
         db.audit(conn, user['id'], 'session.revoked', 'user', user['id'])
-    response.delete_cookie(COOKIE, path='/')
-    response.delete_cookie(CSRF_COOKIE, path='/')
+    if context_cookies_enabled():
+        context='customer' if user['role']=='customer' else 'work'
+        cookie_name,csrf_name=context_cookie_names(context)
+        # Keep an expired context from falling back to a preserved legacy cookie.
+        response.set_cookie(cookie_name,'logged_out',max_age=30*24*3600,httponly=True,secure=secure_cookie(),samesite='strict',path='/')
+        response.delete_cookie(csrf_name,path='/')
+        if user.get('_session_cookie_name')==COOKIE:
+            response.delete_cookie(COOKIE,path='/')
+            response.delete_cookie(CSRF_COOKIE,path='/')
+    else:
+        response.delete_cookie(COOKIE,path='/')
+        response.delete_cookie(CSRF_COOKIE,path='/')
     return {'ok': True}
 
 
@@ -375,7 +445,13 @@ def _provider_ready(name):
 
 
 def _otp_test_access(conn, brand, channel, request):
-    if _channel(conn, brand, channel)['state'] == 'testing':
+    # Dedicated work routes let an owner certify delivery without borrowing a
+    # customer credential or ever enabling an active customer login flow.
+    owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
+    state = _channel(conn, brand, channel)['state']
+    if owner_probe and state != 'testing':
+        raise db.error(403, 'OTP_OWNER_TEST_ONLY', 'اختبار المالك متاح في وضع الاختبار فقط.')
+    if state == 'testing':
         user = _optional_identity(request, conn)
         if not user or user['role'] != 'owner' or user['brand_id'] != brand:
             raise db.error(403, 'OTP_OWNER_TEST_ONLY', 'اختبار الرسائل متاح للمالك فقط قبل الاعتماد.')
@@ -403,6 +479,7 @@ def _otp_channel_ready(conn, brand_id: str, channel: str):
         raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'تعذر إرسال الرمز حاليًا. حاول لاحقًا.')
 
 
+@router.post('/identity/owner/sms-channel-test/request')
 @router.post('/auth/otp/request')
 def request_otp(body: OTPRequestBody, request: Request):
     check_origin(request)
@@ -431,7 +508,8 @@ def request_otp(body: OTPRequestBody, request: Request):
         allowed = db.rate_limit(conn, 'otp-request-ip:' + ip, 10, 600) and allowed
     if not allowed:
         raise db.error(429, 'OTP_RATE_LIMIT', 'طلبات تحقق كثيرة. انتظر قبل المحاولة مجددًا.')
-    challenge_id = db.new_id('otp_')
+    owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
+    challenge_id = db.new_id('owner_probe_' if owner_probe else 'otp_')
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     if provider == 'tawked':
         reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
@@ -459,13 +537,17 @@ class OTPVerifyBody(BaseModel):
     display_name: str = Field(default='', max_length=100)
 
 
+@router.post('/identity/owner/sms-channel-test/verify')
 @router.post('/auth/otp/verify')
 def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     check_origin(request)
     # Employee SMS and customer SMS share storage, never proof purpose. Reject
     # before attempts/provider calls, independent of host or rollout settings.
-    if body.challenge_id.startswith('employee_otp_'):
+    if body.challenge_id.startswith(('employee_otp_', 'owner_sms_')):
         raise db.error(400,'OTP_PURPOSE_MISMATCH','طلب التحقق لا يخص تسجيل دخول العملاء.')
+    owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
+    if body.challenge_id.startswith('owner_probe_') != owner_probe:
+        raise db.error(400,'OTP_PURPOSE_MISMATCH','طلب التحقق لا يخص هذا المسار.')
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         allowed = db.rate_limit(conn, 'otp-verify-ip:' + ip, 20, 600)
@@ -811,6 +893,8 @@ def identity_mail_authorized(conn, mail):
     if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(row['brand_id'],)).fetchone():
         return False
     user=conn.execute('SELECT * FROM users WHERE id=%s',(row['user_id'],)).fetchone() if row['user_id'] else None
+    if staff_email_retired(row['brand_id'], conn=conn) and ((user and user['role'] != 'customer') or row['purpose'] in {'staff_login','invitation','add_owner','owner_link'}):
+        return False
     if row['purpose'] in {'staff_login','invitation','add_owner'}:
         return _staff_token_authorized(conn,row,user)
     if user and (not user['active'] or user['brand_id']!=row['brand_id']):
@@ -837,6 +921,10 @@ def identity_mail_authorized(conn, mail):
 
 def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,created_by=None):
     email=email_delivery.normalize_email(email)
+    if staff_email_retired(brand, conn=conn):
+        target = conn.execute('SELECT role FROM users WHERE id=%s',(user_id,)).fetchone() if user_id else None
+        if (target and target['role'] != 'customer') or purpose in {'staff_login','invitation','add_owner','owner_link'}:
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
     conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(brand+':email-token:'+email+':'+purpose,))
     identifier=db.new_id('email_')
     secret=secrets.token_urlsafe(32)
@@ -877,6 +965,12 @@ class EmailRequestBody(BaseModel):
     purpose:Literal['customer_link','email_login','staff_login','owner_link','recovery']='email_login'
 
 
+def staff_email_retired(brand='kps', conn=None):
+    # One server-side mandatory policy governs every work authentication path.
+    from . import sms_rollout
+    return sms_rollout.email_retired(brand, conn=conn)
+
+
 @router.post('/identity/email/request')
 def email_request(body:EmailRequestBody,request:Request):
     check_origin(request)
@@ -888,6 +982,8 @@ def email_request(body:EmailRequestBody,request:Request):
     if not allowed:
         raise db.error(429,'EMAIL_RATE_LIMIT','انتظر قبل إعادة طلب البريد.')
     identifier=db.new_id('email_')  # Same response for unknown/disabled accounts.
+    if staff_email_retired(body.brand_id) and body.purpose in {'staff_login','owner_link'}:
+        return {'accepted':True,'challenge_id':identifier,'expires_in':900}
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
             return {'accepted':True,'challenge_id':identifier,'expires_in':900}
@@ -906,6 +1002,8 @@ def email_request(body:EmailRequestBody,request:Request):
         else:
             account=conn.execute('SELECT * FROM users WHERE brand_id=%s AND lower(email)=%s AND active AND email_verified_at IS NOT NULL AND invitation_status=%s',(body.brand_id,email,'active')).fetchone()
             valid=account and (body.purpose=='recovery' or (body.purpose=='staff_login' and account['role']!='customer') or (body.purpose=='email_login' and account['role']=='customer'))
+            if staff_email_retired(body.brand_id) and account and account['role'] != 'customer':
+                valid=False
             if valid or (body.purpose=='email_login' and not conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s',(body.brand_id,email)).fetchone()):
                 identifier=_create_email_token(conn,brand=body.brand_id,email=email,purpose=body.purpose,user_id=account['id'] if valid else None)
     return {'accepted':True,'challenge_id':identifier,'expires_in':900}
@@ -927,7 +1025,8 @@ class StaffCodeRequestBody(BaseModel):
 
 @router.post('/identity/staff/code/request')
 def request_staff_code(body:StaffCodeRequestBody,request:Request):
-    if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true':
+    from .sms_rollout import employee_sms_enabled
+    if employee_sms_enabled(brand=body.brand_id,phone=normalize_phone(body.phone),request=request):
         from .employee_sms import EmployeeSMSRequest, request_sms
         return request_sms(EmployeeSMSRequest(**body.model_dump()),request)
     check_origin(request)
@@ -958,19 +1057,19 @@ def request_staff_code(body:StaffCodeRequestBody,request:Request):
 class StaffCodeVerifyBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     challenge_id:str=Field(min_length=5,max_length=80)
-    code:str=Field(min_length=6,max_length=12)
+    code:str=Field(min_length=4,max_length=12)
     display_name:str|None=Field(default=None,min_length=1,max_length=100)
 
 
 @router.post('/identity/staff/code/verify')
 def verify_staff_code(body:StaffCodeVerifyBody,request:Request,response:Response):
+    if body.challenge_id.startswith(('otp_', 'owner_sms_')):
+        raise db.error(400,'OTP_PURPOSE_MISMATCH','رمز التحقق غير مخصص لدخول الموظفين. / Code is not for employee sign-in.')
     if body.challenge_id.startswith('employee_otp_'):
-        if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') != 'true':
-            raise db.error(503,'EMPLOYEE_SMS_NOT_CERTIFIED','رسائل الموظفين غير معتمدة بعد. / Employee SMS is not certified yet.')
         from .employee_sms import EmployeeSMSVerify, verify_sms
         code=body.code.translate(IDENTITY_DIGITS).strip()
-        if not re.fullmatch(r'[0-9]{6}',code):
-            raise db.error(422,'STAFF_CODE_INVALID','أدخل رمز SMS من 6 أرقام. / Enter the six-digit SMS code.')
+        if not re.fullmatch(r'[0-9]{4}',code):
+            raise db.error(422,'STAFF_CODE_INVALID','أدخل رمز SMS من 4 أرقام. / Enter the four-digit SMS code.')
         return verify_sms(EmployeeSMSVerify(challenge_id=body.challenge_id,code=code),request,response)
     check_origin(request)
     code=body.code.translate(IDENTITY_DIGITS).strip()
@@ -980,6 +1079,8 @@ def verify_staff_code(body:StaffCodeVerifyBody,request:Request,response:Response
         challenge=conn.execute("UPDATE identity_tokens SET attempts=attempts+1 WHERE id=%s AND purpose IN ('staff_login','invitation','add_owner') AND code_hash IS NOT NULL AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() AND attempts<5 RETURNING *",(body.challenge_id,)).fetchone()
     if not allowed:
         raise db.error(429,'EMAIL_RATE_LIMIT','محاولات كثيرة. انتظر قليلًا.')
+    if challenge and staff_email_retired(challenge['brand_id']):
+        raise db.error(400,'STAFF_EMAIL_LOGIN_RETIRED','استخدم رمز SMS للدخول. / Use SMS to sign in.')
     if not re.fullmatch(r'[0-9]{6}',code):
         raise db.error(422,'STAFF_CODE_INVALID','أدخل كود البريد المكوّن من 6 أرقام.')
     if not challenge or not hmac.compare_digest(challenge['code_hash'],_staff_code_hash(body.challenge_id,code)):
@@ -1013,11 +1114,16 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         row=conn.execute('SELECT * FROM identity_tokens WHERE id=%s AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE',(challenge['id'],)).fetchone()
         if not row:
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط منتهي أو غير صالح أو مستخدم.')
+        user=conn.execute('SELECT * FROM users WHERE id=%s FOR UPDATE',(row['user_id'],)).fetchone() if row['user_id'] else None
+        if staff_email_retired(row['brand_id'], conn=conn) and ((user and user['role'] != 'customer')
+                                      or row['purpose'] in {'staff_login','invitation','add_owner','owner_link'}):
+            # Pending links cannot reactivate employees or grant owner step-up.
+            # Keep customer verification and operational correspondence intact.
+            raise db.error(400,'STAFF_EMAIL_LOGIN_RETIRED','استخدم رمز SMS للدخول. / Use SMS to sign in.')
         if row['session_id']:
             current=_optional_identity(request,conn)
             if not current or current['session_id']!=row['session_id'] or current['id']!=row['user_id']:
                 raise db.error(403,'LINK_SESSION_REQUIRED','افتح الرابط من جلسة الحساب الذي طلب ربط البريد.')
-        user=conn.execute('SELECT * FROM users WHERE id=%s FOR UPDATE',(row['user_id'],)).fetchone() if row['user_id'] else None
         invitation=row['purpose'] in {'invitation','add_owner'}
         if user and ((not user['active'] and not invitation) or user['brand_id']!=row['brand_id']):
             raise db.error(400,'EMAIL_TOKEN_INVALID','الرابط غير صالح.')
@@ -1075,6 +1181,14 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
 
 
 def require_owner_step_up(conn,user):
+    if staff_email_retired(user.get('brand_id','kps'), conn=conn):
+        # A timestamp created by a pre-cutover password/email proof is not SMS.
+        # Proof must be bound to this owner, this exact live session and the
+        # current registered mobile, with a distinct sensitive challenge.
+        proof = conn.execute("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id JOIN otp_challenges c ON c.source_session_id=s.id AND c.source_user_id=u.id AND c.brand_id=u.brand_id WHERE s.id=%s AND u.id=%s AND u.role='owner' AND u.active AND s.revoked_at IS NULL AND s.expires_at>now() AND s.step_up_at>now()-interval '10 minutes' AND c.id LIKE 'owner_sms_%%' AND c.phone=normalized_identity_phone(u.phone) AND c.delivery_channel='sms' AND c.provider_name IN ('twilio_verify','tawked') AND c.verified_at>now()-interval '10 minutes'", (user.get('session_id'),user['id'])).fetchone() if user['role']=='owner' and user.get('session_id') else None
+        if not proof:
+            raise db.error(403,'OWNER_STEP_UP_REQUIRED','أعد تحقق المالك برسالة SMS قبل الإجراء الحساس. / Verify an owner SMS code before the sensitive action.')
+        return
     if user['role']!='owner' or not user.get('session_id') or not conn.execute("SELECT 1 FROM sessions WHERE id=%s AND user_id=%s AND revoked_at IS NULL AND expires_at>now() AND step_up_at>now()-interval '10 minutes'",(user.get('session_id'),user['id'])).fetchone():
         raise db.error(403,'OWNER_STEP_UP_REQUIRED','أعد تحقق المالك قبل دعوة مالك أو مدير إضافي.')
 
@@ -1091,6 +1205,8 @@ def owner_step_up(body:StepUpBody,user=Depends(require_roles('owner'))):
     if not allowed:
         raise db.error(429,'STEP_UP_RATE_LIMIT','انتظر قبل إعادة التحقق.')
     with db.tx() as conn:
+        if staff_email_retired(user['brand_id'], conn=conn):
+            raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS للتحقق الحساس. / Use SMS for sensitive verification.')
         if not verify_password(body.password,user.get('password_hash')):
             raise db.error(401,'INVALID_CREDENTIALS','تعذر إعادة التحقق من الحساب.')
         conn.execute('UPDATE sessions SET step_up_at=now() WHERE id=%s AND revoked_at IS NULL',(user['session_id'],))
@@ -1113,6 +1229,15 @@ def _assert_staff_phone_available(conn,brand,phone,exclude=None):
     conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(brand+':staff-phone:'+phone,))
     if conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role<>'customer' AND normalized_identity_phone(phone)=%s AND (%s::text IS NULL OR id<>%s)",(brand,phone,exclude,exclude)).fetchone():
         raise db.error(409,'STAFF_IDENTITY_CONFLICT','رقم الجوال مسجل لحساب موظف آخر؛ لا يتم تكرار هوية الموظف.')
+
+
+def staff_sms_account_approved(row):
+    if not staff_email_retired(row.get('brand_id','kps')) or row.get('identity_kind') != 'staff_owner_approved' or row.get('invitation_status') not in {'active','paused'}:
+        return False
+    try:
+        return bool(row.get('phone') and normalize_phone(row['phone']))
+    except HTTPException:
+        return False
 
 
 def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
@@ -1152,7 +1277,7 @@ def staff_public(conn,row):
 class StaffInvitationBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     display_name:str=Field(min_length=1,max_length=100)
-    email:str=Field(min_length=3,max_length=254)
+    email:str|None=Field(default=None,min_length=3,max_length=254)
     phone:str=Field(min_length=8,max_length=30)
     branch_ids:list[str]=Field(default_factory=list,max_length=500)
     employee_ref:str|None=Field(default=None,max_length=80)
@@ -1215,7 +1340,10 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
         raise db.error(403,'STAFF_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الموظفين.')
     if permissions and body.role != 'admin':
         raise db.error(422, 'ADMIN_ROLE_REQUIRED', 'صلاحيات الإدارة مخصصة لدور أدمن فقط.')
-    email=email_delivery.normalize_email(body.email)
+    sms_approved=staff_email_retired(user['brand_id']) and not draft_only
+    if not body.email and not staff_email_retired(user['brand_id']):
+        raise db.error(422,'STAFF_EMAIL_REQUIRED','أدخل البريد الإلكتروني.')
+    email=email_delivery.normalize_email(body.email) if body.email else None
     phone=normalize_phone(body.phone)
     name=body.display_name.strip()
     if not name or '\x00' in name:
@@ -1224,29 +1352,31 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
         raise db.error(403,'DRIVER_ROLE_ONLY','مدير التوصيل يدعو سائقًا فقط.')
     vehicle=_vehicle(body.vehicle)
     channel=_channel(conn,user['brand_id'],'email')
-    ready=not draft_only and email_delivery.configuration()['configured'] and (
+    ready=not draft_only and not sms_approved and email_delivery.configuration()['configured'] and (
         channel['state']=='testing' or (channel['state']=='active' and channel['enabled']))
     scope=_staff_scope(conn,user,body.branch_ids)
     if body.role!='owner' and not scope:
         raise db.error(422,'BRANCH_SCOPE_REQUIRED','حدد فرعًا أو أكثر للموظف.')
-    if (body.role in {'owner','admin','delivery_manager'} or denials) and not draft_only:
+    if (sms_approved or body.role in {'owner','admin','delivery_manager'} or denials) and not draft_only:
         require_owner_step_up(conn,user)
     # Serialize identity conflicts without revealing the matched account's attributes.
-    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+email,))
+    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(user['brand_id']+':email:'+(email or ''),))
     if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(btrim(email))=%s',(user['brand_id'],email)).fetchone():
         raise db.error(409,'STAFF_IDENTITY_CONFLICT','تعذر إنشاء الدعوة. راجع البريد أو الدعوات المخولة.')
     _assert_staff_phone_available(conn,user['brand_id'],phone)
     identifier=db.new_id('staff_')
-    invitation_state='pending_email' if ready else 'draft'
+    invitation_state='active' if sms_approved else 'pending_email' if ready else 'draft'
     row=conn.execute("INSERT INTO users(id,display_name,email,phone,role,brand_id,branch_ids,active,identity_kind,invitation_status,employee_ref,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,false,'pending_email',%s,%s,%s) RETURNING *",(identifier,name,email,phone,body.role,user['brand_id'],db.json(scope),invitation_state,body.employee_ref,db.json(vehicle))).fetchone()
+    if sms_approved:
+        row=conn.execute("UPDATE users SET active=true,identity_kind='staff_owner_approved',invitation_status='active' WHERE id=%s RETURNING *",(identifier,)).fetchone()
     row=conn.execute('UPDATE users SET permissions=%s,permission_denials=%s WHERE id=%s RETURNING *',(db.json(permissions),db.json(denials),identifier)).fetchone()
     challenge=_create_email_token(conn,brand=user['brand_id'],email=email,purpose='add_owner' if body.role=='owner' else 'invitation',user_id=identifier,created_by=user['id']) if ready else None
     details={'role':body.role,'branch_ids':scope,'permissions':permissions,'permission_denials':denials}
     if draft_only:
         details['owner_decision']=maintenance_provenance
-    db.audit(conn,user['id'],'staff.invited' if ready else 'staff.draft.created','user',identifier,details)
+    db.audit(conn,user['id'],'staff.sms.owner_approved' if sms_approved else 'staff.invited' if ready else 'staff.draft.created','user',identifier,details)
     return {'user':staff_public(conn,row),'challenge_id':challenge,'invitation_status':invitation_state,
-            'delivery_status':'queued' if ready else 'draft_only' if draft_only else 'channel_unavailable'}
+            'delivery_status':'sms_on_demand' if sms_approved else 'queued' if ready else 'draft_only' if draft_only else 'channel_unavailable'}
 
 
 @router.get('/identity/staff')
@@ -1301,6 +1431,7 @@ class AdditionalOwnerBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     display_name:str=Field(min_length=1,max_length=100)
     username:str=Field(min_length=3,max_length=150)
+    phone:str|None=Field(default=None,min_length=8,max_length=30)
     password:str=Field(min_length=8,max_length=200,repr=False)
     password_confirmation:str=Field(min_length=8,max_length=200,repr=False)
     reason:str=Field(min_length=3,max_length=500)
@@ -1317,11 +1448,18 @@ def create_additional_password_owner(body:AdditionalOwnerBody,user=Depends(requi
             raise db.error(422,'OWNER_PROFILE_INVALID','أدخل الاسم واسم مستخدم صحيحًا وسبب الإضافة.')
         if body.password!=body.password_confirmation:
             raise db.error(422,'PASSWORD_CONFIRMATION','كلمتا المرور غير متطابقتين.')
+        phone=normalize_phone(body.phone) if body.phone else None
+        if staff_email_retired(user['brand_id'],conn=conn) and not phone:
+            raise db.error(422,'OWNER_PHONE_REQUIRED','أدخل جوال المالك الجديد للدخول برسالة SMS. / Enter the new owner mobile for SMS sign-in.')
+        if phone and not re.fullmatch(r'\+9665[0-9]{8}',phone):
+            raise db.error(422,'PHONE_INVALID','أدخل رقم جوال سعودي صحيحًا. / Enter a valid Saudi mobile.')
+        if phone:
+            _assert_staff_phone_available(conn,user['brand_id'],phone)
         conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('staff-username:'+username.casefold(),))
         if conn.execute('SELECT 1 FROM users WHERE lower(username)=lower(%s)',(username,)).fetchone():
             raise db.error(409,'USERNAME_UNAVAILABLE','اسم المستخدم مستخدم بالفعل؛ اختر اسمًا آخر. لم يتغير أي حساب.')
         identifier=db.new_id('owner_')
-        row=conn.execute("INSERT INTO users(id,username,display_name,password_hash,role,brand_id,active,invitation_status,identity_kind) VALUES(%s,%s,%s,%s,'owner',%s,true,'active','staff_password') RETURNING *",(identifier,username,name,hash_password(body.password,min_length=8),user['brand_id'])).fetchone()
+        row=conn.execute("INSERT INTO users(id,username,display_name,password_hash,role,brand_id,active,invitation_status,identity_kind,phone) VALUES(%s,%s,%s,%s,'owner',%s,true,'active','staff_password',%s) RETURNING *",(identifier,username,name,hash_password(body.password,min_length=8),user['brand_id'],phone)).fetchone()
         db.audit(conn,user['id'],'owner.password_account.created','user',identifier,{'reason':body.reason.strip(),'username':username,'role':'owner'})
         return {'user':public_user(row),'username':username}
 
@@ -1391,11 +1529,14 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
                 require_owner_step_up(conn,user)
         scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
         active=body.active if body.active is not None else row['active']
-        if role_changed and not row['email_verified_at']:
+        sms_approved=staff_sms_account_approved(row)
+        if active and not row['active'] and sms_approved:
+            require_owner_step_up(conn,user)
+        if role_changed and not row['email_verified_at'] and not sms_approved:
             active=False
         email=email_delivery.normalize_email(body.email) if body.email is not None else row['email']
         email_changed=email!=row['email']
-        if email_changed:
+        if email_changed and not staff_email_retired(row['brand_id']):
             if row['role']=='owner':
                 require_owner_step_up(conn,user)
             if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(row['id'],)).fetchone():
@@ -1407,20 +1548,24 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             active=False
         if active and (row['invitation_status'] not in {'active','paused'} or not row['email_verified_at']):
             # Legacy active staff remain during migration, but cannot be activated by bypassing proof.
-            if not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
+            existing_password_owner=(row['active'] and row['role']=='owner' and role=='owner'
+                                     and row['identity_kind']=='staff_password' and row['invitation_status']=='active')
+            if not sms_approved and not existing_password_owner and not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
                 raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
         ensure_safe_staff_scope_change(conn,row,scope,active)
         name=body.display_name.strip() if body.display_name is not None else row['display_name']
         if not name or '\x00' in name:
             raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')
         phone=normalize_phone(body.phone) if body.phone else row['phone']
+        if phone!=row['phone'] and row['role']=='owner':
+            require_owner_step_up(conn,user)
         if row['phone_verified_at'] and phone!=row['phone']:
             raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','رقم موثق يحتاج تحققًا مستقلًا لتغييره.')
         if phone and (body.phone is not None or email_changed):
             _assert_staff_phone_available(conn,user['brand_id'],normalize_phone(phone),identifier)
         vehicle=_vehicle(body.vehicle) if body.vehicle is not None else row['vehicle']
         status=row['invitation_status'] if active else 'paused' if row['invitation_status']=='active' else row['invitation_status']
-        if active and row['email_verified_at']:
+        if active and (row['email_verified_at'] or sms_approved):
             status='active'
         output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
         if body.permissions is not None or role_changed:
@@ -1431,9 +1576,11 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
                 _invalidate_staff_tokens(conn,identifier)
         if role_changed:
             output=conn.execute('UPDATE users SET role=%s WHERE id=%s RETURNING *',(role,identifier)).fetchone()
-            if not row['email_verified_at']:
+            if not row['email_verified_at'] and not sms_approved:
                 output=conn.execute("UPDATE users SET invitation_status='draft' WHERE id=%s RETURNING *",(identifier,)).fetchone()
-        if email_changed:
+        if email_changed and staff_email_retired(row['brand_id']):
+            output=conn.execute('UPDATE users SET email=%s,email_verified_at=NULL WHERE id=%s RETURNING *',(email,identifier)).fetchone()
+        elif email_changed:
             output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
         if role_changed or scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone'] or permissions!=(row.get('permissions') or []):
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))

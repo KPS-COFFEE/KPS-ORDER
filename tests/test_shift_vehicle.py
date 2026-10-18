@@ -2,7 +2,7 @@
 from uuid import uuid4
 import pytest
 from app import db, shift_vehicle
-from tests.test_operations import ops, delivered, close_driver
+from tests.test_operations import ops, delivered, close_driver, begin_driver_closure
 
 
 def inspection(km=1000,fuel=100):
@@ -26,13 +26,21 @@ def test_inspection_required_readings_refuel_replay_and_report(ops):
     post('driver2',path,{'liters':5,'odometer_km':1010},status=403)
     post('other',path,{'liters':5,'odometer_km':1010},status=404)
     delivered(post,order,driver)
-    post('driver','/api/shifts/'+driver+'/closing')
+    begin_driver_closure(post,driver)
     close={'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':1000,
            'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST-END'}}
     result=actor('driver').post('/api/shifts/'+driver+'/submit',json=close,headers={'Idempotency-Key':uuid4().hex})
     assert result.status_code==422
     post('driver','/api/shifts/'+driver+'/submit',{**close,'vehicle_inspection':inspection(1008)},status=422)
-    result=close_driver(post,driver,manager)
+    post('driver','/api/shifts/'+driver+'/submit',{**close,'vehicle_inspection':inspection(1025)})
+    with db.tx() as c:
+        transfers=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchall()
+        assert len(transfers)==1
+        transfer=transfers[0]['id']
+    post('driver','/api/custody/'+transfer+'/confirm',status=404)
+    post('manager','/api/shifts/'+driver+'/approve',status=409)
+    post('manager','/api/custody/'+transfer+'/confirm')
+    result=post('manager','/api/shifts/'+driver+'/approve',key='close-driver-key')
     detail=actor('driver').get('/api/shifts/'+driver).json()
     assert detail['vehicle_summary']=={'distance_km':25,'fuel_liters':'14.75','refuel_count':2}
     post('driver',path,{'liters':5,'odometer_km':1030},status=409)
@@ -55,14 +63,14 @@ def test_inspection_validation_and_legacy_shift_preservation(ops):
         with pytest.raises(ValueError):shift_vehicle.Inspection(**{**inspection(),**changed})
     with db.tx() as c:
         c.execute("UPDATE shifts SET vehicle_log='{}' WHERE id=%s",(driver,))
-    post('driver','/api/shifts/'+driver+'/closing')
+    begin_driver_closure(post,driver)
     post('driver','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':inspection(2000,100),'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'TEST-LEGACY'}})
     detail=actor('driver').get('/api/shifts/'+driver).json()
     assert detail['vehicle_summary']['distance_km'] is None
     assert 'start' not in detail['shift']['vehicle_log']
 
 import os
-from test_browser import _context, _owner_login, _staff, _capture, _acknowledge_driver_end, chromium_browser, live_app, synthetic_mail
+from test_browser import _context, _owner_login, _staff, _capture, _acknowledge_driver_end, _approve_driver_closure_from_browser, chromium_browser, live_app, synthetic_mail
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Real isolated Chromium only')
@@ -107,15 +115,17 @@ def test_driver_inspection_refuel_and_closure_browser(live_app,chromium_browser,
         page.locator('#modal button[type=submit]').click()
         expect(page.locator('#modal .vehicle-shift-summary')).to_be_visible()
         page.locator('#modal-close').click()
-        # The guidance shortcut and the canonical shift card intentionally
-        # expose the same action. Verify both target this driver's shift, and
-        # exercise each entry point across the bilingual journeys.
+        # The canonical card owns closing; guidance must not duplicate its action.
         card_close=page.locator('.shift-card [data-action=start-closing][data-id="'+sid+'"]')
         guide_close=page.locator('.driver-shift-guidance [data-action=start-closing][data-id="'+sid+'"]')
         expect(card_close).to_have_count(1)
-        expect(guide_close).to_have_count(1)
-        (guide_close if language=='ar' else card_close).click()
-        page.locator('[data-confirm-driver-close]').click()
+        expect(guide_close).to_have_count(0)
+        card_close.click()
+        manager_context=chromium_browser.new_context(base_url=live_app)
+        try:
+            _owner_login(manager_context,live_app,manager)
+            _approve_driver_closure_from_browser(page,manager_context,live_app,sid)
+        finally:manager_context.close()
         form=fill_check(1025,100)
         form.locator('[name=counted]').fill('0')
         form.locator('[name=terminal_total]').fill('0')

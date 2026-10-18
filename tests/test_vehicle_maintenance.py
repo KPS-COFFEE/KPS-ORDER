@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from tests.sms_policy_helpers import sms_login, sms_step_up
 from app import auth, db, maintenance
 from test_admin import owner
 
@@ -24,12 +25,20 @@ def principal(role='driver', branches=None, permissions=None, brand='kps'):
     return identifier
 
 
-def login(client, identifier):
+def login(client, identifier, monkeypatch):
     client.cookies.clear()
     client.headers.pop('X-CSRF-Token', None)
-    response = client.post('/api/auth/login', json={'username': identifier, 'password': PASSWORD})
-    assert response.status_code == 200, response.text
-    client.headers['X-CSRF-Token'] = response.json()['csrf_token']
+    with db.tx() as conn:
+        user = conn.execute('SELECT * FROM users WHERE id=%s',(identifier,)).fetchone()
+    from app.sms_rollout import work_sms_required
+    if work_sms_required(user['brand_id']):
+        sms_login(client, user, monkeypatch)
+    else:
+        # A real secondary legacy brand retains its independently supported policy.
+        result = client.post('/api/auth/login', json={'username':identifier,'password':PASSWORD})
+        assert result.status_code == 200, result.text
+        client.headers['X-CSRF-Token'] = result.json()['csrf_token']
+        client.headers['X-KPS-Context'] = 'work'
 
 
 def submit(client, body=None, key=None):
@@ -65,9 +74,9 @@ def test_report_input_fails_closed(values):
 
 
 @pytest.mark.postgres
-def test_driver_submits_without_order_or_shift_only_sees_own_and_replay_is_safe(client):
+def test_driver_submits_without_order_or_shift_only_sees_own_and_replay_is_safe(client, monkeypatch):
     driver = principal()
-    login(client, driver)
+    login(client, driver, monkeypatch)
     options = client.get(PREFIX + '/options').json()
     assert options['can_create'] is True and options['can_manage'] is False
     assert len(options['categories']) == 18
@@ -88,17 +97,17 @@ def test_driver_submits_without_order_or_shift_only_sees_own_and_replay_is_safe(
         for table in ('orders', 'driver_tasks', 'shifts', 'custody_events'):
             assert conn.execute('SELECT count(*) AS n FROM ' + table).fetchone()['n'] == 0
         assert conn.execute('SELECT count(*) AS n FROM vehicle_report_events').fetchone()['n'] == 1
-    login(client, principal())
+    login(client, principal(), monkeypatch)
     assert client.get(PREFIX + '/reports').json()['total'] == 0
     assert client.get(PREFIX + '/reports/' + row['id']).status_code == 404
 
 
 @pytest.mark.postgres
-def test_maintenance_admin_can_manage_only_reports_and_keeps_history(client):
-    login(client, principal())
+def test_maintenance_admin_can_manage_only_reports_and_keeps_history(client, monkeypatch):
+    login(client, principal(), monkeypatch)
     row = submit(client).json()['report']
     admin = principal('admin', permissions=[maintenance.PERMISSION])
-    login(client, admin)
+    login(client, admin, monkeypatch)
     assert client.get(PREFIX + '/reports').json()['total'] == 1
     assert client.get(PREFIX + '/options').json()['can_manage'] is True
     for path in ('/api/admin/config', '/api/identity/staff', '/api/tasks', '/api/orders',
@@ -132,9 +141,9 @@ def test_maintenance_admin_can_manage_only_reports_and_keeps_history(client):
 
 
 @pytest.mark.postgres
-def test_scope_brand_permissions_and_replays_rechecked_on_every_request(client):
+def test_scope_brand_permissions_and_replays_rechecked_on_every_request(client, monkeypatch):
     driver = principal(branches=['kps-branch-1', 'kps-branch-9'])
-    login(client, driver)
+    login(client, driver, monkeypatch)
     key = uuid4().hex
     row = submit(client, key=key).json()['report']
     outside = submit(client, {**PAYLOAD, 'branch_id': 'kps-branch-9'}).json()['report']
@@ -144,7 +153,7 @@ def test_scope_brand_permissions_and_replays_rechecked_on_every_request(client):
     assert client.get(PREFIX + '/reports/' + row['id']).status_code == 404
     assert client.get(PREFIX + '/reports').json()['total'] == 1
     admin = principal('admin', permissions=[maintenance.PERMISSION])
-    login(client, admin)
+    login(client, admin, monkeypatch)
     assert client.get(PREFIX + '/reports/' + outside['id']).status_code == 404
     assert change(client, outside['id'], 'resolved', 1).status_code == 404
     key = uuid4().hex
@@ -158,7 +167,7 @@ def test_scope_brand_permissions_and_replays_rechecked_on_every_request(client):
     assert change(client, row['id'], 'in_progress', 1, key=key).status_code == 403
     with db.tx() as conn:
         conn.execute("INSERT INTO brands(id,name) VALUES('vehicle-test-other-brand','Other synthetic brand')")
-    login(client, principal('owner', brand='vehicle-test-other-brand'))
+    login(client, principal('owner', brand='vehicle-test-other-brand'), monkeypatch)
     assert client.get(PREFIX + '/reports').json()['total'] == 0
     assert client.get(PREFIX + '/reports/' + row['id']).status_code == 404
     assert change(client, row['id'], 'resolved', 2).status_code == 404
@@ -166,8 +175,8 @@ def test_scope_brand_permissions_and_replays_rechecked_on_every_request(client):
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('role', ['delivery_staff', 'branch_manager', 'admin'])
-def test_other_staff_have_no_implicit_maintenance_access(client, role):
-    login(client, principal(role, permissions=['branches_manage'] if role == 'admin' else []))
+def test_other_staff_have_no_implicit_maintenance_access(client, role, monkeypatch):
+    login(client, principal(role, permissions=['branches_manage'] if role == 'admin' else []), monkeypatch)
     for path in (PREFIX + '/options', PREFIX + '/reports', PREFIX + '/reports/unknown'):
         assert client.get(path).status_code == 403
     assert submit(client).status_code == 403
@@ -175,16 +184,20 @@ def test_other_staff_have_no_implicit_maintenance_access(client, role):
 
 
 @pytest.mark.postgres
-def test_maintenance_invitation_all_branches_stays_inactive_and_owner_can_revoke(owner):
+def test_maintenance_invitation_all_branches_stays_inactive_and_owner_can_revoke(owner, monkeypatch):
     client, mutate = owner
-    assert client.post('/api/identity/step-up', json={'password': 'TestOnly!PrivatePassword1'}).status_code == 200
+    from tests.legacy_identity_helpers import make_legacy_user, BRAND, BRANCHES
+    from tests.test_core import _authenticate
+    legacy_owner = make_legacy_user('owner', username='legacy-review-owner', password='TestOnly!PrivatePassword1')
+    _authenticate(client, legacy_owner)
+    assert client.post('/api/identity/step-up', json={'password':'TestOnly!PrivatePassword1'}).status_code == 200
     branches = [b['id'] for b in client.get('/api/admin/config').json()['branches']]
     invited = client.post('/api/identity/staff/invitations', json={
         'display_name': 'أدمن صيانة اختبار', 'email': 'maintenance@fixture.invalid', 'phone': '0500000072',
         'role': 'admin', 'branch_ids': branches, 'permissions': [maintenance.PERMISSION]})
     assert invited.status_code == 200, invited.text
     user = invited.json()['user']
-    assert user['permissions'] == [maintenance.PERMISSION] and len(user['branch_ids']) == 20
+    assert user['permissions'] == [maintenance.PERMISSION] and len(user['branch_ids']) == 3
     assert not user['active'] and not user['email_verified_at']
     blocked = mutate('PATCH', '/api/identity/staff/' + user['id'], {'active': True})
     assert blocked.status_code == 403
@@ -194,20 +207,20 @@ def test_maintenance_invitation_all_branches_stays_inactive_and_owner_can_revoke
 
 
 @pytest.mark.postgres
-def test_owner_can_filter_and_export_maintenance_without_cross_brand_leak(owner):
+def test_owner_can_filter_and_export_maintenance_without_cross_brand_leak(owner, monkeypatch):
     from app.exports import build_archive, verify_archive
     import json
 
     client, _ = owner
     cookies, csrf = dict(client.cookies), client.headers['X-CSRF-Token']
-    login(client, principal(branches=['kps-branch-1', 'kps-branch-9']))
+    login(client, principal(branches=['kps-branch-1', 'kps-branch-9']), monkeypatch)
     first = submit(client).json()['report']
     submit(client, {**PAYLOAD, 'branch_id': 'kps-branch-9'})
     with db.tx() as conn:
         conn.execute("INSERT INTO brands(id,name) VALUES('vehicle-export-other','Other test brand')")
         conn.execute("INSERT INTO branches(id,brand_id,branch_no,source_id,name,city) "
                      "VALUES('vehicle-export-branch','vehicle-export-other',1,'test-source','Other branch','Test city')")
-    login(client, principal(brand='vehicle-export-other', branches=['vehicle-export-branch']))
+    login(client, principal(brand='vehicle-export-other', branches=['vehicle-export-branch']), monkeypatch)
     assert submit(client, {**PAYLOAD, 'branch_id': 'vehicle-export-branch'}).status_code == 200
     client.cookies.clear()
     client.cookies.update(cookies)
@@ -230,15 +243,19 @@ def test_owner_can_filter_and_export_maintenance_without_cross_brand_leak(owner)
 @pytest.mark.postgres
 def test_synthetic_six_digit_invitation_activates_only_maintenance_permission(owner, monkeypatch):
     # Fixture-only encrypted mailbox; never dispatches or asserts real inbox delivery.
-    from test_v5_identity import _mail_setup
+    from test_v5_identity import _legacy_mail_setup as _mail_setup
     from test_final_identity import _code
 
     client, _ = owner
+    from tests.legacy_identity_helpers import make_legacy_user, BRAND, BRANCHES
+    from tests.test_core import _authenticate
+    legacy_owner = make_legacy_user('owner', username='legacy-review-owner', password='TestOnly!PrivatePassword1')
+    _authenticate(client, legacy_owner)
     _mail_setup(monkeypatch)
-    assert client.post('/api/identity/step-up', json={'password': 'TestOnly!PrivatePassword1'}).status_code == 200
+    assert client.post('/api/identity/step-up', json={'password':'TestOnly!PrivatePassword1'}).status_code == 200
     created = client.post('/api/identity/staff/invitations', json={
         'display_name': 'أدمن صيانة اختبار رمز', 'email': 'maintenance-code@fixture.invalid', 'phone': '0500000073',
-        'role': 'admin', 'branch_ids': ['kps-branch-1'], 'permissions': [maintenance.PERMISSION]})
+        'role': 'admin', 'branch_ids': [BRANCHES[0]], 'permissions': [maintenance.PERMISSION]})
     assert created.status_code == 200, created.text
     invited = created.json()
     assert not invited['user']['active'] and invited['invitation_status'] == 'pending_email'
@@ -258,11 +275,11 @@ def test_synthetic_six_digit_invitation_activates_only_maintenance_permission(ow
 
 
 @pytest.mark.postgres
-def test_delivery_manager_only_sees_delivery_reports_not_vehicle_maintenance(client):
-    login(client,principal())
+def test_delivery_manager_only_sees_delivery_reports_not_vehicle_maintenance(client, monkeypatch):
+    login(client,principal(), monkeypatch)
     vehicle=submit(client).json()['report']
     operational=submit(client,{**PAYLOAD,'category':'delay'}).json()['report']
-    login(client,principal('delivery_manager'))
+    login(client,principal('delivery_manager'), monkeypatch)
     assert {r['id'] for r in client.get(PREFIX+'/reports').json()['reports']}=={operational['id']}
     assert client.get(PREFIX+'/reports/'+vehicle['id']).status_code==404
     assert change(client,vehicle['id'],'resolved',1).status_code==404

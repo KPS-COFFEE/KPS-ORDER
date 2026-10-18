@@ -160,3 +160,50 @@ def test_invalid_period_is_visible_and_fails_closed_instead_of_reusing_history(d
         assert data['operating_period']['period_valid'] is False
         assert data['totals']['qualifying_orders']==0
         assert data['totals']['net_spending_halalas']==0
+
+
+@pytest.mark.parametrize('value', ['=SUM(1,1)', ' +cmd', '-1+2', '@formula', '\t=1'])
+def test_csv_export_neutralizes_formulas(value):
+    assert customer_crm.csv_cell(value).startswith("'")
+
+
+def test_filter_values_cannot_change_sql():
+    predicate, values = customer_crm.customer_filters(q="%' OR TRUE --", segment='all',
+        branch_id='other', service='', city='', neighborhood='', registered_from=None, registered_to=None)
+    assert "OR TRUE --" not in predicate
+    assert values[0] == "%' OR TRUE --"
+    assert values[1].startswith('%!%')
+
+
+@pytest.mark.postgres
+def test_customer_search_segments_history_and_scoped_export(database):
+    owner = _make_user('owner')
+    purchaser = _make_user()
+    nonbuyer = _make_user()
+    with db.tx() as c:
+        for person in (purchaser, nonbuyer):
+            c.execute('UPDATE users SET phone_verified_at=now(),phone_sms_verified_at=now() WHERE id=%s', (person['id'],))
+        c.execute('UPDATE users SET display_name=%s WHERE id=%s', ('=SYNTHETIC', purchaser['id']))
+        completed = seed_order(c, purchaser, refund=300)
+        cancelled = seed_order(c, purchaser, status='cancelled')
+    with app_client() as client:
+        _authenticate(client, owner)
+        data = client.get('/api/crm/customers?q=SYNTHETIC&segment=new').json()
+        assert [row['id'] for row in data['customers']] == [purchaser['id']]
+        assert data['customers'][0]['total_orders'] == 2
+        assert data['customers'][0]['net_spending_halalas'] == 1600
+        assert [row['id'] for row in client.get('/api/crm/customers?segment=nonbuyer').json()['customers']] == [nonbuyer['id']]
+        assert client.get('/api/crm/customers?branch_id=not-this-brand').json()['customers'] == []
+        assert client.get('/api/crm/customers?registered_from=2026-10-20&registered_to=2026-10-01').status_code == 422
+        detail = client.get('/api/crm/customers/'+purchaser['id']).json()
+        assert {row['id'] for row in detail['orders']} == {completed, cancelled}
+        assert client.post('/api/crm/export?q=SYNTHETIC', headers={'Origin': 'http://testserver'}).status_code == 403
+        with db.tx() as c:
+            c.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s', (owner['id'],))
+        result = client.post('/api/crm/export?q=SYNTHETIC', headers={'Origin': 'http://testserver'})
+        assert result.status_code == 200, result.text
+        assert "'=SYNTHETIC" in result.text
+        assert nonbuyer['id'] not in result.text
+        assert result.headers['cache-control'] == 'no-store'
+        with db.tx() as c:
+            assert c.execute("SELECT 1 FROM audit_events WHERE action='crm.export' AND actor_id=%s", (owner['id'],)).fetchone()

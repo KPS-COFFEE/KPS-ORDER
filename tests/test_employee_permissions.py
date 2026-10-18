@@ -2,6 +2,7 @@
 import pytest
 from fastapi import HTTPException
 from app import auth, db, employee_permissions as policy
+from tests.sms_policy_helpers import sms_step_up
 from tests.test_core import _make_user, _authenticate
 
 PASSWORD = 'TestOnly!EmployeePermissions-2026'
@@ -26,10 +27,10 @@ def test_admin_grants_and_owner_access_remain_explicit():
             auth.validate_permission_denials(values, 'driver')
 
 
-def _owner(client):
+def _owner(client, monkeypatch):
     owner = _make_user('owner', username=db.new_id('permission_owner_'), password=PASSWORD)
     _authenticate(client, owner)
-    assert client.post('/api/identity/step-up', json={'password': PASSWORD}).status_code == 200
+    sms_step_up(client, owner, monkeypatch)
     return owner
 
 
@@ -53,13 +54,13 @@ def _save(client, user, enabled, expected=None):
     ('delivery_staff', 'dashboard_view', '/api/dashboard'),
     ('branch_manager', 'orders_view', '/api/orders'),
 ])
-def test_live_session_loses_and_regains_permission_without_signout(client,role,code,path):
+def test_live_session_loses_and_regains_permission_without_signout(client,role,code,path, monkeypatch):
     target = _make_user(role, branches=['kps-branch-1'])
     _authenticate(client,target)
     target_cookies = dict(client.cookies)
     csrf = client.headers['X-CSRF-Token']
     assert client.get(path).status_code == 200
-    owner = _owner(client)
+    owner = _owner(client, monkeypatch)
     saved = _save(client,target,policy.effective(target)-{code})
     assert saved.status_code == 200, saved.text
     updated = saved.json()['user']
@@ -71,7 +72,7 @@ def test_live_session_loses_and_regains_permission_without_signout(client,role,c
     assert blocked.status_code == 403, blocked.text
     assert blocked.json()['detail']['code'] == 'STAFF_PERMISSION_FORBIDDEN'
     _authenticate(client,owner)
-    assert client.post('/api/identity/step-up',json={'password':PASSWORD}).status_code == 200
+    sms_step_up(client, owner, monkeypatch)
     assert _save(client,updated,policy.eligible(role)).status_code == 200
     client.cookies.clear(); client.cookies.update(target_cookies)
     client.headers['X-CSRF-Token'] = csrf
@@ -79,12 +80,12 @@ def test_live_session_loses_and_regains_permission_without_signout(client,role,c
 
 
 @pytest.mark.postgres
-def test_permissions_are_owner_only_scoped_audited_and_conflict_checked(client):
+def test_permissions_are_owner_only_scoped_audited_and_conflict_checked(client, monkeypatch):
     target = _make_user('driver',branches=['kps-branch-1'])
     manager = _make_user('delivery_manager',branches=['kps-branch-1'])
     _authenticate(client,manager)
     assert _save(client,target,[]).status_code == 403
-    owner = _owner(client)
+    owner = _owner(client, monkeypatch)
     assert _save(client,owner,[]).status_code == 409
     assert _save(client,target,['shifts_approve']).status_code == 422
     saved = _save(client,target,policy.effective(target)-{'task_photos'})
@@ -101,9 +102,9 @@ def test_permissions_are_owner_only_scoped_audited_and_conflict_checked(client):
 
 
 @pytest.mark.postgres
-def test_revoked_write_permission_blocks_direct_calls_and_retry_keys(client):
+def test_revoked_write_permission_blocks_direct_calls_and_retry_keys(client, monkeypatch):
     manager = _make_user('delivery_manager',branches=['kps-branch-1'])
-    _owner(client)
+    _owner(client, monkeypatch)
     assert _save(client,manager,policy.effective(manager)-{'delivery_assign','shifts_delegate_close'}).status_code == 200
     _authenticate(client,manager)
     for path,body in [('/api/orders/missing/assign',{'driver_id':'missing','reason':'test'}),
@@ -115,9 +116,9 @@ def test_revoked_write_permission_blocks_direct_calls_and_retry_keys(client):
 
 
 @pytest.mark.postgres
-def test_staff_directory_exposes_effective_permission_names_and_catalog(client):
+def test_staff_directory_exposes_effective_permission_names_and_catalog(client, monkeypatch):
     target=_make_user('driver',branches=['kps-branch-1'])
-    _owner(client)
+    _owner(client, monkeypatch)
     result=client.get('/api/identity/staff').json()
     row=next(u for u in result['users'] if u['id']==target['id'])
     assert set(row['effective_permissions'])==policy.eligible('driver')

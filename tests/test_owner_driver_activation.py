@@ -1,8 +1,9 @@
 """Owner activation never fabricates email proof or permits phone-only login."""
 import pytest
 from app import auth, db
-from tests.test_core import _authenticate, _make_user
-from tests.test_v5_identity import _mail_setup, _invite
+from tests.test_core import _authenticate
+from tests.legacy_identity_helpers import make_legacy_user as _make_user
+from tests.test_v5_identity import _legacy_mail_setup as _mail_setup, _legacy_invite as _invite
 from tests.test_final_identity import _request, _verify
 
 
@@ -40,7 +41,7 @@ def test_nonowners_cannot_activate_and_owner_cannot_cross_brand_or_promote(clien
     driver=_make_user('driver'); path='/api/identity/staff/'+driver['id']+'/owner-activate'
     for role in ['driver','delivery_manager','admin','customer']:
         _authenticate(client,_make_user(role))
-        assert client.post(path,json={'reason':'Denied request'}).status_code==403
+        assert client.post(path,json={'reason':'Denied request'}).status_code == (401 if role == 'customer' else 403)
     owner=_make_user('owner',username='activation-owner2',password='TestActivation!Password2')
     _authenticate(client,owner)
     assert client.post('/api/identity/step-up',json={'password':'TestActivation!Password2'}).status_code==200

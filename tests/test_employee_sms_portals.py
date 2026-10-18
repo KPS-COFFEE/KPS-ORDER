@@ -51,18 +51,20 @@ def test_storefront_never_serves_employee_login_or_ops():
         assert client.post('/api/auth/login',headers={'Origin':'https://order.kps.sa'}).status_code==403
 
 
-@pytest.mark.parametrize('code',['1234','12345','1234567','١٢٣٤٥٦','12a456',' 123456'])
-def test_employee_code_requires_exactly_six_ascii_digits(code):
+@pytest.mark.parametrize('code',['123','12345','123456','١٢٣٤','12a4',' 1234',1234])
+def test_employee_code_requires_exactly_four_ascii_digits(code):
     with pytest.raises(ValueError):employee_sms.EmployeeSMSVerify(challenge_id='employee_otp_fixture',code=code)
 
 
 def test_employee_customer_challenges_are_not_interchangeable():
-    employee_sms.EmployeeSMSVerify(challenge_id='employee_otp_fixture',code='012345')
-    with pytest.raises(ValueError):employee_sms.EmployeeSMSVerify(challenge_id='otp_customer',code='012345')
-    with pytest.raises(ValueError):auth.OTPVerifyBody(challenge_id='employee_otp_fixture',code='012345')
+    employee_sms.EmployeeSMSVerify(challenge_id='employee_otp_fixture',code='0123')
+    with pytest.raises(ValueError):employee_sms.EmployeeSMSVerify(challenge_id='otp_customer',code='0123')
+    # Customer schema also has four digits; purpose separation is enforced by
+    # the server before database/provider access (see dedicated test below).
+    auth.OTPVerifyBody(challenge_id='employee_otp_fixture',code='0123')
 
 
-@pytest.mark.parametrize('length',[4,5,7,None,'6'])
+@pytest.mark.parametrize('length',[5,6,7,None,'4'])
 def test_provider_service_length_is_checked_without_changing_it(monkeypatch,length):
     monkeypatch.setenv('EMPLOYEE_TWILIO_VERIFY_SERVICE_SID','VA'+'a'*32)
     original=httpx.Client
@@ -76,10 +78,10 @@ def test_provider_service_length_is_checked_without_changing_it(monkeypatch,leng
     assert seen==['GET']
 
 
-def test_provider_service_six_digit_configuration(monkeypatch):
+def test_provider_service_four_digit_configuration(monkeypatch):
     monkeypatch.setenv('EMPLOYEE_TWILIO_VERIFY_SERVICE_SID','VA'+'a'*32)
     original=httpx.Client
-    monkeypatch.setattr(employee_sms.httpx,'Client',lambda **kw:original(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={'sid':'VA'+'a'*32,'code_length':6})),**kw))
+    monkeypatch.setattr(employee_sms.httpx,'Client',lambda **kw:original(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={'sid':'VA'+'a'*32,'code_length':4})),**kw))
     employee_sms.verify_service_length()
 
 
@@ -90,11 +92,11 @@ def test_employee_channel_requires_certified_active_delivery(monkeypatch,state,e
     assert exc.value.detail['code']=='EMPLOYEE_SMS_NOT_CERTIFIED'
 
 
-def test_existing_four_digit_tawked_contract_is_explicit_blocker(monkeypatch):
+def test_existing_four_digit_tawked_contract_is_reused(monkeypatch):
     monkeypatch.setattr(auth,'_channel',lambda *a:{'state':'active','enabled':True,'delivery_proven_at':datetime.now(timezone.utc)})
     monkeypatch.setattr(auth,'_sms_provider',lambda *a:'tawked')
-    with pytest.raises(HTTPException) as exc:employee_sms.provider_ready(None,'kps')
-    assert exc.value.detail['code']=='EMPLOYEE_OTP_SIX_DIGIT_PROVIDER_REQUIRED'
+    monkeypatch.setenv('TAWKED_API_KEY','tk_test_fixture')
+    assert employee_sms.provider_ready(None,'kps') == 'tawked'
 
 
 def sms_setup(monkeypatch,phone='+966507778899',active=True):
@@ -126,16 +128,16 @@ def test_sms_canonical_employee_login_replay_and_no_activation(client,monkeypatc
     user,calls=sms_setup(monkeypatch)
     result=client.post('/api/identity/staff/code/request',json={'phone':'٠٥٠٧٧٧٨٨٩٩'})
     assert result.status_code==200,result.text
-    assert result.json()['channel']=='sms' and result.json()['code_length']==6
+    assert result.json()['channel']=='sms' and result.json()['code_length']==4
     assert 290<=result.json()['expires_in']<=300
     cid=result.json()['challenge_id']
     before=None
     with db.tx() as conn:before=conn.execute('SELECT active,role,branch_ids,phone_verified_at FROM users WHERE id=%s',(user['id'],)).fetchone()
-    success=client.post('/api/identity/staff/code/verify',json={'challenge_id':cid,'code':'012345'})
+    success=client.post('/api/identity/staff/code/verify',json={'challenge_id':cid,'code':'0123'})
     assert success.status_code==200,success.text
     assert success.json()['user']['id']==user['id'] and success.json()['user']['role']=='driver'
     assert calls[0][1]['To']=='+966507778899' and calls[0][2]['service_sid']=='VA'+'b'*32
-    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':cid,'code':'012345'}).status_code==400
+    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':cid,'code':'0123'}).status_code==400
     with db.tx() as conn:
         assert conn.execute('SELECT active,role,branch_ids,phone_verified_at FROM users WHERE id=%s',(user['id'],)).fetchone()==before
         assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(user['id'],)).fetchone()['n']==1
@@ -149,7 +151,7 @@ def test_sms_employee_revocation_or_change_during_challenge(client,monkeypatch,c
     user,calls=sms_setup(monkeypatch)
     sent=client.post('/api/identity/staff/code/request',json={'phone':'0507778899'}).json()
     with db.tx() as conn:conn.execute('UPDATE users SET '+change+' WHERE id=%s',(user['id'],))
-    verified=client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'012345'})
+    verified=client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'0123'})
     assert verified.status_code==403,verified.text
     assert len(calls)==1
     with db.tx() as conn:assert conn.execute('SELECT count(*) n FROM sessions').fetchone()['n']==0
@@ -163,7 +165,7 @@ def test_sms_unknown_inactive_never_sends_and_cannot_create_account(client,monke
         sent=client.post('/api/identity/staff/code/request',json={'phone':phone})
         assert sent.status_code==200,sent.text
         assert sent.json()['accepted'] is True
-        assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent.json()['challenge_id'],'code':'012345'}).status_code==400
+        assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent.json()['challenge_id'],'code':'0123'}).status_code==400
     assert calls==[]
     with db.tx() as conn:
         assert conn.execute('SELECT count(*) n FROM otp_challenges').fetchone()['n']==0
@@ -177,11 +179,11 @@ def test_sms_expiry_and_bad_code_attempt_limits(client,monkeypatch):
     sent=client.post('/api/identity/staff/code/request',json={'phone':'0507778899'}).json()
     monkeypatch.setattr(auth,'_provider_post',lambda *a,**kw:{'status':'pending','to':'+966507778899','channel':'sms'})
     for _ in range(4):
-        assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'012345'}).status_code==400
+        assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'0123'}).status_code==400
     with db.tx() as conn:
         assert conn.execute('SELECT attempts FROM otp_challenges WHERE id=%s',(sent['challenge_id'],)).fetchone()['attempts']==3
         conn.execute("UPDATE otp_challenges SET expires_at=now()-interval '1 second',attempts=0 WHERE id=%s",(sent['challenge_id'],))
-    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'012345'}).status_code==400
+    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'0123'}).status_code==400
 
 
 @pytest.mark.postgres
@@ -192,7 +194,7 @@ def test_employee_sms_approval_must_prove_the_requested_provider_reference(clien
     sent=client.post('/api/identity/staff/code/request',json={'phone':'0507778899'}).json()
     monkeypatch.setattr(auth,'_provider_post',lambda *a,**kw:{
         'sid':returned_reference,'status':'approved','to':'+966507778899','channel':'sms'})
-    result=client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'012345'})
+    result=client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'0123'})
     assert result.status_code==400,result.text
     assert result.json()['detail']['code']=='OTP_INVALID'
     with db.tx() as conn:
@@ -216,7 +218,7 @@ def test_employee_challenge_cannot_be_consumed_by_customer_verifier(client,monke
         assert conn.execute('SELECT count(*) n FROM sessions').fetchone()['n']==0
         assert conn.execute('SELECT count(*) n FROM customer_identity_links').fetchone()['n']==0
     # The challenge still works only in its intended employee verifier.
-    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'012345'}).status_code==200
+    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'0123'}).status_code==200
 
 
 @pytest.mark.postgres
@@ -225,7 +227,7 @@ def test_customer_challenge_cannot_be_consumed_by_employee_verifier(client,monke
     user,calls=sms_setup(monkeypatch)
     with db.tx() as conn:
         conn.execute("INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name) VALUES('otp_customer_fixture','kps','+966507778899','VEcustomer','sms',now()+interval '5 minutes','twilio_verify')")
-    result=client.post('/api/identity/staff/code/verify',json={'challenge_id':'otp_customer_fixture','code':'012345'})
+    result=client.post('/api/identity/staff/code/verify',json={'challenge_id':'otp_customer_fixture','code':'0123'})
     assert result.status_code==400,result.text
     assert calls==[]
     with db.tx() as conn:
@@ -241,3 +243,65 @@ def test_customer_verifier_rejects_employee_namespace_before_database(monkeypatc
     with pytest.raises(HTTPException) as exc:
         auth.verify_otp(auth.OTPVerifyBody(challenge_id='employee_otp_fixture',code='0123'),request('order.kps.sa'),Response())
     assert exc.value.detail['code']=='OTP_PURPOSE_MISMATCH'
+
+
+@pytest.mark.postgres
+def test_employee_guess_budget_survives_resend_and_ip_change(client, monkeypatch):
+    user, calls = sms_setup(monkeypatch)
+    first = client.post('/api/identity/staff/code/request', json={'phone':'0507778899'}).json()
+    monkeypatch.setattr(auth, '_provider_post', lambda *a, **kw: {'status':'pending'})
+    for _ in range(3):
+        assert client.post('/api/identity/staff/code/verify',json={'challenge_id':first['challenge_id'],'code':'0001'}).status_code == 400
+    # A fresh challenge gets no fresh account guessing budget.
+    monkeypatch.setattr(auth, '_provider_post', lambda *a, **kw: {'sid':'VEfixture','status':'pending','to':'+966507778899','channel':'sms'})
+    second = client.post('/api/identity/staff/code/request', json={'phone':'0507778899'}).json()
+    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':second['challenge_id'],'code':'0001'}).status_code == 429
+
+
+@pytest.mark.postgres
+def test_existing_tawked_four_digit_employee_roundtrip(client, monkeypatch):
+    from app import db
+    from datetime import timedelta
+    user, calls = sms_setup(monkeypatch)
+    monkeypatch.setenv('TAWKED_API_KEY','tk_test_fixture')
+    with db.tx() as conn:
+        conn.execute("UPDATE identity_channels SET sms_provider='tawked' WHERE brand_id='kps' AND channel='sms'")
+    seen = []
+    def start(phone, reference, lang):
+        seen.append((phone, reference, lang))
+        return 'tawked_employee_fixture', datetime.now(timezone.utc)+timedelta(minutes=10)
+    def check(reference, code):
+        seen.append((reference, code))
+        return reference == 'tawked_employee_fixture' and code == '0123'
+    monkeypatch.setattr(employee_sms.sms_verification,'start',start)
+    monkeypatch.setattr(employee_sms.sms_verification,'check',check)
+    sent=client.post('/api/identity/staff/code/request',json={'phone':'0507778899'})
+    assert sent.status_code == 200 and sent.json()['code_length'] == 4
+    cid=sent.json()['challenge_id']
+    assert 290 <= sent.json()['expires_in'] <= 300
+    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':cid,'code':'0123'}).status_code == 200
+    assert seen[0][1] == cid and seen[1] == ('tawked_employee_fixture','0123')
+    assert calls == []
+    assert client.post('/api/identity/staff/code/verify',json={'challenge_id':cid,'code':'0123'}).status_code == 400
+
+
+@pytest.mark.postgres
+def test_concurrent_employee_verification_creates_exactly_one_session(client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app import db
+    user, calls = sms_setup(monkeypatch)
+    sent = client.post('/api/identity/staff/code/request', json={'phone':'0507778899'}).json()
+    rendezvous = Barrier(2)
+    def provider(*args, **kwargs):
+        rendezvous.wait(timeout=10)
+        return {'sid':'VEfixture','status':'approved','to':'+966507778899','channel':'sms'}
+    monkeypatch.setattr(auth,'_provider_post', provider)
+    def verify():
+        return client.post('/api/identity/staff/code/verify',json={'challenge_id':sent['challenge_id'],'code':'0123'}).status_code
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: verify(), range(2)))
+    assert sorted(results) == [200,409]
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(user['id'],)).fetchone()['n'] == 1
+        assert conn.execute('SELECT verified_at FROM otp_challenges WHERE id=%s',(sent['challenge_id'],)).fetchone()['verified_at'] is not None
