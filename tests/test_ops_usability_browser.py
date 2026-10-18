@@ -256,10 +256,11 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
         expect(row).to_contain_text(name)
         expect(row).to_contain_text(district)
         assert row.locator('td').count() == 8
-        assert row.evaluate('''e => [...e.querySelectorAll('td')].every(c => {
+        geometry = row.evaluate('''e => [...e.querySelectorAll('td')].map(c => {
             const b=c.getBoundingClientRect();
-            return b.width>0 && b.left>=0 && b.right<=innerWidth+1 && c.scrollWidth<=c.clientWidth+1 && c.scrollHeight<=c.clientHeight+1;
+            return {label:c.dataset.label,width:b.width,left:b.left,right:b.right,sw:c.scrollWidth,cw:c.clientWidth,sh:c.scrollHeight,ch:c.clientHeight,viewport:innerWidth};
         })''')
+        assert all(c['width']>0 and c['left']>=0 and c['right']<=c['viewport']+1 and c['sw']<=c['cw']+1 and c['sh']<=c['ch']+1 for c in geometry), geometry
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         out = Path('test-artifacts'); out.mkdir(exist_ok=True)
         page.screenshot(path=str(out / f'orders-complete-{lang}-{width}.png'), full_page=True)

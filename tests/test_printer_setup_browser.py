@@ -81,5 +81,15 @@ def test_guided_printer_setup_and_live_acceptance(live_app,chromium_browser,tmp_
         expect(page.locator('#printer-live')).to_contain_text('لا يوجد اتصال' if language=='ar' else 'No connection',timeout=12000)
         expect(page.locator('#printer-live .pill.good')).to_have_count(0)
         expect(page.locator('#printer-live [data-action=test-printer]')).to_be_disabled()
+        page.locator('#modal .modal-head button').click()
+        page.locator('#navigation [data-page=printers]').click()
+        for width in (1280,768,390):
+            page.set_viewport_size({'width':width,'height':900})
+            expect(page.locator('#content .printer-directory tbody tr')).to_have_count(1)
+            assert page.locator('#content .printer-directory tbody tr').evaluate('''row=>[...row.querySelectorAll('td,button,.pill')].every(e=>{
+                const r=e.getBoundingClientRect();
+                return r.width>0&&r.left>=0&&r.right<=innerWidth+1&&e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1;
+            })''')
+            _capture(page,f'TEST_ONLY_printer_directory_{language}_{width}')
         assert not errors
     finally: context.close()
