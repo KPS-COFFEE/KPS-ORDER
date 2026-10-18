@@ -64,3 +64,4 @@ tests/test_owner_dispatch_readiness_contract.py
 tests/test_operational_customer_lookup.py
 tests/test_delivery_center_matching.py
 tests/test_driver_work_hours_backup.py
+tests/test_trip_printer_migration_preservation.py

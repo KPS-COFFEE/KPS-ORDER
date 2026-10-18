@@ -346,6 +346,15 @@ jobs:
         \ \\\n  --exit-code 0\n./trivy image --input \"$RUNNER_TEMP/candidate-image.tar\" --scanners vuln,secret\
         \ \\\n  --format json --output \"$GITHUB_WORKSPACE/evidence/candidate-image-high-critical.json\" \\\n  --exit-code\
         \ 1 --severity HIGH,CRITICAL\n"
+    - name: Reject every image secret regardless of severity
+      run: |
+        set -euo pipefail
+        python - <<'CHECK'
+        import json
+        report=json.load(open('evidence/candidate-image-scan.json'))
+        secrets=[s for result in report.get('Results',[]) for s in result.get('Secrets',[])]
+        assert not secrets, 'Immutable image contains detected secrets; do not publish findings or bypass this gate.'
+        CHECK
     - name: Container logs and cleanup
       if: always()
       run: 'docker logs security-candidate > evidence/container-runtime-final.log 2>&1 || true
