@@ -98,7 +98,7 @@ window.KPSFleet={async open(ctx){
     view.offset=0;await render();
    }else if(b.dataset.fleetExport){
     const q=params();q.set('format',b.dataset.fleetExport);q.set('lang',lang);
-    const response=await fetch('/api/fleet/export?'+q,{credentials:'same-origin'});
+    const response=await fetch('/api/fleet/export?'+q,{credentials:'same-origin',headers:{'X-KPS-Context':'work'}});
     if(!response.ok)throw new Error(tr('تعذر تصدير التقرير.','Export failed.'));
     const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=`fleet-${view.filters.start}-${view.filters.end}.${b.dataset.fleetExport}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);
    }

@@ -526,7 +526,7 @@ def _staff_ui_login(page,user):
 def _authenticated_post(context,base,path,body=None):
     session=context.request.get(base+'/api/session',headers={'X-KPS-Context':'work'}).json()
     assert session.get('user') and session.get('csrf_token'), 'Canonical work session is required for this browser helper'
-    response=context.request.post(base+path,headers={'Origin':base,'X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data=body or {})
+    response=context.request.post(base+path,headers={'Origin':base,'X-KPS-Context':'work','X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data=body or {})
     assert response.ok,response.text()
     return response.json()
 
