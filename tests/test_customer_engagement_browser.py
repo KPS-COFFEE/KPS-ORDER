@@ -24,17 +24,20 @@ def engagement_http(request,monkeypatch):
 def test_account_credit_and_gift_controls_are_brand_scoped(engagement_http,brand,lang,width):
     base,(_,actor,_,_,_)=engagement_http
     account=actor(brand+'-customer')
-    token=account.cookies.get(auth.COOKIE)
+    cookies=[{'name':name,'value':account.cookies.get(name),'url':base} for name in (auth.COOKIE,auth.CSRF_COOKIE)]
     with db.tx() as c:
         for selected,balance in [('kps',111),('enbishan',222)]:
             c.execute("UPDATE users SET phone='+966500001001',phone_verified_at=now(),phone_sms_verified_at=now() WHERE id=%s",('dual-'+selected+'-customer',))
             c.execute('INSERT INTO customer_wallets(brand_id,customer_id,balance_halalas) VALUES(%s,%s,%s)',(selected,'dual-'+selected+'-customer',balance))
         c.execute("UPDATE sessions SET customer_verified_at=now() WHERE user_id=%s",('dual-'+brand+'-customer',))
+    identity=account.get('/api/session').json()
+    assert identity['customer_verified'] and identity['csrf_token']
+    assert identity['user']['id']=='dual-'+brand+'-customer'
     with sync_playwright() as p:
         browser=p.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'),args=['--no-sandbox'])
         try:
             context=browser.new_context(viewport={'width':width,'height':844})
-            context.add_cookies([{'name':auth.COOKIE,'value':token,'url':base}])
+            context.add_cookies(cookies)
             context.add_init_script("localStorage.setItem('kps_customer_lang','"+lang+"')")
             page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(base+'/?brand_id='+brand+'&lang='+lang,wait_until='networkidle')
