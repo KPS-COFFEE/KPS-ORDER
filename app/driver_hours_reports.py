@@ -7,8 +7,8 @@ from html import escape
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 
-from fastapi import APIRouter, Depends, Query, Response
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse, RedirectResponse
 
 from . import auth, db
 
@@ -155,7 +155,15 @@ def _report(user, start, end, driver_id, branch_id):
 
 
 @router.get('/driver-hours')
-def dashboard(user=Depends(auth.current_user)):
+def dashboard(request: Request):
+    # A normal browser navigation has no X-KPS-Context header. Authentication
+    # still resolves only the work cookie; anonymous visitors see the login UI.
+    try:
+        user = auth.current_user(request)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return RedirectResponse('/ops', status_code=303, headers={'Cache-Control':'private, no-store'})
+        raise
     from .driver_work_hours import require_report_access
     require_report_access(user)
     return FileResponse(db.ROOT / 'public/driver-hours.html', headers={'Cache-Control':'private, no-store'})

@@ -136,9 +136,9 @@ def session_context(request):
     if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
-            '/api/reports','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
+            '/api/reports','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
-            or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/customer-crm','/docs/metrics'))):
+            or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
         return 'work'
     return context
 

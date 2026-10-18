@@ -391,3 +391,29 @@ dialog:has(.order-detail-events){width:min(1180px,calc(100vw - 24px))}
 .customer-contact-card{min-width:0}
 .customer-contact-card h2{overflow-wrap:anywhere;white-space:normal}
 @media(max-width:480px){.staff-card .data-grid{grid-template-columns:1fr}.staff-card footer>button{flex:1 1 100%}}
+
+/* Keep all eight order fields visible in the working column on laptops/tablets.
+   The wide-screen table remains a table; compact rows become labelled cards. */
+.order-table th{white-space:normal;line-height:1.7}
+.order-table td:last-child .pill{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:1500px){
+ .order-table{max-height:none;overflow:visible;border:0;border-radius:0;scrollbar-gutter:auto}
+ .order-table table{display:block;min-width:0;width:100%}
+ .order-table thead{display:none}
+ .order-table tbody{display:grid;gap:16px;width:100%}
+ .order-table tbody tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 20px;padding:20px;background:var(--surface);border:1px solid var(--line);border-inline-start:4px solid var(--accent);border-radius:14px}
+ .order-table tbody td{display:block;min-width:0!important;max-width:none;padding:0;border:0;white-space:normal;overflow-wrap:anywhere;grid-column:auto;grid-row:auto;text-align:start;direction:inherit}
+ .order-table tbody td::before{display:block;content:attr(data-label)!important;font-size:12px;font-weight:400;line-height:1.8;color:var(--muted);margin-bottom:4px}
+ .order-table tbody td:first-child{grid-column:1/-1;border-bottom:1px solid var(--line);padding-bottom:12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+ .order-table tbody td:first-child::before{display:none}
+ .order-table tbody td:first-child p{margin:0}
+ .order-table .order-reference{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+ .order-table tbody td:nth-child(2){font-weight:400;padding-inline-end:0}
+ .order-table tbody td:nth-child(4),.order-table tbody td:nth-child(5){direction:inherit;text-align:start;font-variant-numeric:tabular-nums}
+ .order-table tbody td:nth-child(6){direction:inherit;text-align:start;white-space:normal}
+ .order-table tbody td:last-child{grid-column:1/-1;display:block;border-top:1px solid var(--line);padding-top:10px}
+ .order-table tbody tr:hover{background:var(--surface)}
+ .order-table tbody td .pill{margin:3px 0;max-width:100%}
+}
+@media(max-width:600px){.order-table tbody tr{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px}}
+@media(max-width:360px){.order-table tbody tr{grid-template-columns:minmax(0,1fr)}}
