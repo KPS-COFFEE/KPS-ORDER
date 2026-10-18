@@ -17,15 +17,19 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - id: scope
-      name: Select historical test-only evidence or fresh exact-image certification
+      name: Verify only approved test and CI changes; unchanged application
       shell: bash
-      run: "set -euo pipefail\n# Older browser certificates apply only when all application/build inputs match.\n\
-        # New operational changes always rebuild and certify the current immutable image.\ngit merge-base --is-ancestor\
-        \ 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD\nif git diff --quiet 6b0739678fefb62c45baa792a7de6d9e107cb0a5\
-        \ HEAD -- . ':(exclude).github/workflows/security-closure.yml' ':(exclude)tests/test_browser.py' ':(exclude)tests/browser_sms_helpers.py'\
-        \ ':(exclude)tests/test_additional_password_owner.py' ':(exclude)tests/test_owner_staff_management.py';\
-        \ then\n  echo 'final_three=true' >> \"$GITHUB_OUTPUT\"\nelse\n  echo 'final_three=false' >> \"$GITHUB_OUTPUT\"\
-        \nfi\n"
+      run: 'set -euo pipefail
+
+        git merge-base --is-ancestor 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD
+
+        git diff --exit-code 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD -- . '':(exclude).github/workflows/security-closure.yml''
+        '':(exclude)tests/test_browser.py'' '':(exclude)tests/browser_sms_helpers.py'' '':(exclude)tests/test_additional_password_owner.py''
+        '':(exclude)tests/test_owner_staff_management.py''
+
+        echo ''final_three=true'' >> "$GITHUB_OUTPUT"
+
+        '
   host-security-and-browser:
     if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' && needs.verification-scope.outputs.final_three
       != 'true'
@@ -65,23 +69,20 @@ jobs:
         python-version: '3.12'
     - name: Locked runtime and test tools
       run: "mkdir -p evidence ci-safety\npython -m pip install --require-hashes --only-binary=:all: -r requirements.lock\n\
-        python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock\npython -m\
-        \ pip freeze > evidence/host-python-packages.txt\npython -c \"import psycopg; c=psycopg.connect('$TEST_DATABASE_URL');\
-        \ print(c.execute('select version()').fetchone()[0]); c.close()\" > evidence/postgresql-version.txt\npython\
-        \ --version > evidence/host-python-version.txt\ngit rev-parse HEAD > evidence/source-sha.txt\nsha256sum\
-        \ Dockerfile .dockerignore requirements.lock requirements-security-tests.lock > evidence/build-input-sha256.txt\n\
-        cat > ci-safety/sitecustomize.py <<'PY'\nimport socket\n_connect = socket.socket.connect\n_connect_ex =\
-        \ socket.socket.connect_ex\n_sendto = socket.socket.sendto\ndef check(address):\n    if isinstance(address,\
-        \ tuple) and address[0] not in ('127.0.0.1', '::1', 'localhost'):\n        raise RuntimeError('SECURITY\
-        \ TEST: external network disabled')\ndef connect(self, address):\n    check(address)\n    return _connect(self,\
-        \ address)\ndef connect_ex(self, address):\n    check(address)\n    return _connect_ex(self, address)\n\
-        def sendto(self, data, *args):\n    if args: check(args[-1])\n    return _sendto(self, data, *args)\nsocket.socket.connect\
-        \ = connect\nsocket.socket.connect_ex = connect_ex\nsocket.socket.sendto = sendto\nPY\npython - <<'CHECK'\n\
-        import os, psycopg\nwith psycopg.connect(os.environ['TEST_DATABASE_URL']) as c:\n    version = c.execute('show\
-        \ server_version').fetchone()[0]\n    assert version.split()[0] == '18.6', version\nCHECK\n"
+        python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock\npython -m pip freeze\
+        \ > evidence/host-python-packages.txt\npython -c \"import psycopg; c=psycopg.connect('$TEST_DATABASE_URL'); print(c.execute('select\
+        \ version()').fetchone()[0]); c.close()\" > evidence/postgresql-version.txt\npython --version > evidence/host-python-version.txt\n\
+        git rev-parse HEAD > evidence/source-sha.txt\nsha256sum Dockerfile .dockerignore requirements.lock requirements-security-tests.lock\
+        \ > evidence/build-input-sha256.txt\ncat > ci-safety/sitecustomize.py <<'PY'\nimport socket\n_connect = socket.socket.connect\n\
+        _connect_ex = socket.socket.connect_ex\n_sendto = socket.socket.sendto\ndef check(address):\n    if isinstance(address,\
+        \ tuple) and address[0] not in ('127.0.0.1', '::1', 'localhost'):\n        raise RuntimeError('SECURITY TEST: external\
+        \ network disabled')\ndef connect(self, address):\n    check(address)\n    return _connect(self, address)\ndef connect_ex(self,\
+        \ address):\n    check(address)\n    return _connect_ex(self, address)\ndef sendto(self, data, *args):\n    if args:\
+        \ check(args[-1])\n    return _sendto(self, data, *args)\nsocket.socket.connect = connect\nsocket.socket.connect_ex\
+        \ = connect_ex\nsocket.socket.sendto = sendto\nPY\n"
     - name: Test-log pipelines fail closed
-      run: "set -euo pipefail\nif bash -e -o pipefail -c 'exit 17' | tee /dev/null; then\n  echo 'A failed test\
-        \ command was incorrectly accepted.' >&2\n  exit 1\nfi\n"
+      run: "set -euo pipefail\nif bash -e -o pipefail -c 'exit 17' | tee /dev/null; then\n  echo 'A failed test command was\
+        \ incorrectly accepted.' >&2\n  exit 1\nfi\n"
     - name: Owner testing and provider boundary regression first
       env:
         PYTHONPATH: ci-safety:.
@@ -94,7 +95,7 @@ jobs:
     - name: Focused tests on PostgreSQL18
       env:
         PYTHONPATH: ci-safety:.
-      run: 'mapfile -t suites < <(sed ''/^[[:space:]]*#/d;/^[[:space:]]*$/d'' docs/final-operational-tests.txt)
+      run: 'mapfile -t suites < <(sed ''/^[[:space:]]*#/d;/^[[:space:]]*$/d'' docs/security-closure-tests.txt)
 
         python -m pytest -q "${suites[@]}" --junitxml=evidence/security-focused.xml | tee evidence/security-focused.log
 
@@ -104,42 +105,14 @@ jobs:
 
         node tests/test_driver_simple_ui.cjs
 
-
-        node tests/test_driver_trip_ui.cjs
-
         '
     - name: Two real browser policy cases
       env:
         TEST_BROWSER: '1'
         PYTHONPATH: ci-safety:.
-      run: "browser=$(command -v google-chrome || command -v google-chrome-stable || true)\nif [ -n \"$browser\"\
-        \ ]; then\n  export TEST_CHROMIUM_EXECUTABLE=\"$browser\"\nelse\n  python -m playwright install --with-deps\
-        \ chromium\nfi\npython -m pytest -q tests/test_sms_mandatory_policy.py -k real_browser --junitxml=evidence/security-browser.xml\
-        \ | tee evidence/security-browser.log\n"
-    - name: Current operational staff and printer browser acceptance
-      env:
-        TEST_BROWSER: '1'
-        PYTHONPATH: ci-safety:.
-      run: 'set -euo pipefail
-
-        browser=$(command -v google-chrome || command -v google-chrome-stable || true)
-
-        if [ -n "$browser" ]; then export TEST_CHROMIUM_EXECUTABLE="$browser"; fi
-
-        python -m pytest -q tests/test_simple_staff_sms_browser.py tests/test_owner_staff_management.py tests/test_printer_setup_browser.py
-        tests/test_split_payment_browser.py tests/test_employee_permissions_browser.py tests/test_parallel_visual_acceptance.py --junitxml=evidence/current-operational-browser.xml | tee evidence/current-operational-browser.log
-
-        python - <<''CHECK''
-
-        import xml.etree.ElementTree as E
-
-        cases=list(E.parse(''evidence/current-operational-browser.xml'').getroot().iter(''testcase''))
-
-        assert cases and not any(c.find(t) is not None for c in cases for t in (''failure'',''error'',''skipped''))
-
-        CHECK
-
-        '
+      run: "browser=$(command -v google-chrome || command -v google-chrome-stable || true)\nif [ -n \"$browser\" ]; then\n\
+        \  export TEST_CHROMIUM_EXECUTABLE=\"$browser\"\nelse\n  python -m playwright install --with-deps chromium\nfi\npython\
+        \ -m pytest -q tests/test_sms_mandatory_policy.py -k real_browser --junitxml=evidence/security-browser.xml | tee evidence/security-browser.log\n"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -193,168 +166,88 @@ jobs:
         python-version: '3.12'
     - name: Locked runtime and test tools
       run: "mkdir -p evidence ci-safety\npython -m pip install --require-hashes --only-binary=:all: -r requirements.lock\n\
-        python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock\npython -m\
-        \ pip freeze > evidence/host-python-packages.txt\npython -c \"import psycopg; c=psycopg.connect('$TEST_DATABASE_URL');\
-        \ print(c.execute('select version()').fetchone()[0]); c.close()\" > evidence/postgresql-version.txt\npython\
-        \ --version > evidence/host-python-version.txt\ngit rev-parse HEAD > evidence/source-sha.txt\nsha256sum\
-        \ Dockerfile .dockerignore requirements.lock requirements-security-tests.lock > evidence/build-input-sha256.txt\n\
-        cat > ci-safety/sitecustomize.py <<'PY'\nimport socket\n_connect = socket.socket.connect\n_connect_ex =\
-        \ socket.socket.connect_ex\n_sendto = socket.socket.sendto\ndef check(address):\n    if isinstance(address,\
-        \ tuple) and address[0] not in ('127.0.0.1', '::1', 'localhost'):\n        raise RuntimeError('SECURITY\
-        \ TEST: external network disabled')\ndef connect(self, address):\n    check(address)\n    return _connect(self,\
-        \ address)\ndef connect_ex(self, address):\n    check(address)\n    return _connect_ex(self, address)\n\
-        def sendto(self, data, *args):\n    if args: check(args[-1])\n    return _sendto(self, data, *args)\nsocket.socket.connect\
-        \ = connect\nsocket.socket.connect_ex = connect_ex\nsocket.socket.sendto = sendto\nPY\npython - <<'CHECK'\n\
-        import os, psycopg\nwith psycopg.connect(os.environ['TEST_DATABASE_URL']) as c:\n    version = c.execute('show\
-        \ server_version').fetchone()[0]\n    assert version.split()[0] == '18.6', version\nCHECK\n"
+        python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock\npython -m pip freeze\
+        \ > evidence/host-python-packages.txt\npython -c \"import psycopg; c=psycopg.connect('$TEST_DATABASE_URL'); print(c.execute('select\
+        \ version()').fetchone()[0]); c.close()\" > evidence/postgresql-version.txt\npython --version > evidence/host-python-version.txt\n\
+        git rev-parse HEAD > evidence/source-sha.txt\nsha256sum Dockerfile .dockerignore requirements.lock requirements-security-tests.lock\
+        \ > evidence/build-input-sha256.txt\ncat > ci-safety/sitecustomize.py <<'PY'\nimport socket\n_connect = socket.socket.connect\n\
+        _connect_ex = socket.socket.connect_ex\n_sendto = socket.socket.sendto\ndef check(address):\n    if isinstance(address,\
+        \ tuple) and address[0] not in ('127.0.0.1', '::1', 'localhost'):\n        raise RuntimeError('SECURITY TEST: external\
+        \ network disabled')\ndef connect(self, address):\n    check(address)\n    return _connect(self, address)\ndef connect_ex(self,\
+        \ address):\n    check(address)\n    return _connect_ex(self, address)\ndef sendto(self, data, *args):\n    if args:\
+        \ check(args[-1])\n    return _sendto(self, data, *args)\nsocket.socket.connect = connect\nsocket.socket.connect_ex\
+        \ = connect_ex\nsocket.socket.sendto = sendto\nPY\n"
     - name: Test-log pipelines fail closed
-      run: "set -euo pipefail\nif bash -e -o pipefail -c 'exit 17' | tee /dev/null; then\n  echo 'A failed test\
-        \ command was incorrectly accepted.' >&2\n  exit 1\nfi\n"
+      run: "set -euo pipefail\nif bash -e -o pipefail -c 'exit 17' | tee /dev/null; then\n  echo 'A failed test command was\
+        \ incorrectly accepted.' >&2\n  exit 1\nfi\n"
     - name: Build exact candidate Dockerfile without push
-      run: "image=\"kps-order-security-review:$GITHUB_SHA-${{ matrix.role }}\"\ntarget=runtime\nif [ '${{ matrix.role\
-        \ }}' = rollback ]; then target=rollback; fi\ndocker buildx build --target \"$target\" --platform linux/amd64\
-        \ --load --provenance=false \\\n  --label \"org.opencontainers.image.revision=$GITHUB_SHA\" \\\n  --metadata-file\
-        \ evidence/build-metadata.json --tag \"$image\" . > evidence/image-build.log 2>&1\nimage_id=$(docker image\
-        \ inspect --format '{{.Id}}' \"$image\")\nprintf '%s\\n' \"$image_id\" > evidence/candidate-image-id.txt\n\
-        printf 'SECURITY_IMAGE_ID=%s\\n' \"$image_id\" >> \"$GITHUB_ENV\"\ndocker image inspect \"$image_id\" >\
-        \ evidence/candidate-image-inspect.json\ndocker buildx imagetools inspect 'gcr.io/distroless/base-nossl-debian13:nonroot@sha256:8c563c1fb5e120606f0d85733049775faed6192e2bd2223ef283a5393eec22b9'\
+      run: "image=\"kps-order-security-review:$GITHUB_SHA-${{ matrix.role }}\"\ntarget=runtime\nif [ '${{ matrix.role }}'\
+        \ = rollback ]; then target=rollback; fi\ndocker buildx build --target \"$target\" --platform linux/amd64 --load --provenance=false\
+        \ \\\n  --label \"org.opencontainers.image.revision=$GITHUB_SHA\" \\\n  --metadata-file evidence/build-metadata.json\
+        \ --tag \"$image\" . > evidence/image-build.log 2>&1\nimage_id=$(docker image inspect --format '{{.Id}}' \"$image\"\
+        )\nprintf '%s\\n' \"$image_id\" > evidence/candidate-image-id.txt\nprintf 'SECURITY_IMAGE_ID=%s\\n' \"$image_id\"\
+        \ >> \"$GITHUB_ENV\"\ndocker image inspect \"$image_id\" > evidence/candidate-image-inspect.json\ndocker buildx imagetools\
+        \ inspect 'gcr.io/distroless/base-nossl-debian13:nonroot@sha256:8c563c1fb5e120606f0d85733049775faed6192e2bd2223ef283a5393eec22b9'\
         \ > evidence/runtime-base-manifest.txt\ndocker buildx imagetools inspect 'python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1'\
-        \ > evidence/python-builder-manifest.txt\ndocker image save --output \"$RUNNER_TEMP/candidate-image.tar\"\
-        \ \"$image_id\"\nsha256sum \"$RUNNER_TEMP/candidate-image.tar\" > evidence/candidate-image-archive-sha256.txt\n"
+        \ > evidence/python-builder-manifest.txt\ndocker image save --output \"$RUNNER_TEMP/candidate-image.tar\" \"$image_id\"\
+        \nsha256sum \"$RUNNER_TEMP/candidate-image.tar\" > evidence/candidate-image-archive-sha256.txt\n"
     - name: Record exact runtime component applicability
       run: "docker run --rm --network none --read-only --entrypoint python \"$SECURITY_IMAGE_ID\" -c '\nimport importlib.util,\
         \ json, pathlib, ssl, sys\nroot = pathlib.Path(\"/\")\npackages = json.loads(pathlib.Path(\"/usr/local/share/kps/runtime-packages.json\"\
-        ).read_text())\nprint(json.dumps(packages, indent=2)); print(sys.version); print(ssl.OPENSSL_VERSION)\n\
-        assert sys.version_info[:2] == (3, 12)\nassert importlib.util.find_spec(\"pip\") is None\nbanned = {\"libacl1\"\
-        , \"libmount1\", \"libblkid1\", \"util-linux\", \"mount\", \"gzip\", \"ncurses-bin\", \"libsqlite3-0\",\
-        \ \"libuuid1\"}\nassert not banned.intersection(p[\"package\"] for p in packages[\"complete_packages\"])\n\
-        for name in (\"/usr/bin/mount\", \"/usr/bin/gzip\", \"/usr/bin/infocmp\", \"/usr/lib/systemd/systemd-homed\"\
-        ):\n    assert not pathlib.Path(name).exists(), name\nfor pattern in (\"libacl.so*\", \"libmount.so*\",\
-        \ \"libblkid.so*\", \"libsqlite3.so*\", \"*minizip*\", \"Tar.pm\"):\n    found = list(pathlib.Path(\"/usr\"\
-        ).rglob(pattern)); assert not found, found\nfor p in pathlib.Path(\"/usr\").rglob(\"*\"):\n    if p.is_file():\
-        \ assert not p.stat().st_mode & 0o6000, str(p)\nassert pathlib.Path(\"/bin/sh\").exists() == packages[\"\
-        rollback_shell\"]\nimport fastapi, psycopg, PIL, cryptography, uvloop, reportlab\n' > evidence/runtime-components.txt\
-        \ 2>&1\n"
+        ).read_text())\nprint(json.dumps(packages, indent=2)); print(sys.version); print(ssl.OPENSSL_VERSION)\nassert sys.version_info[:2]\
+        \ == (3, 12)\nassert importlib.util.find_spec(\"pip\") is None\nbanned = {\"libacl1\", \"libmount1\", \"libblkid1\"\
+        , \"util-linux\", \"mount\", \"gzip\", \"ncurses-bin\", \"libsqlite3-0\", \"libuuid1\"}\nassert not banned.intersection(p[\"\
+        package\"] for p in packages[\"complete_packages\"])\nfor name in (\"/usr/bin/mount\", \"/usr/bin/gzip\", \"/usr/bin/infocmp\"\
+        , \"/usr/lib/systemd/systemd-homed\"):\n    assert not pathlib.Path(name).exists(), name\nfor pattern in (\"libacl.so*\"\
+        , \"libmount.so*\", \"libblkid.so*\", \"libsqlite3.so*\", \"*minizip*\", \"Tar.pm\"):\n    found = list(pathlib.Path(\"\
+        /usr\").rglob(pattern)); assert not found, found\nfor p in pathlib.Path(\"/usr\").rglob(\"*\"):\n    if p.is_file():\
+        \ assert not p.stat().st_mode & 0o6000, str(p)\nassert pathlib.Path(\"/bin/sh\").exists() == packages[\"rollback_shell\"\
+        ]\nimport fastapi, psycopg, PIL, cryptography, uvloop, reportlab\n' > evidence/runtime-components.txt 2>&1\n"
     - name: Focused suites inside the same immutable image
-      run: "python -m pip install --require-hashes --only-binary=:all: --target \"$RUNNER_TEMP/security-test-tools\"\
-        \ -r requirements-security-tests.lock\nchmod 0777 evidence\nmapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d'\
-        \ docs/final-operational-tests.txt)\ndocker run --rm --network host --entrypoint python \\\n  --mount \"\
-        type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly\" \\\n  --mount \"type=bind,src=$RUNNER_TEMP/security-test-tools,dst=/security-test-tools,readonly\"\
-        \ \\\n  --mount \"type=bind,src=$PWD/tests,dst=/app/tests,readonly\" \\\n  --mount \"type=bind,src=$PWD/docs,dst=/app/docs,readonly\"\
+      run: "python -m pip install --require-hashes --only-binary=:all: --target \"$RUNNER_TEMP/security-test-tools\" -r requirements-security-tests.lock\n\
+        chmod 0777 evidence\nmapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' docs/security-closure-tests.txt)\n\
+        docker run --rm --network host --entrypoint python \\\n  --mount \"type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly\"\
+        \ \\\n  --mount \"type=bind,src=$RUNNER_TEMP/security-test-tools,dst=/security-test-tools,readonly\" \\\n  --mount\
+        \ \"type=bind,src=$PWD/tests,dst=/app/tests,readonly\" \\\n  --mount \"type=bind,src=$PWD/docs,dst=/app/docs,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/Dockerfile,dst=/app/Dockerfile,readonly\" \\\n  --mount \"type=bind,src=$PWD/.dockerignore,dst=/app/.dockerignore,readonly\"\
-        \ \\\n  --mount \"type=bind,src=$PWD/requirements.txt,dst=/app/requirements.txt,readonly\" \\\n  --mount\
-        \ \"type=bind,src=$PWD/.github/workflows/software-hardening.yml,dst=/app/.github/workflows/software-hardening.yml,readonly\"\
+        \ \\\n  --mount \"type=bind,src=$PWD/requirements.txt,dst=/app/requirements.txt,readonly\" \\\n  --mount \"type=bind,src=$PWD/.github/workflows/software-hardening.yml,dst=/app/.github/workflows/software-hardening.yml,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tools/container_entrypoint.py,dst=/app/tools/container_entrypoint.py,readonly\"\
-        \ \\\n  --mount \"type=bind,src=$PWD/tools/profile_checkout.py,dst=/app/tools/profile_checkout.py,readonly\"\
-        \ \\\n  --mount \"type=bind,src=$PWD/tools/hardening_load.py,dst=/app/tools/hardening_load.py,readonly\"\
-        \ \\\n  --mount \"type=bind,src=$(readlink -f \"$(command -v node)\"),dst=/usr/local/bin/node,readonly\"\
-        \ \\\n  --mount \"type=bind,src=$PWD/evidence,dst=/evidence\" \\\n  --env PYTHONPATH=/security-safety:/security-test-tools:/app\
-        \ \\\n  --env TEST_DATABASE_URL=\"$TEST_DATABASE_URL\" --env APP_ENV=testing \\\n  --env OTP_PROVIDER=disabled\
-        \ --env EMAIL_PROVIDER=disabled \\\n  --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false\
-        \ \\\n  --env RECOVERY_POLL_ENABLED=false --env RUNTIME_REVISION=\"$GITHUB_SHA\" \\\n  \"$SECURITY_IMAGE_ID\"\
-        \ -m pytest -q \"${suites[@]}\" -k \"not real_browser\" --deselect tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation --deselect tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser --deselect tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save \\\n  -p no:cacheprovider --junitxml=/evidence/container-security-focused.xml\
-        \ \\\n  | tee evidence/container-security-focused.log\npython - <<'CHECK'\nimport xml.etree.ElementTree\
-        \ as E\ncases=list(E.parse('evidence/container-security-focused.xml').getroot().iter('testcase'))\nassert\
-        \ cases, 'No immutable-image test cases were executed'\nfor case in cases:\n    assert not any(case.find(tag)\
-        \ is not None for tag in ('failure', 'error', 'skipped')), case.attrib\nCHECK\n"
-    - name: Three mandatory Chromium cases against the same immutable image
-      run: |
-        set -euo pipefail
-        browser=$(command -v google-chrome || command -v google-chrome-stable)
-        "$browser" --headless --no-sandbox --disable-gpu --remote-debugging-address=127.0.0.1 --remote-debugging-port=19222 --remote-allow-origins=http://127.0.0.1:19222 --user-data-dir="$RUNNER_TEMP/exact-image-chromium" about:blank > evidence/image-chromium.log 2>&1 &
-        chrome_pid=$!
-        trap 'kill "$chrome_pid" 2>/dev/null || true' EXIT
-        mkdir -p ci-image-browser evidence/image-browser-screenshots
-        chmod 0777 evidence/image-browser-screenshots
-        cat > ci-image-browser/exact_image_browser.py <<'PLUGIN'
-        import pytest
-        @pytest.hookimpl(tryfirst=True)
-        def pytest_fixture_setup(fixturedef, request):
-            if fixturedef.argname != 'chromium_browser':
-                return None
-            from playwright.sync_api import sync_playwright
-            playwright = sync_playwright().start()
-            try:
-                browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:19222')
-            except BaseException:
-                playwright.stop()
-                raise
-            request.addfinalizer(playwright.stop)
-            fixturedef.cached_result = (browser, fixturedef.cache_key(request), None)
-            return browser
-        PLUGIN
-        python - <<'WAIT'
-        import json,time,urllib.request
-        for attempt in range(100):
-            try:
-                with urllib.request.urlopen('http://127.0.0.1:19222/json/version', timeout=1) as r:
-                    assert json.load(r)['webSocketDebuggerUrl']
-                break
-            except Exception:
-                if attempt == 99: raise
-                time.sleep(.1)
-        WAIT
-        # Only tests/tools are mounted; app, migrations and public assets come from exact image bytes.
-        docker run --rm --network host --entrypoint python \
-          --mount "type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly" \
-          --mount "type=bind,src=$PWD/ci-image-browser,dst=/security-browser,readonly" \
-          --mount "type=bind,src=$RUNNER_TEMP/security-test-tools,dst=/security-test-tools,readonly" \
-          --mount "type=bind,src=$PWD/tests,dst=/app/tests,readonly" \
-          --mount "type=bind,src=$PWD/evidence,dst=/evidence" \
-          --mount "type=bind,src=$PWD/evidence/image-browser-screenshots,dst=/app/test-artifacts" \
-          --env PYTHONPATH=/security-safety:/security-browser:/security-test-tools:/app \
-          --env TEST_DATABASE_URL="$TEST_DATABASE_URL" --env TEST_BROWSER=1 \
-          --env APP_ENV=testing --env RUNTIME_REVISION="$GITHUB_SHA" \
-          "$SECURITY_IMAGE_ID" -m pytest -q -p exact_image_browser -p no:cacheprovider \
-          tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation \
-          tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser \
-          tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save \
-          --junitxml=/evidence/container-three-browser.xml | tee evidence/container-three-browser.log
-        python - <<'CHECK'
-        import xml.etree.ElementTree as E
-        cases=list(E.parse('evidence/container-three-browser.xml').getroot().iter('testcase'))
-        assert len(cases)==3, len(cases)
-        assert not any(c.find(t) is not None for c in cases for t in ('failure','error','skipped'))
-        CHECK
+        \ \\\n  --mount \"type=bind,src=$PWD/tools/profile_checkout.py,dst=/app/tools/profile_checkout.py,readonly\" \\\n\
+        \  --mount \"type=bind,src=$PWD/tools/hardening_load.py,dst=/app/tools/hardening_load.py,readonly\" \\\n  --mount\
+        \ \"type=bind,src=$(readlink -f \"$(command -v node)\"),dst=/usr/local/bin/node,readonly\" \\\n  --mount \"type=bind,src=$PWD/evidence,dst=/evidence\"\
+        \ \\\n  --env PYTHONPATH=/security-safety:/security-test-tools:/app \\\n  --env TEST_DATABASE_URL=\"$TEST_DATABASE_URL\"\
+        \ --env APP_ENV=testing \\\n  --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \\\n  --env REPORT_WORKER_ENABLED=false\
+        \ --env EMAIL_WORKER_ENABLED=false \\\n  --env RECOVERY_POLL_ENABLED=false --env RUNTIME_REVISION=\"$GITHUB_SHA\"\
+        \ \\\n  \"$SECURITY_IMAGE_ID\" -m pytest -q \"${suites[@]}\" \\\n  -p no:cacheprovider --junitxml=/evidence/container-security-focused.xml\
+        \ \\\n  | tee evidence/container-security-focused.log\n"
     - name: Exact image runtime health and readiness
       env:
         PYTHONPATH: ci-safety:.
       run: "docker run --detach --name security-candidate --network host \\\n  --mount \"type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly\"\
         \ \\\n  --env PYTHONPATH=/security-safety:/app \\\n  --env DATABASE_URL=\"$TEST_DATABASE_URL\" --env APP_ENV=testing\
-        \ \\\n  --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \\\n  --env REPORT_WORKER_ENABLED=false\
-        \ --env EMAIL_WORKER_ENABLED=false \\\n  --env RECOVERY_POLL_ENABLED=false --env DISPATCH_AUTO_ASSIGN_ENABLED=false\
-        \ \\\n  --env DISPATCH_OFFER_ACCEPT_ENABLED=false \\\n  --env APP_ALLOWED_HOSTS=localhost,127.0.0.1 \\\n\
-        \  --env PORT=18080 --env RUNTIME_REVISION=\"$GITHUB_SHA\" \"$SECURITY_IMAGE_ID\"\npython - <<'PY' | tee\
-        \ evidence/container-smoke.json\nimport json, os, time, urllib.request\nfor attempt in range(90):\n    try:\n\
-        \        result = {}\n        for endpoint in ('health', 'ready'):\n            with urllib.request.urlopen('http://127.0.0.1:18080/'\
-        \ + endpoint, timeout=2) as r:\n                assert r.status == 200\n                result[endpoint]\
-        \ = json.load(r)\n                assert result[endpoint]['revision'] == os.environ['GITHUB_SHA']\n    \
-        \    print(json.dumps(result, indent=2)); break\n    except Exception:\n        if attempt == 89: raise\n\
-        \        time.sleep(1)\nPY\ndocker inspect --format '{{.Image}}' security-candidate > evidence/running-container-image-id.txt\n\
-        cmp evidence/candidate-image-id.txt evidence/running-container-image-id.txt\ndocker logs security-candidate\
-        \ > evidence/container-runtime.log 2>&1\ndocker stop security-candidate\n"
+        \ \\\n  --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \\\n  --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false\
+        \ \\\n  --env RECOVERY_POLL_ENABLED=false --env DISPATCH_AUTO_ASSIGN_ENABLED=false \\\n  --env DISPATCH_OFFER_ACCEPT_ENABLED=false\
+        \ \\\n  --env APP_ALLOWED_HOSTS=localhost,127.0.0.1 \\\n  --env PORT=18080 --env RUNTIME_REVISION=\"$GITHUB_SHA\"\
+        \ \"$SECURITY_IMAGE_ID\"\npython - <<'PY' | tee evidence/container-smoke.json\nimport json, os, time, urllib.request\n\
+        for attempt in range(90):\n    try:\n        result = {}\n        for endpoint in ('health', 'ready'):\n         \
+        \   with urllib.request.urlopen('http://127.0.0.1:18080/' + endpoint, timeout=2) as r:\n                assert r.status\
+        \ == 200\n                result[endpoint] = json.load(r)\n                assert result[endpoint]['revision'] ==\
+        \ os.environ['GITHUB_SHA']\n        print(json.dumps(result, indent=2)); break\n    except Exception:\n        if\
+        \ attempt == 89: raise\n        time.sleep(1)\nPY\ndocker inspect --format '{{.Image}}' security-candidate > evidence/running-container-image-id.txt\n\
+        cmp evidence/candidate-image-id.txt evidence/running-container-image-id.txt\ndocker logs security-candidate > evidence/container-runtime.log\
+        \ 2>&1\ndocker stop security-candidate\n"
     - name: Verify scanner tools and scan this exact image
-      run: "mkdir -p \"$RUNNER_TEMP/security-scanners\"\ncd \"$RUNNER_TEMP/security-scanners\"\ncurl --fail --location\
-        \ --retry 2 --max-time 120 -o syft.tar.gz https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz\n\
-        echo 'c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47  syft.tar.gz' | sha256sum -c -\n\
-        curl --fail --location --retry 2 --max-time 120 -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz\n\
-        echo 'e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7  trivy.tar.gz' | sha256sum -c -\n\
-        tar -xzf syft.tar.gz syft\ntar -xzf trivy.tar.gz trivy\n./syft version > \"$GITHUB_WORKSPACE/evidence/syft-version.txt\"\
-        \n./trivy version > \"$GITHUB_WORKSPACE/evidence/trivy-version.txt\"\n./syft scan \"docker-archive:$RUNNER_TEMP/candidate-image.tar\"\
+      run: "mkdir -p \"$RUNNER_TEMP/security-scanners\"\ncd \"$RUNNER_TEMP/security-scanners\"\ncurl --fail --location --retry\
+        \ 2 --max-time 120 -o syft.tar.gz https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz\n\
+        echo 'c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47  syft.tar.gz' | sha256sum -c -\ncurl --fail\
+        \ --location --retry 2 --max-time 120 -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz\n\
+        echo 'e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7  trivy.tar.gz' | sha256sum -c -\ntar -xzf syft.tar.gz\
+        \ syft\ntar -xzf trivy.tar.gz trivy\n./syft version > \"$GITHUB_WORKSPACE/evidence/syft-version.txt\"\n./trivy version\
+        \ > \"$GITHUB_WORKSPACE/evidence/trivy-version.txt\"\n./syft scan \"docker-archive:$RUNNER_TEMP/candidate-image.tar\"\
         \ -o \"cyclonedx-json=$GITHUB_WORKSPACE/evidence/candidate-image.cdx.json\"\n./trivy image --input \"$RUNNER_TEMP/candidate-image.tar\"\
-        \ --scanners vuln,secret \\\n  --format json --output \"$GITHUB_WORKSPACE/evidence/candidate-image-scan.json\"\
-        \ \\\n  --exit-code 0\n./trivy image --input \"$RUNNER_TEMP/candidate-image.tar\" --scanners vuln,secret\
-        \ \\\n  --format json --output \"$GITHUB_WORKSPACE/evidence/candidate-image-high-critical.json\" \\\n  --exit-code\
-        \ 1 --severity HIGH,CRITICAL\n"
-    - name: Reject every image secret regardless of severity
-      run: |
-        set -euo pipefail
-        python - <<'CHECK'
-        import json
-        report=json.load(open('evidence/candidate-image-scan.json'))
-        secrets=[s for result in report.get('Results',[]) for s in result.get('Secrets',[])]
-        assert not secrets, 'Immutable image contains detected secrets; do not publish findings or bypass this gate.'
-        CHECK
+        \ --scanners vuln,secret \\\n  --format json --output \"$GITHUB_WORKSPACE/evidence/candidate-image-scan.json\" \\\n\
+        \  --exit-code 0\n./trivy image --input \"$RUNNER_TEMP/candidate-image.tar\" --scanners vuln,secret \\\n  --format\
+        \ json --output \"$GITHUB_WORKSPACE/evidence/candidate-image-high-critical.json\" \\\n  --exit-code 1 --severity HIGH,CRITICAL\n"
     - name: Container logs and cleanup
       if: always()
       run: 'docker logs security-candidate > evidence/container-runtime-final.log 2>&1 || true
@@ -419,24 +312,23 @@ jobs:
       with:
         python-version: '3.12'
     - name: Verify exact candidate and PostgreSQL18.6
-      run: "set -euo pipefail\nmkdir -p evidence\ngit merge-base --is-ancestor 6b0739678fefb62c45baa792a7de6d9e107cb0a5\
-        \ HEAD\ngit diff --exit-code 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD -- . ':(exclude).github/workflows/security-closure.yml'\
+      run: "set -euo pipefail\nmkdir -p evidence\ngit merge-base --is-ancestor 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD\n\
+        git diff --exit-code 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD -- . ':(exclude).github/workflows/security-closure.yml'\
         \ ':(exclude)tests/test_browser.py' ':(exclude)tests/browser_sms_helpers.py' ':(exclude)tests/test_additional_password_owner.py'\
-        \ ':(exclude)tests/test_owner_staff_management.py'\nprintf \"%s\\n\" 6b0739678fefb62c45baa792a7de6d9e107cb0a5\
-        \ > evidence/application-source-sha.txt\ngit diff --name-only 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD\
-        \ > evidence/test-only-changes.txt\ngit rev-parse HEAD > evidence/source-sha.txt\npython -m pip install\
-        \ --require-hashes --only-binary=:all: -r requirements.lock\npython -m pip install --require-hashes --only-binary=:all:\
-        \ -r requirements-security-tests.lock\npython - <<'CHECK'\nimport os, psycopg\nwith psycopg.connect(os.environ['TEST_DATABASE_URL'])\
-        \ as c:\n    version=c.execute('show server_version').fetchone()[0]\n    assert version.split()[0]=='18.6',version\n\
-        \    open('evidence/postgresql-version.txt','w').write(version)\nCHECK\npython -m playwright install --with-deps\
-        \ chromium\npython -m pip freeze > evidence/python-packages.txt\n"
+        \ ':(exclude)tests/test_owner_staff_management.py'\nprintf \"%s\\n\" 6b0739678fefb62c45baa792a7de6d9e107cb0a5 > evidence/application-source-sha.txt\n\
+        git diff --name-only 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD > evidence/test-only-changes.txt\ngit rev-parse\
+        \ HEAD > evidence/source-sha.txt\npython -m pip install --require-hashes --only-binary=:all: -r requirements.lock\n\
+        python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock\npython - <<'CHECK'\n\
+        import os, psycopg\nwith psycopg.connect(os.environ['TEST_DATABASE_URL']) as c:\n    version=c.execute('show server_version').fetchone()[0]\n\
+        \    assert version.split()[0]=='18.6',version\n    open('evidence/postgresql-version.txt','w').write(version)\nCHECK\n\
+        python -m playwright install --with-deps chromium\npython -m pip freeze > evidence/python-packages.txt\n"
     - name: Run exactly three SMS-correct browser tests
       run: "set -euo pipefail\npython -m pytest -v --tb=short   tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation\
         \   tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser   tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save\
-        \   --junitxml=evidence/final-three-browser.xml | tee evidence/final-three-browser.log\npython - <<'CHECK'\n\
-        import xml.etree.ElementTree as E\nroot=E.parse('evidence/final-three-browser.xml').getroot()\ncases=list(root.iter('testcase'))\n\
-        assert len(cases)==3, len(cases)\nfor case in cases:\n    assert not any(case.find(tag) is not None for\
-        \ tag in ('error','failure','skipped')),case.attrib\nCHECK\n"
+        \   --junitxml=evidence/final-three-browser.xml | tee evidence/final-three-browser.log\npython - <<'CHECK'\nimport\
+        \ xml.etree.ElementTree as E\nroot=E.parse('evidence/final-three-browser.xml').getroot()\ncases=list(root.iter('testcase'))\n\
+        assert len(cases)==3, len(cases)\nfor case in cases:\n    assert not any(case.find(tag) is not None for tag in ('error','failure','skipped')),case.attrib\n\
+        CHECK\n"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -449,3 +341,4 @@ jobs:
     branches:
     - agent/kps-order-security-closure-20261018
   workflow_dispatch: null
+

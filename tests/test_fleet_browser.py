@@ -3,9 +3,7 @@ import os
 import pytest
 from app import db
 from test_fleet import seed
-from test_browser import _capture,_context,_owner_login,_staff,chromium_browser,ARTIFACTS
-from tests.browser_sms_helpers import sms_browser_app as live_app
-
+from test_browser import _capture,_context,_owner_login,_staff,chromium_browser,live_app,synthetic_mail,ARTIFACTS
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Requires explicit isolated browser acceptance.')]
 
 def _readable_log(page):

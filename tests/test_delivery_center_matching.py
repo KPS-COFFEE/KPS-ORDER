@@ -115,8 +115,7 @@ def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(m
         def execute(self,sql,args):
             if sql.startswith('SELECT settings'):return Result({'settings':{}})
             if sql.startswith('SELECT id FROM shifts'):return Result({'id':'manager-shift'})
-            if sql.startswith('INSERT INTO users'):
-                inserted.append(args);return Result({'id':args[0],'active':True,'identity_kind':'guest','brand_id':args[3]})
+            if sql.startswith('INSERT INTO users'):inserted.append(args);return Result()
             raise AssertionError(sql)
     @contextmanager
     def tx(**kwargs):yield Conn()

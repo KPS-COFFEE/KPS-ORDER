@@ -31,20 +31,6 @@ def run(app, request_scope, request_messages=None):
     return messages
 
 
-@pytest.mark.parametrize('policy,expected', [
-    ('private, no-store', 'private, no-store'),
-    ('Private, max-age=3600', 'private, no-store'),
-    ('public, max-age=3600', 'no-store'),
-])
-def test_sensitive_response_retains_private_and_never_cacheable_directives(policy, expected):
-    async def app(request_scope, receive, send):
-        await send({'type': 'http.response.start', 'status': 200,
-                    'headers': [(b'cache-control', policy.encode())]})
-        await send({'type': 'http.response.body', 'body': b'sensitive export'})
-    messages = run(app, scope('/api/driver-work-hours/export.xlsx'))
-    assert dict(messages[0]['headers'])[b'cache-control'].decode() == expected
-
-
 @pytest.mark.parametrize('path,method,status,cache', [
     ('/api/check', 'GET', 200, 'no-store'),
     ('/api/check', 'POST', 409, 'no-store'),

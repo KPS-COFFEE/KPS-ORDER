@@ -31,7 +31,7 @@ Proposed configuration for a later approved deployment (DO NOT apply now):
 
 ```
 KPS_OFFICIAL_HOST_ENFORCEMENT_ENABLED=true
-KPS_OFFICIAL_HOSTS=order.kps.sa
+KPS_OFFICIAL_HOSTS=order.kps.sa,admin.kps.sa,staff.kps.sa
 KPS_INTERNAL_HEALTH_HOSTS=kps-order-emergency-v4.onrender.com
 ```
 
@@ -52,27 +52,3 @@ Rollback of a future approved cutover: disable the new flag to restore the previ
 ## Verification boundaries
 
 Focused middleware contract suite: 21 PASS. Driver collection UI AR/EN Node fixture: PASS. A broader portal test attempt had 48 PASS / 13 setup ERROR because no isolated TEST_DATABASE_URL was provided; those 13 database cases were not executed or certified. Targeted follow-up belongs in the main CI evidence. Existing `tests/test_split_payment.py::test_delivery_split_only_cash_enters_custody` covers 12 cash/card/split and absent/blank/optional-reference combinations, same-key replay, different-key repeat rejection, role rejection, and cash-only custody accounting; run against isolated PG18. Database collection tests and real browser SMS/print checks are recorded by the main release report. DNS/TLS completeness and branch migration remain BLOCKED until verified. Historical security/image/browser certificates belong to their exact SHA, not automatically to this modified runtime.
-
-
-## Parallel closure checkpoint — fresh evidence
-
-Source inspected: `80a1d727f6695c4ce3685e726ab5b34674e1cfa0`.
-
-Read-only HTTPS requests repeated on 18 October 2026 returned:
-
-| Endpoint | Result | Observed revision |
-| --- | --- | --- |
-| `https://order.kps.sa/health` | 200 alive | `466bb9868768002d35f277a8aa4628fefc431126` |
-| `https://order.kps.sa/ready` | 200 ready; database connected | same |
-| `https://kps-order-emergency-v4.onrender.com/health` | 200 alive | same |
-| `https://kps-order-emergency-v4.onrender.com/ready` | 200 ready; database connected | same |
-| `https://admin.kps.sa/health` and `/ready` | 502 from access path | unverified |
-| `https://staff.kps.sa/health` and `/ready` | 502 from access path | unverified |
-
-One additional short-timeout `/ready` request timed out; the completed 15-second-timeout request returned 200. These are bounded point-in-time observations, not a latency certificate. Public health and ready attest the live revision only, not authenticated behavior or staff/print acceptance.
-
-Focused command at this source: `python -m pytest tests/test_print_bridge_domain_migration.py tests/test_official_host_policy.py -m 'not postgres' -q`: **31 PASS**, **3 deliberately deselected PostgreSQL tests**, no failures/errors/skips. The deselected cases must be run against isolated PostgreSQL before acceptance. Existing Windows CI job in `.github/workflows/emergency-v4.yml` compiles the actual bridge with Windows .NET Framework and invokes `--self-test`; no new Windows execution is asserted at this checkpoint. The current container has no Windows runtime, Mono, or C# compiler. Source/package assertions are not Windows execution.
-
-Mohammed remains **not verified / not changed**. A last-four phone suffix is not sufficient identity proof. A future authorized operator must match the existing account, role, brand and actual assigned branch IDs, obtain owner-sensitive SMS authorization, then grant only `branch_printers_manage` through the existing permission endpoint. No production account read with assumed identity, creation, branch assignment or permission mutation occurred here. Physical paper remains pending a real branch Windows printer test and explicit operator acceptance; simulated `submitted` acknowledgements cannot establish paper output.
-
-The proposed host allowlist above now includes only `order.kps.sa`, because admin/staff reachability has not been established. The guard remains OFF, Render remains running and reachable, and legacy printer registrations remain unchanged. No production merge, deploy, configuration or DNS change was performed.

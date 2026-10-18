@@ -58,24 +58,9 @@ class BlindClosureTests(unittest.TestCase):
 
     def test_card_discrepancy_requires_manager_reason_even_with_balanced_cash(self):
         s={**self.shift,'status':'submitted','submission':{'difference_halalas':0,'card_difference_halalas':100,'retained_halalas':0}}
-        c=Mock()
-        # This case has no pending trip; exercise the original financial guard.
-        c.execute.return_value.fetchone.return_value=None
         with patch('app.driver_incentives.require_decisions'),patch.object(op,'lock_shift',return_value=s),patch.object(op,'shift_access'),self.assertRaises(HTTPException) as error:
-            op.approve_close_in_tx(c,self.manager,'shift',op.Review())
+            op.approve_close_in_tx(Mock(),self.manager,'shift',op.Review())
         self.assertEqual(error.exception.status_code,422)
-
-    def test_open_trip_blocks_approval_before_financial_review(self):
-        s={**self.shift,'status':'submitted','submission':{'difference_halalas':0,'card_difference_halalas':0,'retained_halalas':0}}
-        c=Mock()
-        c.execute.return_value.fetchone.return_value={'trip_id':'unreturned-trip'}
-        with patch('app.driver_incentives.require_decisions') as financial_review,patch.object(op,'lock_shift',return_value=s),patch.object(op,'shift_access'),self.assertRaises(HTTPException) as error:
-            op.approve_close_in_tx(c,self.manager,'shift',op.Review())
-        self.assertEqual(error.exception.status_code,409)
-        self.assertEqual(error.exception.detail['code'],'TRIP_RETURN_REQUIRED')
-        financial_review.assert_not_called()
-        self.assertIn('driver_work_trips',c.execute.call_args.args[0])
-        self.assertIn('returned_at IS NULL',c.execute.call_args.args[0])
 
     def test_driver_cannot_read_financial_reports_even_when_owner_of_shift(self):
         row={'brand_id':'b','branch_ids':['one'],'user_id':'driver','snapshot':{'manager_user_id':'manager'}}

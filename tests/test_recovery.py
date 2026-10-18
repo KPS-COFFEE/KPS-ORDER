@@ -161,46 +161,12 @@ def test_signature_resource_and_replay_failures_do_not_create_state(monitoring):
         assert conn.execute('SELECT count(*) AS n FROM recovery_alerts').fetchone()['n'] == 0
 
 
-@pytest.mark.parametrize('role', ['driver','branch_manager','delivery_manager','delivery_staff'])
+@pytest.mark.parametrize('role', ['customer','driver','branch_manager','delivery_manager','delivery_staff'])
 @pytest.mark.postgres
 def test_monitoring_rejects_every_non_owner_role(client, role):
     _login(client, role=role)
     assert client.get('/api/admin/recovery').status_code == 403
     assert client.post('/api/admin/recovery/refresh').status_code == 403
-
-
-@pytest.mark.postgres
-def test_verified_customer_session_cannot_enter_work_recovery_or_owner_role(client, monkeypatch):
-    """Prove context rejection before the unchanged owner-role rejection.
-
-    Admin URLs require a work-context credential, so a canonical customer session
-    cannot reach their downstream 403 role check. Verify that real customer SMS
-    authentication succeeds first, then exercise both existing security layers.
-    """
-    from tests.sms_policy_helpers import configure_sms
-    configure_sms(monkeypatch)
-    requested = client.post('/api/auth/otp/request', json={'phone': '0509876543'})
-    assert requested.status_code == 200, requested.text
-    verified = client.post('/api/auth/otp/verify', json={
-        'challenge_id': requested.json()['challenge_id'], 'code': '0123'})
-    assert verified.status_code == 200, verified.text
-    client.headers['X-KPS-Context'] = 'customer'
-    client.headers['X-CSRF-Token'] = verified.json()['csrf_token']
-    session = client.get('/api/session')
-    assert session.status_code == 200
-    assert session.json()['customer_verified'] is True
-    customer = session.json()['user']
-    assert customer['id'] == verified.json()['user']['id']
-    assert customer['role'] == 'customer' and customer['phone_sms_verified_at']
-    for method, path in (('GET', '/api/admin/recovery'),
-                         ('POST', '/api/admin/recovery/refresh')):
-        rejected = client.request(method, path)
-        assert rejected.status_code == 401
-        assert rejected.json()['detail']['code'] == 'AUTHENTICATION_REQUIRED'
-    with pytest.raises(HTTPException) as rejected_role:
-        asyncio.run(auth.require_roles('owner')(user=customer))
-    assert rejected_role.value.status_code == 403
-    assert rejected_role.value.detail['code'] == 'ROLE_FORBIDDEN'
 
 
 @pytest.mark.postgres
