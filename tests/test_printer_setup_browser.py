@@ -4,7 +4,7 @@ import os
 import zipfile
 import pytest
 from app import db
-from test_browser import _capture, _context, _owner_login, _staff, chromium_browser, synthetic_mail
+from test_browser import ARTIFACTS, _capture, _context, _owner_login, _staff, chromium_browser, synthetic_mail
 
 from tests.browser_sms_helpers import sms_browser_app as live_app
 
@@ -54,7 +54,13 @@ def test_guided_printer_setup_and_live_acceptance(live_app,chromium_browser,tmp_
                 return {readable,overlap,notesWrap:getComputedStyle(notes).overflowWrap,
                     pageOverflow:document.documentElement.scrollWidth>innerWidth};
             }''')
-            assert layout=={'readable':True,'overlap':False,'notesWrap':'anywhere','pageOverflow':False}
+            # Preserve evidence before a geometry failure; a failing assertion must not erase its screenshot.
+            page.screenshot(path=str(ARTIFACTS/f'TEST_ONLY_printer_before_assert_{language}_{width}.png'),full_page=True)
+            diagnostics=page.locator('#printer-live .printer-directory').evaluate('''root=>
+                [...root.querySelectorAll('td,.pill,td button')].map(e=>({tag:e.tagName,text:e.textContent,
+                    whiteSpace:getComputedStyle(e).whiteSpace,clientWidth:e.clientWidth,scrollWidth:e.scrollWidth,
+                    clientHeight:e.clientHeight,scrollHeight:e.scrollHeight}))''')
+            assert layout=={'readable':True,'overlap':False,'notesWrap':'anywhere','pageOverflow':False},diagnostics
             _capture(page,f'TEST_ONLY_printer_layout_{language}_{width}')
         page.set_viewport_size({'width':1280,'height':900})
         with page.expect_response(lambda r: r.url.endswith("/test") and r.request.method=="POST"):

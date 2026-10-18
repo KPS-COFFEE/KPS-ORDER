@@ -51,11 +51,12 @@ def test_open_driver_browser_hides_withdrawn_page_without_signout(live_app,chrom
     owner=_staff();driver=_staff('driver')
     with db.tx() as conn:
         baseline=conn.execute('SELECT role,branch_ids FROM users WHERE id=%s',(driver['id'],)).fetchone()
+        assert baseline['role']=='driver'
     owner_context,owner_page,owner_errors=_context(chromium_browser,live_app)
     driver_context,page,errors=_context(chromium_browser,live_app)
     try:
         _owner_login(owner_context,live_app,owner)
-        _owner_login(driver_context,live_app,driver)
+        driver_headers=_owner_login(driver_context,live_app,driver)
         page.goto(live_app+'/ops',wait_until='networkidle')
         expect(page.locator('#navigation [data-page=maintenance]')).to_be_visible()
         owner_page.goto(live_app+'/ops',wait_until='networkidle')
@@ -76,6 +77,6 @@ def test_open_driver_browser_hides_withdrawn_page_without_signout(live_app,chrom
             assert row['role']==baseline['role'] and row['branch_ids']==baseline['branch_ids']
         expect(page.locator('#navigation [data-page=maintenance]')).to_have_count(0,timeout=25000)
         expect(page.locator('#app-shell')).to_be_visible()
-        assert driver_context.request.get(live_app+'/api/vehicle-maintenance/options').status==403
+        assert driver_context.request.get(live_app+'/api/vehicle-maintenance/options',headers=driver_headers).status==403
         assert not errors and not owner_errors,(errors,owner_errors)
     finally:owner_context.close();driver_context.close()

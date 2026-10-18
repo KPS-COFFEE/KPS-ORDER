@@ -316,3 +316,7 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 .staff-directory th:last-child,.staff-directory td:last-child{min-width:215px}
 .order-table th:first-child,.order-table td:first-child{min-width:220px}
 .order-table th:nth-child(3),.order-table td:nth-child(3),.order-table th:nth-child(7),.order-table td:nth-child(7){min-width:180px}
+
+/* Live printer controls share the approved wrapping rule; this ID selector
+   must override the older #printer-live button nowrap compatibility rule. */
+#printer-live .printer-directory button{white-space:normal;overflow-wrap:anywhere}
