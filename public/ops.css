@@ -293,7 +293,7 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 /* Approved integration: preserve KPS typography and cards while allowing all prose to wrap. */
 .staff-directory td,.staff-directory th{white-space:normal;overflow-wrap:anywhere!important;word-break:normal!important}
 .printer-directory td,#printer-live td,.fleet-log-table td{white-space:normal;overflow-wrap:anywhere;word-break:normal}
-.printer-directory button,.printer-directory .pill{white-space:normal;overflow-wrap:anywhere}
+.printer-directory button,.printer-directory .pill,#printer-live button{white-space:normal;overflow-wrap:anywhere}
 .task-card .data-grid dd,.order-detail-card>.data-grid dd,.shift-card .data-grid dd{white-space:normal;overflow-wrap:anywhere}
 .card-head{flex-wrap:wrap}.card-head>.pill{flex-shrink:1;white-space:normal}.metric,.hours-kpis .panel{min-width:0;overflow-wrap:anywhere}
 .table-wrap table{table-layout:auto}.table-wrap td{height:auto;max-width:560px;white-space:normal;overflow-wrap:anywhere;line-height:1.65}

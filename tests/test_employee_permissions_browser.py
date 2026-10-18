@@ -49,6 +49,8 @@ def test_employee_permission_switches_are_named_saved_and_visible(live_app,chrom
 def test_open_driver_browser_hides_withdrawn_page_without_signout(live_app,chromium_browser):
     from playwright.sync_api import expect
     owner=_staff();driver=_staff('driver')
+    with db.tx() as conn:
+        baseline=conn.execute('SELECT role,branch_ids FROM users WHERE id=%s',(driver['id'],)).fetchone()
     owner_context,owner_page,owner_errors=_context(chromium_browser,live_app)
     driver_context,page,errors=_context(chromium_browser,live_app)
     try:
@@ -71,7 +73,7 @@ def test_open_driver_browser_hides_withdrawn_page_without_signout(live_app,chrom
         with db.tx() as conn:
             row=conn.execute('SELECT * FROM users WHERE id=%s',(driver['id'],)).fetchone()
             assert set(row['permission_denials'])=={'vehicle_faults_report'}
-            assert row['role']==driver['role'] and row['branch_ids']==driver['branch_ids']
+            assert row['role']==baseline['role'] and row['branch_ids']==baseline['branch_ids']
         expect(page.locator('#navigation [data-page=maintenance]')).to_have_count(0,timeout=25000)
         expect(page.locator('#app-shell')).to_be_visible()
         assert driver_context.request.get(live_app+'/api/vehicle-maintenance/options').status==403
