@@ -105,7 +105,9 @@ def test_native_image_request_preserves_staff_scope(client, monkeypatch, image_c
         assert response.headers['x-content-type-options'] == 'nosniff'
         history = client.get(f'/api/conversations/{cid}/messages', headers={'X-KPS-Context': 'work'})
         assert history.status_code == 200
-        assert history.json()['messages'][0]['attachment_url'] == work_url
+        attachment_message = next(message for message in history.json()['messages']
+                                  if message['attachment_id'] == uploaded['id'])
+        assert attachment_message['attachment_url'] == work_url
         # Removing branch authorization takes effect even for an existing URL.
         with db.tx() as c:
             c.execute('UPDATE users SET active=false WHERE id=%s', (worker['id'],))
@@ -139,6 +141,8 @@ def test_same_jar_image_context_never_falls_back_to_another_identity(client, mon
 @pytest.mark.postgres
 def test_context_hint_cannot_cross_brands(client, monkeypatch, image_conversation):
     _, _, uploaded, _ = image_conversation
+    # The synthetic foreign brand uses the same mandatory SMS flow as KPS.
+    monkeypatch.setenv('EMPLOYEE_SMS_LOGIN_ENABLED', 'true')
     with db.tx() as c:
         c.execute("INSERT INTO brands(id,name) VALUES('attachment-test-other','TEST ONLY')")
     foreign_owner = _make_user('owner', brand='attachment-test-other')
