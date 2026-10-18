@@ -74,3 +74,33 @@ def test_transferred_order_preserves_each_drivers_actual_work():
     assert first['delivery_seconds']==2700
     assert second['delivery_seconds']==3600
     assert first['delivery_seconds']+second['delivery_seconds']==6300
+
+
+def test_eight_hour_shift_six_hours_completed_delivery_without_double_counting():
+    from app.driver_work_hours import order_activity
+    tasks=[dict(order_id='a',status='delivered',picked_up_at=at(0),delivered_at=at(240)),
+           dict(order_id='b',status='delivered',picked_up_at=at(120),delivered_at=at(360))]
+    m=order_activity([shift(0,480)],tasks,[],at(0),at(480),at(480))
+    assert m['order_activity_seconds']==21600
+    assert m['remaining_shift_seconds']==7200
+    assert m['order_utilization_percent']==75
+
+
+def test_activity_clips_days_breaks_and_separates_active_and_missing_timestamps():
+    from app.driver_work_hours import order_activity
+    tasks=[dict(order_id='a',status='delivered',picked_up_at=at(-60),delivered_at=at(90)),
+           dict(order_id='b',status='problem',picked_up_at=at(60),delivered_at=None),
+           dict(order_id='missing',status='delivered',picked_up_at=None,delivered_at=at(110))]
+    m=order_activity([shift()],tasks,[(at(30),at(60))],at(0),at(120),at(120))
+    assert m['order_activity_seconds']==3600
+    assert m['active_delivery_seconds']==1800
+    assert m['remaining_shift_seconds']==1800
+    assert m['missing_order_timing_count']==1
+    assert m['order_utilization_percent']==50
+
+
+def test_no_orders_does_not_claim_a_driver_was_on_break():
+    from app.driver_work_hours import order_activity
+    m=order_activity([shift()],[],[],at(0),at(120),at(120))
+    assert m['remaining_shift_seconds']==7200
+    assert m['order_activity_seconds']==m['active_delivery_seconds']==0

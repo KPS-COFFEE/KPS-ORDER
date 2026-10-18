@@ -77,7 +77,7 @@ def enrich_orders(conn, rows, now=None):
     ids = [row['id'] for row in rows]
     events = conn.execute('SELECT order_id,event_type,created_at FROM order_events WHERE order_id=ANY(%s) '
                           'ORDER BY created_at,id', (ids,)).fetchall()
-    tasks = conn.execute('SELECT t.order_id,t.driver_id,t.created_at,t.picked_up_at,t.delivered_at,t.status,u.display_name '
+    tasks = conn.execute('SELECT t.order_id,t.driver_id,t.created_at,t.picked_up_at,t.delivered_at,t.status,t.reason,u.display_name '
                          'FROM driver_tasks t JOIN users u ON u.id=t.driver_id WHERE t.order_id=ANY(%s) '
                          'ORDER BY t.created_at,t.id', (ids,)).fetchall()
     points, names = {}, {}
@@ -89,7 +89,8 @@ def enrich_orders(conn, rows, now=None):
             point['task.picked_up'] = min(point.get('task.picked_up', task['picked_up_at']), task['picked_up_at'])
         if task['delivered_at']:
             point['task.delivered'] = task['delivered_at']
-        names[task['order_id']] = {'driver_id': task['driver_id'], 'driver_name': task['display_name']}
+        names[task['order_id']] = {'driver_id': task['driver_id'], 'driver_name': task['display_name'],
+                                 'delivery_problem_reason': task.get('reason') if task['status']=='problem' else None}
     for row in rows:
         point = points.get(row['id'], {})
         done = row.get('completed_at') or point.get('task.delivered')

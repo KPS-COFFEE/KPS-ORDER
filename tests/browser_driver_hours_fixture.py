@@ -17,7 +17,7 @@ def main():
     OUT.mkdir(parents=True,exist_ok=True)
     metric=dict(shift_seconds=28800, actual_seconds=25200, delivery_seconds=10800,
                 waiting_seconds=14400, break_seconds=3600, other_work_seconds=0,
-                unclassified_seconds=0,trip_count=3,order_count=7)
+                unclassified_seconds=0,trip_count=3,order_count=7,order_activity_seconds=21600,active_delivery_seconds=0,remaining_shift_seconds=7200,order_utilization_percent=75,missing_order_timing_count=0)
     fixture=dict(start='2026-10-18',end='2026-10-18',operational_date='2026-10-18',
                  operational_day_start='05:30',timezone='Asia/Riyadh',totals=metric,
                  branches=[dict(id='fixture-branch',name='فرع اختباري')],
@@ -50,7 +50,7 @@ def main():
             checks.append('mobile_no_horizontal_overflow')
             page.screenshot(path=str(OUT/'driver-hours-mobile-ar.png'),full_page=True)
             page.click('#hours-language')
-            page.wait_for_function("document.documentElement.lang==='en' && document.querySelector('#hours-kpis h2').textContent==='Total shift hours'")
+            page.wait_for_function("document.documentElement.lang==='en' && document.querySelector('#hours-kpis h2').textContent==='Shift duration'")
             assert page.locator('html').get_attribute('dir')=='ltr'
             checks.append('english_ltr')
             page.screenshot(path=str(OUT/'driver-hours-mobile-en.png'),full_page=True)

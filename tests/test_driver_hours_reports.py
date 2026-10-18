@@ -3,13 +3,13 @@ import io
 from pathlib import Path
 from zipfile import ZipFile
 from xml.etree import ElementTree
-from app.driver_hours_reports import make_xlsx, make_pdf, export_rows
+from app.driver_hours_reports import make_xlsx, make_pdf, export_rows, COLUMNS
 
 
 def fixture():
     metrics = dict(shift_seconds=28800, actual_seconds=25200, delivery_seconds=7200,
                    waiting_seconds=14400, break_seconds=3600, other_work_seconds=0,
-                   unclassified_seconds=3600, trip_count=2, order_count=5)
+                   unclassified_seconds=3600, order_activity_seconds=21600, active_delivery_seconds=0, remaining_shift_seconds=7200, trip_count=2, order_count=5)
     return dict(start='2026-10-18', end='2026-10-18', operational_day_start='05:30',
                 totals=metrics, drivers=[dict(name='=HYPERLINK("bad")', **metrics)])
 
@@ -30,7 +30,7 @@ def test_export_hours_reconcile_and_english_labels():
     assert rows[0][0] == 'Driver'
     assert rows[1][3:8] == [8, 7, 2, 4, 1]
     assert rows[-1][1:] == rows[1][1:]
-    assert rows[1][-1] == 1
+    assert rows[1][9:] == [1,6,0,2]
 
 
 def test_arabic_pdf_has_embedded_font_and_real_pdf():
@@ -52,7 +52,7 @@ def test_pdf_wraps_complete_driver_names_and_repeats_table_headers():
     for page in document.pages:
         # Read the name column separately from adjacent numeric cells.
         page.extract_text(visitor_text=lambda value, cm, tm, font, size:
-                          name_fragments.append(value) if tm[4] > 737 else None)
+                          name_fragments.append(value) if tm[4] > float(page.mediabox.width)-25-(float(page.mediabox.width)-50)/len(COLUMNS)+1 else None)
     compact = ''.join(''.join(name_fragments).split())
     assert ''.join(name.split()) in compact
     assert '…' not in text
@@ -65,7 +65,7 @@ def test_four_cards_match_ops_identity_and_responsive_contract():
     js=(root/'public/assets/driver-hours.js').read_text()
     css=(root/'public/assets/driver-hours.css').read_text()
     html=(root/'public/driver-hours.html').read_text()
-    assert "[['shift','shift_seconds'],['actual','actual_seconds'],['delivery','delivery_seconds'],['waiting','waiting_seconds']]" in js
+    assert "[['shift','shift_seconds'],['order_work','order_activity_seconds'],['remaining','remaining_shift_seconds'],['utilization','order_utilization_percent']]" in js
     assert 'repeat(4,minmax(0,1fr))' in css
     assert 'repeat(2,minmax(0,1fr))' in css
     assert '/ops.css' in html and 'unclassified_seconds' in js
