@@ -27,7 +27,7 @@ def test_report_fixture_never_targets_an_operational_or_unowned_schema(monkeypat
 
 def test_combined_capacity_waits_for_real_dual_brand_acceptance():
     jobs=yaml.safe_load((ROOT/'.github/workflows/enbishan-isolated.yml').read_text())['jobs']
-    assert jobs['capacity-economy']['needs']=='dual-brand'
+    assert set(jobs['capacity-economy']['needs'])=={'dual-brand','operational-regression'}
     assert 'if' not in jobs['capacity-economy']
     for name,previous in [('medium','economy'),('proposed','medium')]:
         job=jobs['capacity-'+name]
