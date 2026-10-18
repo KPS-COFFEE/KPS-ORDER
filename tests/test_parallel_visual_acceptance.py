@@ -48,6 +48,8 @@ def test_integrated_cards_tables_and_customer_lookup(chromium_browser, language,
         screenshots.mkdir(exist_ok=True)
         page.screenshot(path=str(screenshots/f'parallel-customer-{language}-{width}.png'), full_page=True)
         page.locator('#modal').evaluate('(e)=>e.close()')
+        assert page.locator('td').first.evaluate('(e)=>e.clientWidth>=220')
+        assert page.locator('th').first.evaluate('(e)=>e.clientWidth>=220')
         assert page.locator('td').first.evaluate('(e)=>getComputedStyle(e).whiteSpace') == 'normal'
         assert page.locator('td').first.evaluate('(e)=>getComputedStyle(e).textOverflow') == 'clip'
         assert page.locator('td').first.evaluate('(e)=>e.scrollHeight<=e.clientHeight+1')

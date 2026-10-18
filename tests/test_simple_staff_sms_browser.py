@@ -43,13 +43,14 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
             layout=page.locator('.staff-directory').evaluate('''root=>{
                 const cells=[...root.querySelectorAll('td')];
                 const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
-                return {readable:cells.filter(visible).every(e=>{
+                const name=root.querySelector('tbody td:first-child'),header=root.querySelector('thead th:first-child');
+                return {nameReadableWidth:Math.min(name.clientWidth,header.clientWidth)>=220,readable:cells.filter(visible).every(e=>{
                     const s=getComputedStyle(e);
                     return s.whiteSpace==='normal'&&s.textOverflow!=='ellipsis'&&
                         e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1;
                 }),pageOverflow:document.documentElement.scrollWidth>innerWidth};
             }''')
-            assert layout=={'readable':True,'pageOverflow':False}
+            assert layout=={'nameReadableWidth':True,'readable':True,'pageOverflow':False}
             page.screenshot(path=str(ARTIFACTS/f'focused-staff-table-{language}-{listing_width}.png'),full_page=True)
         page.set_viewport_size({'width':width,'height':900})
         page.locator('[data-action=invite-staff]').click()

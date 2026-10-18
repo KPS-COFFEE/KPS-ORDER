@@ -303,3 +303,16 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 #staff-customer-lookup p+p{margin-top:6px}#staff-order-form fieldset{max-width:100%;min-width:0}
 #staff-order-form .actions>span{min-width:0;flex:1;overflow-wrap:anywhere}
 @media(max-width:768px){.topbar{flex-wrap:wrap}.header-actions{max-width:100%}.order-detail-card>.data-grid dd{font-size:17px}.table-wrap td{max-width:380px}.hours-kpis strong{overflow-wrap:anywhere}}
+/* Full text must wrap at readable column widths, never one letter per line.
+   Wider tables scroll inside their existing wrapper on mobile and tablets. */
+.table-wrap th,.table-wrap td{min-width:110px}
+.staff-directory table{min-width:1600px}
+.staff-directory th,.staff-directory td{min-width:140px}
+.staff-directory th:first-child,.staff-directory td:first-child{min-width:220px;width:220px}
+.staff-directory th:nth-child(2),.staff-directory td:nth-child(2){min-width:240px;width:240px}
+.staff-directory th:nth-child(3),.staff-directory td:nth-child(3){min-width:290px}
+.staff-directory th:nth-child(4),.staff-directory td:nth-child(4){min-width:220px}
+.staff-directory th:nth-child(6),.staff-directory td:nth-child(6){min-width:220px}
+.staff-directory th:last-child,.staff-directory td:last-child{min-width:215px}
+.order-table th:first-child,.order-table td:first-child{min-width:220px}
+.order-table th:nth-child(3),.order-table td:nth-child(3),.order-table th:nth-child(7),.order-table td:nth-child(7){min-width:180px}
