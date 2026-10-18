@@ -85,15 +85,6 @@ jobs:
       run: |
         set -euo pipefail
         python -m pytest -q tests/test_tawked_otp.py tests/test_owner_sms_channel_probe.py --junitxml=evidence/owner-probe.xml | tee evidence/owner-probe.log
-    - name: Focused tests on PostgreSQL18
-      env:
-        PYTHONPATH: ci-safety:.
-      run: |
-        mapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' docs/security-closure-tests.txt)
-        python -m pytest -q "${suites[@]}" --junitxml=evidence/security-focused.xml | tee evidence/security-focused.log
-        node tests/test_mandatory_sms_ui.cjs
-        node tests/test_driver_collection_ui.cjs
-        node tests/test_driver_simple_ui.cjs
     - name: Five real browser policy and owner cases
       env:
         TEST_BROWSER: '1'
@@ -118,6 +109,15 @@ jobs:
         assert len(cases)==5,len(cases)
         assert all(not any(c.find(t) is not None for t in ('error','failure','skipped')) for c in cases)
         PY
+    - name: Focused tests on PostgreSQL18
+      env:
+        PYTHONPATH: ci-safety:.
+      run: |
+        mapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' docs/security-closure-tests.txt)
+        python -m pytest -q "${suites[@]}" --junitxml=evidence/security-focused.xml | tee evidence/security-focused.log
+        node tests/test_mandatory_sms_ui.cjs
+        node tests/test_driver_collection_ui.cjs
+        node tests/test_driver_simple_ui.cjs
     - uses: actions/upload-artifact@v4
       if: always()
       with:

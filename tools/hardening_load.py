@@ -687,7 +687,7 @@ class Workload:
         transport = httpx.AsyncHTTPTransport(local_address=source, retries=0,
                     limits=httpx.Limits(max_connections=2, max_keepalive_connections=2))
         async with httpx.AsyncClient(base_url=self.origin, transport=transport, timeout=self.timeout,
-                                     headers={'Origin': self.origin}) as client:
+                                     headers={'Origin': self.origin, 'X-KPS-Context': 'customer'}) as client:
             await barrier.wait()
             try:
                 guest = await self.request(client, 'POST', '/api/identity/guest', json={
@@ -935,30 +935,37 @@ def hosting_report_checks(db_url, origin, workloads):
     identity, provider call or financial mutation is involved.
     """
     import io
-    from http.cookies import SimpleCookie
-    from fastapi import Response
+    import secrets
     from app import auth, db, exports
 
+    parts=conninfo_to_dict(db_url)
+    if (parts.get('host') not in {'127.0.0.1','localhost','::1'}
+            or not parts.get('dbname','').startswith('test_')
+            or not re.fullmatch(r'-csearch_path=kps_(?:load|test)_[0-9a-f]{32}',parts.get('options',''))
+            or os.getenv('DATABASE_URL')!=db_url):
+        raise ValueError('Report fixtures require the exact run-owned local test schema.')
     expected_count = sum(w.concurrency * w.rounds for w in workloads)
     expected_total = sum(order['total'] for w in workloads for order in w.confirmed)
-    response = Response()
+    token,csrf=secrets.token_urlsafe(32),secrets.token_urlsafe(32)
     with db.tx() as conn:
         conn.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) "
                      "VALUES('load-report-owner','TEST report owner','owner','kps',%s)",
                      (db.json(['kps-branch-1', 'kps-branch-2']),))
-        owner = conn.execute("SELECT * FROM users WHERE id='load-report-owner'").fetchone()
-        auth.establish_session(conn, owner, response)
+        # This read-only report check exercises a pre-existing synthetic session,
+        # not a new employee login. Never forge SMS challenges or sensitive proof,
+        # and never loosen the production session factory's mandatory-SMS gate.
+        conn.execute("INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at) VALUES(%s,%s,%s,'load-report-owner',now()+interval '1 hour')",
+                     (db.new_id('load_report_session_'),auth.token_hash(token),auth.token_hash(csrf)))
+        names=auth.context_cookie_names('work') if auth.context_cookies_enabled(conn) else (auth.COOKIE,auth.CSRF_COOKIE)
         stored = conn.execute('SELECT count(*) orders,coalesce(sum(total_halalas),0)::bigint total_halalas '
                               'FROM orders').fetchone()
-    cookies = SimpleCookie()
-    for key, value in response.raw_headers:
-        if key.lower() == b'set-cookie':
-            cookies.load(value.decode())
+    cookies={names[0]:token,names[1]:csrf}
     # Reports cannot hide writes: order fingerprints must remain identical.
     before = order_fingerprints(db_url)
     report = {'expected_orders': expected_count, 'expected_total_halalas': expected_total,
-              'database_orders': stored['orders'], 'database_total_halalas': stored['total_halalas']}
-    with httpx.Client(base_url=origin, cookies={k: v.value for k, v in cookies.items()}, timeout=60) as client:
+              'database_orders': stored['orders'], 'database_total_halalas': stored['total_halalas'],
+              'authorization_scope':'Pre-existing synthetic owner session; this is not a login/SMS certificate.'}
+    with httpx.Client(base_url=origin, cookies=cookies, headers={'X-KPS-Context':'work'}, timeout=60) as client:
         exported = client.get('/api/admin/export')
         exported.raise_for_status()
         archive, manifest = exports.verify_archive(exported.content)

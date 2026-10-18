@@ -5,6 +5,26 @@ import yaml
 ROOT=Path(__file__).resolve().parents[1]
 
 
+def test_retained_load_selects_customer_cookie_jar_without_disabling_security():
+    import inspect
+    from tools.hardening_load import Workload
+    source=inspect.getsource(Workload.user)
+    assert "'X-KPS-Context': 'customer'" in source
+    assert "local_address=source, retries=0" in source
+    assert 'SESSION_CONTEXT_COOKIES_ENABLED' not in source
+
+
+def test_report_fixture_never_targets_an_operational_or_unowned_schema(monkeypatch):
+    import pytest
+    from tools.hardening_load import hosting_report_checks
+    for url in ['postgresql://synthetic@remote.invalid/test_report',
+                'postgresql://synthetic@127.0.0.1/production',
+                'postgresql://synthetic@127.0.0.1/test_report']:
+        monkeypatch.setenv('DATABASE_URL',url)
+        with pytest.raises(ValueError,match='run-owned local test schema'):
+            hosting_report_checks(url,'http://127.0.0.1:1',[])
+
+
 def test_combined_capacity_waits_for_real_dual_brand_acceptance():
     jobs=yaml.safe_load((ROOT/'.github/workflows/enbishan-isolated.yml').read_text())['jobs']
     assert jobs['capacity-economy']['needs']=='dual-brand'

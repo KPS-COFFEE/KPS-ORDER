@@ -99,15 +99,18 @@ from tests.test_operations import ops
 
 import os
 from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from tests.test_employee_sms_browser import employee_sms_app
+from tests.sms_browser_helpers import owner_sms_login,confirm_owner_sms
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated Chromium only')
-def test_owner_employee_actions_in_browser(live_app,chromium_browser):
+def test_owner_employee_actions_in_browser(employee_sms_app,chromium_browser,monkeypatch):
     from playwright.sync_api import expect
     from test_browser import PASSWORD as BROWSER_PASSWORD
+    live_app=employee_sms_app
     owner=_staff();target=_staff('driver')
     context,page,errors=_context(chromium_browser,live_app)
-    _owner_login(context,live_app,owner)
+    owner_sms_login(context,live_app,owner,monkeypatch,BROWSER_PASSWORD)
     try:
         page.goto(live_app+'/ops')
         page.locator('#navigation [data-page=admin]').click()
@@ -118,8 +121,9 @@ def test_owner_employee_actions_in_browser(live_app,chromium_browser):
             page.locator(f'[data-action=manage-staff][data-operation={action}][data-id="{target["id"]}"]').click()
             modal=page.locator('#modal')
             modal.locator('[name=reason]').fill('Synthetic owner action test')
-            modal.locator('[name=password]').fill(BROWSER_PASSWORD)
+            expect(modal.locator('[name=password]')).to_have_count(0)
             modal.locator('button[type=submit]').click()
+            confirm_owner_sms(page)
             expect(modal).not_to_be_visible()
         page.locator(f'.staff-branch-form[data-staff-id="{target["id"]}"]').locator('xpath=ancestor::tr').locator('.staff-actions summary').click()
         expect(page.locator(f'[data-action=edit-staff][data-id="{target["id"]}"]')).to_be_visible()
@@ -128,11 +132,13 @@ def test_owner_employee_actions_in_browser(live_app,chromium_browser):
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated Chromium only')
-def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
+def test_staff_branch_dropdown_count_cancel_and_save(employee_sms_app,chromium_browser,monkeypatch):
     from playwright.sync_api import expect
+    from test_browser import PASSWORD as BROWSER_PASSWORD
+    live_app=employee_sms_app
     owner=_staff();target=_staff('driver')
     context,page,errors=_context(chromium_browser,live_app)
-    _owner_login(context,live_app,owner)
+    owner_sms_login(context,live_app,owner,monkeypatch,BROWSER_PASSWORD)
     try:
         page.goto(live_app+'/ops')
         page.locator('#navigation [data-page=admin]').click()

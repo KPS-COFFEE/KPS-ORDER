@@ -28,7 +28,7 @@ def test_reports_reconcile_real_unpaid_orders_without_changing_their_money(datab
     try:
         workload = load.Workload(origin, 'helper-' + uuid.uuid4().hex, 3, 2, 60)
         metrics = asyncio.run(workload.run())
-        assert metrics['error_count'] == 0
+        assert metrics['error_count'] == 0, metrics['error_samples']
         report = load.hosting_report_checks(database, origin, [workload])
         assert report['passed'], report
         assert report['expected_orders'] == report['database_orders'] == 6

@@ -5,6 +5,8 @@ from app import auth, db
 from tests.sms_policy_helpers import sms_step_up, sms_login
 from tests.test_core import _authenticate, _make_user
 from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail, PASSWORD
+from tests.test_employee_sms_browser import employee_sms_app
+from tests.sms_browser_helpers import owner_sms_login,confirm_owner_sms
 
 PATH='/api/identity/owners/password'
 NEW_PASSWORD='Test8!Aa'
@@ -77,10 +79,11 @@ def test_creation_scope_cannot_be_overridden(client, monkeypatch):
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Requires isolated Chromium')
-def test_owner_password_form_creates_only_after_confirmation(live_app,chromium_browser):
+def test_owner_password_form_creates_only_after_confirmation(employee_sms_app,chromium_browser,monkeypatch):
     from playwright.sync_api import expect
+    live_app=employee_sms_app
     owner=_staff();context,page,errors=_context(chromium_browser,live_app)
-    _owner_login(context,live_app,owner)
+    owner_sms_login(context,live_app,owner,monkeypatch,PASSWORD)
     try:
         page.goto(live_app+'/ops')
         page.locator('#navigation [data-page=admin]').click()
@@ -92,11 +95,12 @@ def test_owner_password_form_creates_only_after_confirmation(live_app,chromium_b
         form.locator('[name=phone]').fill('0501234567')
         form.locator('[name=new_password]').fill(NEW_PASSWORD)
         form.locator('[name=password_confirmation]').fill(NEW_PASSWORD)
-        form.locator('[name=owner_password]').fill(PASSWORD)
+        expect(form.locator('[name=owner_password]')).to_have_count(0)
         form.locator('[name=reason]').fill('Synthetic full owner approval')
         with db.tx() as conn:assert not conn.execute("SELECT 1 FROM users WHERE username='KPS'").fetchone()
         form.locator('[name=full_owner_confirmed]').check()
         form.locator('button[type=submit]').click()
+        confirm_owner_sms(page)
         expect(page.locator('#modal')).not_to_be_visible()
         expect(page.get_by_role('cell',name='عبدالله',exact=False)).to_be_visible()
         with db.tx() as conn:
