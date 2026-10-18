@@ -2,6 +2,10 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const context={window:{}};vm.createContext(context);vm.runInContext(fs.readFileSync('public/assets/order-timing.js','utf8'),context);
 const {preparation,classification,seconds,duration}=context.window.KPSOrderTiming;
 const tr=(ar,en)=>en;
+const {statusLabel}=context.window.KPSOrderTiming;
+assert.equal(statusLabel({preparation_status:'handed_over',delivery_status:'problem'},tr,x=>x),'Delivery manager action required');
+assert.equal(statusLabel({preparation_status:'handed_over',delivery_status:'picked_up'},tr,x=>x),'Handed to driver');
+assert.equal(statusLabel({preparation_status:'handed_over',delivery_status:'delivered'},tr,x=>x),'delivered');
 const order={timings:{acceptance_wait:{seconds:120,state:'completed'},preparation:{seconds:300,state:'completed'},delivery:{seconds:600,state:'running'},total:{seconds:1200,state:'running'}},performance_snapshot:{policies:{delivery:{t1_seconds:600,t2_seconds:1200},total:{t1_seconds:1200,t2_seconds:1800}}}};
 assert.equal(preparation(order).seconds,420);
 assert.equal(preparation({...order,timings:{acceptance_wait:{seconds:50,state:'running'},preparation:{seconds:null,state:'not_started'}}},10).seconds,60);

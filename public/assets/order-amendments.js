@@ -6,11 +6,12 @@
   const money=n=>`${(Number(n||0)/100).toFixed(2)} ${tr('ر.س.','SAR')}`;
   const field=(label,name,value='',extra='')=>`<label>${esc(label)}<input name="${name}" value="${esc(value)}" ${extra}></label>`;
   const button=(action,label)=>`<button type="button" data-amend="${action}">${esc(label)}</button>`;
-  const states={requested:['بانتظار المراجعة','Awaiting review'],branch_confirmed:['أكد الفرع إمكانية التعديل','Branch confirmed'],offered:['بانتظار موافقة العميل','Awaiting customer consent'],applied:['تم اعتماد التعديل','Amendment applied'],rejected:['مرفوض','Rejected'],withdrawn:['تم سحب التعديل','Withdrawn']};
+  const states={requested:['بانتظار المعالجة','Awaiting processing'],branch_confirmed:['بانتظار المعالجة','Awaiting processing'],offered:['بانتظار موافقة العميل','Awaiting customer consent'],applied:['تم اعتماد التعديل','Amendment applied'],rejected:['مرفوض','Rejected'],withdrawn:['تم سحب التعديل','Withdrawn']};
+  const requestKind=kind=>kind==='duplicate'?tr('طلب مكرر','Duplicate order'):tr('طلب إلغاء','Cancellation request');
   const itemList=items=>`<ul>${items.map(x=>`<li><b>${esc(x.name)} × ${x.quantity}</b>${x.note?` · ${esc(x.note)}`:''}${(x.units||[]).map(u=>Object.values(u.option_snapshot||{}).map(g=>(g.choices||[]).map(v=>v.name||v.label||v.code).join(' / ')).filter(Boolean).join(' · ')).filter(Boolean).map(s=>`<small>${esc(s)}</small>`).join('')}</li>`).join('')}</ul>`;
   window.KPSAmendments={open:async function({oid,api,mutation,user,onChanged=()=>{}}){
     const dialog=document.createElement('dialog');dialog.className='amend-dialog';dialog.dir=document.documentElement.dir;
-    dialog.innerHTML=`<header><h2>${esc(tr('تعديل الطلب','Amend order'))}</h2><button type="button" data-close aria-label="${esc(tr('إغلاق','Close'))}">×</button></header><div class="amend-body"></div>`;
+    dialog.innerHTML=`<header><h2>${esc(tr('تعديل وإلغاء الطلب','Order changes and cancellation'))}</h2><button type="button" data-close aria-label="${esc(tr('إغلاق','Close'))}">×</button></header><div class="amend-body"></div>`;
     document.body.append(dialog);dialog.showModal();dialog.querySelector('[data-close]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>{dialog.remove();onChanged();});
     const root=dialog.querySelector('.amend-body');let o,s,products=[],cart=[];
     const customer=user.role==='customer',staff=['owner','delivery_manager','branch_manager'].includes(user.role);
@@ -23,8 +24,9 @@
       const delegated=user.role==='delivery_manager'&&o.snapshot.delivery_workflow==='manager_dispatch';
       const reviewer=user.role==='owner'||user.role===(o.service==='delivery'?'delivery_manager':'branch_manager');
       root.innerHTML=`<p>${esc(o.order_no||oid)} · ${esc(tr('النسخة','Revision'))} ${s.revision+1}</p><div class="amend-totals"><span>${esc(tr('إجمالي الطلب الحالي','Current total'))}<b>${money(o.total_halalas)}</b></span><span>${esc(tr('المتبقي للتحصيل','Still to collect'))}<b>${money(s.due_halalas)}</b></span><span>${esc(tr('المستحق للعميل','Refund due'))}<b>${money(s.refund_due_halalas)}</b></span></div><p class="amend-note">${esc(tr('التعديل لا يطبق حتى مراجعته والموافقة على الإجمالي الجديد. بعد خروج السائق: تعديل العنوان فقط.','Changes apply only after review and consent to the new total. After pickup: address changes only.'))}</p><p role="alert"></p>`;
+      renderRequests(closed,reviewer);
       if(active){
-        root.insertAdjacentHTML('beforeend',`<section><h3>${esc(tr(...states[active.status]))}</h3><p>${esc(tr('ينتهي العرض عند','Offer expires at'))} ${esc(new Date(active.expires_at).toLocaleTimeString())}</p><div class="amend-comparison"><div><h4>${esc(tr('الحالي','Current'))}</h4>${itemList(o.snapshot.items)}<p>${esc(o.customer.address)}</p></div><div><h4>${esc(tr('المقترح','Proposed'))}</h4>${itemList(active.quote.items)}<p>${esc(active.customer.address)}</p><p>${esc(active.quote.notes)}</p></div></div><div class="amend-totals"><span>${esc(tr('الأصناف','Items'))}<b>${money(active.quote.subtotal_halalas)}</b></span><span>${esc(tr('التوصيل','Delivery'))}<b>${money(active.quote.delivery_fee_halalas)}</b></span><span>${esc(tr('الإجمالي الجديد','New total'))}<b>${money(active.quote.total_halalas)}</b></span></div><p>${esc(tr('فرق السعر','Price difference'))}: ${money(active.quote.total_halalas-o.total_halalas)}</p><div class="amend-actions"></div></section>`);
+        root.insertAdjacentHTML('beforeend',`<section><h3>${esc(tr('طلب تعديل','Amendment request'))} — ${esc(tr(...states[active.status]))}</h3><p>${esc(tr('ينتهي العرض عند','Offer expires at'))} ${esc(new Date(active.expires_at).toLocaleTimeString())}</p><div class="amend-comparison"><div><h4>${esc(tr('الحالي','Current'))}</h4>${itemList(o.snapshot.items)}<p>${esc(o.customer.address)}</p></div><div><h4>${esc(tr('المقترح','Proposed'))}</h4>${itemList(active.quote.items)}<p>${esc(active.customer.address)}</p><p>${esc(active.quote.notes)}</p></div></div><div class="amend-totals"><span>${esc(tr('الأصناف','Items'))}<b>${money(active.quote.subtotal_halalas)}</b></span><span>${esc(tr('التوصيل','Delivery'))}<b>${money(active.quote.delivery_fee_halalas)}</b></span><span>${esc(tr('الإجمالي الجديد','New total'))}<b>${money(active.quote.total_halalas)}</b></span></div><p>${esc(tr('فرق السعر','Price difference'))}: ${money(active.quote.total_halalas-o.total_halalas)}</p><div class="amend-actions"></div></section>`);
         const actions=root.querySelector('.amend-actions');
         if(staff||customer)actions.insertAdjacentHTML('beforeend',button('withdraw',tr('سحب طلب التعديل','Withdraw request')));
         if(staff)actions.insertAdjacentHTML('beforeend',button('reject',tr('رفض مع السبب','Reject with reason')));
@@ -49,6 +51,44 @@
         root.querySelector('#amend-refund').onsubmit=async e=>{e.preventDefault();const form=e.target,b=form.querySelector('button');b.disabled=true;try{const f=new FormData(form);await mutation(`/api/orders/${encodeURIComponent(oid)}/refund`,{method:f.get('method'),amount_halalas:Math.round(Number(f.get('amount'))*100),reason:f.get('reason'),amendment_id:latest.id});await refresh();}catch(error){fail(error);b.disabled=false;}};
       }
       if(s.amendments.length)root.insertAdjacentHTML('beforeend',`<details><summary>${esc(tr('سجل التعديلات','Amendment history'))}</summary>${s.amendments.map(a=>`<p>${esc(tr(...states[a.status]))} · ${esc(new Date(a.created_at).toLocaleString())} · ${money(a.quote.total_halalas)}${a.consent_channel?` · ${esc(a.consent_channel==='customer'?tr('موافقة داخل النظام','In-app consent'):a.consent_channel)}`:''}</p>`).join('')}</details>`);
+    }
+    function renderRequests(closed,reviewer){
+      const requests=s.requests||[],pending=requests.some(r=>!r.decision);
+      requests.forEach(r=>{
+        const section=document.createElement('section');section.className='amend-note service-request';
+        const label=r.decision?(r.decision.status==='resolved'?tr('تمت المعالجة','Processed'):tr('مرفوض','Rejected')):tr('بانتظار المعالجة','Awaiting processing');
+        section.innerHTML=`<h3>${esc(requestKind(r.details.kind))} — ${esc(label)}</h3><p>${esc(r.details.note)}</p><p class="small muted">${esc(new Date(r.created_at).toLocaleString())}</p>${r.decision?`<p>${esc(r.decision.note)}</p><p class="small muted">${esc(new Date(r.decided_at).toLocaleString())}</p>`:''}`;
+        if(!r.decision&&reviewer){
+          section.insertAdjacentHTML('beforeend',`${field(tr('نتيجة المعالجة / سبب الرفض','Outcome / rejection reason'),'request_decision','','required maxlength="500"')}<div class="amend-actions"><button type="button" data-request-decision="resolved">${esc(r.details.kind==='duplicate'?tr('إلغاء هذا الطلب المكرر','Cancel this duplicate order'):tr('تنفيذ الإلغاء','Cancel this order'))}</button><button type="button" data-request-decision="rejected">${esc(tr('رفض الطلب مع السبب','Reject with reason'))}</button></div>`);
+          section.querySelectorAll('[data-request-decision]').forEach(b=>b.onclick=async()=>{
+            const note=section.querySelector('[name=request_decision]').value.trim();if(!note){fail(new Error(tr('اكتب نتيجة المعالجة أولًا.','Enter the outcome first.')));return;}
+            section.querySelectorAll('button').forEach(x=>x.disabled=true);
+            try{
+              const action=b.dataset.requestDecision;
+              if(action==='resolved'){
+                const latest=(await api(`/api/orders/${encodeURIComponent(oid)}`)).order;
+                if(latest.preparation_status!=='cancelled'&&latest.delivery_status!=='cancelled')await mutation(`/api/orders/${encodeURIComponent(oid)}/preparation`,{status:'cancelled',version:latest.version,reason:note});
+              }
+              await mutation(`/api/order-requests/orders/${encodeURIComponent(oid)}/${encodeURIComponent(r.id)}/decision`,{action,note});await refresh();
+            }catch(e){fail(e);}finally{section.querySelectorAll('button').forEach(x=>x.disabled=false);}
+          });
+        }
+        root.append(section);
+      });
+      if(customer&&!closed&&!pending){
+        const actions=document.createElement('div');actions.className='amend-actions';
+        actions.innerHTML=`<button type="button" data-request-kind="cancel">${esc(tr('طلب إلغاء','Request cancellation'))}</button><button type="button" data-request-kind="duplicate">${esc(tr('طلب مكرر','Duplicate order'))}</button>`;
+        actions.querySelectorAll('button').forEach(b=>b.onclick=()=>requestForm(b.dataset.requestKind).catch(fail));root.append(actions);
+      }
+    }
+    async function requestForm(kind){
+      let options='';
+      if(kind==='duplicate'){
+        const result=await api('/api/orders?limit=100');
+        options=(result.orders||[]).filter(x=>x.id!==oid).map(x=>`<option value="${esc(x.id)}">${esc(x.snapshot?.order_reference||x.order_no||x.id)}</option>`).join('');
+      }
+      root.innerHTML=`<form id="service-request-form"><h3>${esc(requestKind(kind))}</h3><p>${esc(tr('يُرسل للمسؤول للمعالجة، ويظل الطلب قائمًا حتى تأكيد الإلغاء.','Sent to the responsible team. Your order remains active until cancellation is confirmed.'))}</p>${kind==='duplicate'?`<label>${esc(tr('الطلب الآخر إن وجد','Other order, if available'))}<select name="related_order_id"><option value="">—</option>${options}</select></label>`:''}${field(tr('السبب','Reason'),'note','','required maxlength="500"')}<p role="alert"></p><button type="submit">${esc(tr('إرسال الطلب','Send request'))}</button></form>`;
+      root.querySelector('form').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('[type=submit]');b.disabled=true;try{const f=new FormData(e.target);await mutation(`/api/order-requests/orders/${encodeURIComponent(oid)}`,{kind,note:f.get('note'),related_order_id:f.get('related_order_id')||null});await refresh();}catch(error){fail(error);b.disabled=false;}};
     }
     async function edit(){
       const departed=o.preparation_status==='handed_over'||['picked_up','delivered'].includes(o.delivery_status);

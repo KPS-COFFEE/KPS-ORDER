@@ -102,7 +102,7 @@ def test_owner_password_form_creates_only_after_confirmation(live_app,chromium_b
         form.locator('button[type=submit]').click()
         complete_owner_sms_dialog(page, owner)
         expect(page.locator('#modal')).not_to_be_visible()
-        expect(page.get_by_role('cell',name='عبدالله',exact=False)).to_be_visible()
+        expect(page.locator('.staff-card').get_by_role('heading',name='عبدالله',exact=True)).to_be_visible()
         with db.tx() as conn:
             row=conn.execute("SELECT role,active,phone,phone_verified_at,phone_sms_verified_at,password_hash FROM users WHERE username='KPS'").fetchone()
             assert row['role']=='owner' and row['active'] and row['phone']=='+966501234567'

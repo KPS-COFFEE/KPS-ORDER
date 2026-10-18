@@ -1,6 +1,4 @@
 """Scoped durable fuel/report images, separate from short-lived delivery photos."""
-import io
-from PIL import Image,ImageOps
 from fastapi import APIRouter,Depends,Request,Response
 from . import auth,db
 from .chat import Attachment,validated_image
@@ -17,8 +15,8 @@ def upload(sid:str,body:Attachment,request:Request,user=Depends(auth.current_use
     roles(user,'driver')
     if not auth.has_permission(user,'vehicle_refuel') and not auth.has_permission(user,'vehicle_faults_report'):raise db.error(403,'FORBIDDEN','رفع الصورة غير مصرح.')
     raw=validated_image(body)
-    with Image.open(io.BytesIO(raw)) as source:
-        im=ImageOps.exif_transpose(source).convert('RGB');im.thumbnail((2000,2000));out=io.BytesIO();im.save(out,'JPEG',quality=88);data=out.getvalue()
+    from .evidence_images import evidence_jpeg
+    data=evidence_jpeg(raw,{'image/jpeg':'JPEG','image/png':'PNG','image/webp':'WEBP'}[body.content_type])
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,s)
         if s['user_id']!=user['id'] or s['status'] not in ('open','closing'):raise db.error(409,'SHIFT_CLOSED','الشفت لا يستقبل مرفقات جديدة.')

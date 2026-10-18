@@ -49,6 +49,9 @@ def complete_owner_sms_dialog(page, owner):
     from playwright.sync_api import expect
     dialog = page.locator('dialog:not(#modal)').filter(has=page.locator('input[name=code]'))
     expect(dialog).to_be_visible()
+    # The dialog also handles provider-send failures. A visible input is not
+    # evidence that a challenge was successfully issued; await the enabled gate.
+    expect(dialog.locator('button[type=submit]')).to_be_enabled()
     code = dialog.locator('input[name=code]')
     expect(code).to_have_attribute('maxlength', '4')
     expect(dialog.locator('input[type=password]')).to_have_count(0)

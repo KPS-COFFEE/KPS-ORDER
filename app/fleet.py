@@ -290,7 +290,8 @@ def correct(vid:str,sid:str,body:Correction,request:Request,user=Depends(access)
 
 class ManagementAction(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
-    action:Literal['assign','swap','release','pause','resume','handover']
+    action:Literal['assign','transfer','swap','release','pause','resume','handover']
+    expected_driver_ids:list[str]|None=Field(default=None,max_length=50)
     outgoing:shift_vehicle.Inspection|None=None
     incoming:shift_vehicle.Inspection|None=None
     revision:StrictInt=Field(ge=0)
@@ -309,7 +310,8 @@ def management(vid:str,user=Depends(access)):
         car=c.execute('SELECT * FROM fleet_vehicles WHERE id=%s AND brand_id=%s',(vid,user['brand_id'])).fetchone()
         if not car or not fleet_management.car_scope(c,user,car,drivers):raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')
         events=c.execute("SELECT a.created_at,a.details,u.display_name actor_name FROM audit_events a LEFT JOIN users u ON u.id=a.actor_id WHERE a.entity_id=%s AND a.entity_type='vehicle' AND a.action='fleet.manage' ORDER BY a.created_at DESC LIMIT 50",(vid,)).fetchall()
-        return {'vehicle':car,'drivers':[{'id':d['id'],'display_name':d['display_name'],'plate':d['vehicle'].get('plate')} for d in drivers if d['active'] and fleet_management.driver_scope(user,d)],'events':events}
+        return {'vehicle':car,'assigned_driver_ids':[d['id'] for d in drivers if fleet_management.plate(d['vehicle'])==car['plate_key']],
+                'drivers':[{'id':d['id'],'display_name':d['display_name'],'plate':d['vehicle'].get('plate')} for d in drivers if d['active'] and fleet_management.driver_scope(user,d)],'events':events}
 
 @router.post('/vehicles/{vid}/management')
 def manage(vid:str,body:ManagementAction,request:Request,user=Depends(access)):
@@ -317,7 +319,8 @@ def manage(vid:str,body:ManagementAction,request:Request,user=Depends(access)):
         car=c.execute('SELECT * FROM fleet_vehicles WHERE id=%s AND brand_id=%s',(vid,user['brand_id'])).fetchone()
         drivers=c.execute("SELECT * FROM users WHERE brand_id=%s AND role='driver'",(user['brand_id'],)).fetchall()
         if not car or not fleet_management.car_scope(c,user,car,drivers):raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')
-        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'fleet.manage:'+vid,body.model_dump(mode='json'),lambda:fleet_management.perform(c,user,vid,body))
+        payload=body.model_dump(mode='json',exclude={'expected_driver_ids'} if body.expected_driver_ids is None else set())
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'fleet.manage:'+vid,payload,lambda:fleet_management.perform(c,user,vid,body))
 
 
 class GoogleRouteReading(BaseModel):

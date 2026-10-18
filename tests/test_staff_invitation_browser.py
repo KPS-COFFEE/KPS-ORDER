@@ -69,7 +69,7 @@ def test_privileged_resend_requires_password_without_changing_staff_access(live_
                 modal.locator('input[name=step_up_password]').fill(PASSWORD)
                 modal.locator('button[type=submit]').click()
             expected = 'حُفظت الدعوة في انتظار إرسال البريد؛ التفعيل بعد تحقق الموظف.' if language == 'ar' else 'Invitation queued for email; activation requires staff verification.'
-            expect(page.get_by_role('row').filter(has_text=target['email'])).to_contain_text(
+            expect(page.locator('.staff-card').filter(has_text=target['email'])).to_contain_text(
                 'بانتظار إثبات البريد' if language == 'ar' else 'Awaiting email proof')
             expect(page.locator('#status')).to_have_text(expected)
             expect(modal).not_to_be_visible()

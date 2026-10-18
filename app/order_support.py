@@ -2,11 +2,10 @@
 import asyncio
 import base64
 import hashlib
-import io
 import logging
 from datetime import datetime, timedelta
 from typing import Literal
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from . import auth, db, service_hours
@@ -112,10 +111,8 @@ def upload_photo(tid:str,body:PhotoBody,request:Request,user=Depends(auth.curren
     try:
         raw=base64.b64decode(body.data_base64,validate=True)
         if not 0<len(raw)<=5*1024*1024:fail(413,'الصورة تتجاوز الحجم المسموح')
-        with Image.open(io.BytesIO(raw)) as source:
-            if source.format!={'image/jpeg':'JPEG','image/png':'PNG','image/webp':'WEBP'}[body.content_type] or source.width*source.height>16000000:fail(422,'الصورة كبيرة جدًا')
-            im=ImageOps.exif_transpose(source).convert('RGB');im.thumbnail((2000,2000))
-            output=io.BytesIO();im.save(output,'JPEG',quality=88);data=output.getvalue()
+        from .evidence_images import evidence_jpeg
+        data=evidence_jpeg(raw,{'image/jpeg':'JPEG','image/png':'PNG','image/webp':'WEBP'}[body.content_type])
     except (ValueError,OSError,UnidentifiedImageError,Image.DecompressionBombError):fail(422,'صورة غير صالحة')
     digest=hashlib.sha256(data).hexdigest()
     with db.tx() as c:
@@ -133,16 +130,57 @@ def upload_photo(tid:str,body:PhotoBody,request:Request,user=Depends(auth.curren
 
 def require_photo(c,t,user,stage,photo_id):
     if user['role']!='driver' or user['id']!=t['driver_id']:fail(403,'الاستلام والتسليم يؤكدهما السائق المكلف')
-    p=c.execute('SELECT id FROM delivery_photos WHERE id=%s AND task_id=%s AND uploader_id=%s AND stage=%s AND data IS NOT NULL AND used_at IS NULL FOR UPDATE',(photo_id,t['id'],t['driver_id'],stage)).fetchone()
+    order=c.execute('SELECT branch_id FROM orders WHERE id=%s FOR UPDATE',(t['order_id'],)).fetchone()
+    p=c.execute('SELECT id,sha256 FROM delivery_photos WHERE id=%s AND task_id=%s AND uploader_id=%s AND stage=%s AND data IS NOT NULL AND used_at IS NULL FOR UPDATE',(photo_id,t['id'],t['driver_id'],stage)).fetchone()
     if not p:fail(422,'صورة الاستلام أو التسليم مطلوبة لهذه الخطوة')
     c.execute('UPDATE delivery_photos SET used_at=now() WHERE id=%s',(photo_id,))
+    # The order is locked by the transition caller. Only evidence actually used
+    # for opposite stages counts; abandoned uploads and retries do not count.
+    prior=c.execute("SELECT id,stage FROM delivery_photos WHERE order_id=%s AND sha256=%s AND stage<>%s AND used_at IS NOT NULL ORDER BY used_at,id LIMIT 1",(t['order_id'],p['sha256'],stage)).fetchone()
+    if prior and not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='driver_evidence.observation' AND details->>'fingerprint'=%s",(t['order_id'],p['sha256'])).fetchone():
+        db.event(c,t['order_id'],user['id'],'driver_evidence.observation',{
+            'kind':'same_image_across_stages','status':'open','fingerprint':p['sha256'],
+            'task_id':t['id'],'driver_id':t['driver_id'],'photo_ids':[prior['id'],p['id']],
+            'branch_id':order['branch_id'],
+            'note':'تطابق صورة الاستلام والتسليم؛ ملاحظة إدارية للمراجعة، ولا تثبت مخالفة.'})
+
+def evidence_observations(c,oid):
+    return c.execute("""SELECT e.id,e.details,e.created_at,u.display_name AS driver_name,
+        r.created_at AS read_at,r.actor_id AS read_by,ru.display_name AS read_by_name
+        FROM order_events e LEFT JOIN users u ON u.id=e.actor_id
+        LEFT JOIN LATERAL (SELECT a.actor_id,a.created_at FROM order_events a
+            WHERE a.order_id=e.order_id AND a.event_type='driver_evidence.observation_read'
+            AND a.details->>'observation_id'=e.id ORDER BY a.created_at,a.id LIMIT 1) r ON true
+        LEFT JOIN users ru ON ru.id=r.actor_id
+        WHERE e.order_id=%s AND e.event_type='driver_evidence.observation'
+        ORDER BY e.created_at,e.id""",(oid,)).fetchall()
+
+@router.post('/orders/{oid}/evidence-observations/{observation_id}/read')
+def read_evidence_observation(oid:str,observation_id:str,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    if not auth.has_permission(user,'orders_view'):fail(403,'غير مصرح بعرض الطلبات')
+    with db.tx() as c:
+        # Re-authorize before an idempotency replay; removing a branch must
+        # immediately revoke access to previously acknowledged private notes.
+        order_access(c,user,oid)
+        def perform():
+            order_access(c,user,oid,True)
+            note=c.execute("SELECT id FROM order_events WHERE id=%s AND order_id=%s AND event_type='driver_evidence.observation'",(observation_id,oid)).fetchone()
+            if not note:fail(404,'الملاحظة غير متاحة')
+            if not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='driver_evidence.observation_read' AND details->>'observation_id'=%s",(oid,observation_id)).fetchone():
+                db.event(c,oid,user['id'],'driver_evidence.observation_read',{'observation_id':observation_id,'status':'open','acknowledgement_only':True})
+                db.audit(c,user['id'],'driver_evidence.observation_read','order',oid,{'observation_id':observation_id})
+            return safe({'observation':next(x for x in evidence_observations(c,oid) if x['id']==observation_id)})
+        return mutate(c,user,request,'driver_evidence.read:'+oid+':'+observation_id,{},perform)
 
 @router.get('/orders/{oid}/delivery-photos')
 def photos(oid:str,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','driver')
     with db.tx() as c:
         order_access(c,user,oid)
-        return safe({'photos':c.execute('SELECT id,stage,created_at,deleted_at,used_at FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL ORDER BY created_at',(oid,)).fetchall()})
+        result={'photos':c.execute('SELECT id,stage,created_at,deleted_at,used_at FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL ORDER BY created_at',(oid,)).fetchall()}
+        if user['role'] in ('owner','delivery_manager'):result['observations']=evidence_observations(c,oid)
+        return safe(result)
 
 @router.get('/delivery-photos/{aid}')
 def photo(aid:str,user=Depends(auth.current_user)):
