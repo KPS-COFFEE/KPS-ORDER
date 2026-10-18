@@ -135,3 +135,15 @@ No central session/context selection, password/SMS policy or account data is
 changed. The admin UI uses these aliases; customer OTP paths stay isolated.
 Existing tests plus new portal, CSRF, role, brand, replay, revocation and activation
 race cases are mandatory in both host and immutable-image runs.
+
+Delivery probes now carry an owner_probe_ challenge namespace, bound in both
+directions before attempts/provider calls. Changing to the public customer URL
+after channel activation cannot convert a test into customer-login proof; a
+customer otp_ challenge cannot be consumed by the owner probe. This closes
+bounded purpose confusion, not a work/owner privilege bypass.
+
+The full host+browser job and full immutable-image job now run independently
+in parallel, each with its own isolated PostgreSQL18 service. Both retain every
+mandatory suite and explicit Bash pipefail; neither job depends on or shares a
+database with the other. Image evidence retains its own artifact; host/browser
+JUnit is a separate host artifact. No checks were removed to save time.

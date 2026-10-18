@@ -493,7 +493,8 @@ def request_otp(body: OTPRequestBody, request: Request):
         allowed = db.rate_limit(conn, 'otp-request-ip:' + ip, 10, 600) and allowed
     if not allowed:
         raise db.error(429, 'OTP_RATE_LIMIT', 'طلبات تحقق كثيرة. انتظر قبل المحاولة مجددًا.')
-    challenge_id = db.new_id('otp_')
+    owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
+    challenge_id = db.new_id('owner_probe_' if owner_probe else 'otp_')
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     if provider == 'tawked':
         reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
@@ -529,6 +530,9 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     # before attempts/provider calls, independent of host or rollout settings.
     if body.challenge_id.startswith(('employee_otp_', 'owner_sms_')):
         raise db.error(400,'OTP_PURPOSE_MISMATCH','طلب التحقق لا يخص تسجيل دخول العملاء.')
+    owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
+    if body.challenge_id.startswith('owner_probe_') != owner_probe:
+        raise db.error(400,'OTP_PURPOSE_MISMATCH','طلب التحقق لا يخص هذا المسار.')
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         allowed = db.rate_limit(conn, 'otp-verify-ip:' + ip, 20, 600)
