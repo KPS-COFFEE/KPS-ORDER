@@ -5,7 +5,14 @@ on:
     branches: [agent/kps-order-security-closure-20261018]
     paths:
       - app/auth.py
+      - app/performance.py
+      - public/driver-hours.html
+      - tests/test_driver_order_activity.py
+      - tests/test_driver_work_hours_unit.py
+      - tests/test_driver_work_hours_postgres.py
+      - app/driver_work_hours.py
       - app/driver_hours_reports.py
+      - public/assets/driver-hours.css
       - public/assets/driver-hours.js
       - tests/test_hours_navigation_layout.py
       - tests/test_driver_hours_reports.py
@@ -84,7 +91,7 @@ jobs:
           python -m pytest -q tests/test_delivery_problem_resolution.py tests/test_order_support.py --junitxml=test-artifacts/delivery-problem-ci.xml
           python -m pytest -q tests/test_alert_policy.py --junitxml=test-artifacts/alert-policy-ci.xml
           python -m pytest -q tests/test_operational_alerts.py --junitxml=test-artifacts/operational-alerts-ci.xml
-          python -m pytest -q tests/test_hours_navigation_layout.py tests/test_driver_hours_reports.py tests/test_ops_usability.py tests/test_ops_usability_browser.py tests/test_simple_staff_sms_browser.py tests/test_operational_customer_lookup.py tests/test_fleet_self_service.py tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save --junitxml=test-artifacts/ops-usability-ci.xml
+          python -m pytest -q tests/test_hours_navigation_layout.py tests/test_driver_order_activity.py tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py tests/test_driver_hours_reports.py tests/test_ops_usability.py tests/test_ops_usability_browser.py tests/test_simple_staff_sms_browser.py tests/test_operational_customer_lookup.py tests/test_fleet_self_service.py tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save --junitxml=test-artifacts/ops-usability-ci.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

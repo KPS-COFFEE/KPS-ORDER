@@ -18,12 +18,15 @@ router = APIRouter(tags=['driver-hours'])
 COLUMNS = (
     ('name', 'السائق', 'Driver'), ('order_count', 'الطلبات', 'Orders'),
     ('trip_count', 'الرحلات', 'Trips'), ('shift_seconds', 'ساعات الشفت', 'Shift hours'),
-    ('actual_seconds', 'ساعات العمل الفعلي', 'Actual hours'),
-    ('delivery_seconds', 'ساعات التوصيل', 'Delivery hours'),
+    ('actual_seconds', 'العمل المتاح بعد الاستراحات', 'Available work after breaks'),
+    ('delivery_seconds', 'رحلات الفرع إلى الفرع', 'Branch-to-branch hours'),
     ('waiting_seconds', 'ساعات الانتظار', 'Waiting hours'),
     ('break_seconds', 'ساعات الاستراحات', 'Break hours'),
     ('other_work_seconds', 'أعمال أخرى', 'Other work hours'),
     ('unclassified_seconds', 'وقت غير مصنف', 'Unclassified hours'),
+    ('order_activity_seconds', 'توصيل الطلبات المكتملة', 'Completed order delivery hours'),
+    ('active_delivery_seconds', 'طلبات جارٍ توصيلها', 'Active delivery hours'),
+    ('remaining_shift_seconds', 'باقي الشفت', 'Remaining shift hours'),
 )
 
 
@@ -60,7 +63,7 @@ def make_xlsx(report, lang='ar'):
         archive.writestr('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
         archive.writestr('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Driver hours" sheetId="1" r:id="rId1"/></sheets></workbook>')
         archive.writestr('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
-        archive.writestr('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0" rightToLeft="'+('1' if lang=='ar' else '0')+'"/></sheetViews><cols><col min="1" max="10" width="24" customWidth="1"/></cols><sheetData>'+''.join(sheet_rows)+'</sheetData></worksheet>')
+        archive.writestr('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0" rightToLeft="'+('1' if lang=='ar' else '0')+'"/></sheetViews><cols><col min="1" max="13" width="24" customWidth="1"/></cols><sheetData>'+''.join(sheet_rows)+'</sheetData></worksheet>')
     return out.getvalue()
 
 
@@ -68,7 +71,7 @@ def make_pdf(report, lang='ar'):
     from reportlab.pdfgen import canvas
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.pagesizes import A3, landscape
     import arabic_reshaper
     from bidi.algorithm import get_display
     font = Path(__file__).resolve().parents[1] / 'public/assets/fonts/NotoKufiArabic-Regular.ttf'
@@ -76,7 +79,7 @@ def make_pdf(report, lang='ar'):
         pdfmetrics.registerFont(TTFont('KPSHours', str(font)))
     visual = lambda value: get_display(arabic_reshaper.reshape(str(value)))
     out = io.BytesIO()
-    width, height = landscape(A4)
+    width, height = landscape(A3)
     cv = canvas.Canvas(out, pagesize=(width, height))
     cv.setTitle('KPS ORDER - Driver work hours')
     rows = export_rows(report, lang)

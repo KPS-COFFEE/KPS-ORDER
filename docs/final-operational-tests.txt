@@ -73,3 +73,5 @@ tests/test_customer_progress_postgres.py
 tests/test_order_print_progress.py
 tests/test_photo_observations.py
 tests/test_hours_navigation_layout.py
+
+tests/test_driver_order_activity.py

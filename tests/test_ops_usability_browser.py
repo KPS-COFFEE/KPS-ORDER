@@ -32,10 +32,10 @@ def test_problem_status_event_rows_and_conversation_cards(live_app,chromium_brow
         page.set_viewport_size({'width':width,'height':950})
         page.goto(live_app+'/ops',wait_until='networkidle')
         page.locator('#navigation [data-page=orders]').click()
-        status=page.locator('.order-table tbody td').last
+        status=page.locator('.order-summary-status')
         expect(status).to_contain_text('يتطلب إجراء مدير التوصيل' if lang=='ar' else 'Delivery manager action required')
         expect(status.locator('[data-action=resolve-order-problem]')).to_be_visible()
-        page.locator('[data-action=order-detail][data-id=synthetic-problem]').click()
+        page.locator('.order-summary-head [data-action=order-detail][data-id=synthetic-problem]').click()
         page.locator('.order-detail-events summary').click()
         expect(page.locator('.order-detail-events')).not_to_contain_text('order.created')
         expect(page.locator('.order-detail-events')).to_contain_text(events[1]['details']['reason'])
@@ -114,11 +114,11 @@ def test_order_table_full_text_and_responsive_layout(live_app,chromium_browser,l
         page.goto(live_app+'/ops',wait_until='networkidle')
         page.locator('#navigation [data-page=orders]').click()
         table=page.locator('.order-table')
-        expect(table.locator('tbody tr')).to_have_count(1)
+        expect(table.locator('.order-summary-card')).to_have_count(1)
         expect(table).to_contain_text(row['customer']['name'])
         expect(table).to_contain_text(row['driver_name'])
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-        for cell in table.locator('tbody td').all():
+        for cell in table.locator('.order-summary-fields dd').all():
             assert cell.evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
         page.screenshot(path=str(ARTIFACTS/f'order-table-{lang}-{width}.png'),full_page=True)
         assert not errors,errors
@@ -243,7 +243,7 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
     district = 'حي تجريبي طويل مع وصف كامل للموقع' if lang == 'ar' else 'Long synthetic neighborhood and location'
     with db.tx() as conn:
         conn.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','new','pending','cash',1000,0,1000,%s,%s)",
-                     (oid, contact['id'], db.json({'items':[], 'order_reference':'TEST-LAYOUT-001'}), db.json({'name':name,'neighborhood':district})))
+                     (oid, contact['id'], db.json({'items':[], 'notes':'ملاحظة اختبار كاملة\nبدون قص <script>لا ينفذ</script>', 'order_reference':'TEST-LAYOUT-001'}), db.json({'name':name,'neighborhood':district})))
     context, page, errors = _context(chromium_browser, live_app)
     try:
         _owner_login(context, live_app, owner)
@@ -255,8 +255,13 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
         expect(row).to_be_visible()
         expect(row).to_contain_text(name)
         expect(row).to_contain_text(district)
-        assert row.locator('td').count() == 8
-        geometry = row.evaluate('''e => [...e.querySelectorAll('td')].map(c => {
+        assert row.locator('.order-summary-fields dd').count() == 6
+        expect(row.locator('.order-summary-notes')).to_contain_text('ملاحظة اختبار كاملة')
+        assert row.locator('script').count() == 0
+        row.locator('[data-action=order-review]').click()
+        expect(page.locator('#modal .order-detail-card')).to_contain_text('ملاحظة اختبار كاملة')
+        page.locator('#modal .modal-head button').click()
+        geometry = row.evaluate('''e => [...e.querySelectorAll('.order-summary-fields dd, .order-summary-notes, .order-summary-actions')].map(c => {
             const b=c.getBoundingClientRect();
             return {label:c.dataset.label,width:b.width,left:b.left,right:b.right,sw:c.scrollWidth,cw:c.clientWidth,sh:c.scrollHeight,ch:c.clientHeight,viewport:innerWidth};
         })''')
@@ -278,3 +283,84 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
         assert not errors, errors
     finally:
         context.close()
+
+
+@pytest.mark.parametrize(('lang','width'),[('ar',390),('en',1280)])
+def test_real_driver_hours_eight_shift_six_delivery(live_app,chromium_browser,lang,width):
+    from playwright.sync_api import expect
+    owner,driver,customer=_staff(),_staff('driver'),_staff('customer')
+    sid=db.new_id('hours_ui_')
+    with db.tx() as c:
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,opened_at,submitted_at,status) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]','2026-10-17 16:00+03','2026-10-18 00:00+03','submitted')",(sid,driver['id']))
+        for i,(pickup,delivered) in enumerate([('16:00','20:00'),('18:00','22:00')]):
+            oid=db.new_id('hours_order_')
+            c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','completed','delivered','cash',1000,0,1000,'{}','{}')",(oid,customer['id']))
+            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at,delivered_at) VALUES(%s,%s,%s,%s,'delivered',%s,%s,%s)",(db.new_id('hours_task_'),oid,driver['id'],sid,owner['id'],'2026-10-17 '+pickup+'+03','2026-10-17 '+delivered+'+03'))
+    context,page,errors=_context(chromium_browser,live_app)
+    try:
+        _owner_login(context,live_app,owner)
+        context.add_init_script(f"localStorage.setItem('kps-hours-language','{lang}')")
+        page.set_viewport_size({'width':width,'height':1000})
+        page.goto(live_app+'/driver-hours',wait_until='networkidle')
+        page.locator('input[name=date]').fill('2026-10-17')
+        page.locator('#hours-filters button[type=submit]').click()
+        expect(page.locator('.hours-driver')).to_have_count(1)
+        values=page.locator('.hours-driver .hours-primary strong')
+        expect(values.nth(0)).to_have_text('٨ ساعة' if lang=='ar' else '8 h')
+        expect(values.nth(1)).to_have_text('٦ ساعة' if lang=='ar' else '6 h')
+        expect(values.nth(2)).to_have_text('٢ ساعة' if lang=='ar' else '2 h')
+        expect(values.nth(3)).to_have_text('٧٥%' if lang=='ar' else '75%')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        page.screenshot(path=str(ARTIFACTS/f'hours-8-shift-6-delivery-{lang}-{width}.png'),full_page=True)
+        assert not errors,errors
+    finally:context.close()
+
+
+@pytest.mark.parametrize('lang',['ar','en'])
+def test_real_delivery_manager_resolves_note_from_order_card(live_app,chromium_browser,lang):
+    from playwright.sync_api import expect
+    manager,driver,customer=_staff('delivery_manager'),_staff('driver'),_staff('customer')
+    mid,sid,oid,tid=[db.new_id('note_action_') for _ in range(4)]
+    reason='TEST ملاحظة السائق كاملة — العميل لا يرد'
+    with db.tx() as c:
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager',%s,'kps','[\"kps-branch-1\"]')",(mid,manager['id']))
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]',%s)",(sid,driver['id'],mid))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','handed_over','problem','cash',1000,0,1000,%s,'{}')",(oid,customer['id'],db.json({'notes':'TEST ملاحظة العميل كاملة'})))
+        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at,reason) VALUES(%s,%s,%s,%s,'accepted',%s,NULL,%s)",(tid,oid,driver['id'],sid,manager['id'],reason))
+    # Generate actual used pickup evidence through the canonical driver APIs.
+    import io,base64
+    from PIL import Image
+    driver_context,_,_=_context(chromium_browser,live_app)
+    try:
+        headers=_owner_login(driver_context,live_app,driver)
+        image=io.BytesIO();Image.new('RGB',(12,12),'white').save(image,'PNG')
+        def send(path,data,key):
+            response=driver_context.request.post(live_app+path,headers={**headers,'Idempotency-Key':key},data=data)
+            assert response.ok,response.text()
+            return response.json()
+        photo=send('/api/tasks/'+tid+'/photos',{'stage':'picked_up','content_type':'image/png','data_base64':base64.b64encode(image.getvalue()).decode()},'note-pickup-photo')
+        send('/api/tasks/'+tid+'/transition',{'status':'picked_up','photo_id':photo['id']},'note-pickup')
+        send('/api/tasks/'+tid+'/transition',{'status':'problem','reason':reason},'note-problem')
+    finally:driver_context.close()
+    context,page,errors=_context(chromium_browser,live_app)
+    try:
+        _owner_login(context,live_app,manager)
+        context.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
+        page.set_viewport_size({'width':1280,'height':1000})
+        page.goto(live_app+'/ops',wait_until='networkidle')
+        page.locator('#navigation [data-page=orders]').click()
+        card=page.locator(f'[data-order-id="{oid}"]')
+        expect(card.locator('.order-summary-notes')).to_contain_text(reason)
+        expect(card.locator('.order-summary-notes')).to_contain_text('TEST ملاحظة العميل كاملة')
+        page.screenshot(path=str(ARTIFACTS/f'order-note-action-{lang}-1280.png'),full_page=True)
+        card.locator('[data-action=resolve-order-problem]').click()
+        expect(page.locator('#modal')).to_contain_text(reason)
+        page.locator('#modal textarea[name=reason]').fill('TEST المدير تواصل مع العميل واعتمد استمرار التوصيل')
+        page.locator('#modal button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        with db.tx() as c:
+            task=c.execute('SELECT status,reason FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+            assert task['status']=='picked_up' and 'اعتمد استمرار التوصيل' in task['reason']
+            assert c.execute("SELECT count(*) n FROM order_events WHERE order_id=%s AND event_type='task.picked_up' AND actor_id=%s",(oid,manager['id'])).fetchone()['n']==1
+        assert not errors,errors
+    finally:context.close()
