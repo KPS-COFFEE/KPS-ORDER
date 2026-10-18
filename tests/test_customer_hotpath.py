@@ -119,6 +119,7 @@ def test_queued_guest_audit_failure_rolls_back_identity_and_cookie_but_preserves
         failed = fresh.post('/api/identity/guest', json=body)
         assert failed.status_code == 503, failed.text
         assert failed.json()['detail']['code'] == 'SERVICE_UNAVAILABLE'
+        assert fresh.cookies.get('kps_customer_session') is None and fresh.cookies.get('kps_customer_csrf') is None
         assert fresh.cookies.get(auth.COOKIE) is None and fresh.cookies.get(auth.CSRF_COOKIE) is None
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) n FROM sessions').fetchone()['n'] == before_sessions
@@ -128,7 +129,8 @@ def test_queued_guest_audit_failure_rolls_back_identity_and_cookie_but_preserves
             conn.execute('DROP TRIGGER reject_guest_audit ON audit_events')
         retried = fresh.post('/api/identity/guest', json=body)
         assert retried.status_code == 200, retried.text
-        assert fresh.cookies.get(auth.COOKIE) and fresh.cookies.get(auth.CSRF_COOKIE)
+        assert fresh.cookies.get('kps_customer_session') and fresh.cookies.get('kps_customer_csrf')
+        assert fresh.cookies.get(auth.COOKIE) is None and fresh.cookies.get(auth.CSRF_COOKIE) is None
         with db.tx() as conn:
             rows = conn.execute('SELECT id FROM users WHERE brand_id=%s AND phone=%s', (user['brand_id'], normalized)).fetchall()
             assert len(rows) == 1

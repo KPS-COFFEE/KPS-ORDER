@@ -340,6 +340,11 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                         sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, row)),
                         sql.SQL(',').join(sql.Placeholder() for _ in row))
                     conn.execute(statement, values)
+            # Validate deferred references/projections before changing trigger
+            # state: PostgreSQL refuses ALTER TABLE with pending FK events on
+            # a populated wallet ledger. A consistent snapshot has no new
+            # benefit delta to materialize here.
+            conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
             conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')
             conn.execute('ALTER TABLE customer_wallet_entries ENABLE TRIGGER wallet_entry_balance')
