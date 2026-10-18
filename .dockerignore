@@ -35,3 +35,6 @@
 # Runtime bridge is an explicit Dockerfile COPY input.
 !tools/windows-print-bridge/
 !tools/windows-print-bridge/**
+
+# Build-only rootfs packager; not copied into the runtime.
+!tools/security_runtime_root.py
