@@ -391,3 +391,49 @@ dialog:has(.order-detail-events){width:min(1180px,calc(100vw - 24px))}
 .customer-contact-card{min-width:0}
 .customer-contact-card h2{overflow-wrap:anywhere;white-space:normal}
 @media(max-width:480px){.staff-card .data-grid{grid-template-columns:1fr}.staff-card footer>button{flex:1 1 100%}}
+
+/* Keep all eight order fields visible in the working column on laptops/tablets.
+   The wide-screen table remains a table; compact rows become labelled cards. */
+.order-table th{white-space:normal;line-height:1.7}
+.order-table td:last-child .pill{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:1500px){
+ .order-table{max-height:none;overflow:visible;border:0;border-radius:0;scrollbar-gutter:auto}
+ .order-table table{display:block;min-width:0;width:100%}
+ .order-table thead{display:none}
+ .order-table tbody{display:grid;gap:16px;width:100%}
+ .order-table tbody tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 20px;padding:20px;background:var(--surface);border:1px solid var(--line);border-inline-start:4px solid var(--accent);border-radius:14px}
+ .order-table tbody td{display:block;min-width:0!important;max-width:none;padding:0 0 4px;border:0;white-space:normal;overflow-wrap:anywhere;grid-column:auto;grid-row:auto;text-align:start;direction:inherit}
+ .order-table tbody td::before{display:block;content:attr(data-label)!important;font-size:12px;font-weight:400;line-height:1.8;color:var(--muted);margin-bottom:4px}
+ .order-table tbody td:first-child{grid-column:1/-1;border-bottom:1px solid var(--line);padding-bottom:12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+ .order-table tbody td:first-child::before{display:none}
+ .order-table tbody td:first-child p{margin:0}
+ .order-table .order-reference{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+ .order-table tbody td:nth-child(2){font-weight:400;padding-inline-end:0}
+ .order-table tbody td:nth-child(4),.order-table tbody td:nth-child(5){direction:inherit;text-align:start;font-variant-numeric:tabular-nums}
+ .order-table tbody td:nth-child(6){direction:inherit;text-align:start;white-space:normal}
+ .order-table tbody td:last-child{grid-column:1/-1;display:block;border-top:1px solid var(--line);padding-top:10px}
+ .order-table tbody tr:hover{background:var(--surface)}
+ .order-table tbody td .pill{margin:3px 0;max-width:100%}
+}
+@media(max-width:600px){.order-table tbody tr{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px}}
+@media(max-width:360px){.order-table tbody tr{grid-template-columns:minmax(0,1fr)}}
+
+/* Printer directories use the same complete-text cards in the page and dialog. */
+.printer-directory{margin-block:20px}
+.printer-directory .table-hint{display:none}
+.printer-directory .table-wrap{overflow:visible;border:0;border-radius:0}
+.printer-directory table{display:block;min-width:0;width:100%}
+.printer-directory thead{display:none}
+.printer-directory tbody{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:16px;align-items:start}
+.printer-directory tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px;padding:18px;background:var(--surface);border:1px solid var(--line);border-inline-start:4px solid var(--accent);border-radius:14px;min-width:0}
+.printer-directory tbody td{display:block;min-width:0!important;max-width:none;width:auto;border:0;padding:0 0 4px;white-space:normal;overflow-wrap:anywhere!important;word-break:normal}
+.printer-directory tbody td::before{display:block;content:attr(data-label);font-size:12px;font-weight:400;line-height:1.8;color:var(--muted);margin-bottom:4px}
+.printer-directory tbody td:first-child{grid-column:1/-1;font-weight:700;font-size:17px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.printer-directory tbody td:nth-child(2),.printer-directory tbody td:nth-child(4),.printer-directory tbody td:nth-child(5){grid-column:1/-1}
+.printer-directory tbody td:nth-child(3){grid-column:1/-1}
+.printer-directory .pill{white-space:normal;overflow-wrap:anywhere;line-height:1.8}
+.printer-directory tbody td:last-child{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;border-top:1px solid var(--line);padding-top:12px}
+.printer-directory tbody td:last-child::before{display:none}
+.printer-directory tbody td:last-child button{display:block;flex:1 1 160px;min-width:0;width:auto;max-width:100%;white-space:normal;overflow-wrap:anywhere;margin:0;line-height:1.8}
+#printer-live .printer-directory tbody td:last-child button{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:480px){.printer-directory tr{padding:14px}.printer-directory tbody td:last-child button{flex-basis:100%}}

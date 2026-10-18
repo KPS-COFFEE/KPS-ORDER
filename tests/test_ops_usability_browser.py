@@ -225,3 +225,56 @@ def test_driver_card_vehicle_transfer_ui(live_app,chromium_browser,width):
             assert c.execute("SELECT vehicle->>'plate' plate FROM users WHERE id=%s",(target['id'],)).fetchone()['plate']=='TEST UI 123'
         assert not errors,errors
     finally:context.close()
+
+
+
+
+@pytest.mark.postgres
+@pytest.mark.skipif(os.getenv('TEST_BROWSER') != '1', reason='Requires real Chromium')
+@pytest.mark.parametrize(('lang', 'width'), [('ar',390), ('ar',768), ('ar',1280), ('en',1280)])
+def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lang, width):
+    from pathlib import Path
+    from tests.test_core import _make_user
+    from playwright.sync_api import expect
+    owner = _staff()
+    contact = _make_user()
+    oid = db.new_id('TEST_layout_')
+    name = 'عميل اختبار تنسيق الطلبات وظهور الاسم كاملًا' if lang == 'ar' else 'Synthetic customer full readable name'
+    district = 'حي تجريبي طويل مع وصف كامل للموقع' if lang == 'ar' else 'Long synthetic neighborhood and location'
+    with db.tx() as conn:
+        conn.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','new','pending','cash',1000,0,1000,%s,%s)",
+                     (oid, contact['id'], db.json({'items':[], 'order_reference':'TEST-LAYOUT-001'}), db.json({'name':name,'neighborhood':district})))
+    context, page, errors = _context(chromium_browser, live_app)
+    try:
+        _owner_login(context, live_app, owner)
+        context.add_init_script("localStorage.setItem('kps_ops_lang', '" + lang + "')")
+        page.set_viewport_size({'width':width, 'height':1000})
+        page.goto(live_app + '/ops', wait_until='networkidle')
+        page.locator('#navigation [data-page=orders]').click()
+        row = page.locator('[data-order-id="' + oid + '"]')
+        expect(row).to_be_visible()
+        expect(row).to_contain_text(name)
+        expect(row).to_contain_text(district)
+        assert row.locator('td').count() == 8
+        geometry = row.evaluate('''e => [...e.querySelectorAll('td')].map(c => {
+            const b=c.getBoundingClientRect();
+            return {label:c.dataset.label,width:b.width,left:b.left,right:b.right,sw:c.scrollWidth,cw:c.clientWidth,sh:c.scrollHeight,ch:c.clientHeight,viewport:innerWidth};
+        })''')
+        assert all(c['width']>0 and c['left']>=0 and c['right']<=c['viewport']+1 and c['sw']<=c['cw']+1 and c['sh']<=c['ch']+1 for c in geometry), geometry
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        out = Path('test-artifacts'); out.mkdir(exist_ok=True)
+        page.screenshot(path=str(out / f'orders-complete-{lang}-{width}.png'), full_page=True)
+        # Follow the same normal navigation as the reported failure, with no
+        # artificial browser-wide authentication header.
+        with page.expect_response(lambda r: '/api/driver-work-hours/report?' in r.url) as loaded:
+            page.locator('#navigation a[href="/driver-hours"]').click()
+        assert loaded.value.status == 200
+        expect(page.locator('#hours-kpis article')).to_have_count(4)
+        expect(page.locator('#hours-xlsx')).to_be_visible()
+        for kind in ('xlsx','pdf'):
+            target = page.locator('#hours-' + kind).get_attribute('href')
+            assert context.request.get(live_app + target).status == 200
+        page.screenshot(path=str(out / f'hours-open-{lang}-{width}.png'), full_page=True)
+        assert not errors, errors
+    finally:
+        context.close()
