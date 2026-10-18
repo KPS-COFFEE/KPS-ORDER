@@ -106,7 +106,7 @@ def test_authorized_customer_records_real_http_postgres(sms_browser_app, chromiu
         ]
         for oid, brand, branch, cid, details in records:
             conn.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,'delivery','new','pending','cash',1000,0,1000,%s,%s)",
-                         (oid, brand, branch, cid, db.json({'items': [], 'order_source': 'delivery_center', 'order_reference': 'TEST-CRM-VISUAL'}), db.json(details)))
+                         (oid, brand, branch, cid, db.json({'items': [], 'order_source': 'delivery_center', 'order_reference': 'TEST-CRM-VISUAL-' + oid}), db.json(details)))
     context, page, errors = _context(chromium_browser, sms_browser_app)
     try:
         headers = _owner_login(context, sms_browser_app, staff)

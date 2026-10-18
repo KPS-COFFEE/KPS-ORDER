@@ -320,3 +320,4 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 /* Live printer controls share the approved wrapping rule; this ID selector
    must override the older #printer-live button nowrap compatibility rule. */
 #printer-live .printer-directory button{white-space:normal;overflow-wrap:anywhere}
+#customer-records-results .card-head>h2{flex:1 1 180px;min-width:min(180px,100%)}
