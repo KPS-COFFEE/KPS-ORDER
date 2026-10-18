@@ -110,6 +110,9 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 raise db.error(422,'DELIVERY_ONLY','طلب مركز التوصيل مخصص للتوصيل.')
             if not body.customer.phone:
                 raise db.error(422,'CUSTOMER_PHONE_REQUIRED','أدخل رقم اتصال العميل.')
+            # Replays must satisfy today's branch and duty scope before reading
+            # a saved response. Never let idempotency retain revoked access.
+            delivery_center_scope(conn,user,body.branch_id)
         else:
             auth.assert_customer_order_eligible(conn,user,phone_required=phone_required)
         def perform():
@@ -218,6 +221,14 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
     # Replays use the same durable JSON, with no new counter/event/financial write.
     if isinstance(result, db.DeferredAtomicResponse):
         result = result.resolve()
+    if delivery_center:
+        # Saved responses use the customer-safe branch projection; inspect the
+        # durable order to reauthorize its actual execution branch as well.
+        saved=json.loads(result) if isinstance(result,str) else result
+        if isinstance(saved,dict) and saved.get('order',{}).get('id'):
+            with db.tx() as conn:
+                persisted=scoped_order(conn,saved['order']['id'],user)
+                delivery_center_scope(conn,user,persisted['branch_id'])
     return Response(result,media_type='application/json') if request is not None else result
 
 

@@ -216,3 +216,28 @@ def test_postgres_concurrent_operational_contact_never_claims_verified_identity(
         assert conn.execute('SELECT count(*) n FROM users WHERE id=%s',(identifiers[0],)).fetchone()['n']==1
         assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(identifiers[0],)).fetchone()['n']==0
         assert conn.execute('SELECT count(*) n FROM customer_identity_links').fetchone()['n']==0
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('revocation',['branch','shift'])
+def test_postgres_manager_order_replay_rechecks_branch_and_open_shift(client,monkeypatch,revocation):
+    from tests.test_core import _prepare_catalog,_make_user,_body
+    from tests.sms_policy_helpers import sms_login
+    _prepare_catalog()
+    manager=_make_user('delivery_manager',branches=['kps-branch-1'])
+    sms_login(client,manager,monkeypatch)
+    with db.tx() as conn:
+        conn.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES('replay-manager-shift','manager',%s,'kps',%s)",(manager['id'],db.json(['kps-branch-1'])))
+    body=_body('delivery');body['customer']['phone']='0501234567'
+    create=lambda:client.post('/api/orders/delivery-center',json=body,headers={'Idempotency-Key':'manager-replay-reauthorize'})
+    first=create();assert first.status_code==200,first.text
+    assert create().json()==first.json()
+    with db.tx() as conn:
+        if revocation=='branch':conn.execute("UPDATE users SET branch_ids='[]'::jsonb WHERE id=%s",(manager['id'],))
+        else:conn.execute("UPDATE shifts SET status='submitted' WHERE id='replay-manager-shift'")
+    denied=create()
+    assert denied.status_code==(403 if revocation=='branch' else 409),denied.text
+    assert 'order' not in denied.json()
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n']==1
+        assert conn.execute("SELECT count(*) n FROM idempotency_keys WHERE operation='orders.delivery_center'").fetchone()['n']==1
