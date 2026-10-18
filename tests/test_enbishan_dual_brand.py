@@ -38,6 +38,19 @@ def dual(request, monkeypatch, safe_test_environment):
             if role == 'admin':
                 c.execute('UPDATE users SET permissions=%s WHERE id=%s',
                           (db.json(['accounting_reports','accounting_review']),identifier))
+    # Mock only the external SMS transport/configuration boundary. Mandatory
+    # four-digit challenge, purpose, session, account and brand checks stay real.
+    from app import sms_verification
+    references = set()
+    def sms_start(phone, reference, lang='ar'):
+        references.add(reference)
+        return reference, datetime.now(timezone.utc) + timedelta(minutes=5)
+    monkeypatch.setattr(sms_verification, 'start', sms_start)
+    monkeypatch.setattr(sms_verification, 'check', lambda reference, code: reference in references and code == '0123')
+    monkeypatch.setattr(auth, '_provider_ready', lambda provider: None)
+    with db.tx() as c:
+        c.execute("UPDATE users SET phone=CASE id WHEN 'dual-owner' THEN '+966500001001' ELSE '+966500001002' END WHERE id IN ('dual-owner','dual-manager')")
+        c.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled,delivery_proven_at,sms_provider) VALUES('kps','sms','active',true,now(),'tawked') ON CONFLICT(brand_id,channel) DO UPDATE SET state='active',enabled=true,delivery_proven_at=now(),sms_provider='tawked'")
     credentials = {}
     def actor(name, brand=None):
         identifier = 'dual-'+name
@@ -48,6 +61,8 @@ def dual(request, monkeypatch, safe_test_environment):
                           (uuid4().hex, auth.token_hash(token), auth.token_hash(csrf), identifier))
             credentials[identifier] = token, csrf
         token, csrf = credentials[identifier]
+        client.cookies.clear()
+        client.headers['X-KPS-Context']='customer' if name.endswith('customer') else 'work'
         client.cookies.set(auth.COOKIE, token)
         client.cookies.set(auth.CSRF_COOKIE, csrf)
         client.headers['X-CSRF-Token'] = csrf
@@ -72,6 +87,11 @@ def dual(request, monkeypatch, safe_test_environment):
             c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,'delivery','ready','pending','cash',1000,0,1000,%s,%s)",
                 (identifier,brand,branch,'dual-'+brand+'-customer',db.json({'items':[],'branch_name':branch,'delivery_workflow':'manager_dispatch'}),db.json({'name':'SYNTHETIC'})))
         return identifier
+    actor('owner')
+    challenge = client.post('/api/identity/owner/sms/request')
+    assert challenge.status_code == 200, challenge.text
+    verified = client.post('/api/identity/owner/sms/verify', json={'challenge_id':challenge.json()['challenge_id'], 'code':'0123'})
+    assert verified.status_code == 200, verified.text
     return client, actor, post, shifts, order
 
 
@@ -365,6 +385,10 @@ def test_first_staff_login_returns_selected_brand_and_same_identity(dual):
                   (auth.hash_password('Synthetic-only-password!'),))
     client.headers['X-Operations-Brand']='enbishan'
     result=client.post('/api/auth/login',json={'username':'synthetic.dual.manager','password':'Synthetic-only-password!'})
+    assert result.status_code==403,result.text
+    requested=client.post('/api/identity/staff/code/request',json={'phone':'+966500001002','brand_id':'kps'})
+    assert requested.status_code==200,requested.text
+    result=client.post('/api/identity/staff/code/verify',json={'challenge_id':requested.json()['challenge_id'],'code':'0123'})
     assert result.status_code==200,result.text
     user=result.json()['user']
     assert user['id']=='dual-manager' and user['brand_id']=='enbishan'
@@ -386,3 +410,70 @@ def test_shared_administration_preserves_accountant_role_and_permissions(dual):
         assert actor('accountant',brand).get('/api/multibrand/pool').status_code==403
         post('accountant','/api/multibrand/memberships',{'user_id':'dual-driver','brand_id':'enbishan',
              'branch_ids':['enbishan-test-1']},brand,method='put',status=403)
+
+
+def test_private_backup_registry_preserves_shared_grants_without_business_export():
+    from app.exports import TABLES, AUTH_TABLES
+    for table in ('staff_brand_memberships', 'driver_brand_dedications'):
+        assert table in TABLES
+        assert table in AUTH_TABLES
+
+
+@pytest.mark.postgres
+def test_dual_brand_private_backup_restore_preserves_memberships(dual):
+    import os
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive, restore_archive
+    _, _, post, _, _ = dual
+    now = datetime.now(timezone.utc)
+    post('owner', '/api/multibrand/dedications', {
+        'driver_id':'dual-driver', 'brand_id':'enbishan',
+        'starts_at':now.isoformat(), 'ends_at':(now+timedelta(hours=1)).isoformat(),
+        'reason':'SYNTHETIC backup restoration verification'})
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+        archive, manifest = build_archive(c, full=True)
+        memberships = c.execute('SELECT * FROM staff_brand_memberships ORDER BY user_id,brand_id').fetchall()
+        dedications = c.execute('SELECT * FROM driver_brand_dedications ORDER BY id').fetchall()
+    schema = 'kps_restore_' + uuid4().hex
+    target = os.environ['TEST_DATABASE_URL']
+    try:
+        result = restore_archive(archive, target_url=target, target_schema=schema)
+        with psycopg.connect(target, row_factory=dict_row) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+            assert c.execute('SELECT * FROM staff_brand_memberships ORDER BY user_id,brand_id').fetchall() == memberships
+            assert c.execute('SELECT * FROM driver_brand_dedications ORDER BY id').fetchall() == dedications
+        # Source remains present after restoration into the distinct new schema.
+        with db.tx() as c:
+            assert c.execute('SELECT count(*) AS n FROM staff_brand_memberships').fetchone()['n'] == len(memberships)
+    finally:
+        with psycopg.connect(target, autocommit=True) as c:
+            c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))
+
+
+def test_projected_owner_cannot_downgrade_home_sms_step_up(monkeypatch):
+    from fastapi import HTTPException
+    user = {'id':'synthetic-owner', 'role':'owner', 'session_id':'synthetic-session',
+            'brand_id':'enbishan', 'home_brand_id':'kps'}
+    seen = []
+    monkeypatch.setattr(auth, 'staff_email_retired', lambda brand, **kw: seen.append(brand) or brand == 'kps')
+    class NoProof:
+        def execute(self, query, params):
+            assert "owner_sms_" in query
+            return self
+        def fetchone(self):
+            return None
+    with pytest.raises(HTTPException) as rejected:
+        auth.require_owner_step_up(NoProof(), user)
+    assert rejected.value.status_code == 403
+    assert seen == ['kps']
+
+
+def test_projected_owner_sms_provider_uses_home_identity(monkeypatch):
+    from app import employee_sms, sms_rollout
+    seen = []
+    monkeypatch.setattr(sms_rollout, 'employee_sms_enabled', lambda user: seen.append(user['brand_id']) or user['brand_id']=='kps')
+    employee_sms._owner_sms_enabled({'id':'test', 'brand_id':'enbishan', 'home_brand_id':'kps'})
+    assert seen == ['kps']

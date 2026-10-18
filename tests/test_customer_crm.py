@@ -11,7 +11,7 @@ def app_client(user=None):
     app.include_router(customer_crm.router)
     if user is not None:
         app.dependency_overrides[auth.current_user] = lambda: user
-    return TestClient(app, base_url='http://testserver')
+    return TestClient(app, base_url='http://testserver', headers={'Origin':'http://testserver'})
 
 
 @pytest.mark.parametrize('role', ['customer', 'driver', 'delivery_manager', 'branch_manager', 'delivery_staff'])
@@ -176,7 +176,7 @@ def test_filter_values_cannot_change_sql():
 
 
 @pytest.mark.postgres
-def test_customer_search_segments_history_and_scoped_export(database):
+def test_customer_search_segments_history_and_scoped_export(database, monkeypatch):
     owner = _make_user('owner')
     purchaser = _make_user()
     nonbuyer = _make_user()
@@ -198,8 +198,10 @@ def test_customer_search_segments_history_and_scoped_export(database):
         detail = client.get('/api/crm/customers/'+purchaser['id']).json()
         assert {row['id'] for row in detail['orders']} == {completed, cancelled}
         assert client.post('/api/crm/export?q=SYNTHETIC', headers={'Origin': 'http://testserver'}).status_code == 403
-        with db.tx() as c:
-            c.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s', (owner['id'],))
+        from app import employee_sms
+        from tests.sms_policy_helpers import sms_step_up
+        client.app.include_router(employee_sms.router)
+        sms_step_up(client, owner, monkeypatch)
         result = client.post('/api/crm/export?q=SYNTHETIC', headers={'Origin': 'http://testserver'})
         assert result.status_code == 200, result.text
         assert "'=SYNTHETIC" in result.text

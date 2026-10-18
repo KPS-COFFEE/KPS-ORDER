@@ -92,7 +92,7 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 def public_user(user: dict, conn=None) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials')}
-    output['employee_sms_email_retired'] = staff_email_retired(user.get('brand_id','kps'), conn=conn)
+    output['employee_sms_email_retired'] = staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
     if 'operations_brands' in user:
@@ -1181,7 +1181,7 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
 
 
 def require_owner_step_up(conn,user):
-    if staff_email_retired(user.get('brand_id','kps'), conn=conn):
+    if staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn):
         # A timestamp created by a pre-cutover password/email proof is not SMS.
         # Proof must be bound to this owner, this exact live session and the
         # current registered mobile, with a distinct sensitive challenge.

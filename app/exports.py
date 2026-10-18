@@ -260,6 +260,16 @@ def _restored_evidence(conn, archive, manifest):
     return identity_digests, binary_count
 
 
+def migration_manifest():
+    paths = list((db.ROOT / 'migrations').glob('*.sql'))
+    from . import multibrand
+    if multibrand.enabled():
+        multibrand.isolation_guard()
+        paths.append(db.ROOT / 'app' / 'multibrand_migrations' / '001_enbishan_isolated.sql')
+    return [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+            for path in sorted(paths, key=lambda path: path.name)]
+
+
 def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     target_database_id: str | None = None, asset_directory: str | Path | None = None) -> dict:
     """Restore to a NEW isolated test schema; no existing schema is overwritten.
@@ -272,8 +282,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     if not re.fullmatch(r'kps_restore_[a-f0-9]{32}', target_schema):
         raise ValueError('Restore schema must be kps_restore_ plus a new UUID hex value.')
     _restore_target(target_url, target_database_id)
-    expected = [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-                for path in sorted((db.ROOT / 'migrations').glob('*.sql'))]
+    expected = migration_manifest()
     if manifest['migrations'] != expected:
         raise ValueError('Archive migrations do not match this code. Restore with matching code first.')
     destination, files_restored = Path(asset_directory) if asset_directory is not None else None, 0

@@ -20,6 +20,35 @@ el('detail-more')?.remove();el('detail').append(table([tr('الطلب','Order'),
 if(d.orders_next_after){const button=node('button',tr('طلبات أخرى','More orders'));button.id='detail-more';button.addEventListener('click',()=>detail(id,d.orders_next_after,true));el('detail').append(button);}
 }catch(e){el('status').textContent=e.message;}}
 async function load(more=false){try{el('status').textContent=tr('جار التحميل…','Loading…');if(!more){overview=await api('/api/crm/overview');rows=[];next=null;}const data=await api('/api/crm/customers?'+filters());rows.push(...data.customers);next=data.next_after;render();el('status').textContent='';}catch(e){el('status').textContent=e.message;}}
+let exportChallenge=null;
+async function protectedPost(url,body){
+ const session=await api('/api/session');
+ if(!session.user||!session.csrf_token)throw new Error(tr('أعد تسجيل الدخول.','Sign in again.'));
+ return fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',
+   headers:{...headers,'X-CSRF-Token':session.csrf_token,'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+}
+async function exportCustomers(){
+ const button=el('export');button.disabled=true;
+ try{const query=new URLSearchParams(filters());query.delete('after');
+  const response=await protectedPost('/api/crm/export?'+query);
+  if(!response.ok){const problem=await response.json();
+   if(response.status===403&&problem.detail?.code==='OWNER_STEP_UP_REQUIRED'){el('export-proof').showModal();return;}
+   throw new Error(problem.detail?.message||tr('تعذر التصدير.','Export failed.'));}
+  const url=URL.createObjectURL(await response.blob()),link=node('a');link.href=url;link.download='customers.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ }catch(e){el('status').textContent=e.message;}finally{button.disabled=false;}
+}
+el('export').addEventListener('click',exportCustomers);
+el('send-export-code').addEventListener('click',async()=>{const button=el('send-export-code');button.disabled=true;try{
+ const response=await protectedPost('/api/identity/owner/sms/request'),data=await response.json();
+ if(!response.ok)throw new Error(data.detail?.message||tr('تعذر إرسال الرمز.','Code request failed.'));
+ exportChallenge=data.challenge_id;el('export-proof-status').textContent=tr('أدخل الرمز المرسل إلى جوالك المسجل.','Enter the code sent to your registered mobile.');
+ }catch(e){el('export-proof-status').textContent=e.message;}finally{button.disabled=false;}});
+el('verify-export-code').addEventListener('submit',async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;try{
+ if(!exportChallenge)throw new Error(tr('اطلب الرمز أولًا.','Request a code first.'));
+ const code=new FormData(e.currentTarget).get('code'),response=await protectedPost('/api/identity/owner/sms/verify',{challenge_id:exportChallenge,code}),data=await response.json();
+ if(!response.ok)throw new Error(data.detail?.message||tr('تعذر التحقق.','Verification failed.'));
+ exportChallenge=null;e.currentTarget.reset();el('export-proof').close();await exportCustomers();
+ }catch(error){el('export-proof-status').textContent=error.message;}finally{button.disabled=false;}});
 el('filters').addEventListener('submit',e=>{e.preventDefault();load();});
 el('language').addEventListener('click',()=>{en=!en;render();});el('refresh').addEventListener('click',()=>load());el('more').addEventListener('click',()=>load(true));load();
 })();
