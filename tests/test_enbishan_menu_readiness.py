@@ -112,7 +112,7 @@ def test_owner_review_sms_scope_draft_import_replay_and_stale_preview(client, mo
     assert client.post('/api/admin/enbishan-menu/preview',json=body).status_code == 403
     with db.tx() as c:
         c.execute("INSERT INTO brands(id,name) VALUES('enbishan','TEST ONLY')")
-        c.execute("INSERT INTO app_settings(brand_id,settings) VALUES('enbishan','{}')")
+        c.execute("INSERT INTO app_settings(brand_id,settings) VALUES('enbishan','{\"employee_sms_rollout\":{\"mode\":\"active\"}}')")
     owner = _make_user('owner',brand='enbishan')
     sms_login(client,owner,monkeypatch)
     preview = client.post('/api/admin/enbishan-menu/preview',json=body)
