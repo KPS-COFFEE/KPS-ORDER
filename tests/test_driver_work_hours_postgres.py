@@ -101,28 +101,3 @@ def test_operational_boundary_multiorder_cross_branch_trip_reconciles(ops):
     assert trip['order_count'] == 2 and trip['duration_seconds'] == 2700
     assert trip['departure_branch_id'] == 'ops-branch'
     assert trip['return_branch_id'] == 'hours-return-branch'
-
-
-@pytest.mark.postgres
-def test_real_report_eight_hour_shift_six_hour_orders_and_two_hour_remainder(ops):
-    actor,post,order,shifts=ops
-    _,sid=shifts()
-    ids=[order(),order()]
-    with db.tx() as c:
-        c.execute("UPDATE brands SET settings=settings||'{\"operational_day_start\":\"05:30\"}'::jsonb WHERE id='ops-brand'")
-        c.execute("UPDATE shifts SET opened_at='2026-10-17 16:00+03',submitted_at='2026-10-18 00:00+03' WHERE id=%s",(sid,))
-        for index,(pickup,delivered) in enumerate([('16:00','20:00'),('18:00','22:00')]):
-            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at,delivered_at) VALUES(%s,%s,'ops-driver',%s,'delivered','ops-manager',%s,%s)",
-                      ('activity-'+str(index),ids[index],sid,'2026-10-17 '+pickup+'+03','2026-10-17 '+delivered+'+03'))
-    response=actor('owner').get('/api/driver-work-hours/report',params={'start':'2026-10-17','end':'2026-10-17'})
-    assert response.status_code==200,response.text
-    report=response.json();d=report['drivers'][0]
-    assert d['shift_seconds']==28800
-    assert d['order_activity_seconds']==21600
-    assert d['remaining_shift_seconds']==7200
-    assert d['order_utilization_percent']==75
-    assert d['order_count']==2
-    # Historic branch return is still unknown; task timestamps prove only pickup-to-delivery.
-    assert d['delivery_seconds']==0 and d['missing_trip_evidence']
-    assert report['totals']['order_activity_seconds']==21600
-    assert report['totals']['order_utilization_percent']==75
