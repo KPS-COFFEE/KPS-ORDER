@@ -13,7 +13,7 @@ Plain Trixie retains vulnerable util-linux/libacl. The final rootfs contains
 complete Debian runtime library packages discovered through ELF dependencies,
 their actual dpkg controls/file lists, fonts and the locked Python distribution.
 No package-manager, shell, mount/libmount/libblkid, ACL, gzip or terminal tools
-are copied. The optional Python terminal/SQLite/libuuid adapters are omitted;
+are copied. The optional Python terminal/SQLite/libuuid/Tk adapters are omitted;
 Python uuid4 behavior is unchanged, with uuid.py retaining its standard fallback.
 The real bytes are absent; no CVE, scanner severity or metadata is suppressed.
 OpenSSL is installed from supported Trixie/security repositories during build.

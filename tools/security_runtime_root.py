@@ -15,7 +15,7 @@ local = Path('/usr/local')
 # These optional terminal/SQLite/libuuid adapters are unused by the web app.
 # SQLite was already unavailable in the previous certified image. uuid.py has
 # its standard pure-Python fallback; uuid4 continues to use os.urandom.
-for pattern in ('_sqlite3*.so', '_curses*.so', 'readline*.so', '_uuid*.so'):
+for pattern in ('_sqlite3*.so', '_curses*.so', 'readline*.so', '_uuid*.so', '_tkinter*.so'):
     for p in (local / 'lib/python3.12/lib-dynload').glob(pattern):
         p.unlink()
 shutil.copytree(local, root / 'usr/local', symlinks=True, dirs_exist_ok=True)
@@ -33,7 +33,29 @@ for p in [local / 'bin/python3.12', *local.rglob('*.so'), *local.rglob('*.so.*')
             continue
         # Debian13 merged-/usr owns these paths. Ask dpkg, never infer versions.
         owner = subprocess.check_output(['dpkg-query', '-S', str(path)], text=True).split(': /', 1)[0]
-        packages.add(owner)
+        packages.add(owner.split(':')[0])
+
+# Copy the installed dependency closure too, including provider modules and
+# licensing/version packages that are not discoverable through static ldd.
+pending = list(packages)
+while pending:
+    package = pending.pop()
+    fields = subprocess.check_output(['dpkg-query', '-W', '-f=${Depends}, ${Pre-Depends}', package], text=True)
+    for group in fields.split(','):
+        if not group.strip():
+            continue
+        for alternative in group.split('|'):
+            dependency = alternative.strip().split()[0]
+            if dependency.endswith(':any'):
+                dependency = dependency[:-4]
+            installed = subprocess.run(['dpkg-query', '-W', '-f=${db:Status-Status}', dependency], text=True, capture_output=True)
+            if installed.returncode == 0 and installed.stdout == 'installed':
+                if dependency not in packages:
+                    packages.add(dependency)
+                    pending.append(dependency)
+                break
+        else:
+            raise RuntimeError('Unresolved installed package dependency: ' + group)
 
 for package in packages:
     name = package.split(':')[0]
