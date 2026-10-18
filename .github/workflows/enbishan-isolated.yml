@@ -47,6 +47,7 @@ jobs:
       - name: Engagement transactions and release-orchestration invariants first
         run: >-
           python -m pytest -q tests/test_customer_engagement_closure.py
+          tests/test_customer_engagement_restore.py
           tests/test_engagement_capacity_workflow.py tests/test_hosting_report_check.py
           --junitxml=test-results/enbishan/engagement-transactions.xml
       - name: Real dual-brand, financial, security and mobile acceptance
