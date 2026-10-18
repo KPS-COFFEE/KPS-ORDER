@@ -456,7 +456,7 @@ def update_settings(body: dict, user=Depends(appearance_admin), idem: str | None
         if not isinstance(text, str) or len(text) > 240 or len(text.splitlines()) > 6 or any(ord(c) < 32 and c not in '\n\r' for c in text):
             raise db.error(422,'RECEIPT_TEXT_INVALID','عبارة المناسبات حتى 240 حرفًا و6 أسطر.')
         body['receipt_occasion_text'] = text.strip()
-    if 'delivery_workflow' in body and body['delivery_workflow'] not in ('manager_dispatch','branch_fulfillment'):
+    if 'delivery_workflow' in body and body['delivery_workflow'] not in ('manager_dispatch','branch_fulfillment','branch_without_manager'):
         raise db.error(422,'DELIVERY_WORKFLOW_INVALID','اختر وضع تشغيل التوصيل المعتمد.')
     if 'operational_day_start' in body and not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',str(body['operational_day_start'])):
         raise db.error(422,'OPERATIONAL_DAY_INVALID','وقت بداية اليوم التشغيلي بصيغة HH:MM.')

@@ -1,0 +1,104 @@
+"""Focused evidence for scoped exports and responsive four-card view."""
+import io
+from pathlib import Path
+from zipfile import ZipFile
+from xml.etree import ElementTree
+from app.driver_hours_reports import make_xlsx, make_pdf, export_rows
+
+
+def fixture():
+    metrics = dict(shift_seconds=28800, actual_seconds=25200, delivery_seconds=7200,
+                   waiting_seconds=14400, break_seconds=3600, other_work_seconds=0,
+                   unclassified_seconds=3600, trip_count=2, order_count=5)
+    return dict(start='2026-10-18', end='2026-10-18', operational_day_start='05:30',
+                totals=metrics, drivers=[dict(name='=HYPERLINK("bad")', **metrics)])
+
+
+def test_xlsx_is_parseable_and_names_never_formulas():
+    with ZipFile(io.BytesIO(make_xlsx(fixture()))) as archive:
+        for name in archive.namelist():
+            ElementTree.fromstring(archive.read(name))
+        sheet = archive.read('xl/worksheets/sheet1.xml').decode()
+        assert '<f>' not in sheet
+        assert 'HYPERLINK' in sheet and 'inlineStr' in sheet
+        assert '<v>8.0</v>' in sheet
+        assert 'rightToLeft="1"' in sheet
+
+
+def test_export_hours_reconcile_and_english_labels():
+    rows = export_rows(fixture(), 'en')
+    assert rows[0][0] == 'Driver'
+    assert rows[1][3:8] == [8, 7, 2, 4, 1]
+    assert rows[-1][1:] == rows[1][1:]
+    assert rows[1][-1] == 1
+
+
+def test_arabic_pdf_has_embedded_font_and_real_pdf():
+    value=make_pdf(fixture())
+    assert value.startswith(b'%PDF-')
+    assert b'/FontFile2' in value
+
+
+def test_four_cards_match_ops_identity_and_responsive_contract():
+    root=Path(__file__).resolve().parents[1]
+    js=(root/'public/assets/driver-hours.js').read_text()
+    css=(root/'public/assets/driver-hours.css').read_text()
+    html=(root/'public/driver-hours.html').read_text()
+    assert "[['shift','shift_seconds'],['actual','actual_seconds'],['delivery','delivery_seconds'],['waiting','waiting_seconds']]" in js
+    assert 'repeat(4,minmax(0,1fr))' in css
+    assert 'repeat(2,minmax(0,1fr))' in css
+    assert '/ops.css' in html and 'unclassified_seconds' in js
+
+
+import pytest
+
+
+@pytest.mark.postgres
+def test_real_sms_delegated_exports_scope_and_immediate_revocation(client,monkeypatch):
+    from app import db, employee_permissions as policy
+    from tests.test_core import _make_user
+    from tests.sms_policy_helpers import sms_login, sms_step_up
+    owner=_make_user('owner')
+    driver=_make_user('driver',branches=['kps-branch-1'])
+    outside=_make_user('driver',branches=['kps-branch-2'])
+    unscoped=_make_user('driver')
+    with db.tx() as c:
+        for name,person,branches in [('inside',driver,['kps-branch-1']),('outside',outside,['kps-branch-2']),('unscoped',unscoped,[])]:
+            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,opened_at) VALUES(%s,'driver',%s,'kps',%s,now()-interval '1 minute')",('report-auth-'+name,person['id'],db.json(branches)))
+    sms_login(client,driver,monkeypatch)
+    driver_cookies=dict(client.cookies);driver_csrf=client.headers['X-CSRF-Token']
+    paths=['/driver-hours','/api/driver-work-hours/report','/api/driver-work-hours/export.xlsx?start=2026-10-18&end=2026-10-18','/api/driver-work-hours/export.pdf?start=2026-10-18&end=2026-10-18']
+    for path in paths:
+        assert client.get(path).status_code==403
+    sms_login(client,owner,monkeypatch);sms_step_up(client,owner,monkeypatch)
+    baseline=policy.effective(driver)
+    def save(target,permissions):
+        return client.put('/api/identity/staff/'+driver['id']+'/permissions',json={'enabled_permissions':sorted(permissions),'expected_permissions':sorted(policy.effective(target)),'reason':'Explicit owner review of scoped hours report access'})
+    grant=save(driver,baseline|{'driver_hours_reports'})
+    assert grant.status_code==200,grant.text
+    owner_cookies=dict(client.cookies);owner_csrf=client.headers['X-CSRF-Token']
+    client.cookies.clear();client.cookies.update(driver_cookies);client.headers['X-CSRF-Token']=driver_csrf
+    result=client.get('/api/driver-work-hours/report')
+    assert result.status_code==200,result.text
+    report=result.json()
+    assert [r['driver_id'] for r in report['drivers']]==[driver['id']]
+    assert [r['id'] for r in report['options']['drivers']]==[driver['id']]
+    assert [r['id'] for r in report['branches']]==['kps-branch-1']
+    assert client.get('/api/driver-work-hours/report?branch_id=kps-branch-2').status_code==403
+    assert client.get('/api/driver-work-hours/report?driver_id='+outside['id']).status_code==404
+    query='?start='+report['start']+'&end='+report['end']
+    for kind in ('xlsx','pdf'):
+        response=client.get('/api/driver-work-hours/export.'+kind+query)
+        assert response.status_code==200,response.text[:200] if response.status_code!=200 else ''
+        assert response.headers['cache-control']=='private, no-store'
+        assert client.get('/api/driver-work-hours/export.'+kind+query+'&branch_id=kps-branch-2').status_code==403
+    # A live branch withdrawal must not make empty historical scopes visible.
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]'::jsonb WHERE id=%s",(driver['id'],))
+    empty=client.get('/api/driver-work-hours/report')
+    assert empty.status_code==200,empty.text
+    assert empty.json()['drivers']==[] and empty.json()['options']['drivers']==[]
+    client.cookies.clear();client.cookies.update(owner_cookies);client.headers['X-CSRF-Token']=owner_csrf
+    assert save(grant.json()['user'],baseline).status_code==200
+    client.cookies.clear();client.cookies.update(driver_cookies);client.headers['X-CSRF-Token']=driver_csrf
+    for path in paths:
+        assert client.get(path).status_code==403

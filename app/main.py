@@ -102,6 +102,10 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
 
 from . import driver_checks
 app.include_router(driver_checks.router)
+from . import delegated_operations, driver_work_hours, driver_hours_reports
+app.include_router(delegated_operations.router)
+app.include_router(driver_work_hours.router)
+app.include_router(driver_hours_reports.router)
 
 
 def revision():

@@ -69,11 +69,27 @@ DEFINITIONS = [
 # existing resource/role policies until their API scope contracts are certified.
 DEFINITIONS.append(('staff_catalog_view', 'عرض كتالوج الصلاحيات الإضافية فقط',
                     'View additional permission catalog only', 'staff', set()))
+DEFINITIONS.append(('orders_operational_view', 'عرض حالة الطلبات وتسلسلها التشغيلي ضمن الفروع',
+                    'View branch operational order status and history', 'orders', set()))
+DEFINITIONS.append(('driver_hours_reports', 'عرض وتصدير ساعات عمل السائقين ضمن الفروع',
+                    'View and export scoped driver work hours', 'reports', {'delivery_manager'}))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
     'branch_availability': {'driver', 'delivery_staff', 'delivery_manager', 'admin'},
     'branch_printers_manage': {'driver', 'branch_manager', 'delivery_manager', 'delivery_staff', 'admin'},
-    'staff_catalog_view': {'delivery_manager', 'admin'},
+    'staff_catalog_view': {'driver', 'branch_manager', 'delivery_staff', 'delivery_manager', 'admin'},
+    'orders_operational_view': {'driver', 'branch_manager', 'delivery_staff', 'delivery_manager', 'admin'},
+    'driver_hours_reports': {'driver', 'branch_manager', 'delivery_staff', 'admin'},
+}
+
+
+# Contracts are descriptive, never caller-selectable route authorization rules.
+EXTRA_API_CONTRACTS = {
+    'staff_catalog_view': {'methods':['GET'], 'paths':['/api/identity/permissions/catalog'], 'scope':'catalog_only_no_personnel_no_grant'},
+    'orders_operational_view': {'methods':['GET'], 'paths':['/api/staff/scoped/orders','/api/staff/scoped/orders/{order_id}/history'], 'scope':'current_brand_and_assigned_branches_operational_projection'},
+    'driver_hours_reports': {'methods':['GET'], 'paths':['/driver-hours','/api/driver-work-hours/report','/api/driver-work-hours/export.xlsx','/api/driver-work-hours/export.pdf'], 'scope':'current_brand_and_assigned_branches_reports_only'},
+    'branch_availability': {'methods':['POST'], 'paths':['/api/branches/{branch_id}/products/{product_id}/availability'], 'scope':'current_brand_and_assigned_branches_stock_only'},
+    'branch_printers_manage': {'methods':['GET','POST'], 'paths':['/api/printing/devices','/api/printing/setup','/api/printing/devices/{identifier}/revoke','/api/printing/devices/{identifier}/test','/api/printing/devices/{identifier}/approve','/api/printing/jobs','/api/printing/windows-bridge.zip'], 'scope':'current_brand_and_assigned_branches_printer_management_only'},
 }
 
 
@@ -109,7 +125,8 @@ def catalog():
              'roles': sorted(roles), 'default_roles': sorted(roles - {'admin'}),
              'delegable_roles': sorted(EXTRA_GRANT_ROLES.get(code, set())),
              'owner_approval_required': True,
-             'delegation_status': 'scoped' if code in EXTRA_GRANT_ROLES else 'role_policy_required'}
+             'delegation_status': 'scoped' if code in EXTRA_GRANT_ROLES else 'role_policy_required',
+             'api_contract': EXTRA_API_CONTRACTS.get(code)}
             for code, ar, en, group, roles in DEFINITIONS]
 
 

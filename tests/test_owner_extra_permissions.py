@@ -10,9 +10,9 @@ def test_grants_are_explicit_allowlisted_and_never_change_the_role():
     legacy=policy.effective(driver)
     assert policy.effective(dict(driver,extra_permissions=[]))==legacy
     granted=dict(driver,extra_permissions=['branch_printers_manage','accounting_review','staff_catalog_view','unknown'])
-    assert policy.effective(granted)==legacy|{'branch_printers_manage'}
+    assert policy.effective(granted)==legacy|{'branch_printers_manage','staff_catalog_view'}
     assert granted['role']=='driver'
-    assert policy.effective(dict(granted,permission_denials=['branch_printers_manage']))==legacy
+    assert policy.effective(dict(granted,permission_denials=['branch_printers_manage','staff_catalog_view']))==legacy
     assert policy.effective({'role':'customer','extra_permissions':['branch_printers_manage']})==set()
     assert policy.grantable('owner')==set()
     assert not policy.grantable('driver') & {'refunds_manage','shifts_approve','accounting_review','payments_collect'}

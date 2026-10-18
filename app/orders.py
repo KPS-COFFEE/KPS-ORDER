@@ -123,7 +123,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             execution_branch_id = quote['branch_id']
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
-            if body.service == 'delivery':
+            if body.service == 'delivery' and (config or {}).get('settings', {}).get('delivery_workflow') != 'branch_without_manager':
                 _ensure_manager_duty(conn, body.brand_id, execution_branch_id)
             customer = body.customer.model_dump(exclude_none=True)
             if body.service == 'delivery':
@@ -352,7 +352,12 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
 def get_order(order_id: str, user=Depends(auth.current_user), request: Request = None):
     with db.tx(pipeline=user['role'] == 'customer') as conn:
         row = scoped_order(conn, order_id, user)
-        events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
+        if user['role'] == 'customer':
+            events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
+        else:
+            events = conn.execute('SELECT e.id,e.event_type,e.details,e.created_at,e.actor_id,u.display_name AS actor_name '
+                                  'FROM order_events e LEFT JOIN users u ON u.id=e.actor_id '
+                                  'WHERE e.order_id=%s ORDER BY e.created_at,e.id', (order_id,)).fetchall()
         from .branch_payments import enrich_orders as enrich_payments
         enrich_payments(conn, [row])
         if user['role']!='customer':
@@ -366,6 +371,9 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
                 row['issued_receipt']={**print_order(doc,row), 'payment_status':row['payment_status'], 'payment_method':row['payment_method'], 'preparation_status':row['preparation_status']}
         else:
             row=customer_order_view(row)
+            for event in events:
+                event['details'] = {key: value for key, value in (event.get('details') or {}).items()
+                                    if key not in {'actor_name', 'actor_id', 'actor_role'}}
     result = {'order': row, 'events': events}
     return DatabaseJSONResponse(result) if request is not None else result
 
@@ -433,7 +441,10 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
             if body.status == 'cancelled' and order['service'] == 'delivery':
                 conn.execute("UPDATE orders SET delivery_status='cancelled' WHERE id=%s", (order_id,))
                 row['delivery_status'] = 'cancelled'
-            db.event(conn, order_id, user['id'], 'preparation.' + body.status, {'previous': current, 'reason': body.reason})
+            db.event(conn, order_id, user['id'], 'preparation.' + body.status,
+                     {'previous': current, 'status': body.status, 'reason': body.reason.strip(),
+                      'branch_id': order['branch_id'], 'actor_id': user['id'],
+                      'actor_name': user.get('display_name', ''), 'actor_role': user['role']})
             db.audit(conn, user['id'], 'order.preparation', 'order', order_id, {'from': current, 'to': body.status, 'reason': body.reason})
             return {'order': row}
         return db.idempotent(conn, user['id'], idempotency_key, 'order.preparation:' + order_id, body.model_dump(), perform)

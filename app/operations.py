@@ -385,6 +385,8 @@ def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
             s=lock_shift(c,sid); shift_access(c,user,s)
+            from .driver_work_hours import guard_shift_completion
+            guard_shift_completion(c,s)
             from .driver_breaks import guard as break_guard
             break_guard(c,sid)
             from .driver_closure import guard as closure_guard
@@ -412,6 +414,8 @@ class ClosureSubmit(OperationBody):
 
 def submit_close_in_tx(c,user,sid,body):
     s=lock_shift(c,sid); shift_access(c,user,s)
+    from .driver_work_hours import guard_shift_completion
+    guard_shift_completion(c,s)
     if s['status']!='closing': fail(409,'اطلب التقفيلة أولا')
     if unresolved(c,sid): fail(409,'توجد مهام معلقة')
     if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
@@ -472,6 +476,8 @@ def approve_close_in_tx(c,user,sid,body):
     own_manager=bool(s and s['kind']=='manager' and s['user_id']==user['id'] and user['role']=='delivery_manager')
     shift_access(c,user,s,manager=not own_manager)
     if s['kind']=='manager' and not own_manager:roles(user,'owner')
+    from .driver_work_hours import guard_shift_completion
+    guard_shift_completion(c,s)
     if s['status']!='submitted': fail(409,'التقفيلة غير مرسلة')
     from .driver_incentives import require_decisions
     require_decisions(c,user,s)
@@ -974,6 +980,8 @@ def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(au
                 raise HTTPException(403,{'code':'DRIVER_CLOSE_MANAGER_ONLY'})
             if s['kind']!='driver' or s['status'] not in ('open','closing','submitted'):
                 fail(409,'التقفيلة مقفلة أو غير متاحة')
+            from .driver_work_hours import guard_shift_completion
+            guard_shift_completion(c,s)
             if not body.confirmed:fail(422,'أكد استلام النقد الفعلي ومراجعة التقفيلة')
             if s['status'] in ('open','closing'):
                 if body.counted_halalas is None:fail(422,'أدخل النقد المعدود فعليا')
