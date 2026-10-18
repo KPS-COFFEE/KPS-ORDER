@@ -75,3 +75,4 @@ tests/test_photo_observations.py
 tests/test_hours_navigation_layout.py
 
 tests/test_driver_order_activity.py
+tests/test_stalled_delivery.py
