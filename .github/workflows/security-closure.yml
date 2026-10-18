@@ -252,11 +252,70 @@ jobs:
         \ \\\n  --env TEST_DATABASE_URL=\"$TEST_DATABASE_URL\" --env APP_ENV=testing \\\n  --env OTP_PROVIDER=disabled\
         \ --env EMAIL_PROVIDER=disabled \\\n  --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false\
         \ \\\n  --env RECOVERY_POLL_ENABLED=false --env RUNTIME_REVISION=\"$GITHUB_SHA\" \\\n  \"$SECURITY_IMAGE_ID\"\
-        \ -m pytest -q \"${suites[@]}\" -k \"not real_browser\" \\\n  -p no:cacheprovider --junitxml=/evidence/container-security-focused.xml\
+        \ -m pytest -q \"${suites[@]}\" -k \"not real_browser\" --deselect tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation --deselect tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser --deselect tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save \\\n  -p no:cacheprovider --junitxml=/evidence/container-security-focused.xml\
         \ \\\n  | tee evidence/container-security-focused.log\npython - <<'CHECK'\nimport xml.etree.ElementTree\
         \ as E\ncases=list(E.parse('evidence/container-security-focused.xml').getroot().iter('testcase'))\nassert\
         \ cases, 'No immutable-image test cases were executed'\nfor case in cases:\n    assert not any(case.find(tag)\
         \ is not None for tag in ('failure', 'error', 'skipped')), case.attrib\nCHECK\n"
+    - name: Three mandatory Chromium cases against the same immutable image
+      run: |
+        set -euo pipefail
+        browser=$(command -v google-chrome || command -v google-chrome-stable)
+        "$browser" --headless --no-sandbox --disable-gpu --remote-debugging-address=127.0.0.1 --remote-debugging-port=19222 --remote-allow-origins=http://127.0.0.1:19222 --user-data-dir="$RUNNER_TEMP/exact-image-chromium" about:blank > evidence/image-chromium.log 2>&1 &
+        chrome_pid=$!
+        trap 'kill "$chrome_pid" 2>/dev/null || true' EXIT
+        mkdir -p ci-image-browser evidence/image-browser-screenshots
+        chmod 0777 evidence/image-browser-screenshots
+        cat > ci-image-browser/exact_image_browser.py <<'PLUGIN'
+        import pytest
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_fixture_setup(fixturedef, request):
+            if fixturedef.argname != 'chromium_browser':
+                return None
+            from playwright.sync_api import sync_playwright
+            playwright = sync_playwright().start()
+            try:
+                browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:19222')
+            except BaseException:
+                playwright.stop()
+                raise
+            request.addfinalizer(playwright.stop)
+            fixturedef.cached_result = (browser, fixturedef.cache_key(request), None)
+            return browser
+        PLUGIN
+        python - <<'WAIT'
+        import json,time,urllib.request
+        for attempt in range(100):
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:19222/json/version', timeout=1) as r:
+                    assert json.load(r)['webSocketDebuggerUrl']
+                break
+            except Exception:
+                if attempt == 99: raise
+                time.sleep(.1)
+        WAIT
+        # Only tests/tools are mounted; app, migrations and public assets come from exact image bytes.
+        docker run --rm --network host --entrypoint python \
+          --mount "type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly" \
+          --mount "type=bind,src=$PWD/ci-image-browser,dst=/security-browser,readonly" \
+          --mount "type=bind,src=$RUNNER_TEMP/security-test-tools,dst=/security-test-tools,readonly" \
+          --mount "type=bind,src=$PWD/tests,dst=/app/tests,readonly" \
+          --mount "type=bind,src=$PWD/evidence,dst=/evidence" \
+          --mount "type=bind,src=$PWD/evidence/image-browser-screenshots,dst=/app/test-artifacts" \
+          --env PYTHONPATH=/security-safety:/security-browser:/security-test-tools:/app \
+          --env TEST_DATABASE_URL="$TEST_DATABASE_URL" --env TEST_BROWSER=1 \
+          --env APP_ENV=testing --env RUNTIME_REVISION="$GITHUB_SHA" \
+          "$SECURITY_IMAGE_ID" -m pytest -q -p exact_image_browser -p no:cacheprovider \
+          tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation \
+          tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser \
+          tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save \
+          --junitxml=/evidence/container-three-browser.xml | tee evidence/container-three-browser.log
+        python - <<'CHECK'
+        import xml.etree.ElementTree as E
+        cases=list(E.parse('evidence/container-three-browser.xml').getroot().iter('testcase'))
+        assert len(cases)==3, len(cases)
+        assert not any(c.find(t) is not None for c in cases for t in ('failure','error','skipped'))
+        CHECK
     - name: Exact image runtime health and readiness
       env:
         PYTHONPATH: ci-safety:.
