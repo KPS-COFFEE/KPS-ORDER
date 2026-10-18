@@ -115,3 +115,23 @@ Three additional existing employee/provider OTP suites are mandatory in both
 host and image runs; none of the previous suites was removed. Real SMS delivery
 and a safe immutable fallback remain separate pre-deployment gates, as detailed
 in security-release-otp-rollback.md.
+
+## JUnit and owner delivery-probe regression found in continuation
+
+The first continuation image (8c2494d) built and ran, but its raw JUnit had
+749 passed / 1 failed / 5 skipped in both host and container runs. The failed
+case exposed owner delivery certification using a customer-context OTP route.
+GitHub step status incorrectly remained green because default-shell pipelines
+did not propagate the pytest exit status through tee. These historical failures
+are retained and are not reported as successful acceptance.
+
+All job run steps now select explicit Bash with pipefail, with a nonzero piped
+command gate self-check. Dedicated owner delivery-probe aliases under
+/api/identity/owner/sms-channel-test/ use the existing work context and portal
+boundary. They require current owner session, CSRF, matching brand and testing
+channel on every recheck, including after provider verification. Active channels
+are rejected, so concurrent activation cannot turn a test into customer login.
+No central session/context selection, password/SMS policy or account data is
+changed. The admin UI uses these aliases; customer OTP paths stay isolated.
+Existing tests plus new portal, CSRF, role, brand, replay, revocation and activation
+race cases are mandatory in both host and immutable-image runs.

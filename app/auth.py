@@ -430,7 +430,13 @@ def _provider_ready(name):
 
 
 def _otp_test_access(conn, brand, channel, request):
-    if _channel(conn, brand, channel)['state'] == 'testing':
+    # Dedicated work routes let an owner certify delivery without borrowing a
+    # customer credential or ever enabling an active customer login flow.
+    owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
+    state = _channel(conn, brand, channel)['state']
+    if owner_probe and state != 'testing':
+        raise db.error(403, 'OTP_OWNER_TEST_ONLY', 'اختبار المالك متاح في وضع الاختبار فقط.')
+    if state == 'testing':
         user = _optional_identity(request, conn)
         if not user or user['role'] != 'owner' or user['brand_id'] != brand:
             raise db.error(403, 'OTP_OWNER_TEST_ONLY', 'اختبار الرسائل متاح للمالك فقط قبل الاعتماد.')
@@ -458,6 +464,7 @@ def _otp_channel_ready(conn, brand_id: str, channel: str):
         raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'تعذر إرسال الرمز حاليًا. حاول لاحقًا.')
 
 
+@router.post('/identity/owner/sms-channel-test/request')
 @router.post('/auth/otp/request')
 def request_otp(body: OTPRequestBody, request: Request):
     check_origin(request)
@@ -514,6 +521,7 @@ class OTPVerifyBody(BaseModel):
     display_name: str = Field(default='', max_length=100)
 
 
+@router.post('/identity/owner/sms-channel-test/verify')
 @router.post('/auth/otp/verify')
 def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     check_origin(request)
