@@ -742,7 +742,7 @@
     return {...parent,id:line.productId,name:mapping.original_name,price_halalas:parent.price_halalas+Number(value?.price_delta_halalas||0),
       enabled:false,source_verified:false,unified_khaliya:false,option_groups:[],unavailable_reason:t("review_the_saved_khaliya_type_and_choose_it_from_the_unified_card")};
   }
-  function linePrice(line) { const product = productFor(line); const variant=globalThis.KPSMenuVariants?.selected(product,line.options);if(variant)return variant.price_halalas;const extra = groups(product || {}).reduce((sum,g) => sum + Number((g.values || []).find((v) => (v.code || v.id) === line.options[g.code])?.price_delta_halalas || 0), 0); return Number(product?.price_halalas || 0) + extra; }
+  function linePrice(line,product=productFor(line)) { const variant=globalThis.KPSMenuVariants?.selected(product,line.options);if(variant)return variant.price_halalas;const extra = groups(product || {}).reduce((sum,g) => sum + Number((g.values || []).find((v) => (v.code || v.id) === line.options[g.code])?.price_delta_halalas || 0), 0); return Number(product?.price_halalas || 0) + extra; }
   function draftSubtotal() { return state.cart.reduce((sum, line) => sum + linePrice(line) * line.quantity, 0); }
   function eligibleForProduct(product, target=branch()) { if (state.branchId && state.branchCatalogId !== state.branchId) return {ok:false, reason:t(state.branchCatalogPending?"checking_branch_options":"branch_options_check_failed")}; if (product.enabled === false) return {ok:false, reason:t("this_item_is_temporarily_unavailable")}; if (restricted(product)) { if (!target) return {ok:false, reason:t("choose_a_branch_to_check_availability_in_hafar_al_batin")}; if (!product.available_cities.some((c) => city(c) === city(target.city))) return {ok:false, reason:t("available_only_in_hafar_al_batin_choose_an_eligible_branch")}; } if (state.branchId && product.available === false && product.unavailable_reason && !/تحقق|مهيأ|مصدر|سعر/.test(product.unavailable_reason)) return {ok:false, reason:serverReason(product)}; return {ok:true, reason:''}; }
   function catalogReady() { return state.cart.length > 0 && state.cart.every((line) => productFor(line)?.source_verified === true); }
@@ -1352,8 +1352,7 @@
       for(const line of lines){
         const p=result.products.find(p=>p.id===line.productId);
         if(!p||p.enabled===false||p.available===false||!p.source_verified||!cartOptionsAvailable(line,p))unavailable=true;
-        const extras=groups(p||{}).reduce((n,g)=>n+Number((g.values||[]).find(v=>(v.code||v.id)===line.options[g.code])?.price_delta_halalas||0),0);
-        total+=(Number(p?.price_halalas||0)+extras)*line.quantity;
+        total+=linePrice(line,p||{})*line.quantity;
       }
       const content=node('div');content.append(node('p','',t('reorder_notice')),node('p','small',target?sourceText(target):t('choose_a_branch')));
       if(state.cart.length)content.append(node('p','notice',t('replace_basket_notice')));
