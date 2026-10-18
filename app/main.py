@@ -16,6 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import auth, catalog, db, email_delivery, monitoring, orders, image_previews
 from .http_security import SecurityMiddleware
+from .host_policy import OfficialHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
@@ -63,6 +64,7 @@ if hosts:
 from . import portals
 app.add_middleware(portals.PortalBoundaryMiddleware)
 app.add_middleware(SecurityMiddleware)
+app.add_middleware(OfficialHostMiddleware)
 
 
 @app.exception_handler(RequestValidationError)

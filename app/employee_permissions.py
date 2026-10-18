@@ -1,6 +1,6 @@
 """Named employee capabilities over the existing role and resource policies.
 
-An empty denial list preserves legacy access. Capabilities never change the
+An empty denial/grant list preserves legacy access. Capabilities never change the
 employee's role, brand, branches, task ownership, custody or approval policies.
 The route table uses resolved endpoint identities, not caller-supplied URLs.
 """
@@ -65,7 +65,21 @@ DEFINITIONS = [
     ('appearance_manage', 'إدارة التصميم والشريط', 'Manage appearance and moving strip', 'configuration', {'admin'}),
     ('brand_services_manage', 'إظهار وإيقاف خدمات البراند', 'Show or pause brand services', 'configuration', {'admin'}),
 ]
+# Explicit cross-role grants are fail-closed. Other capabilities retain their
+# existing resource/role policies until their API scope contracts are certified.
+DEFINITIONS.append(('staff_catalog_view', 'عرض كتالوج الصلاحيات الإضافية فقط',
+                    'View additional permission catalog only', 'staff', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
+EXTRA_GRANT_ROLES = {
+    'branch_availability': {'driver', 'delivery_staff', 'delivery_manager', 'admin'},
+    'branch_printers_manage': {'driver', 'branch_manager', 'delivery_manager', 'delivery_staff', 'admin'},
+    'staff_catalog_view': {'delivery_manager', 'admin'},
+}
+
+
+def grantable(role):
+    return {code for code, roles in EXTRA_GRANT_ROLES.items() if role in roles}
+
 GROUPS = {
     'orders': ('الطلبات', 'Orders'), 'delivery': ('التوصيل', 'Delivery'),
     'staff': ('السائقون', 'Drivers'), 'shifts': ('الشفتات والتقفيلات', 'Shifts and closures'),
@@ -86,13 +100,16 @@ def effective(user):
     if role == 'owner':
         return eligible(role)
     base = set(user.get('permissions') or []) & ADMIN if role == 'admin' else eligible(role)
-    return base - set(user.get('permission_denials') or [])
+    return (base | (set(user.get('extra_permissions') or []) & grantable(role))) - set(user.get('permission_denials') or [])
 
 
 def catalog():
     return [{'code': code, 'name_ar': ar, 'name_en': en, 'group': group,
              'group_ar': GROUPS[group][0], 'group_en': GROUPS[group][1],
-             'roles': sorted(roles), 'default_roles': sorted(roles - {'admin'})}
+             'roles': sorted(roles), 'default_roles': sorted(roles - {'admin'}),
+             'delegable_roles': sorted(EXTRA_GRANT_ROLES.get(code, set())),
+             'owner_approval_required': True,
+             'delegation_status': 'scoped' if code in EXTRA_GRANT_ROLES else 'role_policy_required'}
             for code, ar, en, group, roles in DEFINITIONS]
 
 
@@ -137,7 +154,7 @@ ROUTES = {
              'update_staff': 'drivers_manage', 'resend_invitation': 'drivers_manage',
              'revoke_invitation': 'drivers_manage', 'register_driver_vehicle': 'vehicle_register'},
     'catalog': {'nearest_branches': 'delivery_assign',
-                'branch_product_availability': {'branch_manager': 'branch_availability', 'admin': 'products_manage'}},
+                'branch_product_availability': ('branch_availability', 'products_manage')},
     'maintenance': {name: {'delivery_manager':'support_manage','driver': 'vehicle_faults_report', 'admin': 'vehicle_maintenance_manage'}
                     for name in ('options', 'list_reports', 'report_detail', 'create_report', 'update_report')},
     'fuel_exceptions': {'request_exception':'shifts_open','confirm_ready':'vehicle_refuel','listing':{'delivery_manager':'shifts_approve'},'decide':'shifts_approve'},

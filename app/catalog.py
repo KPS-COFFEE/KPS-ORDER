@@ -726,7 +726,7 @@ class AvailabilityBody(BaseModel):
 def branch_product_availability(branch_id: str, product_id: str, body: AvailabilityBody,
                                 user=Depends(auth.current_user),
                                 idempotency_key: str | None = Header(default=None)):
-    if user['role'] not in ('owner','branch_manager') and not auth.has_permission(user,'products_manage'):
+    if user['role']!='owner' and not (auth.has_permission(user,'branch_availability') or auth.has_permission(user,'products_manage')):
         raise db.error(403, 'ROLE_FORBIDDEN', 'يلزم تفويض إدارة الأصناف.')
     if user['role'] != 'owner' and branch_id not in user['branch_ids']:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود ضمن صلاحياتك.')

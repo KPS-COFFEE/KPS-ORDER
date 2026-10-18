@@ -15,7 +15,18 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 class KpsPrintBridge {
-    const string Origin = "https://kps-order-emergency-v4.onrender.com";
+    const string DefaultOrigin = "https://order.kps.sa";
+    const string BridgeVersion = "20261018.1";
+    static string Origin = DefaultOrigin;
+    static bool RePair;
+    static string SecureOrigin(string value) {
+        Uri uri;
+        if(!Uri.TryCreate(value,UriKind.Absolute,out uri) || uri.Scheme!="https" ||
+           !String.IsNullOrEmpty(uri.UserInfo) || uri.Port!=443 ||
+           uri.AbsolutePath!="/" || !String.IsNullOrEmpty(uri.Query) || !String.IsNullOrEmpty(uri.Fragment))
+            throw new Exception("Printer endpoint must be an HTTPS origin without paths or credentials.");
+        return uri.GetLeftPart(UriPartial.Authority);
+    }
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 4*1024*1024 };
     static readonly string DataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KPS-Print-Bridge");
     static string Token, Printer;
@@ -25,7 +36,7 @@ class KpsPrintBridge {
     static Dictionary<string,object> Api(string path,object body) {
         var request=(HttpWebRequest)WebRequest.Create(Origin+"/api/printing/"+path);
         request.Method="POST"; request.ContentType="application/json; charset=utf-8";
-        request.Headers["Origin"]=Origin; request.AllowAutoRedirect=false;
+        request.Headers["Origin"]=Origin; request.Headers["X-KPS-Bridge-Version"]=BridgeVersion; request.AllowAutoRedirect=false;
         request.Timeout=20000; request.ReadWriteTimeout=20000;
         if (!String.IsNullOrEmpty(Token)) request.Headers["Authorization"]="Bearer "+Token;
         byte[] bytes=Encoding.UTF8.GetBytes(Json.Serialize(body));request.ContentLength=bytes.Length;
@@ -75,14 +86,20 @@ class KpsPrintBridge {
     static void Configure() {
         Directory.CreateDirectory(DataDir);string config=Path.Combine(DataDir,"device.bin");
         string setupPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"setup.json");
-        if(File.Exists(config) && !File.Exists(setupPath)) {
+        if(File.Exists(config) && !File.Exists(setupPath) && !RePair) {
             byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(config),null,DataProtectionScope.CurrentUser);
             var saved=Obj(Json.DeserializeObject(Encoding.UTF8.GetString(plain)));
             Token=Str(saved,"token");Printer=Str(saved,"printer_name");
+            Origin=SecureOrigin(String.IsNullOrEmpty(Str(saved,"origin"))?DefaultOrigin:Str(saved,"origin"));
         } else {
             var printers=PrinterSettings.InstalledPrinters;
             if(printers.Count==0)throw new Exception("No installed Windows printers.");
             var setup=File.Exists(setupPath)?Obj(Json.DeserializeObject(File.ReadAllText(setupPath,Encoding.UTF8))):new Dictionary<string,object>();
+            string endpointPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"endpoint.json");
+            var endpoint=File.Exists(endpointPath)?Obj(Json.DeserializeObject(File.ReadAllText(endpointPath,Encoding.UTF8))):new Dictionary<string,object>();
+            string origin=Str(setup,"origin");
+            if(String.IsNullOrEmpty(origin))origin=Str(endpoint,"origin");
+            Origin=SecureOrigin(String.IsNullOrEmpty(origin)?DefaultOrigin:origin);
             Application.EnableVisualStyles();
             using(var form=new Form {Text="KPS — ربط طابعة الفرع / Printer setup",Width=600,Height=340,StartPosition=FormStartPosition.CenterScreen,RightToLeft=RightToLeft.Yes,Font=new Font("Tahoma",11),FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false}) {
                 var title=new Label {Text="الفرع / Branch: "+Str(setup,"branch_name"),Left=20,Top=20,Width=540,Height=45};
@@ -104,7 +121,7 @@ class KpsPrintBridge {
                 };
                 if(form.ShowDialog()!=DialogResult.OK)throw new Exception("Setup cancelled; previous connection unchanged.");
             }
-            byte[] encrypted=ProtectedData.Protect(Encoding.UTF8.GetBytes(Json.Serialize(new {token=Token,printer_name=Printer})),null,DataProtectionScope.CurrentUser);
+            byte[] encrypted=ProtectedData.Protect(Encoding.UTF8.GetBytes(Json.Serialize(new {token=Token,printer_name=Printer,origin=Origin})),null,DataProtectionScope.CurrentUser);
             string pending=config+".new";
             using(var file=new FileStream(pending,FileMode.Create,FileAccess.Write,FileShare.None)) {file.Write(encrypted,0,encrypted.Length);file.Flush(true);}
             if(File.Exists(config))File.Replace(pending,config,null);else File.Move(pending,config);
@@ -255,6 +272,11 @@ class KpsPrintBridge {
     [STAThread]
     static int Main(string[] args) {
         if(args.Length>0 && args[0]=="--self-test") {
+            if(SecureOrigin(DefaultOrigin)!=DefaultOrigin)return 11;
+            foreach(string invalid in new [] {"http://order.kps.sa","https://order.kps.sa/evil","https://user:pass@order.kps.sa","https://order.kps.sa?token=1","https://order.kps.sa:444"}) {
+                bool rejected=false;try {SecureOrigin(invalid);}catch(Exception){rejected=true;}
+                if(!rejected)return 12;
+            }
             var fixture=Obj(Json.DeserializeObject("{\"lines\":[{\"text\":\"KPS قهوة\",\"bold\":true,\"center\":true}]}"));
             if(Lines(fixture).Count!=1) return 1;
             // 80mm roll, 72.1mm printable width and asymmetric driver offsets.
@@ -322,10 +344,9 @@ class KpsPrintBridge {
         using(var mutex=new Mutex(true,"Local\\KPSBranchPrintBridge",out created)) {
             if(!created){MessageBox.Show("أغلق نافذة برنامج الطباعة السابقة ثم افتح الإعداد مجدداً.\nClose the previous bridge window, then reopen setup.","KPS");return 1;}
             try {
-                if(args.Length>0 && args[0]=="--re-pair") {
-                    string config=Path.Combine(DataDir,"device.bin");
-                    if(File.Exists(config))File.Move(config,config+"."+DateTime.UtcNow.Ticks+".old");
-                }
+                // Keep the previous encrypted credentials intact until replacement
+                // pairing succeeds. Cancelling setup must not break the old device.
+                RePair=args.Length>0 && args[0]=="--re-pair";
                 ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;Configure();
                 while(true) {
                     try {

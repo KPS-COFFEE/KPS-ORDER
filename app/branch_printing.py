@@ -2,6 +2,8 @@
 import io
 import base64
 import json
+import os
+from urllib.parse import urlsplit
 import secrets
 import zipfile
 from datetime import datetime, timezone
@@ -18,7 +20,7 @@ operators = auth.require_roles('owner', 'delivery_manager')
 
 
 def can_manage_printers(user):
-    return user['role'] == 'owner' or (user['role'] in {'admin', 'delivery_manager'} and auth.has_permission(user,'branch_printers_manage'))
+    return user['role'] != 'customer' and auth.has_permission(user,'branch_printers_manage')
 
 
 def printer_admin(user=Depends(auth.current_user)):
@@ -155,8 +157,9 @@ def guided_setup(body: PairBody, response: Response, user=Depends(printer_admin)
     # The setup secret is short-lived and branch-bound, never placed in a URL.
     with db.tx() as conn:
         branch=scope(conn,user,body.branch_id)
+    origin=bridge_origin()
     pair=pair_device(body,user)
-    config={'pairing_code':pair['pairing_code'],'branch_name':branch['name'],'branch_id':body.branch_id}
+    config={'pairing_code':pair['pairing_code'],'branch_name':branch['name'],'branch_id':body.branch_id,'origin':origin}
     response.headers['Cache-Control']='no-store'
     return {'id':pair['id'],'bundle':base64.b64encode(bridge_bundle(config)).decode('ascii')}
 
@@ -367,11 +370,12 @@ def jobs(user=Depends(printer_admin)):
 
 
 @router.post('/bridge/next')
-def claim(device=Depends(bridge)):
+def claim(request: Request = None, device=Depends(bridge)):
     with db.tx() as conn:
         live=conn.execute('SELECT id,approved_at FROM branch_print_devices WHERE id=%s AND revoked_at IS NULL FOR UPDATE',(device['id'],)).fetchone()
         if not live:raise db.error(401,'PRINT_DEVICE_AUTH','ألغي ربط الجهاز.')
-        conn.execute('UPDATE branch_print_devices SET last_seen_at=now() WHERE id=%s',(device['id'],))
+        conn.execute('UPDATE branch_print_devices SET last_seen_at=now(),last_api_host=coalesce(%s,last_api_host),bridge_version=coalesce(%s,bridge_version) WHERE id=%s',
+                     (request.url.hostname if request else None,request.headers.get('X-KPS-Bridge-Version','')[:60] if request else None,device['id']))
         row=conn.execute("SELECT * FROM branch_print_jobs WHERE device_id=%s AND status='queued' AND (kind='test' OR %s) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",(device['id'],bool(live['approved_at']))).fetchone()
         if not row:return {'job':None}
         conn.execute("UPDATE branch_print_jobs SET status='claimed',claimed_at=now() WHERE id=%s",(row['id'],))
@@ -398,12 +402,58 @@ def download_bridge(user=Depends(printer_admin)):
     return Response(bridge_bundle(),media_type='application/zip',headers={'Content-Disposition':'attachment; filename="KPS-Windows-Print-Bridge.zip"','Cache-Control':'no-store'})
 
 
+def bridge_origin():
+    # Trusted deployment configuration only; never derive pairing endpoints from
+    # request Host, Origin or forwarded headers. Never downgrade bridge secrets.
+    value=os.getenv('PRINT_BRIDGE_ORIGIN','https://order.kps.sa').strip()
+    try:
+        parsed=urlsplit(value)
+        valid=(parsed.scheme=='https' and parsed.hostname and not parsed.username
+               and not parsed.password and parsed.port in (None,443)
+               and parsed.path in ('','/') and not parsed.query and not parsed.fragment)
+    except ValueError:
+        valid=False
+    if not valid:
+        raise db.error(503,'PRINT_ORIGIN_INVALID','عنوان برنامج الطباعة يجب أن يكون دومين HTTPS رسميًا دون مسارات.')
+    return value.rstrip('/')
+
+
+@router.get('/migration-status')
+def migration_status(user=Depends(printer_admin)):
+    target=urlsplit(bridge_origin()).hostname
+    with db.tx() as conn:
+        branches=conn.execute('SELECT id,name FROM branches WHERE brand_id=%s ORDER BY name',
+                              (user['brand_id'],)).fetchall()
+        rows=conn.execute('SELECT id,branch_id,label,printer_name,last_seen_at,revoked_at,approved_at,last_api_host,bridge_version '
+                          'FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',
+                          (user['brand_id'],)).fetchall()
+    branches=[b for b in branches if user['role']=='owner' or b['id'] in user.get('branch_ids',[])]
+    result=[]
+    for branch in branches:
+        active=[r for r in rows if r['branch_id']==branch['id'] and not r['revoked_at']]
+        connected=[r for r in active if connection_status(r)=='online']
+        moved=[r for r in connected if r['last_api_host']==target and r['approved_at']]
+        # Unknown/old/offline registrations remain blockers until an operator
+        # verifies/retires them explicitly. New pairing never revokes old devices.
+        remaining=[r for r in active if r['last_api_host']!=target or not r['approved_at'] or connection_status(r)!='online']
+        result.append({**branch,'migrated':bool(moved) and not remaining,
+                       'connected_devices':len(connected),
+                       'approved_devices':sum(bool(r['approved_at']) for r in active),
+                       'active_devices':len(active),'needs_attention':not moved or bool(remaining),
+                       'devices':[{**r,'connection_status':connection_status(r)} for r in active]})
+    return {'target_origin':bridge_origin(),'branches':result,
+            'migrated_branches':sum(b['migrated'] for b in result),
+            'remaining_branches':sum(not b['migrated'] for b in result),
+            'public_render_shutdown_authorized':False}
+
+
 def bridge_bundle(setup=None):
     output=io.BytesIO()
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as bundle:
         for name in ('KpsPrintBridge.cs','Start.cmd','README.txt'):
             bundle.write(db.ROOT/'tools'/'windows-print-bridge'/name,name)
         bundle.write(db.ROOT/'public'/'assets'/'kps-receipt-logo.png','logo.png')
+        bundle.writestr('endpoint.json',json.dumps({'origin':bridge_origin()},ensure_ascii=False))
         if setup:
             bundle.writestr('setup.json',json.dumps(setup,ensure_ascii=False))
     return output.getvalue()

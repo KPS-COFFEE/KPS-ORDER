@@ -54,3 +54,19 @@ Before operational use, the manager sends Test print from Branch printers.
 Verify the physical output at the correct branch (logo, Arabic, English, roll
 width and margins), then confirm paper output in the portal. Windows submission
 alone never approves a printer. Orders remain gated until this confirmation.
+
+OFFICIAL-DOMAIN MIGRATION (20261018.1)
+The bridge defaults to https://order.kps.sa. A trusted server-generated endpoint.json
+can configure a different official HTTPS origin; HTTP, credentials, paths, query
+strings, fragments and nonstandard ports are rejected. API redirects are never
+followed. Device credentials bind their origin inside Windows DPAPI encryption.
+No token is copied between computers. Existing legacy registrations are unchanged.
+
+Download a fresh branch setup from the official site. Keep old devices paired until
+replacement pairing, a real test page and operator approval succeed. Re-pair setup
+cancellation preserves the previous encrypted configuration. Review branch migration
+status in Printer management. Unknown/offline/old endpoint registrations need manual
+review and explicit retirement. This software does not authorize shutting Render off.
+The Windows bridge must be restarted after updating its source; close the prior
+window, extract in a permanent folder, and run Start.cmd. Real Windows compilation,
+printer-driver behavior and physical 58mm/80mm paper require branch acceptance.
