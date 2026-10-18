@@ -53,6 +53,9 @@ def test_existing_private_vehicle_bilingual_edit_preserves_fleet_and_history(liv
         edit.locator('xpath=ancestor::details').locator('summary').click()
         edit.click()
         modal = page.locator('#modal')
+        vehicle_details = modal.locator('[name=vehicle_plate]').locator('xpath=ancestor::details[1]')
+        if vehicle_details.get_attribute('open') is None:
+            vehicle_details.locator('summary').click()
         expect(modal.locator('[data-saudi-plate-preview] .saudi-plate')).to_be_visible()
         modal.locator('[name=vehicle_plate]').fill('1234 DZJ')
         expect(modal.locator('.saudi-plate__letters[lang=ar]')).to_have_text('دمح')

@@ -321,3 +321,8 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
    must override the older #printer-live button nowrap compatibility rule. */
 #printer-live .printer-directory button{white-space:normal;overflow-wrap:anywhere}
 #customer-records-results .card-head>h2{flex:1 1 180px;min-width:min(180px,100%)}
+
+/* Fleet operating-log columns retain their readable widths after generic table rules. */
+.table-wrap .fleet-log-table th,.table-wrap .fleet-log-table td{min-width:130px}
+.table-wrap .fleet-log-table th:last-child,.table-wrap .fleet-log-table td:last-child{min-width:150px}
+.table-wrap .fleet-log-table td:nth-child(22){min-width:220px}
