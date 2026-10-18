@@ -25,13 +25,29 @@ COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print
 COPY --from=runtime-base / /runtime-root/
 COPY tools/security_runtime_root.py /tmp/security_runtime_root.py
 COPY tools/container_entrypoint.py /tmp/container_entrypoint.py
+FROM build AS candidate-build
 RUN python /tmp/security_runtime_root.py
+
+FROM build AS rollback-build
+RUN KPS_RUNTIME_SHELL=1 python /tmp/security_runtime_root.py
+
+# Independent compatible rollback: original shell command, same secure app.
+FROM runtime-base AS rollback
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=10000 \
+    PATH=/usr/local/bin:/usr/bin:/bin LD_LIBRARY_PATH=/usr/local/lib
+WORKDIR /app
+COPY --from=rollback-build /runtime-root/ /
+COPY --from=build --chown=10001:10001 /app/ /app/
+USER 10001:10001
+EXPOSE 10000
+ENTRYPOINT []
+CMD ["/bin/sh", "-c", "exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 2 --timeout-keep-alive 15"]
 
 FROM runtime-base AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=10000 \
     PATH=/usr/local/bin:/usr/bin:/bin LD_LIBRARY_PATH=/usr/local/lib
 WORKDIR /app
-COPY --from=build /runtime-root/ /
+COPY --from=candidate-build /runtime-root/ /
 COPY --from=build --chown=10001:10001 /app/ /app/
 USER 10001:10001
 EXPOSE 10000

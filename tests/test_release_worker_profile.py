@@ -1,6 +1,7 @@
 """Do not certify a different worker topology from the Docker entry point."""
 import inspect
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,15 @@ def test_release_load_and_docker_use_the_same_two_web_workers(monkeypatch, port)
 
     lines = (ROOT / 'Dockerfile').read_text().splitlines()
     commands = [json.loads(line[4:]) for line in lines if line.startswith('CMD ')]
-    assert commands == [['/usr/local/bin/python', '/usr/local/bin/kps-order-start.py']]
+    assert len(commands) == 2
+    assert commands[-1] == ['/usr/local/bin/python', '/usr/local/bin/kps-order-start.py']
+    assert commands[0][:2] == ['/bin/sh', '-c']
+    rollback_args = shlex.split(commands[0][2])
+    assert rollback_args[:5] == ['exec', 'python', '-m', 'uvicorn', 'app.main:app']
+    assert rollback_args[rollback_args.index('--port') + 1] == '${PORT:-10000}'
+    assert rollback_args[rollback_args.index('--host') + 1] == '0.0.0.0'
+    assert int(rollback_args[rollback_args.index('--workers') + 1]) == hardening_load.RELEASE_WORKERS == 2
+    assert int(rollback_args[rollback_args.index('--timeout-keep-alive') + 1]) == hardening_load.RELEASE_KEEPALIVE_SECONDS == 15
     captured = []
     monkeypatch.setenv('PORT', port)
     monkeypatch.setattr(os, 'execv', lambda executable, args: captured.append((executable, args)))

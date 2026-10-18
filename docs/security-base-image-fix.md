@@ -23,12 +23,16 @@ The exact immutable archive must pass the original 40 mandatory test suites plus
 PostgreSQL18, AR/EN browser policy tests, runtime health/readiness, SBOM and the
 same raw full scan and HIGH/CRITICAL gate. No acceptance claim before results.
 
-A separately preserved rollback archive contains the exact tested SMS-safe
-image, never the historical password-bypass revision. It is a recovery baseline
-for subsequent changes, not a separately certified alternate operating-system
-implementation. It cannot remedy a defect inherent in this same base. Retain a
-valid owner session during an approved release and prove fresh real SMS login
-before discarding the session. No password/email fallback or DB rollback.
+The independently built rollback target uses the same secure application and
+Debian13 library closure, adding the supported Debian13 dash binary package
+and restoring the original shell-based Uvicorn command. It preserves four-digit
+SMS and all server-side authentication/isolation checks. Candidate and rollback
+are different images; both run the full mandatory suite, PostgreSQL18,
+health/readiness, SBOM and unmodified blocking scanner. Only passing images may
+be approved. The host AR/EN browser suite covers their identical application.
+No old password-bypass revision is used. No DB or business-data rollback.
+Retain a valid owner session and prove new real SMS login during an approved
+release before discarding that session.
 
 Primary sources: docker-library/official-images library/python;
 GoogleContainerTools/distroless README.md and base/config.bzl;

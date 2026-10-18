@@ -21,6 +21,9 @@ for pattern in ('_sqlite3*.so', '_curses*.so', 'readline*.so', '_uuid*.so', '_tk
 shutil.copytree(local, root / 'usr/local', symlinks=True, dirs_exist_ok=True)
 
 packages = {'fonts-dejavu-core', 'libstdc++6', 'libgcc-s1'}
+with_shell = os.environ.get('KPS_RUNTIME_SHELL') == '1'
+if with_shell:
+    packages.add('dash')
 for p in [local / 'bin/python3.12', *local.rglob('*.so'), *local.rglob('*.so.*')]:
     if not p.is_file():
         continue
@@ -97,6 +100,11 @@ legacy = root / 'var/lib/dpkg/status'
 if legacy.exists():
     names = {x['package'] for x in records}
     legacy.write_text('\n\n'.join(block for block in legacy.read_text().split('\n\n') if not any(f'Package: {name}\n' in block + '\n' for name in names)) + '\n')
+if with_shell:
+    shell = root / 'usr/bin/sh'
+    if shell.exists() or shell.is_symlink():
+        shell.unlink()
+    shell.symlink_to('dash')
 (root / 'etc/passwd').write_text('root:x:0:0:root:/root:/sbin/nologin\nkpsorder:x:10001:10001::/nonexistent:/sbin/nologin\n')
 (root / 'etc/group').write_text('root:x:0:\nkpsorder:x:10001:\n')
 for p in root.rglob('*'):
@@ -104,6 +112,6 @@ for p in root.rglob('*'):
         p.chmod(p.stat().st_mode & ~0o6000)
 manifest = root / 'usr/local/share/kps/runtime-packages.json'
 manifest.parent.mkdir(parents=True, exist_ok=True)
-manifest.write_text(json.dumps({'suite': 'trixie', 'python': '3.12', 'complete_packages': records}, indent=2) + '\n')
+manifest.write_text(json.dumps({'suite': 'trixie', 'python': '3.12', 'rollback_shell': with_shell, 'complete_packages': records}, indent=2) + '\n')
 shutil.copyfile('/tmp/container_entrypoint.py', root / 'usr/local/bin/kps-order-start.py')
 print(manifest.read_text())

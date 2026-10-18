@@ -114,6 +114,10 @@ jobs:
         retention-days: 7
         if-no-files-found: error
   exact-image-candidate:
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [candidate, rollback]
     if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -189,8 +193,10 @@ jobs:
         fi
     - name: Build exact candidate Dockerfile without push
       run: |
-        image="kps-order-security-review:$GITHUB_SHA"
-        docker buildx build --platform linux/amd64 --load --provenance=false \
+        image="kps-order-security-review:$GITHUB_SHA-${{ matrix.role }}"
+        target=runtime
+        if [ '${{ matrix.role }}' = rollback ]; then target=rollback; fi
+        docker buildx build --target "$target" --platform linux/amd64 --load --provenance=false \
           --label "org.opencontainers.image.revision=$GITHUB_SHA" \
           --metadata-file evidence/build-metadata.json --tag "$image" . > evidence/image-build.log 2>&1
         image_id=$(docker image inspect --format '{{.Id}}' "$image")
@@ -212,12 +218,13 @@ jobs:
         assert importlib.util.find_spec("pip") is None
         banned = {"libacl1", "libmount1", "libblkid1", "util-linux", "mount", "gzip", "ncurses-bin", "libsqlite3-0", "libuuid1"}
         assert not banned.intersection(p["package"] for p in packages["complete_packages"])
-        for name in ("/bin/sh", "/usr/bin/mount", "/usr/bin/gzip", "/usr/bin/infocmp", "/usr/lib/systemd/systemd-homed"):
+        for name in ("/usr/bin/mount", "/usr/bin/gzip", "/usr/bin/infocmp", "/usr/lib/systemd/systemd-homed"):
             assert not pathlib.Path(name).exists(), name
         for pattern in ("libacl.so*", "libmount.so*", "libblkid.so*", "libsqlite3.so*", "*minizip*", "Tar.pm"):
             found = list(pathlib.Path("/usr").rglob(pattern)); assert not found, found
         for p in pathlib.Path("/usr").rglob("*"):
             if p.is_file(): assert not p.stat().st_mode & 0o6000, str(p)
+        assert pathlib.Path("/bin/sh").exists() == packages["rollback_shell"]
         import fastapi, psycopg, PIL, cryptography, uvloop, reportlab
         ' > evidence/runtime-components.txt 2>&1
     - name: Focused suites inside the same immutable image
@@ -299,14 +306,6 @@ jobs:
         ./trivy image --input "$RUNNER_TEMP/candidate-image.tar" --scanners vuln,secret \
           --format json --output "$GITHUB_WORKSPACE/evidence/candidate-image-high-critical.json" \
           --exit-code 1 --severity HIGH,CRITICAL
-    - name: Preserve SMS-safe rollback baseline
-      run: |
-        # No old password-bypass revision enters this archive. This is the
-        # certified application's immutable baseline for subsequent releases.
-        docker tag "$SECURITY_IMAGE_ID" "kps-order-sms-safe-rollback:$GITHUB_SHA"
-        cp "$RUNNER_TEMP/candidate-image.tar" "$RUNNER_TEMP/sms-safe-rollback-image.tar"
-        sha256sum "$RUNNER_TEMP/sms-safe-rollback-image.tar" > evidence/rollback-image-archive-sha256.txt
-        printf '%s\n' "$SECURITY_IMAGE_ID" > evidence/rollback-image-id.txt
     - name: Container logs and cleanup
       if: always()
       run: |
@@ -315,7 +314,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: security-closure-${{ github.sha }}
+        name: security-closure-${{ matrix.role }}-${{ github.sha }}
         path: evidence/
         retention-days: 7
         if-no-files-found: error
@@ -323,17 +322,8 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: security-image-${{ github.sha }}
+        name: security-image-${{ matrix.role }}-${{ github.sha }}
         path: ${{ runner.temp }}/candidate-image.tar
-        retention-days: 14
-        compression-level: 1
-        if-no-files-found: error
-    - name: Preserve immutable SMS-safe rollback baseline
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: security-sms-safe-rollback-${{ github.sha }}
-        path: ${{ runner.temp }}/sms-safe-rollback-image.tar
         retention-days: 14
         compression-level: 1
         if-no-files-found: error
