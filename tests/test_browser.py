@@ -181,10 +181,35 @@ def _capture(page, prefix):
 
 
 def _owner_login(context, base, owner):
-    login = context.request.post(base + '/api/auth/login', headers={'Origin': base},
-                                 data={'username': owner['username'], 'password': PASSWORD})
+    from tests.sms_policy_helpers import register_synthetic_mobile
+    with db.tx() as conn:
+        fixture = conn.execute('SELECT * FROM users WHERE id=%s', (owner['id'],)).fetchone()
+    fixture = register_synthetic_mobile(fixture)
+    origin = {'Origin': base, 'X-KPS-Context': 'work'}
+    denied = context.request.post(base + '/api/auth/login', headers=origin,
+                                  data={'username': owner['username'], 'password': PASSWORD})
+    assert denied.status == 403, denied.text()
+    assert denied.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n'] == 0
+    sent = context.request.post(base + '/api/identity/staff/code/request', headers=origin,
+                                data={'phone': fixture['phone'], 'brand_id': fixture['brand_id']})
+    assert sent.ok, sent.text()
+    assert sent.json()['channel'] == 'sms' and sent.json()['code_length'] == 4
+    login = context.request.post(base + '/api/identity/staff/code/verify', headers=origin,
+                                 data={'challenge_id': sent.json()['challenge_id'], 'code': '0123'})
     assert login.ok, login.text()
-    return {'Origin': base, 'X-CSRF-Token': login.json()['csrf_token']}
+    assert login.json()['user']['id'] == owner['id']
+    assert login.json()['user']['role'] == fixture['role']
+    assert login.json()['user']['brand_id'] == fixture['brand_id']
+    headers = {**origin, 'X-CSRF-Token': login.json()['csrf_token']}
+    with db.tx() as conn:
+        session = conn.execute('SELECT step_up_at FROM sessions WHERE user_id=%s AND revoked_at IS NULL', (owner['id'],)).fetchone()
+        assert session['step_up_at'] is None, 'SMS login must not grant sensitive-action proof'
+    if fixture['role'] == 'owner':
+        rejected = context.request.post(base + '/api/identity/step-up', headers=headers, data={'password': PASSWORD})
+        assert rejected.status == 403 and rejected.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
+    return headers
 
 
 def _test_banner(context, base, headers):
@@ -929,3 +954,4 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
             'physical_device_test':False,'real_external_sms_verification':False},indent=2))
     finally:
         context.close();owner_context.close()
+
