@@ -1573,6 +1573,8 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             require_owner_step_up(conn,user)
         phone_changed=phone!=row['phone']
         if phone_changed and staff_email_retired(row['brand_id']):
+            if row['role']=='owner':
+                raise db.error(409,'OWNER_PHONE_VERIFICATION_REQUIRED','غيّر جوال المالك عبر مسار التحقق المستقل من الرقم الجديد. / Use the owner mobile verification flow.')
             require_owner_sms_step_up(conn,user)
             ensure_safe_staff_scope_change(conn,row,[],False)
         elif row['phone_verified_at'] and phone_changed:

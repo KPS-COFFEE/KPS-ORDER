@@ -183,3 +183,19 @@ def test_saving_existing_role_defaults_does_not_reclassify_them_as_extra_grants(
     assert saved['role']==target['role'] and saved['branch_ids']==target['branch_ids']
     assert saved['extra_permissions']==[]
     assert set(saved['effective_permissions'])==policy.effective(target)
+
+
+@pytest.mark.postgres
+def test_staff_editor_cannot_replace_owner_mobile_without_canonical_new_phone_proof(client,monkeypatch):
+    owner=_make_user('owner')
+    sms_login(client,owner,monkeypatch);sms_step_up(client,owner,monkeypatch)
+    with db.tx() as conn:
+        before=conn.execute('SELECT phone,phone_sms_verified_at FROM users WHERE id=%s',(owner['id'],)).fetchone()
+    result=client.patch('/api/identity/staff/'+owner['id'],json={
+        'phone':'+966500904444','reason':'Cannot bypass new owner mobile verification'})
+    assert result.status_code==409,result.text
+    assert result.json()['detail']['code']=='OWNER_PHONE_VERIFICATION_REQUIRED'
+    with db.tx() as conn:
+        after=conn.execute('SELECT phone,phone_sms_verified_at FROM users WHERE id=%s',(owner['id'],)).fetchone()
+        assert after==before
+    assert client.get('/api/session').json()['user']['id']==owner['id']

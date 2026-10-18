@@ -42,6 +42,8 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
         expect(form.locator('input[type=password]')).to_have_count(0)
         assert form.locator('input,select').first.get_attribute('name')=='role'
         assert form.locator('[name=email]').get_attribute('required') is None
+        expect(form.locator('[name=email]')).not_to_be_visible()
+        expect(form.locator('[name=employee_ref]')).not_to_be_visible()
         form.locator('[name=display_name]').fill('Synthetic Simple Staff '+language)
         form.locator('[name=phone]').fill('+96650090211'+('1' if language=='ar' else '2'))
         # Branch choices remain explicit even with a role-first form.
@@ -64,10 +66,13 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
         expect(page.locator(f'[data-action=staff-permissions][data-id="{driver["id"]}"]')).to_have_count(0)
         driver_context,driver_page,driver_errors=_context(chromium_browser,live_app)
         _owner_login(driver_context,live_app,driver)
+        driver_page.add_init_script(f"localStorage.setItem('kps_ops_lang','{language}')")
+        driver_page.set_viewport_size({'width':width,'height':900})
         driver_page.goto(live_app+'/ops',wait_until='networkidle')
         expect(driver_page.locator('#navigation [data-page=printers]')).to_be_visible()
         driver_page.locator('#navigation [data-page=printers]').click()
-        expect(driver_page.locator('#content')).to_contain_text('إدارة الطابعات')
+        expect(driver_page.locator('#page-heading h1')).to_have_text('إدارة الطابعات' if language=='ar' else 'Printer management')
+        expect(driver_page.locator('#content [data-action=branch-printers]')).to_be_visible()
         assert not errors and not driver_errors
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     finally:

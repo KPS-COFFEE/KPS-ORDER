@@ -77,3 +77,47 @@ def test_domain_migration_requires_official_heartbeat_paper_approval_and_retirin
         assert actor(who).get('/api/printing/migration-status').status_code==403
     result=actor('other').get('/api/printing/migration-status').json()
     assert all(b['id']!='ops-branch' for b in result['branches'])
+
+
+@pytest.mark.postgres
+def test_real_bridge_routes_accept_official_host_and_reject_render_host_with_portal_policy(ops,monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.host_policy import OfficialHostMiddleware
+    from app.http_security import SecurityMiddleware
+    from app.portals import PortalBoundaryMiddleware
+    actor,post,_,_=ops
+    device=post('owner','/api/printing/devices',{'branch_id':'ops-branch','label':'Official hostname integration'})
+    paired=actor('customer').post('/api/printing/bridge/pair',json={
+        'pairing_code':device['pairing_code'],'printer_name':'Synthetic official-domain printer'})
+    assert paired.status_code==200,paired.text
+    job=post('owner','/api/printing/devices/'+device['id']+'/test')
+    monkeypatch.setenv('KPS_OFFICIAL_HOST_ENFORCEMENT_ENABLED','true')
+    monkeypatch.setenv('KPS_OFFICIAL_HOSTS','order.kps.sa')
+    monkeypatch.setenv('KPS_INTERNAL_HEALTH_HOSTS','kps-order-emergency-v4.onrender.com')
+    monkeypatch.setenv('KPS_PORTAL_HOST_ROUTING_ENABLED','true')
+    monkeypatch.setenv('PUBLIC_BASE_URL','https://order.kps.sa')
+    monkeypatch.setenv('APP_ALLOWED_ORIGINS','https://order.kps.sa')
+    # Exercise the real device auth/claim/ack route stack, without replacing any
+    # authorization dependency or connecting to the production domain.
+    app=FastAPI()
+    app.include_router(branch_printing.router)
+    app.add_middleware(PortalBoundaryMiddleware)
+    app.add_middleware(SecurityMiddleware)
+    app.add_middleware(OfficialHostMiddleware)
+    headers={'Authorization':'Bearer '+paired.json()['token'],
+             'Origin':'https://order.kps.sa','X-KPS-Bridge-Version':'synthetic-domain-test'}
+    with TestClient(app,base_url='https://order.kps.sa',headers=headers) as official:
+        claimed=official.post('/api/printing/bridge/next',json={})
+        assert claimed.status_code==200,claimed.text
+        assert claimed.json()['job']['id']==job['id']
+        assert official.post('/api/printing/bridge/jobs/'+job['id']+'/ack',json={'status':'submitted'}).status_code==200
+        assert official.post('/api/printing/bridge/next',json={}).json()['job'] is None
+        denied=official.post('https://kps-order-emergency-v4.onrender.com/api/printing/bridge/next',
+                             json={},headers={'X-Forwarded-Host':'order.kps.sa'})
+        assert denied.status_code==421
+    with db.tx() as conn:
+        saved=conn.execute('SELECT last_api_host,bridge_version FROM branch_print_devices WHERE id=%s',(device['id'],)).fetchone()
+        assert saved['last_api_host']=='order.kps.sa'
+        assert saved['bridge_version']=='synthetic-domain-test'
+        assert conn.execute('SELECT status FROM branch_print_jobs WHERE id=%s',(job['id'],)).fetchone()['status']=='submitted'
