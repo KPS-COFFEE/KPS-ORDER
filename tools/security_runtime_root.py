@@ -94,6 +94,14 @@ for package in sorted(packages):
             shutil.copy2(src, dest)
     (status / name).write_text(control)
     (info / (name + '.list')).write_text('\n'.join(files) + '\n')
+    # Refresh the exact file checksums as well as controls after replacement.
+    architecture = next(line.split(': ', 1)[1] for line in control.splitlines() if line.startswith('Architecture: '))
+    for filename in (f'{name}:{architecture}.md5sums', f'{name}.md5sums'):
+        sums = Path('/var/lib/dpkg/info') / filename
+        if sums.exists():
+            shutil.copyfile(sums, info / (name + '.md5sums'))
+            shutil.copyfile(sums, status / (name + '.md5sums'))
+            break
     records.append({'package': name, 'version': next(line.split(': ', 1)[1] for line in control.splitlines() if line.startswith('Version: '))})
 # Retain the base's existing controls; remove only actual duplicates of copied packages.
 legacy = root / 'var/lib/dpkg/status'
