@@ -460,7 +460,7 @@ dialog:has(.order-detail-layout) .modal-head{position:sticky;top:-18px;backgroun
 .order-summary-head{padding-bottom:7px;gap:6px 12px}
 .order-summary-fields{grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
 .order-summary-fields>div{padding:6px 8px}
-.order-summary-fields dd{font-size:14px;line-height:1.65}
+.order-summary-fields dd{font-size:15px;line-height:1.8}
 .order-summary-status{padding-top:7px;gap:6px}
 .order-summary-status .pill{font-size:12px}
 .order-summary-notes{padding:8px 10px}

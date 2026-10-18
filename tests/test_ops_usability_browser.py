@@ -274,7 +274,11 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
             const b=c.getBoundingClientRect();
             return {label:c.dataset.label,width:b.width,left:b.left,right:b.right,sw:c.scrollWidth,cw:c.clientWidth,sh:c.scrollHeight,ch:c.clientHeight,viewport:innerWidth};
         })''')
-        assert all(c['width']>0 and c['left']>=0 and c['right']<=c['viewport']+1 and c['sw']<=c['cw']+1 and c['sh']<=c['ch']+1 for c in geometry), geometry
+        import json
+        out = Path('test-artifacts'); out.mkdir(exist_ok=True)
+        (out / f'orders-geometry-{lang}-{width}.json').write_text(json.dumps(geometry,indent=2))
+        page.screenshot(path=str(out / f'orders-complete-{lang}-{width}.png'), full_page=True)
+        assert all(c['width']>0 and c['left']>=0 and c['right']<=c['viewport']+1 and c['sw']<=c['cw']+1 and c['sh']<=c['ch']+1 for c in geometry), json.dumps(geometry)
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         out = Path('test-artifacts'); out.mkdir(exist_ok=True)
         page.screenshot(path=str(out / f'orders-complete-{lang}-{width}.png'), full_page=True)
