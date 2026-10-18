@@ -1622,7 +1622,18 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             require_owner_step_up(conn,user)
         phone_changed=phone!=row['phone']
         if phone_changed and staff_email_retired(row['brand_id']):
-            if row['role']=='owner' and (row.get('phone_verified_at') or row.get('phone_sms_verified_at')):
+            # Canonical staff/owner SMS verifies a challenge rather than writing
+            # the legacy users.phone_* timestamps. Recognize that actual proof
+            # against this account's current mobile before allowing any edit.
+            owner_phone_proven = row['role']=='owner' and (
+                row.get('phone_verified_at') or row.get('phone_sms_verified_at') or
+                conn.execute(
+                    "SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND brand_id=%s "
+                    "AND phone=normalized_identity_phone(%s) AND delivery_channel='sms' "
+                    "AND provider_name IN ('twilio_verify','tawked') AND verified_at IS NOT NULL "
+                    "AND (id LIKE 'employee_otp_%%' OR id LIKE 'owner_sms_%%') LIMIT 1",
+                    (row['id'],row['brand_id'],row.get('phone'))).fetchone())
+            if owner_phone_proven:
                 raise db.error(409,'OWNER_PHONE_VERIFICATION_REQUIRED','غيّر جوال المالك عبر مسار التحقق المستقل من الرقم الجديد. / Use the owner mobile verification flow.')
             require_owner_sms_step_up(conn,user)
             ensure_safe_staff_scope_change(conn,row,[],False)

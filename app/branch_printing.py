@@ -205,7 +205,7 @@ def test_printer(identifier:str,user=Depends(printer_admin),idem:str|None=Header
                 'ليست فاتورة طلب / NOT AN ORDER',job_id)]
             conn.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,kind,payload,requested_by) VALUES(%s,%s,%s,%s,'test',%s,%s)",
                          (job_id,user['brand_id'],device['branch_id'],identifier,db.json({'language':'ar','kind':'test','lines':lines}),user['id']))
-            conn.execute('UPDATE branch_print_devices SET acceptance_job_id=%s,approved_at=NULL,approved_by=NULL WHERE id=%s',(job_id,identifier))
+            conn.execute('UPDATE branch_print_devices SET acceptance_job_id=%s,approved_at=NULL,approved_by=NULL,approved_api_host=NULL WHERE id=%s',(job_id,identifier))
             db.audit(conn,user['id'],'printer.test.queued','printer',identifier,{'job_id':job_id})
             return {'id':job_id,'status':'queued'}
         return db.idempotent(conn,user['id'],idem,'printer.test',{'device_id':identifier},perform)
@@ -221,11 +221,11 @@ class AcceptBody(BaseModel):
 def approve_printer(identifier:str,body:AcceptBody,user=Depends(printer_admin)):
     with db.tx() as conn:
         device,branch=managed_device(conn,user,identifier)
-        job=conn.execute("SELECT status FROM branch_print_jobs WHERE id=%s AND device_id=%s AND kind='test'",(body.job_id,identifier)).fetchone()
+        job=conn.execute("SELECT status,ack_api_host FROM branch_print_jobs WHERE id=%s AND device_id=%s AND kind='test'",(body.job_id,identifier)).fetchone()
         if not body.paper_confirmed or body.job_id!=device['acceptance_job_id'] or not job or job['status']!='submitted':
             raise db.error(409,'PRINT_TEST_NOT_CONFIRMED','انتظر إرسال الاختبار وتأكد من خروج الورقة وصحة الشعار والعربية والمقاس.')
         if not device['approved_at']:
-            conn.execute('UPDATE branch_print_devices SET approved_at=now(),approved_by=%s WHERE id=%s',(user['id'],identifier))
+            conn.execute('UPDATE branch_print_devices SET approved_at=now(),approved_by=%s,approved_api_host=%s WHERE id=%s',(user['id'],job['ack_api_host'],identifier))
             db.audit(conn,user['id'],'printer.test.approved','printer',identifier,{'job_id':body.job_id,'physical_output_confirmed_by_operator':True})
         return {'approved':True}
 
@@ -388,12 +388,16 @@ class AckBody(BaseModel):
 
 
 @router.post('/bridge/jobs/{identifier}/ack')
-def acknowledge(identifier:str,body:AckBody,device=Depends(bridge)):
+def acknowledge(identifier:str,body:AckBody,request: Request = None,device=Depends(bridge)):
     with db.tx() as conn:
         row=conn.execute('SELECT status FROM branch_print_jobs WHERE id=%s AND device_id=%s FOR UPDATE',(identifier,device['id'])).fetchone()
         if not row:raise db.error(404,'PRINT_JOB_NOT_FOUND','أمر الطباعة غير موجود.')
         if row['status'] not in {'claimed',body.status}:raise db.error(409,'PRINT_JOB_STATE','حالة أمر الطباعة لا تسمح بهذا الإجراء.')
-        conn.execute('UPDATE branch_print_jobs SET status=%s,finished_at=coalesce(finished_at,now()) WHERE id=%s',(body.status,identifier))
+        # Capture the first acknowledgement endpoint only. A replay through a
+        # different host must not re-label historic paper/acceptance evidence,
+        # including legacy jobs whose provenance is unknown (NULL).
+        conn.execute("UPDATE branch_print_jobs SET ack_api_host=CASE WHEN status='claimed' THEN %s ELSE ack_api_host END,status=%s,finished_at=coalesce(finished_at,now()) WHERE id=%s",
+                     (request.url.hostname if request else None,body.status,identifier))
         return {'id':identifier,'status':body.status}
 
 
@@ -424,7 +428,7 @@ def migration_status(user=Depends(printer_admin)):
     with db.tx() as conn:
         branches=conn.execute('SELECT id,name FROM branches WHERE brand_id=%s ORDER BY name',
                               (user['brand_id'],)).fetchall()
-        rows=conn.execute('SELECT id,branch_id,label,printer_name,last_seen_at,revoked_at,approved_at,last_api_host,bridge_version '
+        rows=conn.execute('SELECT id,branch_id,label,printer_name,last_seen_at,revoked_at,approved_at,approved_api_host,last_api_host,bridge_version '
                           'FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',
                           (user['brand_id'],)).fetchall()
     branches=[b for b in branches if user['role']=='owner' or b['id'] in user.get('branch_ids',[])]
@@ -432,10 +436,10 @@ def migration_status(user=Depends(printer_admin)):
     for branch in branches:
         active=[r for r in rows if r['branch_id']==branch['id'] and not r['revoked_at']]
         connected=[r for r in active if connection_status(r)=='online']
-        moved=[r for r in connected if r['last_api_host']==target and r['approved_at']]
+        moved=[r for r in connected if r['last_api_host']==target and r['approved_api_host']==target and r['approved_at']]
         # Unknown/old/offline registrations remain blockers until an operator
         # verifies/retires them explicitly. New pairing never revokes old devices.
-        remaining=[r for r in active if r['last_api_host']!=target or not r['approved_at'] or connection_status(r)!='online']
+        remaining=[r for r in active if r['last_api_host']!=target or r['approved_api_host']!=target or not r['approved_at'] or connection_status(r)!='online']
         result.append({**branch,'migrated':bool(moved) and not remaining,
                        'connected_devices':len(connected),
                        'approved_devices':sum(bool(r['approved_at']) for r in active),

@@ -121,3 +121,60 @@ def test_real_bridge_routes_accept_official_host_and_reject_render_host_with_por
         assert saved['last_api_host']=='order.kps.sa'
         assert saved['bridge_version']=='synthetic-domain-test'
         assert conn.execute('SELECT status FROM branch_print_jobs WHERE id=%s',(job['id'],)).fetchone()['status']=='submitted'
+
+
+@pytest.mark.postgres
+def test_legacy_approval_and_ack_replay_cannot_certify_official_domain_migration(ops,monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    actor,post,_,_=ops
+    monkeypatch.setenv('PRINT_BRIDGE_ORIGIN','https://order.kps.sa')
+    pair=post('owner','/api/printing/devices',{'branch_id':'ops-branch','label':'Existing approved computer'})
+    token=actor('customer').post('/api/printing/bridge/pair',json={
+        'pairing_code':pair['pairing_code'],'printer_name':'Synthetic thermal printer'}).json()['token']
+    app=FastAPI()
+    app.include_router(branch_printing.router)
+    headers={'Authorization':'Bearer '+token}
+    def state():
+        result=actor('owner').get('/api/printing/migration-status')
+        assert result.status_code==200,result.text
+        return next(b for b in result.json()['branches'] if b['id']=='ops-branch')
+    def accept(client):
+        test=post('owner','/api/printing/devices/'+pair['id']+'/test')
+        claim=client.post('/api/printing/bridge/next',json={})
+        assert claim.status_code==200 and claim.json()['job']['id']==test['id']
+        assert client.post('/api/printing/bridge/jobs/'+test['id']+'/ack',json={'status':'submitted'}).status_code==200
+        post('owner','/api/printing/devices/'+pair['id']+'/approve',{'job_id':test['id'],'paper_confirmed':True})
+        return test['id']
+    with TestClient(app,base_url='https://legacy.onrender.com',headers=headers) as legacy, \
+         TestClient(app,base_url='https://order.kps.sa',headers=headers) as official:
+        old_job=accept(legacy)
+        assert not state()['migrated']
+        assert state()['devices'][0]['approved_api_host']=='legacy.onrender.com'
+        # The old approval remains operational, but an official heartbeat alone
+        # proves connectivity only, never fresh test-paper acceptance.
+        assert official.post('/api/printing/bridge/next',json={}).json()['job'] is None
+        assert state()['devices'][0]['approved_at'] is not None
+        assert state()['devices'][0]['last_api_host']=='order.kps.sa'
+        assert not state()['migrated']
+        # ACK replay and repeated owner approval cannot rewrite the original host.
+        assert official.post('/api/printing/bridge/jobs/'+old_job+'/ack',json={'status':'submitted'}).status_code==200
+        post('owner','/api/printing/devices/'+pair['id']+'/approve',{'job_id':old_job,'paper_confirmed':True})
+        assert state()['devices'][0]['approved_api_host']=='legacy.onrender.com'
+        assert not state()['migrated']
+        with db.tx() as conn:
+            assert conn.execute('SELECT ack_api_host FROM branch_print_jobs WHERE id=%s',(old_job,)).fetchone()['ack_api_host']=='legacy.onrender.com'
+            # Pre-migration rows have unknown provenance. A replay must also keep
+            # NULL unknown rather than falsely certifying a new official ACK.
+            conn.execute('UPDATE branch_print_jobs SET ack_api_host=NULL WHERE id=%s',(old_job,))
+            conn.execute('UPDATE branch_print_devices SET approved_api_host=NULL WHERE id=%s',(pair['id'],))
+        assert official.post('/api/printing/bridge/jobs/'+old_job+'/ack',json={'status':'submitted'}).status_code==200
+        with db.tx() as conn:
+            assert conn.execute('SELECT ack_api_host FROM branch_print_jobs WHERE id=%s',(old_job,)).fetchone()['ack_api_host'] is None
+        assert not state()['migrated']
+        # Only a fresh official-domain test ACK plus explicit paper confirmation
+        # establishes official acceptance; the same device token is retained.
+        fresh_job=accept(official)
+        assert fresh_job!=old_job
+        assert state()['devices'][0]['approved_api_host']=='order.kps.sa'
+        assert state()['migrated']

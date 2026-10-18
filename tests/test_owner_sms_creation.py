@@ -54,11 +54,22 @@ def test_sms_owner_creation_requires_separate_proof_and_preserves_every_existing
         event=conn.execute("SELECT details FROM audit_events WHERE action='owner.sms_account.created' AND entity_id=%s",(target['id'],)).fetchone()['details']
         assert event['full_owner_confirmed'] is True and event['phone_ownership_verified'] is False
         assert event['brand_id']==owner['brand_id']
+    with db.tx() as conn:
+        sessions_before=conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(target['id'],)).fetchone()['n']
     denied=client.post('/api/auth/login',json={'username':'SMS.owner','password':'FakePassword!DoesNotExist'})
-    assert denied.status_code==403 and denied.json()['detail']['code']=='WORK_SMS_REQUIRED'
+    # This passwordless account has no credential to validate: the password
+    # endpoint rejects 401 before reaching the mandatory-SMS policy check.
+    assert denied.status_code==401 and denied.json()['detail']['code']=='INVALID_CREDENTIALS'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(target['id'],)).fetchone()['n']==sessions_before
+        assert conn.execute('SELECT password_hash FROM users WHERE id=%s',(target['id'],)).fetchone()['password_hash'] is None
     signed=sms_login(client,target,monkeypatch)
     assert signed['user']['id']==target['id'] and signed['user']['role']=='owner'
-    assert signed['user']['phone_sms_verified_at'] is not None
+    # The real verifier stores SMS proof in canonical OTP challenges and the
+    # authenticated session; legacy profile timestamps are not fabricated.
+    with db.tx() as conn:
+        assert conn.execute("SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND brand_id=%s AND phone=%s AND id LIKE 'employee_otp_%%' AND delivery_channel='sms' AND verified_at IS NOT NULL",(target['id'],target['brand_id'],target['phone'])).fetchone()
+        assert conn.execute('SELECT 1 FROM sessions WHERE user_id=%s AND revoked_at IS NULL',(target['id'],)).fetchone()
 
 
 @pytest.mark.postgres
@@ -115,6 +126,9 @@ def test_unverified_owner_mobile_assignment_allowed_but_verified_owner_uses_inde
     # the separate verified-owner replacement boundary.
     sms_login(client,changed.json()['user'],monkeypatch)
     sms_step_up(client,changed.json()['user'],monkeypatch)
+    with db.tx() as conn:
+        assert conn.execute("SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND phone='+966509031114' AND id LIKE 'employee_otp_%%' AND verified_at IS NOT NULL",(target['id'],)).fetchone()
+        assert conn.execute("SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND phone='+966509031114' AND id LIKE 'owner_sms_%%' AND verified_at IS NOT NULL",(target['id'],)).fetchone()
     rejected=client.patch(path,json={'phone':'0509031115','reason':'Cannot replace a proven owner mobile with profile update'})
     assert rejected.status_code==409,rejected.text
     assert rejected.json()['detail']['code']=='OWNER_PHONE_VERIFICATION_REQUIRED'
