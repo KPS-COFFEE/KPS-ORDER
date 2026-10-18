@@ -5,10 +5,12 @@ import pytest
 
 from app import db
 from test_browser import (
-    ARTIFACTS, PASSWORD, _context, _owner_login, _staff,
-    chromium_browser, live_app, synthetic_mail,
+    ARTIFACTS, _context, _owner_login, _staff,
+    chromium_browser,
 )
 from test_fleet import seed
+
+from tests.browser_sms_helpers import sms_browser_app as live_app, complete_owner_sms_dialog
 
 pytestmark = [pytest.mark.postgres, pytest.mark.skipif(os.getenv('TEST_BROWSER') != '1', reason='Requires isolated PostgreSQL/browser acceptance')]
 
@@ -55,8 +57,9 @@ def test_existing_private_vehicle_bilingual_edit_preserves_fleet_and_history(liv
         modal.locator('[name=vehicle_plate]').fill('1234 DZJ')
         expect(modal.locator('.saudi-plate__letters[lang=ar]')).to_have_text('دمح')
         modal.locator('[name=reason]').fill('TEST ONLY equivalent English plate presentation')
-        modal.locator('[name=step_up_password]').fill(PASSWORD)
+        expect(modal.locator('[name=step_up_password]')).to_have_count(0)
         modal.locator('button[type=submit]').click()
+        complete_owner_sms_dialog(page, owner)
         expect(modal).not_to_be_visible()
         with db.tx() as conn:
             current = conn.execute('SELECT vehicle FROM users WHERE id=%s', (driver['id'],)).fetchone()['vehicle']

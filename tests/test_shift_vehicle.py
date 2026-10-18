@@ -70,7 +70,8 @@ def test_inspection_validation_and_legacy_shift_preservation(ops):
     assert 'start' not in detail['shift']['vehicle_log']
 
 import os
-from test_browser import _context, _owner_login, _staff, _capture, _acknowledge_driver_end, _approve_driver_closure_from_browser, chromium_browser, live_app, synthetic_mail
+from tests.browser_sms_helpers import sms_browser_app as live_app
+from test_browser import _context, _owner_login, _staff, _capture, _acknowledge_driver_end, _approve_driver_closure_from_browser, chromium_browser
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Real isolated Chromium only')
