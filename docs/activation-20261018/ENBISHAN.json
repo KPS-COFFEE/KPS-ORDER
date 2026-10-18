@@ -2,22 +2,25 @@
   "status": "NOT_READY",
   "completion_percentage": null,
   "percentage_reason": "No completed, evidence-backed inventory of the full owner scope; no invented estimate.",
-  "candidate_sha": "d443e686725c61e0534961dc4eff61fc832a46ca",
+  "candidate_sha": "dc77cb560d5061e7a6ca33ef71fcb062b5c67a22",
   "branch": "agent/enbishan-isolated-development-20261017",
   "production_changes": false,
   "activation_authorized": false,
   "evidence": {
     "local_source_tests": {
-      "passed": 107,
+      "passed": 1011,
       "failed": 0,
       "errors": 0,
-      "deselected": 41,
-      "scope": "Focused non-PostgreSQL source checks only; not full application certification.",
-      "junit": "source-checks.xml"
+      "skipped": 9,
+      "deselected": 950,
+      "subtests_passed": 197,
+      "scope": "Available source regression only; eight DB/browser-unavailable modules excluded. All required runtime suites remain mandatory.",
+      "junit": "../engagement-source-20261018.xml",
+      "details": "../engagement-closure-20261018.md"
     },
     "integration_ci": {
-      "run": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39087847262",
-      "sha": "91bb9fbb9a1a73b9f6ccd2293afe02b3978d8fee",
+      "run": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39098204910",
+      "sha": "dc77cb560d5061e7a6ca33ef71fcb062b5c67a22",
       "steps_executed": 0,
       "runner": "",
       "classification": "INFRASTRUCTURE_BLOCKED",
@@ -28,6 +31,15 @@
       "run": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39084485147",
       "conclusion": "success",
       "limitation": "Separate security-stream evidence; does NOT certify the combined candidate image."
+    },
+    "combined_security_ci": {
+      "run": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39098204783",
+      "sha": "dc77cb560d5061e7a6ca33ef71fcb062b5c67a22",
+      "jobs": 3,
+      "steps_executed": 0,
+      "runner": "",
+      "classification": "INFRASTRUCTURE_BLOCKED",
+      "note": "No scan, container build or rollback test executed. Prior security-stream success cannot certify this code."
     }
   },
   "database": {
@@ -304,10 +316,15 @@
       {
         "version": "078_map_resolution_guards.sql",
         "sha256": "e45b396dc85337d34d7b6c08bcfa7db57d968ac890767b877e7f2518b5217a91"
+      },
+      {
+        "version": "079_customer_engagement.sql",
+        "sha256": "a1922ff24784472d68ccacf346116d64c8cd29aed4f43873ca08f086ba41118f"
       }
     ],
     "status": "PG18_EXECUTION_REQUIRED",
-    "data_mutation_authorized": false
+    "data_mutation_authorized": false,
+    "parser_status": "PostgreSQL18.6 SQL/PLpgSQL syntax parsed; actual PG18 migration and transaction execution required."
   },
   "rollback": {
     "status": "NOT_CERTIFIED_FOR_COMBINED_CANDIDATE",
@@ -319,14 +336,20 @@
     ]
   },
   "environment_checklist": {
-    "APP_ENV": "Enbishan currently requires testing. Runtime-safe dual-brand activation remains implementation work.",
-    "DATABASE_URL": "Isolated test_enbishan_* loopback database only for current dual-brand mode; never use a production DSN for tests.",
+    "APP_ENV": "Existing isolated path remains testing-only; approved runtime path supports production/staging/testing only after exact-SHA gates and explicit DB/host binding.",
+    "DATABASE_URL": "PG18.6; isolated tests require test_* DB. Approved runtime requires exact KPS_MULTIBRAND_DATABASE_HOST and KPS_MULTIBRAND_DATABASE_NAME binding. Never use operational data in tests.",
     "ENBISHAN_ISOLATED_ENABLED": "Development only; OFF in production.",
     "PUBLIC_BASE_URL": "Owner-approved binding and allowed-host validation; no DNS edits performed.",
     "KPS_BRANCH_PAYMENT_LIVE_ENABLED": "DEFAULT OFF",
     "KPS_BRANCH_PAYMENT_LIVE_ACCEPTANCE_SHA": "Unset until independently accepted exact release.",
     "KPS_BRANCH_PAYMENT_LIVE_OWNER_APPROVAL_SHA": "Unset until explicit owner activation approval.",
-    "provider_secrets": "Use existing secure configuration channels; no values copied into reports or repository."
+    "provider_secrets": "Use existing secure configuration channels; no values copied into reports or repository.",
+    "KPS_MULTIBRAND": "DEFAULT OFF; ENABLED, ACCEPTANCE_SHA, OWNER_APPROVAL_SHA required for exact candidate, independently of feature flags.",
+    "KPS_STOREFRONT_HOST_BRANDS": "Explicit JSON mapping of actual approved storefront hosts to kps/enbishan; both brands required, APP_ALLOWED_HOSTS must explicitly allow them.",
+    "customer_benefits_prefix": "KPS_CUSTOMER_BENEFITS_ENBISHAN",
+    "gift_orders_prefix": "KPS_GIFT_ORDERS_ENBISHAN",
+    "feature_activation": "Each brand feature defaults OFF; ENABLED=true plus ACCEPTANCE_SHA and OWNER_APPROVAL_SHA equal exact accepted RUNTIME_REVISION/RENDER_GIT_COMMIT. No owner approval supplied or configuration changed.",
+    "marketing_notice": "Owner-versioned Arabic/English notice required before opt-in; registration never grants marketing consent."
   },
   "domain_dns_checklist": {
     "status": "NO_CHANGE",
@@ -380,11 +403,8 @@
     "note": "Historical app 2CPU/4GiB + DB1CPU/2GiB evidence is proposal-only for a different SHA; no Render resources changed."
   },
   "remaining_programming": [
-    "Complete scoped CRM follow-up and benefit/marketing-consent history and their UI integration.",
-    "Implement/integrate discounts, cashback ledgers/redemption/refund handling and duplicate-benefit prevention.",
-    "Implement/integrate the approved gift flow without changing payer/recipient/fiscal ownership.",
-    "Promote isolated multibrand implementation to an activation-capable, default-OFF runtime path without removing existing test isolation safeguards.",
-    "Finish complete owner-scope acceptance inventory; repair any regression and certify exact combined code/image/performance/restore."
+    "Run full PG18/shared KPS+Enbishan/mobile+desktop AR/EN acceptance, restore/restart/concurrency/revocation, current image/security gates and appropriate final-candidate performance gates; fix any defects found before readiness.",
+    "Complete and sign off the full owner-scope acceptance inventory. No promise of zero further code changes until execution passes."
   ],
   "can_activate_without_new_development": false,
   "brand_id": "enbishan",
@@ -409,6 +429,14 @@
     "Authorized merchant credentials/provider acceptance and physical-printer witness where applicable.",
     "approved menu, prices, modifiers and image assets",
     "verified branch coordinates, hours, delivery areas and fees",
-    "seller/VAT profile and authorized message/payment configuration"
+    "seller/VAT profile and authorized message/payment configuration",
+    "Explicit owner-approved benefit terms, rates, segments, limits and accounting contract. Current implemented contract is non-expiring promotional discount credit with proportional confirmed-refund reversal; no prior policy was invented.",
+    "Explicit owner feature activation approval after acceptance, exact host/DB binding and normal authorized deployment credentials."
+  ],
+  "implemented_pending_acceptance": [
+    "CRM follow-ups, wallet/benefit/consent histories, pagination and management/customer UI integration.",
+    "Versioned scoped offers, transactional redemption and reward ledger, refunds/cancellation reconciliation and use-limit locking.",
+    "Verified purchaser/recipient gift flow and frozen invoice purchaser identity.",
+    "Independent default-OFF exact-SHA brand feature gates and explicit bound multibrand runtime."
   ]
 }
