@@ -131,7 +131,7 @@ def session_context(request):
         raise db.error(400,'SESSION_CONTEXT_INVALID','اختر سياق الدخول الصحيح. / Invalid session context.')
     if path.startswith('/api/fiscal/orders/') and path.endswith('/documents'):
         return context
-    if (path.startswith(('/api/auth/otp/','/api/customer/profile','/api/customer/addresses')) or path in {'/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
+    if (path.startswith(('/api/auth/otp/','/api/customer/')) or path in {'/api/quote','/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
         return 'customer'
     if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',

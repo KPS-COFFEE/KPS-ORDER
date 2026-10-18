@@ -38,7 +38,9 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
           'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings', 'driver_check_requests',
           'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache',
-          'staff_brand_memberships', 'driver_brand_dedications')
+          'staff_brand_memberships', 'driver_brand_dedications',
+          'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+          'customer_wallets','benefit_order_states','customer_wallet_entries')
 AUTH_TABLES = {'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
@@ -77,6 +79,9 @@ def _scoped_sql(table, brand):
               'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles', 'driver_check_requests'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
+    if table in {'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+                 'customer_wallets','benefit_order_states','customer_wallet_entries'}:
+        return 'brand_id=%s', (brand,)
     if table == 'app_settings' or table in direct:
         return 'brand_id=%s', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
@@ -308,6 +313,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             # the new isolated restore schema and this transaction.
             conn.execute('ALTER TABLE shifts DISABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users DISABLE TRIGGER register_fleet_vehicle')
+            conn.execute('ALTER TABLE customer_wallet_entries DISABLE TRIGGER wallet_entry_balance')
             for table in manifest['table_order']:
                 columns = {row['column_name']: row['udt_name'] for row in conn.execute(
                     'SELECT column_name,udt_name FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
@@ -336,6 +342,9 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     conn.execute(statement, values)
             conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')
+            conn.execute('ALTER TABLE customer_wallet_entries ENABLE TRIGGER wallet_entry_balance')
+            consent_sequence=conn.execute("SELECT pg_get_serial_sequence('customer_marketing_consents','seq') AS name").fetchone()['name']
+            conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM customer_marketing_consents),0),1),EXISTS(SELECT 1 FROM customer_marketing_consents))",(consent_sequence,))
             # Restores preserve history, never replay physical printing or
             # reactivate device credentials copied from an older snapshot.
             if 'branch_print_devices' in actual:

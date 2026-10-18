@@ -45,7 +45,7 @@ jobs:
           mkdir -p test-results/enbishan
           git rev-parse HEAD > test-results/enbishan/revision.txt
       - name: Real dual-brand, financial, security and mobile acceptance
-        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_enbishan_mobile_browser.py
+        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_enbishan_mobile_browser.py tests/test_customer_engagement_browser.py
       - name: KPS regression (existing failures remain failures)
         if: ${{ !cancelled() }}
         run: >-
@@ -55,7 +55,7 @@ jobs:
           tests/test_customer_crm.py tests/test_employee_permissions.py
           tests/test_context_cookie_isolation.py tests/test_map_resolution_security.py
           tests/test_driver_checks.py tests/test_driver_prelaunch_guards_unit.py
-
+          tests/test_customer_engagement_closure.py
           --junitxml=test-results/enbishan/kps-regression.xml
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}

@@ -310,7 +310,9 @@ PRESERVED_TABLES = ('users', 'driver_check_requests', 'fuel_exceptions', 'driver
                     'conversation_reads', 'conversation_transfers',
                     'recovery_events', 'recovery_state', 'recovery_alerts',
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
-                    'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings')
+                    'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
+                    'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+                    'customer_wallets','benefit_order_states','customer_wallet_entries')
 
 
 def preservation_snapshot(conn, baseline=None):

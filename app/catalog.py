@@ -412,6 +412,9 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
     from .branch_payment_policy import required
     safe_brand['branch_online_required'] = required(brand_id, brand['settings'])
+    from . import activation
+    safe_brand['customer_features'] = {'benefits':activation.enabled('customer_benefits',brand_id),
+                                      'gifts':activation.enabled('gift_orders',brand_id)}
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
                            if key in {'accent', 'background', 'text', 'font', 'profile'}}
     # This allowlisted projection already consists entirely of JSON values.
@@ -547,6 +550,13 @@ class OrderItem(_CheckoutModel):
     note: str = Field(default='', max_length=300)
 
 
+class GiftInfo(_CheckoutModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    recipient_name: str = Field(min_length=1,max_length=100)
+    recipient_phone: str = Field(min_length=8,max_length=30)
+    message: str = Field(default='',max_length=500)
+
+
 class QuoteBody(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
     brand_id: str = Field(default='kps', min_length=1, max_length=80)
@@ -557,6 +567,9 @@ class QuoteBody(_CheckoutModel):
     customer: CustomerInfo
     notes: str = Field(default='', max_length=1000)
     expected_total_halalas: StrictInt | None = Field(default=None, ge=0, le=10000000)
+    benefit_code: str = Field(default='',pattern=r'^(?:[A-Z0-9_-]{3,50})?$')
+    cashback_halalas: StrictInt = Field(default=0,ge=0,le=10000000)
+    gift: GiftInfo | None = None
 
     @model_validator(mode='before')
     @classmethod
@@ -629,9 +642,21 @@ def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list
     return total, snapshots
 
 
-def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
+def order_request_payload(body):
+    # Preserve fingerprints of already committed ordinary orders across this
+    # additive release. Non-default new fields remain part of the replay key.
+    payload=body.model_dump()
+    for field in ('benefit_code','cashback_halalas','gift'):
+        if not payload.get(field):
+            payload.pop(field,None)
+    return payload
+
+
+def quote_order(conn, body: QuoteBody, for_update=False, *, user=None, order_id=None) -> dict:
     from .storefront_scope import require_brand
     require_brand(body.brand_id)
+    from . import gift_orders
+    gift_orders.validate(conn,body,user)
     lock = ' FOR SHARE' if for_update else ''
     with conn.pipeline():
         brand_query = conn.execute('SELECT id,settings FROM brands WHERE id=%s AND active' + lock, (body.brand_id,))
@@ -732,14 +757,16 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     if online:
         from .payment_runtime import mode
         result.update(branch_payment_mode=mode(), branch_payment_seller=branch['settings']['online_payment_seller'])
-    return result
+    from . import customer_benefits
+    return customer_benefits.apply(conn,body,result,user,reserve_order_id=order_id)
 
 
 
 @router.post('/quote')
 def quote(body: QuoteBody, request: Request = None):
     with db.tx(pipeline=True) as conn:
-        result = {'quote': customer_quote_view(quote_order(conn, body))}
+        user = auth._find_session(conn,request) if request is not None else None
+        result = {'quote': customer_quote_view(quote_order(conn, body,user=user))}
     return DatabaseJSONResponse(result) if request is not None else result
 
 

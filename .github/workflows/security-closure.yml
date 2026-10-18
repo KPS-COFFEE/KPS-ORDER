@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   host-security-and-browser:
-    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018'
+    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -118,7 +118,7 @@ jobs:
       fail-fast: false
       matrix:
         role: [candidate, rollback]
-    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018'
+    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -331,4 +331,5 @@ jobs:
   push:
     branches:
     - agent/kps-order-security-closure-20261018
+    - agent/enbishan-isolated-development-20261017
   workflow_dispatch: null

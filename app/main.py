@@ -116,6 +116,9 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
 
 from . import driver_checks
 app.include_router(driver_checks.router)
+from . import customer_benefits, customer_engagement
+app.include_router(customer_benefits.router)
+app.include_router(customer_engagement.router)
 
 
 def revision():

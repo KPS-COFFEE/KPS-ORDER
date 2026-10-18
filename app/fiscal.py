@@ -92,6 +92,9 @@ def build(order, number, issued_at, *, seller=None):
            'payment_method': order['payment_method'], 'source_revision': order.get('amendment_revision', 0),
            'receipt_occasion_style': deepcopy(order['snapshot'].get('receipt_occasion_style', {})),
            'prices_include_vat': True, 'receipt_occasion_text': order['snapshot'].get('receipt_occasion_text', '')}
+    if order['snapshot'].get('gift'):
+        doc['buyer'] = deepcopy(order['snapshot']['gift']['purchaser'])
+        doc['gift_order'] = True
     doc['qr_text'] = encode_qr(doc)
     return doc
 

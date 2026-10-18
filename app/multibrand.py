@@ -31,7 +31,12 @@ def replay_operation(conn, user_id, operation):
 
 
 def enabled():
-    return os.getenv('ENBISHAN_ISOLATED_ENABLED') == 'true'
+    if os.getenv('ENBISHAN_ISOLATED_ENABLED') == 'true':
+        if os.getenv('KPS_MULTIBRAND_ENABLED') == 'true':
+            raise RuntimeError('Choose isolated development or an approved runtime, never both.')
+        return True
+    from . import activation
+    return activation.enabled('multibrand')
 
 
 def isolation_guard():
@@ -42,6 +47,17 @@ def isolation_guard():
     except Exception:
         parts = {}
     name = parts.get('dbname', '')
+    if os.getenv('ENBISHAN_ISOLATED_ENABLED') != 'true':
+        # A distinct, exact-release approved runtime path. The original local
+        # test-database/credential restrictions below remain unchanged.
+        if (os.getenv('APP_ENV') not in {'production','staging','testing'} or parts.get('service')
+                or not name or name != os.getenv('KPS_MULTIBRAND_DATABASE_NAME')
+                or not parts.get('host') or parts['host'] != os.getenv('KPS_MULTIBRAND_DATABASE_HOST')
+                or parts.get('hostaddr') not in (None,parts.get('host'))):
+            raise RuntimeError('Approved multibrand runtime requires its explicit database host/name binding.')
+        if os.getenv('APP_ENV')=='testing' and not name.startswith('test_'):
+            raise RuntimeError('Runtime tests require a named test database.')
+        return
     if (os.getenv('APP_ENV') != 'testing' or parts.get('host') not in {'127.0.0.1', 'localhost', '::1'}
             or parts.get('hostaddr', '127.0.0.1') not in {'127.0.0.1', '::1'}
             or parts.get('service')

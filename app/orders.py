@@ -115,6 +115,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
         phone_required=False if delivery_center else user.get('customer_phone_required')
         if phone_required is None:phone_required=auth.customer_phone_required(conn,body.brand_id)
         if delivery_center:
+            if body.gift or body.benefit_code or body.cashback_halalas:
+                raise db.error(422,'CUSTOMER_BENEFIT_IDENTITY_REQUIRED','المزايا والإهداء من حساب العميل الموثق. / Use the verified purchaser account.')
             if body.service != 'delivery':
                 raise db.error(422,'DELIVERY_ONLY','طلب مركز التوصيل مخصص للتوصيل.')
             if not body.customer.phone:
@@ -128,7 +130,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             if request and not db.rate_limit(conn,'order-ip:'+(request.client.host if request.client else 'unknown'),200,600):
                 raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
             if delivery_center:delivery_center_scope(conn,user,body.branch_id)
-            quote = catalog.quote_order(conn, body, for_update=True)
+            order_id = db.new_id('order_')
+            quote = catalog.quote_order(conn, body, for_update=True,user=user,order_id=order_id)
             execution_branch_id = quote['branch_id']
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
@@ -144,7 +147,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 raise db.error(422,'CUSTOMER_PHONE_REQUIRED','أدخل رقم اتصال صحيحًا قبل الطلب.')
             if phone_required and customer['phone'] != user.get('phone'):
                 raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','تحقق من الرقم الجديد قبل الطلب.')
-            if body.service=='delivery' and phone_required:
+            if body.service=='delivery' and phone_required and not body.gift:
                 address_key='addr_'+hashlib.sha256((user['id']+json.dumps({k:customer.get(k) for k in ('address','neighborhood','location')},sort_keys=True)).encode()).hexdigest()
                 loc=customer.get('location') or {}
                 conn.execute('INSERT INTO customer_addresses(id,customer_id,brand_id,label,address,neighborhood,lat,lng) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=now()', (address_key,user['id'],user['brand_id'],customer['neighborhood'],customer['address'],customer['neighborhood'],loc.get('lat'),loc.get('lng')))
@@ -162,6 +165,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 customer.update(auth.identity_snapshot(user))
             if supplied_phone and customer['phone'] != user.get('phone'):
                 for flag in ('phone_verified','phone_sms_verified','phone_whatsapp_verified'):customer[flag]=False
+            from . import gift_orders
+            gift_orders.capture(body,user,customer,quote)
             if user.get('identity_kind') == 'guest':
                 recent=conn.execute("SELECT 1 FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1",
                                     (body.brand_id,execution_branch_id,customer['phone'],db.json(quote['items']))).fetchone()
@@ -183,7 +188,6 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 profiles = (config or {}).get('settings', {}).get('invoice_profiles') or invoice_profiles.defaults('kps')
                 quote['channel_commercial'] = channel_commercial.capture(profiles, execution_branch_id, quote, user['id'])
             performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id)
-            order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
                 quote['delivery_operating_day'] = {'date': delivery_day.isoformat(), 'start': '16:00',
@@ -197,8 +201,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})
             ctes = ('next_number AS (' + order_numbering.NEXT_NUMBER_SQL + '), created_order AS ('
                                'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
-                               'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
-                               "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
+                               'subtotal_halalas,delivery_fee_halalas,total_halalas,discount_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
+                               "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
                                "to_jsonb(%s::text || lpad(last_number::text,greatest(4,length(last_number::text)),'0'))),"
                                '%s,%s,%s FROM next_number RETURNING *), '
                     'created_event AS (INSERT INTO order_events(id,order_id,actor_id,event_type,details) '
@@ -216,14 +220,14 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             return db.AtomicIdempotentWrite(ctes,
                                (execution_branch_id, order_id, body.brand_id, execution_branch_id, customer_owner_id, body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
-                                quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
+                                quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],quote['discount_halalas'],
                                 db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day,
                                 db.new_id('evt_'), user['id'], db.json({'service': body.service}),
                                 db.new_id('audit_'), user['id'], db.json({'branch_id': execution_branch_id,
                                     'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
                                     'total_halalas': quote['total_halalas']}),
                                 public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
-        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', body.model_dump(), perform,
+        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', catalog.order_request_payload(body), perform,
                                pipeline_writes=True, defer_atomic_response=True,encoded_response=request is not None)
     # The database acknowledges COMMIT before the saved JSON reaches HTTP.
     # Replays use the same durable JSON, with no new counter/event/financial write.

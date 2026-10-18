@@ -18,6 +18,31 @@ def bound_brand(request):
     from .multibrand import enabled, isolation_guard
     if enabled():
         isolation_guard()
+        # Work credentials are role-bound by auth._find_session. A caller's
+        # header cannot turn a customer cookie into a staff credential. This
+        # permits explicit staff brand grants without relaxing customer scope.
+        from . import auth
+        if auth.session_context(request)=='work':
+            return None
+        if os.getenv('ENBISHAN_ISOLATED_ENABLED') != 'true':
+            try:
+                mapping=json.loads(os.environ['KPS_STOREFRONT_HOST_BRANDS'])
+            except (KeyError,ValueError,TypeError):
+                raise RuntimeError('Approved storefront host mapping is required.') from None
+            if (not isinstance(mapping,dict) or not mapping
+                    or any(not isinstance(host,str) or not re.fullmatch(r'[a-z0-9.-]+',host)
+                           or brand not in {'kps','enbishan'} for host,brand in mapping.items())
+                    or set(mapping.values()) != {'kps','enbishan'}
+                    or configured not in mapping):
+                raise RuntimeError('Storefront mapping must bind both brands and the configured public URL.')
+            allowed=set(os.getenv('APP_ALLOWED_HOSTS','').split(','))
+            if not set(mapping).issubset(allowed):
+                raise RuntimeError('Each mapped storefront host must be explicitly allowed.')
+            # Forwarded headers never choose the brand. Unknown virtual hosts
+            # cannot acquire the default KPS storefront accidentally.
+            if request.url.hostname not in mapping:
+                raise HTTPException(404,{'code':'STOREFRONT_HOST_UNKNOWN'})
+            return mapping[request.url.hostname]
         mapping = {'order.enbishan.com': 'enbishan', 'enbishan.test': 'enbishan', 'kps.test': 'kps'}
         if configured in mapping:
             return mapping[configured]

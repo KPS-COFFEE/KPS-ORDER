@@ -72,6 +72,9 @@ def canonical_items(items):
 
 
 def proposal_quote(c, o, p):
+    if o['snapshot'].get('benefits'):
+        raise db.error(409,'BENEFIT_ORDER_REPRICE_REQUIRED',
+                       'تعديل طلب المزايا يتطلب إلغاءه واسترداده أولًا ثم إنشاء طلب مسعّر جديد. / Cancel and refund the benefit order before creating a newly priced replacement.')
     # Identity, payment method, fulfillment branch and receipt ownership are never client editable.
     if p.customer.name != o['customer'].get('name') or (p.customer.phone or '') != (o['customer'].get('phone') or ''):
         raise db.error(422, 'AMENDMENT_IDENTITY', 'التعديل لا يغير هوية صاحب الطلب أو رقم تواصله.')
@@ -87,7 +90,7 @@ def proposal_quote(c, o, p):
         quote['items'] = o['snapshot']['items']
         quote['subtotal_halalas'] = o['subtotal_halalas']
         quote['total_halalas'] = quote['subtotal_halalas'] + quote['delivery_fee_halalas']
-    for key in ('receipt_occasion_style', 'receipt_occasion_text', 'receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow', 'branch_payment_mode', 'branch_payment_seller'):
+    for key in ('gift','receipt_occasion_style', 'receipt_occasion_text', 'receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow', 'branch_payment_mode', 'branch_payment_seller'):
         if key in o['snapshot']: quote[key] = o['snapshot'][key]
     if 'channel_commercial' in o['snapshot']:
         from .channel_commercial import amounts
