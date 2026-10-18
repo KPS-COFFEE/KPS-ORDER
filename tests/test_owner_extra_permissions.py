@@ -141,7 +141,7 @@ def test_additional_branch_availability_is_scoped_and_revocation_blocks_replay(c
     changed=client.post(path,json={'available':False,'reason':'Stock unavailable at authorized branch'},headers={'Idempotency-Key':'scoped-stock-one'})
     assert changed.status_code==200,changed.text
     assert client.post('/api/branches/kps-branch-2/products/'+pid+'/availability',json={'available':False}).status_code==404
-    assert client.post('/api/branches/kps-branch-1/products/other-stock-product/availability',json={'available':False}).status_code==404
+    assert client.post('/api/branches/kps-branch-1/products/other-stock-product/availability',json={'available':False},headers={'Idempotency-Key':'cross-brand-stock-denied'}).status_code==404
     # An availability grant is not permission to change the menu globally.
     assert client.patch('/api/admin/products/'+pid,json={'name':'Forbidden global edit'}).status_code==403
     with db.tx() as conn:
@@ -152,3 +152,34 @@ def test_additional_branch_availability_is_scoped_and_revocation_blocks_replay(c
     assert _save(client,grant.json()['user'],policy.effective(target)).status_code==200
     client.cookies.clear();client.cookies.update(target_cookies);client.headers['X-CSRF-Token']=target_csrf
     assert client.post(path,json={'available':False,'reason':'Stock unavailable at authorized branch'},headers={'Idempotency-Key':'scoped-stock-one'}).status_code==403
+
+
+@pytest.mark.postgres
+def test_pending_custody_blocks_pause_and_branch_removal_without_deleting_history(client,monkeypatch):
+    target=_make_user('driver',branches=['kps-branch-1'])
+    manager=_make_user('delivery_manager',branches=['kps-branch-1'])
+    owner=_make_user('owner');sms_login(client,owner,monkeypatch);sms_step_up(client,owner,monkeypatch)
+    with db.tx() as conn:
+        conn.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES('custody-source-only','manager',%s,'kps','[\"kps-branch-1\"]')",(manager['id'],))
+        conn.execute("INSERT INTO custody_transfers(id,from_shift_id,recipient_user_id,amount_halalas,reference,created_by) VALUES('custody-pending-only','custody-source-only',%s,100,'Synthetic pending custody',%s)",(target['id'],manager['id']))
+    for body in ({'active':False},{'branch_ids':[]}):
+        result=client.patch('/api/identity/staff/'+target['id'],json={**body,'reason':'Cannot strand pending custody'})
+        assert result.status_code==409,result.text
+        assert result.json()['detail']['code']=='STAFF_PENDING_CUSTODY'
+    with db.tx() as conn:
+        row=conn.execute('SELECT * FROM users WHERE id=%s',(target['id'],)).fetchone()
+        assert row['active'] and row['branch_ids']==target['branch_ids']
+        assert conn.execute("SELECT status FROM custody_transfers WHERE id='custody-pending-only'").fetchone()['status']=='pending'
+
+
+@pytest.mark.postgres
+def test_saving_existing_role_defaults_does_not_reclassify_them_as_extra_grants(client,monkeypatch):
+    target=_make_user('delivery_manager',branches=['kps-branch-1'])
+    owner=_make_user('owner')
+    sms_login(client,owner,monkeypatch);sms_step_up(client,owner,monkeypatch)
+    result=_save(client,target,policy.effective(target))
+    assert result.status_code==200,result.text
+    saved=result.json()['user']
+    assert saved['role']==target['role'] and saved['branch_ids']==target['branch_ids']
+    assert saved['extra_permissions']==[]
+    assert set(saved['effective_permissions'])==policy.effective(target)

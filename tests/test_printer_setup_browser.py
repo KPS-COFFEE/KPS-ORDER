@@ -4,7 +4,9 @@ import os
 import zipfile
 import pytest
 from app import db
-from test_browser import _capture, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from test_browser import _capture, _context, _owner_login, _staff, chromium_browser, synthetic_mail
+
+from tests.browser_sms_helpers import sms_browser_app as live_app
 
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit isolated browser acceptance')]
 

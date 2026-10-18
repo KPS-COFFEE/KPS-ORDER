@@ -1245,6 +1245,11 @@ def ensure_safe_staff_scope_change(conn,row,new_scope,new_active):
         raise db.error(409,'STAFF_OPEN_SHIFT','أغلق الشفت وسلّم العهدة قبل إيقاف الحساب.')
     if (not new_active) and conn.execute("SELECT 1 FROM driver_tasks WHERE driver_id=%s AND status NOT IN ('delivered','cancelled','transferred','reassigned')",(row['id'],)).fetchone():
         raise db.error(409,'STAFF_OPEN_TASKS','أعد إسناد مهام الموظف قبل إيقاف حسابه.')
+    if (not new_active or removed) and conn.execute(
+        "SELECT 1 FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id "
+        "WHERE t.status='pending' AND (t.recipient_user_id=%s OR s.user_id=%s) LIMIT 1",
+        (row['id'],row['id'])).fetchone():
+        raise db.error(409,'STAFF_PENDING_CUSTODY','أكد استلام العهدة أو أكمل تسليمها قبل إيقاف الموظف أو سحب فروعه.')
     if removed and conn.execute("SELECT 1 FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')",(row['id'],list(removed))).fetchone():
         raise db.error(409,'STAFF_OPEN_TASKS','أعد إسناد المهام مع قبول التسليم قبل سحب فرع السائق.')
     if removed and row['role'] in {'driver','delivery_manager','delivery_staff'}:
@@ -1411,9 +1416,7 @@ def set_employee_permissions(identifier:str,body:EmployeePermissionsBody,user=De
         if sorted(body.expected_permissions)!=before:
             raise db.error(409,'STAFF_PERMISSIONS_CHANGED','تغيرت صلاحيات الموظف؛ حدّث القائمة ثم أعد المراجعة.')
         grants=sorted(set(values) & employee_permissions.ADMIN) if row['role']=='admin' else []
-        extras=sorted(set(values) - set(grants) - employee_permissions.eligible(row['role']))
-        # Printer permission is role-eligible for admin but only explicit when set.
-        extras=sorted(set(extras) | ((set(values)-set(grants)) & employee_permissions.grantable(row['role'])))
+        extras=sorted(set(values) - employee_permissions.eligible(row['role']))
         denials=sorted(employee_permissions.eligible(row['role'])-set(values)) if row['role']!='admin' else []
         output=conn.execute('UPDATE users SET permissions=%s,permission_denials=%s,extra_permissions=%s,updated_at=now() WHERE id=%s RETURNING *',
                             (db.json(grants),db.json(denials),db.json(extras),identifier)).fetchone()
@@ -1517,6 +1520,8 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
         role_changed=role!=row['role']
         if role_changed:
             require_owner_step_up(conn,user)
+            if row.get('extra_permissions'):
+                require_owner_sms_step_up(conn,user)
             if identifier==user['id'] or not (body.reason or '').strip():
                 raise db.error(409,'STAFF_ROLE_CHANGE_BLOCKED','لا تغير دور حسابك الحالي، وسجل سبب تغيير دور الموظف.')
             ensure_safe_staff_scope_change(conn,row,[],False)
@@ -1599,7 +1604,7 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
             conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
             conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
-        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {}),**({'old_permission_denials':row.get('permission_denials') or [],'permission_denials':denials} if body.permission_denials is not None else {})})
+        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role,'old_extra_permissions':row.get('extra_permissions') or [],'extra_permissions':[]} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {}),**({'old_permission_denials':row.get('permission_denials') or [],'permission_denials':denials} if body.permission_denials is not None else {})})
         return {'user':staff_public(conn,output)}
 
 
