@@ -13,7 +13,7 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from . import db, employee_permissions, sms_verification
 
@@ -1282,6 +1282,7 @@ class StaffInvitationBody(BaseModel):
     employee_ref:str|None=Field(default=None,max_length=80)
     vehicle:dict=Field(default_factory=dict)
     role:Literal['driver','owner','admin','delivery_manager','delivery_staff','branch_manager']='driver'
+    full_owner_confirmed:StrictBool=False
     permissions:list[str]=Field(default_factory=list,max_length=20)
     permission_denials:list[str]=Field(default_factory=list,max_length=80)
 
@@ -1340,6 +1341,8 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
     if permissions and body.role != 'admin':
         raise db.error(422, 'ADMIN_ROLE_REQUIRED', 'صلاحيات الإدارة مخصصة لدور أدمن فقط.')
     sms_approved=staff_email_retired(user['brand_id']) and not draft_only
+    if sms_approved and body.role=='owner' and not body.full_owner_confirmed:
+        raise db.error(422,'OWNER_FULL_ACCESS_CONFIRMATION','أكد منح صلاحيات المالك الكاملة قبل إنشاء الحساب.')
     if not body.email and not staff_email_retired(user['brand_id']):
         raise db.error(422,'STAFF_EMAIL_REQUIRED','أدخل البريد الإلكتروني.')
     email=email_delivery.normalize_email(body.email) if body.email else None
@@ -1435,6 +1438,52 @@ def _invalidate_staff_tokens(conn,identifier):
 class OwnerDriverActivationBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     reason:str=Field(min_length=3,max_length=500)
+
+
+class AdditionalSMSOwnerBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    display_name:str=Field(min_length=1,max_length=100)
+    username:str=Field(min_length=3,max_length=150)
+    phone:str=Field(min_length=8,max_length=30)
+    full_owner_confirmed:StrictBool
+    reason:str=Field(min_length=3,max_length=500)
+
+
+@router.post('/identity/owners/sms')
+def create_additional_sms_owner(body:AdditionalSMSOwnerBody,user=Depends(require_roles('owner'))):
+    """Explicit full-owner confirmation, using the canonical SMS staff creator.
+
+    Username is retained only as an administrative identifier. This route never
+    accepts passwords, hashes a password, or asserts ownership of the mobile.
+    """
+    username=body.username.strip()
+    name=body.display_name.strip()
+    reason=body.reason.strip()
+    if not body.full_owner_confirmed:
+        raise db.error(422,'OWNER_FULL_ACCESS_CONFIRMATION','أكد منح صلاحيات المالك الكاملة قبل إنشاء الحساب.')
+    if not re.fullmatch(r'[A-Za-z0-9_.@+-]{3,150}',username) or not name or '\x00' in name or len(reason)<3:
+        raise db.error(422,'OWNER_PROFILE_INVALID','أدخل الاسم واسم مستخدم صحيحًا وسبب الإضافة.')
+    phone=normalize_phone(body.phone)
+    if not re.fullmatch(r'\+9665[0-9]{8}',phone):
+        raise db.error(422,'PHONE_INVALID','أدخل رقم جوال سعودي صحيحًا. / Enter a valid Saudi mobile.')
+    with db.tx() as conn:
+        allowed=db.rate_limit(conn,'staff-invite:'+user['id'],30,3600)
+    if not allowed:
+        raise db.error(429,'STAFF_INVITE_RATE_LIMIT','طلبات إضافة كثيرة. انتظر قليلًا.')
+    with db.tx() as conn:
+        require_owner_sms_step_up(conn,user)
+        if not staff_email_retired(user['brand_id'],conn=conn):
+            raise db.error(409,'OWNER_SMS_POLICY_REQUIRED','فعّل سياسة دخول الموظفين برسالة SMS قبل استخدام هذا المسار.')
+        conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('staff-username:'+username.casefold(),))
+        if conn.execute('SELECT 1 FROM users WHERE lower(username)=lower(%s)',(username,)).fetchone():
+            raise db.error(409,'USERNAME_UNAVAILABLE','اسم المستخدم مستخدم بالفعل؛ اختر اسمًا آخر. لم يتغير أي حساب.')
+        result=create_staff_invitation(conn,StaffInvitationBody(display_name=name,phone=phone,role='owner',full_owner_confirmed=True),user)
+        identifier=result['user']['id']
+        row=conn.execute('UPDATE users SET username=%s WHERE id=%s RETURNING *',(username,identifier)).fetchone()
+        db.audit(conn,user['id'],'owner.sms_account.created','user',identifier,
+                 {'reason':reason,'username':username,'role':'owner','brand_id':user['brand_id'],
+                  'full_owner_confirmed':True,'phone_ownership_verified':False})
+        return {**result,'user':staff_public(conn,row),'username':username,'sign_in':'registered_mobile_sms'}
 
 
 class AdditionalOwnerBody(BaseModel):
@@ -1573,7 +1622,7 @@ def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles(
             require_owner_step_up(conn,user)
         phone_changed=phone!=row['phone']
         if phone_changed and staff_email_retired(row['brand_id']):
-            if row['role']=='owner':
+            if row['role']=='owner' and (row.get('phone_verified_at') or row.get('phone_sms_verified_at')):
                 raise db.error(409,'OWNER_PHONE_VERIFICATION_REQUIRED','غيّر جوال المالك عبر مسار التحقق المستقل من الرقم الجديد. / Use the owner mobile verification flow.')
             require_owner_sms_step_up(conn,user)
             ensure_safe_staff_scope_change(conn,row,[],False)
