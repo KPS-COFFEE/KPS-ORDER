@@ -2,11 +2,10 @@
 import asyncio
 import base64
 import hashlib
-import io
 import logging
 from datetime import datetime, timedelta
 from typing import Literal
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from . import auth, db, service_hours
@@ -112,10 +111,8 @@ def upload_photo(tid:str,body:PhotoBody,request:Request,user=Depends(auth.curren
     try:
         raw=base64.b64decode(body.data_base64,validate=True)
         if not 0<len(raw)<=5*1024*1024:fail(413,'الصورة تتجاوز الحجم المسموح')
-        with Image.open(io.BytesIO(raw)) as source:
-            if source.format!={'image/jpeg':'JPEG','image/png':'PNG','image/webp':'WEBP'}[body.content_type] or source.width*source.height>16000000:fail(422,'الصورة كبيرة جدًا')
-            im=ImageOps.exif_transpose(source).convert('RGB');im.thumbnail((2000,2000))
-            output=io.BytesIO();im.save(output,'JPEG',quality=88);data=output.getvalue()
+        from .evidence_images import evidence_jpeg
+        data=evidence_jpeg(raw,{'image/jpeg':'JPEG','image/png':'PNG','image/webp':'WEBP'}[body.content_type])
     except (ValueError,OSError,UnidentifiedImageError,Image.DecompressionBombError):fail(422,'صورة غير صالحة')
     digest=hashlib.sha256(data).hexdigest()
     with db.tx() as c:
