@@ -1,6 +1,18 @@
 -- Additive engagement records. No customer, order or financial history is rewritten.
 ALTER TABLE orders ADD COLUMN discount_halalas bigint NOT NULL DEFAULT 0 CHECK(discount_halalas>=0);
-ALTER TABLE orders DROP CONSTRAINT orders_total_halalas_check;
+-- PostgreSQL names a multi-column inline CHECK as a table constraint, not
+-- necessarily after its declaration column. Match the exact retained equation
+-- and require one match; never drop an arbitrary financial constraint.
+DO $$
+DECLARE original_check text; matches integer;
+BEGIN
+ SELECT count(*),min(conname) INTO matches,original_check FROM pg_constraint
+ WHERE conrelid='orders'::regclass AND contype='c'
+ AND regexp_replace(pg_get_constraintdef(oid),'[[:space:]()]','','g')=
+     'CHECKtotal_halalas=subtotal_halalas+delivery_fee_halalas';
+ IF matches<>1 THEN RAISE EXCEPTION 'Expected exactly one original order total reconciliation check'; END IF;
+ EXECUTE format('ALTER TABLE orders DROP CONSTRAINT %I',original_check);
+END; $$;
 ALTER TABLE orders ADD CONSTRAINT orders_total_halalas_check CHECK(discount_halalas<=subtotal_halalas AND total_halalas=subtotal_halalas-discount_halalas+delivery_fee_halalas);
 CREATE UNIQUE INDEX engagement_users_brand_id ON users(brand_id,id);
 CREATE TABLE customer_followups (
@@ -66,6 +78,8 @@ CREATE INDEX customer_wallet_history ON customer_wallet_entries(brand_id,custome
 -- Append-only decisions/ledgers. State projections alone may be updated.
 CREATE FUNCTION engagement_immutable() RETURNS trigger AS $$
 BEGIN RAISE EXCEPTION 'Engagement history is append-only'; END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER immutable_order_discount BEFORE UPDATE OF discount_halalas ON orders FOR EACH ROW
+ WHEN (NEW.discount_halalas IS DISTINCT FROM OLD.discount_halalas) EXECUTE FUNCTION engagement_immutable();
 CREATE TRIGGER immutable_followup BEFORE UPDATE OR DELETE ON customer_followups FOR EACH ROW EXECUTE FUNCTION engagement_immutable();
 CREATE TRIGGER immutable_consent BEFORE UPDATE OR DELETE ON customer_marketing_consents FOR EACH ROW EXECUTE FUNCTION engagement_immutable();
 CREATE TRIGGER immutable_notice BEFORE UPDATE OR DELETE ON customer_marketing_notices FOR EACH ROW EXECUTE FUNCTION engagement_immutable();

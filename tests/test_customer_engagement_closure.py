@@ -209,6 +209,22 @@ def verified_customer(client):
 
 
 @pytest.mark.postgres
+def test_order_discount_reconciliation_and_historical_immutability(verified_customer):
+    import psycopg
+    _,user=verified_customer
+    oid='discount-constraint-'+uuid4().hex
+    statement="INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,discount_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'pickup','completed','not_applicable','cash',1000,0,%s,%s,'{}','{}')"
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with db.tx() as c:c.execute(statement,(oid,user['id'],1000,100))
+    with db.tx() as c:c.execute(statement,(oid,user['id'],900,100))
+    with pytest.raises(psycopg.errors.RaiseException,match='append-only'):
+        with db.tx() as c:c.execute('UPDATE orders SET discount_halalas=0 WHERE id=%s',(oid,))
+    with db.tx() as c:
+        row=c.execute('SELECT discount_halalas,total_halalas FROM orders WHERE id=%s',(oid,)).fetchone()
+        assert row=={'discount_halalas':100,'total_halalas':900}
+
+
+@pytest.mark.postgres
 def test_explicit_consent_replay_revocation_and_brand_isolation(verified_customer):
     client,user=verified_customer
     assert client.get('/api/customer/marketing-consent').json()['marketing']=={'sms':False,'whatsapp':False}
