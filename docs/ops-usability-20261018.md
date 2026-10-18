@@ -23,8 +23,22 @@ then continuously after 60 seconds while unresolved. Message reading is not a re
 the existing server-scoped awaiting-reply endpoint remains authoritative. Timers
 start on first observation in this browser session, not an invented server arrival
 timestamp. Browser gesture/audio permission and an open, awake page are required.
-Disconnected or unverified alerts stop continuous audio after 45 seconds without
-a successful refresh; renewed verification resumes an outstanding alert.
+Follow-up owner decision: loss of a refresh is not acknowledgment and must not
+mute an outstanding bell; only a confirmed action/reply or ended session stops it.
+
+Bell policy is stored per brand in existing app_settings JSON, without a migration.
+Only an owner can update it through a dedicated endpoint with session-bound SMS
+step-up, idempotency and an audit event. Delegated appearance permission does not
+grant access. Delays and individual pulse lengths are configurable; bells cannot
+be disabled via this endpoint. Nonowners have no visible audio settings or mute
+button. Playback is attempted automatically and retried on ordinary pointer/key
+interaction; blocked browser audio remains honestly visible as a status notice.
+Browser/site/OS mute controls, sleep and closed pages cannot be overridden.
+Owner changes propagate on the next successful policy refresh (up to 60 seconds).
+The shared scheduler now also handles new driver assignments.
+
+Local PostgreSQL 18.6: 19 policy/scope/reply/printing checks passed. New owner SMS,
+nonowner hidden controls, order layout and bell browser checks await real CI.
 
 An independent amendments-inbox request now runs alongside the other alert reads,
 removing a sequential network round trip without increasing polling frequency.

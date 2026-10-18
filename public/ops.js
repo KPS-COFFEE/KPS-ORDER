@@ -9,41 +9,85 @@
   const datetime = v => v ? new Intl.DateTimeFormat(state.lang === 'en' ? 'en-GB' : 'ar-SA-u-ca-gregory', { timeZone: 'Asia/Riyadh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(v)) : '—';
   const moneyInput = v => (Number(v || 0) / 100).toFixed(2);
   let alertAudio=null,alertBusy=false;
+  let alertPolicy={first_after_seconds:0,second_after_seconds:30,continuous_after_seconds:60,first_ring_seconds:1,second_ring_seconds:1};
+  let alertPolicyUser=null,alertPolicyAt=0,alertPolicyBusy=false,soundActivationBusy=false;
+  async function refreshAlertPolicy(){
+    if(alertPolicyBusy||!state.user||!['owner','admin','delivery_manager','delivery_staff','branch_manager','driver'].includes(state.user.role))return;
+    const user=state.user.id;
+    if(alertPolicyUser===user&&Date.now()-alertPolicyAt<60000)return;
+    alertPolicyBusy=true;
+    try{const result=await api('/api/operations/alert-policy');if(state.user?.id===user){alertPolicy=result.policy;alertPolicyUser=user;alertPolicyAt=Date.now();}}
+    catch{/* Keep mandatory defaults/last verified policy; never mute after a failed read. */}
+    finally{alertPolicyBusy=false;}
+  }
+  async function ensureMandatoryAlertSound(){
+    if(!state.user||alertAudio?.state==='running')return;
+    if(soundActivationBusy){
+      if(alertAudio&&navigator.userActivation?.isActive)try{await alertAudio.resume();tickAlertSounds();}catch{}
+      return;
+    }
+    soundActivationBusy=true;
+    try{await enableAlertSound();}catch{/* A status notice explains blocked browser audio, without employee settings. */}
+    finally{soundActivationBusy=false;}
+  }
+  document.addEventListener('pointerdown',ensureMandatoryAlertSound,{passive:true});
+  document.addEventListener('keydown',ensureMandatoryAlertSound);
+  setInterval(refreshAlertPolicy,15000);
+  function concealAlertControls(host){
+    // No employee toggle or mute preference. A browser restriction must not be hidden.
+    host.querySelectorAll('[data-action=alert-sound]').forEach(button=>{button.hidden=true;});
+    let warning=$('#alert-audio-blocked',host);
+    if(!warning){warning=document.createElement('p');warning.id='alert-audio-blocked';warning.className='small-text notice warn';warning.setAttribute('role','status');host.append(warning);}
+    warning.hidden=alertAudio?.state==='running';
+    warning.textContent=tr('الصوت ينتظر سماح المتصفح؛ اضغط داخل الصفحة. إذا بقي التنبيه، اسمح بالصوت للموقع من إعدادات المتصفح.','Audio awaits browser permission; interact with this page. If this notice remains, allow site audio in browser settings.');
+  }
+  async function alertPolicySettings(){
+    if(state.user?.role!=='owner')throw new Error(tr('إعدادات الجرس للمالك فقط.','Only the owner may change bell settings.'));
+    const result=await api('/api/operations/alert-policy'),p=result.policy;
+    const inputs=[['first_after_seconds','التنبيه الأول بعد — ثانية','First alert after — seconds',0,300],['first_ring_seconds','مدة الدقة الأولى — ثانية (دقتان)','First pulse duration — seconds (two pulses)',1,10],['second_after_seconds','التنبيه الثاني بعد — ثانية من البداية','Second alert after — seconds from start',1,600],['second_ring_seconds','مدة دقة التنبيه الثاني — ثانية (دقتان)','Second pulse duration — seconds (two pulses)',1,10],['continuous_after_seconds','الرنين المتواصل بعد — ثانية من البداية','Continuous ringing after — seconds from start',1,1800]];
+    modal(tr('جرس التشغيل الإلزامي — المالك','Mandatory operation bells — owner'),`<form>${notice(tr('الجرس إلزامي. نغمة الرسائل مختلفة عن الطلبات. فتح الشاشة أو قراءة الرسالة لا يوقفه؛ يلزم حفظ الرد أو تنفيذ الإجراء. لا يمكن ضمان الصوت عند إغلاق الصفحة أو سكون الجهاز.','Bells are mandatory. Messages and orders use distinct tones. Reading or opening does not stop a bell: save a reply or perform the required action. Closed pages or sleeping devices cannot guarantee audio.'))}<div class="form-columns">${inputs.map(([key,ar,en,min,max])=>field(tr(ar,en),key,p[key],{type:'number',min,max,step:1,required:true})).join('')}</div>${formEnd(tr('تحقق SMS وحفظ','Verify by SMS and save'))}</form>`,async fd=>{
+      const body=Object.fromEntries(inputs.map(([key])=>[key,Number(fd.get(key))]));
+      await ownerStepUp();const saved=await api('/api/admin/alert-policy',{method:'PATCH',body});
+      alertPolicy=saved.policy;alertPolicyUser=state.user.id;alertPolicyAt=Date.now();closeModal();tickAlertSounds();
+    });
+  }
   // Timers only synthesize sound; they never poll the server or acknowledge work.
   const alertChannels=new Map();
   function syncAlertChannel(kind,ids){
     let channel=alertChannels.get(kind);
-    if(!channel){channel={items:new Map(),continuous:null,user:state.user?.id,verified:0};alertChannels.set(kind,channel);}
+    if(!channel){channel={items:new Map(),continuous:null,bursts:[],user:state.user?.id,verified:0};alertChannels.set(kind,channel);}
     if(channel.user!==state.user?.id){stopAlertChannel(channel);channel.items.clear();channel.user=state.user?.id;}
     const current=new Set(ids.map(String)),now=Date.now();channel.verified=now;
     for(const id of channel.items.keys())if(!current.has(id))channel.items.delete(id);
     for(const id of current)if(!channel.items.has(id))channel.items.set(id,{at:now,first:false,second:false});
     tickAlertSounds();
   }
-  function stopAlertChannel(channel){
+  function stopAlertChannel(channel,clearBursts=true){
     if(channel.continuous){channel.continuous.stop();channel.continuous.disconnect();channel.continuous=null;}
+    if(clearBursts){for(const tone of channel.bursts)if(!tone.ended)tone.stop();channel.bursts=[];}
   }
   function tickAlertSounds(){
     const now=Date.now();
     for(const [kind,channel] of alertChannels){
-      if(!state.user||channel.user!==state.user.id||!channel.items.size||now-channel.verified>45000||alertAudio?.state!=='running'){
+      if(!state.user||channel.user!==state.user.id||!channel.items.size||alertAudio?.state!=='running'){
         stopAlertChannel(channel);if(!state.user||channel.user!==state.user?.id)channel.items.clear();continue;
       }
-      let pair=false,continuous=false;
+      channel.bursts=channel.bursts.filter(t=>!t.ended);
+      let pair=0,continuous=false;
       for(const item of channel.items.values()){
-        if(!item.first){item.first=true;pair=true;}
-        if(now-item.at>=30000&&!item.second){item.second=true;pair=true;}
-        if(now-item.at>=60000)continuous=true;
+        if(!item.first&&now-item.at>=alertPolicy.first_after_seconds*1000){item.first=true;pair=alertPolicy.first_ring_seconds;}
+        if(now-item.at>=alertPolicy.second_after_seconds*1000&&!item.second){item.second=true;pair=alertPolicy.second_ring_seconds;}
+        if(now-item.at>=alertPolicy.continuous_after_seconds*1000)continuous=true;
       }
       const frequency=kind==='messages'?1046:660;
-      if(pair&&!channel.continuous){alertTone(frequency,alertAudio.currentTime,.18,.12);alertTone(frequency,alertAudio.currentTime+.3,.18,.12);}
+      if(pair&&!channel.continuous&&!continuous){channel.bursts.push(...[alertTone(frequency,alertAudio.currentTime,pair,.12),alertTone(frequency,alertAudio.currentTime+pair+.3,pair,.12)].filter(Boolean));}
       if(continuous&&!channel.continuous){
         const oscillator=alertAudio.createOscillator(),gain=alertAudio.createGain();
         oscillator.type=kind==='messages'?'sine':'triangle';oscillator.frequency.value=frequency;
         gain.gain.value=.07;oscillator.connect(gain);gain.connect(alertAudio.destination);
         oscillator.start();channel.continuous=oscillator;
         oscillator.onended=()=>gain.disconnect();
-      }else if(!continuous)stopAlertChannel(channel);
+      }else if(!continuous&&channel.continuous)stopAlertChannel(channel,false);
     }
   }
   setInterval(tickAlertSounds,250);
@@ -52,6 +96,8 @@
     oscillator.connect(gain);gain.connect(alertAudio.destination);oscillator.frequency.value=frequency;
     gain.gain.setValueAtTime(.001,start);gain.gain.exponentialRampToValueAtTime(volume,start+.02);
     gain.gain.exponentialRampToValueAtTime(.001,start+duration);oscillator.start(start);oscillator.stop(start+duration);
+    oscillator.onended=()=>{oscillator.ended=true;oscillator.disconnect();gain.disconnect();};
+    return oscillator;
   }
   async function enableAlertSound(){
     const Audio=window.AudioContext||window.webkitAudioContext;
@@ -59,6 +105,8 @@
     alertAudio=alertAudio||new Audio();await alertAudio.resume();driverAlertAt=0;await refreshOperationalAlerts();
   }
   async function refreshOperationalAlerts(){
+    if(state.user&&!alertAudio)void ensureMandatoryAlertSound();
+    await refreshAlertPolicy();
     let host=$('#operational-alerts');
     if(!host){host=document.createElement('section');host.id='operational-alerts';$('#page-heading').after(host);}
     if(state.user?.role==='driver'){await refreshDriverAlerts(host);return;}
@@ -69,6 +117,7 @@
       const unassigned=d.unassigned||[],problems=d.problems||[],printing=d.printing||[];
       host.hidden=false;
       let alertHtml=(['owner','delivery_manager'].includes(state.user.role)?`<button class="quiet" data-action="break-manage">${esc(tr('استراحات السائقين','Driver breaks'))} (${(breaks.breaks||[]).filter(b=>b.overdue||b.status==='requested').length})</button><button class="quiet" data-action="driver-report-center">${esc(tr('بلاغات السائقين','Driver reports'))}</button>`:'')+`<div class="actions"><button class="quiet" data-action="alert-sound">${esc(alertAudio?.state==='running'?tr('الصوت مفعل','Sound enabled'):tr('تفعيل صوت الطلبات — أبقِ الصفحة مفتوحة','Enable order sound — keep this page open'))}</button></div>${unassigned.length||problems.length||printing.length?`<details class="notice warn" open><summary>${esc(tr('تنبيهات التشغيل','Operational alerts'))}: ${unassigned.length+problems.length+printing.length}</summary>${unassigned.map(o=>`<p><button class="quiet" data-action="order-detail" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button> — ${esc(tr('يلزم إجراء: قبول وإسناد أو رفض بسبب','Action required: accept and assign or reject with reason'))}</p>`).join('')}${problems.map(o=>`<p><button class="quiet" data-action="order-detail" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button> — ${esc(o.reason||tr('بلاغ سائق يحتاج متابعة','Driver report needs attention'))}</p>`).join('')}${printing.length?`<p>${esc(tr('طباعة متأخرة أو غير مؤكدة؛ الطلبات محفوظة. تحقق من الورق قبل إعادة الطباعة.','Delayed or uncertain printing; orders are saved. Check paper output before reprinting.'))} <button data-action="branch-printers">${esc(tr('مراجعة الطباعة','Review printing'))} (${printing.length})</button></p>`:''}</details>`:''}`;
+      if(state.user.role==='owner')alertHtml+=`<div class="actions"><button class="quiet" data-action="alert-policy">${esc(tr('إعدادات جرس التشغيل — المالك','Operation bell settings — owner'))}</button></div>`;
       const amendments=amendmentData.orders||[];if(amendments.length)alertHtml+=`<div class="notice warn"><b>${esc(tr('طلبات تعديل / نسخ معدلة تحتاج مراجعة','Amendments / revised copies need review'))}</b>${amendments.map(o=>`<p><button data-action="amend-order" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button></p>`).join('')}</div>`;
       const fuelPending=(fuel.requests||[]).filter(r=>r.status==='requested'&&r.ui_status!=='stale'),closurePending=(closures.requests||[]).filter(s=>s.closure_authorization?.status==='requested');if(state.user.role==='delivery_manager'&&can('shifts_approve'))alertHtml+=`<p class="notice ${fuelPending.length?'warn':''}"><button data-action="fuel-inbox">${esc(fuelPending.length?tr('طلبات وقود تنتظر الاعتماد','Fuel requests awaiting approval'):tr('طلبات استثناء الوقود','Fuel exception requests'))} (${fuelPending.length})</button></p>`;if(closurePending.length)alertHtml+=`<p class="notice warn"><button data-action="closure-inbox">${esc(tr('طلبات إنهاء مبكر تنتظر الاعتماد','Early closure requests awaiting approval'))} (${closurePending.length})</button></p>`;const awaiting=chats.awaiting_reply||[],pending=amendments.length||unassigned.length||problems.length||printing.length||fuelPending.length||closurePending.length;
       if(awaiting.length)alertHtml+=`<p class="notice warn"><button class="quiet" data-page="chat">${esc(tr('رسائل تنتظر الرد','Messages awaiting reply'))} (${num(awaiting.length)})</button></p>`;
@@ -80,6 +129,7 @@
         ...amendments.map(o=>'amend:'+o.id),...fuelPending.map(o=>'fuel:'+o.id),...closurePending.map(o=>'closure:'+o.id)
       ]);
       syncAlertChannel('messages',awaiting.map(c=>c.id));
+      concealAlertControls(host);
     }catch(e){host.hidden=false;host.textContent=tr('تعذر تحديث التنبيهات؛ راجع الطلبات والطباعة يدويًا.','Alerts could not refresh; check orders and printing manually.');}finally{alertBusy=false;}
   }
   let driverAlertSignature='',driverAlertAt=0;
@@ -92,9 +142,8 @@
       host.hidden=false;
       const html=`<div class="notice ${pending.length?'warn':''}" role="status"><div class="actions"><button class="quiet" data-action="alert-sound">${esc(alertAudio?.state==='running'?tr('الجرس مفعل','Bell enabled'):tr('تفعيل جرس الطلبات','Enable task bell'))}</button><button data-page="tasks">${esc(tr('طلباتي النشطة','My active orders'))} (${num(rows.length)})</button></div>${pending.length?`<strong>${esc(tr('لديك طلبات جديدة تنتظر قبولك','New orders are waiting for your acceptance'))}: ${num(pending.length)}</strong>`:''}<p class="small-text">${esc(tr('أبقِ الصفحة مفتوحة وارفع صوت الجهاز لاستقبال الجرس.','Keep this page open and turn up device volume to hear the bell.'))}</p></div>`;
       if(host.dataset.rendered!==html){host.innerHTML=html;host.dataset.rendered=html;}
-      if(pending.length&&alertAudio?.state==='running'&&(signature!==driverAlertSignature||Date.now()-driverAlertAt>=15000)){
-        driverAlertAt=Date.now();for(let i=0;i<3;i++){alertTone(880,alertAudio.currentTime+i*.65,.22,.28);alertTone(1174,alertAudio.currentTime+i*.65+.25,.27,.28);}
-      }
+      concealAlertControls(host);
+      syncAlertChannel('driver-orders',pending.map(t=>t.id));
       driverAlertSignature=signature;if(!pending.length)driverAlertAt=0;
     }catch(e){host.hidden=false;host.textContent=tr('تعذر تحديث مهامك؛ اضغط تحديث.','Could not refresh tasks; press refresh.');}finally{alertBusy=false;}
   }
@@ -1513,6 +1562,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
       else if(a==='float-register')await floatRegister();
       else if(a==='float-review')floatReview(id);
       else if(a==='alert-sound')await enableAlertSound();
+      else if(a==='alert-policy')await alertPolicySettings();
       else if(a==='no-answer')reportNoAnswer(id);
       else if(a==='problem')reasonModal(tr('بلاغ مشكلة','Report a problem'),tr('حفظ البلاغ','Save problem report'),`/api/tasks/${encodeURIComponent(id)}/transition`,'reason',{status:'problem'});
       else if(a==='driver-terminal')await editDriverTerminal(id);

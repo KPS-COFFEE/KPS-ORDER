@@ -12,6 +12,48 @@ from PIL import Image, UnidentifiedImageError
 from . import auth, db, catalog, email_delivery, service_hours, print_translations
 
 router = APIRouter(prefix='/api')
+ALERT_POLICY_DEFAULTS = {
+    'first_after_seconds': 0, 'second_after_seconds': 30,
+    'continuous_after_seconds': 60, 'first_ring_seconds': 1, 'second_ring_seconds': 1,
+}
+
+
+def alert_policy(conn, brand_id):
+    row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
+    return ALERT_POLICY_DEFAULTS | ((row['settings'].get('alert_policy') or {}) if row else {})
+
+
+@router.get('/operations/alert-policy')
+def read_alert_policy(user=Depends(auth.require_roles('owner','admin','delivery_manager','delivery_staff','branch_manager','driver'))):
+    with db.tx() as conn:
+        return {'mandatory': True, 'policy': alert_policy(conn, user['brand_id'])}
+
+
+@router.patch('/admin/alert-policy')
+def update_alert_policy(body: dict, user=Depends(auth.require_roles('owner')),
+                        idem: str | None=Header(None, alias='Idempotency-Key')):
+    # Dedicated owner-only route; delegated appearance/configuration grants do not apply.
+    if set(body) != set(ALERT_POLICY_DEFAULTS) or any(type(v) is not int for v in body.values()):
+        raise db.error(422, 'ALERT_POLICY_INVALID', 'أدخل جميع توقيتات الجرس بأرقام صحيحة.')
+    first, second, continuous = (body[k] for k in ('first_after_seconds','second_after_seconds','continuous_after_seconds'))
+    if (not 0 <= first <= 300 or not first < second <= 600 or
+            not second < continuous <= 1800 or
+            not all(1 <= body[k] <= 10 for k in ('first_ring_seconds','second_ring_seconds')) or
+            first + 2 * body['first_ring_seconds'] + .3 > second or
+            second + 2 * body['second_ring_seconds'] + .3 > continuous):
+        raise db.error(422, 'ALERT_POLICY_INVALID', 'رتب أوقات التنبيه دون تداخل؛ مدة الدقة من ثانية إلى عشر ثوانٍ.')
+    with db.tx() as conn:
+        auth.require_owner_step_up(conn, user)
+        def perform():
+            row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR UPDATE', (user['brand_id'],)).fetchone()
+            settings = row['settings'] | {'alert_policy': body}
+            conn.execute('UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id=%s', (db.json(settings), user['brand_id']))
+            db.audit(conn, user['id'], 'alerts.policy.updated', 'brand', user['brand_id'],
+                     {'before': row['settings'].get('alert_policy', ALERT_POLICY_DEFAULTS), 'after': body})
+            return {'mandatory': True, 'policy': body}
+        return db.idempotent(conn, user['id'], idem, 'alerts.policy.update', body, perform)
+
+
 owner = auth.require_roles('owner')
 branch_admin = auth.require_permission('branches_manage')
 product_admin = auth.require_permission('products_manage')

@@ -8,6 +8,45 @@ from tests.browser_sms_helpers import sms_browser_app as live_app, complete_owne
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit real Chromium opt-in required')]
 
 
+def test_mandatory_bell_controls_hidden_for_staff(live_app,chromium_browser):
+    from playwright.sync_api import expect
+    user=_staff('delivery_staff');context,page,errors=_context(chromium_browser,live_app)
+    try:
+        _owner_login(context,live_app,user)
+        page.set_viewport_size({'width':390,'height':950})
+        page.goto(live_app+'/ops',wait_until='networkidle')
+        expect(page.locator('#operational-alerts')).to_be_visible()
+        expect(page.locator('[data-action=alert-policy]')).to_have_count(0)
+        expect(page.locator('[data-action=alert-sound]')).to_be_hidden()
+        page.locator('#page-heading').click()
+        expect(page.locator('#alert-audio-blocked')).to_be_hidden()
+        page.screenshot(path=str(ARTIFACTS/'mandatory-bell-staff-ar-390.png'),full_page=True)
+        assert not errors,errors
+    finally:context.close()
+
+
+def test_owner_bell_policy_saved_only_after_sms(live_app,chromium_browser):
+    from playwright.sync_api import expect
+    user=_staff();context,page,errors=_context(chromium_browser,live_app)
+    try:
+        _owner_login(context,live_app,user)
+        page.goto(live_app+'/ops',wait_until='networkidle')
+        page.locator('[data-action=alert-policy]').click()
+        form=page.locator('#modal form')
+        form.locator('[name=first_after_seconds]').fill('5')
+        form.locator('[name=first_ring_seconds]').fill('2')
+        form.locator('button[type=submit]').click()
+        with db.tx() as c:
+            assert 'alert_policy' not in c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
+        complete_owner_sms_dialog(page,user)
+        expect(page.locator('#modal')).not_to_be_visible()
+        with db.tx() as c:
+            policy=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']['alert_policy']
+            assert policy['first_after_seconds']==5 and policy['first_ring_seconds']==2
+        assert not errors,errors
+    finally:context.close()
+
+
 @pytest.mark.parametrize(('lang','width'),[('ar',390),('ar',768),('ar',1280),('en',390),('en',768),('en',1280)])
 def test_order_table_full_text_and_responsive_layout(live_app,chromium_browser,lang,width):
     from playwright.sync_api import expect
