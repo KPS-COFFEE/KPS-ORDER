@@ -24,7 +24,9 @@ def test_unassigned_contact_attempts_and_scope(ops):
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM order_events WHERE order_id=%s AND event_type='customer.no_answer'",(oid,)).fetchone()['n']==2
         assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='ready'
-    post('driver',path,{'status':'accepted'})
+    post('driver',path,{'status':'accepted','reason':'Driver cannot resolve own escalated problem'},status=403)
+    post('manager',path,{'status':'accepted'},status=422)
+    post('manager',path,{'status':'accepted','reason':'Manager contacted customer and approved continuing'})
     assert not actor('manager').get('/api/operations/alerts').json()['problems']
 
 @pytest.mark.postgres

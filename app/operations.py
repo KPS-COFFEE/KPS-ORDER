@@ -570,11 +570,15 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
         return mutate(c,user,request,'order.assign:'+oid,body.model_dump(),perform)
 
 @router.get('/tasks')
-def tasks(user=Depends(auth.current_user)):
+def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff','driver')
     with db.tx() as c:
         if user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
-        else:rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC LIMIT 500').fetchall(); rows=[r for r in rows if same_scope(user,r) and (user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[]))]
+        else:
+            rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))'+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500',
+                           [user['brand_id'],user['role']=='owner',user.get('branch_ids',[])]+([order_id] if order_id else [])).fetchall()
+        if order_id:
+            rows=[r for r in rows if r['order_id']==order_id]
         if user['role']=='driver':
             rows=[r for r in rows if r['branch_id'] in user.get('branch_ids',[])]
             for r in rows:
@@ -608,6 +612,13 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             s=lock_shift(c,t['shift_id']);shift_access(c,user,s)
             if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
+            resolving_problem=t['status']=='problem' and body.status!='problem'
+            if resolving_problem:
+                roles(user,'owner','delivery_manager')
+                if not body.reason.strip():
+                    raise db.error(422,'PROBLEM_DECISION_REQUIRED','سجل قرار مدير التوصيل وسبب معالجة البلاغ.')
+                if body.status=='accepted' and t.get('picked_up_at'):
+                    raise db.error(409,'PROBLEM_PICKUP_ALREADY_CONFIRMED','الاستلام مسجل سابقًا؛ استأنف من مرحلة التوصيل دون إعادة المرحلة.')
             if body.status in ('accepted','picked_up','delivered'):
                 from .order_amendments import guard
                 guard(c,o,driver_id=t['driver_id'],require_branch=body.status!='accepted')
@@ -629,7 +640,12 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status=='delivered' and o['payment_status']!='paid':fail(409,'يلزم تحصيل فعلي ودليل تسليم')
             if body.status in ('picked_up','delivered'):
                 from .order_support import require_photo
-                require_photo(c,t,user,body.status,body.photo_id)
+                if resolving_problem and body.status=='picked_up':
+                    # Manager restores only an already evidenced pickup, never certifies a new one.
+                    if not t.get('picked_up_at') or not c.execute("SELECT 1 FROM delivery_photos WHERE task_id=%s AND stage='picked_up' AND used_at IS NOT NULL",(tid,)).fetchone():
+                        raise db.error(409,'PROBLEM_PICKUP_EVIDENCE_REQUIRED','لا يوجد إثبات استلام سابق؛ راجع المهمة دون اختلاق وقت استلام.')
+                else:
+                    require_photo(c,t,user,body.status,body.photo_id)
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
@@ -649,7 +665,9 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
                 from .fiscal_issuance import credit_on_cancellation
                 credit_on_cancellation(c,o,user,body.reason)
             if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
-            db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status'],'photo_id':body.photo_id})
+            db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status'],'status':body.status,
+                     'photo_id':body.photo_id,'reason':body.reason,'branch_id':o['branch_id'],
+                     'actor_name':user.get('display_name',''),'manager_decision':resolving_problem})
             if body.contact_method:
                 db.event(c,t['order_id'],user['id'],'customer.no_answer',{'task_id':tid,'method':body.contact_method,'reason':body.reason})
             db.audit(c,user['id'],'task.transition','task',tid,body.model_dump())

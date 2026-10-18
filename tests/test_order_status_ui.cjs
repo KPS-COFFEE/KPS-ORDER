@@ -1,0 +1,15 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('public/ops.js','utf8');
+const ctx={state:{user:{role:'owner'}},can:()=>true,tr:(ar,en)=>en,esc:x=>String(x??''),badge:x=>`[${x}]`,statusName:x=>x};
+vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('  function orderStatusBadge('),source.indexOf('  function orderCard(')),ctx);
+const base={id:'test',service:'delivery',preparation_status:'handed_over'};
+assert.match(ctx.orderStatusBadge({...base,delivery_status:'problem'}),/Delivery manager action required/);
+assert.match(ctx.orderStatusBadge({...base,delivery_status:'problem'}),/resolve-order-problem/);
+assert.match(ctx.orderStatusBadge({...base,delivery_status:'picked_up'}),/\[picked_up\]/);
+assert.match(ctx.orderStatusBadge({...base,delivery_status:'delivered'}),/\[delivered\]/);
+assert.ok(!ctx.orderStatusBadge({...base,delivery_status:'delivered'}).includes('action required'));
+assert.match(ctx.orderStatusBadge({...base,delivery_status:'pending'}),/Handed to driver/);
+ctx.state.user.role='driver';assert.ok(!ctx.orderStatusBadge({...base,delivery_status:'problem'}).includes('resolve-order-problem'));
+assert.equal(ctx.orderEventDescription({event_type:'order.created',details:{}}),'Order created');
+assert.match(ctx.orderEventDescription({event_type:'task.accepted',details:{previous:'assigned',status:'accepted',reason:'A recorded manager decision'}}),/assigned → accepted.*A recorded manager decision/);
+console.log('PASS: unresolved delivery problem overrides branch handover; delivered remains delivered; manager-only action and readable event transitions.');

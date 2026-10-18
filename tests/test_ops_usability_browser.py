@@ -8,6 +8,55 @@ from tests.browser_sms_helpers import sms_browser_app as live_app, complete_owne
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit real Chromium opt-in required')]
 
 
+@pytest.mark.parametrize(('lang','width'),[('ar',390),('ar',768),('ar',1280),('en',390),('en',768),('en',1280)])
+def test_problem_status_event_rows_and_conversation_cards(live_app,chromium_browser,lang,width):
+    from playwright.sync_api import expect
+    owner=_staff();context,page,errors=_context(chromium_browser,live_app)
+    try:
+        _owner_login(context,live_app,owner)
+        context.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
+        row={'id':'synthetic-problem','service':'delivery','order_no':'TEST-PROBLEM-001',
+             'branch_id':'kps-branch-1','customer':{'name':'عميل اختبار البلاغ','neighborhood':'حي الاختبار'},
+             'preparation_status':'handed_over','delivery_status':'problem','payment_status':'unpaid',
+             'created_at':'2026-10-18T12:00:00Z','total_halalas':25000,'snapshot':{'items':[]}}
+        events=[{'event_type':'order.created','actor_name':'موظف اختبار','created_at':'2026-10-18T12:00:00Z','details':{}},
+                {'event_type':'task.problem','actor_name':'سائق اختبار','created_at':'2026-10-18T12:01:00Z','details':{'previous':'picked_up','status':'problem','reason':'سبب صناعي طويل يظهر كاملًا دون قص أو تداخل مع الوقت والفرع'}}]
+        page.route('**/api/orders?*',lambda r:r.fulfill(json={'orders':[row],'next_offset':None}))
+        page.route('**/api/orders/synthetic-problem',lambda r:r.fulfill(json={'order':row,'events':events}))
+        card={'id':'synthetic-chat','order_reference':'TEST-PROBLEM-001','branch_id':'kps-branch-1',
+              'branch_name':'المروج','branch_no':1,'route':'delivery','status':'open','customer_name':'عميل اختبار البطاقات',
+              'category':'delivery_problem','unread_count':2,'last_message':'رسالة اختبار <script>not executable</script>',
+              'created_at':'2026-10-18T12:00:00Z'}
+        page.route('**/api/conversations',lambda r:r.fulfill(json={'conversations':[card]}))
+        page.route('**/api/conversations/synthetic-chat/messages?*',lambda r:r.fulfill(json={'conversation':card,'messages':[]}))
+        page.set_viewport_size({'width':width,'height':950})
+        page.goto(live_app+'/ops',wait_until='networkidle')
+        page.locator('#navigation [data-page=orders]').click()
+        status=page.locator('.order-table tbody td').last
+        expect(status).to_contain_text('يتطلب إجراء مدير التوصيل' if lang=='ar' else 'Delivery manager action required')
+        expect(status.locator('[data-action=resolve-order-problem]')).to_be_visible()
+        page.locator('[data-action=order-detail][data-id=synthetic-problem]').click()
+        page.locator('.order-detail-events summary').click()
+        expect(page.locator('.order-detail-events')).not_to_contain_text('order.created')
+        expect(page.locator('.order-detail-events')).to_contain_text(events[1]['details']['reason'])
+        assert page.locator('#modal').evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
+        page.screenshot(path=str(ARTIFACTS/f'event-rows-{lang}-{width}.png'),full_page=True)
+        page.locator('#modal .modal-head button').click()
+        page.locator('#navigation [data-page=chat]').click()
+        expect(page.locator('.chat-layout')).to_have_class('chat-layout inbox-only')
+        expect(page.locator('.conversation-customer')).to_have_text(card['customer_name'])
+        expect(page.locator('.conversation-preview')).to_have_text(card['last_message'])
+        assert page.locator('.conversation script').count()==0
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        assert page.locator('.conversation').evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
+        page.screenshot(path=str(ARTIFACTS/f'conversation-cards-{lang}-{width}.png'),full_page=True)
+        page.locator('.conversation').click()
+        expect(page.locator('.conversation')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('#chat-detail')).to_be_visible()
+        assert not errors,errors
+    finally:context.close()
+
+
 def test_mandatory_bell_controls_hidden_for_staff(live_app,chromium_browser):
     from playwright.sync_api import expect
     user=_staff('delivery_staff');context,page,errors=_context(chromium_browser,live_app)

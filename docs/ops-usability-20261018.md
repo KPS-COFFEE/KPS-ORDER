@@ -49,3 +49,21 @@ Node alert schedule and six mandatory-SMS handler scenarios passed. New AR/EN
 This application change invalidates the previous image certificate for release:
 certify the new exact SHA/image again. No production deployment is authorized by
 this document, and no production records were changed.
+
+## Event history, unresolved delivery problems and conversation cards
+
+Order lists and details now prioritize actual delivery status over preparation
+handover. Branch-to-driver handover is not customer delivery. An open problem
+shows a manager-action badge and decision form in orders/timing/tasks. Only an
+owner or delivery manager may resolve it, with a recorded reason and audit event.
+A manager may resume an already evidenced pickup without creating a new pickup
+time/photo; missing pickup evidence blocks this action. Cancellation retains its
+payment/refund guards. Driver self-resolution is denied. Tasks lookup filters
+brand and authorized branches in SQL, and optionally targets one order.
+
+Event history uses a wider responsive dialog and compact rows with full reasons,
+and translates common event labels. Conversation cards reuse the same rendering
+on initial load and refresh, show authorized customer/branch/latest-message data,
+and retain escaping and read/reply rules. No production order was manually edited.
+Local PostgreSQL 18.6: 34 affected operational/support/timing tests passed. New
+AR/EN event-history and conversation screenshots at 390/768/1280 await CI.

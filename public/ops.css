@@ -349,6 +349,33 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 .table-wrap .fleet-log-table th:last-child,.table-wrap .fleet-log-table td:last-child{min-width:150px}
 .table-wrap .fleet-log-table td:nth-child(22){min-width:220px}
 /* Staff directory uses the existing panel, badge and action vocabulary. */
+/* Event rows use the available dialog width, with full reasons wrapping. */
+dialog:has(.order-detail-events){width:min(1180px,calc(100vw - 24px))}
+.order-detail-events summary{font-weight:700;cursor:pointer;margin-bottom:12px}
+.order-detail-events table{min-width:880px;font-size:14px}
+.order-detail-events th,.order-detail-events td{padding:10px 12px;line-height:1.65;vertical-align:middle}
+.order-detail-events th:nth-child(1),.order-detail-events td:nth-child(1){min-width:195px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.order-detail-events th:nth-child(2),.order-detail-events td:nth-child(2){min-width:150px}
+.order-detail-events th:nth-child(3),.order-detail-events td:nth-child(3){min-width:210px}
+.order-detail-events th:last-child,.order-detail-events td:last-child{min-width:300px;white-space:normal;overflow-wrap:anywhere}
+.order-detail-events tbody tr:nth-child(even){background:#fafbf9}
+/* Shared inbox cards for initial rendering and incremental refresh. */
+.chat-layout{grid-template-columns:minmax(290px,360px) minmax(0,1fr);align-items:start}
+.chat-layout.inbox-only{grid-template-columns:minmax(0,1fr)}
+.chat-layout.inbox-only #chat-detail{display:none}
+.chat-layout.inbox-only .conversation-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:14px;max-height:none}
+.conversation-list{min-width:0}
+.conversation{display:flex;flex-direction:column;gap:10px;margin:0 0 12px;padding:16px;min-width:0;border-radius:13px;height:auto;white-space:normal;overflow-wrap:anywhere}
+.conversation.active{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.conversation-card-head,.conversation-card-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;max-width:100%}
+.conversation-card-head strong{font-size:14px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.conversation-customer{font-size:16px;font-weight:700}
+.conversation-context{font-size:13px;color:var(--muted)}
+.conversation-preview{display:block;font-size:14px;line-height:1.8;white-space:pre-wrap;text-align:start;padding:10px;border:1px solid var(--line);border-radius:9px;background:#fafbf9;max-height:8em;overflow:auto}
+.conversation-card-footer{margin-top:auto}
+.conversation-card-footer small{font-size:11px}
+.chat-layout #chat-detail{min-width:0}
+@media(max-width:900px){.chat-layout{grid-template-columns:minmax(0,1fr)}.chat-layout:not(.inbox-only) .conversation-list{max-height:300px;overflow:auto}.conversation{margin-bottom:10px}}
 .staff-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
 .staff-card{display:flex;flex-direction:column;min-width:0;gap:14px;margin:0}
 .staff-card .card-head{align-items:flex-start;gap:12px}
