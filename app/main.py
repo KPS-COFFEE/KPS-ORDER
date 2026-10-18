@@ -16,6 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import auth, catalog, db, email_delivery, monitoring, orders, image_previews
 from .http_security import SecurityMiddleware
+from .host_policy import OfficialHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
@@ -69,6 +70,7 @@ if hosts:
 from . import portals
 app.add_middleware(portals.PortalBoundaryMiddleware)
 app.add_middleware(SecurityMiddleware)
+app.add_middleware(OfficialHostMiddleware)
 
 
 @app.exception_handler(RequestValidationError)
@@ -119,6 +121,12 @@ app.include_router(driver_checks.router)
 from . import customer_benefits, customer_engagement
 app.include_router(customer_benefits.router)
 app.include_router(customer_engagement.router)
+from . import delegated_operations, driver_work_hours, driver_hours_reports
+app.include_router(delegated_operations.router)
+app.include_router(driver_work_hours.router)
+app.include_router(driver_hours_reports.router)
+from . import enbishan_catalog_import
+app.include_router(enbishan_catalog_import.router)
 
 
 def revision():

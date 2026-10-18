@@ -1,0 +1,185 @@
+name: Distinct application rollback compatibility and image
+permissions:
+  contents: read
+concurrency:
+  group: application-rollback-${{ github.ref }}
+  cancel-in-progress: true
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/kps-order-security-closure-20261018]
+jobs:
+  prior-application:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_rollback
+          POSTGRES_USER: rollback_test
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U rollback_test -d test_rollback" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://rollback_test:isolated-synthetic-only@127.0.0.1:5432/test_rollback
+      APP_ENV: testing
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      REPORT_WORKER_ENABLED: 'false'
+      EMAIL_WORKER_ENABLED: 'false'
+      RECOVERY_POLL_ENABLED: 'false'
+      DISPATCH_AUTO_ASSIGN_ENABLED: 'false'
+      DISPATCH_OFFER_ACCEPT_ENABLED: 'false'
+      RUNTIME_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Locked tools and exact PostgreSQL version
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock
+          python - <<'PY'
+          import os,psycopg
+          with psycopg.connect(os.environ['TEST_DATABASE_URL']) as c:
+              version=c.execute('show server_version').fetchone()[0]
+          assert version.split()[0]=='18.6',version
+          print(version)
+          PY
+          git rev-parse HEAD > evidence/source-sha.txt
+          python -m pytest -q tests/test_rollback_source_packaging.py --junitxml=evidence/packaging.xml
+      - name: Assemble explicit prior application and build immutable image
+        run: |
+          set -euo pipefail
+          context="$RUNNER_TEMP/prior-application-context"
+          python tools/rollback_prepare_compat.py --repository "$PWD" --output "$context" > evidence/rollback-source-identity.json
+          baseline="$RUNNER_TEMP/raw-prior-application"
+          mkdir "$baseline"
+          git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$baseline"
+          docker buildx build --target runtime --platform linux/amd64 --load --provenance=false \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "sa.kps.rollback.baseline=80a1d727f6695c4ce3685e726ab5b34674e1cfa0" \
+            --metadata-file evidence/build-metadata.json --tag "kps-application-rollback:$GITHUB_SHA" "$context" > evidence/image-build.log 2>&1
+          image_id=$(docker image inspect --format '{{.Id}}' "kps-application-rollback:$GITHUB_SHA")
+          printf '%s\n' "$image_id" > evidence/image-id.txt
+          printf 'ROLLBACK_COMPAT_IMAGE=%s\nROLLBACK_BASELINE_DIR=%s\nROLLBACK_COMPAT_DIR=%s\n' "$image_id" "$baseline" "$context" >> "$GITHUB_ENV"
+          docker image inspect "$image_id" > evidence/image-inspect.json
+          docker image save --output "$RUNNER_TEMP/prior-application-image.tar" "$image_id"
+          sha256sum "$RUNNER_TEMP/prior-application-image.tar" > evidence/image-archive-sha256.txt
+      - name: SMS financial printing and trip contracts inside exact prior image
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/rollback-test-tools" -r requirements-security-tests.lock
+          chmod 0777 evidence
+          docker run --rm --network host --entrypoint python \
+            --mount "type=bind,src=$RUNNER_TEMP/rollback-test-tools,dst=/test-tools,readonly" \
+            --mount "type=bind,src=$PWD/tests,dst=/app/tests,readonly" \
+            --mount "type=bind,src=$PWD/evidence,dst=/evidence" \
+            --env PYTHONPATH=/test-tools:/app --env TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+            --env APP_ENV=testing --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \
+            --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false \
+            --env RECOVERY_POLL_ENABLED=false --env DISPATCH_AUTO_ASSIGN_ENABLED=false \
+            --env DISPATCH_OFFER_ACCEPT_ENABLED=false "$ROLLBACK_COMPAT_IMAGE" \
+            -m pytest -q -p no:cacheprovider \
+            tests/test_owner_sensitive_sms.py tests/test_sms_mandatory_policy.py \
+            tests/test_split_payment.py tests/test_branch_printing.py \
+            tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py \
+            tests/test_driver_work_hours_backup.py tests/test_branch_order_employee_closure.py \
+            tests/test_owner_extra_permissions.py \
+            tests/test_fiscal.py::test_completed_driver_sale_automatically_issues_once_and_refunds \
+            tests/test_fiscal.py::test_actual_issuance_and_credit_before_refund_atomicity \
+            -k 'not real_browser' --junitxml=/evidence/prior-contracts.xml | tee evidence/prior-contracts.log
+          python - <<'PY'
+          import xml.etree.ElementTree as E
+          cases=list(E.parse('evidence/prior-contracts.xml').getroot().iter('testcase'))
+          assert cases and not any(c.find(t) is not None for c in cases for t in ('failure','error','skipped'))
+          PY
+      - name: Current database to exact prior image and back without restoring database
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_rollback_application_compatibility.py --junitxml=evidence/application-rollback.xml | tee evidence/application-rollback.log
+          cp test-artifacts/rollback-app-compatibility-drill.json evidence/
+          python - <<'PY'
+          import json,xml.etree.ElementTree as E
+          cases=list(E.parse('evidence/application-rollback.xml').getroot().iter('testcase'))
+          assert cases and not any(c.find(t) is not None for c in cases for t in ('failure','error','skipped'))
+          d=json.load(open('evidence/rollback-app-compatibility-drill.json'))
+          assert d['synthetic_only'] and d['database_restored'] is False
+          assert d['compat']['return_confirmed'] and d['reupgrade_orders_preserved']==3
+          PY
+      - name: Prior image real runtime health and readiness
+        run: |
+          set -euo pipefail
+          docker run --detach --name prior-runtime --network host \
+            --env DATABASE_URL="$TEST_DATABASE_URL" --env APP_ENV=testing \
+            --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \
+            --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false \
+            --env RECOVERY_POLL_ENABLED=false --env DISPATCH_AUTO_ASSIGN_ENABLED=false \
+            --env DISPATCH_OFFER_ACCEPT_ENABLED=false --env APP_ALLOWED_HOSTS=localhost,127.0.0.1 \
+            --env PORT=18081 --env RUNTIME_REVISION="$GITHUB_SHA" "$ROLLBACK_COMPAT_IMAGE"
+          python - <<'PY' | tee evidence/runtime-smoke.json
+          import json,os,time,urllib.request
+          for attempt in range(90):
+              try:
+                  results={}
+                  for endpoint in ('health','ready'):
+                      with urllib.request.urlopen('http://127.0.0.1:18081/'+endpoint,timeout=2) as r:
+                          assert r.status==200
+                          results[endpoint]=json.load(r)
+                          assert results[endpoint]['revision']==os.environ['GITHUB_SHA']
+                  print(json.dumps(results,indent=2));break
+              except Exception:
+                  if attempt==89:raise
+                  time.sleep(1)
+          PY
+          docker inspect --format '{{.Image}}' prior-runtime > evidence/running-image-id.txt
+          cmp evidence/image-id.txt evidence/running-image-id.txt
+          docker logs prior-runtime > evidence/runtime.log 2>&1
+          docker stop prior-runtime
+      - name: SBOM vulnerabilities and secrets for exact prior image
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/rollback-scanners"
+          cd "$RUNNER_TEMP/rollback-scanners"
+          curl --fail --location --retry 2 --max-time 120 -o syft.tar.gz https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
+          echo 'c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47  syft.tar.gz' | sha256sum -c -
+          curl --fail --location --retry 2 --max-time 120 -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz
+          echo 'e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7  trivy.tar.gz' | sha256sum -c -
+          tar -xzf syft.tar.gz syft
+          tar -xzf trivy.tar.gz trivy
+          ./syft version > "$GITHUB_WORKSPACE/evidence/syft-version.txt"
+          ./trivy version > "$GITHUB_WORKSPACE/evidence/trivy-version.txt"
+          ./syft scan "docker-archive:$RUNNER_TEMP/prior-application-image.tar" -o "cyclonedx-json=$GITHUB_WORKSPACE/evidence/prior-application.cdx.json"
+          ./trivy image --input "$RUNNER_TEMP/prior-application-image.tar" --scanners vuln,secret --format json --output "$GITHUB_WORKSPACE/evidence/image-scan.json" --exit-code 0
+          ./trivy image --input "$RUNNER_TEMP/prior-application-image.tar" --scanners secret --format json --output "$GITHUB_WORKSPACE/evidence/image-secrets.json" --exit-code 1
+          ./trivy image --input "$RUNNER_TEMP/prior-application-image.tar" --scanners vuln,secret --severity HIGH,CRITICAL --format json --output "$GITHUB_WORKSPACE/evidence/image-high-critical.json" --exit-code 1
+      - name: Runtime cleanup
+        if: always()
+        run: |
+          docker logs prior-runtime > evidence/runtime-final.log 2>&1 || true
+          docker rm -f prior-runtime 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prior-application-certification-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prior-application-image-${{ github.sha }}
+          path: ${{ runner.temp }}/prior-application-image.tar
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 14

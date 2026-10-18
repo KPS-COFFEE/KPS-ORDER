@@ -29,12 +29,12 @@ for(const lang of ['ar','en']){
  assert.match(get('#login-error').textContent,/SMS/);
  assert.equal(get('#login-submit').disabled,false);
  cases+=2;
- let dialog;const elements={form:{},'[data-cancel]':{},'[type=submit]':{},'[name=code]':{value:'0123',focus(){}},'.form-error':{}};
+ let dialog;const elements={form:{append(){}},'[data-cancel]':{},'[type=submit]':{},'[name=code]':{value:'0123',focus(){}},'.form-error':{}};
  const requests=[];
  const ownerContext={state:{user:{role:'owner',employee_sms_email_retired:true}},tr:(a,b)=>lang==='ar'?a:b,esc:String,
    mutation:()=>{throw Error('Sensitive password fallback forbidden')},
    api:async(path,opts)=>{requests.push([path,opts]);return path.endsWith('/request')?{challenge_id:'owner_sms_synthetic'}:{verified:true}},
-   document:{createElement:()=>dialog={addEventListener(){},querySelector:s=>elements[s],showModal(){},close(){},remove(){}},body:{append(){}}}};
+   document:{createElement:tag=>tag==='button'?{}:(dialog={isConnected:false,addEventListener(){},querySelector:s=>elements[s],showModal(){},close(){},remove(){this.isConnected=false;}}),body:{append(node){node.isConnected=true;}}}};
  vm.createContext(ownerContext);vm.runInContext(sensitive,ownerContext);
  const proof=ownerContext.ownerStepUp('must-never-be-sent');
  await new Promise(resolve=>setImmediate(resolve));

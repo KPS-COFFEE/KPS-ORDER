@@ -93,7 +93,14 @@ def test_owner_approved_sms_invitation_needs_fresh_owner_proof_and_no_email(monk
     monkeypatch.setattr(auth,'_create_email_token',lambda **kw:pytest.fail('SMS approval must never queue email'))
     monkeypatch.setattr(auth,'staff_public',lambda conn,row:dict(row))
     monkeypatch.setattr(auth.db,'audit',lambda *a:None)
-    result=auth.create_staff_invitation(Connection(),auth.StaffInvitationBody(display_name='Synthetic',phone='0507778899',role=role),actor)
+    body=auth.StaffInvitationBody(display_name='Synthetic',phone='0507778899',role=role)
+    if role=='owner':
+        with pytest.raises(HTTPException) as exc:
+            auth.create_staff_invitation(Connection(),body,actor)
+        assert exc.value.detail['code']=='OWNER_FULL_ACCESS_CONFIRMATION'
+        assert not proofs and not row['active']
+        body=body.model_copy(update={'full_owner_confirmed':True})
+    result=auth.create_staff_invitation(Connection(),body,actor)
     assert proofs==['synthetic_session']
     assert result['user']['active'] and result['user']['identity_kind']=='staff_owner_approved'
     assert result['challenge_id'] is None and result['invitation_status']=='active'

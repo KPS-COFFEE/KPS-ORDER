@@ -58,9 +58,12 @@ def customer_quote_view(quote):
 
 def commercial_snapshot(product: dict) -> dict:
     settings = product['settings']
-    return {**{key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')},
+    result = {**{key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')},
             'source_id': settings.get('source_id', product['id']),
             'option_groups': settings.get('option_groups') or [], 'variants': settings.get('variants') or []}
+    if 'variant_price_matrix' in settings:
+        result['variant_price_matrix'] = settings['variant_price_matrix']
+    return result
 
 
 def commercial_digest(product: dict) -> str:
@@ -71,6 +74,8 @@ def source_approved(product: dict) -> bool:
     settings = product['settings']
     if settings.get('source_verified') is not True:
         return False
+    if 'variant_price_matrix' in settings:
+        return settings.get('owner_approved_digest') == commercial_digest(product)
     approval = settings.get('menu_approval')
     # Legacy explicit owner approvals and other brands keep their existing path.
     if not approval:
@@ -352,6 +357,16 @@ def public_product(product: dict, branch=None, service=None) -> dict:
     available, reason = product_availability(product, branch, service=service)
     result = {key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')}
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
+    if 'variant_price_matrix' in settings:
+        from .menu_variants import validated
+        try:
+            rows = validated(product)
+            result['variant_price_matrix'] = [r.model_dump(exclude_none=True) for r in rows]
+        except (ValueError, TypeError, KeyError):
+            available, reason = False, 'أسعار أحجام ونكهات الصنف بحاجة إلى مراجعة الإدارة.'
+    for field in ('name_en', 'category_en', 'description_en'):
+        if isinstance(settings.get(field), str):
+            result[field] = settings[field]
     groups = []
     for group in settings.get('option_groups') or []:
         values = []
@@ -635,9 +650,14 @@ def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list
                 unit_price += delta
                 choices.append({'code': selected_code, 'name': value['name'], 'price_delta_halalas': delta})
             options_snapshot[code] = {'name': group.get('name', code), 'choices': choices}
+        from .menu_variants import selected_price
+        variant = selected_price(product, unit.options)
+        if variant is not None:
+            unit_price = variant['price_halalas']
         if unit_price < 0:
             raise db.error(409, 'PRODUCT_PRICE_INVALID', 'سعر الصنف غير صالح.')
-        snapshots.append({'options': unit.options, 'option_snapshot': options_snapshot, 'price_halalas': unit_price})
+        snapshots.append({'options': unit.options, 'option_snapshot': options_snapshot, 'price_halalas': unit_price,
+                          **({'compare_at_halalas': variant['compare_at_halalas']} if variant and 'compare_at_halalas' in variant else {})})
         total += unit_price
     return total, snapshots
 
@@ -731,6 +751,16 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, user=None, order_id=
                                   'unit_price_halalas': selected_units[0]['price_halalas'],
                                   'line_total_halalas': sum(unit['price_halalas'] for unit in selected_units),
                                   'units': selected_units, 'note': item.note})
+        elif product['brand_id'] == 'enbishan' and 'variant_price_matrix' in product['settings']:
+            grouped = {}
+            for unit in units:
+                grouped.setdefault(db.digest(unit['options']), []).append(unit)
+            for variant_code, selected_units in grouped.items():
+                snapshots.append({'product_id': product['id'], 'source_id': product['settings'].get('source_id', product['id']),
+                                  'variant_code': variant_code, 'name': product['name'], 'category': product['category'],
+                                  'quantity': len(selected_units), 'unit_price_halalas': selected_units[0]['price_halalas'],
+                                  'line_total_halalas': sum(u['price_halalas'] for u in selected_units),
+                                  'units': selected_units, 'note': item.note})
         else:
             snapshots.append({'product_id': product['id'], 'source_id': product['settings'].get('source_id', product['id']),
                               'name': product['name'], 'category': product['category'], 'quantity': item.quantity,
@@ -780,7 +810,7 @@ class AvailabilityBody(BaseModel):
 def branch_product_availability(branch_id: str, product_id: str, body: AvailabilityBody,
                                 user=Depends(auth.current_user),
                                 idempotency_key: str | None = Header(default=None)):
-    if user['role'] not in ('owner','branch_manager') and not auth.has_permission(user,'products_manage'):
+    if user['role']!='owner' and not (auth.has_permission(user,'branch_availability') or auth.has_permission(user,'products_manage')):
         raise db.error(403, 'ROLE_FORBIDDEN', 'يلزم تفويض إدارة الأصناف.')
     if user['role'] != 'owner' and branch_id not in user['branch_ids']:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود ضمن صلاحياتك.')

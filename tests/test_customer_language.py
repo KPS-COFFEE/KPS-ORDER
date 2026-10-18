@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 
 from app import db
-from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from test_browser import _context, _owner_login, _staff, chromium_browser, synthetic_mail
+from tests.browser_sms_helpers import sms_browser_app as live_app
 from test_launch_browser import _configure_branches, _evidence
 
 ROOT = Path(__file__).resolve().parents[1]

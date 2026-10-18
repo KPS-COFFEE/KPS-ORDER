@@ -91,19 +91,24 @@ def test_owner_password_form_creates_only_after_confirmation(live_app,chromium_b
         form.locator('[name=display_name]').fill('عبدالله')
         form.locator('[name=username]').fill('KPS')
         form.locator('[name=phone]').fill('0501234567')
-        form.locator('[name=new_password]').fill(NEW_PASSWORD)
-        form.locator('[name=password_confirmation]').fill(NEW_PASSWORD)
+        expect(form.locator('input[type=password]')).to_have_count(0)
         expect(form.locator('[name=owner_password]')).to_have_count(0)
         form.locator('[name=reason]').fill('Synthetic full owner approval')
         with db.tx() as conn:assert not conn.execute("SELECT 1 FROM users WHERE username='KPS'").fetchone()
+        form.locator('button[type=submit]').click()
+        with db.tx() as conn:assert not conn.execute("SELECT 1 FROM users WHERE username='KPS'").fetchone()
+        expect(page.locator('dialog:not(#modal)')).to_have_count(0)
         form.locator('[name=full_owner_confirmed]').check()
         form.locator('button[type=submit]').click()
         complete_owner_sms_dialog(page, owner)
         expect(page.locator('#modal')).not_to_be_visible()
-        expect(page.get_by_role('cell',name='عبدالله',exact=False)).to_be_visible()
+        expect(page.locator('.staff-card').get_by_role('heading',name='عبدالله',exact=True)).to_be_visible()
         with db.tx() as conn:
-            row=conn.execute("SELECT role,active,phone FROM users WHERE username='KPS'").fetchone()
+            row=conn.execute("SELECT role,active,phone,phone_verified_at,phone_sms_verified_at,password_hash FROM users WHERE username='KPS'").fetchone()
             assert row['role']=='owner' and row['active'] and row['phone']=='+966501234567'
+            assert row['phone_verified_at'] is None and row['phone_sms_verified_at'] is None
+            assert row['password_hash'] is None
+            assert conn.execute('SELECT role,active FROM users WHERE id=%s',(owner['id'],)).fetchone()=={'role':'owner','active':True}
         assert not errors
     finally:context.close()
 

@@ -111,11 +111,6 @@ def database(monkeypatch, safe_test_environment):
         # Production has no fixture override and defaults KPS to required SMS.
         with db.tx() as c:
             c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":false}'::jsonb WHERE brand_id='kps'")
-            # Preserve legacy pickup/cash regression scenarios as a versioned
-            # historical policy, just like legacy guest identity above. New
-            # branch-online acceptance explicitly enables the current policy.
-            # This setting has no public write API and is never set in runtime.
-            c.execute("UPDATE brands SET settings=settings||'{\"branch_online_required\":false}'::jsonb WHERE id='kps'")
         yield isolated_url
     finally:
         db.close_pools(isolated_url)

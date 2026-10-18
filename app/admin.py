@@ -12,6 +12,48 @@ from PIL import Image, UnidentifiedImageError
 from . import auth, db, catalog, email_delivery, service_hours, print_translations
 
 router = APIRouter(prefix='/api')
+ALERT_POLICY_DEFAULTS = {
+    'first_after_seconds': 0, 'second_after_seconds': 30,
+    'continuous_after_seconds': 60, 'first_ring_seconds': 1, 'second_ring_seconds': 1,
+}
+
+
+def alert_policy(conn, brand_id):
+    row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
+    return ALERT_POLICY_DEFAULTS | ((row['settings'].get('alert_policy') or {}) if row else {})
+
+
+@router.get('/operations/alert-policy')
+def read_alert_policy(user=Depends(auth.require_roles('owner','admin','delivery_manager','delivery_staff','branch_manager','driver'))):
+    with db.tx() as conn:
+        return {'mandatory': True, 'policy': alert_policy(conn, user['brand_id'])}
+
+
+@router.patch('/admin/alert-policy')
+def update_alert_policy(body: dict, user=Depends(auth.require_roles('owner')),
+                        idem: str | None=Header(None, alias='Idempotency-Key')):
+    # Dedicated owner-only route; delegated appearance/configuration grants do not apply.
+    if set(body) != set(ALERT_POLICY_DEFAULTS) or any(type(v) is not int for v in body.values()):
+        raise db.error(422, 'ALERT_POLICY_INVALID', 'أدخل جميع توقيتات الجرس بأرقام صحيحة.')
+    first, second, continuous = (body[k] for k in ('first_after_seconds','second_after_seconds','continuous_after_seconds'))
+    if (not 0 <= first <= 300 or not first < second <= 600 or
+            not second < continuous <= 1800 or
+            not all(1 <= body[k] <= 10 for k in ('first_ring_seconds','second_ring_seconds')) or
+            first + 2 * body['first_ring_seconds'] + .3 > second or
+            second + 2 * body['second_ring_seconds'] + .3 > continuous):
+        raise db.error(422, 'ALERT_POLICY_INVALID', 'رتب أوقات التنبيه دون تداخل؛ مدة الدقة من ثانية إلى عشر ثوانٍ.')
+    with db.tx() as conn:
+        auth.require_owner_step_up(conn, user)
+        def perform():
+            row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR UPDATE', (user['brand_id'],)).fetchone()
+            settings = row['settings'] | {'alert_policy': body}
+            conn.execute('UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id=%s', (db.json(settings), user['brand_id']))
+            db.audit(conn, user['id'], 'alerts.policy.updated', 'brand', user['brand_id'],
+                     {'before': row['settings'].get('alert_policy', ALERT_POLICY_DEFAULTS), 'after': body})
+            return {'mandatory': True, 'policy': body}
+        return db.idempotent(conn, user['id'], idem, 'alerts.policy.update', body, perform)
+
+
 owner = auth.require_roles('owner')
 branch_admin = auth.require_permission('branches_manage')
 product_admin = auth.require_permission('products_manage')
@@ -159,12 +201,8 @@ def validate_options(groups, variants=None):
 
 def validate_branch_settings(settings, branch_city):
     allowed = {'active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
-               'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified','online_payment_seller'}
+               'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
     keys(settings, allowed)
-    if settings.get('online_payment_seller') is not None:
-        from .payment_gateways import IDENTIFIER
-        if not isinstance(settings['online_payment_seller'], str) or not IDENTIFIER.fullmatch(settings['online_payment_seller']):
-            raise db.error(422, 'PAYMENT_SELLER_INVALID', 'اختر معرف منشأة صحيحًا.')
     for field in ('active','pickup_enabled','car_enabled','delivery_enabled','ordering_verified','operational_data_verified','location_verified','map_url_verified'):
         if field in settings and type(settings[field]) is not bool:
             raise db.error(422, 'BOOLEAN_INVALID', 'إعداد التفعيل يجب أن يكون صحيحًا أو خطأ.')
@@ -257,13 +295,6 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
             branch_city = text(body.get('city',row['city']),100,'المدينة')
             changes = body.get('settings',{})
             validate_branch_settings(changes,branch_city)
-            if 'online_payment_seller' in changes:
-                from . import invoice_profiles
-                if user['role'] != 'owner':
-                    raise db.error(403, 'OWNER_REQUIRED', 'تحديد منشأة الدفع من صلاحيات المالك فقط.')
-                seller = changes['online_payment_seller']
-                if seller is not None and seller not in invoice_profiles.settings(conn, user['brand_id']).get('entities', {}):
-                    raise db.error(422, 'PAYMENT_SELLER_INVALID', 'المنشأة غير موجودة ضمن البراند.')
             settings = row['settings'] | changes
             if 'map_url' in changes and changes['map_url'] is None:
                 settings['map_url_verified'] = False
@@ -296,7 +327,7 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             row = scoped(conn,'products',record_id,user)
             product_scope(row['settings'],user)
             changes = body.get('settings',{})
-            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids','print_labels_en'})
+            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','variant_price_matrix','name_en','category_en','description_en','image_url','image_asset_id','description','lifecycle','available_branch_ids','print_labels_en'})
             if 'print_labels_en' in changes:
                 changes['print_labels_en']=print_translations.validate(changes['print_labels_en'])
             if 'lifecycle' in changes and changes['lifecycle'] not in {'draft','active','paused'}:
@@ -334,6 +365,9 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             validate_option_scope(conn,changes.get('option_groups',row['settings'].get('option_groups',[])),user)
             if 'description' in changes:
                 changes['description']=text(changes['description'],2000,'وصف الصنف')
+            for field, maximum in [('name_en',200),('category_en',100),('description_en',2000)]:
+                if field in changes:
+                    changes[field]=text(changes[field],maximum,field)
             settings = row['settings'] | changes
             product_scope(settings,user)
             if settings.get('lifecycle') == 'active' and settings.get('source_verified') is not True:
@@ -342,6 +376,18 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             category = text(body.get('category',row['category']),150,'التصنيف')
             price = money(body.get('price_halalas',row['price_halalas']),'سعر الصنف')
             updated = dict(row, name=name, category=category, price_halalas=price, settings=settings)
+            if 'variant_price_matrix' in settings:
+                from .menu_variants import validated
+                try:
+                    validated(updated)
+                except (ValueError, TypeError, KeyError):
+                    raise db.error(422,'PRODUCT_VARIANTS_INVALID','راجع أسعار الأحجام والنكهات والسعر قبل وبعد.') from None
+                if changes.get('source_verified') is True:
+                    auth.require_owner_sms_step_up(conn,user)
+                elif settings.get('owner_approved_digest') != catalog.commercial_digest(updated):
+                    settings['source_verified'] = False
+                    settings['enabled'] = False
+                    settings['lifecycle'] = 'draft'
             if changes.get('source_verified') is True:
                 settings['owner_approved_digest'] = catalog.commercial_digest(updated)
             elif catalog.source_approved(row) and catalog.availability_only_change(row,updated):
@@ -467,7 +513,7 @@ def update_settings(body: dict, user=Depends(appearance_admin), idem: str | None
         if not isinstance(text, str) or len(text) > 240 or len(text.splitlines()) > 6 or any(ord(c) < 32 and c not in '\n\r' for c in text):
             raise db.error(422,'RECEIPT_TEXT_INVALID','عبارة المناسبات حتى 240 حرفًا و6 أسطر.')
         body['receipt_occasion_text'] = text.strip()
-    if 'delivery_workflow' in body and body['delivery_workflow'] not in ('manager_dispatch','branch_fulfillment'):
+    if 'delivery_workflow' in body and body['delivery_workflow'] not in ('manager_dispatch','branch_fulfillment','branch_without_manager'):
         raise db.error(422,'DELIVERY_WORKFLOW_INVALID','اختر وضع تشغيل التوصيل المعتمد.')
     if 'operational_day_start' in body and not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',str(body['operational_day_start'])):
         raise db.error(422,'OPERATIONAL_DAY_INVALID','وقت بداية اليوم التشغيلي بصيغة HH:MM.')
@@ -663,8 +709,6 @@ def create_branch(body:dict,user=Depends(owner),idem:str|None=Header(None,alias=
     if not name or not branch_city:
         raise db.error(422,'BRANCH_IDENTITY_REQUIRED','اسم الفرع ومدينته مطلوبان.')
     supplied_settings=body.get('settings',{})
-    if supplied_settings.get('online_payment_seller') is not None:
-        raise db.error(422, 'INITIAL_PAYMENT_SELLER_PENDING', 'اعتمد منشأة الدفع بعد إنشاء الفرع.')
     validate_branch_settings(supplied_settings,branch_city)
     if any(supplied_settings.get(key) for key in ('pickup_enabled','car_enabled','delivery_enabled')):
         raise db.error(422,'INITIAL_BRANCH_DISABLED','أنشئ الفرع متوقفًا ثم راجع بيانات تشغيله قبل التفعيل.')

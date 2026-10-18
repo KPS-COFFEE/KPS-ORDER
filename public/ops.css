@@ -289,3 +289,78 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 @media(max-width:600px){.driver-home-tasks{grid-template-columns:1fr}.driver-home-tasks .actions button{flex:1 1 45%}.driver-home-summary .data-grid{grid-template-columns:1fr 1fr}}
 
 .driver-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.driver-tools button,.driver-offer button{min-height:48px}button.danger{background:#b42318;color:#fff;border-color:#b42318}button.danger:hover{background:#8f1d14}.driver-break-state{border:2px solid #c46a10}
+
+/* Approved integration: preserve KPS typography and cards while allowing all prose to wrap. */
+.staff-directory td,.staff-directory th{white-space:normal;overflow-wrap:anywhere!important;word-break:normal!important}
+.printer-directory td,#printer-live td,.fleet-log-table td{white-space:normal;overflow-wrap:anywhere;word-break:normal}
+.printer-directory button,.printer-directory .pill,#printer-live button{white-space:normal;overflow-wrap:anywhere}
+.task-card .data-grid dd,.order-detail-card>.data-grid dd,.shift-card .data-grid dd{white-space:normal;overflow-wrap:anywhere}
+.card-head{flex-wrap:wrap}.card-head>.pill{flex-shrink:1;white-space:normal}.metric,.hours-kpis .panel{min-width:0;overflow-wrap:anywhere}
+.table-wrap table{table-layout:auto}.table-wrap td{height:auto;max-width:560px;white-space:normal;overflow-wrap:anywhere;line-height:1.65}
+.table-wrap td.money{white-space:nowrap;direction:ltr;unicode-bidi:isolate;text-align:end;font-variant-numeric:tabular-nums}
+.customer-address-choice{display:block;text-align:start;width:100%;margin-top:10px;white-space:normal;overflow-wrap:anywhere;font-weight:400}
+.customer-address-choice[aria-pressed=true]{background:var(--accent-light);border-color:var(--accent);color:var(--accent)}
+#staff-customer-lookup p+p{margin-top:6px}#staff-order-form fieldset{max-width:100%;min-width:0}
+#staff-order-form .actions>span{min-width:0;flex:1;overflow-wrap:anywhere}
+@media(max-width:768px){.topbar{flex-wrap:wrap}.header-actions{max-width:100%}.order-detail-card>.data-grid dd{font-size:17px}.table-wrap td{max-width:380px}.hours-kpis strong{overflow-wrap:anywhere}}
+/* Full text must wrap at readable column widths, never one letter per line.
+   Wider tables scroll inside their existing wrapper on mobile and tablets. */
+.table-wrap th,.table-wrap td{min-width:110px}
+.staff-directory table{min-width:1600px}
+.staff-directory th,.staff-directory td{min-width:140px}
+.staff-directory th:first-child,.staff-directory td:first-child{min-width:220px;width:220px}
+.staff-directory th:nth-child(2),.staff-directory td:nth-child(2){min-width:240px;width:240px}
+.staff-directory th:nth-child(3),.staff-directory td:nth-child(3){min-width:290px}
+.staff-directory th:nth-child(4),.staff-directory td:nth-child(4){min-width:220px}
+.staff-directory th:nth-child(6),.staff-directory td:nth-child(6){min-width:220px}
+.staff-directory th:last-child,.staff-directory td:last-child{min-width:215px}
+.order-table th:first-child,.order-table td:first-child{min-width:220px}
+.order-table th:nth-child(3),.order-table td:nth-child(3),.order-table th:nth-child(7),.order-table td:nth-child(7){min-width:180px}
+/* Orders: predictable column widths and isolated numbers in both languages. */
+.order-table{width:100%;max-height:72vh;scrollbar-gutter:stable}
+.order-table table{min-width:1160px;table-layout:auto}
+.order-table th{position:sticky;top:0;z-index:1}
+.order-table td{line-height:1.7;overflow-wrap:break-word;white-space:normal}
+.order-table td:first-child p{margin:5px 0}
+.order-table td:nth-child(4),.order-table td:nth-child(5){min-width:140px;font-variant-numeric:tabular-nums}
+.order-table td:nth-child(4),.order-table td:nth-child(5){direction:ltr;unicode-bidi:isolate;text-align:center}
+.order-table tbody tr:hover{background:var(--accent-light)}
+@media(max-width:760px){
+ .order-table{max-height:none;overflow:visible}
+ .order-table table{min-width:0}
+ .order-table td:nth-child(2){padding-inline-end:0}
+ .order-table td:nth-child(6){grid-row:auto;grid-column:auto}
+ .order-table td:nth-child(3),.order-table td:nth-child(7){min-width:0}
+ .order-table td:nth-child(4),.order-table td:nth-child(5){direction:inherit;text-align:start}
+ .order-table tr{gap:8px 12px}
+ .order-table td:nth-child(3)::before{content:'الفرع: ';color:var(--muted)}
+ .order-table td:nth-child(7)::before{content:'السائق: ';color:var(--muted)}
+ html[lang=en] .order-table td:nth-child(3)::before{content:'Branch: '}
+ html[lang=en] .order-table td:nth-child(7)::before{content:'Driver: '}
+}
+
+/* Live printer controls share the approved wrapping rule; this ID selector
+   must override the older #printer-live button nowrap compatibility rule. */
+#printer-live .printer-directory button{white-space:normal;overflow-wrap:anywhere}
+#customer-records-results .card-head>h2{flex:1 1 180px;min-width:min(180px,100%)}
+
+/* Fleet operating-log columns retain their readable widths after generic table rules. */
+.table-wrap .fleet-log-table th,.table-wrap .fleet-log-table td{min-width:130px}
+.table-wrap .fleet-log-table th:last-child,.table-wrap .fleet-log-table td:last-child{min-width:150px}
+.table-wrap .fleet-log-table td:nth-child(22){min-width:220px}
+/* Staff directory uses the existing panel, badge and action vocabulary. */
+.staff-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.staff-card{display:flex;flex-direction:column;min-width:0;gap:14px;margin:0}
+.staff-card .card-head{align-items:flex-start;gap:12px}
+.staff-card h2{font-size:1.15rem;margin:0;white-space:normal;overflow-wrap:anywhere}
+.staff-card h3{font-size:1rem;margin:0 0 8px}
+.staff-card .data-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin:0}
+.staff-card dt,.staff-card dd,.staff-card p{white-space:normal;overflow-wrap:anywhere}
+.staff-card dd{margin-inline-start:0}
+.staff-card footer{margin-top:auto;display:flex;flex-wrap:wrap;gap:8px}
+.staff-card footer details{min-width:0;max-width:100%}
+.staff-card button,.staff-card summary{white-space:normal;overflow-wrap:anywhere;max-width:100%}
+.staff-card .branch-picker{max-width:100%}
+.customer-contact-card{min-width:0}
+.customer-contact-card h2{overflow-wrap:anywhere;white-space:normal}
+@media(max-width:480px){.staff-card .data-grid{grid-template-columns:1fr}.staff-card footer>button{flex:1 1 100%}}

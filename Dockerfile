@@ -20,7 +20,7 @@ COPY --chown=kpsorder:kpsorder public/ ./public/
 RUN python -m app.image_previews
 COPY --chown=kpsorder:kpsorder docs/metrics.md ./docs/metrics.md
 COPY --chown=kpsorder:kpsorder tools/portable_backup.py ./tools/portable_backup.py
-COPY --chown=kpsorder:kpsorder tools/prelaunch_inventory.py ./tools/prelaunch_inventory.py
+COPY --chown=kpsorder:kpsorder tools/enbishan_workbook.py ./tools/enbishan_workbook.py
 COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print-bridge/
 
 COPY --from=runtime-base / /runtime-root/
@@ -32,7 +32,8 @@ RUN python /tmp/security_runtime_root.py
 FROM build AS rollback-build
 RUN KPS_RUNTIME_SHELL=1 python /tmp/security_runtime_root.py
 
-# Independent compatible rollback: original shell command, same secure app.
+# Launcher fallback only: same application bytes with the original shell command.
+# This target does not certify rollback to a prior application release.
 FROM runtime-base AS rollback
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=10000 \
     PATH=/usr/local/bin:/usr/bin:/bin LD_LIBRARY_PATH=/usr/local/lib

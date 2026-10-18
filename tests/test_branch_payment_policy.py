@@ -24,10 +24,11 @@ def prepare(monkeypatch, seller='sami'):
 
 def test_kps_new_branch_policy_is_off_without_both_gates(monkeypatch):
     branch = _branch(online_payment_seller='sami')
-    assert required('kps', {}) is True
+    assert required('kps', {}) is False
+    assert required('kps', {'branch_online_required': True}) is True
     assert required('other-brand', {}) is False
-    assert catalog.branch_service(branch, 'pickup', brand_settings={})[1] == 'BRAND_SERVICE_DISABLED'
-    settings = {'services': {'pickup': True, 'car_pickup': True}}
+    assert catalog.branch_service(branch, 'pickup', brand_settings={'services': {'pickup': False}})[1] == 'BRAND_SERVICE_DISABLED'
+    settings = {'branch_online_required': True, 'services': {'pickup': True, 'car_pickup': True}}
     assert catalog.branch_service(branch, 'pickup', brand_settings=settings)[1] == 'BRANCH_PAYMENT_NOT_READY'
     prepare(monkeypatch)
     assert blockers(branch) == []

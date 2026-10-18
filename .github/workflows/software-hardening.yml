@@ -16,28 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  capacity-scope:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
-    runs-on: ubuntu-latest
-    outputs:
-      run: ${{ steps.scope.outputs.run }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - id: scope
-        name: Respect owner-requested focused closure without recertifying capacity
-        shell: bash
-        run: |
-          if git log -1 --format=%s | grep -Eq '\[(payment-closure-only|prelaunch-focused)\]'; then
-            echo 'run=false' >> "$GITHUB_OUTPUT"
-            echo '## Capacity NOT CERTIFIED on this SHA' >> "$GITHUB_STEP_SUMMARY"
-            echo 'Owner requested focused closure without repeating expensive load tests. Prior capacity failures remain blockers. No load threshold, scenario or command is changed.' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-          fi
-
   dependency-security:
     if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
@@ -62,8 +40,7 @@ jobs:
           path: test-artifacts/dependency-audit.json
 
   isolated-load-recovery:
-    needs: capacity-scope
-    if: "!cancelled() && needs.capacity-scope.outputs.run == 'true'"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -112,8 +89,7 @@ jobs:
             test-artifacts/diagnostic/
 
   isolated-two-worker-capacity:
-    needs: capacity-scope
-    if: "!cancelled() && needs.capacity-scope.outputs.run == 'true'"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -158,8 +134,7 @@ jobs:
 
   proposed-capacity-budget:
     name: proposed-capacity-budget (${{ matrix.repetition }})
-    needs: capacity-scope
-    if: "!cancelled() && needs.capacity-scope.outputs.run == 'true'"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -227,8 +202,7 @@ jobs:
 
   representative-render-budget:
     name: representative-render-budget (${{ matrix.repetition }})
-    needs: capacity-scope
-    if: "!cancelled() && needs.capacity-scope.outputs.run == 'true'"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4')"
     runs-on: ubuntu-latest
     # Allow all original levels and recovery to finish on the smaller budget;
     # request timeouts and latency/error acceptance thresholds stay unchanged.

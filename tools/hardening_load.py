@@ -585,10 +585,6 @@ def configure_synthetic_data():
         # This unchanged workload certifies the retained legacy guest brand policy.
         # Mandatory-SMS correctness has independent current-policy acceptance.
         conn.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":false}'::jsonb WHERE brand_id='kps'")
-        # Preserve the original cash pickup/car workload explicitly. Current
-        # online-payment readiness is certified separately; never relax its
-        # production default to make this historical capacity scenario pass.
-        conn.execute("UPDATE brands SET settings=settings||'{\"branch_online_required\":false}'::jsonb WHERE id='kps'")
         conn.execute("UPDATE branches SET settings=settings||%s WHERE id IN ('kps-branch-1','kps-branch-2')", (db.json(settings),))
         conn.execute("UPDATE branches SET settings=settings||%s WHERE id='kps-branch-1'", (db.json({'product_availability': {'kps-33': False, 'kps-34': False}}),))
         conn.execute("UPDATE products SET settings=settings||%s WHERE id IN ('kps-33','kps-34')", (db.json({'available_branch_ids': ['kps-branch-2']}),))
@@ -1238,9 +1234,7 @@ def main():
                  'p99_ms_max': args.p99_ms, 'unexpected_error_rate_max': args.max_error_rate,
                  'data_invariant_failures_max': 0, 'deadlocks_max': 0, 'all_requested_levels_required': True},
         'methodology': {'workers': args.workers, 'rounds_per_user': args.rounds, 'requested_levels': levels,
-            'real_guest_identity': True, 'checkout_identity_policy': 'legacy_guest',
-            'branch_payment_policy': 'legacy_cash_not_online_payment_certification',
-            'real_HTTP': True, 'real_PostgreSQL': True,
+            'real_guest_identity': True, 'checkout_identity_policy': 'legacy_guest', 'real_HTTP': True, 'real_PostgreSQL': True,
             'concurrent_same_key_order_transmissions': 2, 'source_address_strategy': 'distinct actual 127.20.x.x socket IPs',
             'transport_recovery': 'Await both transmissions; at most one retry per TransportError, same session/body/key; original failures remain in error rate/latencies.',
             'traffic': 'Guest -> catalog -> server quote -> concurrent create/replay -> scoped order read; fresh key per cycle',

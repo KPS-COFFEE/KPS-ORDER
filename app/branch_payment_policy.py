@@ -12,7 +12,10 @@ router = APIRouter(prefix='/api/admin/branch-payment-policy')
 def required(brand_id, settings):
     # A retained explicit legacy policy is used by historical regression fixtures.
     # No public administration schema accepts this compatibility setting.
-    return settings.get('branch_online_required', brand_id == 'kps') is True
+    # Preserve the newer approved cash/card collection workflow. Enabling an
+    # online-only branch policy is an explicit per-brand decision, never an
+    # effect of integrating the default-OFF payment implementation.
+    return settings.get('branch_online_required', False) is True
 
 
 def blockers(branch):
