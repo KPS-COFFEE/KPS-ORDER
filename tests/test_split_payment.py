@@ -80,7 +80,9 @@ def test_simultaneous_collection_only_one_wins(v5):
         assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s', (oid,)).fetchone()['n'] == 2
 
 
-def test_delivery_split_only_cash_enters_custody(v5):
+@pytest.mark.parametrize('method,cash,card', [('cash',1200,0),('card',0,1200),('split',400,800)])
+@pytest.mark.parametrize('reference', [None, '', ' ', 'TEST-OPTIONAL'])
+def test_delivery_split_only_cash_enters_custody(v5,method,cash,card,reference):
     _, call, body, _ = v5
     manager = call('manager', 'POST', '/api/shifts', {'kind': 'manager', 'branch_ids': ['v5-a']}).json()['shift']['id']
     inspection = {'odometer_km': 1000, 'fuel_percent': 100,
@@ -91,17 +93,27 @@ def test_delivery_split_only_cash_enters_custody(v5):
     driver = opened.json()['shift']['id']
     oid = call('customer', 'POST', '/api/orders', body('delivery') | {'payment_method': 'split'}).json()['order']['id']
     tid = call('manager', 'POST', f'/api/orders/{oid}/assign', {'driver_shift_id': driver}).json()['task']['id']
-    data = split_body() | {'amount_halalas': 1200, 'card_halalas': 800}
+    data = {'method':method,'amount_halalas':1200}
+    if cash: data['tendered_halalas']=cash
+    if method=='split': data.update(cash_halalas=cash,card_halalas=card)
+    if reference is not None: data['reference']=reference
     assert call('driver', 'POST', f'/api/orders/{oid}/collect', data).status_code == 409
-    assert call('owner', 'POST', f'/api/orders/{oid}/collect', data).status_code == 403
+    assert call('owner', 'POST', f'/api/orders/{oid}/collect', data | {'reference':'TEST-AUTHORIZATION'}).status_code == 403
     with db.tx() as c:
         c.execute("UPDATE driver_tasks SET status='picked_up' WHERE id=%s", (tid,))
         c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s", (oid,))
-    assert call('driver', 'POST', f'/api/orders/{oid}/collect', data).status_code == 200
+    key=uuid4().hex
+    first=call('driver', 'POST', f'/api/orders/{oid}/collect', data,key)
+    assert first.status_code == 200,first.text
+    assert call('driver','POST',f'/api/orders/{oid}/collect',data,key).json()==first.json()
+    assert call('driver','POST',f'/api/orders/{oid}/collect',data).status_code==409
+    with db.tx() as c:
+        rows=c.execute('SELECT method,reference FROM collections WHERE order_id=%s',(oid,)).fetchall()
+        assert all(r['reference']==(reference or '').strip() for r in rows if r['method']=='card')
     shift = call('driver', 'GET', f'/api/shifts/{driver}').json()
     assert 'expected_halalas' not in shift and 'collections' not in shift
     shift = call('manager', 'GET', f'/api/shifts/{driver}').json()
-    assert shift['expected_halalas'] == 400
-    assert len(shift['collections']) == 2
+    assert shift['expected_halalas'] == cash
+    assert len(shift['collections']) == (2 if method=='split' else 1)
     dashboard = call('owner', 'GET', '/api/dashboard').json()
-    assert {r['method']: r['amount_halalas'] for r in dashboard['collections']} == {'cash': 400, 'card': 800}
+    assert {r['method']: r['amount_halalas'] for r in dashboard['collections']} == {k:v for k,v in [('cash',cash),('card',card)] if v}

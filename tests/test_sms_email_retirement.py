@@ -7,11 +7,12 @@ from tests.test_employee_sms_portals import request
 
 
 @pytest.mark.parametrize('sms,retired,expected',[
-    ('false','false',False),('true','false',False),('false','true',False),('true','true',True)])
-def test_email_retirement_requires_both_rollout_switches(monkeypatch,sms,retired,expected):
+    ('false','false',False),('true','false',True),('false','true',False),('true','true',True)])
+def test_kps_email_retirement_cannot_be_disabled_by_rollout_switches(monkeypatch,sms,retired,expected):
     monkeypatch.setenv('EMPLOYEE_SMS_LOGIN_ENABLED',sms)
     monkeypatch.setenv('EMPLOYEE_SMS_EMAIL_RETIRED',retired)
-    assert auth.staff_email_retired() is expected
+    assert auth.staff_email_retired('kps') is True
+    assert auth.staff_email_retired('synthetic-legacy') is expected
 
 
 def retirement(monkeypatch):
@@ -92,7 +93,14 @@ def test_owner_approved_sms_invitation_needs_fresh_owner_proof_and_no_email(monk
     monkeypatch.setattr(auth,'_create_email_token',lambda **kw:pytest.fail('SMS approval must never queue email'))
     monkeypatch.setattr(auth,'staff_public',lambda conn,row:dict(row))
     monkeypatch.setattr(auth.db,'audit',lambda *a:None)
-    result=auth.create_staff_invitation(Connection(),auth.StaffInvitationBody(display_name='Synthetic',phone='0507778899',role=role),actor)
+    body=auth.StaffInvitationBody(display_name='Synthetic',phone='0507778899',role=role)
+    if role=='owner':
+        with pytest.raises(HTTPException) as exc:
+            auth.create_staff_invitation(Connection(),body,actor)
+        assert exc.value.detail['code']=='OWNER_FULL_ACCESS_CONFIRMATION'
+        assert not proofs and not row['active']
+        body=body.model_copy(update={'full_owner_confirmed':True})
+    result=auth.create_staff_invitation(Connection(),body,actor)
     assert proofs==['synthetic_session']
     assert result['user']['active'] and result['user']['identity_kind']=='staff_owner_approved'
     assert result['challenge_id'] is None and result['invitation_status']=='active'
@@ -118,8 +126,8 @@ def test_sms_invitation_and_reactivation_without_email_on_postgresql(client,monk
     retirement(monkeypatch)
     owner=_make_user('owner')
     _authenticate(client,owner)
-    with db.tx() as conn:
-        conn.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s',(owner['id'],))
+    from tests.sms_policy_helpers import sms_step_up
+    sms_step_up(client, owner, monkeypatch)
     response=client.post('/api/identity/staff/invitations',json={'display_name':'Synthetic SMS Driver','phone':'0507778899','role':'driver','branch_ids':['kps-branch-1']})
     assert response.status_code==200,response.text
     result=response.json()

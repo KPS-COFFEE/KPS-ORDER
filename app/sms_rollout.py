@@ -8,8 +8,6 @@ _KEY = 'employee_sms_rollout'
 
 
 def _policy(conn, brand='kps', *, lock=False):
-    if brand != 'kps':
-        return {}
     row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s' + (' FOR UPDATE' if lock else ''), (brand,)).fetchone()
     value = (row or {}).get('settings', {}).get(_KEY, {})
     return value if isinstance(value, dict) else {}
@@ -22,11 +20,24 @@ def _read_policy(brand='kps'):
         return _policy(conn, brand)
 
 
-def employee_sms_enabled(user=None, *, brand='kps', phone=None, request=None, conn=None):
-    if os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true':
+def work_sms_required(brand='kps', *, conn=None):
+    """Server policy, independent of provider health and deployment environment.
+
+    KPS work identities always require SMS in this candidate. The existing
+    global SMS rollout flag extends the same requirement to other brands;
+    disabling a provider or changing a pilot record cannot enable passwords.
+    """
+    if brand == 'kps' or os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true':
         return True
+    policy = _policy(conn, brand) if conn is not None else _read_policy(brand)
+    return policy.get('mode') == 'active'
+
+
+def employee_sms_enabled(user=None, *, brand='kps', phone=None, request=None, conn=None):
     if user:
         brand = user.get('brand_id', brand)
+    if work_sms_required(brand, conn=conn):
+        return True
     policy = _policy(conn, brand) if conn is not None else _read_policy(brand)
     if policy.get('mode') == 'active':
         return True
@@ -49,12 +60,9 @@ def employee_sms_enabled(user=None, *, brand='kps', phone=None, request=None, co
 
 
 def email_retired(brand='kps', conn=None):
-    if brand != 'kps':
-        return False
-    if os.getenv('EMPLOYEE_SMS_EMAIL_RETIRED') == 'true' and os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true':
-        return True
-    policy = _policy(conn, brand) if conn is not None else _read_policy(brand)
-    return policy.get('mode') == 'active' and policy.get('email_retired') is True
+    # Retiring email and password work proofs is one mandatory policy, not two
+    # independently switchable channels. Customer email remains separate.
+    return work_sms_required(brand, conn=conn)
 
 
 def context_cookies_enabled(conn=None):
@@ -65,7 +73,7 @@ def context_cookies_enabled(conn=None):
     # instead of holding one slot while waiting for a second policy connection.
     # The policy remains a fresh database read, never a process-wide cache.
     policy = _policy(conn) if conn is not None else _read_policy()
-    return policy.get('mode') in {'pilot', 'active'}
+    return work_sms_required() or policy.get('mode') in {'pilot', 'active'}
 
 
 def record_employee_proof(conn, user, challenge_id):
@@ -104,7 +112,7 @@ def start_pilot(request: Request, user=Depends(auth.require_roles('owner'))):
         value = {'mode':'pilot','pilot_user_id':current['id'],'email_retired':False}
         conn.execute('UPDATE app_settings SET settings=jsonb_set(settings,%s,%s::jsonb,true) WHERE brand_id=%s', ([_KEY],db.json(value),current['brand_id']))
         db.audit(conn,current['id'],'employee.sms.pilot_started','brand',current['brand_id'])
-    return {'mode':'pilot','email_retired':False,'sms_sent':False}
+    return {'mode':'pilot','email_retired':email_retired(current['brand_id']),'sms_sent':False}
 
 
 @router.post('/api/identity/owner/sms/rollout/activate')
@@ -133,5 +141,7 @@ def activate(request: Request, user=Depends(auth.require_roles('owner'))):
 @router.get('/api/identity/staff/login-policy')
 def login_policy(brand_id: str='kps'):
     # Pilot identity and its enrollment are never exposed publicly.
-    active = os.getenv('EMPLOYEE_SMS_LOGIN_ENABLED') == 'true' or _read_policy(brand_id).get('mode') == 'active'
-    return {'channel':'sms' if active else 'email','code_length':4 if active else 6}
+    required = work_sms_required(brand_id)
+    active = required or _read_policy(brand_id).get('mode') == 'active'
+    return {'channel':'sms' if active else 'email','code_length':4 if active else 6,
+            'sms_required':required,'password_login_allowed':not required,'password_step_up_allowed':not required}

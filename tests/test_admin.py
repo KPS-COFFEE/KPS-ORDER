@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 from app import admin,auth,db
+from tests.sms_policy_helpers import sms_login, sms_step_up
 
 
 def test_configuration_rejects_malformed_options_and_city_aliases():
@@ -43,13 +44,13 @@ def test_disabled_branch_can_clear_form_fields_without_retaining_old_values(owne
 
 
 @pytest.fixture
-def owner(client):
+def owner(client, monkeypatch):
     password='TestOnly!PrivatePassword1'
     with db.tx() as conn:
         conn.execute("INSERT INTO users(id,username,display_name,role,brand_id,password_hash) VALUES('admin-test-owner','admin-test-owner','اختبار الإدارة','owner','kps',%s)",(auth.hash_password(password),))
-    response=client.post('/api/auth/login',json={'username':'admin-test-owner','password':password})
-    assert response.status_code==200,response.text
-    client.headers['X-CSRF-Token']=response.json()['csrf_token']
+    with db.tx() as conn:
+        principal = conn.execute("SELECT * FROM users WHERE id='admin-test-owner'").fetchone()
+    sms_login(client, principal, monkeypatch)
     def mutate(method,path,body=None,key=None,files=None):
         headers={'Idempotency-Key':key or uuid4().hex}
         return client.request(method,path,json=body,files=files,headers=headers)
@@ -120,10 +121,9 @@ def test_real_banner_upload_schedule_scope_edit_persistence_and_private_preview(
 
 
 @pytest.mark.postgres
-def test_legacy_employee_session_revocation_and_owner_protection(owner):
+def test_legacy_employee_session_revocation_and_owner_protection(owner, monkeypatch):
     client,mutate=owner
-    # V5 requires email invitation for newly enrolled staff. Existing active
-    # employees retain private password access during their safe transition.
+    # Legacy hashes remain stored; KPS password alone cannot create a session.
     rejected=mutate('POST','/api/admin/users',{'username':'test-driver','role':'driver','password':'TestOnly!DriverPassword1','branch_ids':['kps-branch-1']})
     assert rejected.status_code==422
     assert rejected.json()['detail']['code']=='STAFF_EMAIL_INVITATION_REQUIRED'
@@ -132,7 +132,11 @@ def test_legacy_employee_session_revocation_and_owner_protection(owner):
         conn.execute("INSERT INTO users(id,username,display_name,role,brand_id,branch_ids,password_hash) VALUES(%s,'test-driver','موظف سابق للاختبار','driver','kps',%s,%s)",
                      (uid,db.json(['kps-branch-1']),auth.hash_password('TestOnly!DriverPassword1')))
     owner_cookies=dict(client.cookies);owner_csrf=client.headers['X-CSRF-Token']
-    login=client.post('/api/auth/login',json={'username':'test-driver','password':'TestOnly!DriverPassword1'});assert login.status_code==200
+    login=client.post('/api/auth/login',json={'username':'test-driver','password':'TestOnly!DriverPassword1'})
+    assert login.status_code == 403 and login.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
+    with db.tx() as conn:
+        employee = conn.execute('SELECT * FROM users WHERE id=%s',(uid,)).fetchone()
+    sms_login(client, employee, monkeypatch)
     employee_cookies=dict(client.cookies)
     client.cookies.clear();client.cookies.update(owner_cookies);client.headers['X-CSRF-Token']=owner_csrf
     assert mutate('PATCH','/api/admin/users/'+uid,{'active':False}).status_code==200
@@ -151,7 +155,9 @@ def test_add_brand_same_database_invites_separate_scoped_owner_and_no_catalog_fo
     monkeypatch.setenv('EMAIL_FROM','sender@example.invalid')
     monkeypatch.setenv('RESEND_API_KEY','synthetic-never-dispatched')
     monkeypatch.setenv('MAIL_OUTBOX_KEY',base64.urlsafe_b64encode(b'B'*32).decode())
-    assert client.post('/api/identity/step-up',json={'password':'TestOnly!PrivatePassword1'}).status_code==200
+    with db.tx() as conn:
+        principal = conn.execute("SELECT * FROM users WHERE id='admin-test-owner'").fetchone()
+    sms_step_up(client, principal, monkeypatch)
     payload={'id':'testbrand','name':'براند اختبار','owner_email':'owner@example.invalid','owner_display_name':'مالك اختبار'}
     r=mutate('POST','/api/admin/brands',payload,key='create-second-brand');assert r.status_code==200,r.text
     assert r.json()['invitation_status']=='pending_email'

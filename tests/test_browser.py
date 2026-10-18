@@ -109,8 +109,7 @@ def chromium_browser():
     from playwright.sync_api import sync_playwright
     ARTIFACTS.mkdir(exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'],
-                                             executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None)
+        browser = playwright.chromium.launch(headless=True, args=['--no-sandbox'], executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None)
         try:
             yield browser
         finally:
@@ -182,10 +181,35 @@ def _capture(page, prefix):
 
 
 def _owner_login(context, base, owner):
-    login = context.request.post(base + '/api/auth/login', headers={'Origin': base},
-                                 data={'username': owner['username'], 'password': PASSWORD})
+    from tests.sms_policy_helpers import register_synthetic_mobile
+    with db.tx() as conn:
+        fixture = conn.execute('SELECT * FROM users WHERE id=%s', (owner['id'],)).fetchone()
+    fixture = register_synthetic_mobile(fixture)
+    origin = {'Origin': base, 'X-KPS-Context': 'work'}
+    denied = context.request.post(base + '/api/auth/login', headers=origin,
+                                  data={'username': owner['username'], 'password': PASSWORD})
+    assert denied.status == 403, denied.text()
+    assert denied.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n'] == 0
+    sent = context.request.post(base + '/api/identity/staff/code/request', headers=origin,
+                                data={'phone': fixture['phone'], 'brand_id': fixture['brand_id']})
+    assert sent.ok, sent.text()
+    assert sent.json()['channel'] == 'sms' and sent.json()['code_length'] == 4
+    login = context.request.post(base + '/api/identity/staff/code/verify', headers=origin,
+                                 data={'challenge_id': sent.json()['challenge_id'], 'code': '0123'})
     assert login.ok, login.text()
-    return {'Origin': base, 'X-CSRF-Token': login.json()['csrf_token']}
+    assert login.json()['user']['id'] == owner['id']
+    assert login.json()['user']['role'] == fixture['role']
+    assert login.json()['user']['brand_id'] == fixture['brand_id']
+    headers = {**origin, 'X-CSRF-Token': login.json()['csrf_token']}
+    with db.tx() as conn:
+        session = conn.execute('SELECT step_up_at FROM sessions WHERE user_id=%s AND revoked_at IS NULL', (owner['id'],)).fetchone()
+        assert session['step_up_at'] is None, 'SMS login must not grant sensitive-action proof'
+    if fixture['role'] == 'owner':
+        rejected = context.request.post(base + '/api/identity/step-up', headers=headers, data={'password': PASSWORD})
+        assert rejected.status == 403 and rejected.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
+    return headers
 
 
 def _test_banner(context, base, headers):
@@ -500,8 +524,9 @@ def _staff_ui_login(page,user):
 
 
 def _authenticated_post(context,base,path,body=None):
-    session=context.request.get(base+'/api/session').json()
-    response=context.request.post(base+path,headers={'Origin':base,'X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data=body or {})
+    session=context.request.get(base+'/api/session',headers={'X-KPS-Context':'work'}).json()
+    assert session.get('user') and session.get('csrf_token'), 'Canonical work session is required for this browser helper'
+    response=context.request.post(base+path,headers={'Origin':base,'X-KPS-Context':'work','X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data=body or {})
     assert response.ok,response.text()
     return response.json()
 
@@ -513,7 +538,8 @@ def _approve_driver_closure_from_browser(page, manager_context, base, shift_id):
     with db.tx() as conn:
         before=conn.execute('SELECT status,available,submitted_at,closed_at FROM shifts WHERE id=%s',(shift_id,)).fetchone()
         transfers=conn.execute('SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s',(shift_id,)).fetchone()['n']
-    session=page.context.request.get(base+'/api/session').json()
+    session=page.context.request.get(base+'/api/session',headers={'X-KPS-Context':'work'}).json()
+    assert session.get('user') and session.get('csrf_token'), 'Canonical work session is required before the closure-policy assertion'
     refused=page.context.request.post(base+'/api/shifts/'+shift_id+'/closing',headers={
         'Origin':base,'X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data={})
     assert refused.status==409 and refused.json()['detail']['code']=='EARLY_CLOSURE_APPROVAL_REQUIRED'
@@ -930,3 +956,4 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
             'physical_device_test':False,'real_external_sms_verification':False},indent=2))
     finally:
         context.close();owner_context.close()
+

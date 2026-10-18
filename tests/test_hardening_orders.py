@@ -76,8 +76,9 @@ def test_location_requires_a_real_json_number(field, value):
         catalog.Location.model_validate(location)
 
 
-def test_car_pickup_requires_nonblank_color():
-    car = {'plate': '', 'color': '  '}
+@pytest.mark.parametrize('field', ['plate', 'color'])
+def test_car_pickup_requires_nonblank_plate_and_color(field):
+    car = {'plate': 'TEST', 'color': 'black'} | {field: '  '}
     with pytest.raises(ValidationError):
         catalog.Car.model_validate(car)
 
@@ -101,6 +102,7 @@ def checkout(client):
         'brand_id': brand, 'display_name': 'عميل اختبار', 'phone': '0501234567'})
     assert guest.status_code == 200, guest.text
     client.headers['X-CSRF-Token'] = guest.json()['csrf_token']
+    client.headers['X-KPS-Context'] = 'customer'
     return client, guest.json()['user']
 
 
@@ -127,7 +129,7 @@ def staff_client(client, branch_ids):
                      (user_id, db.json(branch_ids)))
         conn.execute("INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at) VALUES(%s,%s,%s,%s,now()+interval '1 hour')",
                      (db.new_id('test_session_'), auth.token_hash(token), auth.token_hash(csrf), user_id))
-    with TestClient(client.app, base_url='http://testserver', headers={'Origin': 'http://testserver', 'X-CSRF-Token': csrf}) as staff:
+    with TestClient(client.app, base_url='http://testserver', headers={'Origin': 'http://testserver', 'X-CSRF-Token': csrf, 'X-KPS-Context': 'work'}) as staff:
         staff.cookies.set(auth.COOKIE, token)
         staff.cookies.set(auth.CSRF_COOKIE, csrf)
         yield staff, user_id
@@ -292,6 +294,7 @@ def test_matching_unverified_phone_never_grants_other_guests_orders(checkout):
         guest = other.post('/api/identity/guest', json={'brand_id': 'hardening-orders', 'display_name': 'TEST other', 'phone': '0501234567'})
         assert guest.status_code == 200 and guest.json()['user']['id'] != user['id']
         other.headers['X-CSRF-Token'] = guest.json()['csrf_token']
+        other.headers['X-KPS-Context'] = 'customer'
         assert other.get('/api/orders/' + order['id']).status_code == 404
         assert other.get('/api/orders').json()['orders'] == []
         assert other.post('/api/orders/' + order['id'] + '/arrival', json={'version': 1},

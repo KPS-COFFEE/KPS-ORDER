@@ -1,8 +1,8 @@
 """Do not certify a different worker topology from the Docker entry point."""
 import inspect
 import json
-from pathlib import Path
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -11,19 +11,37 @@ from tools import hardening_load
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_release_load_and_docker_use_the_same_two_web_workers():
+@pytest.mark.parametrize('port', ['', '18080'])
+def test_release_load_and_docker_use_the_same_two_web_workers(monkeypatch, port):
+    import os
+    import runpy
+    import sys
+
     lines = (ROOT / 'Dockerfile').read_text().splitlines()
     commands = [json.loads(line[4:]) for line in lines if line.startswith('CMD ')]
-    assert len(commands) == 1
-    shell, flag, command = commands[0]
-    assert (shell, flag) == ('/bin/sh', '-c')
-    args = shlex.split(command)
-    assert args[:5] == ['exec', 'python', '-m', 'uvicorn', 'app.main:app']
+    assert len(commands) == 2
+    assert commands[-1] == ['/usr/local/bin/python', '/usr/local/bin/kps-order-start.py']
+    assert commands[0][:2] == ['/bin/sh', '-c']
+    rollback_args = shlex.split(commands[0][2])
+    assert rollback_args[:5] == ['exec', 'python', '-m', 'uvicorn', 'app.main:app']
+    assert rollback_args[rollback_args.index('--port') + 1] == '${PORT:-10000}'
+    assert rollback_args[rollback_args.index('--host') + 1] == '0.0.0.0'
+    assert int(rollback_args[rollback_args.index('--workers') + 1]) == hardening_load.RELEASE_WORKERS == 2
+    assert int(rollback_args[rollback_args.index('--timeout-keep-alive') + 1]) == hardening_load.RELEASE_KEEPALIVE_SECONDS == 15
+    captured = []
+    monkeypatch.setenv('PORT', port)
+    monkeypatch.setattr(os, 'execv', lambda executable, args: captured.append((executable, args)))
+    deployed = Path('/usr/local/bin/kps-order-start.py')
+    runpy.run_path(str(deployed if deployed.is_file() else ROOT / 'tools/container_entrypoint.py'))
+    assert len(captured) == 1
+    executable, args = captured[0]
+    assert executable == sys.executable
+    assert args[:4] == [sys.executable, '-m', 'uvicorn', 'app.main:app']
     assert int(args[args.index('--workers') + 1]) == hardening_load.RELEASE_WORKERS == 2
     assert int(args[args.index('--timeout-keep-alive') + 1]) == hardening_load.RELEASE_KEEPALIVE_SECONDS == 15
     assert inspect.signature(hardening_load.start_app).parameters['workers'].default == 2
     assert args[args.index('--host') + 1] == '0.0.0.0'
-    assert args[args.index('--port') + 1] == '${PORT:-10000}'
+    assert args[args.index('--port') + 1] == (port or '10000')
 
 
 def test_both_release_runs_retain_the_complete_strict_load_gate():

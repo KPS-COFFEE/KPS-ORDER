@@ -665,7 +665,10 @@ def v5_tables(snap,view='compact'):
             ['إجمالي التعبئة (لتر)',vehicle['fuel_liters']],['عدد التعبئات',vehicle['refuel_count']]])
         status=lambda v:'سليم' if v=='ok' else 'يحتاج متابعة' if v=='issue' else 'غير مسجل'
         table('inspections','الفحص اليومي للمركبة',['البند','بداية الشفت','نهاية الشفت'],[[label,status(begin.get('checks',{}).get(key)),status(end.get('checks',{}).get(key))] for key,label in CHECKS.items()]+[['ملاحظات',begin.get('notes',''),end.get('notes','')]])
-        table('refuels','سجل تعبئة البنزين',['الوقت - الرياض','لتر','العداد (كم)','ملاحظات'],[[v5_stamp(r['recorded_at']),r['liters'],r['odometer_km'],r.get('notes','')] for r in log.get('refuels',[])])
+        parts=[*log.get('previous_segments',[]),log]
+        if log.get('previous_segments'):
+            table('vehicle-handovers','المركبات خلال الشفت',['المركبة','عداد الاستلام','عداد التسليم','بنزين الاستلام %','بنزين التسليم %','سبب التبديل'],[[(part.get('vehicle') or {}).get('plate',''),part.get('start',{}).get('odometer_km'),part.get('end',{}).get('odometer_km'),part.get('start',{}).get('fuel_percent'),part.get('end',{}).get('fuel_percent'),part.get('handover',{}).get('reason','')] for part in parts])
+        table('refuels','سجل تعبئة البنزين',['الوقت - الرياض','المركبة','لتر','العداد (كم)','ملاحظات'],[[v5_stamp(r['recorded_at']),part.get('vehicle',{}).get('plate',''),r['liters'],r['odometer_km'],r.get('notes','')] for part in parts for r in part.get('refuels',[])])
     if snap.get('support_tickets'):
         from .order_support import CATEGORIES,STATES
         table('support-tickets','تذاكر المتابعة والمشكلات',['التذكرة','الطلب','الفرع','التصنيف','الحالة','الملاحظة / الحل'],[[t['reference'],t['order_reference'],branch(t['branch_id']),CATEGORIES.get(t['category'],t['category']),STATES.get(t['status'],t['status']),t['note']+' / '+t.get('resolution','')] for t in snap['support_tickets']])

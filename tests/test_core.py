@@ -129,6 +129,8 @@ def _make_user(role='customer', brand='kps', branches=None, username=None, passw
 
 
 def _authenticate(client, user):
+    # Match the UI context on shared API routes while preserving separate jars.
+    client.headers['X-KPS-Context'] = 'customer' if user['role'] == 'customer' else 'work'
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     with db.tx() as conn:
         conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at) VALUES(%s,%s,%s,%s,now()+interval \'1 hour\')',
@@ -228,11 +230,15 @@ class TestPostgreSQLCore:
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n'] == 1
 
-    def test_session_csrf_origin_revocation_and_password_login(self, client):
+    def test_session_csrf_origin_revocation_and_password_login(self, client, monkeypatch):
         user = _make_user('branch_manager', branches=['kps-branch-1'], username='staff.test', password='LongTestPassword!1')
         login = client.post('/api/auth/login', json={'username': 'STAFF.TEST', 'password': 'LongTestPassword!1'})
-        assert login.status_code == 200
-        csrf = login.json()['csrf_token']
+        assert login.status_code == 403 and login.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
+        assert client.get('/api/session').json()['user'] is None
+        from tests.sms_policy_helpers import sms_login
+        login = sms_login(client, user, monkeypatch)
+        csrf = login['csrf_token']
+        client.headers.pop('X-CSRF-Token')
         assert client.get('/api/session').json()['user']['id'] == user['id']
         assert client.post('/api/auth/logout').status_code == 403
         assert client.post('/api/auth/logout', headers={'X-CSRF-Token': csrf, 'Origin': 'https://other.invalid'}).status_code == 403

@@ -16,6 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import auth, catalog, db, email_delivery, monitoring, orders, image_previews
 from .http_security import SecurityMiddleware
+from .host_policy import OfficialHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
@@ -41,12 +42,6 @@ async def lifespan(app):
                 background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
             if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
-            from . import branch_payment_webhooks
-            if branch_payment_webhooks.worker_enabled() and os.getenv('APP_ENV') != 'testing':
-                background_tasks.append(asyncio.create_task(branch_payment_webhooks.poll_loop(), name='branch-payment-inbox'))
-            from . import branch_refund_reconciliation
-            if branch_refund_reconciliation.enabled() and os.getenv('APP_ENV') != 'testing':
-                background_tasks.append(asyncio.create_task(branch_refund_reconciliation.poll_loop(), name='branch-refund-reconciliation'))
         yield
     finally:
         try:
@@ -69,6 +64,7 @@ if hosts:
 from . import portals
 app.add_middleware(portals.PortalBoundaryMiddleware)
 app.add_middleware(SecurityMiddleware)
+app.add_middleware(OfficialHostMiddleware)
 
 
 @app.exception_handler(RequestValidationError)
@@ -86,32 +82,30 @@ async def database_unavailable(request: Request, exc):
 # routes first without changing a route's dependencies or relative precedence
 # within its router. No permission/session result is cached.
 app.include_router(orders.router)
-from . import branch_payments, branch_payment_renewal
+from . import branch_payments
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
 from . import owner_phone
 app.include_router(owner_phone.router)
-from . import employee_sms
+from . import employee_sms, sms_rollout, sms_pilot_ui
 app.include_router(employee_sms.router)
-from . import sms_rollout, sms_pilot_ui
 app.include_router(sms_rollout.router)
 app.include_router(sms_pilot_ui.router)
 # Provider callbacks use their own signed timestamped verification, rather than
 # browser Origin or session cookies. They must stay outside the /api namespace.
 app.include_router(email_delivery.webhook_router)
-from . import branch_payment_webhooks
-app.include_router(branch_payment_webhooks.router)
-from . import branch_refunds
-app.include_router(branch_refunds.router)
-from . import branch_payment_reports
-app.include_router(branch_payment_reports.router)
-from . import branch_payment_policy
-app.include_router(branch_payment_policy.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'channel_settlement', 'internal_documents', 'driver_closure', 'customer_crm'):
+for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'channel_settlement', 'internal_documents', 'driver_closure'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
+
+from . import driver_checks
+app.include_router(driver_checks.router)
+from . import delegated_operations, driver_work_hours, driver_hours_reports
+app.include_router(delegated_operations.router)
+app.include_router(driver_work_hours.router)
+app.include_router(driver_hours_reports.router)
 
 
 def revision():
@@ -154,22 +148,6 @@ def customer_page(request: Request):
         return JSONResponse({'detail': {'code': 'UI_UNAVAILABLE', 'message': 'واجهة المتجر قيد الإعداد.'}}, status_code=503)
     from .storefront_scope import customer_html
     return HTMLResponse(customer_html(path.read_text(), request), headers={'Cache-Control': 'no-store'})
-
-
-@app.get('/branch-payment')
-def branch_payment_page(user=Depends(auth.require_roles('customer'))):
-    if os.getenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED') != 'true':
-        raise db.error(404,'PAYMENT_PAGE_DISABLED','الدفع الإلكتروني غير مفعل.')
-    return FileResponse(PUBLIC / 'branch-payment.html',media_type='text/html',headers={'Cache-Control':'no-store'})
-
-
-@app.get('/payment-return')
-def branch_payment_return_page():
-    # Cross-site provider navigation omits Strict cookies. Serve only a neutral
-    # shell; its same-origin API calls must authenticate and verify payment.
-    if os.getenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED') != 'true':
-        raise db.error(404,'PAYMENT_PAGE_DISABLED','الدفع الإلكتروني غير مفعل.')
-    return FileResponse(PUBLIC / 'branch-payment.html',media_type='text/html',headers={'Cache-Control':'no-store'})
 
 
 @app.get('/ops')

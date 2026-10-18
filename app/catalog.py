@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import asyncio
 import hashlib
 import json
 import re
@@ -12,7 +13,8 @@ from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, parse_qs, urlencode, unquote, urljoin
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from .responses import DatabaseJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
@@ -189,9 +191,7 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None) ->
     now = now or service_hours.now_riyadh()
     settings = branch['settings']
     service_key = 'car_pickup' if service == 'car' else service
-    from .branch_payment_policy import required, blockers
-    online = service in {'pickup','car'} and brand_settings is not None and required(branch['brand_id'], brand_settings)
-    if (brand_settings or {}).get('services', {}).get(service_key, not online) is not True:
+    if (brand_settings or {}).get('services', {}).get(service_key, True) is not True:
         return False, 'BRAND_SERVICE_DISABLED', 'هذه الخدمة موقوفة من إدارة البراند.'
     if settings.get('active', True) is not True:
         return False, 'BRANCH_DISABLED', 'الفرع متوقف عن استقبال الطلبات الجديدة.'
@@ -199,8 +199,6 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None) ->
         return False, 'DELIVERY_CITY_NOT_ELIGIBLE', 'هذا الفرع غير مشمول بخدمة التوصيل حاليًا.'
     if settings.get(service + '_enabled') is not True:
         return False, 'SERVICE_DISABLED', 'هذه الخدمة غير مفعلة لهذا الفرع.'
-    if online and blockers(branch):
-        return False, 'BRANCH_PAYMENT_NOT_READY', 'الدفع الإلكتروني لهذه الخدمة ينتظر استكمال الاعتماد والتفعيل.'
     if not (settings.get('operational_data_verified') is True or settings.get('ordering_verified') is True):
         return False, 'BRANCH_CONFIGURATION_UNVERIFIED', 'بيانات تشغيل هذا الفرع لم تُعتمد بعد.'
     if not settings.get('opening_hours'):
@@ -408,8 +406,6 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
             public_products.append(item)
 
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
-    from .branch_payment_policy import required
-    safe_brand['branch_online_required'] = required(brand_id, brand['settings'])
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
                            if key in {'accent', 'background', 'text', 'font', 'profile'}}
     # This allowlisted projection already consists entirely of JSON values.
@@ -441,9 +437,8 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
             available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
             item['services'][service] = {'available': available, 'code': code, 'reason': reason}
         result.append(item)
-    from .branch_payment_policy import required
     return {'branches': result,
-            'brand_services': {key: brand_settings.get('services', {}).get(key, key=='delivery' or not required(brand_id, brand_settings)) is True
+            'brand_services': {key: brand_settings.get('services', {}).get(key, True) is True
                                for key in ('delivery', 'pickup', 'car_pickup')}}
 
 
@@ -490,28 +485,17 @@ class Location(_CheckoutModel):
 
 class Car(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
-    plate: str = Field(default='', max_length=30)
+    plate: str = Field(min_length=1, max_length=30)
     color: str = Field(min_length=1, max_length=40)
     model: str = Field(default='', max_length=60)
 
-    @field_validator('color')
+    @field_validator('plate', 'color')
     @classmethod
     def car_identification_required(cls, value):
         value = value.strip()
         if not value:
-            raise ValueError('Car color is required.')
+            raise ValueError('Car plate and color are required.')
         return value
-
-    @field_validator('plate')
-    @classmethod
-    def flexible_optional_plate(cls, value):
-        # New checkout values only; never rewrite historical order snapshots.
-        value = value.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789'))
-        if any(not (c in ' -/' or '0' <= c <= '9' or 'A' <= c <= 'Z' or
-                    'a' <= c <= 'z' or '\u0621' <= c <= '\u063a' or
-                    '\u0641' <= c <= '\u064a') for c in value):
-            raise ValueError('Plate may contain Arabic/English letters, digits, spaces, hyphens or slashes.')
-        return ' '.join(value.split())
 
 
 class CustomerInfo(_CheckoutModel):
@@ -639,10 +623,6 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     if not available:
         raise db.error(409, code, reason)
     selected_branch = branch
-    from .branch_payment_policy import required
-    online = body.service in {'pickup','car'} and required(body.brand_id, brand['settings'])
-    if online and body.payment_method != 'card':
-        raise db.error(422, 'ONLINE_PAYMENT_REQUIRED', 'الدفع الإلكتروني بعد موافقة الكاشير هو الوسيلة المتاحة لهذه الخدمة.')
     contains_khaliya = body.brand_id == 'kps' and any(item.product_id in KHALIYA_SOURCES.values() for item in body.items)
     if contains_khaliya and body.service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
         branch = khaliya_branch(conn, lock)
@@ -725,9 +705,6 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
             'branch_id': selected_branch['id'], 'branch_no': selected_branch['branch_no'],
             'branch_name': selected_branch['name'], 'branch_city': selected_branch['city'],
             'branch_location': selected_branch['settings'].get('location')}}
-    if online:
-        from .payment_runtime import mode
-        result.update(branch_payment_mode=mode(), branch_payment_seller=branch['settings']['online_payment_seller'])
     return result
 
 
@@ -749,7 +726,7 @@ class AvailabilityBody(BaseModel):
 def branch_product_availability(branch_id: str, product_id: str, body: AvailabilityBody,
                                 user=Depends(auth.current_user),
                                 idempotency_key: str | None = Header(default=None)):
-    if user['role'] not in ('owner','branch_manager') and not auth.has_permission(user,'products_manage'):
+    if user['role']!='owner' and not (auth.has_permission(user,'branch_availability') or auth.has_permission(user,'products_manage')):
         raise db.error(403, 'ROLE_FORBIDDEN', 'يلزم تفويض إدارة الأصناف.')
     if user['role'] != 'owner' and branch_id not in user['branch_ids']:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود ضمن صلاحياتك.')
@@ -923,12 +900,53 @@ class MapURLBody(BaseModel):
 
 
 @router.post('/location/parse-map-url')
+async def parse_map_url_http(body: MapURLBody, request: Request, response: Response):
+    from . import map_resolution
+    value = safe_map_url(body.url)
+    if not value:
+        raise db.error(422, 'MAP_URL_NOT_ALLOWED', 'اختر دبوسًا أو رابط Google Maps معتمدًا.')
+    if urlsplit(value).hostname not in map_resolution.SHORT_HOSTS:
+        return _parse_map_pin(value)
+    admission = await run_in_threadpool(map_resolution.admit, value, request.cookies.get(map_resolution.COOKIE))
+    result = None
+    try:
+        if admission.get('error'):
+            raise admission['error']
+        if 'result' in admission:
+            output = JSONResponse(admission['result'])
+        else:
+            result = _parse_map_pin(await map_resolution.resolve_short_map_url(value))
+            output = JSONResponse(result)
+    except HTTPException as error:
+        # Expected errors must retain the anonymous identity too. Otherwise a
+        # failed link would bootstrap a new per-browser rate bucket each time.
+        output = JSONResponse({'detail': error.detail}, status_code=error.status_code, headers=error.headers)
+    finally:
+        # Cancellation must not strand a live worker's lease. The short cleanup
+        # task remains scheduled even if the HTTP task is cancelled a second time.
+        cleanup = asyncio.create_task(run_in_threadpool(map_resolution.finish, admission, result))
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            await asyncio.shield(cleanup)
+            raise
+    output.set_cookie(map_resolution.COOKIE, admission['cookie'], max_age=86400,
+                      httponly=True, secure=auth.secure_cookie(), samesite='strict', path='/api/location')
+    output.headers['Cache-Control'] = 'no-store'
+    return output
+
+
 def parse_map_url(body: MapURLBody):
+    """Compatibility parser for source-level callers; HTTP uses guarded async route."""
     value = safe_map_url(body.url)
     if not value:
         raise db.error(422, 'MAP_URL_NOT_ALLOWED', 'اختر دبوسًا أو رابط Google Maps معتمدًا.')
     if urlsplit(value).hostname in {'maps.app.goo.gl', 'goo.gl'}:
         value = resolve_short_map_url(value)
+    return _parse_map_pin(value)
+
+
+def _parse_map_pin(value):
     parsed = urlsplit(value)
     query = parse_qs(parsed.query)
     candidate = (query.get('destination') or query.get('query') or query.get('q') or [None])[0]

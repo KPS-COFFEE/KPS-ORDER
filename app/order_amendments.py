@@ -37,7 +37,6 @@ def balance(c, o):
     from .branch_payments import online_order
     if online_order(o):
         net += int(c.execute('SELECT coalesce(sum(amount_halalas),0) AS net FROM branch_online_receipts WHERE order_id=%s',(o['id'],)).fetchone()['net'])
-        net -= int(c.execute("SELECT coalesce(sum(amount_halalas),0) AS net FROM branch_online_refunds WHERE order_id=%s AND status='verified'",(o['id'],)).fetchone()['net'])
     return net
 
 

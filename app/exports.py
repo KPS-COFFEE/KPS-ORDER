@@ -25,7 +25,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
-          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
+          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
           'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports', 'manager_financial_matches',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
@@ -36,20 +36,24 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'closure_drafts', 'report_renderings', 'report_notifications',
           'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations', 'driver_evidence', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
-          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings')
-AUTH_TABLES = {'owner_phone_challenges', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'otp_challenges', 'rate_limits', 'idempotency_keys',
-               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices'}
+          'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings', 'driver_check_requests',
+          'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache')
+AUTH_TABLES = {'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
+               'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
                          'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations'}
+# Private full archives preserve exact evidence; restore retires these anonymous
+# capabilities/budgets and location cache only after validating the snapshot.
+MAP_RUNTIME_TABLES = {'map_resolution_state', 'map_resolution_clients',
+                      'map_resolution_leases', 'map_resolution_cache'}
 PUBLIC = db.ROOT / 'public' / 'assets'
 MAX_WEB_EXPORT = 64 * 1024 * 1024
 INDEPENDENT_RESTORE_DATABASE_ID = 'dpg-db50dcdckfvc738gsrhg-a'
 
 
 def _plain(value):
-    if isinstance(value, datetime):
-        return (value.astimezone(timezone.utc) if value.tzinfo else value).isoformat()
-    if isinstance(value, date):
+    if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, UUID):
         return str(value)
@@ -65,15 +69,19 @@ def _encode(value) -> bytes:
 def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
-    direct = {'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'branch_payment_attempts', 'branch_online_receipts', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'driver_evidence', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
-              'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles'} | INFRASTRUCTURE_TABLES
+              'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles', 'driver_check_requests'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
     if table == 'app_settings' or table in direct:
         return 'brand_id=%s', (brand,)
+    if table == 'driver_work_trips':
+        return 'brand_id=%s', (brand,)
+    if table in {'driver_work_trip_orders', 'driver_work_trip_events'}:
+        return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
     if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
@@ -111,39 +119,6 @@ def _totals(conn, brand_id):
     order['collected_halalas'] = conn.execute('SELECT coalesce(sum(amount_halalas),0)::bigint AS n FROM collections WHERE ' + col_clause, vals).fetchone()['n']
     order['refunded_halalas'] = conn.execute('SELECT coalesce(sum(amount_halalas),0)::bigint AS n FROM refunds WHERE ' + ref_clause, ref_vals).fetchone()['n']
     return order
-
-
-def _sequence_state(conn):
-    """Read allocated high water as well as is_called; never consume a number."""
-    states = []
-    for row in conn.execute(
-        'SELECT sequencename,start_value,min_value,max_value,increment_by,cycle,cache_size '
-        'FROM pg_sequences WHERE schemaname=current_schema() ORDER BY sequencename'):
-        state = conn.execute(sql.SQL('SELECT last_value,is_called FROM {}').format(
-            sql.Identifier(row['sequencename']))).fetchone()
-        states.append(dict(row, **state))
-    return states
-
-
-def _restore_sequences(conn, archived):
-    current = _sequence_state(conn)
-    if {r['sequencename'] for r in archived} != {r['sequencename'] for r in current}:
-        raise ValueError('Archived sequence set differs from target schema.')
-    by_name = {r['sequencename']: r for r in current}
-    for row in archived:
-        descriptor = by_name[row['sequencename']]
-        if {k:v for k,v in row.items() if k not in {'last_value','is_called'}} != {
-                k:v for k,v in descriptor.items() if k not in {'last_value','is_called'}}:
-            raise ValueError('Archived sequence configuration differs from target.')
-        if type(row['last_value']) is not int or type(row['is_called']) is not bool:
-            raise ValueError('Invalid sequence watermark.')
-        if not row['min_value'] <= row['last_value'] <= row['max_value']:
-            raise ValueError('Sequence watermark outside configured range.')
-        # Identifier quoting and regclass binding both stay within the new schema.
-        conn.execute('SELECT setval(%s::regclass,%s,%s)',
-                     (row['sequencename'],row['last_value'],row['is_called']))
-    if _sequence_state(conn) != archived:
-        raise ValueError('Restored sequence watermarks differ from source.')
 
 
 def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[bytes, dict]:
@@ -194,8 +169,6 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
             if path.is_file() and not path.is_symlink() and re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:jpg|jpeg|png|webp|svg)', path.name):
                 if full or brand_id == 'kps':
                     add('static/assets/' + path.name, path.read_bytes())
-        if full:
-            add('metadata/sequences.json', _encode(_sequence_state(conn)))
         manifest = {'format': FORMAT, 'mode': 'database' if full else 'business', 'created_at': datetime.now(timezone.utc).isoformat(),
                     'source_revision': os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned',
                     'scope': {'brand_id': None if full else brand_id}, 'migrations': migrations,
@@ -205,6 +178,7 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                                                  'products': ['id', 'settings.source_id'], 'orders': ['id', 'snapshot']},
                     'deduplication': 'Preserve primary/source IDs; verify counts/totals before import. Never replay sales or collections.',
                     'credentials_included': bool(full),
+                    'map_runtime_import_policy': 'Private database archives only; verify then discard signing key, counters, leases and location cache on isolated restore.',
                     'excluded_tables': [] if full else sorted(AUTH_TABLES),
                     'infrastructure_tables': [table for table in selected if table in INFRASTRUCTURE_TABLES],
                     'infrastructure_import_policy': 'Preserve observations and failure queues as historical source records; do not activate source hosting configuration or replay alerts.'}
@@ -262,8 +236,8 @@ def _restore_target(target_url, target_database_id=None):
 
 
 def _restored_evidence(conn, archive, manifest):
-    """Compare identifiers, complete rows and every stored blob before retirement."""
-    identity_digests, row_digests, binary_count = {}, {}, 0
+    """Read the inserted target records, then compare IDs and every stored blob."""
+    identity_digests, binary_count = {}, 0
     for table in manifest['table_order']:
         source = json.loads(archive.read(f'data/{table}.json'))
         target = conn.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(table))).fetchall()
@@ -278,7 +252,6 @@ def _restored_evidence(conn, archive, manifest):
             raise ValueError('Restored primary identifiers differ from snapshot.')
         identity_digests[table] = hashlib.sha256(b'\n'.join(target_ids)).hexdigest()
         indexed = {identity(row): row for row in target}
-        verified_rows = []
         for row in source:
             actual = indexed[identity(row)]
             for column, value in row.items():
@@ -287,12 +260,7 @@ def _restored_evidence(conn, archive, manifest):
                     if len(restored) != value['size_bytes'] or hashlib.sha256(restored).hexdigest() != value['sha256']:
                         raise ValueError('Restored binary checksum mismatch.')
                     binary_count += 1
-                    actual[column] = value
-            if _encode(actual) != _encode(row):
-                raise ValueError('Restored complete row differs from snapshot.')
-            verified_rows.append(hashlib.sha256(_encode(actual)).hexdigest())
-        row_digests[table] = hashlib.sha256('\n'.join(sorted(verified_rows)).encode()).hexdigest()
-    return identity_digests, binary_count, row_digests
+    return identity_digests, binary_count
 
 
 def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
@@ -304,11 +272,6 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     """
     started = time.monotonic()
     archive, manifest = verify_archive(contents, require_full=True)
-    if 'metadata/sequences.json' not in manifest['files']:
-        raise ValueError('Full restore requires archived source sequence watermarks; take a new private snapshot.')
-    archived_sequences = json.loads(archive.read('metadata/sequences.json'))
-    if not isinstance(archived_sequences, list):
-        raise ValueError('Invalid archived sequence state.')
     if not re.fullmatch(r'kps_restore_[a-f0-9]{32}', target_schema):
         raise ValueError('Restore schema must be kps_restore_ plus a new UUID hex value.')
     _restore_target(target_url, target_database_id)
@@ -319,6 +282,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     destination, files_restored = Path(asset_directory) if asset_directory is not None else None, 0
     discarded_worker_pulses = 0
     discarded_monitor_states = 0
+    discarded_map_runtime = {}
     if destination and (destination.exists() or destination.is_symlink()):
         raise ValueError('Static asset restoration refuses existing destinations.')
     with psycopg.connect(target_url, row_factory=dict_row, connect_timeout=10) as conn:
@@ -360,14 +324,10 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                             values.append(Decimal(value['$decimal']))
                         else:
                             values.append(value)
-                    statement = sql.SQL('INSERT INTO {} ({}) OVERRIDING SYSTEM VALUE VALUES ({})').format(
+                    statement = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
                         sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, row)),
                         sql.SQL(',').join(sql.Placeholder() for _ in row))
                     conn.execute(statement, values)
-            # Check every source field before deliberately retiring recovered
-            # print credentials/queues or ephemeral worker observations.
-            identities, binary_count, row_digests = _restored_evidence(conn, archive, manifest)
-            _restore_sequences(conn, archived_sequences)
             conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')
             # Restores preserve history, never replay physical printing or
@@ -376,13 +336,34 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                 conn.execute("UPDATE branch_print_devices SET revoked_at=coalesce(revoked_at,now()),token_hash=NULL,pair_hash=NULL,pair_expires_at=NULL")
                 conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE status='queued'")
                 conn.execute("UPDATE branch_print_jobs SET status='uncertain',finished_at=now() WHERE status='claimed'")
+            if 'chat_messages' in actual:
+                sequence = conn.execute("SELECT pg_get_serial_sequence('chat_messages','seq') AS name").fetchone()['name']
+                if sequence:
+                    conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM chat_messages),0),1),EXISTS(SELECT 1 FROM chat_messages))", (sequence,))
+            if 'orders' in actual:
+                conn.execute("SELECT setval('order_human_number_seq',greatest(coalesce((SELECT max(order_no) FROM orders),0),1),EXISTS(SELECT 1 FROM orders))")
+            if 'fiscal_documents' in manifest['table_order']:
+                conn.execute("SELECT setval('fiscal_document_number_seq',greatest(coalesce((SELECT max(substring(number from '[0-9]+$')::bigint) FROM fiscal_documents),0),1),EXISTS(SELECT 1 FROM fiscal_documents))")
+            if 'fiscal_previews' in manifest['table_order']:
+                conn.execute("SELECT setval('fiscal_preview_number_seq',greatest(coalesce((SELECT max(substring(number from '[0-9]+$')::bigint) FROM fiscal_previews),0),1),EXISTS(SELECT 1 FROM fiscal_previews))")
+            if 'shifts' in actual:
+                sequence = conn.execute("SELECT pg_get_serial_sequence('shifts','shift_no') AS name").fetchone()['name']
+                if sequence:
+                    conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(shift_no) FROM shifts),0),1),EXISTS(SELECT 1 FROM shifts))", (sequence,))
             counts = {table: conn.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n']
                       for table in manifest['table_order']}
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:
                 raise ValueError('Restored counts or monetary totals differ from snapshot.')
+            identities, binary_count = _restored_evidence(conn, archive, manifest)
             # Verify archived counts/identifiers first, then retire only this
             # newly restored schema's ephemeral runtime pulses. Historical
             # provider backup observations and owner alerts stay preserved.
+            for table in sorted(MAP_RUNTIME_TABLES & actual):
+                discarded_map_runtime[table] = counts.get(table, 0)
+                conn.execute(sql.SQL('DELETE FROM {}').format(sql.Identifier(table)))
+            if any(discarded_map_runtime.values()):
+                db.audit(conn, None, 'restore.map_runtime_discarded', 'runtime', target_schema,
+                         {'tables': discarded_map_runtime})
             if 'recovery_worker_observations' in actual:
                 discarded_worker_pulses = counts['recovery_worker_observations']
                 discarded_monitor_states = counts.get('recovery_monitor_state', 0)
@@ -415,14 +396,12 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     raise
     return {'target_schema': target_schema, 'counts': counts, 'totals': manifest['totals'], 'verified': True,
             'snapshot_created_at': manifest['created_at'], 'source_revision': manifest['source_revision'],
-            'identifier_sha256': identities, 'row_sha256': row_digests,
-            'complete_rows_verified': True, 'sequence_state_verified': True,
-            'sequence_state_sha256': hashlib.sha256(_encode(archived_sequences)).hexdigest(),
-            'binary_files_verified': binary_count,
+            'identifier_sha256': identities, 'binary_files_verified': binary_count,
             'static_files_archived': sum(name.startswith('static/assets/') for name in manifest['files']),
             'static_files_restored': files_restored, 'static_restore_verified': destination is not None,
             'ephemeral_worker_observations_discarded': discarded_worker_pulses,
             'ephemeral_monitor_state_discarded': discarded_monitor_states,
+            'ephemeral_map_runtime_discarded': discarded_map_runtime,
             'archive_sha256': hashlib.sha256(contents).hexdigest(), 'elapsed_seconds': round(time.monotonic() - started, 3)}
 
 

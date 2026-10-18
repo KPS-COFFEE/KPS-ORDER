@@ -196,8 +196,11 @@ def test_owner_saves_any_provider_only_as_a_disabled_plan(client):
 @pytest.mark.parametrize('role', ['customer', 'driver', 'delivery_manager', 'delivery_staff', 'branch_manager', 'admin'])
 def test_preparation_is_owner_only(client, role):
     _authenticate(client, _make_user(role, branches=['kps-branch-1']))
-    assert client.get('/api/admin/online-payments').status_code == 403
-    assert client.put('/api/admin/online-payments', json={}).status_code == 403
+    # A customer credential cannot authenticate this work route. Authenticated
+    # work roles are denied authorization; neither may view or mutate the plan.
+    expected = 401 if role == 'customer' else 403
+    assert client.get('/api/admin/online-payments').status_code == expected
+    assert client.put('/api/admin/online-payments', json={}).status_code == expected
 
 
 @pytest.mark.postgres

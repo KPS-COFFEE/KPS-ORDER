@@ -59,8 +59,8 @@ def setup_provider(monkeypatch,state='active'):
     monkeypatch.setattr(sms_verification,'check',lambda *a:True)
 
 
-def send(client):
-    r=client.post('/api/auth/otp/request',json={'phone':'0500000000'})
+def send(client, path='/api/auth/otp/request'):
+    r=client.post(path,json={'phone':'0500000000'})
     assert r.status_code==200,r.text
     assert 295 <= r.json()['expires_in'] <= 300
     return r.json()['challenge_id']
@@ -104,9 +104,10 @@ def test_owner_testing_keeps_session_and_requires_explicit_activation(client,mon
     assert client.post('/api/auth/otp/request',json={'phone':'0500000000'}).status_code==403
     owner=_make_user(role='owner')
     _authenticate(client,owner)
-    cid=send(client)
+    assert client.post('/api/auth/otp/request',json={'phone':'0500000000'}).status_code==403
+    cid=send(client, '/api/identity/owner/sms-channel-test/request')
     cookie=client.cookies.get(auth.COOKIE)
-    r=client.post('/api/auth/otp/verify',json={'challenge_id':cid,'code':'0123'})
+    r=client.post('/api/identity/owner/sms-channel-test/verify',json={'challenge_id':cid,'code':'0123'})
     assert r.status_code==200 and r.json()=={'verified':True,'test_only':True},r.text
     assert client.cookies.get(auth.COOKIE)==cookie
     with db.tx() as conn:

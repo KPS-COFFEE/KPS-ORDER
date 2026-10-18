@@ -5,9 +5,10 @@ import pytest
 from fastapi import HTTPException
 
 from app import auth, db, email_delivery
-from tests.test_core import _authenticate, _make_user
+from tests.test_v5_identity import _authenticate
+from tests.legacy_identity_helpers import BRAND as LEGACY_BRAND, make_legacy_user as _make_user
 from tests.test_final_identity import _code, _request, _staff, _verify
-from tests.test_v5_identity import _invite, _mail_setup
+from tests.test_v5_identity import _legacy_invite as _invite, _legacy_mail_setup as _mail_setup
 
 
 PROVENANCE={'decision_id':'synthetic-owner-decision-2026','source_sha256':'a'*64}
@@ -15,7 +16,7 @@ PROVENANCE={'decision_id':'synthetic-owner-decision-2026','source_sha256':'a'*64
 
 def _body(role='driver',**changes):
     values={'display_name':'موظف اختبار','email':'delivery@fixture.invalid','phone':'0507778899',
-            'role':role,'branch_ids':['kps-branch-1','kps-branch-5']}
+            'role':role,'branch_ids':['legacy-security-branch-1','legacy-security-branch-5']}
     return auth.StaffInvitationBody.model_validate(values|changes)
 
 
@@ -40,7 +41,7 @@ class TestIdentityClosure:
 
     @pytest.mark.parametrize('mutation',[
         'active=false',"invitation_status='paused'","email='replacement@fixture.invalid'",
-        "role='owner'","branch_ids='[\"kps-branch-1\"]'::jsonb","phone='+966500000009'",
+        "role='owner'","branch_ids='[\"legacy-security-branch-1\"]'::jsonb","phone='+966500000009'",
         'email_verified_at=NULL',
     ])
     def test_waiting_email_cancels_after_staff_authority_changes(self,client,monkeypatch,mutation):
@@ -70,11 +71,10 @@ class TestIdentityClosure:
         monkeypatch.setattr(email_delivery,'_send',lambda row:pytest.fail('Changed admin grants must invalidate mail.'))
         assert email_delivery.dispatch_once()['attempted']==0
 
-    @pytest.mark.parametrize('mutation',['active=false',"role='branch_manager'",
-                                         "branch_ids='[\"kps-branch-1\"]'::jsonb"])
+    @pytest.mark.parametrize('mutation',['active=false',"role='branch_manager'","role='delivery_manager'"])
     def test_invitation_queue_rechecks_the_inviter(self,client,monkeypatch,mutation):
         _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        manager=_make_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
         invitation=_invite(client).json()
         with db.tx() as conn:
@@ -129,7 +129,7 @@ class TestIdentityClosure:
 
     @pytest.mark.parametrize('role',['owner','admin','customer','delivery_manager','driver'])
     def test_internal_draft_requires_fresh_owner_and_narrow_delivery_role(self,client,role):
-        actor=_make_user(role,branches=['kps-branch-1','kps-branch-5'])
+        actor=_make_user(role,branches=['legacy-security-branch-1','legacy-security-branch-5'])
         with db.tx() as conn:
             if role=='owner':
                 conn.execute('UPDATE users SET active=false WHERE id=%s',(actor['id'],))
@@ -169,10 +169,10 @@ class TestIdentityClosure:
 
     def test_disabled_active_email_channel_preserves_invitation_as_draft(self,client,monkeypatch):
         _mail_setup(monkeypatch,state='active')
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        manager=_make_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
         with db.tx() as conn:
-            conn.execute("UPDATE identity_channels SET enabled=false WHERE brand_id='kps' AND channel='email'")
+            conn.execute("UPDATE identity_channels SET enabled=false WHERE brand_id='legacy-security-fixture' AND channel='email'")
         result=_invite(client)
         assert result.status_code==200
         assert result.json()['invitation_status']=='draft' and result.json()['challenge_id'] is None

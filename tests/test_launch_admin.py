@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
+from tests.sms_policy_helpers import sms_login, sms_step_up
 from app import auth, db
 from test_admin import owner
 
@@ -28,13 +29,13 @@ def _administrator(permissions, branches=None, role='admin'):
     return identifier
 
 
-def _login(client, identifier):
+def _login(client, identifier, monkeypatch):
     client.cookies.clear()
     client.headers.pop('X-CSRF-Token', None)
-    result = client.post('/api/auth/login', json={'username': identifier, 'password': PASSWORD})
-    assert result.status_code == 200, result.text
-    client.headers['X-CSRF-Token'] = result.json()['csrf_token']
-    return result.json()['user']
+    with db.tx() as conn:
+        user = conn.execute('SELECT * FROM users WHERE id=%s',(identifier,)).fetchone()
+    result = sms_login(client, user, monkeypatch)
+    return result['user']
 
 
 def _restore_owner(client, cookies, csrf):
@@ -55,13 +56,13 @@ def test_administrator_permissions_are_explicit_and_cannot_name_owner_capabiliti
 
 
 @pytest.mark.postgres
-def test_global_services_require_explicit_owner_delegation(owner):
+def test_global_services_require_explicit_owner_delegation(owner, monkeypatch):
     client, mutate = owner
     body = {'services': {'delivery': True, 'pickup': False, 'car_pickup': False}, 'reason': 'Synthetic service policy test'}
     for permissions, role in [(['branches_manage'], 'admin'), (['brand_services_manage'], 'driver')]:
-        _login(client, _administrator(permissions, role=role))
+        _login(client, _administrator(permissions, role=role), monkeypatch)
         assert mutate('PATCH', '/api/admin/brand-services', body).status_code == 403
-    _login(client, _administrator(['brand_services_manage']))
+    _login(client, _administrator(['brand_services_manage']), monkeypatch)
     result = mutate('PATCH', '/api/admin/brand-services', body)
     assert result.status_code == 200, result.text
     config = client.get('/api/admin/config').json()
@@ -70,10 +71,10 @@ def test_global_services_require_explicit_owner_delegation(owner):
 
 
 @pytest.mark.postgres
-def test_delegated_branch_administrator_is_scoped_and_cannot_gain_owner_access(owner):
+def test_delegated_branch_administrator_is_scoped_and_cannot_gain_owner_access(owner, monkeypatch):
     client, mutate = owner
     identifier = _administrator(['branches_manage'])
-    user = _login(client, identifier)
+    user = _login(client, identifier, monkeypatch)
     assert user['role'] == 'admin' and user['permissions'] == ['branches_manage']
     configuration = client.get('/api/admin/config')
     assert configuration.status_code == 200, configuration.text
@@ -99,10 +100,10 @@ def test_delegated_branch_administrator_is_scoped_and_cannot_gain_owner_access(o
 
 
 @pytest.mark.postgres
-def test_appearance_administrator_cannot_change_operating_settings_or_account_permissions(owner):
+def test_appearance_administrator_cannot_change_operating_settings_or_account_permissions(owner, monkeypatch):
     client, mutate = owner
     identifier = _administrator(['appearance_manage'])
-    _login(client, identifier)
+    _login(client, identifier, monkeypatch)
     allowed = mutate('PATCH', '/api/admin/settings', {'theme': {'profile': 'CHARCOAL'}})
     assert allowed.status_code == 200, allowed.text
     restored = mutate('PATCH', '/api/admin/settings', {'theme': {'profile': 'ORIGINAL_Light'}})
@@ -116,17 +117,18 @@ def test_appearance_administrator_cannot_change_operating_settings_or_account_pe
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('endpoint', ['/api/admin/users', '/api/identity/staff'])
-def test_owner_permission_change_requires_step_up_revokes_sessions_and_audits(owner, endpoint):
+def test_owner_permission_change_requires_step_up_revokes_sessions_and_audits(owner, endpoint, monkeypatch):
     client, mutate = owner
     owner_cookies, owner_csrf = dict(client.cookies), client.headers['X-CSRF-Token']
     identifier = _administrator(['branches_manage'])
-    _login(client, identifier)
+    _login(client, identifier, monkeypatch)
     old_admin_cookies = dict(client.cookies)
     _restore_owner(client, owner_cookies, owner_csrf)
     denied = mutate('PATCH', endpoint + '/' + identifier, {'permissions': ['banners_manage']})
     assert denied.status_code == 403 and denied.json()['detail']['code'] == 'OWNER_STEP_UP_REQUIRED'
-    step_up = client.post('/api/identity/step-up', json={'password': 'TestOnly!PrivatePassword1'})
-    assert step_up.status_code == 200, step_up.text
+    with db.tx() as conn:
+        owner_user = conn.execute("SELECT * FROM users WHERE id='admin-test-owner'").fetchone()
+    sms_step_up(client, owner_user, monkeypatch)
     invalid = mutate('PATCH', endpoint + '/' + identifier, {'permissions': ['owner']})
     assert invalid.status_code == 422
     changed = mutate('PATCH', endpoint + '/' + identifier, {'permissions': ['banners_manage']})
@@ -143,19 +145,23 @@ def test_owner_permission_change_requires_step_up_revokes_sessions_and_audits(ow
     client.cookies.update(old_admin_cookies)
     assert client.get('/api/session').json()['user'] is None
     assert client.get('/api/admin/config').status_code == 401
-    _login(client, identifier)
+    _login(client, identifier, monkeypatch)
     assert client.get('/api/admin/config').status_code == 200
     assert mutate('PATCH', '/api/admin/branches/kps-branch-1', {'settings': {'active': False}}).status_code == 403
 
 
 @pytest.mark.postgres
-def test_owner_and_admin_invitations_remain_inactive_until_secure_email_verification(owner):
+def test_owner_and_admin_invitations_remain_inactive_until_secure_email_verification(owner, monkeypatch):
     client, mutate = owner
+    from tests.legacy_identity_helpers import make_legacy_user, BRAND, BRANCHES
+    from tests.test_core import _authenticate
+    legacy_owner = make_legacy_user('owner', username='legacy-review-owner', password='TestOnly!PrivatePassword1')
+    _authenticate(client, legacy_owner)
     payload = {'display_name': 'أدمن دعوة اختبار', 'email': 'admin@fixture.invalid', 'phone': '0500000081',
-               'role': 'admin', 'branch_ids': ['kps-branch-1'], 'permissions': ['banners_manage']}
+               'role': 'admin', 'branch_ids': [BRANCHES[0]], 'permissions': ['banners_manage']}
     denied = client.post('/api/identity/staff/invitations', json=payload)
     assert denied.status_code == 403 and denied.json()['detail']['code'] == 'OWNER_STEP_UP_REQUIRED'
-    assert client.post('/api/identity/step-up', json={'password': 'TestOnly!PrivatePassword1'}).status_code == 200
+    assert client.post('/api/identity/step-up', json={'password':'TestOnly!PrivatePassword1'}).status_code == 200
     invited = client.post('/api/identity/staff/invitations', json=payload)
     assert invited.status_code == 200, invited.text
     row = invited.json()['user']
@@ -167,20 +173,24 @@ def test_owner_and_admin_invitations_remain_inactive_until_secure_email_verifica
                            'email': 'second-owner@fixture.invalid', 'phone': '0500000082', 'role': 'owner', 'permissions': []})
     assert other.status_code == 200, other.text
     assert other.json()['user']['role'] == 'owner' and other.json()['user']['active'] is False
-    assert mutate('PATCH', '/api/admin/users/admin-test-owner', {'active': False}).status_code == 409
+    assert mutate('PATCH', '/api/admin/users/'+legacy_owner['id'], {'active': False}).status_code == 409
     with db.tx() as conn:
-        assert conn.execute("SELECT count(*) AS n FROM users WHERE brand_id='kps' AND role='owner' AND active").fetchone()['n'] == 1
+        assert conn.execute("SELECT count(*) AS n FROM users WHERE brand_id='legacy-security-fixture' AND role='owner' AND active").fetchone()['n'] == 1
 
 
 @pytest.mark.postgres
 def test_verified_admin_invitation_retains_only_owner_selected_permissions(owner, monkeypatch):
-    from test_v5_identity import _mail_setup, _secret
+    from test_v5_identity import _legacy_mail_setup as _mail_setup, _secret
     client, mutate = owner
+    from tests.legacy_identity_helpers import make_legacy_user, BRAND, BRANCHES
+    from tests.test_core import _authenticate
+    legacy_owner = make_legacy_user('owner', username='legacy-review-owner', password='TestOnly!PrivatePassword1')
+    _authenticate(client, legacy_owner)
     _mail_setup(monkeypatch)
-    assert client.post('/api/identity/step-up', json={'password': 'TestOnly!PrivatePassword1'}).status_code == 200
+    assert client.post('/api/identity/step-up', json={'password':'TestOnly!PrivatePassword1'}).status_code == 200
     invitation = client.post('/api/identity/staff/invitations', json={
         'display_name': 'أدمن بريد اختبار', 'email': 'verified-admin@fixture.invalid', 'phone': '0500000071',
-        'role': 'admin', 'branch_ids': ['kps-branch-1'], 'permissions': ['banners_manage']})
+        'role': 'admin', 'branch_ids': [BRANCHES[0]], 'permissions': ['banners_manage']})
     assert invitation.status_code == 200, invitation.text
     pending = invitation.json()
     assert pending['invitation_status'] == 'pending_email' and pending['user']['active'] is False
@@ -191,15 +201,15 @@ def test_verified_admin_invitation_retains_only_owner_selected_permissions(owner
     assert verified.status_code == 200, verified.text
     user = verified.json()['user']
     assert user['id'] == pending['user']['id'] and user['role'] == 'admin'
-    assert user['permissions'] == ['banners_manage'] and user['branch_ids'] == ['kps-branch-1']
+    assert user['permissions'] == ['banners_manage'] and user['branch_ids'] == [BRANCHES[0]]
     assert user['active'] is True and user['email_verified_at']
     client.headers['X-CSRF-Token'] = verified.json()['csrf_token']
     assert client.get('/api/admin/config').status_code == 200
     assert client.get('/api/identity/staff').status_code == 403
-    assert mutate('PATCH', '/api/admin/users/admin-test-owner', {'active': False}).status_code == 403
+    assert mutate('PATCH', '/api/admin/users/'+legacy_owner['id'], {'active': False}).status_code == 403
     assert mutate('PATCH', '/api/admin/settings', {'theme': {'profile': 'CHARCOAL'}}).status_code == 403
     banner = mutate('POST', '/api/admin/banners', {'title': 'إعلان مخول بعد التحقق'})
-    assert banner.status_code == 200 and banner.json()['branch_ids'] == ['kps-branch-1']
+    assert banner.status_code == 200 and banner.json()['branch_ids'] == [BRANCHES[0]]
     assert client.post('/api/identity/email/verify', json=proof).status_code == 400
 
 
@@ -267,12 +277,12 @@ def test_banner_rejects_unsafe_links_unregistered_cities_and_invalid_rotation(ow
 
 
 @pytest.mark.postgres
-def test_banner_administrator_cannot_edit_global_or_other_branch_campaigns(owner):
+def test_banner_administrator_cannot_edit_global_or_other_branch_campaigns(owner, monkeypatch):
     client, mutate = owner
     global_banner = mutate('POST', '/api/admin/banners', {'title': 'إعلان المالك العام'}).json()['id']
     scoped_banner = mutate('POST', '/api/admin/banners', {'title': 'إعلان المالك لفرع آخر', 'branch_ids': ['kps-branch-9']}).json()['id']
     identifier = _administrator(['banners_manage'])
-    _login(client, identifier)
+    _login(client, identifier, monkeypatch)
     result = mutate('POST', '/api/admin/banners', {'title': 'إعلان مخول تجريبي', 'branch_ids': [], 'active': True})
     assert result.status_code == 200, result.text
     assert result.json()['branch_ids'] == ['kps-branch-1']

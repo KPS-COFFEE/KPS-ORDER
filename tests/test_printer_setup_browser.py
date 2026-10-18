@@ -4,7 +4,9 @@ import os
 import zipfile
 import pytest
 from app import db
-from test_browser import _capture, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from test_browser import ARTIFACTS, _capture, _context, _owner_login, _staff, chromium_browser, synthetic_mail
+
+from tests.browser_sms_helpers import sms_browser_app as live_app
 
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit isolated browser acceptance')]
 
@@ -34,21 +36,33 @@ def test_guided_printer_setup_and_live_acceptance(live_app,chromium_browser,tmp_
         test=page.locator('#printer-live [data-action=test-printer]')
         expect(test).to_be_enabled(timeout=12000)
         expect(page.locator('.printer-directory .pill')).to_contain_text('بانتظار الاعتماد' if language=='ar' else 'Awaiting approval')
-        for width in (1366, 768, 390):
+        for width in (1280, 768, 390):
             page.set_viewport_size({'width':width,'height':900})
             layout=page.locator('#printer-live .printer-directory').evaluate('''root => {
                 const name=root.querySelector('td:nth-child(2)');
                 const pill=root.querySelector('.pill');
                 const notes=root.querySelector('td:nth-child(4)');
-                return {name:getComputedStyle(name).whiteSpace,
-                    status:getComputedStyle(pill).whiteSpace,
-                    notes:getComputedStyle(notes).overflowWrap,
-                    cut:name.scrollWidth>name.clientWidth,
+                const elements=[name,pill,notes,...root.querySelectorAll('td button')];
+                const readable=elements.every(e=>{
+                    const style=getComputedStyle(e);
+                    return style.whiteSpace==='normal'&&style.textOverflow!=='ellipsis'&&
+                        e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1;
+                });
+                const buttons=[...root.querySelectorAll('td:last-child button')].map(e=>e.getBoundingClientRect());
+                const overlap=buttons.some((r,i)=>buttons.slice(i+1).some(b=>
+                    Math.min(r.right,b.right)>Math.max(r.left,b.left)&&Math.min(r.bottom,b.bottom)>Math.max(r.top,b.top)));
+                return {readable,overlap,notesWrap:getComputedStyle(notes).overflowWrap,
                     pageOverflow:document.documentElement.scrollWidth>innerWidth};
             }''')
-            assert layout=={'name':'nowrap','status':'nowrap','notes':'normal','cut':False,'pageOverflow':False}
+            # Preserve evidence before a geometry failure; a failing assertion must not erase its screenshot.
+            page.screenshot(path=str(ARTIFACTS/f'TEST_ONLY_printer_before_assert_{language}_{width}.png'),full_page=True)
+            diagnostics=page.locator('#printer-live .printer-directory').evaluate('''root=>
+                [...root.querySelectorAll('td,.pill,td button')].map(e=>({tag:e.tagName,text:e.textContent,
+                    whiteSpace:getComputedStyle(e).whiteSpace,clientWidth:e.clientWidth,scrollWidth:e.scrollWidth,
+                    clientHeight:e.clientHeight,scrollHeight:e.scrollHeight}))''')
+            assert layout=={'readable':True,'overlap':False,'notesWrap':'anywhere','pageOverflow':False},diagnostics
             _capture(page,f'TEST_ONLY_printer_layout_{language}_{width}')
-        page.set_viewport_size({'width':1366,'height':900})
+        page.set_viewport_size({'width':1280,'height':900})
         with page.expect_response(lambda r: r.url.endswith("/test") and r.request.method=="POST"):
             test.click()
         claim=context.request.post(live_app+'/api/printing/bridge/next',headers={**headers,**token},data={})

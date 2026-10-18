@@ -9,17 +9,24 @@ import pytest
 from fastapi import HTTPException
 
 from app import auth, db, email_delivery
-from tests.test_core import _authenticate, _body, _create, _make_user, _prepare_catalog
+from tests.test_core import _authenticate as _core_authenticate, _body, _create, _make_user, _prepare_catalog
+from tests.legacy_identity_helpers import BRAND as LEGACY_BRAND, BRANCHES as LEGACY_BRANCHES, make_legacy_user, seed_legacy_brand
 
 
-def _mail_setup(monkeypatch,state='testing'):
+def _authenticate(client, user):
+    # Match the actual UI's explicit credential context on shared API routes.
+    client.headers['X-KPS-Context'] = 'customer' if user['role'] == 'customer' else 'work'
+    return _core_authenticate(client, user)
+
+
+def _mail_setup(monkeypatch,state='testing',brand='kps'):
     # Synthetic isolated fixture: this never calls a live provider or claims deployment readiness.
     monkeypatch.setenv('EMAIL_PROVIDER','resend')
     monkeypatch.setenv('EMAIL_FROM','noreply@fixture.invalid')
     monkeypatch.setenv('RESEND_API_KEY','synthetic-test-key-never-sent')
     monkeypatch.setenv('MAIL_OUTBOX_KEY',base64.urlsafe_b64encode(b'x'*32).decode())
     with db.tx() as conn:
-        conn.execute('UPDATE identity_channels SET state=%s,enabled=%s,delivery_proven_at=CASE WHEN %s THEN now() ELSE NULL END WHERE brand_id=%s AND channel=%s',(state,state=='active',state=='active','kps','email'))
+        conn.execute('UPDATE identity_channels SET state=%s,enabled=%s,delivery_proven_at=CASE WHEN %s THEN now() ELSE NULL END WHERE brand_id=%s AND channel=%s',(state,state=='active',state=='active',brand,'email'))
 
 
 def _secret(challenge):
@@ -32,6 +39,7 @@ def _secret(challenge):
 
 
 def _guest(client,phone='0501112233'):
+    client.headers['X-KPS-Context']='customer'
     client.cookies.clear()
     client.headers.pop('X-CSRF-Token',None)
     result=client.post('/api/identity/guest',json={'display_name':'ضيف اختبار','phone':phone})
@@ -44,6 +52,18 @@ def _invite(client,email='driver@fixture.invalid',branches=None,role='driver'):
     return client.post('/api/identity/staff/invitations',json={
         'display_name':'سائق اختبار','email':email,'phone':'0507778899',
         'branch_ids':branches or ['kps-branch-1','kps-branch-5'],'role':role})
+
+
+def _legacy_mail_setup(monkeypatch, state='testing'):
+    # Retained non-SMS tenant configuration; KPS current-context tests below
+    # and the dedicated mandatory-SMS suite keep the default enabled policy.
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED','false')
+    seed_legacy_brand()
+    _mail_setup(monkeypatch, state, brand=LEGACY_BRAND)
+
+
+def _legacy_invite(client, email='driver@fixture.invalid', branches=None, role='driver'):
+    return _invite(client, email=email, branches=branches or LEGACY_BRANCHES, role=role)
 
 
 def test_email_validation_and_no_implicit_sender_configuration(monkeypatch):
@@ -97,8 +117,10 @@ class TestV5Identity:
         order=first.json()['order']
         assert order['customer_id']==user['id'] and order['customer']['phone_verified'] is False
         assert _create(client,_body(service),key='guest-service-'+service).json()['order']['id']==order['id']
-        assert client.post('/api/shifts',json={'kind':'manager','branch_ids':['kps-branch-1']},headers={'Idempotency-Key':'guest-forbidden-shift'}).status_code==403
-        assert client.get('/api/admin/config').status_code==403
+        # A customer cookie is not a work credential; reject before role logic.
+        assert client.post('/api/shifts',json={'kind':'manager','branch_ids':['kps-branch-1']},headers={'Idempotency-Key':'guest-forbidden-shift'}).status_code==401
+        assert client.get('/api/admin/config').status_code==401
+        assert client.get('/api/session').json()['user']['id']==user['id']
 
     def test_same_unverified_phone_never_joins_known_or_other_guest(self,client):
         _prepare_catalog()
@@ -147,10 +169,10 @@ class TestV5Identity:
             assert outbox['status']=='delivered' and outbox['delivery_at']
 
     def test_tokens_expire_attempt_limit_and_resend_revokes_old(self,client,monkeypatch):
-        _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        _legacy_mail_setup(monkeypatch)
+        manager=make_legacy_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
-        invited=_invite(client).json()
+        invited=_legacy_invite(client).json()
         old=invited['challenge_id']
         resent=client.post('/api/identity/staff/'+invited['user']['id']+'/resend')
         assert resent.status_code==200
@@ -166,14 +188,14 @@ class TestV5Identity:
         assert client.post('/api/identity/email/verify',json={'challenge_id':resent2,'token':_secret(resent2)}).status_code==400
 
     def test_manager_driver_invitation_scopes_and_self_grant_denial(self,client,monkeypatch):
-        _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        _legacy_mail_setup(monkeypatch)
+        manager=make_legacy_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
-        assert _invite(client,branches=['kps-branch-1','kps-branch-7']).status_code==403
-        assert _invite(client,role='owner').status_code==403
-        malicious={'display_name':'اسم','email':'bad@fixture.invalid','phone':'0507778899','branch_ids':['kps-branch-1'],'active':True,'email_verified':True}
+        assert _legacy_invite(client,branches=['legacy-security-branch-1','kps-branch-7']).status_code==403
+        assert _legacy_invite(client,role='owner').status_code==403
+        malicious={'display_name':'اسم','email':'bad@fixture.invalid','phone':'0507778899','branch_ids':['legacy-security-branch-1'],'active':True,'email_verified':True}
         assert client.post('/api/identity/staff/invitations',json=malicious).status_code==422
-        invitation=_invite(client)
+        invitation=_legacy_invite(client)
         assert invitation.status_code==200,invitation.text
         pending=invitation.json()['user']
         assert pending['active'] is False and pending['email_verified_at'] is None
@@ -182,21 +204,21 @@ class TestV5Identity:
         verified=client.post('/api/identity/email/verify',json=body)
         assert verified.status_code==200,verified.text
         driver=verified.json()['user']
-        assert driver['id']==pending['id'] and driver['branch_ids']==['kps-branch-1','kps-branch-5']
+        assert driver['id']==pending['id'] and driver['branch_ids']==['legacy-security-branch-1','legacy-security-branch-5']
         client.headers['X-CSRF-Token']=verified.json()['csrf_token']
-        assert client.patch('/api/identity/staff/'+driver['id'],json={'branch_ids':['kps-branch-7']}).status_code==403
+        assert client.patch('/api/identity/staff/'+driver['id'],json={'branch_ids':['legacy-security-branch-7']}).status_code==403
         assert client.get('/api/identity/staff').status_code==403
         assert client.post('/api/identity/email/verify',json=body).status_code==400
 
     def test_owner_link_does_not_duplicate_owner_and_add_owner_requires_stepup(self,client,monkeypatch):
-        _mail_setup(monkeypatch)
-        owner=_make_user('owner',username='fixture-owner',password='OnlyFixture!Password1')
+        _legacy_mail_setup(monkeypatch)
+        owner=make_legacy_user('owner',username='fixture-owner',password='OnlyFixture!Password1')
         _authenticate(client,owner)
-        assert _invite(client,email='extra@fixture.invalid',role='owner').status_code==403
+        assert _legacy_invite(client,email='extra@fixture.invalid',role='owner').status_code==403
         assert client.post('/api/identity/step-up',json={'password':'OnlyFixture!Password1'}).status_code==200
-        invited=_invite(client,email='extra@fixture.invalid',role='owner')
+        invited=_legacy_invite(client,email='extra@fixture.invalid',role='owner')
         assert invited.status_code==200,invited.text
-        request=client.post('/api/identity/email/request',json={'email':'original@fixture.invalid','purpose':'owner_link'})
+        request=client.post('/api/identity/email/request',json={'brand_id':LEGACY_BRAND,'email':'original@fixture.invalid','purpose':'owner_link'})
         assert request.status_code==200
         verified=client.post('/api/identity/email/verify',json={'challenge_id':request.json()['challenge_id'],'token':_secret(request.json()['challenge_id'])})
         assert verified.status_code==200 and verified.json()['user']['id']==owner['id']
@@ -210,11 +232,11 @@ class TestV5Identity:
         assert extra.json()['user']['id']!=owner['id']
 
     def test_channel_activation_requires_delivery_not_provider_acceptance(self,client,monkeypatch):
-        _mail_setup(monkeypatch)
-        owner=_make_user('owner')
+        _legacy_mail_setup(monkeypatch)
+        owner=make_legacy_user('owner')
         _authenticate(client,owner)
         assert client.patch('/api/identity/settings',json={'channel':'email','state':'active','enabled':True}).status_code==409
-        request=client.post('/api/identity/email/request',json={'email':'owner@fixture.invalid','purpose':'owner_link'}).json()
+        request=client.post('/api/identity/email/request',json={'brand_id':LEGACY_BRAND,'email':'owner@fixture.invalid','purpose':'owner_link'}).json()
         monkeypatch.setattr(email_delivery,'_send',lambda row:'synthetic-provider-acceptance')
         assert email_delivery.dispatch_once()['provider_accepted']==1
         with db.tx() as conn:
@@ -223,9 +245,9 @@ class TestV5Identity:
         accepted=client.post('/api/identity/email/verify',json={'challenge_id':request['challenge_id'],'token':_secret(request['challenge_id'])})
         client.headers['X-CSRF-Token']=accepted.json()['csrf_token']
         assert client.patch('/api/identity/settings',json={'channel':'email','state':'active','enabled':True}).status_code==200
-        assert client.get('/api/identity/channels').json()['channels']['email']['available']
-        unknown=client.post('/api/identity/email/request',json={'email':'unknown@fixture.invalid','purpose':'staff_login'})
-        known=client.post('/api/identity/email/request',json={'email':'owner@fixture.invalid','purpose':'staff_login'})
+        assert client.get('/api/identity/channels',params={'brand_id':LEGACY_BRAND}).json()['channels']['email']['available']
+        unknown=client.post('/api/identity/email/request',json={'brand_id':LEGACY_BRAND,'email':'unknown@fixture.invalid','purpose':'staff_login'})
+        known=client.post('/api/identity/email/request',json={'brand_id':LEGACY_BRAND,'email':'owner@fixture.invalid','purpose':'staff_login'})
         assert unknown.status_code==known.status_code==200
         assert set(unknown.json())==set(known.json())=={'accepted','challenge_id','expires_in'}
 
@@ -256,10 +278,10 @@ class TestV5Identity:
         assert client.patch('/api/identity/staff/'+driver['id'],json={'active':False}).status_code==200
 
     def test_revoke_pending_invitation_invalidates_token_and_cancels_outbox(self,client,monkeypatch):
-        _mail_setup(monkeypatch)
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        _legacy_mail_setup(monkeypatch)
+        manager=make_legacy_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
-        invitation=_invite(client).json()
+        invitation=_legacy_invite(client).json()
         secret=_secret(invitation['challenge_id'])
         assert client.post('/api/identity/staff/'+invitation['user']['id']+'/revoke-invitation').status_code==200
         assert client.post('/api/identity/email/verify',json={'challenge_id':invitation['challenge_id'],'token':secret}).status_code==400
@@ -278,9 +300,9 @@ class TestV5Identity:
         client.headers['X-CSRF-Token']=csrf
 
     def test_staff_draft_with_no_sender_is_inactive_and_resend_requires_channel(self,client):
-        manager=_make_user('delivery_manager',branches=['kps-branch-1','kps-branch-5'])
+        manager=make_legacy_user('owner',branches=['legacy-security-branch-1','legacy-security-branch-5'])
         _authenticate(client,manager)
-        result=_invite(client)
+        result=_legacy_invite(client)
         assert result.status_code==200,result.text
         assert result.json()['delivery_status']=='channel_unavailable'
         assert result.json()['challenge_id'] is None
@@ -295,10 +317,10 @@ class TestV5Identity:
         import hmac
         import json
         import time
-        _mail_setup(monkeypatch)
-        owner=_make_user('owner')
+        _legacy_mail_setup(monkeypatch)
+        owner=make_legacy_user('owner')
         _authenticate(client,owner)
-        request=client.post('/api/identity/email/request',json={'email':'owner@fixture.invalid','purpose':'owner_link'}).json()
+        request=client.post('/api/identity/email/request',json={'brand_id':LEGACY_BRAND,'email':'owner@fixture.invalid','purpose':'owner_link'}).json()
         monkeypatch.setattr(email_delivery,'_send',lambda row:'provider-reference-123')
         email_delivery.dispatch_once()
         signing=b'fixture-webhook-secret-12345'
@@ -316,7 +338,7 @@ class TestV5Identity:
             assert conn.execute('SELECT count(*) n FROM email_webhook_events WHERE id=%s',(event_id,)).fetchone()['n']==1
             assert conn.execute('SELECT status FROM email_outbox WHERE dedupe_key=%s',('identity:'+request['challenge_id'],)).fetchone()['status']=='delivered'
             # Mail server delivery alone never marks the channel as inbox-proven.
-            assert conn.execute("SELECT delivery_proven_at FROM identity_channels WHERE brand_id='kps' AND channel='email'").fetchone()['delivery_proven_at'] is None
+            assert conn.execute("SELECT delivery_proven_at FROM identity_channels WHERE brand_id='legacy-security-fixture' AND channel='email'").fetchone()['delivery_proven_at'] is None
 
     @pytest.mark.parametrize('state', ['unconfigured', 'paused', 'fault'])
     def test_optional_otp_respects_disabled_channel_and_guest_stays_available(self,client,monkeypatch,state):

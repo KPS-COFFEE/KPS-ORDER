@@ -19,9 +19,8 @@ from psycopg.conninfo import conninfo_to_dict
 
 _HOSTS = {'127.0.0.1', 'localhost', '::1', 'postgres'}
 _PROVIDER_SECRETS = (
-    'TAWKED_API_KEY',
+    'TAWKED_API_KEY', 'EMPLOYEE_TWILIO_VERIFY_SERVICE_SID', 'OWNER_SENSITIVE_TWILIO_VERIFY_SERVICE_SID', 'OWNER_PHONE_TWILIO_VERIFY_SERVICE_SID',
     'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID',
-    'EMPLOYEE_TWILIO_VERIFY_SERVICE_SID',
     'RENDER_API_KEY', 'RENDER_WEBHOOK_SIGNING_SECRET', 'RENDER_POSTGRES_ID', 'RENDER_BACKUP_BRAND_ID',
     'RECOVERY_POLL_ENABLED', 'RECOVERY_POLL_INTERVAL_SECONDS',
     'EMAIL_FROM', 'MAIL_OUTBOX_KEY', 'RESEND_API_KEY', 'RESEND_WEBHOOK_SECRET',
@@ -36,7 +35,6 @@ _TEST_DEFAULTS = {
     'SESSION_COOKIE_SECURE': 'false',
     'SESSION_TTL_HOURS': '12',
     'OTP_PROVIDER': 'disabled',
-    'EMPLOYEE_SMS_LOGIN_ENABLED': 'false',
     'EMAIL_PROVIDER': 'disabled',
     'REPORT_WORKER_ENABLED': 'false',
     'EMAIL_WORKER_ENABLED': 'false',
@@ -113,11 +111,6 @@ def database(monkeypatch, safe_test_environment):
         # Production has no fixture override and defaults KPS to required SMS.
         with db.tx() as c:
             c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":false}'::jsonb WHERE brand_id='kps'")
-            # Preserve legacy pickup/cash regression scenarios as a versioned
-            # historical policy, just like legacy guest identity above. New
-            # branch-online acceptance explicitly enables the current policy.
-            # This setting has no public write API and is never set in runtime.
-            c.execute("UPDATE brands SET settings=settings||'{\"branch_online_required\":false}'::jsonb WHERE id='kps'")
         yield isolated_url
     finally:
         db.close_pools(isolated_url)

@@ -1,0 +1,175 @@
+"""Post-fix adversarial regression checks based on audited SHA 466bb986. Synthetic DB only.
+
+No auth dependency overrides; provider requests are blocked by sitecustomize.
+Historical exploit proofs are retained under docs/security-evidence/before; these cases require prevention.
+"""
+import secrets
+from copy import deepcopy
+import pytest
+from fastapi import Response
+from app import auth, catalog, db
+from test_core import _make_user, _authenticate, _prepare_catalog, _body
+
+
+@pytest.fixture
+def population(client, monkeypatch):
+    monkeypatch.setenv('KPS_PORTAL_HOST_ROUTING_ENABLED', 'false')
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED', 'false')
+    users = {role: _make_user(role=role, branches=['kps-branch-1'])
+             for role in ('owner', 'delivery_manager', 'driver', 'customer')}
+    users['customer2'] = _make_user()
+    users['driver2'] = _make_user(role='driver', branches=['kps-branch-1'])
+    with db.tx() as c:
+        c.execute("INSERT INTO brands(id,name) VALUES('audit-other','Synthetic other')")
+    users['foreign_owner'] = _make_user(role='owner', brand='audit-other')
+    ids = {'pickup': db.new_id('audit_'), 'delivery': db.new_id('audit_'),
+           'manager_shift': db.new_id('audit_'), 'driver_shift': db.new_id('audit_'),
+           'task': db.new_id('audit_')}
+    with db.tx() as c:
+        for key, service in [('pickup','pickup'), ('delivery','delivery')]:
+            snap = {'items': [{'product_id':'audit','name':'Synthetic','quantity':1,
+                              'unit_price_halalas':1000,'line_total_halalas':1000,'units':[]}],
+                    'branch_name':'Synthetic branch','notes':''}
+            c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,%s,'handed_over',%s,'cash',1000,0,1000,%s,%s)",
+                      (ids[key], users['customer']['id'],service,'pending' if service=='delivery' else 'not_applicable',db.json(snap),db.json({'name':'Synthetic customer','phone':'+966500000001','address':'Synthetic private address'})))
+        for kind, userkey, shiftkey, parent in [('manager','delivery_manager','manager_shift',None),('driver','driver','driver_shift',ids['manager_shift'])]:
+            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id) VALUES(%s,%s,%s,'kps',%s,%s)",
+                      (ids[shiftkey],kind,users[userkey]['id'],db.json(['kps-branch-1']),parent))
+        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) VALUES(%s,%s,%s,%s,'picked_up',%s)",
+                  (ids['task'],ids['delivery'],users['driver']['id'],ids['driver_shift'],users['delivery_manager']['id']))
+    return users, ids
+
+
+def test_audit_forged_session_and_role_headers(client, population):
+    users, ids = population
+    client.cookies.set(auth.COOKIE, secrets.token_urlsafe(32))
+    for path in ['/api/identity/staff','/api/orders/'+ids['pickup'],'/api/admin/export']:
+        r = client.get(path, headers={'X-Role':'owner','X-User-ID':users['owner']['id'],'X-KPS-Context':'work'})
+        assert r.status_code in (401,404), (path,r.status_code,r.text)
+
+
+def test_audit_customer_cannot_read_other_customer_or_invoice(client, population):
+    users, ids = population
+    _authenticate(client, users['customer2'])
+    for path in ['/api/orders/'+ids['pickup'], '/api/fiscal/orders/'+ids['pickup']+'/documents']:
+        assert client.get(path).status_code == 404
+    rows = client.get('/api/orders',params={'search':ids['pickup']}).json()['orders']
+    assert rows == []
+    _authenticate(client, users['customer'])
+    assert client.get('/api/orders/'+ids['pickup']).status_code == 200
+
+
+def test_audit_driver_cannot_read_or_collect_other_task(client, population):
+    users, ids = population
+    _authenticate(client, users['driver2'])
+    assert client.get('/api/orders/'+ids['delivery']).status_code == 404
+    assert client.get('/api/tasks/'+ids['task']+'/customer-chat').status_code in (403,404)
+    r=client.post('/api/orders/'+ids['delivery']+'/collect',json={'method':'card','amount_halalas':1000},headers={'Idempotency-Key':'audit-cross-driver'})
+    assert r.status_code == 404
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM collections').fetchone()['n']==0
+
+
+def test_audit_owner_cannot_cross_brand_or_branch_revocation(client, population):
+    users, ids=population
+    _authenticate(client, users['foreign_owner'])
+    assert client.get('/api/orders/'+ids['delivery']).status_code==404
+    _authenticate(client, users['driver'])
+    assert client.get('/api/orders/'+ids['delivery']).status_code==200
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id=%s",(users['driver']['id'],))
+    assert client.get('/api/orders/'+ids['delivery']).status_code==404
+
+
+@pytest.mark.parametrize('role',['customer','driver','delivery_manager'])
+def test_audit_nonowner_cannot_grant_owner(client,population,role):
+    users, ids=population
+    _authenticate(client,users[role])
+    r=client.post('/api/identity/owners/password',json={'display_name':'Synthetic escalation','username':'attacker','password':'SyntheticOnly!Password123','phone':'0500000001'})
+    assert r.status_code==403
+    assert client.get('/api/identity/staff').status_code==403
+
+
+def test_audit_current_session_deactivation(client,population):
+    users, ids=population
+    _authenticate(client,users['owner'])
+    assert client.get('/api/identity/staff').status_code==200
+    with db.tx() as c:c.execute('UPDATE users SET active=false WHERE id=%s',(users['owner']['id'],))
+    assert client.get('/api/identity/staff').status_code==401
+
+
+def test_audit_price_injection_and_mandatory_sms_policy(client,population):
+    users, ids=population
+    _prepare_catalog()
+    _authenticate(client,users['customer'])
+    body=_body();body['customer']['phone']='0500000001'
+    for field,value in [('total_halalas',1),('discount_halalas',999999),('payment_status','paid'),('role','owner')]:
+        attack=deepcopy(body);attack[field]=value
+        assert client.post('/api/orders',json=attack,headers={'Idempotency-Key':db.new_id('audit_')}).status_code==422
+    bad=deepcopy(body);bad['items'][0]['price_halalas']=1
+    assert client.post('/api/orders',json=bad,headers={'Idempotency-Key':db.new_id('audit_')}).status_code==422
+    with db.tx() as c:c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":true}' WHERE brand_id='kps'")
+    r=client.post('/api/orders',json=body,headers={'Idempotency-Key':db.new_id('audit_')})
+    assert r.status_code==403 and r.json()['detail']['code']=='CUSTOMER_PHONE_VERIFICATION_REQUIRED'
+
+
+def test_audit_collection_wrong_amount_and_replay(client,population):
+    users,ids=population
+    _authenticate(client,users['driver'])
+    path='/api/orders/'+ids['delivery']+'/collect'
+    for value in (1,-1000,True,'1000'):
+        r=client.post(path,json={'method':'card','amount_halalas':value},headers={'Idempotency-Key':db.new_id('audit_')})
+        assert r.status_code==422,(value,r.text)
+    body={'method':'card','amount_halalas':1000}
+    a=client.post(path,json=body,headers={'Idempotency-Key':'audit-collection-0001'})
+    assert a.status_code==200,a.text
+    b=client.post(path,json=body,headers={'Idempotency-Key':'audit-collection-0001'})
+    assert b.status_code==200 and a.json()==b.json()
+    assert client.post(path,json=body,headers={'Idempotency-Key':'audit-collection-0002'}).status_code==409
+    with db.tx() as c:
+        row=c.execute('SELECT count(*) n,sum(amount_halalas) total FROM collections WHERE order_id=%s',(ids['delivery'],)).fetchone()
+        assert row['n']==1 and row['total']==1000
+
+
+def test_audit_no_csrf_or_wrong_origin_cannot_collect(client,population):
+    users,ids=population;_authenticate(client,users['driver'])
+    path='/api/orders/'+ids['delivery']+'/collect'
+    body={'method':'card','amount_halalas':1000}
+    assert client.post(path,json=body,headers={'Origin':'https://untrusted.invalid','Idempotency-Key':'audit-origin-0001'}).status_code==403
+    del client.headers['X-CSRF-Token']
+    assert client.post(path,json=body,headers={'Idempotency-Key':'audit-csrf-0001'}).status_code==403
+    with db.tx() as c:assert c.execute('SELECT count(*) n FROM collections').fetchone()['n']==0
+
+
+def test_audit_prevent_unthrottled_public_map_resolution(client,monkeypatch):
+    """After SEC-01: the historical25-success proof must now be impossible."""
+    from app import map_resolution
+    calls=[]
+    async def resolve(value):
+        calls.append(value)
+        return 'https://www.google.com/maps?q=28.4,45.9'
+    monkeypatch.setattr(map_resolution,'resolve_short_map_url',resolve)
+    statuses=[]
+    for _ in range(25):
+        r=client.post('/api/location/parse-map-url',json={'url':'https://maps.app.goo.gl/SyntheticAuditOnly'})
+        statuses.append(r.status_code)
+    assert statuses==[200]*map_resolution.CLIENT_LIMIT+[429]*(25-map_resolution.CLIENT_LIMIT)
+    assert len(calls)==1
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM map_resolution_clients').fetchone()['n']==1
+        assert c.execute('SELECT count(*) n FROM map_resolution_leases').fetchone()['n']==0
+
+
+def test_audit_password_login_blocked_when_sms_required(client,monkeypatch):
+    """After AUTH-OBS: a valid stored password cannot issue a KPS work session."""
+    monkeypatch.setenv('EMPLOYEE_SMS_LOGIN_ENABLED','true')
+    monkeypatch.setenv('EMPLOYEE_SMS_EMAIL_RETIRED','true')
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED','false')
+    monkeypatch.setenv('KPS_PORTAL_HOST_ROUTING_ENABLED','false')
+    owner=_make_user('owner',username='audit-password-owner',password='SyntheticOnly!Password123')
+    assert client.post('/api/auth/login',json={'username':'audit-password-owner','password':'incorrect'}).status_code==401
+    r=client.post('/api/auth/login',json={'username':'audit-password-owner','password':'SyntheticOnly!Password123'})
+    assert r.status_code==403 and r.json()['detail']['code']=='WORK_SMS_REQUIRED'
+    assert client.get('/api/identity/staff').status_code==401
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM sessions WHERE user_id=%s',(owner['id'],)).fetchone()['n']==0
+        assert c.execute('SELECT password_hash FROM users WHERE id=%s',(owner['id'],)).fetchone()['password_hash']==owner['password_hash']

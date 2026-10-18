@@ -60,9 +60,7 @@ def private_write(path, contents):
 
 def record_drill(result):
     config = recovery.configuration()
-    if (not config['provider_configured'] or not result.get('verified')
-            or not result.get('static_restore_verified') or not result.get('complete_rows_verified')
-            or not result.get('sequence_state_verified')):
+    if not config['provider_configured'] or not result.get('verified') or not result.get('static_restore_verified'):
         raise ValueError('Only a verified full restore for the bound source can be recorded.')
     if result['source_revision'] != (os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'):
         raise ValueError('Drill evidence must match the executing source revision.')
