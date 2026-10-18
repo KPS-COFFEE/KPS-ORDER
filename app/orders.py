@@ -361,6 +361,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         if user['role']!='customer':
             performance.enrich_orders(conn,rows[:limit])
         else:
+            from .customer_progress import enrich_orders as enrich_customer_progress
+            enrich_customer_progress(conn, rows[:limit])
             rows=[customer_order_view(row) for row in rows]
     return {'sort':sort, 'orders': rows[:limit], 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info}
 
@@ -530,7 +532,9 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
     with db.tx(pipeline=user['role'] == 'customer') as conn:
         row = scoped_order(conn, order_id, user)
         if user['role'] == 'customer':
-            events = conn.execute('SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s ORDER BY created_at,id', (order_id,)).fetchall()
+            events = conn.execute("SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s "
+                                  "AND event_type NOT IN ('driver_evidence.observation','driver_evidence.observation_read') "
+                                  "ORDER BY created_at,id", (order_id,)).fetchall()
         else:
             events = conn.execute('SELECT e.id,e.event_type,e.details,e.created_at,e.actor_id,u.display_name AS actor_name '
                                   'FROM order_events e LEFT JOIN users u ON u.id=e.actor_id '
@@ -547,6 +551,8 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
             if doc:
                 row['issued_receipt']={**print_order(doc,row), 'payment_status':row['payment_status'], 'payment_method':row['payment_method'], 'preparation_status':row['preparation_status']}
         else:
+            from .customer_progress import enrich_orders as enrich_customer_progress
+            enrich_customer_progress(conn, [row])
             row=customer_order_view(row)
             for event in events:
                 event['details'] = {key: value for key, value in (event.get('details') or {}).items()

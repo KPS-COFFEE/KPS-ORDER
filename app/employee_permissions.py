@@ -166,7 +166,8 @@ ROUTES = {
     ) for name in names},
     'order_support': {'tickets': 'support_manage', 'create_ticket': 'support_manage',
                       'update_ticket': 'support_manage', 'daily': 'support_manage',
-                      'upload_photo': 'task_photos', 'photos': 'orders_view', 'photo': 'orders_view'},
+                      'upload_photo': 'task_photos', 'photos': 'orders_view', 'photo': 'orders_view',
+                      'read_evidence_observation':'orders_view'},
     'auth': {'staff_list': 'drivers_view', 'invite_staff': 'drivers_manage',
              'update_staff': 'drivers_manage', 'resend_invitation': 'drivers_manage',
              'revoke_invitation': 'drivers_manage', 'register_driver_vehicle': 'vehicle_register'},
@@ -186,6 +187,8 @@ ROUTES = {
         'options', 'cases', 'detail', 'followup', 'upload', 'download')},
 }
 ROUTES['branch_printing'].update({'enqueue': 'orders_print', 'operational_devices': 'orders_print'})
+ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branch_manager':'orders_prepare'}
+                                for name in ('order_output_status','confirm_order_output')})
 
 
 def required_for(endpoint, role):

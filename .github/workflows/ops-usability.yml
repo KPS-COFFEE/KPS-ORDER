@@ -6,6 +6,14 @@ on:
     paths:
       - app/orders.py
       - app/order_requests.py
+      - app/customer_progress.py
+      - app/branch_printing.py
+      - app/order_support.py
+      - tests/test_customer_progress*.py
+      - tests/test_order_print_progress*.py
+      - tests/test_photo_observations*.py
+      - public/customer.js
+      - public/customer.css
       - app/order_amendments.py
       - public/assets/order-amendments.js
       - tests/test_order_requests*.py
@@ -66,6 +74,7 @@ jobs:
           node tests/test_driver_alerts_ui.cjs
           node tests/test_order_status_ui.cjs
           node tests/test_order_timing.cjs
+          python -m pytest -q tests/test_customer_progress.py tests/test_customer_progress_postgres.py tests/test_customer_progress_browser.py tests/test_order_print_progress.py tests/test_order_print_progress_browser.py tests/test_photo_observations.py tests/test_photo_observations_browser.py --junitxml=test-artifacts/progress-photo-ci.xml
           python -m pytest -q tests/test_order_requests.py tests/test_order_requests_browser.py tests/test_order_amendments.py tests/test_amendment_editor_browser.py --junitxml=test-artifacts/customer-requests-ci.xml
           python -m pytest -q tests/test_delivery_problem_resolution.py tests/test_order_support.py --junitxml=test-artifacts/delivery-problem-ci.xml
           python -m pytest -q tests/test_alert_policy.py --junitxml=test-artifacts/alert-policy-ci.xml
