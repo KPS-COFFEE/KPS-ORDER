@@ -98,13 +98,13 @@ def test_pause_and_role_change_block_open_shift(ops):
 from tests.test_operations import ops
 
 import os
-from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from test_browser import _context, _owner_login, _staff, chromium_browser, synthetic_mail
+from tests.browser_sms_helpers import sms_browser_app as live_app, complete_owner_sms_dialog
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated Chromium only')
 def test_owner_employee_actions_in_browser(live_app,chromium_browser):
     from playwright.sync_api import expect
-    from test_browser import PASSWORD as BROWSER_PASSWORD
     owner=_staff();target=_staff('driver')
     context,page,errors=_context(chromium_browser,live_app)
     _owner_login(context,live_app,owner)
@@ -118,8 +118,9 @@ def test_owner_employee_actions_in_browser(live_app,chromium_browser):
             page.locator(f'[data-action=manage-staff][data-operation={action}][data-id="{target["id"]}"]').click()
             modal=page.locator('#modal')
             modal.locator('[name=reason]').fill('Synthetic owner action test')
-            modal.locator('[name=password]').fill(BROWSER_PASSWORD)
+            expect(modal.locator('[name=password]')).to_have_count(0)
             modal.locator('button[type=submit]').click()
+            complete_owner_sms_dialog(page, owner)
             expect(modal).not_to_be_visible()
         page.locator(f'.staff-branch-form[data-staff-id="{target["id"]}"]').locator('xpath=ancestor::tr').locator('.staff-actions summary').click()
         expect(page.locator(f'[data-action=edit-staff][data-id="{target["id"]}"]')).to_be_visible()
@@ -171,3 +172,4 @@ def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
         expect(page.locator('#modal .staff-branch-options input:checked')).to_have_count(2)
         assert not errors
     finally:context.close()
+

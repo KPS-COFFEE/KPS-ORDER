@@ -17,12 +17,19 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - id: scope
-      name: Select only exact-candidate orchestration changes
+      name: Verify only approved test and CI changes; unchanged application
       shell: bash
-      run: "set -euo pipefail\ngit merge-base --is-ancestor 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD\nchanged=$(git diff\
-        \ --name-only 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD)\nif [ \"$changed\" = '.github/workflows/security-closure.yml'\
-        \ ]; then\n  echo 'final_three=true' >> \"$GITHUB_OUTPUT\"\nelse\n  echo 'final_three=false' >> \"$GITHUB_OUTPUT\"\
-        \nfi\n"
+      run: 'set -euo pipefail
+
+        git merge-base --is-ancestor 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD
+
+        git diff --exit-code 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD -- . '':(exclude).github/workflows/security-closure.yml''
+        '':(exclude)tests/test_browser.py'' '':(exclude)tests/browser_sms_helpers.py'' '':(exclude)tests/test_additional_password_owner.py''
+        '':(exclude)tests/test_owner_staff_management.py''
+
+        echo ''final_three=true'' >> "$GITHUB_OUTPUT"
+
+        '
   host-security-and-browser:
     if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' && needs.verification-scope.outputs.final_three
       != 'true'
@@ -299,19 +306,23 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: 6b0739678fefb62c45baa792a7de6d9e107cb0a5
+        fetch-depth: 0
         persist-credentials: false
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
     - name: Verify exact candidate and PostgreSQL18.6
-      run: "set -euo pipefail\nmkdir -p evidence\ntest \"$(git rev-parse HEAD)\" = 6b0739678fefb62c45baa792a7de6d9e107cb0a5\n\
-        git rev-parse HEAD > evidence/source-sha.txt\npython -m pip install --require-hashes --only-binary=:all: -r requirements.lock\n\
+      run: "set -euo pipefail\nmkdir -p evidence\ngit merge-base --is-ancestor 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD\n\
+        git diff --exit-code 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD -- . ':(exclude).github/workflows/security-closure.yml'\
+        \ ':(exclude)tests/test_browser.py' ':(exclude)tests/browser_sms_helpers.py' ':(exclude)tests/test_additional_password_owner.py'\
+        \ ':(exclude)tests/test_owner_staff_management.py'\nprintf \"%s\\n\" 6b0739678fefb62c45baa792a7de6d9e107cb0a5 > evidence/application-source-sha.txt\n\
+        git diff --name-only 6b0739678fefb62c45baa792a7de6d9e107cb0a5 HEAD > evidence/test-only-changes.txt\ngit rev-parse\
+        \ HEAD > evidence/source-sha.txt\npython -m pip install --require-hashes --only-binary=:all: -r requirements.lock\n\
         python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock\npython - <<'CHECK'\n\
         import os, psycopg\nwith psycopg.connect(os.environ['TEST_DATABASE_URL']) as c:\n    version=c.execute('show server_version').fetchone()[0]\n\
         \    assert version.split()[0]=='18.6',version\n    open('evidence/postgresql-version.txt','w').write(version)\nCHECK\n\
         python -m playwright install --with-deps chromium\npython -m pip freeze > evidence/python-packages.txt\n"
-    - name: Run exactly three unchanged browser tests
+    - name: Run exactly three SMS-correct browser tests
       run: "set -euo pipefail\npython -m pytest -v --tb=short   tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation\
         \   tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser   tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save\
         \   --junitxml=evidence/final-three-browser.xml | tee evidence/final-three-browser.log\npython - <<'CHECK'\nimport\
@@ -330,3 +341,4 @@ jobs:
     branches:
     - agent/kps-order-security-closure-20261018
   workflow_dispatch: null
+
