@@ -17,9 +17,9 @@ are copied. The optional Python terminal/SQLite/libuuid/Tk adapters are omitted;
 Python uuid4 behavior is unchanged, with uuid.py retaining its standard fallback.
 The real bytes are absent; no CVE, scanner severity or metadata is suppressed.
 OpenSSL is installed from supported Trixie/security repositories during build.
-The default command retains PORT, two Uvicorn workers and graceful exec signals.
+The default command retains PORT (including the empty-variable fallback), two Uvicorn workers and graceful exec signals. The existing worker-profile test exercises the actual shell-free launcher with default/custom PORT instead of requiring the old shell syntax.
 
-The exact immutable archive must pass the unchanged 40 mandatory test suites,
+The exact immutable archive must pass the original 40 mandatory test suites plus the existing worker-profile suite,
 PostgreSQL18, AR/EN browser policy tests, runtime health/readiness, SBOM and the
 same raw full scan and HIGH/CRITICAL gate. No acceptance claim before results.
 

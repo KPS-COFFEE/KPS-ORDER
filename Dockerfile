@@ -24,6 +24,7 @@ COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print
 
 COPY --from=runtime-base / /runtime-root/
 COPY tools/security_runtime_root.py /tmp/security_runtime_root.py
+COPY tools/container_entrypoint.py /tmp/container_entrypoint.py
 RUN python /tmp/security_runtime_root.py
 
 FROM runtime-base AS runtime

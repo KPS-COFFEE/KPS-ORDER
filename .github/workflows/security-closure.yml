@@ -233,6 +233,8 @@ jobs:
           --mount "type=bind,src=$PWD/Dockerfile,dst=/app/Dockerfile,readonly" \
           --mount "type=bind,src=$PWD/.dockerignore,dst=/app/.dockerignore,readonly" \
           --mount "type=bind,src=$PWD/requirements.txt,dst=/app/requirements.txt,readonly" \
+          --mount "type=bind,src=$PWD/.github/workflows/software-hardening.yml,dst=/app/.github/workflows/software-hardening.yml,readonly" \
+          --mount "type=bind,src=$PWD/tools/container_entrypoint.py,dst=/app/tools/container_entrypoint.py,readonly" \
           --mount "type=bind,src=$PWD/tools/profile_checkout.py,dst=/app/tools/profile_checkout.py,readonly" \
           --mount "type=bind,src=$PWD/tools/hardening_load.py,dst=/app/tools/hardening_load.py,readonly" \
           --mount "type=bind,src=$(readlink -f "$(command -v node)"),dst=/usr/local/bin/node,readonly" \

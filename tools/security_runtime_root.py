@@ -105,5 +105,5 @@ for p in root.rglob('*'):
 manifest = root / 'usr/local/share/kps/runtime-packages.json'
 manifest.parent.mkdir(parents=True, exist_ok=True)
 manifest.write_text(json.dumps({'suite': 'trixie', 'python': '3.12', 'complete_packages': records}, indent=2) + '\n')
-(root / 'usr/local/bin/kps-order-start.py').write_text('import os, sys\nos.execv(sys.executable, [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", os.environ.get("PORT", "10000"), "--workers", "2", "--timeout-keep-alive", "15"])\n')
+shutil.copyfile('/tmp/container_entrypoint.py', root / 'usr/local/bin/kps-order-start.py')
 print(manifest.read_text())

@@ -38,3 +38,4 @@ tests/test_employee_sms_portals.py
 tests/test_employee_sms_diagnostics.py
 tests/test_tawked_otp.py
 tests/test_owner_sms_channel_probe.py
+tests/test_release_worker_profile.py
