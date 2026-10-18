@@ -316,6 +316,28 @@ html[dir="rtl"] .task-contact p[dir="ltr"]{text-align:right}
 .staff-directory th:last-child,.staff-directory td:last-child{min-width:215px}
 .order-table th:first-child,.order-table td:first-child{min-width:220px}
 .order-table th:nth-child(3),.order-table td:nth-child(3),.order-table th:nth-child(7),.order-table td:nth-child(7){min-width:180px}
+/* Orders: predictable column widths and isolated numbers in both languages. */
+.order-table{width:100%;max-height:72vh;scrollbar-gutter:stable}
+.order-table table{min-width:1160px;table-layout:auto}
+.order-table th{position:sticky;top:0;z-index:1}
+.order-table td{line-height:1.7;overflow-wrap:break-word;white-space:normal}
+.order-table td:first-child p{margin:5px 0}
+.order-table td:nth-child(4),.order-table td:nth-child(5){min-width:140px;font-variant-numeric:tabular-nums}
+.order-table td:nth-child(4),.order-table td:nth-child(5){direction:ltr;unicode-bidi:isolate;text-align:center}
+.order-table tbody tr:hover{background:var(--accent-light)}
+@media(max-width:760px){
+ .order-table{max-height:none;overflow:visible}
+ .order-table table{min-width:0}
+ .order-table td:nth-child(2){padding-inline-end:0}
+ .order-table td:nth-child(6){grid-row:auto;grid-column:auto}
+ .order-table td:nth-child(3),.order-table td:nth-child(7){min-width:0}
+ .order-table td:nth-child(4),.order-table td:nth-child(5){direction:inherit;text-align:start}
+ .order-table tr{gap:8px 12px}
+ .order-table td:nth-child(3)::before{content:'الفرع: ';color:var(--muted)}
+ .order-table td:nth-child(7)::before{content:'السائق: ';color:var(--muted)}
+ html[lang=en] .order-table td:nth-child(3)::before{content:'Branch: '}
+ html[lang=en] .order-table td:nth-child(7)::before{content:'Driver: '}
+}
 
 /* Live printer controls share the approved wrapping rule; this ID selector
    must override the older #printer-live button nowrap compatibility rule. */

@@ -8,7 +8,45 @@
   const num = v => new Intl.NumberFormat(state.lang === 'en' ? 'en' : 'ar').format(Number(v || 0));
   const datetime = v => v ? new Intl.DateTimeFormat(state.lang === 'en' ? 'en-GB' : 'ar-SA-u-ca-gregory', { timeZone: 'Asia/Riyadh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(v)) : '—';
   const moneyInput = v => (Number(v || 0) / 100).toFixed(2);
-  let alertAudio=null,alertBusy=false,alertLastSound=0,chatLastSound=0;
+  let alertAudio=null,alertBusy=false;
+  // Timers only synthesize sound; they never poll the server or acknowledge work.
+  const alertChannels=new Map();
+  function syncAlertChannel(kind,ids){
+    let channel=alertChannels.get(kind);
+    if(!channel){channel={items:new Map(),continuous:null,user:state.user?.id,verified:0};alertChannels.set(kind,channel);}
+    if(channel.user!==state.user?.id){stopAlertChannel(channel);channel.items.clear();channel.user=state.user?.id;}
+    const current=new Set(ids.map(String)),now=Date.now();channel.verified=now;
+    for(const id of channel.items.keys())if(!current.has(id))channel.items.delete(id);
+    for(const id of current)if(!channel.items.has(id))channel.items.set(id,{at:now,first:false,second:false});
+    tickAlertSounds();
+  }
+  function stopAlertChannel(channel){
+    if(channel.continuous){channel.continuous.stop();channel.continuous.disconnect();channel.continuous=null;}
+  }
+  function tickAlertSounds(){
+    const now=Date.now();
+    for(const [kind,channel] of alertChannels){
+      if(!state.user||channel.user!==state.user.id||!channel.items.size||now-channel.verified>45000||alertAudio?.state!=='running'){
+        stopAlertChannel(channel);if(!state.user||channel.user!==state.user?.id)channel.items.clear();continue;
+      }
+      let pair=false,continuous=false;
+      for(const item of channel.items.values()){
+        if(!item.first){item.first=true;pair=true;}
+        if(now-item.at>=30000&&!item.second){item.second=true;pair=true;}
+        if(now-item.at>=60000)continuous=true;
+      }
+      const frequency=kind==='messages'?1046:660;
+      if(pair&&!channel.continuous){alertTone(frequency,alertAudio.currentTime,.18,.12);alertTone(frequency,alertAudio.currentTime+.3,.18,.12);}
+      if(continuous&&!channel.continuous){
+        const oscillator=alertAudio.createOscillator(),gain=alertAudio.createGain();
+        oscillator.type=kind==='messages'?'sine':'triangle';oscillator.frequency.value=frequency;
+        gain.gain.value=.07;oscillator.connect(gain);gain.connect(alertAudio.destination);
+        oscillator.start();channel.continuous=oscillator;
+        oscillator.onended=()=>gain.disconnect();
+      }else if(!continuous)stopAlertChannel(channel);
+    }
+  }
+  setInterval(tickAlertSounds,250);
   function alertTone(frequency,start,duration,volume){
     const oscillator=alertAudio.createOscillator(),gain=alertAudio.createGain();
     oscillator.connect(gain);gain.connect(alertAudio.destination);oscillator.frequency.value=frequency;
@@ -18,7 +56,7 @@
   async function enableAlertSound(){
     const Audio=window.AudioContext||window.webkitAudioContext;
     if(!Audio)throw new Error(tr('المتصفح لا يدعم التنبيه الصوتي.','This browser does not support audio alerts.'));
-    alertAudio=alertAudio||new Audio();await alertAudio.resume();alertLastSound=0;chatLastSound=0;driverAlertAt=0;await refreshOperationalAlerts();
+    alertAudio=alertAudio||new Audio();await alertAudio.resume();driverAlertAt=0;await refreshOperationalAlerts();
   }
   async function refreshOperationalAlerts(){
     let host=$('#operational-alerts');
@@ -27,23 +65,21 @@
     if(!state.user||!['owner','delivery_manager','delivery_staff','branch_manager'].includes(state.user.role)){host.hidden=true;return;}
     if(alertBusy)return;alertBusy=true;const userId=state.user.id;
     try{
-      const [d,chats,breaks,fuel,closures]=await Promise.all([can('operational_alerts')?api('/api/operations/alerts'):Promise.resolve({}),can('chat_view')?api('/api/conversations/alerts'):Promise.resolve({}),['owner','delivery_manager'].includes(state.user.role)?api('/api/driver-breaks'):Promise.resolve({breaks:[]}),state.user.role==='delivery_manager'&&can('shifts_approve')?api('/api/fuel-exceptions'):Promise.resolve({requests:[]}),['owner','delivery_manager'].includes(state.user.role)&&can('shifts_approve')?api('/api/driver-closure'):Promise.resolve({requests:[]})]);if(state.user?.id!==userId)return;
+      const [d,chats,breaks,fuel,closures,amendmentData]=await Promise.all([can('operational_alerts')?api('/api/operations/alerts'):Promise.resolve({}),can('chat_view')?api('/api/conversations/alerts'):Promise.resolve({}),['owner','delivery_manager'].includes(state.user.role)?api('/api/driver-breaks'):Promise.resolve({breaks:[]}),state.user.role==='delivery_manager'&&can('shifts_approve')?api('/api/fuel-exceptions'):Promise.resolve({requests:[]}),['owner','delivery_manager'].includes(state.user.role)&&can('shifts_approve')?api('/api/driver-closure'):Promise.resolve({requests:[]}),['owner','delivery_manager','branch_manager'].includes(state.user.role)&&can('orders_view')?api('/api/order-amendments/inbox'):Promise.resolve({orders:[]})]);if(state.user?.id!==userId)return;
       const unassigned=d.unassigned||[],problems=d.problems||[],printing=d.printing||[];
       host.hidden=false;
       let alertHtml=(['owner','delivery_manager'].includes(state.user.role)?`<button class="quiet" data-action="break-manage">${esc(tr('استراحات السائقين','Driver breaks'))} (${(breaks.breaks||[]).filter(b=>b.overdue||b.status==='requested').length})</button><button class="quiet" data-action="driver-report-center">${esc(tr('بلاغات السائقين','Driver reports'))}</button>`:'')+`<div class="actions"><button class="quiet" data-action="alert-sound">${esc(alertAudio?.state==='running'?tr('الصوت مفعل','Sound enabled'):tr('تفعيل صوت الطلبات — أبقِ الصفحة مفتوحة','Enable order sound — keep this page open'))}</button></div>${unassigned.length||problems.length||printing.length?`<details class="notice warn" open><summary>${esc(tr('تنبيهات التشغيل','Operational alerts'))}: ${unassigned.length+problems.length+printing.length}</summary>${unassigned.map(o=>`<p><button class="quiet" data-action="order-detail" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button> — ${esc(tr('يلزم إجراء: قبول وإسناد أو رفض بسبب','Action required: accept and assign or reject with reason'))}</p>`).join('')}${problems.map(o=>`<p><button class="quiet" data-action="order-detail" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button> — ${esc(o.reason||tr('بلاغ سائق يحتاج متابعة','Driver report needs attention'))}</p>`).join('')}${printing.length?`<p>${esc(tr('طباعة متأخرة أو غير مؤكدة؛ الطلبات محفوظة. تحقق من الورق قبل إعادة الطباعة.','Delayed or uncertain printing; orders are saved. Check paper output before reprinting.'))} <button data-action="branch-printers">${esc(tr('مراجعة الطباعة','Review printing'))} (${printing.length})</button></p>`:''}</details>`:''}`;
-      const amendments=['owner','delivery_manager','branch_manager'].includes(state.user.role)&&can('orders_view')?(await api('/api/order-amendments/inbox')).orders:[];if(amendments.length)alertHtml+=`<div class="notice warn"><b>${esc(tr('طلبات تعديل / نسخ معدلة تحتاج مراجعة','Amendments / revised copies need review'))}</b>${amendments.map(o=>`<p><button data-action="amend-order" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button></p>`).join('')}</div>`;
+      const amendments=amendmentData.orders||[];if(amendments.length)alertHtml+=`<div class="notice warn"><b>${esc(tr('طلبات تعديل / نسخ معدلة تحتاج مراجعة','Amendments / revised copies need review'))}</b>${amendments.map(o=>`<p><button data-action="amend-order" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button></p>`).join('')}</div>`;
       const fuelPending=(fuel.requests||[]).filter(r=>r.status==='requested'&&r.ui_status!=='stale'),closurePending=(closures.requests||[]).filter(s=>s.closure_authorization?.status==='requested');if(state.user.role==='delivery_manager'&&can('shifts_approve'))alertHtml+=`<p class="notice ${fuelPending.length?'warn':''}"><button data-action="fuel-inbox">${esc(fuelPending.length?tr('طلبات وقود تنتظر الاعتماد','Fuel requests awaiting approval'):tr('طلبات استثناء الوقود','Fuel exception requests'))} (${fuelPending.length})</button></p>`;if(closurePending.length)alertHtml+=`<p class="notice warn"><button data-action="closure-inbox">${esc(tr('طلبات إنهاء مبكر تنتظر الاعتماد','Early closure requests awaiting approval'))} (${closurePending.length})</button></p>`;const awaiting=chats.awaiting_reply||[],pending=amendments.length||unassigned.length||problems.length||printing.length||fuelPending.length||closurePending.length;
       if(awaiting.length)alertHtml+=`<p class="notice warn"><button class="quiet" data-page="chat">${esc(tr('رسائل تنتظر الرد','Messages awaiting reply'))} (${num(awaiting.length)})</button></p>`;
       if(d.closure_exceptions?.length)alertHtml+=`<p class="notice warn"><button class="quiet" data-page="reports">${esc(tr('تقفيلات باستثناء من مدير التوصيل','Exceptional closures by delivery manager'))} (${num(d.closure_exceptions.length)})</button></p>`;
       if(host.dataset.rendered!==alertHtml){const active=document.activeElement,focus=host.contains(active)?{action:active.dataset.action,page:active.dataset.page,id:active.dataset.id,summary:active.tagName==='SUMMARY'}:null;const open=$('details',host)?.open,top=$('#content').getBoundingClientRect().top,y=window.scrollY;host.innerHTML=alertHtml;host.dataset.rendered=alertHtml;if(open!==undefined&&$('details',host))$('details',host).open=open;if(focus){const target=focus.summary?$('summary',host):Array.from(host.querySelectorAll('button')).find(b=>b.dataset.action===focus.action&&b.dataset.page===focus.page&&b.dataset.id===focus.id);target?.focus({preventScroll:true});}if(top<0)window.scrollTo({top:y+$('#content').getBoundingClientRect().top-top,behavior:'instant'});}
-      if(!pending)alertLastSound=0;if(!awaiting.length)chatLastSound=0;
-      if(alertAudio?.state==='running'){
-        const now=Date.now(),orderDue=pending&&(!alertLastSound||now-alertLastSound>=60000);
-        if(orderDue){alertLastSound=now;alertTone(660,alertAudio.currentTime,.25,.14);alertTone(880,alertAudio.currentTime+.3,.35,.14);}
-        if(awaiting.length&&(!chatLastSound||now-chatLastSound>=60000)){
-          chatLastSound=now;alertTone(1046,alertAudio.currentTime+(orderDue ? .9 : 0),.85,.32);
-        }
-      }
+      syncAlertChannel('orders',unassigned.map(o=>o.id));
+      syncAlertChannel('operations',[
+        ...problems.map(o=>'problem:'+o.id),...printing.map(o=>'print:'+o.id),
+        ...amendments.map(o=>'amend:'+o.id),...fuelPending.map(o=>'fuel:'+o.id),...closurePending.map(o=>'closure:'+o.id)
+      ]);
+      syncAlertChannel('messages',awaiting.map(c=>c.id));
     }catch(e){host.hidden=false;host.textContent=tr('تعذر تحديث التنبيهات؛ راجع الطلبات والطباعة يدويًا.','Alerts could not refresh; check orders and printing manually.');}finally{alertBusy=false;}
   }
   let driverAlertSignature='',driverAlertAt=0;

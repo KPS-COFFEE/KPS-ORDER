@@ -9,6 +9,35 @@ pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='
 
 
 @pytest.mark.parametrize(('lang','width'),[('ar',390),('ar',768),('ar',1280),('en',390),('en',768),('en',1280)])
+def test_order_table_full_text_and_responsive_layout(live_app,chromium_browser,lang,width):
+    from playwright.sync_api import expect
+    owner=_staff();context,page,errors=_context(chromium_browser,live_app)
+    try:
+        _owner_login(context,live_app,owner)
+        context.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
+        row={'id':'synthetic-layout-order','order_no':'LAYOUT-001','branch_id':'kps-branch-1',
+             'branch_name':'فرع اختبار باسم طويل لعرض النص كاملًا',
+             'customer':{'name':'اسم عميل صناعي طويل لا يُقص من جدول الطلبات','neighborhood':'حي اختبار طويل لا ينبغي أن يتداخل مع المبلغ'},
+             'driver_name':'اسم سائق صناعي طويل يبقى ظاهرًا بالكامل','total_halalas':25000,
+             'created_at':'2026-10-18T12:00:00Z','preparation_status':'completed',
+             'timings':{'preparation':{'seconds':8204,'state':'completed'},'delivery':{'seconds':7204,'state':'running'}}}
+        page.route('**/api/orders?*',lambda route:route.fulfill(json={'orders':[row],'next_offset':None}))
+        page.set_viewport_size({'width':width,'height':950})
+        page.goto(live_app+'/ops',wait_until='networkidle')
+        page.locator('#navigation [data-page=orders]').click()
+        table=page.locator('.order-table')
+        expect(table.locator('tbody tr')).to_have_count(1)
+        expect(table).to_contain_text(row['customer']['name'])
+        expect(table).to_contain_text(row['driver_name'])
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        for cell in table.locator('tbody td').all():
+            assert cell.evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
+        page.screenshot(path=str(ARTIFACTS/f'order-table-{lang}-{width}.png'),full_page=True)
+        assert not errors,errors
+    finally:context.close()
+
+
+@pytest.mark.parametrize(('lang','width'),[('ar',390),('ar',768),('ar',1280),('en',390),('en',768),('en',1280)])
 def test_staff_cards_and_live_partial_customer_search(live_app,chromium_browser,lang,width):
     from playwright.sync_api import expect
     owner=_staff();driver=_staff('driver');customer=_staff('customer')

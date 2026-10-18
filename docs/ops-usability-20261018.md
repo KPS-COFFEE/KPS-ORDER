@@ -13,3 +13,25 @@ Base: production merge `c19f75bc0f8957d33fe48121a5843d51e629039d`.
 Run `tests/test_ops_usability.py`, `tests/test_ops_usability_browser.py` and retained staff, CRM, fleet and SMS suites. Chromium evidence covers AR/EN at 390, 768 and 1280 px. The focused workflow uses PostgreSQL 18.6 and real Chromium; only external SMS I/O is synthetic.
 
 Local Chromium startup failed with SIGSEGV before page load in this execution environment. Such runs are ERROR, not PASS. Remote CI results must be checked for the exact candidate. A new source/image certification and normal protected review are required before release; the expired original release cutoff does not authorize an automatic late deploy.
+# Follow-up: order layout and distinct escalating bells
+
+Owner-requested follow-up preserves the current KPS styling and data paths.
+Orders have sticky headers, readable column widths, isolated numeric durations,
+wrapping names and mobile labels without the previous neighborhood/amount overlap.
+Order and message bells each sound twice initially, twice after 30 seconds,
+then continuously after 60 seconds while unresolved. Message reading is not a reply;
+the existing server-scoped awaiting-reply endpoint remains authoritative. Timers
+start on first observation in this browser session, not an invented server arrival
+timestamp. Browser gesture/audio permission and an open, awake page are required.
+Disconnected or unverified alerts stop continuous audio after 45 seconds without
+a successful refresh; renewed verification resumes an outstanding alert.
+
+An independent amendments-inbox request now runs alongside the other alert reads,
+removing a sequential network round trip without increasing polling frequency.
+This is not evidence that production server/database latency has been resolved.
+Local PostgreSQL 18.6: five operational scope/reply/printing checks passed.
+Node alert schedule and six mandatory-SMS handler scenarios passed. New AR/EN
+390/768/1280 order screenshots and Chromium bell cases require CI execution.
+This application change invalidates the previous image certificate for release:
+certify the new exact SHA/image again. No production deployment is authorized by
+this document, and no production records were changed.
