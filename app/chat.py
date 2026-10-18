@@ -13,6 +13,10 @@ from .operations import uid,safe,fail,roles,mutate
 router=APIRouter(prefix='/api',tags=['chat'])
 CATEGORIES={'help','suggestion','complaint','change','refund','delivery_problem','privacy','other'}
 
+def attachment_url(aid,user):
+    context='customer' if user['role']=='customer' else 'work'
+    return '/api/chat-attachments/'+aid+'?context='+context
+
 def route_for(category, service, details=''):
     if category=='privacy':return 'privacy'
     if category=='refund':return 'review'
@@ -149,7 +153,7 @@ def messages(cid:str,after:int=0,user=Depends(auth.current_user)):
     with db.tx() as c:
         v=conversation(c,user,cid)
         rows=c.execute('SELECT m.*,u.display_name sender FROM chat_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=%s AND m.seq>%s ORDER BY m.seq LIMIT 100',(cid,after)).fetchall()
-        for r in rows:r['attachment_url']='/api/chat-attachments/'+r['attachment_id'] if r['attachment_id'] else None
+        for r in rows:r['attachment_url']=attachment_url(r['attachment_id'],user) if r['attachment_id'] else None
         transfers=c.execute('SELECT * FROM conversation_transfers WHERE conversation_id=%s ORDER BY created_at',(cid,)).fetchall()
         from .order_support import STATES,CATEGORIES
         tickets=c.execute('SELECT ticket_no,category,status FROM support_tickets WHERE conversation_id=%s ORDER BY ticket_no',(cid,)).fetchall()
@@ -178,7 +182,7 @@ def send(cid:str,body:Message,request:Request,user=Depends(auth.current_user)):
             mid=uid();c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text,attachment_id) VALUES(%s,%s,%s,%s,%s)',(mid,cid,user['id'],body.text,body.attachment_id))
             c.execute("UPDATE conversations SET status=CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=%s",(cid,))
             db.audit(c,user['id'],'chat.send','conversation',cid,{'message_id':mid})
-            result=c.execute('SELECT * FROM chat_messages WHERE id=%s',(mid,)).fetchone();result['attachment_url']='/api/chat-attachments/'+body.attachment_id if body.attachment_id else None
+            result=c.execute('SELECT * FROM chat_messages WHERE id=%s',(mid,)).fetchone();result['attachment_url']=attachment_url(body.attachment_id,user) if body.attachment_id else None
             return {'message':result}
         return mutate(c,user,request,'chat.send:'+cid,body.model_dump(),perform)
 
@@ -208,7 +212,7 @@ def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_use
             if not db.rate_limit(c,'attachment:'+user['id'],12,60):fail(429,'أرسل الصور بوتيرة أبطأ')
             aid=uid();c.execute('INSERT INTO chat_attachments(id,conversation_id,uploader_id,content_type,size_bytes,sha256,data) VALUES(%s,%s,%s,%s,%s,%s,%s)',(aid,cid,user['id'],body.content_type,len(data),digest,data))
             db.audit(c,user['id'],'chat.attachment','conversation',cid,{'attachment_id':aid,'size_bytes':len(data)})
-            return {'id':aid,'url':'/api/chat-attachments/'+aid}
+            return {'id':aid,'url':attachment_url(aid,user)}
         return mutate(c,user,request,'chat.attachment:'+cid,{'sha256':digest,'content_type':body.content_type},perform)
 
 @router.get('/chat-attachments/{aid}')
