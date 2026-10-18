@@ -258,7 +258,7 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
         assert row.locator('.order-summary-fields dd').count() == 6
         expect(row.locator('.order-summary-notes')).to_contain_text('ملاحظة اختبار كاملة')
         assert row.locator('script').count() == 0
-        row.locator('[data-action=order-detail]').last.click()
+        row.locator('[data-action=order-review]').click()
         expect(page.locator('#modal .order-detail-card')).to_contain_text('ملاحظة اختبار كاملة')
         page.locator('#modal .modal-head button').click()
         geometry = row.evaluate('''e => [...e.querySelectorAll('.order-summary-fields dd, .order-summary-notes, .order-summary-actions')].map(c => {
