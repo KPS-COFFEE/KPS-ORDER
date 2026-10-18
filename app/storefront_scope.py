@@ -11,6 +11,22 @@ KPS_HOSTS = {'order.kps.sa', 'kps-order-emergency-v4.onrender.com'}
 current_brand = ContextVar('storefront_brand', default=None)
 
 
+def forced_work_context(request):
+    from . import auth
+    from starlette.requests import Request
+    # An endpoint-owned work context is distinct from a caller-supplied header.
+    neutral=Request({**request.scope,'headers':[(k,v) for k,v in request.scope['headers'] if k.lower()!=b'x-kps-context']})
+    return auth.session_context(neutral)=='work'
+
+
+def verify_work_override(request):
+    from . import auth,db
+    # Called in the thread pool before storefront binding, never in the event loop.
+    with db.tx(pipeline=True) as c:
+        principal=auth._find_session(c,request)
+    return bool(principal and principal['role']!='customer')
+
+
 def bound_brand(request):
     # The configured deployment binding survives a forged Host header.
     # Forwarded host headers never select a tenant.
@@ -22,7 +38,8 @@ def bound_brand(request):
         # header cannot turn a customer cookie into a staff credential. This
         # permits explicit staff brand grants without relaxing customer scope.
         from . import auth
-        if auth.session_context(request)=='work':
+        if (request.url.path not in {'/','/index.html'} and auth.session_context(request)=='work'
+                and (forced_work_context(request) or getattr(request.state,'verified_work_storefront',False))):
             return None
         if os.getenv('ENBISHAN_ISOLATED_ENABLED') != 'true':
             try:

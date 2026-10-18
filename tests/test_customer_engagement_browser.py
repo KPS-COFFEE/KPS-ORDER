@@ -4,6 +4,7 @@ import pytest
 from playwright.sync_api import sync_playwright, expect
 from app import auth, db
 from test_enbishan_mobile_browser import dual_http
+from test_enbishan_dual_brand import dual
 
 
 @pytest.fixture
@@ -19,7 +20,8 @@ def engagement_http(request,monkeypatch):
 @pytest.mark.postgres
 @pytest.mark.parametrize('brand',['kps','enbishan'])
 @pytest.mark.parametrize('lang',['ar','en'])
-def test_mobile_account_credit_and_gift_controls_are_brand_scoped(engagement_http,brand,lang):
+@pytest.mark.parametrize('width',[390,1280])
+def test_account_credit_and_gift_controls_are_brand_scoped(engagement_http,brand,lang,width):
     base,(_,actor,_,_,_)=engagement_http
     account=actor(brand+'-customer')
     token=account.cookies.get(auth.COOKIE)
@@ -31,7 +33,7 @@ def test_mobile_account_credit_and_gift_controls_are_brand_scoped(engagement_htt
     with sync_playwright() as p:
         browser=p.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'),args=['--no-sandbox'])
         try:
-            context=browser.new_context(viewport={'width':390,'height':844})
+            context=browser.new_context(viewport={'width':width,'height':844})
             context.add_cookies([{'name':auth.COOKIE,'value':token,'url':base}])
             context.add_init_script("localStorage.setItem('kps_customer_lang','"+lang+"')")
             page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))

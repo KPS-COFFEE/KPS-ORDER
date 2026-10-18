@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 
 from fastapi import HTTPException, Request
 from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import auth, monitoring, storefront_scope
 
@@ -107,8 +109,15 @@ class SecurityMiddleware:
 
         from .multibrand import operation_brand
         operations_token = operation_brand.set(request.headers.get('x-operations-brand'))
-        brand_token = storefront_scope.current_brand.set(storefront_scope.bound_brand(request))
+        brand_token = storefront_scope.current_brand.set(None)
         try:
+            from .multibrand import enabled as multibrand_enabled
+            if (multibrand_enabled() and path not in {'/','/index.html'}
+                    and auth.session_context(request)=='work' and not storefront_scope.forced_work_context(request)
+                    and any(re.fullmatch(r'[A-Za-z0-9_-]{40,100}',request.cookies.get(name,''))
+                            for name in (auth.COOKIE,'kps_work_session'))):
+                request.state.verified_work_storefront=await run_in_threadpool(storefront_scope.verify_work_override,request)
+            storefront_scope.current_brand.set(storefront_scope.bound_brand(request))
             if path.startswith('/api/') and method not in {'GET', 'HEAD', 'OPTIONS'}:
                 auth.check_origin(request)
             length = request.headers.get('content-length')

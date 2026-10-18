@@ -94,18 +94,30 @@ jobs:
         node tests/test_mandatory_sms_ui.cjs
         node tests/test_driver_collection_ui.cjs
         node tests/test_driver_simple_ui.cjs
-    - name: Two real browser policy cases
+    - name: Five real browser policy and owner cases
       env:
         TEST_BROWSER: '1'
         PYTHONPATH: ci-safety:.
       run: |
+        set -euo pipefail
         browser=$(command -v google-chrome || command -v google-chrome-stable || true)
         if [ -n "$browser" ]; then
           export TEST_CHROMIUM_EXECUTABLE="$browser"
         else
           python -m playwright install --with-deps chromium
         fi
-        python -m pytest -q tests/test_sms_mandatory_policy.py -k real_browser --junitxml=evidence/security-browser.xml | tee evidence/security-browser.log
+        python -m pytest -q \
+          tests/test_sms_mandatory_policy.py::test_real_browser_hides_password_and_blocks_forced_submit \
+          tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation \
+          tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser \
+          tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save \
+          --junitxml=evidence/security-browser.xml | tee evidence/security-browser.log
+        python - <<'PY'
+        import xml.etree.ElementTree as E
+        cases=list(E.parse('evidence/security-browser.xml').getroot().iter('testcase'))
+        assert len(cases)==5,len(cases)
+        assert all(not any(c.find(t) is not None for t in ('error','failure','skipped')) for c in cases)
+        PY
     - uses: actions/upload-artifact@v4
       if: always()
       with:

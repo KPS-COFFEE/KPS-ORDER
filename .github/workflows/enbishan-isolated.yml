@@ -44,6 +44,11 @@ jobs:
         run: |
           mkdir -p test-results/enbishan
           git rev-parse HEAD > test-results/enbishan/revision.txt
+      - name: Engagement transactions and release-orchestration invariants first
+        run: >-
+          python -m pytest -q tests/test_customer_engagement_closure.py
+          tests/test_engagement_capacity_workflow.py
+          --junitxml=test-results/enbishan/engagement-transactions.xml
       - name: Real dual-brand, financial, security and mobile acceptance
         run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_enbishan_mobile_browser.py tests/test_customer_engagement_browser.py
       - name: KPS regression (existing failures remain failures)
@@ -63,3 +68,205 @@ jobs:
           name: enbishan-dual-brand-${{ github.sha }}
           path: test-results/
           retention-days: 14
+
+  # Reuse the retained workload and real cgroup budgets only AFTER shared
+  # functional acceptance succeeds. Larger profiles run only on smaller failure.
+  capacity-economy:
+    needs: dual-brand
+    name: capacity-economy (${{ matrix.repetition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hosting_economy
+          POSTGRES_USER: hosting_test
+          POSTGRES_PASSWORD: isolated-hosting-only
+        ports: ['5432:5432']
+        options: >-
+          --cpus 0.5 --memory 1g --memory-swap 1g
+          --health-cmd "pg_isready -U hosting_test -d test_hosting_economy"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hosting_test:isolated-hosting-only@127.0.0.1:5432/test_hosting_economy
+      KPS_LOAD_RESOURCE_PROFILE: economy
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install unchanged pinned requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Validate fail-closed budget and unchanged workload guards
+        run: python -m pytest tests/test_resource_load_profile.py tests/test_hardening_load_observer.py tests/test_hosting_report_check.py -q
+      - name: Prepare actual one-core two-GiB application cgroup
+        run: |
+          mkdir -p test-artifacts
+          KPS_LOAD_CGROUP_PATH="/sys/fs/cgroup/kps_order_load_$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+          printf 'KPS_LOAD_CGROUP_PATH=%s\n' "$KPS_LOAD_CGROUP_PATH" >> "$GITHUB_ENV"
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py \
+            --prepare-application-cgroup "$KPS_LOAD_CGROUP_PATH" "$(id -u)" "$(id -g)" \
+            2>&1 | tee test-artifacts/resource-setup.log
+      - name: Retained 50 100 250 500 load, zero errors, recovery and reports
+        run: >-
+          python tools/hardening_load.py
+          --max-error-rate 0
+          --application-cgroup "$KPS_LOAD_CGROUP_PATH"
+          --database-container '${{ job.services.postgres.id }}'
+          --output test-artifacts/economy-${{ matrix.repetition }}.json
+      - name: Remove only this run's empty application group
+        if: always() && env.KPS_LOAD_CGROUP_PATH != ''
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py
+          --cleanup-application-cgroup "$KPS_LOAD_CGROUP_PATH"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosting-economy-${{ matrix.repetition }}
+          path: test-artifacts/
+          if-no-files-found: error
+
+  capacity-medium:
+    name: capacity-medium (${{ matrix.repetition }})
+    needs: capacity-economy
+    if: ${{ !cancelled() && needs.capacity-economy.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hosting_medium
+          POSTGRES_USER: hosting_test
+          POSTGRES_PASSWORD: isolated-hosting-only
+        ports: ['5432:5432']
+        options: >-
+          --cpus 1 --memory 2g --memory-swap 2g
+          --health-cmd "pg_isready -U hosting_test -d test_hosting_medium"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hosting_test:isolated-hosting-only@127.0.0.1:5432/test_hosting_medium
+      KPS_LOAD_RESOURCE_PROFILE: medium
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install unchanged pinned requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Validate fail-closed budget and unchanged workload guards
+        run: python -m pytest tests/test_resource_load_profile.py tests/test_hardening_load_observer.py tests/test_hosting_report_check.py -q
+      - name: Prepare actual one-core two-GiB application cgroup
+        run: |
+          mkdir -p test-artifacts
+          KPS_LOAD_CGROUP_PATH="/sys/fs/cgroup/kps_order_load_$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+          printf 'KPS_LOAD_CGROUP_PATH=%s\n' "$KPS_LOAD_CGROUP_PATH" >> "$GITHUB_ENV"
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py \
+            --prepare-application-cgroup "$KPS_LOAD_CGROUP_PATH" "$(id -u)" "$(id -g)" \
+            2>&1 | tee test-artifacts/resource-setup.log
+      - name: Retained 50 100 250 500 load, zero errors, recovery and reports
+        run: >-
+          python tools/hardening_load.py
+          --max-error-rate 0
+          --application-cgroup "$KPS_LOAD_CGROUP_PATH"
+          --database-container '${{ job.services.postgres.id }}'
+          --output test-artifacts/medium-${{ matrix.repetition }}.json
+      - name: Remove only this run's empty application group
+        if: always() && env.KPS_LOAD_CGROUP_PATH != ''
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py
+          --cleanup-application-cgroup "$KPS_LOAD_CGROUP_PATH"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosting-medium-${{ matrix.repetition }}
+          path: test-artifacts/
+          if-no-files-found: error
+
+  capacity-proposed:
+    name: capacity-proposed (${{ matrix.repetition }})
+    needs: capacity-medium
+    if: ${{ !cancelled() && needs.capacity-medium.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hosting_proposed
+          POSTGRES_USER: hosting_test
+          POSTGRES_PASSWORD: isolated-hosting-only
+        ports: ['5432:5432']
+        options: >-
+          --cpus 1 --memory 2g --memory-swap 2g
+          --health-cmd "pg_isready -U hosting_test -d test_hosting_proposed"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hosting_test:isolated-hosting-only@127.0.0.1:5432/test_hosting_proposed
+      KPS_LOAD_RESOURCE_PROFILE: proposed
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install unchanged pinned requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Validate fail-closed budget and unchanged workload guards
+        run: python -m pytest tests/test_resource_load_profile.py tests/test_hardening_load_observer.py tests/test_hosting_report_check.py -q
+      - name: Prepare actual two-core four-GiB application cgroup
+        run: |
+          mkdir -p test-artifacts
+          KPS_LOAD_CGROUP_PATH="/sys/fs/cgroup/kps_order_load_$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+          printf 'KPS_LOAD_CGROUP_PATH=%s\n' "$KPS_LOAD_CGROUP_PATH" >> "$GITHUB_ENV"
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py \
+            --prepare-application-cgroup "$KPS_LOAD_CGROUP_PATH" "$(id -u)" "$(id -g)" \
+            2>&1 | tee test-artifacts/resource-setup.log
+      - name: Retained 50 100 250 500 load, zero errors, recovery and reports
+        run: >-
+          python tools/hardening_load.py
+          --max-error-rate 0
+          --application-cgroup "$KPS_LOAD_CGROUP_PATH"
+          --database-container '${{ job.services.postgres.id }}'
+          --output test-artifacts/proposed-${{ matrix.repetition }}.json
+      - name: Remove only this run's empty application group
+        if: always() && env.KPS_LOAD_CGROUP_PATH != ''
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py
+          --cleanup-application-cgroup "$KPS_LOAD_CGROUP_PATH"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosting-proposed-${{ matrix.repetition }}
+          path: test-artifacts/
+          if-no-files-found: error

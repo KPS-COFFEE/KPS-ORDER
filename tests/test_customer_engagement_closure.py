@@ -137,6 +137,28 @@ def test_approved_runtime_uses_real_host_and_ignores_forwarded_brand(monkeypatch
     with pytest.raises(HTTPException):storefront_scope.bound_brand(request('unknown.invalid'))
 
 
+def test_runtime_unknown_host_and_forged_work_header_fail_closed_at_http_boundary(monkeypatch):
+    import json
+    from fastapi.testclient import TestClient
+    from starlette.responses import JSONResponse
+    from app.http_security import SecurityMiddleware
+    enable(monkeypatch,'multibrand')
+    monkeypatch.delenv('ENBISHAN_ISOLATED_ENABLED',raising=False)
+    monkeypatch.setenv('DATABASE_URL','postgresql://synthetic@127.0.0.1/test_runtime')
+    monkeypatch.setenv('KPS_MULTIBRAND_DATABASE_HOST','127.0.0.1')
+    monkeypatch.setenv('KPS_MULTIBRAND_DATABASE_NAME','test_runtime')
+    monkeypatch.setenv('PUBLIC_BASE_URL','https://order.kps.sa')
+    monkeypatch.setenv('KPS_STOREFRONT_HOST_BRANDS',json.dumps({'order.kps.sa':'kps','order.enbishan.com':'enbishan'}))
+    monkeypatch.setenv('APP_ALLOWED_HOSTS','order.kps.sa,order.enbishan.com')
+    async def endpoint(scope,receive,send):
+        await JSONResponse({'brand_id':storefront_scope.current_brand.get()})(scope,receive,send)
+    client=TestClient(SecurityMiddleware(endpoint))
+    headers={'X-KPS-Context':'work'}
+    assert client.get('https://unknown.invalid/api/catalog',headers=headers).status_code==404
+    assert client.get('https://order.enbishan.com/api/catalog',headers=headers).json()['brand_id']=='enbishan'
+    assert client.get('https://order.enbishan.com/api/catalog?brand_id=kps',headers=headers).status_code==403
+
+
 def test_gift_keeps_purchaser_ownership_and_uses_recipient_for_operations():
     from tests.test_core import _body
     body=catalog.QuoteBody(**{**_body(),'gift':{'recipient_name':'TEST recipient','recipient_phone':'0500001002','message':'TEST'}})
@@ -222,6 +244,39 @@ def test_order_discount_reconciliation_and_historical_immutability(verified_cust
     with db.tx() as c:
         row=c.execute('SELECT discount_halalas,total_halalas FROM orders WHERE id=%s',(oid,)).fetchone()
         assert row=={'discount_halalas':100,'total_halalas':900}
+
+
+@pytest.mark.postgres
+def test_gift_http_order_replay_preserves_buyer_and_denies_recipient_access(verified_customer,monkeypatch):
+    from tests.test_core import _body,_make_user,_authenticate
+    from app import fiscal
+    client,user=verified_customer
+    enable(monkeypatch,'gift_orders')
+    payload=_body()
+    payload['customer']['phone']=user['phone']
+    payload['gift']={'recipient_name':'TEST RECIPIENT','recipient_phone':'+966500001099','message':'TEST GIFT ONLY'}
+    headers={'Idempotency-Key':'test-gift-replay-0001'}
+    first=client.post('/api/orders',json=payload,headers=headers)
+    assert first.status_code==200,first.text
+    assert client.post('/api/orders',json=payload,headers=headers).json()==first.json()
+    identifier=first.json()['order']['id']
+    with db.tx() as c:
+        order=c.execute('SELECT * FROM orders WHERE id=%s',(identifier,)).fetchone()
+        assert order['customer_id']==user['id']
+        assert order['customer']['phone']=='+966500001099'
+        assert order['customer']['phone_verified'] is False
+        assert order['snapshot']['gift']['purchaser']['phone']==user['phone']
+        assert 'TEST GIFT ONLY' in order['snapshot']['notes']
+        assert c.execute('SELECT count(*) AS n FROM customer_addresses WHERE customer_id=%s',(user['id'],)).fetchone()['n']==0
+    invoice=fiscal.build(order,'TEST-GIFT-INVOICE',datetime.now(timezone.utc))
+    assert invoice['gift_order'] and invoice['buyer']['customer_id']==user['id']
+    assert invoice['buyer']['phone']==user['phone']
+    recipient=_make_user()
+    with db.tx() as c:
+        recipient=c.execute("UPDATE users SET phone='+966500001099',phone_verified_at=now(),phone_sms_verified_at=now() WHERE id=%s RETURNING *",(recipient['id'],)).fetchone()
+    _authenticate(client,recipient)
+    with db.tx() as c:c.execute('UPDATE sessions SET customer_verified_at=now() WHERE user_id=%s',(recipient['id'],))
+    assert client.get('/api/orders/'+identifier).status_code==404
 
 
 @pytest.mark.postgres

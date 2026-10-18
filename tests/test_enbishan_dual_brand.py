@@ -178,12 +178,18 @@ def test_dedication_blocks_other_brand_and_overlapping_periods(dual):
 @pytest.mark.postgres
 def test_enbishan_host_defaults_and_cross_brand_request_rejection(dual,monkeypatch):
     client, _, _, _, _=dual
+    client.headers['X-KPS-Context']='customer'
     monkeypatch.setenv('PUBLIC_BASE_URL','https://order.enbishan.com')
     page=client.get('/')
     assert page.status_code==200
     assert 'data-storefront-brand="enbishan"' in page.text
     assert '0550472662' not in page.text and 'kps.coffe' not in page.text
     assert client.get('/api/catalog').json()['brand']['id']=='enbishan'
+    assert client.get('/api/catalog?brand_id=kps').status_code==403
+    assert client.get('/api/branches?brand_id=kps').status_code==403
+    client.cookies.clear()
+    client.headers['X-KPS-Context']='work'
+    assert 'data-storefront-brand="enbishan"' in client.get('/').text
     assert client.get('/api/catalog?brand_id=kps').status_code==403
     assert client.get('/api/branches?brand_id=kps').status_code==403
 
