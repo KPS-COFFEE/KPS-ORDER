@@ -27,6 +27,8 @@ def test_enbishan_size_flavour_before_after_prices_and_missing_combination(dual_
             context=browser.new_context(viewport={'width':width,'height':900})
             page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto(base+'/?brand_id=enbishan&lang='+language,wait_until='networkidle')
+            if language=='en':
+                page.locator('#customer-language').click()
             expect(page.locator('html')).to_have_attribute('lang',language)
             page.locator('[data-product-id="'+product['id']+'"] .product-content h3 button').click()
             selects=page.locator('#product-options select')
