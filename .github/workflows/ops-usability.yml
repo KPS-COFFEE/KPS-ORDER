@@ -8,6 +8,9 @@ on:
       - app/performance.py
       - public/driver-hours.html
       - tests/test_driver_order_activity.py
+      - tests/test_chat_attachment_sessions.py
+      - tests/test_chat_attachment_browser.py
+      - tests/test_context_cookie_isolation.py
       - tests/test_driver_work_hours_unit.py
       - tests/test_driver_work_hours_postgres.py
       - app/driver_work_hours.py
@@ -80,6 +83,7 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock
           python -m playwright install --with-deps chromium
       - run: |
+          python -m pytest -q tests/test_chat_attachment_sessions.py tests/test_chat_attachment_browser.py tests/test_context_cookie_isolation.py --junitxml=test-artifacts/chat-attachment-ci.xml
           node --check public/ops.js
           node tests/test_mandatory_sms_ui.cjs
           node tests/test_alert_schedule_ui.cjs

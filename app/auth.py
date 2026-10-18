@@ -127,6 +127,11 @@ def session_context(request):
     """A UI context selects a credential; it never grants a role or OTP purpose."""
     path=request.url.path
     context=request.headers.get('x-kps-context')
+    # Native <img> loads and new-tab links cannot send the UI context header.
+    # This public hint only selects a cookie; current_user and chat scope still
+    # validate the live session, role, brand and conversation on every request.
+    if context is None and request.method in {'GET','HEAD'} and re.fullmatch(r'/api/chat-attachments/[^/]+',path):
+        context=request.query_params.get('context')
     if context is not None and context not in {'work','customer'}:
         raise db.error(400,'SESSION_CONTEXT_INVALID','اختر سياق الدخول الصحيح. / Invalid session context.')
     if path.startswith('/api/fiscal/orders/') and path.endswith('/documents'):
