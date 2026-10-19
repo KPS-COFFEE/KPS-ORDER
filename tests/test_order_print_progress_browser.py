@@ -90,7 +90,7 @@ def test_manager_handles_print_alert_in_place(sms_browser_app,chromium_browser,l
     manager=_staff('delivery_manager')
     with db.tx() as c:
         c.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,created_by) VALUES('alert-device','kps','kps-branch-1','Synthetic alert printer',%s)",(manager['id'],))
-        c.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,kind,status,payload,requested_by) VALUES('alert-job','kps','kps-branch-1','alert-device','test','uncertain','{}',%s)",(manager['id'],))
+        c.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,kind,status,payload,requested_by,claimed_at,finished_at) VALUES('alert-job','kps','kps-branch-1','alert-device','test','uncertain','{}',%s,now(),now())",(manager['id'],))
     context,page,errors=_context(chromium_browser,base)
     try:
         context.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")

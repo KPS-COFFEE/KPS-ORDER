@@ -9,8 +9,8 @@ from test_order_print_progress import setup_job
 def prepare(ops):
     actor, post, order, _ = ops
     oid, job, headers = setup_job(actor, post, order)
-    with db.tx() as c:
-        c.execute("UPDATE branch_print_jobs SET status='uncertain' WHERE id=%s", (job,))
+    assert actor('customer').post('/api/printing/bridge/next',json={},headers=headers).json()['job']['id']==job
+    assert actor('customer').post('/api/printing/bridge/jobs/'+job+'/ack',json={'status':'uncertain'},headers=headers).status_code==200
     return actor, post, oid, job, headers
 
 
