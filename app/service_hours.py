@@ -89,6 +89,26 @@ def hours_open(hours, now=None):
     return hours_status(hours, now)['open']
 
 
+def manager_shift_status(hours, now=None):
+    """Allow manager preparation at 15:45 for the upcoming 16:00 window.
+
+    Customer admission and driver shifts keep hours_status unchanged. The
+    snapshot uses the upcoming service window and its operational date.
+    Custom opening times and explicitly closed days are not widened.
+    """
+    now = local_time(now)
+    status = hours_status(hours, now)
+    if status['open'] or not status['next_open_at']:
+        return status
+    opening = datetime.fromisoformat(status['next_open_at'])
+    if (opening.hour == 16 and opening.minute == 0
+            and opening - timedelta(minutes=15) <= now < opening):
+        status = hours_status(hours, opening)
+        status['preparation'] = True
+        status['preparation_start'] = (opening - timedelta(minutes=15)).isoformat()
+    return status
+
+
 def closed_delivery_message(hours, now=None):
     now = local_time(now)
     state = hours_status(hours, now)
