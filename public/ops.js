@@ -126,10 +126,8 @@
       if(d.closure_exceptions?.length)alertHtml+=`<p class="notice warn"><button class="quiet" data-page="reports">${esc(tr('تقفيلات باستثناء من مدير التوصيل','Exceptional closures by delivery manager'))} (${num(d.closure_exceptions.length)})</button></p>`;
       if(host.dataset.rendered!==alertHtml){const active=document.activeElement,focus=host.contains(active)?{action:active.dataset.action,page:active.dataset.page,id:active.dataset.id,summary:active.tagName==='SUMMARY'}:null;const open=$('details',host)?.open,top=$('#content').getBoundingClientRect().top,y=window.scrollY;host.innerHTML=alertHtml;host.dataset.rendered=alertHtml;if(open!==undefined&&$('details',host))$('details',host).open=open;if(focus){const target=focus.summary?$('summary',host):Array.from(host.querySelectorAll('button')).find(b=>b.dataset.action===focus.action&&b.dataset.page===focus.page&&b.dataset.id===focus.id);target?.focus({preventScroll:true});}if(top<0)window.scrollTo({top:y+$('#content').getBoundingClientRect().top-top,behavior:'instant'});}
       syncAlertChannel('orders',unassigned.map(o=>o.id));
-      syncAlertChannel('operations',[
-        ...problems.map(o=>'problem:'+o.id),...printing.map(o=>'print:'+o.id),
-        ...amendments.map(o=>'amend:'+(o.request_id||o.amendment_id||o.id)),...fuelPending.map(o=>'fuel:'+o.id),...closurePending.map(o=>'closure:'+o.id)
-      ]);
+      // Operational notices remain visible; only orders and conversations ring.
+      syncAlertChannel('operations',[]);
       syncAlertChannel('messages',awaiting.map(c=>c.id));
       concealAlertControls(host);
     }catch(e){host.hidden=false;host.textContent=tr('تعذر تحديث التنبيهات؛ راجع الطلبات والطباعة يدويًا.','Alerts could not refresh; check orders and printing manually.');}finally{alertBusy=false;}
