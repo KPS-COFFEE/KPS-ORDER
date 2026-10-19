@@ -81,3 +81,36 @@ def test_manager_confirms_invoice_before_customer_preparation(sms_browser_app, c
     finally:
         customer_ctx.close()
         manager_ctx.close()
+
+
+@pytest.mark.parametrize('lang,width', [('ar',390),('en',1280)])
+def test_manager_handles_print_alert_in_place(sms_browser_app,chromium_browser,lang,width):
+    from playwright.sync_api import expect
+    base=sms_browser_app
+    manager=_staff('delivery_manager')
+    with db.tx() as c:
+        c.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,created_by) VALUES('alert-device','kps','kps-branch-1','Synthetic alert printer',%s)",(manager['id'],))
+        c.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,kind,status,payload,requested_by,claimed_at,finished_at) VALUES('alert-job','kps','kps-branch-1','alert-device','test','uncertain','{}',%s,now(),now())",(manager['id'],))
+    context,page,errors=_context(chromium_browser,base)
+    try:
+        context.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
+        page.set_viewport_size({'width':width,'height':950})
+        _owner_login(context,base,manager)
+        page.goto(base+'/ops',wait_until='networkidle')
+        button=page.locator('[data-action=print-alert-action][data-id=alert-job]')
+        expect(button).to_be_visible()
+        button.click()
+        modal=page.locator('#modal')
+        modal.locator('[name=action]').select_option('escalated')
+        modal.locator('[name=reason]').fill('Check printer connection')
+        modal.locator('button[type=submit]').click()
+        expect(page.locator('#operational-alerts')).to_contain_text('Check printer connection')
+        button.click()
+        modal.locator('[name=reason]').fill('Branch verified paper')
+        modal.locator('[name=paper_checked]').check()
+        assert modal.evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
+        modal.locator('button[type=submit]').click()
+        expect(button).to_have_count(0)
+        assert not errors
+    finally:
+        context.close()

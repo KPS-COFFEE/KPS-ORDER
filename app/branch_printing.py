@@ -420,6 +420,66 @@ def confirm_order_output(order_id:str,body:OutputConfirmation,user=Depends(outpu
         return db.idempotent(conn,user['id'],idem,'printer.output:'+order_id,body.model_dump(),perform)
 
 
+class AlertAction(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    action: Literal['confirmed', 'reprint', 'escalated']
+    reason: str = Field(min_length=1, max_length=300)
+    paper_checked: StrictBool = False
+
+
+@router.post('/jobs/{identifier}/resolve-alert')
+def resolve_print_alert(identifier: str, body: AlertAction, user=Depends(operators),
+                        idem: str | None = Header(None, alias='Idempotency-Key')):
+    if not auth.has_permission(user, 'orders_print'):
+        raise db.error(403, 'PRINT_ALERT_PERMISSION', 'معالجة تنبيه الطباعة غير مصرح بها.')
+    if not body.reason.strip():
+        raise db.error(422, 'PRINT_ALERT_REASON', 'سبب الإجراء مطلوب.')
+    if body.action in ('confirmed', 'reprint') and not body.paper_checked:
+        raise db.error(422, 'PRINT_ALERT_CHECK', 'تحقق من خروج الورقة لدى الفرع أولًا.')
+    with db.tx() as conn:
+        job = conn.execute('SELECT * FROM branch_print_jobs WHERE id=%s AND brand_id=%s',
+                           (identifier, user['brand_id'])).fetchone()
+        if not job:
+            raise db.error(404, 'PRINT_JOB_NOT_FOUND', 'أمر الطباعة غير موجود.')
+        scope(conn, user, job['branch_id'])
+        order = None
+        if job['order_id']:
+            from .orders import scoped_order
+            order = scoped_order(conn, job['order_id'], user, lock=True)
+        def perform():
+            current = conn.execute('SELECT * FROM branch_print_jobs WHERE id=%s FOR UPDATE', (identifier,)).fetchone()
+            resolution = current['alert_resolution']
+            if resolution.get('action') in ('confirmed', 'reprint'):
+                raise db.error(409, 'PRINT_ALERT_RESOLVED', 'تمت معالجة التنبيه؛ حدّث الصفحة.')
+            if current['status'] == 'cancelled':
+                raise db.error(409, 'PRINT_ALERT_CANCELLED', 'مهمة الطباعة ملغاة.')
+            result = {'action': body.action, 'reason': body.reason.strip(), 'actor_id': user['id'],
+                      'actor_name': user.get('display_name', ''), 'at': datetime.now(timezone.utc).isoformat()}
+            if body.action == 'reprint':
+                if current['status'] == 'claimed':
+                    raise db.error(409, 'PRINT_JOB_IN_FLIGHT', 'المهمة ما زالت لدى برنامج الطباعة؛ تحقق من انتهائها قبل إعادة الطباعة.')
+                if not order or order['completed_at'] or order['preparation_status'] in ('cancelled','rejected','completed') or order['delivery_status'] in ('cancelled','delivered'):
+                    raise db.error(409, 'PRINT_ORDER_CLOSED', 'لا يمكن إعادة طباعة هذه المهمة؛ راجع الطلب أو اختبار الطابعة.')
+                if current['payload'].get('order_revision', 0) != order.get('amendment_revision', 0):
+                    raise db.error(409, 'PRINT_OLD_REVISION', 'تغير الطلب؛ اطبع النسخة الحالية من تفاصيله.')
+                device = conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND approved_at IS NOT NULL AND token_hash IS NOT NULL FOR UPDATE', (current['device_id'], user['brand_id'])).fetchone()
+                if not device:
+                    raise db.error(409, 'PRINT_NOT_PAIRED', 'راجع ربط واعتماد طابعة الفرع أولًا.')
+                payload = dict(current['payload'])
+                payload['lines'] = [{'text': 'إعادة طباعة' if payload.get('language') == 'ar' else 'REPRINT', 'bold': True, 'center': True}] + payload['lines']
+                replacement = db.new_id('print_')
+                conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason,created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp())', (replacement,current['brand_id'],current['branch_id'],current['device_id'],current['order_id'],current['kind'],db.json(payload),user['id'],body.reason.strip()))
+                result['replacement_id'] = replacement
+            if body.action in ('confirmed','reprint') and current['status'] == 'queued':
+                conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE id=%s", (identifier,))
+            conn.execute('UPDATE branch_print_jobs SET alert_resolution=%s WHERE id=%s', (db.json(result),identifier))
+            db.audit(conn,user['id'],'printer.alert.'+body.action,'print_job',identifier,result)
+            if order:
+                db.event(conn,order['id'],user['id'],'printer.alert.'+body.action,{'job_id':identifier,**result})
+            return result
+        return db.idempotent(conn,user['id'],idem,'printer.alert:'+identifier,body.model_dump(),perform)
+
+
 @router.get('/jobs')
 def jobs(user=Depends(printer_admin)):
     with db.tx() as conn:

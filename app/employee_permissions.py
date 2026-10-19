@@ -187,7 +187,7 @@ ROUTES = {
     'accounting': {name: {'delivery_manager': 'accounting_cases_followup'} for name in (
         'options', 'cases', 'detail', 'followup', 'upload', 'download')},
 }
-ROUTES['branch_printing'].update({'enqueue': 'orders_print', 'operational_devices': 'orders_print'})
+ROUTES['branch_printing'].update({'enqueue': 'orders_print', 'resolve_print_alert': 'orders_print', 'operational_devices': 'orders_print'})
 ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branch_manager':'orders_prepare'}
                                 for name in ('order_output_status','confirm_order_output')})
 
