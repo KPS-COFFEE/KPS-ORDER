@@ -41,8 +41,15 @@ def test_closed_driver_and_manager_snapshots_no_double_count(prepared):
         assert driver_snap['summary']['completed_orders']==0
         assert driver_snap['external_enbishan_totals']['total_halalas']==4000
         assert c.execute("SELECT sum(amount_halalas) n FROM custody_events WHERE shift_id=%s",(manager,)).fetchone()['n']==1500
-        rid=reporting.create_snapshot(c,manager,'ops-manager')
-        snap=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(rid,)).fetchone()['snapshot']
+    post('manager',f'/api/shifts/{manager}/closing')
+    post('manager',f'/api/shifts/{manager}/submit',{'counted_halalas':1500,'handover_halalas':1500})
+    tid=post('manager','/api/custody',{'from_shift_id':manager,'recipient_user_id':'ops-owner','amount_halalas':1500,'reference':'ENBISHAN-TEST','closure':True})['transfer']['id']
+    post('owner',f'/api/custody/{tid}/confirm')
+    final=post('owner',f'/api/shifts/{manager}/approve')
+    with db.tx() as c:
+        snap=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(final['report_id'],)).fetchone()['snapshot']
+    assert snap['summary']['submission']['difference_halalas']==0
+    assert snap['summary']['completed_orders']==0
     assert len(snap['external_enbishan'])==1
     assert snap['external_enbishan_totals']==driver_snap['external_enbishan_totals']
     for snap in (driver_snap,snap):
