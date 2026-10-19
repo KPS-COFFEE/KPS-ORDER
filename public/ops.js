@@ -105,7 +105,9 @@
     alertAudio=alertAudio||new Audio();await alertAudio.resume();driverAlertAt=0;await refreshOperationalAlerts();
   }
   function printAlertRow(job){
-    const reason=job.status==='uncertain'
+    const reason=job.reprint_reason&&['queued','claimed'].includes(job.status)
+      ?tr('إعادة الطباعة بانتظار تأكيد النتيجة.','Reprint is awaiting a result.')
+      :job.status==='uncertain'
       ?tr('لم يصل تأكيد نجاح الطباعة؛ قد تكون الورقة خرجت.','Printing success is unconfirmed; the paper may have printed.')
       :job.status==='claimed'
         ?tr('استلم برنامج الطباعة المهمة ولم يرسل النتيجة منذ أكثر من دقيقتين.','The print bridge received the job but has not returned a result for over two minutes.')
@@ -504,7 +506,7 @@
   }
   function orderEventDescription(event){
     const d=event.details||{},kind=event.event_type||event.type||event.status||'';
-    const labels={'order.created':tr('إنشاء الطلب','Order created'),'task.assigned':tr('إسناد السائق','Driver assigned'),'preparation.accepted':tr('قبول الطلب','Order accepted'),'preparation.handed_over':tr('تسليم الفرع للسائق','Branch handed order to driver'),'task.accepted':tr('قبول السائق للمهمة','Driver accepted task'),'task.picked_up':tr('استلام السائق من الفرع','Driver picked up from branch'),'task.delivered':tr('توصيل مؤكد للعميل','Confirmed customer delivery'),'task.problem':tr('بلاغ مشكلة','Problem reported'),'task.cancelled':tr('إلغاء المهمة','Task cancelled'),'customer.no_answer':tr('محاولة تواصل — الزبون لا يرد','Contact attempt — no answer')};
+    const labels={'printer.alert.confirmed':tr('تم التحقق من الطباعة يدويًا','Paper output verified manually'),'printer.alert.reprint':tr('طلب إعادة طباعة','Reprint requested'),'printer.alert.escalated':tr('تصعيد مشكلة الطباعة للإدارة','Printing issue escalated to management'),'order.created':tr('إنشاء الطلب','Order created'),'task.assigned':tr('إسناد السائق','Driver assigned'),'preparation.accepted':tr('قبول الطلب','Order accepted'),'preparation.handed_over':tr('تسليم الفرع للسائق','Branch handed order to driver'),'task.accepted':tr('قبول السائق للمهمة','Driver accepted task'),'task.picked_up':tr('استلام السائق من الفرع','Driver picked up from branch'),'task.delivered':tr('توصيل مؤكد للعميل','Confirmed customer delivery'),'task.problem':tr('بلاغ مشكلة','Problem reported'),'task.cancelled':tr('إلغاء المهمة','Task cancelled'),'customer.no_answer':tr('محاولة تواصل — الزبون لا يرد','Contact attempt — no answer')};
     const transition=[d.previous,d.status].filter(Boolean).map(x=>statusName(x)).join(' → ');
     const reason=d.reason==='Accepted with driver assignment'?tr('قبول مع إسناد سائق','Accepted with driver assignment'):d.reason;
     const method=({call:tr('اتصال','Phone call'),message:tr('رسالة','Message'),whatsapp:tr('واتساب','WhatsApp')})[d.method]||d.method;
