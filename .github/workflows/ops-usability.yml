@@ -46,6 +46,7 @@ on:
       - tests/test_operational_alerts.py
       - tests/test_driver_alerts_ui.cjs
       - tests/test_delivery_problem_resolution.py
+      - tests/test_stalled_delivery.py
       - tests/test_order_status_ui.cjs
       - tests/test_order_timing.cjs
       - tests/test_owner_staff_management.py
@@ -82,6 +83,9 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
           python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock
           python -m playwright install --with-deps chromium
+      - name: Stalled delivery and compact layout acceptance
+        run: |
+          python -m pytest -q tests/test_stalled_delivery.py tests/test_order_timing_browser.py tests/test_ops_usability_browser.py -k 'stalled or timing_full or problem_status_event_rows or complete_order_rows or driver_hours' --junitxml=test-artifacts/stalled-layout-ci.xml
       - run: |
           python -m pytest -q tests/test_chat_attachment_sessions.py tests/test_chat_attachment_browser.py tests/test_context_cookie_isolation.py --junitxml=test-artifacts/chat-attachment-ci.xml
           node --check public/ops.js

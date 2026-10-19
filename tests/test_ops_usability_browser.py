@@ -23,6 +23,9 @@ def test_problem_status_event_rows_and_conversation_cards(live_app,chromium_brow
                 {'event_type':'task.problem','actor_name':'سائق اختبار','created_at':'2026-10-18T12:01:00Z','details':{'previous':'picked_up','status':'problem','reason':'سبب صناعي طويل يظهر كاملًا دون قص أو تداخل مع الوقت والفرع'}}]
         page.route('**/api/orders?*',lambda r:r.fulfill(json={'orders':[row],'next_offset':None}))
         page.route('**/api/orders/synthetic-problem',lambda r:r.fulfill(json={'order':row,'events':events}))
+        page.route('**/api/tasks?order_id=synthetic-problem',lambda r:r.fulfill(json={'tasks':[{
+            'id':'TEST-resolution-task','order_id':'synthetic-problem','status':'problem',
+            'picked_up_at':'2026-10-18T12:01:00Z'}]}))
         card={'id':'synthetic-chat','order_reference':'TEST-PROBLEM-001','branch_id':'kps-branch-1',
               'branch_name':'المروج','branch_no':1,'route':'delivery','status':'open','customer_name':'عميل اختبار البطاقات',
               'category':'delivery_problem','unread_count':2,'last_message':'رسالة اختبار <script>not executable</script>',
@@ -41,6 +44,12 @@ def test_problem_status_event_rows_and_conversation_cards(live_app,chromium_brow
         expect(page.locator('.order-detail-events')).to_contain_text(events[1]['details']['reason'])
         assert page.locator('#modal').evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
         page.screenshot(path=str(ARTIFACTS/f'event-rows-{lang}-{width}.png'),full_page=True)
+        page.locator('[data-action=resolve-delivered-order]').click()
+        expect(page.locator('#modal input[name=delivered_at]')).to_have_value('')
+        assert page.locator('#modal input[name=delivered_at]').get_attribute('required') is not None
+        assert page.locator('#modal textarea[name=evidence]').get_attribute('required') is not None
+        expect(page.locator('#modal input[name=confirmed]')).not_to_be_checked()
+        assert page.locator('#modal').evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
         page.locator('#modal .modal-head button').click()
         page.locator('#navigation [data-page=chat]').click()
         expect(page.locator('.chat-layout')).to_have_class('chat-layout inbox-only')
@@ -265,7 +274,11 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
             const b=c.getBoundingClientRect();
             return {label:c.dataset.label,width:b.width,left:b.left,right:b.right,sw:c.scrollWidth,cw:c.clientWidth,sh:c.scrollHeight,ch:c.clientHeight,viewport:innerWidth};
         })''')
-        assert all(c['width']>0 and c['left']>=0 and c['right']<=c['viewport']+1 and c['sw']<=c['cw']+1 and c['sh']<=c['ch']+1 for c in geometry), geometry
+        import json
+        out = Path('test-artifacts'); out.mkdir(exist_ok=True)
+        (out / f'orders-geometry-{lang}-{width}.json').write_text(json.dumps(geometry,indent=2))
+        page.screenshot(path=str(out / f'orders-complete-{lang}-{width}.png'), full_page=True)
+        assert all(c['width']>0 and c['left']>=0 and c['right']<=c['viewport']+1 and c['sw']<=c['cw']+1 and c['sh']<=c['ch']+1 for c in geometry), json.dumps(geometry)
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         out = Path('test-artifacts'); out.mkdir(exist_ok=True)
         page.screenshot(path=str(out / f'orders-complete-{lang}-{width}.png'), full_page=True)

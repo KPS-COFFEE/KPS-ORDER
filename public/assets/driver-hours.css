@@ -8,3 +8,10 @@
 .hours-driver h3{margin-top:18px}.hours-kpis h2{font-size:16px}.hours-kpis strong{font-size:27px;overflow-wrap:anywhere}
 @media(max-width:900px){.hours-primary{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:360px){.hours-primary{grid-template-columns:1fr}}
+
+/* Aligned per-driver summaries with stable, readable units. */
+.hours-kpis{gap:12px}.hours-kpis .panel{padding:16px;gap:8px}.hours-kpis h2{margin:0;font-size:14px}
+.hours-kpis strong{font-size:24px}.hours-driver{padding:16px}.hours-primary{margin:12px 0;gap:8px}
+.hours-primary>span{padding:9px 12px}.hours-primary strong{font-size:19px}
+.hours-driver-head h2{font-size:19px}.hours-driver summary{font-size:14px}
+.hours-metrics{gap:12px}.hours-metrics>span{min-width:0;overflow-wrap:anywhere}

@@ -1,5 +1,5 @@
 """Independent delivery operations. Monetary values are integer halalas."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 import json as jsonlib
@@ -598,6 +598,69 @@ class TaskTransition(OperationBody):
     proof:str=Field('',max_length=2000)
     reason:str=Field('',max_length=2000)
     contact_method:Literal['call','message']|None=None
+
+
+class DeliveryResolution(OperationBody):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    reason: str = Field(min_length=3, max_length=2000)
+    evidence: str = Field(min_length=3, max_length=2000)
+    delivered_at: datetime
+    confirmed: StrictBool
+
+
+def validate_delivery_resolution(body, task, order, now):
+    if not body.confirmed or body.delivered_at.tzinfo is None:
+        raise db.error(422, 'DELIVERY_VERIFICATION_REQUIRED', 'أكد التحقق من التسليم وحدد وقته الفعلي بمنطقة زمنية.')
+    if (order['service'] != 'delivery' or order.get('completed_at') or
+            order['preparation_status'] in ('cancelled', 'rejected', 'completed') or
+            order['delivery_status'] in ('cancelled', 'delivered') or
+            task['status'] not in ('picked_up', 'problem') or task.get('delivered_at')):
+        raise db.error(409, 'DELIVERY_RESOLUTION_STATE', 'الطلب غير قابل لمعالجة تسليم متعثر.')
+    pickup = task.get('picked_up_at')
+    if pickup is None or not (order['created_at'] <= pickup <= body.delivered_at <= now):
+        raise db.error(422, 'DELIVERY_ACTUAL_TIME_REQUIRED', 'يلزم استلام مسجل ووقت تسليم فعلي بعد الاستلام ولا يتجاوز الوقت الحالي.')
+    if order['payment_status'] != 'paid':
+        raise db.error(409, 'DELIVERY_PAYMENT_REQUIRED', 'يلزم استكمال التحصيل الفعلي قبل توثيق التسليم.')
+
+
+@router.post('/tasks/{tid}/resolve-delivery')
+def resolve_delivery(tid: str, body: DeliveryResolution, request: Request, user=Depends(auth.current_user)):
+    roles(user, 'owner', 'delivery_manager')
+    if not auth.has_permission(user, 'tasks_resolve_delivery'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية معالجة الطلب المتعثر متوقفة لحسابك.')
+    with db.tx() as c:
+        # Recheck current order AND shift scope before idempotent replay.
+        c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', ('operations:'+user['brand_id'],))
+        task = c.execute('SELECT * FROM driver_tasks WHERE id=%s', (tid,)).fetchone()
+        if not task: fail(404, 'المهمة غير موجودة')
+        order = c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE', (task['order_id'],)).fetchone()
+        order_access(c, user, order)
+        task = c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE', (tid,)).fetchone()
+        shift = lock_shift(c, task['shift_id'])
+        shift_access(c, user, shift)
+        def perform():
+            if shift['status'] != 'open':
+                raise db.error(409, 'DELIVERY_SHIFT_CLOSED', 'لا يمكن تعديل مهمة في شفت قيد الإقفال أو مقفل.')
+            validate_delivery_resolution(body, task, order, datetime.now(timezone.utc))
+            from .order_amendments import guard
+            guard(c, order, driver_id=task['driver_id'], require_branch=True)
+            c.execute("UPDATE driver_tasks SET status='delivered',delivered_at=%s,reason=%s,proof=%s WHERE id=%s",
+                      (body.delivered_at, body.reason, body.evidence, tid))
+            c.execute("UPDATE orders SET delivery_status='delivered',completed_at=%s,version=version+1 WHERE id=%s",
+                      (body.delivered_at, order['id']))
+            from .fiscal_issuance import issue_sale
+            issue_sale(c, order['id'], user)
+            details = {'task_id': tid, 'previous': task['status'], 'status': 'delivered',
+                       'reason': body.reason, 'evidence': body.evidence,
+                       'actual_delivered_at': body.delivered_at.isoformat(),
+                       'branch_id': order['branch_id'], 'actor_name': user.get('display_name', ''),
+                       'manager_decision': True, 'administrative_resolution': True}
+            # Event/audit created_at records processing time, never replaces the
+            # separately verified actual delivery time used by performance.
+            db.event(c, order['id'], user['id'], 'task.delivered', details)
+            db.audit(c, user['id'], 'task.delivery.resolved', 'task', tid, details)
+            return {'task': c.execute('SELECT * FROM driver_tasks WHERE id=%s', (tid,)).fetchone()}
+        return mutate(c, user, request, 'task.resolve_delivery:'+tid, body.model_dump(mode='json'), perform)
 
 @router.post('/tasks/{tid}/transition')
 def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(auth.current_user)):

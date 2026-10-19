@@ -36,6 +36,7 @@ def test_timing_full_text_scoped_filters_paging_and_live_clock(chromium_browser,
         if width<1350:
             assert page.locator('.timing-scroll').evaluate('(e)=>e.scrollWidth>e.clientWidth')
         assert page.locator('.timing-notes').evaluate('(e)=>getComputedStyle(e).textOverflow')=='clip'
+        assert page.locator('.timing-table tbody td').evaluate_all('(cells)=>cells.every(e=>getComputedStyle(e).whiteSpace==="nowrap")')
         (ROOT/'test-artifacts').mkdir(exist_ok=True)
         page.screenshot(path=str(ROOT/'test-artifacts'/f'timing-{lang}-{width}.png'),full_page=True)
         page.wait_for_function('document.querySelectorAll(".timing-duration")[2].innerText.startsWith("10:02")')
