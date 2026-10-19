@@ -290,7 +290,7 @@ def receipt(order, branch, kind, language, translations=None):
                 if choices: add(f"{i}: {translated(option.get('name',''))} — {choices}")
         if item.get('note'): add(('ملاحظة: ' if ar else 'Note: ')+item['note'],True)
         add('────────────────────',False,True)
-    if order.get('notes') or snap.get('notes'):add(('ملاحظات الطلب: ' if ar else 'Order notes: ')+(order.get('notes') or snap['notes']),True)
+    if kind=='preparation' and (order.get('notes') or snap.get('notes')):add(('ملاحظات الطلب: ' if ar else 'Order notes: ')+(order.get('notes') or snap['notes']),True)
     if kind=='order':
         for key,label,en in [('subtotal_halalas','الأصناف','Subtotal'),('discount_halalas','الخصم','Discount'),('delivery_fee_halalas','التوصيل','Delivery'),('total_halalas','الإجمالي','Total')]:
             value=order.get(key,snap.get(key,0))
