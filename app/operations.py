@@ -391,7 +391,7 @@ def save_external_enbishan(sid:str, body:ExternalEnbishan, request:Request, user
                    'recorded_by':user['id'],'recorded_name':user.get('display_name') or user['id'],
                    'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
             c.execute('UPDATE shifts SET external_enbishan=%s WHERE id=%s',(db.json(value),sid))
-            if delta:event(c,sid,delta,'direct_receipt','external-enbishan:'+sid,user['id'],'عنبيشن — ساباد / '+body.reason)
+            if delta:event(c,sid,delta,'direct_receipt','external-enbishan:'+sid+':'+str(value['revision']),user['id'],'عنبيشن — ساباد / '+body.reason)
             db.audit(c,user['id'],'shift.external_enbishan','shift',sid,{'before':before,'after':value})
             return {'shift_id':sid,'external_enbishan':value}
         return mutate(c,user,request,'shift.external-enbishan:'+sid,body.model_dump(),perform)
