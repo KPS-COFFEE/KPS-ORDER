@@ -354,6 +354,49 @@ def day_start(config):
         return h*60+m,True
     except (AttributeError,ValueError,TypeError,IndexError):fail(503,'بداية اليوم التشغيلي غير صحيحة')
 
+class ExternalEnbishan(OperationBody):
+    order_count: StrictInt = Field(ge=0, le=100000)
+    cash_halalas: StrictInt = Field(ge=0, le=100000000000)
+    card_halalas: StrictInt = Field(ge=0, le=100000000000)
+    revision: StrictInt = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+def external_enbishan_eligible(c, s):
+    from .catalog import normalize_city
+    if s['brand_id'] != 'kps' or s['kind'] != 'driver' or not s['branch_ids']:
+        return False
+    rows=c.execute('SELECT city FROM branches WHERE brand_id=%s AND id=ANY(%s)',(s['brand_id'],s['branch_ids'])).fetchall()
+    return len(rows)==len(s['branch_ids']) and {normalize_city(r['city']) for r in rows}=={'حفر الباطن'}
+
+
+@router.post('/shifts/{sid}/external-enbishan')
+def save_external_enbishan(sid:str, body:ExternalEnbishan, request:Request, user=Depends(auth.current_user)):
+    roles(user,'delivery_manager')
+    with db.tx() as c:
+        # Revalidate current scope even on an idempotent replay.
+        shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),manager=True)
+        def perform():
+            s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
+            if s['status'] not in ('open','closing'):fail(409,'أعد التقفيلة للتصحيح قبل تعديل طلبات عنبيشن')
+            if not external_enbishan_eligible(c,s):fail(403,'طلبات عنبيشن المؤقتة لسواقين حفر الباطن فقط')
+            before=s.get('external_enbishan') or {}
+            if body.revision!=before.get('revision',0):fail(409,'تغير الملخص؛ حدّث الصفحة قبل الحفظ')
+            total=body.cash_halalas+body.card_halalas
+            if (body.order_count==0)!=(total==0):fail(422,'عدد الطلبات وقيمتها يجب أن يكونا متوافقين')
+            delta=body.cash_halalas-before.get('cash_halalas',0)
+            if available_balance(c,s)+delta<0:fail(409,'لا يمكن تخفيض النقد إلى أقل من المبالغ المسلمة أو المحجوزة')
+            valid_cash_amount(balance(c,s)+delta)
+            value={**body.model_dump(),'revision':body.revision+1,'total_halalas':total,'source':'sapaad',
+                   'recorded_by':user['id'],'recorded_name':user.get('display_name') or user['id'],
+                   'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
+            c.execute('UPDATE shifts SET external_enbishan=%s WHERE id=%s',(db.json(value),sid))
+            if delta:event(c,sid,delta,'direct_receipt','external-enbishan:'+sid,user['id'],'عنبيشن — ساباد / '+body.reason)
+            db.audit(c,user['id'],'shift.external_enbishan','shift',sid,{'before':before,'after':value})
+            return {'shift_id':sid,'external_enbishan':value}
+        return mutate(c,user,request,'shift.external-enbishan:'+sid,body.model_dump(),perform)
+
+
 @router.get('/shifts/{sid}')
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
@@ -361,7 +404,7 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
         task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
-        return safe(blind_closure.driver_view(user,{'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
+        return safe(blind_closure.driver_view(user,{'shift':s,'external_enbishan_eligible':external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
 
 @router.post('/shifts/{sid}/refuel')
 def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
@@ -447,7 +490,7 @@ def submit_close_in_tx(c,user,sid,body):
         if delegated:
             c.execute("UPDATE shifts SET vehicle_log=jsonb_set(vehicle_log, '{end_exception}', %s) WHERE id=%s",(db.json({'reason':body.exception_reason.strip(),'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}),sid))
     values=body.model_dump(exclude={'vehicle_inspection','handover','exception_reason'});values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
-    if s['kind']=='driver':values.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas))
+    if s['kind']=='driver':values.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas,(s.get('external_enbishan') or {}).get('card_halalas',0)))
     if s['kind']=='driver':values['payment_terminal']=c.execute('SELECT payment_terminal FROM users WHERE id=%s',(s['user_id'],)).fetchone()['payment_terminal']
     if delegated:values['delegated_closure']={'by':user['id'],'reason':body.exception_reason.strip()}
     c.execute("UPDATE shifts SET status='submitted',submission=%s,submitted_at=now() WHERE id=%s",(db.json(values),sid))

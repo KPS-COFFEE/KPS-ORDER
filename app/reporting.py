@@ -87,6 +87,12 @@ def create_snapshot(c,sid,approved_by):
     snap['display_branches']={b['id']:{'name':b['name'],'branch_no':b['branch_no'],'city':b['city']} for b in c.execute('SELECT id,name,branch_no,city FROM branches WHERE id=ANY(%s)',(list(set(s['branch_ids'])|{o['branch_id'] for o in orders}),)).fetchall()}
     snap['closure_label']=display_shift_label(s)
     snap['driver_reports']=[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'shift_no':r['snapshot']['shift'].get('shift_no'),'closure_label':r['snapshot'].get('closure_label') or display_shift_label(r['snapshot']['shift']),'user_id':r['snapshot']['shift']['user_id'],'summary':r['snapshot']['summary'],'closure':r['snapshot']['shift']['submission']} for r in children]
+    if s['kind']=='driver':
+        external=s.get('external_enbishan') or {}
+        snap['external_enbishan']=[{**external,'driver_id':s['user_id'],'shift_id':sid}] if external else []
+    else:
+        snap['external_enbishan']=[row for child in children for row in child['snapshot'].get('external_enbishan',[])]
+    snap['external_enbishan_totals']={key:sum(row.get(key,0) for row in snap['external_enbishan']) for key in ('order_count','cash_halalas','card_halalas','total_halalas')}
     order_ids=[o['id'] for o in orders]
     snap['conversation_exceptions']=safe(c.execute('SELECT t.*,v.order_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE v.order_id=ANY(%s) ORDER BY t.created_at',(order_ids,)).fetchall())
     if s['kind']=='manager':
@@ -105,6 +111,8 @@ def cell(v):
     return text
 
 def make_csv(snap):
+    if snap.get('external_enbishan'):return make_v5_csv(snap)
+
     out=io.StringIO();writer=csv.writer(out);writer.writerow(['نوع السجل','المرجع','الحالة/الطريقة','المبلغ بالهللات','الفرع/الشفت','الوقت'])
     for o in snap['orders']:writer.writerow([cell(v) for v in ['order_completed' if o.get('fulfilled_in_report') else 'order_history_only',o['id'],o['delivery_status'],o['total_halalas'],o['branch_id'],o['created_at']]])
     for name in ('collections','refunds'):
@@ -293,6 +301,8 @@ def make_print_html(snap):
     return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>تقفيلة '+esc(title)+'</title><style>'+css+'</style><script src="/report.js" defer></script></head><body><main><header><p class="brand">'+esc(title)+'</p><h1>تقرير تشغيلي وتقفيلة</h1><button type="button" data-print-report>طباعة التقرير</button>'+intro+'<p class="note">القيم والنتائج أدناه من اللقطة النهائية المحفوظة عند اعتماد التقفيلة. المراجع معروضة كاملة، والأوقات بتوقيت الرياض. أحداث العهدة تسجل حركة النقد؛ لا تضاف مرة أخرى إلى تحصيلات الطلبات.</p></header>'+''.join(sections)+'<footer>نهاية التقرير المحفوظ · مرجع التقفيلة '+ref(snap.get('reference'))+' · جميع المبالغ بالريال السعودي</footer></main></body></html>'
 
 def make_pdf(snap):
+    if snap.get('external_enbishan'):return make_v5_pdf(snap)
+
     if snap.get("schema_version",1)>=2:return make_v5_pdf(snap)
     from datetime import datetime,timezone
     from decimal import Decimal
@@ -612,6 +622,16 @@ def v5_tables(snap,view='compact'):
         totals += [v5_money(sum((r.get('closure') or {}).get(k,0) for r in snap.get('driver_reports',[]))) for k in ['expected_halalas','handover_halalas','difference_halalas']]
         totals += [str(len(rows))+' سائق']
         table('drivers','تقفيلات السائقين - تشمل شفتات بلا طلبات',['السائق','عدد','كاش محصل','شبكة','متوقع','تسليم مستلم','فرق','حالة/مرجع'],rows,totals)
+    external=snap.get('external_enbishan',[])
+    if external:
+        keys=('order_count','cash_halalas','card_halalas','total_halalas')
+        totals={k:sum(r.get(k,0) for r in external) for k in keys}
+        table('external-enbishan','طلبات عنبيشن — ساباد (ملخص مؤقت مستقل عن مبيعات كبز)',
+              ['السائق / الشفت','عدد الطلبات','كاش','شبكة','الإجمالي','سجّل بواسطة / الوقت'],
+              [[name(r.get('driver_id'))+' / '+shift_name(r.get('shift_id')),r.get('order_count',0),
+                v5_money(r.get('cash_halalas')),v5_money(r.get('card_halalas')),v5_money(r.get('total_halalas')),
+                str(r.get('recorded_name') or name(r.get('recorded_by')))+' / '+v5_stamp(r.get('recorded_at'))] for r in external],
+              ['إجمالي عنبيشن',totals['order_count'],v5_money(totals['cash_halalas']),v5_money(totals['card_halalas']),v5_money(totals['total_halalas']),'مدرج في التسوية؛ لا يمثل فواتير جديدة'])
     own_events=[r for r in snap.get('custody_events',[]) if r.get('shift_id')==shift.get('id')]
     received_custody=sum(r.get('amount_halalas',0) for r in own_events if r.get('kind')=='transfer_in')
     driver_shift_ids={r.get('shift_id') for r in snap.get('driver_reports',[])}
@@ -765,7 +785,7 @@ main[data-report-view="compact"] table{font-size:12px;line-height:1.5}main[data-
 
 def output_tables(snap,view,part):
     tables=v5_tables(snap,view)
-    if part=='drivers':return [t for t in tables if t['key']=='drivers']
+    if part=='drivers':return [t for t in tables if t['key'] in ('drivers','external-enbishan')]
     if part=='main':return [t for t in tables if t['key']!='drivers']
     return tables
 

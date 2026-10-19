@@ -139,7 +139,7 @@ ROUTES = {
     'driver_incentives': {'achievement': ('shifts_view','accounting_reports'), 'shift_review': ('shifts_view','accounting_reports'), 'decide': 'shifts_approve'},
     'operations': {
         'dashboard': 'dashboard_view', 'operational_alerts': 'operational_alerts',
-        'open_shift': 'shifts_open', 'shifts': 'shifts_view', 'shift_detail': 'shifts_view',
+        'open_shift': 'shifts_open', 'shifts': 'shifts_view', 'shift_detail': 'shifts_view', 'save_external_enbishan': 'shifts_delegate_close',
         'people': ('custody_view', 'drivers_view', 'delivery_assign', 'shifts_close'), 'driver_roster': 'drivers_view',
         'refuel_shift': 'vehicle_refuel', 'request_close': 'shifts_close',
         'submit_close': 'shifts_close', 'return_close': 'shifts_approve', 'approve_close': 'shifts_approve',

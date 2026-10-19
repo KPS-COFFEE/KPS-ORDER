@@ -14,10 +14,10 @@ def driver_view(user, value, shift_money=False):
         return [driver_view(user, item, shift_money) for item in value]
     return value
 
-def card_reconciliation(c, sid, actual):
+def card_reconciliation(c, sid, actual, external_card=0):
     row = c.execute("""SELECT
         (SELECT coalesce(sum(amount_halalas),0) FROM collections WHERE shift_id=%s AND method='card')
         - (SELECT coalesce(sum(amount_halalas),0) FROM refunds WHERE shift_id=%s AND method='card') AS expected""", (sid,sid)).fetchone()
-    expected = int(row['expected'])
+    expected = int(row['expected']) + external_card
     return {'terminal_total_halalas': actual, 'expected_card_halalas': expected,
             'card_difference_halalas': actual-expected}
