@@ -111,13 +111,15 @@ def cell(v):
     return text
 
 def make_csv(snap):
-
     out=io.StringIO();writer=csv.writer(out);writer.writerow(['نوع السجل','المرجع','الحالة/الطريقة','المبلغ بالهللات','الفرع/الشفت','الوقت'])
     for o in snap['orders']:writer.writerow([cell(v) for v in ['order_completed' if o.get('fulfilled_in_report') else 'order_history_only',o['id'],o['delivery_status'],o['total_halalas'],o['branch_id'],o['created_at']]])
     for name in ('collections','refunds'):
         for r in snap[name]:writer.writerow([cell(v) for v in [name,r['id'],r['method'],r['amount_halalas'],r['shift_id'],r['created_at']]])
     for r in snap['custody_events']:writer.writerow([cell(v) for v in ['custody',r['id'],r['kind'],r['amount_halalas'],r['shift_id'],r['created_at']]])
     for key,v in snap['summary']['submission'].items():writer.writerow(['closure',cell(key),'',cell(v),snap['shift']['id'],''])
+    if snap.get('external_enbishan'):
+        writer.writerow([])
+        writer.writerow(['طلبات عنبيشن — ساباد','السائق','عدد الطلبات','كاش بالهللات','شبكة بالهللات','الإجمالي بالهللات'])
     for row in snap.get('external_enbishan',[]):
         writer.writerow(['طلبات عنبيشن — ساباد',cell(row.get('driver_id')),row.get('order_count',0),row.get('cash_halalas',0),row.get('card_halalas',0),row.get('total_halalas',0)])
     return ('\ufeff'+out.getvalue()).encode('utf-8')
