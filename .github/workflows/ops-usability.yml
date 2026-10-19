@@ -93,6 +93,7 @@ jobs:
           node --check public/ops.js
           node tests/test_mandatory_sms_ui.cjs
           node tests/test_alert_schedule_ui.cjs
+          node tests/test_print_alert_location.cjs
           node tests/test_driver_alerts_ui.cjs
           node tests/test_order_status_ui.cjs
           node tests/test_order_timing.cjs

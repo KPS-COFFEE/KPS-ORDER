@@ -39,6 +39,14 @@ def test_print_alerts_keep_order_and_isolate_scope(ops):
     result=actor('manager').get('/api/operations/alerts')
     assert result.status_code==200,result.text
     assert {r['status'] for r in result.json()['printing']}=={'queued','claimed','uncertain'}
+    for job in result.json()['printing']:
+        assert job['order_id']==oid
+        assert job['branch_id']=='ops-branch'
+        assert job['branch_name']
+        assert job['order_reference'] or job['order_no']
+        assert job['printer_label']=='Test'
+        assert job['kind']=='order'
+        assert job['created_at']
     assert not actor('other').get('/api/operations/alerts').json()['printing']
     with db.tx() as c:
         assert c.execute('SELECT id FROM orders WHERE id=%s',(oid,)).fetchone()
