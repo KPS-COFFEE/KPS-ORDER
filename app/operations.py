@@ -161,7 +161,7 @@ class ShiftOpen(OperationBody):
     reason: str=''
 
 
-def delivery_shift_window(c, brand, branches):
+def delivery_shift_window(c, brand, branches, *, manager_preparation=False):
     """Gate fresh staffing; existing tasks and closures never expire by clock.
 
     Unconfigured legacy/internal brands retain their existing staffing flow.
@@ -170,6 +170,7 @@ def delivery_shift_window(c, brand, branches):
     from . import catalog
     now = service_hours.now_riyadh()
     windows = {}
+    preparation_date = None
     brand_settings = c.execute('SELECT settings FROM brands WHERE id=%s', (brand,)).fetchone()['settings']
     if brand_settings.get('services', {}).get('delivery', True) is not True:
         fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
@@ -182,16 +183,23 @@ def delivery_shift_window(c, brand, branches):
             fail(409, 'هذا الفرع غير مؤهل لشفتات التوصيل.')
         if settings.get('active', True) is not True or settings.get('delivery_enabled') is not True:
             fail(409, 'التوصيل موقوف لهذا الفرع؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
-        status = service_hours.hours_status(hours, now)
+        status = (service_hours.manager_shift_status(hours, now) if manager_preparation
+                  else service_hours.hours_status(hours, now))
         if not status['configured']:
             fail(503, 'ساعات التوصيل لهذا الفرع غير صحيحة.')
         if not status['open']:
+            if manager_preparation:
+                raise db.error(409, 'MANAGER_SHIFT_HOURS',
+                               'شفت المدير مغلق الآن. لفترة التوصيل التي تبدأ 16:00، يتاح التجهيز من 15:45 بتوقيت السعودية؛ استقبال العملاء يبدأ 16:00.')
             fail(409, service_hours.closed_delivery_message(hours, now))
         windows[branch['id']] = {'hours': hours, 'window_start': status['current_window_start'],
                                   'window_end': status['current_window_end']}
+        if status.get('preparation'):
+            preparation_date = datetime.fromisoformat(status['current_window_start']).date()
+            windows[branch['id']]['preparation_start'] = status['preparation_start']
     if not windows:
         return None, None
-    operational_date = service_hours.delivery_operational_date(now)
+    operational_date = preparation_date or service_hours.delivery_operational_date(now)
     return operational_date, {'timezone': 'Asia/Riyadh', 'operational_date': operational_date.isoformat(),
                               'operational_day_start': '16:00', 'branches': windows}
 
@@ -220,7 +228,8 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
                 if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
                 branch_rows.append(b)
-            operational_date, delivery_window = delivery_shift_window(c, brand, branch_rows)
+            operational_date, delivery_window = delivery_shift_window(
+                c, brand, branch_rows, manager_preparation=body.kind == 'manager')
             if body.opening_halalas:
                 roles(user,'owner')
                 if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')

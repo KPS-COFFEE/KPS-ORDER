@@ -71,6 +71,37 @@ def test_utc_input_and_owner_custom_weekday_hours():
     assert '5:00 مساءً' in service_hours.closed_delivery_message(friday_only, local('2026-10-10T02:00:00'))
 
 
+@pytest.mark.parametrize(('stamp', 'manager_open', 'customer_open', 'day'), [
+    ('2026-10-19T15:44:59', False, False, '2026-10-18'),
+    ('2026-10-19T15:45:00', True, False, '2026-10-19'),
+    ('2026-10-19T15:59:59', True, False, '2026-10-19'),
+    ('2026-10-19T16:00:00', True, True, '2026-10-19'),
+    ('2026-10-20T00:00:00', True, True, '2026-10-19'),
+    ('2026-10-20T04:00:00', False, False, '2026-10-19'),
+    ('2026-10-19T12:45:00+00:00', True, False, '2026-10-19'),
+])
+def test_manager_preparation_is_separate_from_customer_admission(stamp, manager_open, customer_open, day):
+    now = datetime.fromisoformat(stamp)
+    hours = deepcopy(service_hours.DEFAULT_DELIVERY_HOURS)
+    result = service_hours.manager_shift_status(hours, now)
+    assert result['open'] is manager_open
+    assert result['operational_date'] == day
+    assert service_hours.hours_status(hours, now)['open'] is customer_open
+    assert hours == service_hours.DEFAULT_DELIVERY_HOURS
+    if manager_open and not customer_open:
+        assert result['current_window_start'] == '2026-10-19T16:00:00+03:00'
+        assert result['current_window_end'] == '2026-10-20T04:00:00+03:00'
+        assert result['preparation_start'] == '2026-10-19T15:45:00+03:00'
+
+
+def test_manager_preparation_respects_custom_hours_and_closed_days():
+    for hours in ([], [{'days': [4], 'start': '16:00', 'end': '04:00'}],
+                  [{'days': list(range(7)), 'start': '18:00', 'end': '02:00'}]):
+        assert not service_hours.manager_shift_status(hours, local('2026-10-19T15:45:00'))['open']
+    custom = [{'days': list(range(7)), 'start': '18:00', 'end': '02:00'}]
+    assert not service_hours.manager_shift_status(custom, local('2026-10-19T17:45:00'))['open']
+
+
 def test_invalid_hours_fail_closed_and_equal_endpoints_preserve_calendar_contract():
     for hours in (None, [], [{'days': [True], 'start': '16:00', 'end': '04:00'}],
                   [{'days': [0], 'start': '25:00', 'end': '04:00'}]):
@@ -105,6 +136,8 @@ def delivery_ops(ops, monkeypatch):
 @pytest.mark.postgres
 @pytest.mark.parametrize(('stamp', 'allowed'), [('2026-10-10T03:59:00', True),
                                              ('2026-10-10T04:00:00', False),
+                                             ('2026-10-10T15:44:59', False),
+                                             ('2026-10-10T15:45:00', False),
                                              ('2026-10-10T15:59:00', False),
                                              ('2026-10-10T16:00:00', True),
                                              ('2026-10-11T00:00:00', True)])
@@ -113,12 +146,14 @@ def test_manager_fresh_shift_and_customer_quote_boundaries(delivery_ops, stamp, 
     clock[0] = local(stamp)
     response = actor('customer').post('/api/quote', json=body)
     assert response.status_code == (200 if allowed else 409), response.text
+    manager_allowed = allowed or stamp[11:16] in ('15:45', '15:59')
     started = post('manager', '/api/shifts', {'kind': 'manager', 'branch_ids': ['ops-branch']},
-                   status=200 if allowed else 409)
-    if allowed:
-        assert started['shift']['delivery_operational_date'] == service_hours.delivery_operational_date(clock[0]).isoformat()
+                   status=200 if manager_allowed else 409)
+    if manager_allowed:
+        expected = service_hours.manager_shift_status(service_hours.DEFAULT_DELIVERY_HOURS, clock[0])
+        assert started['shift']['delivery_operational_date'] == expected['operational_date']
     else:
-        assert '4 مساءً' in started['detail']
+        assert started['detail']['code'] == 'MANAGER_SHIFT_HOURS'
 
 
 @pytest.mark.postgres
@@ -130,6 +165,26 @@ def test_driver_fresh_shift_cannot_start_outside_window(delivery_ops, stamp):
     post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'], 'manager_shift_id': manager}, status=409)
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM shifts WHERE user_id='ops-driver'").fetchone()['n'] == 0
+
+
+@pytest.mark.postgres
+def test_manager_prepares_new_day_without_opening_customer_service(delivery_ops):
+    actor, post, _, _, clock, body = delivery_ops
+    clock[0] = local('2026-10-10T15:45:00')
+    manager = post('manager', '/api/shifts', {'kind': 'manager', 'branch_ids': ['ops-branch']})['shift']
+    assert manager['delivery_operational_date'] == '2026-10-10'
+    snapshot = manager['delivery_window_snapshot']['branches']['ops-branch']
+    assert snapshot['window_start'] == '2026-10-10T16:00:00+03:00'
+    assert snapshot['preparation_start'] == '2026-10-10T15:45:00+03:00'
+    assert actor('customer').post('/api/quote', json=body).status_code == 409
+    assert post('customer', '/api/orders', body, status=409)['detail']['code'] == 'DELIVERY_CLOSED'
+    post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'],
+                                 'manager_shift_id': manager['id']}, status=409)
+    post('manager', '/api/shifts', {'kind': 'manager', 'branch_ids': ['ops-branch']}, status=409)
+    clock[0] = local('2026-10-10T16:00:00')
+    assert actor('customer').post('/api/quote', json=body).status_code == 200
+    post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'],
+                                 'manager_shift_id': manager['id']})
 
 
 @pytest.mark.postgres
