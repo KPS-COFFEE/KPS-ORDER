@@ -21,6 +21,7 @@ import httpx
 import pytest
 
 from app import auth, db, email_delivery
+from tests.browser_sms_helpers import complete_owner_sms_dialog
 from test_browser import (ARTIFACTS, WIDTHS, PASSWORD, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
                           _match_manager_finances,
@@ -72,8 +73,10 @@ def v5_live_app(database, tmp_path, monkeypatch):
 
         def start(self):
             self.process = subprocess.Popen(
-                [sys.executable, '-m', 'uvicorn', 'app.main:app', '--host',
-                 '127.0.0.1', '--port', str(port)],
+                [sys.executable, '-c',
+                 "import pytest,uvicorn; from tests.sms_policy_helpers import configure_sms; "
+                 "configure_sms(pytest.MonkeyPatch()); "
+                 + f"uvicorn.run('app.main:app',host='127.0.0.1',port={port})"],
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
@@ -160,27 +163,36 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             _staff_ui_login(page, user)
             fonts[role] = _font_evidence(page)
         owner, manager, branch = [pages[role] for role in ('owner', 'delivery_manager', 'branch_manager')]
-        # Manager registers one driver for two authorized branches through the UI.
+        # Account creation is owner-only; managers retain operational scope.
         manager.locator('[data-page=drivers]').click()
-        manager.locator('[data-action=invite-staff]').click()
-        email = 'synthetic-driver-' + secrets.token_hex(5) + '@example.test'
-        for name, value in {'display_name': 'سائق اختبار V5 فقط', 'email': email, 'phone': '0500000022'}.items():
-            manager.locator(f'#modal-body [name={name}]').fill(value)
-        manager.locator('#modal-body .staff-branch-dropdown summary').click()
-        manager.locator('#modal-body [name="scope:kps-branch-1"]').check()
-        manager.locator('#modal-body [name="scope:kps-branch-9"]').check()
-        _capture(manager, 'v5-manager-two-branch-driver-invitation')
-        _submit_modal(manager)
-        expect(manager.locator('#content')).to_contain_text('سائق اختبار V5 فقط')
+        expect(manager.locator('[data-action=invite-staff]')).to_have_count(0)
+        owner.locator('[data-page=admin]').click()
+        owner.locator('[data-action=admin-tab][data-tab=users]').click()
+        owner.locator('[data-action=invite-staff]').click()
+        owner.locator('#modal-body [name=role]').select_option('driver')
+        for name, value in {'display_name': 'سائق اختبار V5 فقط', 'phone': '0500000022'}.items():
+            owner.locator(f'#modal-body [name={name}]').fill(value)
+        owner.locator('#modal-body .staff-branch-dropdown summary').click()
+        owner.locator('#modal-body [name="scope:kps-branch-1"]').check()
+        owner.locator('#modal-body [name="scope:kps-branch-9"]').check()
+        _capture(owner, 'v5-owner-two-branch-driver-registration')
+        owner.locator('#modal-body button[type=submit]').click()
+        complete_owner_sms_dialog(owner, users['owner'])
+        expect(owner.locator('#modal')).not_to_be_visible()
+        expect(owner.locator('#content')).to_contain_text('سائق اختبار V5 فقط')
+        with db.tx() as conn:
+            registered_driver=conn.execute("SELECT * FROM users WHERE brand_id='kps' AND phone='+966500000022'").fetchone()
+            assert registered_driver and registered_driver['role']=='driver'
+            assert registered_driver['phone_sms_verified_at'] is None
         driver_context, driver, driver_errors = _context(chromium_browser, base)
         contexts['driver'], pages['driver'] = driver_context, driver
         errors.append(driver_errors)
-        driver.goto(_read_synthetic_invitation(email))
+        _staff_ui_login(driver, registered_driver)
         expect(driver.locator('#app-shell')).to_be_visible()
         assert '#identity_token' not in driver.url
-        driver_user = driver_context.request.get(base + '/api/session').json()['user']
-        assert driver_user['role'] == 'driver' and driver_user['email_verified_at']
-        assert driver_user['phone_sms_verified_at'] is None and driver_user['phone_whatsapp_verified_at'] is None
+        driver_user = driver_context.request.get(base + '/api/session', headers={'X-KPS-Context':'work'}).json()['user']
+        assert driver_user['role'] == 'driver' and driver_user['phone_sms_verified_at']
+        assert driver_user['email_verified_at'] is None and driver_user['phone_whatsapp_verified_at'] is None
         assert set(driver_user['branch_ids']) == {'kps-branch-1', 'kps-branch-9'}
         fonts['driver'] = _font_evidence(driver)
         manager_shift = _authenticated_post(contexts['delivery_manager'], base, '/api/shifts', {'kind': 'manager', 'branch_ids': ['kps-branch-1','kps-branch-9']})['shift']['id']
@@ -390,8 +402,8 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             'test_only': True, 'real_http': True, 'network_api_interception': False,
             'database': 'UUID-isolated PostgreSQL schema', 'widths_px': WIDTHS,
             'physical_device_test': False, 'external_email_delivery_tested': False,
-            'email_link_source': 'isolated encrypted synthetic test outbox, not an external mailbox',
-            'sms_configured': False, 'whatsapp_configured': False, 'font_loads': fonts,
+            'staff_authentication': 'four-digit SMS through real UI; only provider I/O synthetic',
+            'sms_configured': True, 'sms_provider_synthetic': True, 'whatsapp_configured': False, 'font_loads': fonts,
             'financial_events': {'orders':1,'collections':1,'driver_closures':1,'manager_closures':1,'independent_financial_matches':1},
             'actual_http_process_restarts': base.restart_count,
             'restart_database_and_saved_report_bytes_identical': True,
