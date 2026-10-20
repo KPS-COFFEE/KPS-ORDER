@@ -77,7 +77,7 @@ def enrich_orders(conn, rows, now=None):
     ids = [row['id'] for row in rows]
     events = conn.execute('SELECT order_id,event_type,created_at FROM order_events WHERE order_id=ANY(%s) '
                           'ORDER BY created_at,id', (ids,)).fetchall()
-    tasks = conn.execute('SELECT t.order_id,t.driver_id,t.created_at,t.picked_up_at,t.delivered_at,t.status,u.display_name '
+    tasks = conn.execute('SELECT t.order_id,t.driver_id,t.created_at,t.picked_up_at,t.delivered_at,t.status,t.reason,u.display_name '
                          'FROM driver_tasks t JOIN users u ON u.id=t.driver_id WHERE t.order_id=ANY(%s) '
                          'ORDER BY t.created_at,t.id', (ids,)).fetchall()
     points, names = {}, {}
@@ -89,16 +89,21 @@ def enrich_orders(conn, rows, now=None):
             point['task.picked_up'] = min(point.get('task.picked_up', task['picked_up_at']), task['picked_up_at'])
         if task['delivered_at']:
             point['task.delivered'] = task['delivered_at']
-        names[task['order_id']] = {'driver_id': task['driver_id'], 'driver_name': task['display_name']}
+        names[task['order_id']] = {'driver_id': task['driver_id'], 'driver_name': task['display_name'],
+                                 'delivery_problem_reason': task.get('reason') if task['status']=='problem' else None}
     for row in rows:
         point = points.get(row['id'], {})
         done = row.get('completed_at') or point.get('task.delivered')
         cancelled = row['preparation_status'] in {'cancelled', 'rejected'} or row['delivery_status'] == 'cancelled'
-        terminal = bool(done or cancelled)
+        terminal = bool(done or cancelled or row['delivery_status'] == 'delivered' or row['preparation_status'] == 'completed')
         accepted, ready, pickup = point.get('preparation.accepted'), point.get('preparation.ready'), point.get('task.picked_up')
-        times = {'acceptance_wait': _phase(row['created_at'], accepted, now, terminal, cancelled),
-                 'preparation': _phase(accepted, ready, now, terminal, cancelled),
-                 'driver_wait': _phase(ready, pickup, now, terminal, cancelled) if row['service'] == 'delivery' else {'seconds': None, 'state': 'not_applicable'},
+        # A later recorded stage proves the previous stage has ended, but does
+        # not supply its missing timestamp. Never run two successive clocks or
+        # invent a ready/acceptance time from a pickup.
+        handed_over = point.get('preparation.handed_over') or pickup
+        times = {'acceptance_wait': _phase(row['created_at'], accepted, now, terminal or bool(ready or handed_over), cancelled),
+                 'preparation': _phase(accepted, ready, now, terminal or bool(handed_over), cancelled),
+                 'driver_wait': _phase(ready, pickup, now, terminal or bool(pickup), cancelled) if row['service'] == 'delivery' else {'seconds': None, 'state': 'not_applicable'},
                  'delivery': _phase(pickup, point.get('task.delivered') or done, now, terminal, cancelled) if row['service'] == 'delivery' else {'seconds': None, 'state': 'not_applicable'},
                  'total': _phase(row['created_at'], done, now, terminal, cancelled)}
         snap = row.get('performance_snapshot') or {}

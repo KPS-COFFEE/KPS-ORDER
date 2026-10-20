@@ -14,7 +14,7 @@ def main():
     if (parts.scheme not in {'postgresql', 'postgres'} or parts.hostname not in {'127.0.0.1', 'localhost', '::1'}
             or not parts.path.removeprefix('/').startswith('test_enbishan_') or parts.query or parts.fragment):
         raise SystemExit('Set TEST_DATABASE_URL to a local test_enbishan_* database. No runtime fallback is permitted.')
-    env = {k:v for k,v in os.environ.items() if k not in {'DATABASE_URL', 'TAWKED_API_KEY', 'RESEND_API_KEY',
+    env = {k:v for k,v in os.environ.items() if k not in {'DATABASE_URL', 'TAWKED_API_KEY', 'ENBISHAN_TAWKED_API_KEY', 'RESEND_API_KEY',
            'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID', 'RENDER_API_KEY',
            'MAIL_OUTBOX_KEY', 'SMTP_PASSWORD'} and not k.startswith('KPS_PAYMENTS_')}
     env.update(APP_ENV='testing', OTP_PROVIDER='disabled', EMAIL_PROVIDER='disabled',

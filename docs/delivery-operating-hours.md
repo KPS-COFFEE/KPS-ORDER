@@ -30,3 +30,12 @@ time. Unconfigured legacy internal staffing flows retain their existing behavior
 conversion, weekday overrides, driver/manager shift admission, owner changes,
 service independence, a real pre-cutoff order completed/collected/closed after
 04:00, and preservation after restart on an isolated PostgreSQL test database.
+
+## Manager preparation (owner approved 2026-10-19)
+
+For a configured 16:00 opening, manager shifts may open from 15:45 inclusive
+Asia/Riyadh. This preparation period belongs to the upcoming operational day.
+Customer delivery quotes/orders and driver shift admission retain their existing
+16:00 opening. Service enablement, branch authorization, prior-shift closure and
+custom opening schedules remain enforced. The frozen service window still starts
+at 16:00; preparation_start records the separate 15:45 staff preparation boundary.

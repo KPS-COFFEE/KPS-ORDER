@@ -25,6 +25,7 @@ DEFINITIONS = [
     ('delivery_assign', 'إسناد الطلبات للسائقين', 'Assign orders to drivers', 'delivery', DELIVERY),
     ('tasks_view', 'عرض مهام التوصيل', 'View delivery tasks', 'delivery', DELIVERY | {'driver'}),
     ('tasks_update', 'تحديث المهمة وإبلاغ مشكلة', 'Update task or report a problem', 'delivery', MANAGER | {'driver'}),
+    ('tasks_resolve_delivery', 'معالجة الطلب المتعثر وتوثيق التسليم الفعلي', 'Resolve stalled orders with verified delivery', 'delivery', MANAGER),
     ('tasks_transfer', 'تحويل المهمة إلى سائق آخر', 'Transfer a task to another driver', 'delivery', MANAGER),
     ('tasks_accept_transfer', 'قبول مهمة محولة إليك', 'Accept a transferred task', 'delivery', {'driver'}),
     ('task_photos', 'رفع صور إثبات التسليم', 'Upload delivery evidence photos', 'delivery', {'driver'}),
@@ -138,11 +139,11 @@ ROUTES = {
     'driver_incentives': {'achievement': ('shifts_view','accounting_reports'), 'shift_review': ('shifts_view','accounting_reports'), 'decide': 'shifts_approve'},
     'operations': {
         'dashboard': 'dashboard_view', 'operational_alerts': 'operational_alerts',
-        'open_shift': 'shifts_open', 'shifts': 'shifts_view', 'shift_detail': 'shifts_view',
+        'open_shift': 'shifts_open', 'shifts': 'shifts_view', 'shift_detail': 'shifts_view', 'save_external_enbishan': 'shifts_delegate_close',
         'people': ('custody_view', 'drivers_view', 'delivery_assign', 'shifts_close'), 'driver_roster': 'drivers_view',
         'refuel_shift': 'vehicle_refuel', 'request_close': 'shifts_close',
         'submit_close': 'shifts_close', 'return_close': 'shifts_approve', 'approve_close': 'shifts_approve',
-        'assign': 'delivery_assign', 'tasks': 'tasks_view', 'task_transition': 'tasks_update',
+        'assign': 'delivery_assign', 'tasks': 'tasks_view', 'task_transition': 'tasks_update', 'resolve_delivery': 'tasks_resolve_delivery',
         'task_handover': 'tasks_transfer', 'accept_task_handover': 'tasks_accept_transfer',
         'collect': 'payments_collect', 'refund': {'delivery_manager':'refunds_manage','branch_manager':'payments_collect'},
         'get_payment_terminal': 'driver_terminal_view', 'set_payment_terminal': 'driver_terminal',
@@ -166,7 +167,8 @@ ROUTES = {
     ) for name in names},
     'order_support': {'tickets': 'support_manage', 'create_ticket': 'support_manage',
                       'update_ticket': 'support_manage', 'daily': 'support_manage',
-                      'upload_photo': 'task_photos', 'photos': 'orders_view', 'photo': 'orders_view'},
+                      'upload_photo': 'task_photos', 'photos': 'orders_view', 'photo': 'orders_view',
+                      'read_evidence_observation':'orders_view'},
     'auth': {'staff_list': 'drivers_view', 'invite_staff': 'drivers_manage',
              'update_staff': 'drivers_manage', 'resend_invitation': 'drivers_manage',
              'revoke_invitation': 'drivers_manage', 'register_driver_vehicle': 'vehicle_register'},
@@ -185,7 +187,9 @@ ROUTES = {
     'accounting': {name: {'delivery_manager': 'accounting_cases_followup'} for name in (
         'options', 'cases', 'detail', 'followup', 'upload', 'download')},
 }
-ROUTES['branch_printing'].update({'enqueue': 'orders_print', 'operational_devices': 'orders_print'})
+ROUTES['branch_printing'].update({'enqueue': 'orders_print', 'resolve_print_alert': 'orders_print', 'operational_devices': 'orders_print'})
+ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branch_manager':'orders_prepare'}
+                                for name in ('order_output_status','confirm_order_output')})
 
 
 def required_for(endpoint, role):

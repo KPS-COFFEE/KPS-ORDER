@@ -51,14 +51,17 @@ def prepare_rows(rows):
         row['price_halalas'] = halalas(source.get('price'))
         before = source.get('price_before')
         row['compare_at_halalas'] = None if before in (None, '') else halalas(before)
-        if row['compare_at_halalas'] is not None and row['compare_at_halalas'] <= row['price_halalas']:
-            raise ValueError('The before price must exceed the selling price on row ' + str(number))
+        if row['compare_at_halalas'] is not None and row['compare_at_halalas'] < row['price_halalas']:
+            raise ValueError('The before price cannot be below the selling price on row ' + str(number))
+        # Equal source prices are valid, but are not a discount claim.
+        if row['compare_at_halalas'] == row['price_halalas']:
+            row['compare_at_halalas'] = None
         grouped.setdefault(row['product_code'], []).append(row)
     products = []
     for code, values in sorted(grouped.items()):
         first = values[0]
         for row in values:
-            if any(row[k] != first[k] for k in ('name', 'name_en', 'category', 'category_en', 'image')):
+            if any(row[k] != first[k] for k in ('name', 'name_en', 'category', 'category_en')):
                 raise ValueError('Conflicting product descriptions for code ' + code)
         axes = [key for key in ('size', 'flavour') if any(row[key] for row in values)]
         groups = []
@@ -70,12 +73,14 @@ def prepare_rows(rows):
                            'min_select': 1, 'max_select': 1, 'type': 'select',
                            'values': [{'code': stable_id('v-', v), 'name': v, 'price_delta_halalas': 0}
                                       for v in sorted({r[axis] for r in values})]})
-        image = first['image']
+        images = sorted({row['image'] for row in values if row['image']})
+        image = images[0] if len(images) == 1 else ''
         # Uploaded branded assets only. Local filenames/URLs remain explicit
         # inputs for the asset-upload step; this importer never fetches URLs.
         image_url = image if re.fullmatch(r'/api/product-assets/[A-Za-z0-9_-]+', image) else None
-        if image and image_url is None:
-            unresolved_images.add(image)
+        unresolved_images.update(ref for ref in images if not re.fullmatch(r'/api/product-assets/[A-Za-z0-9_-]+', ref))
+        if len(images) > 1:
+            unresolved_images.update(images)
         settings = {'enabled': False, 'lifecycle': 'draft', 'source_verified': False,
                     'source_id': code, 'option_groups': groups, 'image_url': image_url,
                     'name_en': first['name_en'], 'category_en': first['category_en']}
@@ -84,6 +89,9 @@ def prepare_rows(rows):
                    **({'compare_at_halalas': row['compare_at_halalas']} if row['compare_at_halalas'] is not None else {})}
                   for row in values]
         settings['variant_price_matrix'] = matrix
+        settings['source_image_references'] = [
+            {'options': entry['options'], 'image': row['image']}
+            for entry, row in zip(matrix, values) if row['image']]
         product = {'id': stable_id('enbishan-menu-', code), 'brand_id': 'enbishan',
                    'name': first['name'], 'category': first['category'],
                    'price_halalas': min(r['price_halalas'] for r in values), 'settings': settings}

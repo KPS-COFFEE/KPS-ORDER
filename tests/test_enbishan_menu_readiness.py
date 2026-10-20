@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from app import catalog, db
 from app.enbishan_catalog_import import prepare_rows, halalas
 from app.menu_variants import selected_price, validated
-from tools.enbishan_workbook import read_workbook, menu_rows
+from tools.enbishan_workbook import read_workbook, menu_rows, reference_menu
 from tests.test_core import _make_user, _authenticate, _branch, _body
 from tests.sms_policy_helpers import sms_login, sms_step_up
 
@@ -62,6 +62,16 @@ def test_arabic_money_and_decimal_values_are_exact():
     assert halalas('0.01') == 1
 
 
+def test_equal_original_and_sale_prices_show_one_price_without_false_discount():
+    source = rows()
+    source[0]['price_before'] = source[0]['price']
+    product = prepare_rows(source)['products'][0]
+    selected = selected_price(product, choices(product, 'صغير', 'توت'))
+    assert selected['price_halalas'] == 1300
+    assert 'compare_at_halalas' not in selected
+    assert selected_price(product, choices(product, 'كبير', 'توت'))['compare_at_halalas'] == 1900
+
+
 @pytest.mark.parametrize('change', ['duplicate', 'missing_axis', 'different_identity', 'bad_before', 'cross_brand', 'missing_code'])
 def test_ambiguous_or_injected_file_rows_fail_closed(change):
     values = rows()
@@ -103,6 +113,35 @@ def test_actual_xlsx_is_inspected_compiled_and_never_applied(tmp_path):
     assert inspected['ordering_enabled'] is False and len(inspected['source_sha256']) == 64
     path = tmp_path/'FORMULA.xlsx';workbook(path, formula=True)
     with pytest.raises(ValueError, match='formulas'): read_workbook(path)
+
+
+def test_reference_layout_preserves_merges_prices_piece_counts_and_pending_choices():
+    headers = {'B': 'Name Item English', 'C': 'اسم الصنف بالعربي', 'D': 'Category - القسم',
+               'G': 'العدد', 'H': 'الاختيارات', 'I': 'سعر المنيو بعد الخصم',
+               'J': 'السعر الاساسى', 'K': 'Image Link - رابط الصورة', 'L': 'Item Price'}
+    base = {'B': 'TEST ONLY', 'C': 'اختبار', 'D': 'TEST', 'F': 'وسط',
+            'G': '10', 'I': '14.5', 'J': '22', 'L': '999', 'K': 'https://example.invalid/one'}
+    second = {**base, 'C': '', 'D': '', 'G': '15', 'I': '26.5', 'J': '26.5',
+              'K': 'https://example.invalid/two'}
+    pending = {**base, 'H': 'اختر 3 أصناف', 'K': 'ليس له'}
+    inspection = {'source_sha256': 'a'*64,
+                  'sheets': {'THE MENU': [{'A': 'THE MENU'}, headers, base, second, pending]},
+                  'source_rows': {'THE MENU': [1, 2, 3, 4, 5]},
+                  'merged_cells': {'THE MENU': ['A1:N1', 'C3:C4', 'D3:D4']}}
+    result = reference_menu(inspection)
+    assert len(result['inventory']) == 3 and len(result['rows']) == 2
+    assert result['missing_images'] == [5]
+    assert result['unresolved'][0]['source_row'] == 5
+    product = prepare_rows(result['rows'])['products'][0]
+    assert len(product['settings']['variant_price_matrix']) == 2
+    assert product['price_halalas'] == 1450  # never Item Price 999
+    assert {v['name'] for v in product['settings']['option_groups'][0]['values']} == {'وسط · 10 قطعة', 'وسط · 15 قطعة'}
+    assert product['settings']['image_url'] is None
+    assert len(product['settings']['source_image_references']) == 2
+    assert prepare_rows(result['rows'])['catalog_digest'] == prepare_rows(reference_menu(inspection)['rows'])['catalog_digest']
+    inspection['sheets']['THE MENU'][1]['I'] = 'Item Price'
+    with pytest.raises(ValueError, match='headers changed'):
+        reference_menu(inspection)
 
 
 @pytest.mark.postgres

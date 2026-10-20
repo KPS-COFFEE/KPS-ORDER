@@ -54,6 +54,35 @@ def metrics(shifts, breaks, trips, lo, hi, now, stops=(), unknown=()):
                 other_work_seconds=0,unclassified_seconds=seconds(unclassified))
 
 
+def order_activity(shifts, tasks, breaks, lo, hi, now, stops=()):
+    """Completed pickup-to-delivery time, unioned per driver and clipped to work.
+
+    Branch returns remain a separate measure. Missing history never becomes an
+    invented zero-duration delivery or assumed waiting; live tasks are separate.
+    """
+    spans = clipped([(s['opened_at'], min(s.get('submitted_at') or s.get('closed_at') or now, now)) for s in shifts], lo, hi)
+    work = subtract(spans, clipped([*breaks, *stops], lo, hi))
+    completed, ongoing = [], []
+    missing = set()
+    for task in tasks:
+        pickup, delivered = task.get('picked_up_at'), task.get('delivered_at')
+        if task['status'] == 'delivered':
+            if pickup is not None and delivered is not None and pickup <= delivered <= now:
+                completed.append((pickup, delivered))
+            elif delivered is not None and lo <= delivered < hi:
+                missing.add(task['order_id'])
+        elif task['status'] in ('picked_up', 'problem') and pickup is not None:
+            ongoing.append((pickup, now))
+    completed = subtract(work, subtract(work, clipped(completed, lo, hi)))
+    ongoing = subtract(work, subtract(work, clipped(ongoing, lo, hi)))
+    ongoing = subtract(ongoing, completed)
+    total, done, active = seconds(spans), seconds(completed), seconds(ongoing)
+    return {'order_activity_seconds': done, 'active_delivery_seconds': active,
+            'remaining_shift_seconds': round(max(0, total-done-active), 3),
+            'order_utilization_percent': round(done / total * 100, 2) if total else 0,
+            'missing_order_timing_count': len(missing)}
+
+
 class Movement(BaseModel):
     model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
     branch_id: str = Field(min_length=1,max_length=100)
@@ -195,18 +224,21 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
             if paused:stops.append((paused,s.get('submitted_at') or s.get('closed_at') or now))
         m=metrics(ss,[(b['started_at'],b['ended_at'] or now) for b in bs],ts,lo,hi,now,stops,unknown)
         count=c.execute("SELECT count(DISTINCT order_id) n,avg(extract(epoch FROM(delivered_at-picked_up_at))) FILTER(WHERE delivered_at>=picked_up_at) average FROM driver_tasks WHERE shift_id=ANY(%s) AND status='delivered' AND delivered_at>=%s AND delivered_at<%s",(sids,lo,hi)).fetchone()
+        activity_tasks=c.execute("SELECT order_id,status,picked_up_at,delivered_at FROM driver_tasks WHERE shift_id=ANY(%s) AND driver_id=%s AND (delivered_at>=%s OR (status IN ('picked_up','problem') AND picked_up_at<%s))",(sids,p['id'],lo,hi)).fetchall()
+        activity=order_activity(ss,activity_tasks,[(b['started_at'],b['ended_at'] or now) for b in bs],lo,hi,now,stops)
         confirmed=[t for t in ts if t['returned_at']]
         for t in ts:
             t['status']='returned' if t['returned_at'] else 'awaiting_return'
             t['duration_seconds']=(t['returned_at']-t['departed_at']).total_seconds() if t['returned_at'] else None
             t['period_seconds']=seconds(clipped([(t['departed_at'],t['returned_at'])],lo,hi)) if t['returned_at'] else None
-        drivers.append({'driver_id':p['id'],'name':p['display_name'],'shift_status':'open' if any(s['status']=='open' for s in ss) else ss[-1]['status'],**m,
+        drivers.append({'driver_id':p['id'],'name':p['display_name'],'shift_status':'open' if any(s['status']=='open' for s in ss) else ss[-1]['status'],**m,**activity,
                         'trip_count':len(confirmed),'pending_trip_count':len(ts)-len(confirmed),'order_count':count['n'],
                         'average_trip_seconds':sum(t['duration_seconds'] for t in confirmed)/len(confirmed) if confirmed else None,
                         'average_order_delivery_seconds':float(count['average']) if count['average'] is not None else None,
                         'missing_trip_evidence':bool(missing_ids),'trips':ts})
-    keys=('shift_seconds','actual_seconds','delivery_seconds','waiting_seconds','break_seconds','other_work_seconds','unclassified_seconds','trip_count','pending_trip_count','order_count')
+    keys=('shift_seconds','actual_seconds','delivery_seconds','waiting_seconds','break_seconds','other_work_seconds','unclassified_seconds','trip_count','pending_trip_count','order_count','order_activity_seconds','active_delivery_seconds','remaining_shift_seconds','missing_order_timing_count')
     totals={key:sum(d[key] for d in drivers) for key in keys}
+    totals['order_utilization_percent']=round(totals['order_activity_seconds']/totals['shift_seconds']*100,2) if totals['shift_seconds'] else 0
     return safe({'start':first,'end':last,'timezone':'Asia/Riyadh','operational_day_start':f'{minutes//60:02d}:{minutes%60:02d}',
                  'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ عرض يوم تقويمي بتوقيت الرياض',
                  'branch_filter_basis':'shift_scope_membership; multi-branch hours are not additive across branch filters',

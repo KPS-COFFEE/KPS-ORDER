@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verification-scope:
-    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017'
+    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019'
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
@@ -27,7 +27,7 @@ jobs:
         \ then\n  echo 'final_three=true' >> \"$GITHUB_OUTPUT\"\nelse\n  echo 'final_three=false' >> \"$GITHUB_OUTPUT\"\
         \nfi\n"
   host-security-and-browser:
-    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017'
+    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -127,7 +127,7 @@ jobs:
 
         python -m pytest -q tests/test_simple_staff_sms_browser.py tests/test_owner_staff_management.py tests/test_printer_setup_browser.py
         tests/test_split_payment_browser.py tests/test_employee_permissions_browser.py tests/test_parallel_visual_acceptance.py
-        tests/test_additional_password_owner.py
+        tests/test_additional_password_owner.py tests/test_evidence_memory_browser.py
         tests/test_shift_vehicle.py::test_driver_inspection_refuel_and_closure_browser
         tests/test_shift_vehicle.py::test_two_hundred_tasks_use_three_compact_columns
         tests/test_fuel_exceptions.py::test_mobile_full_exception_request_and_manager_approval
@@ -157,7 +157,7 @@ jobs:
       fail-fast: false
       matrix:
         role: [candidate, rollback]
-    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017'
+    if: github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -448,4 +448,6 @@ jobs:
     branches:
     - agent/kps-order-security-closure-20261018
     - agent/enbishan-isolated-development-20261017
+    - agent/print-alert-actions-20261019
+    - agent/enbishan-manual-closure-20261019
   workflow_dispatch: null

@@ -28,7 +28,10 @@ def test_report_fixture_never_targets_an_operational_or_unowned_schema(monkeypat
 def test_combined_capacity_waits_for_real_dual_brand_acceptance():
     jobs=yaml.safe_load((ROOT/'.github/workflows/enbishan-isolated.yml').read_text())['jobs']
     assert set(jobs['capacity-economy']['needs'])=={'dual-brand','operational-regression'}
-    assert 'if' not in jobs['capacity-economy']
+    gate=jobs['capacity-economy']['if']
+    assert "github.event_name == 'workflow_dispatch'" in gate
+    assert "inputs.run_capacity" in gate
+    assert "inputs.capacity_reason != ''" in gate
     for name,previous in [('medium','economy'),('proposed','medium')]:
         job=jobs['capacity-'+name]
         assert job['needs']=='capacity-'+previous

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path, PurePosixPath
 import sys
 import zipfile
@@ -61,13 +62,18 @@ def read_workbook(path):
                 raise ValueError('Unsafe worksheet target.')
             relationships[rel.get('Id')] = member
         sheets = {}
+        source_rows = {}
+        merged_cells = {}
         for sheet in xml_member(archive, 'xl/workbook.xml').findall('m:sheets/m:sheet', NS):
             name = sheet.get('name')
             if not name or name in sheets:
                 raise ValueError('Worksheet names must be unique.')
             member = relationships[sheet.get('{' + NS['r'] + '}id')]
             rows = []
-            for row in xml_member(archive, member).findall('m:sheetData/m:row', NS):
+            row_numbers = []
+            worksheet = xml_member(archive, member)
+            merged_cells[name] = [node.get('ref') for node in worksheet.findall('m:mergeCells/m:mergeCell', NS)]
+            for ordinal, row in enumerate(worksheet.findall('m:sheetData/m:row', NS), 1):
                 if len(rows) >= 5001:
                     raise ValueError('Worksheet exceeds 5000 data rows.')
                 cells = {}
@@ -91,11 +97,92 @@ def read_workbook(path):
                     cells[column] = value
                 if any(cells.values()):
                     rows.append(cells)
+                    row_numbers.append(int(row.get('r', ordinal)))
             sheets[name] = rows
+            source_rows[name] = row_numbers
         images = [{'member': n, 'sha256': hashlib.sha256(archive.read(n)).hexdigest(),
                    'bytes': archive.getinfo(n).file_size} for n in names if n.startswith('xl/media/')]
     return {'source_sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'sheets': sheets,
+            'source_rows': source_rows, 'merged_cells': merged_cells,
             'embedded_images': images, 'ordering_enabled': False}
+
+
+def reference_menu(inspection):
+    """Review the owner's THE MENU layout without guessing merged values or options.
+
+    Source numbering is provenance, never a permanent SKU. The deterministic
+    semantic key is retained in the review manifest for subsequent reimports.
+    Ambiguous families remain outside the import payload until reviewed.
+    """
+    name = 'THE MENU'
+    sheet = inspection['sheets'].get(name, [])
+    numbers = inspection.get('source_rows', {}).get(name, [])
+    by_number = {number: dict(row) for number, row in zip(numbers, sheet)}
+    required = {'B': 'Name Item English', 'C': 'اسم الصنف بالعربي', 'D': 'Category - القسم',
+                'G': 'العدد', 'H': 'الاختيارات', 'I': 'سعر المنيو بعد الخصم',
+                'J': 'السعر الاساسى', 'K': 'Image Link - رابط الصورة', 'L': 'Item Price'}
+    if any(by_number.get(2, {}).get(col) != value for col, value in required.items()):
+        raise ValueError('Reference menu headers changed; review the mapping before import.')
+    for merge in inspection.get('merged_cells', {}).get(name, []):
+        match = re.fullmatch(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', merge or '')
+        if not match:
+            raise ValueError('Invalid merged cell range.')
+        col, start, end_col, end = match.groups()
+        if col != end_col:  # The title is decorative, not data.
+            if merge != 'A1:N1':
+                raise ValueError('Review a horizontally merged data range before import.')
+            continue
+        if col not in {'C', 'D', 'H'} or not 3 <= int(start) <= int(end) <= 5001:
+            raise ValueError('Review unsupported merged data before import.')
+        value = by_number.get(int(start), {}).get(col, '')
+        for number in range(int(start), int(end) + 1):
+            row = by_number.setdefault(number, {})
+            if row.get(col) and row[col] != value:
+                raise ValueError('Conflicting merged cell values.')
+            row[col] = value
+    inventory, payload, unresolved = [], [], []
+    for number, source in sorted(by_number.items()):
+        if number < 3:
+            continue
+        source = {key: value.strip() for key, value in source.items()}
+        sale, original = source.get('I', ''), source.get('J', '')
+        from app.enbishan_catalog_import import halalas
+        if halalas(original) < halalas(sale):
+            raise ValueError('Original price below sale price at source row ' + str(number))
+        semantic_key = '|'.join(source.get(k, '') for k in ('B', 'C', 'D'))
+        code = 'enb-' + hashlib.sha256(semantic_key.encode()).hexdigest()[:24]
+        size = source.get('F', '')
+        count = source.get('G', '')
+        if count.isdigit():
+            size += ' · ' + count + ' قطعة'
+        issues = []
+        options = source.get('H', '')
+        # Only the unambiguous grape-leaf flavour list is compiled. Other
+        # choices retain their verbatim source for an explicit owner decision.
+        flavours = options.splitlines() if options == 'دبس رمان\nليمون\nسبايسي\nمشكل' else ['']
+        if options and flavours == ['']:
+            issues.append('تأكيد بنية الاختيارات والتكرار')
+        if source.get('C') in {'خليه', 'موهيتو', 'بوكس رمضان'}:
+            issues.append('اعتماد الاسم والتركيبة والتوفر')
+        if source.get('B') == 'Crispy & Cabbage':
+            issues.append('تعارض الاسم العربي والإنجليزي')
+        image = source.get('K', '')
+        if not re.fullmatch(r'https://[^\s]+', image):
+            image = ''
+        inventory.append({'source_row': number, 'source': source, 'product_code': code,
+                          'sale_halalas': halalas(sale), 'original_halalas': halalas(original),
+                          'size_label': size, 'image_reference': image, 'review_required': issues})
+        if issues:
+            unresolved.append({'source_row': number, 'issues': issues})
+            continue
+        for flavour in flavours:
+            payload.append({'product_code': code, 'name': source.get('C', ''),
+                            'name_en': source.get('B', ''), 'category': source.get('D', ''),
+                            'size': size, 'flavour': flavour, 'price': sale,
+                            'price_before': original, 'image': image})
+    return {'source_sha256': inspection['source_sha256'], 'inventory': inventory,
+            'rows': payload, 'unresolved': unresolved, 'ordering_enabled': False,
+            'missing_images': [r['source_row'] for r in inventory if not r['image_reference']]}
 
 
 def menu_rows(inspection, sheet_name, column_map=None):
@@ -126,9 +213,13 @@ def main():
     parser.add_argument('workbook', type=Path)
     parser.add_argument('--menu-sheet', help='Omit to inspect every worksheet without interpreting it.')
     parser.add_argument('--column-map', type=Path, help='Reviewed JSON mapping from original headers to canonical fields.')
+    parser.add_argument('--reference-menu', action='store_true', help='Review the approved THE MENU source layout; unresolved choices stay out of drafts.')
     args = parser.parse_args()
     inspection = read_workbook(args.workbook)
-    if args.menu_sheet:
+    if args.reference_menu:
+        output = reference_menu(inspection)
+        output['preview'] = prepare_rows(output['rows'])
+    elif args.menu_sheet:
         mapping = json.loads(args.column_map.read_text()) if args.column_map else None
         rows = menu_rows(inspection, args.menu_sheet, mapping)
         output = {'source_sha256': inspection['source_sha256'], 'rows': rows,

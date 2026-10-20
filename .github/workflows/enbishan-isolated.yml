@@ -4,6 +4,15 @@ on:
     branches: [agent/enbishan-isolated-development-20261017]
     paths-ignore: ['docs/**']
   workflow_dispatch:
+    inputs:
+      run_capacity:
+        description: Run costly capacity tests only for a justified capacity investigation
+        type: boolean
+        default: false
+      capacity_reason:
+        description: Required concrete reason for repeating capacity tests
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -49,6 +58,9 @@ jobs:
           python -m pytest -q tests/test_customer_engagement_closure.py
           tests/test_customer_engagement_restore.py
           tests/test_enbishan_menu_readiness.py
+          tests/test_enbishan_customer_scope_constraints.py
+          tests/test_enbishan_shared_terminal.py tests/test_enbishan_shared_float.py
+          tests/test_enbishan_sms_boundary.py
           tests/test_engagement_capacity_workflow.py tests/test_hosting_report_check.py
           --junitxml=test-results/enbishan/engagement-transactions.xml
       - name: Real dual-brand, financial, security and mobile acceptance
@@ -128,6 +140,7 @@ jobs:
   # Reuse the retained workload and real cgroup budgets only AFTER shared
   # functional acceptance succeeds. Larger profiles run only on smaller failure.
   capacity-economy:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_capacity && inputs.capacity_reason != '' }}
     needs: [dual-brand, operational-regression]
     name: capacity-economy (${{ matrix.repetition }})
     runs-on: ubuntu-latest

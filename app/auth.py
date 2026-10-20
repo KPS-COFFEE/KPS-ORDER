@@ -129,6 +129,11 @@ def session_context(request):
     """A UI context selects a credential; it never grants a role or OTP purpose."""
     path=request.url.path
     context=request.headers.get('x-kps-context')
+    # Native <img> loads and new-tab links cannot send the UI context header.
+    # This public hint only selects a cookie; current_user and chat scope still
+    # validate the live session, role, brand and conversation on every request.
+    if context is None and request.method in {'GET','HEAD'} and re.fullmatch(r'/api/chat-attachments/[^/]+',path):
+        context=request.query_params.get('context')
     if context is not None and context not in {'work','customer'}:
         raise db.error(400,'SESSION_CONTEXT_INVALID','اختر سياق الدخول الصحيح. / Invalid session context.')
     if path.startswith('/api/fiscal/orders/') and path.endswith('/documents'):
@@ -138,9 +143,9 @@ def session_context(request):
     if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
-            '/api/reports','/api/crm','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
+            '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
-            or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/customer-crm','/docs/metrics'))):
+            or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
         return 'work'
     return context
 
@@ -446,6 +451,15 @@ def _provider_ready(name):
         raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد.')
 
 
+def _customer_provider_ready(provider, brand):
+    if brand == 'enbishan':
+        if provider != 'tawked':
+            raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود عنبيشن غير معتمد.')
+        sms_verification.brand_ready(brand)
+    else:
+        _provider_ready(provider)
+
+
 def _otp_test_access(conn, brand, channel, request):
     # Dedicated work routes let an owner certify delivery without borrowing a
     # customer credential or ever enabling an active customer login flow.
@@ -501,7 +515,7 @@ def request_otp(body: OTPRequestBody, request: Request):
             guest=current_user(request)
         else:guest=None
         provider = _sms_provider(conn, body.brand_id)
-        _provider_ready(provider)
+        _customer_provider_ready(provider, body.brand_id)
         _otp_channel_ready(conn, body.brand_id, channel)
         _otp_test_access(conn, body.brand_id, channel, request)
         if provider == 'tawked' and channel != 'sms':
@@ -514,7 +528,7 @@ def request_otp(body: OTPRequestBody, request: Request):
     challenge_id = db.new_id('owner_probe_' if owner_probe else 'otp_')
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     if provider == 'tawked':
-        reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
+        reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang, **({'brand': body.brand_id} if body.brand_id == 'enbishan' else {}))
         expires_at = min(expires_at, provider_expiry)
     else:
         result = _provider_post('Verifications', {'To': phone, 'Channel': channel})
@@ -571,10 +585,10 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
         provider = challenge['provider_name']
         if _sms_provider(conn, challenge['brand_id']) != provider:
             raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
-        _provider_ready(provider)
+        _customer_provider_ready(provider, challenge['brand_id'])
     # Check the stored provider reference, never a client supplied phone/reference.
     if provider == 'tawked':
-        approved = channel == 'sms' and sms_verification.check(challenge['provider_reference'], body.code)
+        approved = channel == 'sms' and sms_verification.check(challenge['provider_reference'], body.code, **({'brand': challenge['brand_id']} if challenge['brand_id'] == 'enbishan' else {}))
     else:
         result = _provider_post('VerificationCheck', {'VerificationSid': challenge['provider_reference'], 'Code': body.code})
         approved = result.get('status') == 'approved' and result.get('to') == challenge['phone'] and result.get('channel', channel) == channel
@@ -700,7 +714,7 @@ def channel_readiness(conn, brand):
         if channel in {'sms','whatsapp'}:
             try:
                 provider = _selected_sms_provider(channels.get('sms') or {})
-                _provider_ready(provider)
+                _customer_provider_ready(provider, brand)
                 configured = os.getenv('OTP_CHANNEL','sms') == channel and (provider != 'tawked' or channel == 'sms')
             except Exception:
                 configured = False

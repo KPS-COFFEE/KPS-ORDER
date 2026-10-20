@@ -64,7 +64,7 @@ def isolation_guard():
             or not name.startswith('test_enbishan_')):
         raise RuntimeError('Enbishan development requires its own local test_enbishan_* database.')
     # Credentials must never be inherited by the isolated application.
-    if any(os.getenv(key) for key in ('TAWKED_API_KEY', 'TWILIO_AUTH_TOKEN', 'RESEND_API_KEY', 'RENDER_API_KEY')):
+    if any(os.getenv(key) for key in ('TAWKED_API_KEY', 'ENBISHAN_TAWKED_API_KEY', 'TWILIO_AUTH_TOKEN', 'RESEND_API_KEY', 'RENDER_API_KEY')):
         raise RuntimeError('Provider credentials are prohibited in isolated Enbishan development.')
     if any(key.startswith('KPS_PAYMENTS_') and value for key, value in os.environ.items()):
         raise RuntimeError('Live payment configuration is prohibited in isolated Enbishan development.')
@@ -74,17 +74,17 @@ def migrate(conn):
     if not enabled():
         return
     isolation_guard()
-    path = Path(__file__).with_name('multibrand_migrations') / '001_enbishan_isolated.sql'
-    contents = path.read_text()
     import hashlib
-    checksum = hashlib.sha256(contents.encode()).hexdigest()
-    previous = conn.execute('SELECT sha256 FROM schema_migrations WHERE version=%s', (path.name,)).fetchone()
-    if previous:
-        if previous['sha256'] != checksum:
-            raise RuntimeError('Applied isolated migration changed.')
-        return
-    conn.execute(contents)
-    conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (path.name, checksum))
+    for path in sorted(Path(__file__).with_name('multibrand_migrations').glob('*.sql')):
+        contents = path.read_text()
+        checksum = hashlib.sha256(contents.encode()).hexdigest()
+        previous = conn.execute('SELECT sha256 FROM schema_migrations WHERE version=%s', (path.name,)).fetchone()
+        if previous:
+            if previous['sha256'] != checksum:
+                raise RuntimeError('Applied isolated migration changed.')
+            continue
+        conn.execute(contents)
+        conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (path.name, checksum))
 
 
 def project(conn, user, brand):

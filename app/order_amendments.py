@@ -111,11 +111,12 @@ def public_amendment(a, customer=False):
 
 
 def summary(c, o, u):
+    from .order_requests import rows as request_rows
     amendments = c.execute('SELECT * FROM order_amendments WHERE order_id=%s ORDER BY created_at DESC LIMIT 30', (o['id'],)).fetchall()
     receipts = c.execute('SELECT kind,actor_id FROM order_revision_receipts WHERE order_id=%s AND revision=%s', (o['id'], o.get('amendment_revision', 0))).fetchall()
     net = balance(c, o)
-    return {'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
-            'active_id': (active(c, o['id']) or {}).get('id'), 'revision': o.get('amendment_revision', 0),
+    return {'requests': request_rows(c, o['id']), 'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
+            'active_id': next((a['id'] for a in amendments if a['status'] in ACTIVE), None), 'revision': o.get('amendment_revision', 0),
             'due_halalas': max(0, o['total_halalas']-net), 'refund_due_halalas': max(0, net-o['total_halalas']),
             'receipts': receipts if u['role'] != 'customer' else []}
 
@@ -123,8 +124,26 @@ def summary(c, o, u):
 @router.get('/inbox')
 def inbox(user=Depends(auth.require_roles('owner','delivery_manager','branch_manager'))):
     with db.tx() as c:
-        rows=c.execute("SELECT o.id,o.order_no,o.service,o.amendment_revision,a.id amendment_id,a.status FROM orders o LEFT JOIN LATERAL (SELECT id,status FROM order_amendments WHERE order_id=o.id AND status IN ('requested','branch_confirmed','offered') AND expires_at>now() LIMIT 1) a ON true WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s)) AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected') AND (a.id IS NOT NULL OR (o.amendment_revision>0 AND NOT EXISTS(SELECT 1 FROM order_revision_receipts r WHERE r.order_id=o.id AND r.revision=o.amendment_revision AND r.kind='branch'))) ORDER BY o.created_at LIMIT 100",(user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
-        return {'orders':rows}
+        if not auth.has_permission(user, 'orders_view'):
+            raise db.error(403, 'REQUEST_PERMISSION', 'عرض الطلبات غير مصرح.')
+        rows=c.execute("""SELECT o.id,o.order_no,o.service,o.amendment_revision,a.id amendment_id,a.status
+            FROM orders o LEFT JOIN LATERAL (SELECT id,status FROM order_amendments
+              WHERE order_id=o.id AND status IN ('requested','branch_confirmed','offered')
+              ORDER BY created_at DESC LIMIT 1) a ON true
+            WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))
+              AND (%s='owner' OR (%s='delivery_manager' AND o.service='delivery')
+                   OR (%s='branch_manager' AND o.service IN ('pickup','car')))
+              AND (a.id IS NOT NULL OR (o.completed_at IS NULL
+                AND o.preparation_status NOT IN ('cancelled','rejected') AND o.amendment_revision>0
+                AND NOT EXISTS(SELECT 1 FROM order_revision_receipts r WHERE r.order_id=o.id
+                  AND r.revision=o.amendment_revision AND r.kind='branch')))
+            ORDER BY o.created_at LIMIT 100""",(user['brand_id'],user['role']=='owner',user.get('branch_ids',[]),
+            user['role'],user['role'],user['role'])).fetchall()
+        # Apply operational routing on the server, including expired requests:
+        # opening a request or its conversation cannot remove it from this inbox.
+        rows=[r for r in rows if reviewer(r,user)]
+        from .order_requests import pending_inbox
+        return {'orders':rows, 'requests':pending_inbox(c,user)}
 
 
 @router.post('/orders/{oid}/preview')
@@ -155,7 +174,7 @@ def request_amendment(oid: str, body: Proposal, user=Depends(auth.require_roles(
             editable(o, c)
             if user['role'] != 'customer' and not reviewer(o, user):
                 raise db.error(403, 'AMENDMENT_REVIEWER', 'طلب التوصيل يتبع مدير التوصيل، والاستلام يتبع الفرع.')
-            if o['version'] != body.version or active(c, oid):
+            if o['version'] != body.version or c.execute("SELECT 1 FROM order_amendments WHERE order_id=%s AND status IN ('requested','branch_confirmed','offered')", (oid,)).fetchone():
                 raise db.error(409, 'AMENDMENT_CONFLICT', 'تغير الطلب أو يوجد تعديل قيد المراجعة؛ حدّث التفاصيل.')
             if not body.reason.strip():raise db.error(422,'AMENDMENT_REASON','اكتب سبب التعديل.')
             if not db.rate_limit(c,'amendment:'+user['id'],10,900):raise db.error(429,'AMENDMENT_RATE','طلبات تعديل كثيرة؛ حاول لاحقًا.')
@@ -181,10 +200,12 @@ def decide(aid: str, body: Decision, user=Depends(auth.require_roles('customer',
         scoped_order(c,a['order_id'],user)
         def perform():
             o = scoped_order(c,a['order_id'],user,lock=True)
-            row = active(c,o['id'])
+            row = (c.execute("SELECT * FROM order_amendments WHERE id=%s AND order_id=%s AND status IN ('requested','branch_confirmed','offered')", (aid,o['id'])).fetchone()
+                   if body.action in ('reject','withdraw') else active(c,o['id']))
             if not row or row['id'] != aid or row['base_revision'] != o['amendment_revision']:
                 raise db.error(409,'AMENDMENT_EXPIRED','انتهى أو تغير طلب التعديل؛ حدّث الصفحة.')
-            editable(o, c)
+            if body.action not in ('reject','withdraw'):
+                editable(o, c)
             action = body.action
             staff = reviewer(o,user)
             if action == 'withdraw':

@@ -13,6 +13,10 @@ from .operations import uid,safe,fail,roles,mutate
 router=APIRouter(prefix='/api',tags=['chat'])
 CATEGORIES={'help','suggestion','complaint','change','refund','delivery_problem','privacy','other'}
 
+def attachment_url(aid,user):
+    context='customer' if user['role']=='customer' else 'work'
+    return '/api/chat-attachments/'+aid+'?context='+context
+
 def route_for(category, service, details=''):
     if category=='privacy':return 'privacy'
     if category=='refund':return 'review'
@@ -118,7 +122,7 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
         if status:
             if status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             scope+=' AND v.status=%s';p.append(status)
-        rows=c.execute('SELECT v.*,o.order_no,o.snapshot->>\'order_reference\' order_reference,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id LEFT JOIN branches b ON b.id=v.branch_id WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
+        rows=c.execute('SELECT v.*,o.order_no,o.snapshot->>\'order_reference\' order_reference,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,coalesce(o.customer->>\'name\',cu.display_name) customer_name,last.text last_message,last.created_at last_message_at,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id LEFT JOIN branches b ON b.id=v.branch_id LEFT JOIN users cu ON cu.id=v.customer_id AND cu.brand_id=v.brand_id LEFT JOIN LATERAL (SELECT text,created_at FROM chat_messages WHERE conversation_id=v.id ORDER BY seq DESC LIMIT 1) last ON true WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
         if user['role'] == 'customer':
             rows = [customer_conversation_view(c, row) for row in rows]
         return safe({'conversations':rows,'offset':offset,'limit':50})
@@ -149,7 +153,7 @@ def messages(cid:str,after:int=0,user=Depends(auth.current_user)):
     with db.tx() as c:
         v=conversation(c,user,cid)
         rows=c.execute('SELECT m.*,u.display_name sender FROM chat_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=%s AND m.seq>%s ORDER BY m.seq LIMIT 100',(cid,after)).fetchall()
-        for r in rows:r['attachment_url']='/api/chat-attachments/'+r['attachment_id'] if r['attachment_id'] else None
+        for r in rows:r['attachment_url']=attachment_url(r['attachment_id'],user) if r['attachment_id'] else None
         transfers=c.execute('SELECT * FROM conversation_transfers WHERE conversation_id=%s ORDER BY created_at',(cid,)).fetchall()
         from .order_support import STATES,CATEGORIES
         tickets=c.execute('SELECT ticket_no,category,status FROM support_tickets WHERE conversation_id=%s ORDER BY ticket_no',(cid,)).fetchall()
@@ -178,7 +182,7 @@ def send(cid:str,body:Message,request:Request,user=Depends(auth.current_user)):
             mid=uid();c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text,attachment_id) VALUES(%s,%s,%s,%s,%s)',(mid,cid,user['id'],body.text,body.attachment_id))
             c.execute("UPDATE conversations SET status=CASE WHEN status='resolved' THEN 'open' ELSE status END WHERE id=%s",(cid,))
             db.audit(c,user['id'],'chat.send','conversation',cid,{'message_id':mid})
-            result=c.execute('SELECT * FROM chat_messages WHERE id=%s',(mid,)).fetchone();result['attachment_url']='/api/chat-attachments/'+body.attachment_id if body.attachment_id else None
+            result=c.execute('SELECT * FROM chat_messages WHERE id=%s',(mid,)).fetchone();result['attachment_url']=attachment_url(body.attachment_id,user) if body.attachment_id else None
             return {'message':result}
         return mutate(c,user,request,'chat.send:'+cid,body.model_dump(),perform)
 
@@ -208,7 +212,7 @@ def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_use
             if not db.rate_limit(c,'attachment:'+user['id'],12,60):fail(429,'أرسل الصور بوتيرة أبطأ')
             aid=uid();c.execute('INSERT INTO chat_attachments(id,conversation_id,uploader_id,content_type,size_bytes,sha256,data) VALUES(%s,%s,%s,%s,%s,%s,%s)',(aid,cid,user['id'],body.content_type,len(data),digest,data))
             db.audit(c,user['id'],'chat.attachment','conversation',cid,{'attachment_id':aid,'size_bytes':len(data)})
-            return {'id':aid,'url':'/api/chat-attachments/'+aid}
+            return {'id':aid,'url':attachment_url(aid,user)}
         return mutate(c,user,request,'chat.attachment:'+cid,{'sha256':digest,'content_type':body.content_type},perform)
 
 @router.get('/chat-attachments/{aid}')

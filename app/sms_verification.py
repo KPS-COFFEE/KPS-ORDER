@@ -7,6 +7,19 @@ import httpx
 from . import db
 
 
+def brand_ready(brand):
+    if brand != 'enbishan':
+        return
+    from . import activation
+    activation.require('customer_sms', 'enbishan')
+    if (os.getenv('ENBISHAN_TAWKED_SENDER') != 'ENBISHAN'
+            or not os.getenv('ENBISHAN_TAWKED_SENDER_APPROVAL_REFERENCE', '').strip()
+            or not re.fullmatch(r'tk_(?:live|test)_[A-Za-z0-9_-]+', os.getenv('ENBISHAN_TAWKED_API_KEY', ''))
+            or os.getenv('ENBISHAN_TAWKED_API_KEY') == os.getenv('TAWKED_API_KEY')):
+        raise _failure('brand_sender_unapproved', 'OTP_BRAND_SENDER_UNAPPROVED',
+                       'مرسل عنبيشن بانتظار اعتماد المزود. / Enbishan sender approval is pending.')
+
+
 def configured():
     return bool(re.fullmatch(r'tk_(?:live|test)_[A-Za-z0-9_-]+', os.getenv('TAWKED_API_KEY', '')))
 
@@ -18,10 +31,12 @@ def _failure(reason, code='OTP_PROVIDER_FAILURE', message='تعذر الاتصا
     return error
 
 
-def _call(path, payload, *, idempotency_key=None):
-    if not configured():
+def _call(path, payload, *, idempotency_key=None, brand=None):
+    brand_ready(brand)
+    if brand != 'enbishan' and not configured():
         raise _failure('provider_unconfigured', 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ بعد.')
-    headers = {'Authorization': 'Bearer ' + os.environ['TAWKED_API_KEY']}
+    key_name = 'ENBISHAN_TAWKED_API_KEY' if brand == 'enbishan' else 'TAWKED_API_KEY'
+    headers = {'Authorization': 'Bearer ' + os.environ[key_name]}
     if idempotency_key:
         headers['Idempotency-Key'] = idempotency_key
     try:
@@ -39,11 +54,11 @@ def _call(path, payload, *, idempotency_key=None):
         raise _failure('provider_invalid_response') from None
 
 
-def start(phone, reference, lang='ar'):
+def start(phone, reference, lang='ar', *, brand=None):
     if not re.fullmatch(r'\+9665[0-9]{8}', phone):
         raise db.error(422, 'PHONE_INVALID', 'أدخل رقم جوال سعودي صحيحًا.')
     result = _call('start', {'to': phone, 'channel': 'sms', 'lang': lang,
-                            'reference': reference}, idempotency_key=reference)
+                            'reference': reference}, idempotency_key=reference, brand=brand)
     try:
         expiry = datetime.fromisoformat(result['expires_at'].replace('Z', '+00:00'))
         if (result.get('status') != 'pending' or not isinstance(result.get('id'), str)
@@ -55,6 +70,6 @@ def start(phone, reference, lang='ar'):
     return result['id'], expiry
 
 
-def check(reference, code):
-    result = _call('check', {'id': reference, 'code': code})
+def check(reference, code, *, brand=None):
+    result = _call('check', {'id': reference, 'code': code}, brand=brand)
     return result.get('verified') is True and result.get('status') == 'verified'

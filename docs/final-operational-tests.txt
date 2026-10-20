@@ -14,6 +14,7 @@ tests/test_storefront_scope.py
 tests/test_employee_permissions.py
 tests/test_driver_order_scope.py
 tests/test_order_amendments.py
+tests/test_order_requests.py
 tests/test_hardening_orders.py
 tests/test_hardening_order_pipeline.py
 tests/test_split_payment.py
@@ -79,3 +80,13 @@ tests/test_branch_refunds.py
 tests/test_payment_intents.py
 tests/test_payment_live_foundation.py
 tests/test_optional_customer_plate.py
+tests/test_evidence_image_memory.py
+tests/test_evidence_memory_postgres.py
+tests/test_customer_progress.py
+tests/test_customer_progress_postgres.py
+tests/test_order_print_progress.py
+tests/test_photo_observations.py
+tests/test_hours_navigation_layout.py
+
+tests/test_driver_order_activity.py
+tests/test_stalled_delivery.py

@@ -13,8 +13,10 @@ router = APIRouter(prefix='/api/driver-floats', tags=['driver-floats'])
 
 
 def driver(c, user, driver_id):
-    row = c.execute("SELECT * FROM users WHERE id=%s AND brand_id=%s AND role='driver'", (driver_id,user['brand_id'])).fetchone()
-    if not row or (user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[]))):
+    row = c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active", (driver_id,)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():row=multibrand.project(c,row,user['brand_id'])
+    if not row or row['brand_id']!=user['brand_id'] or (user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[]))):
         fail(404,'السائق خارج نطاقك')
     return row
 
@@ -62,7 +64,13 @@ def listing(user=Depends(auth.current_user)):
     if user['role'] not in ('owner','delivery_manager') and not auth.has_permission(user,'accounting_review'):
         fail(403,'العهدة الدائمة لمدير التوصيل والمحاسبة')
     with db.tx() as c:
-        drivers=c.execute("SELECT id,display_name,branch_ids FROM users WHERE brand_id=%s AND role='driver' AND active ORDER BY display_name",(user['brand_id'],)).fetchall()
+        from . import multibrand
+        if multibrand.enabled():
+            candidates=c.execute("SELECT * FROM users WHERE role='driver' AND active ORDER BY display_name,id").fetchall()
+            projected=(multibrand.project(c,d,user['brand_id']) for d in candidates)
+            drivers=[{'id':d['id'],'display_name':d['display_name'],'branch_ids':d['branch_ids']} for d in projected if d]
+        else:
+            drivers=c.execute("SELECT id,display_name,branch_ids FROM users WHERE brand_id=%s AND role='driver' AND active ORDER BY display_name",(user['brand_id'],)).fetchall()
         drivers=[d for d in drivers if user['role']=='owner' or set(d['branch_ids'])<=set(user.get('branch_ids',[]))]
         rows=c.execute('SELECT r.*,d.approved,d.reviewed_by,d.created_at reviewed_at FROM driver_float_requests r LEFT JOIN driver_float_decisions d ON d.request_id=r.id WHERE r.brand_id=%s ORDER BY r.created_at DESC',(user['brand_id'],)).fetchall()
         ids={d['id'] for d in drivers}

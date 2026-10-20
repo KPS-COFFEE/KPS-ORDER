@@ -1,5 +1,5 @@
 """Independent delivery operations. Monetary values are integer halalas."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 import json as jsonlib
@@ -162,7 +162,7 @@ class ShiftOpen(OperationBody):
     reason: str=''
 
 
-def delivery_shift_window(c, brand, branches):
+def delivery_shift_window(c, brand, branches, *, manager_preparation=False):
     """Gate fresh staffing; existing tasks and closures never expire by clock.
 
     Unconfigured legacy/internal brands retain their existing staffing flow.
@@ -171,6 +171,7 @@ def delivery_shift_window(c, brand, branches):
     from . import catalog
     now = service_hours.now_riyadh()
     windows = {}
+    preparation_date = None
     brand_settings = c.execute('SELECT settings FROM brands WHERE id=%s', (brand,)).fetchone()['settings']
     if brand_settings.get('services', {}).get('delivery', True) is not True:
         fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
@@ -183,16 +184,23 @@ def delivery_shift_window(c, brand, branches):
             fail(409, 'هذا الفرع غير مؤهل لشفتات التوصيل.')
         if settings.get('active', True) is not True or settings.get('delivery_enabled') is not True:
             fail(409, 'التوصيل موقوف لهذا الفرع؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
-        status = service_hours.hours_status(hours, now)
+        status = (service_hours.manager_shift_status(hours, now) if manager_preparation
+                  else service_hours.hours_status(hours, now))
         if not status['configured']:
             fail(503, 'ساعات التوصيل لهذا الفرع غير صحيحة.')
         if not status['open']:
+            if manager_preparation:
+                raise db.error(409, 'MANAGER_SHIFT_HOURS',
+                               'شفت المدير مغلق الآن. لفترة التوصيل التي تبدأ 16:00، يتاح التجهيز من 15:45 بتوقيت السعودية؛ استقبال العملاء يبدأ 16:00.')
             fail(409, service_hours.closed_delivery_message(hours, now))
         windows[branch['id']] = {'hours': hours, 'window_start': status['current_window_start'],
                                   'window_end': status['current_window_end']}
+        if status.get('preparation'):
+            preparation_date = datetime.fromisoformat(status['current_window_start']).date()
+            windows[branch['id']]['preparation_start'] = status['preparation_start']
     if not windows:
         return None, None
-    operational_date = service_hours.delivery_operational_date(now)
+    operational_date = preparation_date or service_hours.delivery_operational_date(now)
     return operational_date, {'timezone': 'Asia/Riyadh', 'operational_date': operational_date.isoformat(),
                               'operational_day_start': '16:00', 'branches': windows}
 
@@ -230,7 +238,8 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
                 if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
                 branch_rows.append(b)
-            operational_date, delivery_window = delivery_shift_window(c, brand, branch_rows)
+            operational_date, delivery_window = delivery_shift_window(
+                c, brand, branch_rows, manager_preparation=body.kind == 'manager')
             if body.opening_halalas:
                 roles(user,'owner')
                 if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
@@ -361,6 +370,49 @@ def day_start(config):
         return h*60+m,True
     except (AttributeError,ValueError,TypeError,IndexError):fail(503,'بداية اليوم التشغيلي غير صحيحة')
 
+class ExternalEnbishan(OperationBody):
+    order_count: StrictInt = Field(ge=0, le=100000)
+    cash_halalas: StrictInt = Field(ge=0, le=100000000000)
+    card_halalas: StrictInt = Field(ge=0, le=100000000000)
+    revision: StrictInt = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+def external_enbishan_eligible(c, s):
+    from .catalog import normalize_city
+    if s['brand_id'] != 'kps' or s['kind'] != 'driver' or not s['branch_ids']:
+        return False
+    rows=c.execute('SELECT city FROM branches WHERE brand_id=%s AND id=ANY(%s)',(s['brand_id'],s['branch_ids'])).fetchall()
+    return len(rows)==len(s['branch_ids']) and {normalize_city(r['city']) for r in rows}=={'حفر الباطن'}
+
+
+@router.post('/shifts/{sid}/external-enbishan')
+def save_external_enbishan(sid:str, body:ExternalEnbishan, request:Request, user=Depends(auth.current_user)):
+    roles(user,'delivery_manager')
+    with db.tx() as c:
+        # Revalidate current scope even on an idempotent replay.
+        shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),manager=True)
+        def perform():
+            s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
+            if s['status'] not in ('open','closing'):fail(409,'أعد التقفيلة للتصحيح قبل تعديل طلبات عنبيشن')
+            if not external_enbishan_eligible(c,s):fail(403,'طلبات عنبيشن المؤقتة لسواقين حفر الباطن فقط')
+            before=s.get('external_enbishan') or {}
+            if body.revision!=before.get('revision',0):fail(409,'تغير الملخص؛ حدّث الصفحة قبل الحفظ')
+            total=body.cash_halalas+body.card_halalas
+            if (body.order_count==0)!=(total==0):fail(422,'عدد الطلبات وقيمتها يجب أن يكونا متوافقين')
+            delta=body.cash_halalas-before.get('cash_halalas',0)
+            if available_balance(c,s)+delta<0:fail(409,'لا يمكن تخفيض النقد إلى أقل من المبالغ المسلمة أو المحجوزة')
+            valid_cash_amount(balance(c,s)+delta)
+            value={**body.model_dump(),'revision':body.revision+1,'total_halalas':total,'source':'sapaad',
+                   'recorded_by':user['id'],'recorded_name':user.get('display_name') or user['id'],
+                   'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}
+            c.execute('UPDATE shifts SET external_enbishan=%s WHERE id=%s',(db.json(value),sid))
+            if delta:event(c,sid,delta,'direct_receipt','external-enbishan:'+sid+':'+str(value['revision']),user['id'],'عنبيشن — ساباد / '+body.reason)
+            db.audit(c,user['id'],'shift.external_enbishan','shift',sid,{'before':before,'after':value})
+            return {'shift_id':sid,'external_enbishan':value}
+        return mutate(c,user,request,'shift.external-enbishan:'+sid,body.model_dump(),perform)
+
+
 @router.get('/shifts/{sid}')
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
@@ -368,7 +420,7 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
         task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
-        return safe(blind_closure.driver_view(user,{'shift':s,'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
+        return safe(blind_closure.driver_view(user,{'shift':s,'external_enbishan_eligible':external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
 
 @router.post('/shifts/{sid}/refuel')
 def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
@@ -454,7 +506,7 @@ def submit_close_in_tx(c,user,sid,body):
         if delegated:
             c.execute("UPDATE shifts SET vehicle_log=jsonb_set(vehicle_log, '{end_exception}', %s) WHERE id=%s",(db.json({'reason':body.exception_reason.strip(),'recorded_by':user['id'],'recorded_at':c.execute('SELECT now() n').fetchone()['n'].isoformat()}),sid))
     values=body.model_dump(exclude={'vehicle_inspection','handover','exception_reason'});values['expected_halalas']=balance(c,s); values['difference_halalas']=body.counted_halalas-values['expected_halalas']
-    if s['kind']=='driver':values.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas))
+    if s['kind']=='driver':values.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas,(s.get('external_enbishan') or {}).get('card_halalas',0)))
     if s['kind']=='driver':values['payment_terminal']=c.execute('SELECT payment_terminal FROM users WHERE id=%s',(s['user_id'],)).fetchone()['payment_terminal']
     if delegated:values['delegated_closure']={'by':user['id'],'reason':body.exception_reason.strip()}
     c.execute("UPDATE shifts SET status='submitted',submission=%s,submitted_at=now() WHERE id=%s",(db.json(values),sid))
@@ -593,11 +645,15 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
         return mutate(c,user,request,'order.assign:'+oid,body.model_dump(),perform)
 
 @router.get('/tasks')
-def tasks(user=Depends(auth.current_user)):
+def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff','driver')
     with db.tx() as c:
         if user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
-        else:rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC LIMIT 500').fetchall(); rows=[r for r in rows if same_scope(user,r) and (user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[]))]
+        else:
+            rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))'+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500',
+                           [user['brand_id'],user['role']=='owner',user.get('branch_ids',[])]+([order_id] if order_id else [])).fetchall()
+        if order_id:
+            rows=[r for r in rows if r['order_id']==order_id]
         if user['role']=='driver':
             rows=[r for r in rows if r['branch_id'] in user.get('branch_ids',[])]
             for r in rows:
@@ -618,6 +674,69 @@ class TaskTransition(OperationBody):
     reason:str=Field('',max_length=2000)
     contact_method:Literal['call','message']|None=None
 
+
+class DeliveryResolution(OperationBody):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    reason: str = Field(min_length=3, max_length=2000)
+    evidence: str = Field(min_length=3, max_length=2000)
+    delivered_at: datetime
+    confirmed: StrictBool
+
+
+def validate_delivery_resolution(body, task, order, now):
+    if not body.confirmed or body.delivered_at.tzinfo is None:
+        raise db.error(422, 'DELIVERY_VERIFICATION_REQUIRED', 'أكد التحقق من التسليم وحدد وقته الفعلي بمنطقة زمنية.')
+    if (order['service'] != 'delivery' or order.get('completed_at') or
+            order['preparation_status'] in ('cancelled', 'rejected', 'completed') or
+            order['delivery_status'] in ('cancelled', 'delivered') or
+            task['status'] not in ('picked_up', 'problem') or task.get('delivered_at')):
+        raise db.error(409, 'DELIVERY_RESOLUTION_STATE', 'الطلب غير قابل لمعالجة تسليم متعثر.')
+    pickup = task.get('picked_up_at')
+    if pickup is None or not (order['created_at'] <= pickup <= body.delivered_at <= now):
+        raise db.error(422, 'DELIVERY_ACTUAL_TIME_REQUIRED', 'يلزم استلام مسجل ووقت تسليم فعلي بعد الاستلام ولا يتجاوز الوقت الحالي.')
+    if order['payment_status'] != 'paid':
+        raise db.error(409, 'DELIVERY_PAYMENT_REQUIRED', 'يلزم استكمال التحصيل الفعلي قبل توثيق التسليم.')
+
+
+@router.post('/tasks/{tid}/resolve-delivery')
+def resolve_delivery(tid: str, body: DeliveryResolution, request: Request, user=Depends(auth.current_user)):
+    roles(user, 'owner', 'delivery_manager')
+    if not auth.has_permission(user, 'tasks_resolve_delivery'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية معالجة الطلب المتعثر متوقفة لحسابك.')
+    with db.tx() as c:
+        # Recheck current order AND shift scope before idempotent replay.
+        c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', ('operations:'+user['brand_id'],))
+        task = c.execute('SELECT * FROM driver_tasks WHERE id=%s', (tid,)).fetchone()
+        if not task: fail(404, 'المهمة غير موجودة')
+        order = c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE', (task['order_id'],)).fetchone()
+        order_access(c, user, order)
+        task = c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE', (tid,)).fetchone()
+        shift = lock_shift(c, task['shift_id'])
+        shift_access(c, user, shift)
+        def perform():
+            if shift['status'] != 'open':
+                raise db.error(409, 'DELIVERY_SHIFT_CLOSED', 'لا يمكن تعديل مهمة في شفت قيد الإقفال أو مقفل.')
+            validate_delivery_resolution(body, task, order, datetime.now(timezone.utc))
+            from .order_amendments import guard
+            guard(c, order, driver_id=task['driver_id'], require_branch=True)
+            c.execute("UPDATE driver_tasks SET status='delivered',delivered_at=%s,reason=%s,proof=%s WHERE id=%s",
+                      (body.delivered_at, body.reason, body.evidence, tid))
+            c.execute("UPDATE orders SET delivery_status='delivered',completed_at=%s,version=version+1 WHERE id=%s",
+                      (body.delivered_at, order['id']))
+            from .fiscal_issuance import issue_sale
+            issue_sale(c, order['id'], user)
+            details = {'task_id': tid, 'previous': task['status'], 'status': 'delivered',
+                       'reason': body.reason, 'evidence': body.evidence,
+                       'actual_delivered_at': body.delivered_at.isoformat(),
+                       'branch_id': order['branch_id'], 'actor_name': user.get('display_name', ''),
+                       'manager_decision': True, 'administrative_resolution': True}
+            # Event/audit created_at records processing time, never replaces the
+            # separately verified actual delivery time used by performance.
+            db.event(c, order['id'], user['id'], 'task.delivered', details)
+            db.audit(c, user['id'], 'task.delivery.resolved', 'task', tid, details)
+            return {'task': c.execute('SELECT * FROM driver_tasks WHERE id=%s', (tid,)).fetchone()}
+        return mutate(c, user, request, 'task.resolve_delivery:'+tid, body.model_dump(mode='json'), perform)
+
 @router.post('/tasks/{tid}/transition')
 def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(auth.current_user)):
     roles(user,'driver','owner','delivery_manager')
@@ -631,6 +750,13 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             s=lock_shift(c,t['shift_id']);shift_access(c,user,s)
             if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
+            resolving_problem=t['status']=='problem' and body.status!='problem'
+            if resolving_problem:
+                roles(user,'owner','delivery_manager')
+                if not body.reason.strip():
+                    raise db.error(422,'PROBLEM_DECISION_REQUIRED','سجل قرار مدير التوصيل وسبب معالجة البلاغ.')
+                if body.status=='accepted' and t.get('picked_up_at'):
+                    raise db.error(409,'PROBLEM_PICKUP_ALREADY_CONFIRMED','الاستلام مسجل سابقًا؛ استأنف من مرحلة التوصيل دون إعادة المرحلة.')
             if body.status in ('accepted','picked_up','delivered'):
                 from .order_amendments import guard
                 guard(c,o,driver_id=t['driver_id'],require_branch=body.status!='accepted')
@@ -652,7 +778,12 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status=='delivered' and o['payment_status']!='paid':fail(409,'يلزم تحصيل فعلي ودليل تسليم')
             if body.status in ('picked_up','delivered'):
                 from .order_support import require_photo
-                require_photo(c,t,user,body.status,body.photo_id)
+                if resolving_problem and body.status=='picked_up':
+                    # Manager restores only an already evidenced pickup, never certifies a new one.
+                    if not t.get('picked_up_at') or not c.execute("SELECT 1 FROM delivery_photos WHERE task_id=%s AND stage='picked_up' AND used_at IS NOT NULL",(tid,)).fetchone():
+                        raise db.error(409,'PROBLEM_PICKUP_EVIDENCE_REQUIRED','لا يوجد إثبات استلام سابق؛ راجع المهمة دون اختلاق وقت استلام.')
+                else:
+                    require_photo(c,t,user,body.status,body.photo_id)
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
@@ -672,7 +803,9 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
                 from .fiscal_issuance import credit_on_cancellation
                 credit_on_cancellation(c,o,user,body.reason)
             if body.status=='cancelled':c.execute("UPDATE orders SET preparation_status='cancelled' WHERE id=%s",(t['order_id'],))
-            db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status'],'photo_id':body.photo_id})
+            db.event(c,t['order_id'],user['id'],'task.'+body.status,{'task_id':tid,'previous':t['status'],'status':body.status,
+                     'photo_id':body.photo_id,'reason':body.reason,'branch_id':o['branch_id'],
+                     'actor_name':user.get('display_name',''),'manager_decision':resolving_problem})
             if body.contact_method:
                 db.event(c,t['order_id'],user['id'],'customer.no_answer',{'task_id':tid,'method':body.contact_method,'reason':body.reason})
             db.audit(c,user['id'],'task.transition','task',tid,body.model_dump())
@@ -689,7 +822,7 @@ def operational_alerts(user=Depends(auth.current_user)):
         problems=c.execute("SELECT o.id,o.order_no,o.snapshot->>'order_reference' AS order_reference,t.id AS task_id,t.reason FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE "+scope+" AND t.status='problem' ORDER BY t.created_at LIMIT 100",params).fetchall()
         printing=[]
         if user['role'] in ('owner','delivery_manager'):
-            printing=c.execute("SELECT p.id,p.order_id,p.status,p.branch_id FROM branch_print_jobs p WHERE p.brand_id=%s AND (%s OR p.branch_id=ANY(%s)) AND (p.status='uncertain' OR (p.status IN ('queued','claimed') AND p.created_at<now()-interval '2 minutes')) ORDER BY p.created_at LIMIT 100",params).fetchall()
+            printing=c.execute("SELECT p.id,p.order_id,p.status,p.branch_id,p.kind,p.created_at,p.reprint_reason,p.alert_resolution,o.order_no,o.snapshot->>'order_reference' AS order_reference,b.name AS branch_name,b.branch_no,d.label AS printer_label,d.printer_name FROM branch_print_jobs p LEFT JOIN orders o ON o.id=p.order_id AND o.brand_id=p.brand_id JOIN branches b ON b.id=p.branch_id AND b.brand_id=p.brand_id JOIN branch_print_devices d ON d.id=p.device_id AND d.brand_id=p.brand_id WHERE p.brand_id=%s AND (%s OR p.branch_id=ANY(%s)) AND coalesce(p.alert_resolution->>'action','') NOT IN ('confirmed','reprint') AND (p.alert_resolution->>'action'='escalated' OR p.status='uncertain' OR (p.status IN ('queued','claimed') AND (p.created_at<now()-interval '2 minutes' OR p.reprint_reason<>''))) ORDER BY p.created_at LIMIT 100",params).fetchall()
         exceptions=[]
         if user['role']=='owner':
             exceptions=c.execute("SELECT n.id,n.report_id FROM report_notifications n JOIN closure_reports r ON r.id=n.report_id WHERE n.recipient_user_id=%s AND n.brand_id=%s AND n.read_at IS NULL AND r.snapshot->'shift'->'submission'->'closure_exception' IS NOT NULL ORDER BY n.created_at DESC LIMIT 50",(user['id'],user['brand_id'])).fetchall()
@@ -858,8 +991,10 @@ class PaymentTerminal(OperationBody):
 
 
 def terminal_driver(c,user,driver_id):
-    row=c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND brand_id=%s",(driver_id,user['brand_id'])).fetchone()
-    if not row:fail(404,'السائق غير موجود')
+    row=c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active",(driver_id,)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():row=multibrand.project(c,row,user['brand_id'])
+    if not row or row['brand_id']!=user['brand_id']:fail(404,'السائق غير موجود')
     if user['role']=='driver':
         if row['id']!=user['id']:fail(404,'السائق غير موجود')
     elif user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'السائق خارج نطاق المدير')
