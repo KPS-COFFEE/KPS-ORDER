@@ -14,8 +14,8 @@ def test_actual_pins_update_without_invented_driver_gps_or_map_reload(static_cus
         page=browser.new_page(viewport={'width':600,'height':850})
         external=[]
         page.route('https://api.mapbox.com/**',lambda route:(external.append(route.request.url),route.abort()))
-        page.goto(static_customer+'/assets/dispatch-map.js')
-        page.set_content('<html><body><div id="map"></div></body></html>')
+        page.route('**/__dispatch-map-test',lambda route:route.fulfill(content_type='text/html; charset=utf-8',body='<html><head><meta charset="utf-8"></head><body><div id="map"></div></body></html>'))
+        page.goto(static_customer+'/__dispatch-map-test')
         page.add_style_tag(url=static_customer+'/assets/dispatch-map.css')
         page.add_script_tag(url=static_customer+'/assets/dispatch-map.js')
         page.evaluate("""async lang=>{
@@ -47,8 +47,8 @@ def test_missing_token_is_explicit_and_does_not_request_sdk(static_customer):
         browser=p.chromium.launch(headless=True);page=browser.new_page()
         external=[]
         page.route('https://api.mapbox.com/**',lambda route:(external.append(route.request.url),route.abort()))
-        page.goto(static_customer+'/assets/dispatch-map.js')
-        page.set_content('<html><body><div id="map"></div></body></html>')
+        page.route('**/__dispatch-map-test',lambda route:route.fulfill(content_type='text/html; charset=utf-8',body='<html><head><meta charset="utf-8"></head><body><div id="map"></div></body></html>'))
+        page.goto(static_customer+'/__dispatch-map-test')
         page.add_style_tag(url=static_customer+'/assets/dispatch-map.css')
         page.add_script_tag(url=static_customer+'/assets/dispatch-map.js')
         page.evaluate("KPSDispatchMap.mount(document.querySelector('#map'),{api:async()=>({enabled:false}),brandId:'kps',lang:'ar',orders:[],drivers:[],branches:[]})")
