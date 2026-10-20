@@ -683,7 +683,7 @@ class Workload:
         transport = httpx.AsyncHTTPTransport(local_address=source, retries=0,
                     limits=httpx.Limits(max_connections=2, max_keepalive_connections=2))
         async with httpx.AsyncClient(base_url=self.origin, transport=transport, timeout=self.timeout,
-                                     headers={'Origin': self.origin}) as client:
+                                     headers={'Origin': self.origin, 'X-KPS-Context': 'customer'}) as client:
             await barrier.wait()
             try:
                 guest = await self.request(client, 'POST', '/api/identity/guest', json={
