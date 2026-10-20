@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import psycopg
+from anyio import to_thread
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
@@ -25,6 +26,13 @@ PUBLIC = ROOT / 'public'
 @asynccontextmanager
 async def lifespan(app):
     background_tasks = []
+    # Each process owns four database connections. Bound synchronous request
+    # workers to two per connection instead of waking forty threads to wait
+    # for the same pool on the one-core service. Requests remain queued by
+    # AnyIO; no authorization, database deadline or admission limit changes.
+    request_limiter = to_thread.current_default_thread_limiter()
+    previous_request_tokens = request_limiter.total_tokens
+    request_limiter.total_tokens = 2 * db.POOL_MAX_SIZE
     try:
         app.state.database_configured = bool(os.getenv('DATABASE_URL'))
         if app.state.database_configured:
@@ -52,6 +60,7 @@ async def lifespan(app):
                     await task
         finally:
             db.close_pools()
+            request_limiter.total_tokens = previous_request_tokens
 
 
 app = FastAPI(title='KPS Independent Orders', version='5.0.0', lifespan=lifespan,
