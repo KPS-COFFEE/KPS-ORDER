@@ -468,7 +468,7 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
 
 
 @router.get('/products/{product_id}/availability')
-def availability(product_id: str, branch_id: str):
+def availability(product_id: str, branch_id: str, service: Literal['pickup', 'car', 'delivery'] | None = None):
     with db.tx() as conn:
         product = conn.execute('SELECT * FROM products WHERE id=%s', (product_id,)).fetchone()
         branch = conn.execute('SELECT * FROM branches WHERE id=%s', (branch_id,)).fetchone()
@@ -476,6 +476,20 @@ def availability(product_id: str, branch_id: str):
             raise db.error(404, 'PRODUCT_NOT_FOUND', 'الصنف أو الفرع غير موجود.')
         from .storefront_scope import require_brand
         require_brand(product['brand_id'])
+        if service == 'delivery':
+            from . import morning_delivery
+            settings = conn.execute('SELECT settings FROM brands WHERE id=%s', (branch['brand_id'],)).fetchone()['settings']
+            now = service_hours.now_riyadh()
+            if morning_delivery.active(branch, settings, now):
+                rows = conn.execute('SELECT * FROM branches WHERE brand_id=%s', (branch['brand_id'],)).fetchall()
+                try:
+                    branch = morning_delivery.target(rows, branch, settings, khaliya=is_khaliya(product), now=now)
+                except HTTPException:
+                    return {'available': False, 'reason': 'التوصيل الصباحي غير متاح حاليًا.', 'source_verified': source_approved(product)}
+            elif is_khaliya(product) and normalize_city(branch['city']) == 'حفر الباطن':
+                branch = khaliya_branch(conn)
+                if not branch:
+                    return {'available': False, 'reason': 'الخلية غير متاحة حاليًا.', 'source_verified': source_approved(product)}
         available, reason = product_availability(product, branch)
         return {'available': available, 'reason': reason, 'source_verified': source_approved(product)}
 
