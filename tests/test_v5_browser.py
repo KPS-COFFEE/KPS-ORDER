@@ -1,8 +1,8 @@
 """V5 browser-operated guest → staff → driver → final-report journey.
 
-Real HTTP and isolated PostgreSQL only, no browser API interception. The invite
-link is read from the isolated encrypted test outbox with the test key; no real
-external mail is sent and this does not certify a production email channel.
+Real HTTP and isolated PostgreSQL only, no browser API interception. Staff use
+four-digit SMS through the actual UI; only external provider I/O is synthetic.
+The restartable server preserves database and authenticated-session assertions.
 """
 from __future__ import annotations
 
@@ -20,9 +20,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app import auth, db, email_delivery
-from test_browser import (ARTIFACTS, WIDTHS, PASSWORD, _context, _capture, _staff,
+from app import auth, db
+from tests.browser_sms_helpers import complete_owner_sms_dialog
+from test_browser import (ARTIFACTS, WIDTHS, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
+                          _approve_driver_closure_from_browser,
                           _match_manager_finances,
                           _inspection_payload, _fill_closure_inspection, _attach_task_photo,
                           chromium_browser, ROOT)
@@ -72,8 +74,10 @@ def v5_live_app(database, tmp_path, monkeypatch):
 
         def start(self):
             self.process = subprocess.Popen(
-                [sys.executable, '-m', 'uvicorn', 'app.main:app', '--host',
-                 '127.0.0.1', '--port', str(port)],
+                [sys.executable, '-c',
+                 "import pytest,uvicorn; from tests.sms_policy_helpers import configure_sms; "
+                 "configure_sms(pytest.MonkeyPatch()); "
+                 + f"uvicorn.run('app.main:app',host='127.0.0.1',port={port})"],
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
@@ -116,15 +120,6 @@ def _font_evidence(page):
     return result
 
 
-def _read_synthetic_invitation(email):
-    with db.tx() as conn:
-        row = conn.execute("SELECT * FROM email_outbox WHERE recipient=%s AND kind='identity' ORDER BY created_at DESC LIMIT 1", (email,)).fetchone()
-        assert row and row['status'] == 'pending'
-        payload = email_delivery._payload(row)
-    # The secret stays in memory and is never added to screenshots or artifacts.
-    return next(line for line in payload['text'].splitlines() if '/#identity_challenge=' in line)
-
-
 def _close_detail(page):
     if page.locator('#modal').is_visible():
         page.locator('#modal-close').click()
@@ -155,37 +150,66 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
     try:
         for role, user in users.items():
             context, page, page_errors = _context(chromium_browser, base)
+            context.set_extra_http_headers({'X-KPS-Context':'work'})
             contexts[role], pages[role] = context, page
             errors.append(page_errors)
             _staff_ui_login(page, user)
             fonts[role] = _font_evidence(page)
         owner, manager, branch = [pages[role] for role in ('owner', 'delivery_manager', 'branch_manager')]
-        # Manager registers one driver for two authorized branches through the UI.
+        # Account creation is owner-only; managers retain operational scope.
         manager.locator('[data-page=drivers]').click()
-        manager.locator('[data-action=invite-staff]').click()
-        email = 'synthetic-driver-' + secrets.token_hex(5) + '@example.test'
-        for name, value in {'display_name': 'سائق اختبار V5 فقط', 'email': email, 'phone': '0500000022'}.items():
-            manager.locator(f'#modal-body [name={name}]').fill(value)
-        manager.locator('#modal-body .staff-branch-dropdown summary').click()
-        manager.locator('#modal-body [name="scope:kps-branch-1"]').check()
-        manager.locator('#modal-body [name="scope:kps-branch-9"]').check()
-        _capture(manager, 'v5-manager-two-branch-driver-invitation')
-        _submit_modal(manager)
-        expect(manager.locator('#content')).to_contain_text('سائق اختبار V5 فقط')
+        expect(manager.locator('[data-action=invite-staff]')).to_have_count(0)
+        owner.locator('[data-page=admin]').click()
+        owner.locator('[data-action=admin-tab][data-tab=users]').click()
+        owner.locator('[data-action=invite-staff]').click()
+        owner.locator('#modal-body [name=role]').select_option('driver')
+        for name, value in {'display_name': 'سائق اختبار V5 فقط', 'phone': '0500000022'}.items():
+            owner.locator(f'#modal-body [name={name}]').fill(value)
+        owner.locator('#modal-body .staff-branch-dropdown summary').click()
+        owner.locator('#modal-body [name="scope:kps-branch-1"]').check()
+        owner.locator('#modal-body [name="scope:kps-branch-9"]').check()
+        _capture(owner, 'v5-owner-two-branch-driver-registration')
+        owner.locator('#modal-body button[type=submit]').click()
+        complete_owner_sms_dialog(owner, users['owner'])
+        expect(owner.locator('#modal')).not_to_be_visible()
+        expect(owner.locator('#content')).to_contain_text('سائق اختبار V5 فقط')
+        with db.tx() as conn:
+            registered_driver=conn.execute("SELECT * FROM users WHERE brand_id='kps' AND phone='+966500000022'").fetchone()
+            assert registered_driver and registered_driver['role']=='driver'
+            assert registered_driver['phone_sms_verified_at'] is None
         driver_context, driver, driver_errors = _context(chromium_browser, base)
+        driver_context.set_extra_http_headers({'X-KPS-Context':'work'})
         contexts['driver'], pages['driver'] = driver_context, driver
         errors.append(driver_errors)
-        driver.goto(_read_synthetic_invitation(email))
+        _staff_ui_login(driver, registered_driver)
         expect(driver.locator('#app-shell')).to_be_visible()
         assert '#identity_token' not in driver.url
-        driver_user = driver_context.request.get(base + '/api/session').json()['user']
-        assert driver_user['role'] == 'driver' and driver_user['email_verified_at']
-        assert driver_user['phone_sms_verified_at'] is None and driver_user['phone_whatsapp_verified_at'] is None
+        driver_user = driver_context.request.get(base + '/api/session', headers={'X-KPS-Context':'work'}).json()['user']
+        assert driver_user['role'] == 'driver' and driver_user['id'] == registered_driver['id']
+        # Employee SMS proves this login without changing persistent contact
+        # ownership or granting the separate sensitive-owner verification.
+        assert driver_user['phone_sms_verified_at'] is None
+        with db.tx() as conn:
+            proof = conn.execute("SELECT * FROM otp_challenges WHERE source_user_id=%s AND id LIKE 'employee_otp_%%' AND delivery_channel='sms' AND verified_at IS NOT NULL ORDER BY created_at DESC LIMIT 1", (driver_user['id'],)).fetchone()
+            assert proof and proof['phone'] == registered_driver['phone']
+            assert proof['source_session_id'] is None
+            work_cookie = auth.context_cookie_names('work')[0]
+            work_token = next(cookie['value'] for cookie in driver_context.cookies() if cookie['name'] == work_cookie)
+            session = conn.execute('SELECT step_up_at FROM sessions WHERE token_hash=%s', (auth.token_hash(work_token),)).fetchone()
+            assert session and session['step_up_at'] is None
+        assert driver_user['email_verified_at'] is None and driver_user['phone_whatsapp_verified_at'] is None
         assert set(driver_user['branch_ids']) == {'kps-branch-1', 'kps-branch-9'}
         fonts['driver'] = _font_evidence(driver)
         manager_shift = _authenticated_post(contexts['delivery_manager'], base, '/api/shifts', {'kind': 'manager', 'branch_ids': ['kps-branch-1','kps-branch-9']})['shift']['id']
         driver_shift = _authenticated_post(driver_context, base, '/api/shifts', {'kind': 'driver', 'branch_ids': ['kps-branch-1','kps-branch-9'], 'manager_shift_id': manager_shift, 'vehicle_inspection': _inspection_payload()})['shift']['id']
+        # Exercise the supported guest fallback deliberately. Staff login above
+        # still required certified SMS; no guest is represented as verified.
+        with db.tx() as conn:
+            customer_sms = conn.execute("SELECT enabled FROM identity_channels WHERE brand_id='kps' AND channel='sms'").fetchone()
+            assert customer_sms and customer_sms['enabled'] is True
+            conn.execute("UPDATE identity_channels SET enabled=false WHERE brand_id='kps' AND channel='sms'")
         customer_context, customer, customer_errors = _context(chromium_browser, base)
+        customer_context.set_extra_http_headers({'X-KPS-Context':'customer'})
         contexts['guest'], pages['guest'] = customer_context, customer
         errors.append(customer_errors)
         customer.goto('/')
@@ -226,6 +250,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             order = conn.execute("SELECT * FROM orders WHERE customer->>'name'='ضيف اختبار V5 فقط'").fetchone()
             assert order and order['customer']['identity_kind'] == 'guest'
             assert not order['customer']['phone_verified']
+            conn.execute("UPDATE identity_channels SET enabled=%s WHERE brand_id='kps' AND channel='sms'",(customer_sms['enabled'],))
         order_id, total = order['id'], order['total_halalas']
         public_created = customer_context.request.get(base+'/api/orders/'+order_id)
         assert public_created.status == 200
@@ -271,14 +296,22 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _attach_task_photo(driver)
         _submit_modal(driver)
         driver.locator('[data-action=collect]').click()
-        driver.locator('#modal-body [name=tendered]').fill(f'{total/100:.2f}')
-        _submit_modal(driver, check=['confirmed'])
+        expect(driver.locator('#modal-body input[name=tendered]')).to_have_count(0)
+        expect(driver.locator('#modal-body input[name=confirmed]')).to_have_count(0)
+        expect(driver.locator('#modal-body select[name=method]')).to_have_value('cash')
+        with driver.expect_response(lambda response: response.request.method=='POST' and response.url.endswith('/collect')) as paid:
+            _submit_modal(driver)
+        assert paid.value.status==200,paid.value.text()
+        assert paid.value.request.post_data_json=={'method':'cash','amount_halalas':total,'tendered_halalas':total,'reference':''}
+        with db.tx() as conn:
+            collection=conn.execute('SELECT * FROM collections WHERE order_id=%s',(order_id,)).fetchone()
+            assert collection['amount_halalas']==total and collection['tendered_halalas']==total and collection['change_halalas']==0
         driver.locator('[data-action=delivered]').click()
         _attach_task_photo(driver)
         _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
-        driver.locator('[data-confirm-driver-close]').click()
+        _approve_driver_closure_from_browser(driver,contexts['delivery_manager'],base,driver_shift)
         driver.locator('#blind-closure-form [name=counted]').fill(f'{total/100:.2f}')
         driver.locator('#blind-closure-form [name=terminal_total]').fill('0')
         driver.locator('#save-blind-closure').click()
@@ -368,7 +401,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         assert base.restart_count == 1
         assert persistence_state() == before_restart
         for role, context in contexts.items():
-            session = context.request.get(base+'/api/session')
+            session = context.request.get(base+'/api/session', headers={'X-KPS-Context':'customer' if role=='guest' else 'work'})
             assert session.status == 200 and session.json()['user'] and session.json()['csrf_token'], role
         tracked = customer_context.request.get(base+'/api/orders/'+order_id)
         assert tracked.status == 200 and tracked.json()['order']['snapshot'] == original_customer_snapshot
@@ -390,8 +423,8 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             'test_only': True, 'real_http': True, 'network_api_interception': False,
             'database': 'UUID-isolated PostgreSQL schema', 'widths_px': WIDTHS,
             'physical_device_test': False, 'external_email_delivery_tested': False,
-            'email_link_source': 'isolated encrypted synthetic test outbox, not an external mailbox',
-            'sms_configured': False, 'whatsapp_configured': False, 'font_loads': fonts,
+            'staff_authentication': 'four-digit SMS through real UI; only provider I/O synthetic',
+            'sms_configured': True, 'sms_provider_synthetic': True, 'whatsapp_configured': False, 'font_loads': fonts,
             'financial_events': {'orders':1,'collections':1,'driver_closures':1,'manager_closures':1,'independent_financial_matches':1},
             'actual_http_process_restarts': base.restart_count,
             'restart_database_and_saved_report_bytes_identical': True,

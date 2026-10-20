@@ -11,10 +11,12 @@ from tests.test_tawked_otp import setup_provider
 def required(client):
     with db.tx() as c:
         c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":true}'::jsonb WHERE brand_id='kps'")
+    client.headers['X-KPS-Context']='customer'
     return client
 
 def verify(client,monkeypatch,phone='0500000000',name='TEST customer'):
     setup_provider(monkeypatch)
+    client.headers['X-KPS-Context']='customer'
     r=client.post('/api/auth/otp/request',json={'phone':phone})
     assert r.status_code==200,r.text
     r=client.post('/api/auth/otp/verify',json={'challenge_id':r.json()['challenge_id'],'code':'0123','display_name':name})
@@ -50,7 +52,7 @@ def test_session_30_days_fixed_and_reverification_restores_customer(required,mon
     _prepare_catalog();result=verify(required,monkeypatch);uid=result['user']['id']
     assert 'Max-Age=2592000' in str(required.cookies) or required.get('/api/session').json()['customer_verified']
     first=_create(required,key='history-order');assert first.status_code==200,first.text
-    token=required.cookies.get(auth.COOKIE)
+    token=required.cookies.get(auth.context_cookie_names('customer')[0] if auth.context_cookies_enabled() else auth.COOKIE)
     with db.tx() as c:
         before=c.execute('SELECT expires_at,customer_verified_at FROM sessions WHERE token_hash=%s',(auth.token_hash(token),)).fetchone()
         c.execute("UPDATE sessions SET customer_verified_at=now()-interval '7 days',expires_at=now()+interval '23 days' WHERE token_hash=%s",(auth.token_hash(token),))
@@ -68,7 +70,7 @@ def test_session_30_days_fixed_and_reverification_restores_customer(required,mon
 @pytest.mark.postgres
 def test_forward_migration_preserves_existing_sms_login_and_fixed_deadline(required,monkeypatch):
     _prepare_catalog();verify(required,monkeypatch)
-    token=required.cookies.get(auth.COOKIE)
+    token=required.cookies.get(auth.context_cookie_names('customer')[0] if auth.context_cookies_enabled() else auth.COOKIE)
     with db.tx() as c:
         c.execute("UPDATE sessions SET customer_verified_at=NULL,created_at=now()-interval '4 hours',expires_at=now()+interval '8 hours' WHERE token_hash=%s",(auth.token_hash(token),))
         c.execute('UPDATE otp_challenges o SET verified_at=s.created_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=%s AND o.phone=u.phone AND o.brand_id=u.brand_id',(auth.token_hash(token),))
@@ -91,7 +93,7 @@ def test_forward_migration_preserves_existing_sms_login_and_fixed_deadline(requi
 @pytest.mark.postgres
 @pytest.mark.parametrize('invalid_proof',['unverified','different_phone','email_session','expired_proof','revoked_session'])
 def test_migration_never_promotes_a_session_without_its_live_sms_proof(required,monkeypatch,invalid_proof):
-    verify(required,monkeypatch);token=required.cookies.get(auth.COOKIE)
+    verify(required,monkeypatch);token=required.cookies.get(auth.context_cookie_names('customer')[0] if auth.context_cookies_enabled() else auth.COOKIE)
     with db.tx() as c:
         c.execute('UPDATE sessions SET customer_verified_at=NULL WHERE token_hash=%s',(auth.token_hash(token),))
         if invalid_proof=='unverified':c.execute('UPDATE otp_challenges SET verified_at=NULL')
@@ -130,7 +132,7 @@ def test_customer_profile_address_ownership_and_phone_change(required,monkeypatc
     assert required.patch('/api/customer/profile',json={'display_name':'TEST renamed'}).status_code==200
     r=required.post('/api/auth/otp/request',json={'phone':'0501111111','purpose':'change_phone'})
     assert r.status_code==200,r.text
-    old_token=required.cookies.get(auth.COOKIE)
+    old_token=required.cookies.get(auth.context_cookie_names('customer')[0] if auth.context_cookies_enabled() else auth.COOKIE)
     r=required.post('/api/auth/otp/verify',json={'challenge_id':r.json()['challenge_id'],'code':'0123','display_name':'TEST renamed'})
     assert r.status_code==200,r.text
     assert r.json()['user']['id']==one['user']['id']

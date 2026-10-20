@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   windows-print-bridge:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/ops-actionable-alerts-20261020')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020')"
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -42,7 +42,7 @@ jobs:
         shard: [0, 1, 2]
     # pull_request branch filters target branches. This gate restricts execution
     # to the emergency source branch without changing legacy integrations.
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/ops-actionable-alerts-20261020')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020')"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -75,12 +75,14 @@ jobs:
       # No provider credentials or intercepted API responses are used.
       TEST_BROWSER: "1"
       RELEASE_FULL_CI: "1"
+      ROLLBACK_BASELINE_DIR: /tmp/kps-rollback-baseline
+      ROLLBACK_COMPAT_DIR: /tmp/kps-rollback-compat
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Select affected regression scope
         id: scope
         shell: bash
@@ -155,6 +157,11 @@ jobs:
             requirements-dev.txt
       - name: Install pinned application and test requirements
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Prepare genuine prior application for the complete rollback regression
+        run: |
+          python tools/rollback_prepare_compat.py --repository "$PWD" --output "$ROLLBACK_COMPAT_DIR"
+          mkdir "$ROLLBACK_BASELINE_DIR"
+          git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$ROLLBACK_BASELINE_DIR"
       - name: Install Chromium and required system libraries
         run: python -m playwright install --with-deps chromium webkit
       - name: Check Python and browser script syntax
@@ -311,10 +318,78 @@ jobs:
           }
           NODE
 
+  focused-staff-journeys:
+    # Additional early feedback only; all full shards and their aggregate gate
+    # remain mandatory and retain their existing exact coverage manifests.
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_kps_order
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      APP_ENV: testing
+      PUBLIC_BASE_URL: http://testserver
+      APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
+      SESSION_COOKIE_SECURE: "false"
+      OTP_PROVIDER: disabled
+      INITIAL_CATALOG_IMPORT: "true"
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      TEST_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install pinned application and test requirements
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Install real Chromium and required system libraries
+        run: python -m playwright install --with-deps chromium
+      - name: Verify staff invitation and complete V5 journey early
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_staff_invitation_browser.py tests/test_v5_browser.py
+          --junitxml=test-results/focused-staff-journeys.xml
+      - name: Retain focused synthetic journey evidence separately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-staff-journeys-evidence
+          path: |
+            test-results/focused-staff-journeys.xml
+            test-artifacts/*.png
+            test-artifacts/*.json
+            test-artifacts/*.pdf
+            test-artifacts/*.csv
+            test-artifacts/v5-reports/**
+          if-no-files-found: warn
+          retention-days: 7
+
   complete-release-regression:
     name: independent-postgres-regression
     needs: independent-postgres-regression
-    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/ops-actionable-alerts-20261020')
+    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -332,3 +407,4 @@ jobs:
           path: all-test-results
       - name: Verify exact revision and complete nonduplicated test coverage
         run: python tools/full_regression.py --verify all-test-results --revision '${{ github.event.pull_request.head.sha || github.sha }}'
+

@@ -64,43 +64,16 @@ def synthetic_mail(monkeypatch):
     monkeypatch.setenv('EMAIL_WORKER_ENABLED','false')
 
 
+from tests.browser_sms_helpers import sms_browser_app
+
+
 @pytest.fixture
-def live_app(database, tmp_path, synthetic_mail):
-    with socket.socket() as reservation:
-        reservation.bind(('127.0.0.1', 0))
-        port = reservation.getsockname()[1]
-    base = f'http://127.0.0.1:{port}'
-    env = {**os.environ, 'DATABASE_URL': database, 'APP_ENV': 'testing',
-           'PUBLIC_BASE_URL': base, 'APP_ALLOWED_ORIGINS': base,
-           'APP_ALLOWED_HOSTS': '127.0.0.1,localhost', 'SESSION_COOKIE_SECURE': 'false',
-           'OTP_PROVIDER': 'disabled', 'INITIAL_CATALOG_IMPORT': 'true'}
-    for name in ('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID'):
-        env.pop(name, None)
-    log_path = tmp_path / 'browser-test-app.log'
-    with log_path.open('w') as log:
-        process = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', str(port)],
-                                   cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
-        try:
-            deadline = time.monotonic() + 25
-            while time.monotonic() < deadline:
-                if process.poll() is not None:
-                    pytest.fail('Isolated browser HTTP server did not start: ' + log_path.read_text()[-3000:])
-                try:
-                    if httpx.get(base + '/ready', timeout=1).status_code == 200:
-                        break
-                except httpx.HTTPError:
-                    pass
-                time.sleep(.1)
-            else:
-                pytest.fail('Isolated browser HTTP server readiness timed out.')
-            yield base
-        finally:
-            process.terminate()
-            try:
-                process.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+def live_app(database, monkeypatch, synthetic_mail):
+    # Real HTTP/auth routes with only provider I/O synthetic, in-process so the
+    # canonical SMS provider monkeypatch survives. Keep synthetic email outbox.
+    # Consumers import live_app alone; delegate directly rather than requiring
+    # pytest to discover an additional fixture in every importing test module.
+    yield from sms_browser_app.__wrapped__(database, monkeypatch)
 
 
 @pytest.fixture
@@ -186,12 +159,14 @@ def _owner_login(context, base, owner):
         fixture = conn.execute('SELECT * FROM users WHERE id=%s', (owner['id'],)).fetchone()
     fixture = register_synthetic_mobile(fixture)
     origin = {'Origin': base, 'X-KPS-Context': 'work'}
+    with db.tx() as conn:
+        sessions_before = conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n']
     denied = context.request.post(base + '/api/auth/login', headers=origin,
                                   data={'username': owner['username'], 'password': PASSWORD})
     assert denied.status == 403, denied.text()
     assert denied.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
     with db.tx() as conn:
-        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n'] == 0
+        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n'] == sessions_before
     sent = context.request.post(base + '/api/identity/staff/code/request', headers=origin,
                                 data={'phone': fixture['phone'], 'brand_id': fixture['brand_id']})
     assert sent.ok, sent.text()
@@ -235,6 +210,10 @@ def test_real_preview_responsive_colors_restriction_banner_and_missing_otp(live_
     owner_context, _, owner_errors = _context(chromium_browser, live_app)
     headers = _owner_login(owner_context, live_app, owner)
     banner_id = _test_banner(owner_context, live_app, headers)
+    # This scenario specifically certifies the unconfigured customer channel.
+    # Establish the owner's real SMS session first, then disable the test channel.
+    with db.tx() as conn:
+        conn.execute("UPDATE identity_channels SET enabled=false WHERE brand_id='kps' AND channel='sms'")
     context, page, errors = _context(chromium_browser, live_app)
     try:
         page.goto('/')
@@ -428,12 +407,8 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
 
         owner = _staff()
         owner_context, ops, owner_errors = _context(chromium_browser, live_app)
-        ops.goto('/ops.html')
-        ops.locator('#login-form input[name=username]').fill(owner['username'])
-        ops.locator('#login-form input[name=password]').fill(PASSWORD)
-        ops.locator('#login-submit').click()
-        expect(ops.locator('#app-shell')).to_be_visible()
-        expect(ops.locator('#content .metrics')).to_be_visible()
+        _staff_ui_login(ops,owner)
+        expect(ops.locator('#dispatch-orders')).to_be_visible()
         _capture(ops, 'operations-dashboard-synthetic-order')
         ops.locator('#navigation [data-page=admin]').click()
         expect(ops.locator('[data-action=admin-tab][data-tab=banners]')).to_be_visible()
@@ -490,6 +465,7 @@ def _role_fixture():
     users={}
     with db.tx() as conn:
         conn.execute('INSERT INTO brands(id,name) VALUES(%s,%s)',(brand,'براند اختبار متصفح معزول'))
+        conn.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled,delivery_proven_at,sms_provider) VALUES(%s,'sms','active',true,now(),'tawked')",(brand,))
         conn.execute('INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES(%s,1,%s,%s,%s,%s,%s)',
                      (branch_id,'browser-synthetic-source',brand,'فرع اختبار معزول','حفر الباطن',db.json({})))
         conn.execute('INSERT INTO app_settings(brand_id,settings) VALUES(%s,%s)',
@@ -515,12 +491,36 @@ def _role_fixture():
 
 def _staff_ui_login(page,user):
     from playwright.sync_api import expect
-    page.goto('/ops.html')
-    page.locator('#login-form input[name=username]').fill(user['username'])
-    page.locator('#login-form input[name=password]').fill(PASSWORD)
-    page.locator('#login-submit').click()
+    from tests.sms_policy_helpers import register_synthetic_mobile
+    with db.tx() as conn:
+        fixture=conn.execute('SELECT * FROM users WHERE id=%s',(user['id'],)).fetchone()
+    fixture=register_synthetic_mobile(fixture)
+    page.goto('/ops.html?brand_id='+fixture['brand_id'])
+    policy=page.context.request.get('/api/identity/staff/login-policy?brand_id='+fixture['brand_id'])
+    assert policy.ok,policy.text()
+    if policy.json().get('sms_required') is False:
+        # Existing non-KPS policy explicitly permits legacy login. Exercise its
+        # visible UI rather than changing that brand's authentication policy.
+        expect(page.locator('.legacy-login')).to_be_visible()
+        page.locator('.legacy-login summary').click()
+        page.locator('#login-form input[name=username]').fill(fixture['username'])
+        page.locator('#login-form input[name=password]').fill(PASSWORD)
+        page.locator('#login-submit').click()
+    else:
+        phone=page.locator('#staff-code-request-form input[name=phone]')
+        expect(phone).to_be_visible()
+        phone.fill(fixture['phone'])
+        page.locator('#staff-code-request-submit').click()
+        code=page.locator('#staff-code-verify-form input[name=code]')
+        expect(code).to_be_visible()
+        expect(code).to_have_attribute('maxlength','4')
+        code.fill('0123')
+        page.locator('#staff-code-verify-submit').click()
     expect(page.locator('#app-shell')).to_be_visible()
     expect(page.locator('#content .loading')).to_have_count(0)
+    with db.tx() as conn:
+        session=conn.execute('SELECT step_up_at FROM sessions WHERE user_id=%s AND revoked_at IS NULL',(user['id'],)).fetchone()
+        assert session and session['step_up_at'] is None
 
 
 def _authenticated_post(context,base,path,body=None):
@@ -733,16 +733,24 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         _submit_modal(driver)
         expect(driver.locator('[data-action=collect]')).to_be_visible()
         driver.locator('[data-action=collect]').click()
-        driver.locator('#modal-body input[name=tendered]').fill('20.00')
-        expect(driver.locator('#change-preview')).to_contain_text('١٠')
-        _capture(driver,'driver-actual-cash-collection-and-change')
-        _submit_modal(driver,check=['confirmed'])
+        # The existing simplified driver UI records the exact amount due;
+        # tendered/change editing belongs to the non-driver collection UI.
+        expect(driver.locator('#modal-body input[name=tendered]')).to_have_count(0)
+        expect(driver.locator('#modal-body input[name=confirmed]')).to_have_count(0)
+        expect(driver.locator('#modal-body select[name=method]')).to_have_value('cash')
+        expect(driver.locator('#change-preview')).to_contain_text('٠')
+        _capture(driver,'driver-actual-cash-collection')
+        with driver.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/collect')) as paid:
+            _submit_modal(driver)
+        assert paid.value.status==200,paid.value.text()
+        assert paid.value.request.post_data_json=={'method':'cash','amount_halalas':1000,'tendered_halalas':1000,'reference':''}
         driver.locator('[data-action=delivered]').click()
         _attach_task_photo(driver)
         _submit_modal(driver,{'proof':'إثبات تسليم اختبار معزول؛ لا يوجد تسليم فعلي.'})
         with db.tx() as conn:
             collection=conn.execute('SELECT * FROM collections WHERE order_id=%s',(order_id,)).fetchone()
-            assert collection['amount_halalas']==1000 and collection['tendered_halalas']==2000 and collection['change_halalas']==1000
+            assert collection['amount_halalas']==1000 and collection['tendered_halalas']==1000 and collection['change_halalas']==0
+            assert conn.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(order_id,)).fetchone()['n']==1
             assert conn.execute('SELECT delivery_status FROM orders WHERE id=%s',(order_id,)).fetchone()['delivery_status']=='delivered'
             photos=conn.execute('SELECT stage,used_at FROM delivery_photos WHERE order_id=%s ORDER BY stage',(order_id,)).fetchall()
             assert len(photos)==2 and {row['stage'] for row in photos}=={'picked_up','delivered'} and all(row['used_at'] for row in photos)
@@ -871,7 +879,8 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
     _owner_login(owner_context,live_app,owner)
     brand_id='browser-new-brand-test'
     brand_name='براند اختبار جديد فقط'
-    _authenticated_post(owner_context,live_app,'/api/identity/step-up',{'password':PASSWORD})
+    sent=_authenticated_post(owner_context,live_app,'/api/identity/owner/sms/request')
+    _authenticated_post(owner_context,live_app,'/api/identity/owner/sms/verify',{'challenge_id':sent['challenge_id'],'code':'0123'})
     created=_authenticated_post(owner_context,live_app,'/api/admin/brands',{
         'id':brand_id,'name':brand_name,'owner_email':'brand-owner@example.invalid',
         'owner_display_name':'مالك براند اختبار فقط'})
@@ -956,4 +965,5 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
             'physical_device_test':False,'real_external_sms_verification':False},indent=2))
     finally:
         context.close();owner_context.close()
+
 

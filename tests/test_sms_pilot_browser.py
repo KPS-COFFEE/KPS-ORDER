@@ -9,7 +9,7 @@ import httpx
 from fastapi.testclient import TestClient
 from app import auth,db
 from tests.test_core import _authenticate,_make_user
-from tests.test_tawked_otp import setup_provider
+from tests.sms_policy_helpers import configure_sms
 from tests.test_owner_phone_browser import chromium_browser
 from test_browser import _context
 
@@ -18,7 +18,7 @@ pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='
 
 @pytest.fixture
 def pilot_app(database,monkeypatch):
-    setup_provider(monkeypatch)
+    configure_sms(monkeypatch)
     owner=_make_user('owner',username='synthetic_pilot_owner',password='Synthetic-Pilot-Only-42')
     from app.main import app
     with TestClient(app) as client:token,csrf=_authenticate(client,owner)
@@ -52,7 +52,28 @@ def test_actual_app_pilot_activation_and_personal_shopping_share_browser(pilot_a
     try:
         context.add_cookies([{'name':auth.COOKIE,'value':token,'url':base},{'name':auth.CSRF_COOKIE,'value':csrf,'url':base}])
         page.goto(base+'/sms-login-test?lang='+lang,wait_until='networkidle')
-        page.locator('input[name=password]').fill('Synthetic-Pilot-Only-42')
+        # Mandatory SMS retirement also applies before starting the pilot.
+        # Password verification must fail; obtain a genuine session-bound SMS
+        # proof through the unchanged API, then exercise the pilot's own UI.
+        work_headers={'Origin':base,'X-KPS-Context':'work','X-CSRF-Token':csrf}
+        rejected=context.request.post(base+'/api/identity/step-up',headers=work_headers,
+                                      data={'password':'Synthetic-Pilot-Only-42'})
+        assert rejected.status==403 and rejected.json()['detail']['code']=='WORK_SMS_REQUIRED'
+        sent_proof=context.request.post(base+'/api/identity/owner/sms/request',headers=work_headers,data={})
+        assert sent_proof.ok,sent_proof.text()
+        challenge=sent_proof.json()['challenge_id']
+        wrong=context.request.post(base+'/api/identity/owner/sms/verify',headers=work_headers,
+                                   data={'challenge_id':challenge,'code':'9999'})
+        assert wrong.status==400,wrong.text()
+        proof=context.request.post(base+'/api/identity/owner/sms/verify',headers=work_headers,
+                                   data={'challenge_id':challenge,'code':'0123'})
+        assert proof.ok,proof.text()
+        with db.tx() as conn:
+            verified=conn.execute('SELECT source_user_id,source_session_id,verified_at FROM otp_challenges WHERE id=%s',(challenge,)).fetchone()
+            sid=conn.execute('SELECT id FROM sessions WHERE token_hash=%s',(auth.token_hash(token),)).fetchone()['id']
+            assert verified['source_user_id']==owner['id'] and verified['source_session_id']==sid
+            assert verified['verified_at'] is not None
+        page.locator('input[name=password]').fill('')
         page.locator('#start').click();expect(page.locator('#login')).to_be_visible()
         page.locator('#login input[name=code]').fill('٠١٢٣');page.locator('#verify-login').click()
         expect(page.locator('#sensitive')).to_be_visible()

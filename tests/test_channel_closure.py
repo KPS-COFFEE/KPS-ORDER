@@ -100,7 +100,7 @@ def test_private_document_and_ledger_scope(channel_client):
         assert actor(role).get('/api/customer/legal/internal').status_code==403
     result=actor('owner').get('/api/internal-documents/kps-operating-agreement')
     # The global security middleware deliberately normalizes protected API responses.
-    assert result.status_code==200 and result.headers['cache-control']=='no-store'
+    assert result.status_code==200 and set(result.headers['cache-control'].split(', ')) == {'private', 'no-store'}
     users['owner']['brand_id']='other'
     assert actor('owner').get('/api/internal-documents/kps-operating-agreement').status_code==404
     assert actor('owner').get('/api/channel-settlements/orders/channel-order').status_code==404

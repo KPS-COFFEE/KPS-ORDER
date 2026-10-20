@@ -174,7 +174,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 from . import channel_commercial
                 profiles = (config or {}).get('settings', {}).get('invoice_profiles') or invoice_profiles.defaults('kps')
                 quote['channel_commercial'] = channel_commercial.capture(profiles, execution_branch_id, quote, user['id'])
-            performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id)
+            performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id,
+                                                             settings=(config or {}).get('settings', {}))
             order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
@@ -568,6 +569,53 @@ class PreparationBody(BaseModel):
     reason: str = Field(default='', max_length=500)
 
 
+class ManagerAcceptanceBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    version: StrictInt = Field(ge=1)
+
+
+@router.post('/{order_id}/manager-accept')
+def manager_accept(order_id: str, body: ManagerAcceptanceBody,
+                   user=Depends(auth.require_roles('owner', 'delivery_manager')),
+                   idempotency_key: str | None = Header(default=None)):
+    """Accept independently of dispatch; never invent print or pickup evidence."""
+    if not auth.has_permission(user, 'delivery_assign'):
+        raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية قبول وإسناد الطلبات متوقفة لحسابك.')
+    with db.tx() as conn:
+        # Use the same lock order as assignment/shift closure. Current scope and
+        # duty are checked even for replay, so revoked sessions cannot recover data.
+        conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',
+                     ('operations:' + user['brand_id'],))
+        order = scoped_order(conn, order_id, user, lock=True)
+        manager_shift_id = delivery_center_scope(conn, user, order['branch_id'])
+        if (order['service'] != 'delivery'
+                or order['snapshot'].get('delivery_workflow') != 'manager_dispatch'
+                or order['snapshot'].get('delivery_period') == 'morning'):
+            raise db.error(409, 'MANAGER_ACCEPTANCE_NOT_APPLICABLE', 'الطلب لا يتبع مسار قبول مدير التوصيل.')
+        def perform():
+            if order['version'] != body.version:
+                raise db.error(409, 'ORDER_VERSION_CONFLICT', 'تغير الطلب. حدّث الصفحة قبل القبول.')
+            if order['preparation_status'] != 'new' or order['delivery_status'] != 'pending' or order.get('completed_at'):
+                raise db.error(409, 'ORDER_ALREADY_PROCESSED', 'الطلب لم يعد بانتظار قبول المدير.')
+            from .order_amendments import guard
+            guard(conn, order, require_branch=False)
+            if order['customer'].get('requires_operational_confirmation') and not conn.execute(
+                    "SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' "
+                    "AND details->>'result'='reached'", (order_id,)).fetchone():
+                raise db.error(409, 'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED', 'يلزم اتصال تشغيلي موثق قبل قبول الطلب.')
+            row = conn.execute("UPDATE orders SET preparation_status='accepted',version=version+1 WHERE id=%s RETURNING *",
+                               (order_id,)).fetchone()
+            details = {'previous': 'new', 'status': 'accepted', 'manager_shift_id': manager_shift_id,
+                       'branch_id': order['branch_id'], 'actor_id': user['id'],
+                       'actor_name': user.get('display_name', ''), 'actor_role': user['role'],
+                       'dispatch_pending': True}
+            db.event(conn, order_id, user['id'], 'preparation.accepted', details)
+            db.audit(conn, user['id'], 'order.manager_accepted', 'order', order_id, details)
+            return {'order': row}
+        return db.idempotent(conn, user['id'], idempotency_key, 'order.manager_accept:' + order_id,
+                             body.model_dump(), perform)
+
+
 @router.post('/{order_id}/preparation')
 def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_roles('owner', 'branch_manager', 'delivery_manager')),
                 idempotency_key: str | None = Header(default=None)):
@@ -679,3 +727,4 @@ def operational_confirmation(order_id:str,body:ContactConfirmationBody,
             return {'order_id':order_id,'result':body.result,'phone_verified':bool(order['customer'].get('phone_verified')),
                     'operational_confirmation_only':True}
         return db.idempotent(conn,user['id'],idempotency_key,'order.operational_confirmation:'+order_id,body.model_dump(),perform)
+

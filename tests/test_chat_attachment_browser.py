@@ -13,6 +13,16 @@ pytestmark = [pytest.mark.postgres, pytest.mark.skipif(os.getenv('TEST_BROWSER')
                                                      reason='Explicit real browser acceptance')]
 
 
+
+def _open_staff_navigation(page):
+    """Use the compact operations-room menu before normal navigation."""
+    from playwright.sync_api import expect
+    toggle = page.locator('.dispatch-nav-toggle')
+    if toggle.is_visible() and toggle.get_attribute('aria-expanded') != 'true':
+        toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+    expect(page.locator('#navigation')).to_be_visible()
+
 @pytest.fixture(autouse=True)
 def context_mode(monkeypatch):
     monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED', 'true')
@@ -43,6 +53,7 @@ def test_thumbnail_and_opened_image_use_the_correct_session(sms_browser_app, chr
         context.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}');localStorage.setItem('kps_customer_lang','{lang}')")
         page.set_viewport_size({'width': width, 'height': 900})
         page.goto(base + '/ops')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=chat]').click()
         page.locator(f'.conversation[data-id="{cid}"]').click()
         staff_image = page.locator('#messages .message img')
@@ -80,3 +91,4 @@ def test_thumbnail_and_opened_image_use_the_correct_session(sms_browser_app, chr
         assert not errors, errors
     finally:
         context.close()
+

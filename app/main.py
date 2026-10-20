@@ -100,6 +100,10 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
+from . import dispatch_map, experience_policy
+app.include_router(dispatch_map.router)
+app.include_router(experience_policy.router)
+
 from . import driver_checks
 app.include_router(driver_checks.router)
 from . import delegated_operations, driver_work_hours, driver_hours_reports
@@ -181,3 +185,4 @@ def frontend_file(filename: str):
 if (PUBLIC / 'assets').exists():
     app.include_router(image_previews.router)
     app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')
+
