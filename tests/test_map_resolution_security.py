@@ -1,9 +1,12 @@
 """SEC-01 prevention tests. All HTTP transports are synthetic; PG is fixture-owned."""
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import contextmanager
+from datetime import datetime, timezone
 import multiprocessing
 import os
 import time
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -14,12 +17,35 @@ SHORT = 'https://maps.app.goo.gl/SyntheticSecurityOnly'
 PIN = 'https://www.google.com/maps?q=28.4,45.9'
 
 
-def _worker_admit(url, cookie, database):
+def _admit_in_bucket(url, cookie=None, bucket=None):
+    if bucket is None:
+        return maps.admit(url, cookie)
+    # Freeze only the minute used for rate accounting. Transactions, advisory
+    # locks, shared counters and cache reads remain real PostgreSQL operations.
+    # Spawning workers near a wall-clock minute boundary must not reset the
+    # seeded admission's budget while this test checks cross-worker sharing.
+    real_tx = db.tx
+
+    @contextmanager
+    def fixed_bucket_tx():
+        with real_tx() as conn:
+            class FixedBucketConnection:
+                def execute(self, query, *args, **kwargs):
+                    if query == "SELECT date_trunc('minute',clock_timestamp()) AS bucket":
+                        return conn.execute('SELECT %s::timestamptz AS bucket', (bucket,))
+                    return conn.execute(query, *args, **kwargs)
+            yield FixedBucketConnection()
+
+    with patch.object(db, 'tx', fixed_bucket_tx):
+        return maps.admit(url, cookie)
+
+
+def _worker_admit(url, cookie, database, bucket=None):
     # Spawned process owns its DB pool, as real Uvicorn workers do.
     os.environ['DATABASE_URL'] = database
-    from app import db, map_resolution
+    from app import db
     try:
-        result = map_resolution.admit(url, cookie)
+        result = _admit_in_bucket(url, cookie, bucket)
         return {k: (v.status_code if k == 'error' else v) for k, v in result.items()}
     finally:
         db.close_pools()
@@ -99,12 +125,14 @@ def test_global_concurrency_is_shared_by_distinct_os_workers(database):
 
 
 def test_client_budget_and_cache_are_shared_by_distinct_os_workers(database):
-    admission = maps.admit(SHORT)
+    bucket = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    admission = _admit_in_bucket(SHORT, bucket=bucket)
     maps.finish(admission, catalog._parse_map_pin(PIN))
     with ProcessPoolExecutor(max_workers=2, mp_context=multiprocessing.get_context('spawn')) as executor:
         values = list(executor.map(_worker_admit, [SHORT] * maps.CLIENT_LIMIT,
                                    [admission['cookie']] * maps.CLIENT_LIMIT,
-                                   [database] * maps.CLIENT_LIMIT))
+                                   [database] * maps.CLIENT_LIMIT,
+                                   [bucket] * maps.CLIENT_LIMIT))
     assert sum('result' in value for value in values) == maps.CLIENT_LIMIT - 1
     assert sum(value.get('error') == 429 for value in values) == 1
 

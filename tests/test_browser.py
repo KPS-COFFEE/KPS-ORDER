@@ -189,12 +189,15 @@ def _owner_login(context, base, owner):
 
 def _approve_advertising(context, base, headers):
     """Opt in through actual owner proof; production advertising stays off."""
+    headers = {**headers, 'X-KPS-Context': 'work'}
     sent = context.request.post(base + '/api/identity/owner/sms/request', headers=headers)
     assert sent.ok, sent.text()
     proof = context.request.post(base + '/api/identity/owner/sms/verify', headers=headers,
         data={'challenge_id': sent.json()['challenge_id'], 'code': '0123'})
     assert proof.ok, proof.text()
-    policy = context.request.get(base + '/api/advertising/policy').json()['policy']
+    current = context.request.get(base + '/api/advertising/policy', headers=headers)
+    assert current.ok, current.text()
+    policy = current.json()['policy']
     approved = context.request.put(base + '/api/advertising/policy',
         headers={**headers, 'Idempotency-Key': 'browser-ads-' + secrets.token_hex(16)},
         data={'advertising_enabled': True, 'expected_version': policy['version'],
@@ -424,9 +427,13 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         owner = _staff()
         owner_context, ops, owner_errors = _context(chromium_browser, live_app)
         _staff_ui_login(ops,owner)
-        session = owner_context.request.get(live_app + '/api/session').json()
+        work_headers = {'Origin': live_app, 'X-KPS-Context': 'work'}
+        session_response = owner_context.request.get(live_app + '/api/session', headers=work_headers)
+        assert session_response.ok, session_response.text()
+        session = session_response.json()
+        assert session['user']['id'] == owner['id'] and session['csrf_token']
         _approve_advertising(owner_context, live_app,
-            {'Origin': live_app, 'X-CSRF-Token': session['csrf_token']})
+            {**work_headers, 'X-CSRF-Token': session['csrf_token']})
         expect(ops.locator('#dispatch-orders')).to_be_visible()
         _capture(ops, 'operations-dashboard-synthetic-order')
         ops.locator('#navigation [data-page=admin]').click()
