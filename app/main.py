@@ -88,6 +88,8 @@ from . import first_order_gift
 app.include_router(first_order_gift.router)
 from . import morning_delivery
 app.include_router(morning_delivery.router)
+from . import customer_map
+app.include_router(customer_map.router)
 from . import branch_payments
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)

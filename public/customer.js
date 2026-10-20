@@ -1515,6 +1515,7 @@ $('customer-language').addEventListener('click',changeLanguage);const tickerPaus
     state.identityReady=true;renderAccount();renderService();renderCart();loadBanners();await verifyEmailLink();
     if(state.entryEnabled&&entryVerified()){try{const point=JSON.parse(localStorage.getItem(`order-location:${requestedBrandId}:${state.session.user.id}`)||'null');if(point&&Number.isFinite(point.lat)&&Number.isFinite(point.lng))saveLocation(point.lat,point.lng);}catch{}}
     renderCustomerEntry();
+    window.KPSCustomerMap?.mount({api,brandId:requestedBrandId,host:document.querySelector('.branch-location-tools .row'),getLocation:()=>state.location,onConfirm:saveLocation,tr:entryText,canOpen:()=>!state.entryEnabled||entryVerified()});
   }
   init().catch(()=>{state.identityReady=Boolean(requestedBrandId);renderAccount();showError('site-notice',t("unable_to_load_part_of_the_page_refresh_to_try_again"));});
 })();

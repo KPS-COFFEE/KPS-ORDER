@@ -83,6 +83,22 @@ def guard_accepted_awaiting_dispatch(c, shift):
     """A separately accepted order cannot be abandoned by closing its manager."""
     if shift['kind'] != 'manager':
         return
+    if (shift.get('delivery_window_snapshot') or {}).get('period') == 'morning':
+        # Morning preparation acceptance belongs to the branch, not a manager
+        # event. Even a newly arrived request must retain an open dispatcher.
+        # The manager row is locked by the caller; admission holds that row FOR
+        # SHARE until the order commits, so closure cannot race past a new order.
+        morning_pending = c.execute("SELECT 1 FROM orders o WHERE o.brand_id=%s "
+            "AND o.branch_id=ANY(%s) AND o.service='delivery' "
+            "AND o.snapshot->>'delivery_period'='morning' AND o.completed_at IS NULL "
+            "AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
+            "AND o.delivery_status NOT IN ('cancelled','delivered') "
+            "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
+            "AND t.status NOT IN ('cancelled','reassigned','transferred')) LIMIT 1",
+            (shift['brand_id'], shift['branch_ids'])).fetchone()
+        if morning_pending:
+            raise db.error(409, 'MORNING_ORDERS_AWAITING_DISPATCH',
+                           'توجد طلبات صباحية بانتظار المعالجة أو الإسناد. عالجها قبل تقفيل المناوبة.')
     pending = c.execute("SELECT 1 FROM order_events e JOIN orders o ON o.id=e.order_id "
         "WHERE e.event_type='preparation.accepted' AND e.details->>'manager_shift_id'=%s "
         "AND e.details->>'dispatch_pending'='true' AND o.brand_id=%s "
@@ -250,6 +266,16 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 raise db.error(409,'SHIFT_ALREADY_OPEN','لديك شفت مفتوح بالفعل. انتقل إلى مهام التوصيل أو الشفتات بدل فتح شفت جديد.')
             brand=target.get('brand_id') or user.get('brand_id')
             bids=body.branch_ids or target.get('branch_ids',[])
+            manager = None
+            if body.kind == 'driver' and body.manager_shift_id:
+                manager = lock_shift(c, body.manager_shift_id)
+                if (manager and manager['kind'] == 'manager' and manager['status'] == 'open'
+                        and manager['brand_id'] == brand
+                        and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                        and not body.branch_ids):
+                    # Morning operates only a subset of the normal driver pool.
+                    # Derive it server-side from two already-authorized scopes.
+                    bids = [bid for bid in target.get('branch_ids', []) if bid in manager['branch_ids']]
             if not brand or not bids: fail(422,'يلزم براند وفروع فعلية للشفت')
             branch_rows=[]
             for bid in bids:
@@ -262,7 +288,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             if body.kind=='driver':
                 if not body.manager_shift_id:
                     raise db.error(409,'MANAGER_SHIFT_REQUIRED','اختر شفت مدير التوصيل المفتوح. إذا لم يظهر، اطلب من المدير فتح شفت يغطي جميع فروعك المعتمدة.')
-                manager=lock_shift(c,body.manager_shift_id)
+                manager=manager or lock_shift(c,body.manager_shift_id)
                 if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']):
                     raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي جميع فروعك. مدير التوصيل هو من يعدّل نطاق التغطية.')
                 manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
@@ -367,10 +393,12 @@ def driver_cash_policy(c,brand_id):
 def people_data(c,user):
     users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver','branch_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
-    managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
+    managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
     if user['role']=='driver':
-        managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])]
+        managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])
+                  or (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
+                  and bool(set(user.get('branch_ids',[]))&set(s['branch_ids']))]
     return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
 
 @router.get('/operations/people')
@@ -618,6 +646,11 @@ def eligible_driver_shift(c,s,order):
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
     principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
     if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (principal['role']!='owner' and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
+    if order.get('snapshot', {}).get('delivery_period') == 'morning':
+        from . import morning_delivery
+        morning_delivery.authorize_order(c, principal, order)
+        if (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning':
+            fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية.')
     return manager
 
 class Assignment(OperationBody):
@@ -640,11 +673,6 @@ def assign_in_transaction(c,user,oid,body):
     manager=lock_shift(c,s['manager_shift_id'])
     if not manager or manager['status']!='open':fail(409,'شفت المدير غير مفتوح')
     eligible_driver_shift(c,s,o)
-    if o.get('snapshot', {}).get('delivery_period') == 'morning':
-        principal = c.execute('SELECT * FROM users WHERE id=%s', (manager['user_id'],)).fetchone()
-        morning_delivery.authorize_order(c, principal, o)
-        if (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning':
-            fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية.')
     if user['role']=='delivery_manager' and manager['user_id']!=user['id']:fail(403,'الشفت تابع لمدير آخر')
     if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
     if body.accept_order and o['preparation_status']=='new':
@@ -1290,6 +1318,17 @@ class ManagerHandover(OperationBody):
     target_manager_shift_id:str
     reason:str=Field(min_length=1,max_length=2000)
 
+def morning_handover_scope(c, source, target):
+    if (source.get('delivery_window_snapshot') or {}).get('period') != 'morning':
+        return
+    if (target.get('delivery_window_snapshot') or {}).get('period') != 'morning':
+        fail(409, 'المناوبة البديلة للطلبات الصباحية يجب أن تكون صباحية معتمدة.')
+    from . import morning_delivery
+    principal=c.execute('SELECT * FROM users WHERE id=%s', (target['user_id'],)).fetchone()
+    for bid in source['branch_ids']:
+        morning_delivery.authorize_order(c, principal, {'brand_id':source['brand_id'], 'branch_id':bid,
+                                                       'snapshot':{'delivery_period':'morning'}})
+
 @router.post('/shifts/{sid}/handover-manager')
 def manager_handover(sid:str,body:ManagerHandover,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager')
@@ -1298,6 +1337,7 @@ def manager_handover(sid:str,body:ManagerHandover,request:Request,user=Depends(a
             ids=sorted(set([sid,body.target_manager_shift_id]));ss={i:lock_shift(c,i) for i in ids};src=ss[sid];target=ss[body.target_manager_shift_id]
             shift_access(c,user,src)
             if not target or src['kind']!='manager' or target['kind']!='manager' or src['id']==target['id'] or src['status'] not in ('open','closing') or target['status']!='open' or src['brand_id']!=target['brand_id'] or not set(src['branch_ids'])<=set(target['branch_ids']):fail(409,'المناوبة البديلة غير مؤهلة')
+            morning_handover_scope(c, src, target)
             if c.execute("SELECT 1 FROM manager_handovers WHERE from_shift_id=%s AND status='pending'",(sid,)).fetchone():fail(409,'يوجد تسليم مناوبة معلق')
             children=c.execute("SELECT id FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id",(sid,)).fetchall()
             hid=uid();c.execute('INSERT INTO manager_handovers(id,from_shift_id,to_shift_id,branch_ids,driver_shift_ids,reason,requested_by) VALUES(%s,%s,%s,%s,%s,%s,%s)',(hid,sid,target['id'],db.json(src['branch_ids']),db.json([x['id'] for x in children]),body.reason,user['id']))
@@ -1323,6 +1363,7 @@ def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_us
             if target['user_id']!=user['id'] or target['brand_id']!=user['brand_id']:fail(403,'المستلم الحقيقي فقط يقبل المناوبة')
             shift_access(c,user,target)
             if target['status']!='open' or src['status']!='closing':fail(409,'حالة الشفت غير صالحة')
+            morning_handover_scope(c, src, target)
             c.execute("UPDATE shifts SET manager_shift_id=%s WHERE id=ANY(%s) AND manager_shift_id=%s AND status<>'closed'",(target['id'],h['driver_shift_ids'],src['id']))
             c.execute("UPDATE manager_handovers SET status='accepted',accepted_by=%s,accepted_at=now() WHERE id=%s",(user['id'],hid))
             db.audit(c,user['id'],'manager.handover.accept','shift',target['id'],{'handover_id':hid,'driver_shift_ids':h['driver_shift_ids'],'cash_transferred':False})
