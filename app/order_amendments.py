@@ -122,7 +122,7 @@ def inbox(user=Depends(auth.require_roles('owner','delivery_manager','branch_man
     with db.tx() as c:
         if not auth.has_permission(user, 'orders_view'):
             raise db.error(403, 'REQUEST_PERMISSION', 'عرض الطلبات غير مصرح.')
-        rows=c.execute("""SELECT o.id,o.order_no,o.service,o.amendment_revision,a.id amendment_id,a.status
+        rows=c.execute("""SELECT o.id,o.order_no,o.snapshot->>'order_reference' order_reference,o.service,o.amendment_revision,a.id amendment_id,a.status
             FROM orders o LEFT JOIN LATERAL (SELECT id,status FROM order_amendments
               WHERE order_id=o.id AND status IN ('requested','branch_confirmed','offered')
               ORDER BY created_at DESC LIMIT 1) a ON true
