@@ -20,27 +20,38 @@ Customer production has not been changed. Both new feature switches default off.
 - Saudi mobile inputs 5/05/966/+966 normalize to one canonical identity.
 - Customer on-the-way status starts at actual order-specific driver pickup,
   independently of the separate manual trip departure action.
+- Gift policy is independently owner-controlled, with a Riyadh start time,
+  catalog-backed selections and branch paid-subtotal minimums. Quoting never
+  consumes eligibility. The order and brand/canonical-phone claim commit
+  atomically; concurrency, retries, failure rollback and backup restore are tested.
+  Changing campaigns or cancelling an order does not reset the lifetime claim.
+- Owner advertisement preview uses real 390/768/1366 px iframe viewports with
+  storefront CSS. Images remain uncropped. Preview does not upload or publish.
+  Advertisement activation remains separate from gift eligibility.
 
 ## Still required for the full approved demo scope
 
 - Configure and locality-test Mapbox, then implement the interactive in-page pin
   picker. This checkpoint retains the existing geolocation/manual-pin controls.
-- Implement and certify gift redemption, owner start time, campaign eligibility
-  and once-per-verified-phone database constraints; no gift is granted here.
-- Complete owner advertisement effects and the three device preview workflow.
+- Choose and implement the requested image-specific advertisement effect once
+  its image and effect are approved; no blanket flashing effect is imposed.
 - Complete morning execution routing, selected-branch preparer controls and
   morning user scopes without exposing the execution branch to customers.
 - Implement the approved unified manager control room against the real APIs.
-- Finish browser and PostgreSQL certification, review, then request customer
+- Finish whole-journey browser and PostgreSQL certification, review, then request customer
   production publication approval. There is no production deployment in this PR.
 
 ## Validation
 
-- Local: 36 policy, phone normalization, role-denial and customer status tests passed.
+- Local: 75 unit/source tests passed; 16 PostgreSQL cases deselected because no
+  isolated local database is available. Their integration run is in CI instead.
 - Local JavaScript syntax and Python compilation passed.
 - Local PostgreSQL integration not run: no local server; installing packages failed
   on environment permissions. No production DSN was used.
-- Local browser checks not run: Chromium is absent. Six browser cases are prepared
-  for AR/EN at 390/768/1366 px, with synthetic APIs and no SMS or payments.
-- Dedicated branch CI runs PostgreSQL 18, pickup progress integration and the six
-  browser cases. Results must be read before calling this checkpoint certified.
+- Local browser checks not run: Chromium is absent. CI runs real Chromium with
+  synthetic customer APIs and PostgreSQL 18; no real SMS or payments are sent.
+- CI run 39400396735 (90c20bc) passed 106 tests, including gift rollback and
+  backup restoration. CI run 39402035791 (7a8bff0) passed 108 tests, including
+  the three-device advertisement preview in Arabic and English.
+- Additional inherited production CSP coverage and preview screenshots are
+  being added; a subsequent run must certify that revision before review.

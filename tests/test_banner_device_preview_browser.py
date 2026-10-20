@@ -2,6 +2,7 @@
 import base64
 import io
 import os
+from pathlib import Path
 import pytest
 from PIL import Image
 from test_experience_entry_browser import static_customer
@@ -17,6 +18,14 @@ def test_owner_preview_has_three_real_viewports_and_preserves_the_whole_image(st
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True)
         page=browser.new_page(viewport={'width':1280,'height':950})
+        # Match production policy: srcdoc must work without weakening CSP or
+        # allowing scripts inside the preview frame.
+        def security_headers(route):
+            response=route.fetch()
+            route.fulfill(response=response,headers={**response.headers,
+                'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+                'X-Frame-Options':'DENY'})
+        page.route('**/assets/banner-device-preview.js',security_headers)
         requests=[];errors=[]
         page.on('request',lambda request:requests.append(request.url) if '/api/' in request.url else None)
         page.on('pageerror',lambda error:errors.append(str(error)))
@@ -32,4 +41,6 @@ def test_owner_preview_has_three_real_viewports_and_preserves_the_whole_image(st
             assert frame.locator('h2').first.inner_text()=='<img src=x onerror=alert(1)>'
             assert frame.locator('[onerror]').count()==0
         assert not requests and not errors
+        Path('test-results').mkdir(exist_ok=True)
+        page.screenshot(path=f'test-results/customer-entry-ad-preview-{lang}.png',full_page=True)
         browser.close()
