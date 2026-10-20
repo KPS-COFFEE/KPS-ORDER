@@ -80,3 +80,12 @@ def test_same_verified_phone_keeps_addresses_wallets_and_accounts_separate(dual)
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM customer_identity_links').fetchone()['n'] == 0
         assert c.execute('SELECT count(*) n FROM customer_addresses').fetchone()['n'] == 2
+
+
+@pytest.mark.postgres
+def test_restore_manifest_matches_all_applied_multibrand_migrations(dual):
+    from app.exports import migration_manifest
+    with db.tx() as c:
+        applied = c.execute('SELECT version,sha256 FROM schema_migrations ORDER BY version').fetchall()
+    assert migration_manifest() == applied
+    assert any(row['version'] == '002_customer_brand_ownership.sql' for row in applied)

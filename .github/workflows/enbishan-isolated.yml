@@ -64,7 +64,7 @@ jobs:
           tests/test_engagement_capacity_workflow.py tests/test_hosting_report_check.py
           --junitxml=test-results/enbishan/engagement-transactions.xml
       - name: Real dual-brand, financial, security and mobile acceptance
-        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_enbishan_mobile_browser.py tests/test_customer_engagement_browser.py tests/test_enbishan_menu_browser.py
+        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_enbishan_mobile_browser.py tests/test_customer_engagement_browser.py tests/test_enbishan_menu_browser.py tests/test_shift_vehicle.py tests/test_fuel_exceptions.py tests/test_customer_language.py
       - name: KPS regression (existing failures remain failures)
         if: ${{ !cancelled() }}
         run: >-

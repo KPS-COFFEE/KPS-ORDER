@@ -275,7 +275,7 @@ def migration_manifest():
     from . import multibrand
     if multibrand.enabled():
         multibrand.isolation_guard()
-        paths.append(db.ROOT / 'app' / 'multibrand_migrations' / '001_enbishan_isolated.sql')
+        paths.extend((db.ROOT / 'app' / 'multibrand_migrations').glob('*.sql'))
     return [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
             for path in sorted(paths, key=lambda path: path.name)]
 

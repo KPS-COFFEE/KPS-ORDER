@@ -211,7 +211,7 @@ def driver_tasks(user=Depends(auth.require_roles('driver'))):
     result = []
     for brand, principal in principals:
         if principal:
-            for task in operations.tasks(user=principal)['tasks']:
+            for task in operations.tasks(order_id=None, user=principal)['tasks']:
                 result.append(dict(task, brand_id=brand['id'], brand_name=brand['name']))
     return {'tasks': result}
 
