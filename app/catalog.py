@@ -653,6 +653,7 @@ def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list
 
 
 def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
+    now = service_hours.now_riyadh()
     lock = ' FOR SHARE' if for_update else ''
     with conn.pipeline():
         brand_query = conn.execute('SELECT id,settings FROM brands WHERE id=%s AND active' + lock, (body.brand_id,))
@@ -660,21 +661,21 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     brand, branch = brand_query.fetchone(), branch_query.fetchone()
     if not brand or not branch:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع أو البراند غير موجود.')
-    available, code, reason = branch_service(branch, body.service, brand_settings=brand['settings'])
+    available, code, reason = branch_service(branch, body.service, now=now, brand_settings=brand['settings'])
     if not available:
         raise db.error(409, code, reason)
     selected_branch = branch
     contains_khaliya = body.brand_id == 'kps' and any(item.product_id in KHALIYA_SOURCES.values() for item in body.items)
     from . import morning_delivery
-    morning = body.service == 'delivery' and morning_delivery.active(selected_branch, brand['settings'])
+    morning = body.service == 'delivery' and morning_delivery.active(selected_branch, brand['settings'], now)
     if morning:
         candidates=conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no'+lock,(body.brand_id,)).fetchall()
-        branch=morning_delivery.target(candidates,selected_branch,brand['settings'],khaliya=contains_khaliya)
+        branch=morning_delivery.target(candidates,selected_branch,brand['settings'],khaliya=contains_khaliya,now=now)
     elif contains_khaliya and body.service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
         branch = khaliya_branch(conn, lock)
         if not is_khaliya_branch(branch):
             raise db.error(409, 'PRODUCT_UNAVAILABLE', 'الخلية غير متاحة حاليًا.')
-        ready, code, reason = branch_service(branch, body.service, brand_settings=brand['settings'])
+        ready, code, reason = branch_service(branch, body.service, now=now, brand_settings=brand['settings'])
         if not ready:
             raise db.error(409, code, reason)
     required_methods={'cash','card'} if body.payment_method=='split' else {body.payment_method}

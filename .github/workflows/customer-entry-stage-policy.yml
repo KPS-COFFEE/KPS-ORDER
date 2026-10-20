@@ -31,7 +31,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/customer.js && node --check public/ops.js && node --check public/assets/experience-policy.js && node --check public/assets/first-order-gift.js && node --check public/assets/banner-device-preview.js && node --check public/assets/morning-delivery.js
-      - run: python -m pytest -q tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_manager_acceptance_postgres.py tests/test_banner_device_preview_browser.py tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py tests/test_core.py tests/test_experience_policy.py tests/test_experience_policy_postgres.py tests/test_customer_progress.py tests/test_customer_progress_postgres.py tests/test_experience_entry_browser.py --junitxml=test-results/customer-entry.xml
+      - run: python -m pytest -q tests/test_morning_policy_browser.py tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_manager_acceptance_postgres.py tests/test_banner_device_preview_browser.py tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py tests/test_core.py tests/test_experience_policy.py tests/test_experience_policy_postgres.py tests/test_customer_progress.py tests/test_customer_progress_postgres.py tests/test_experience_entry_browser.py --junitxml=test-results/customer-entry.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

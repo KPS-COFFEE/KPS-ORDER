@@ -26,9 +26,9 @@ def test_owner_policy_scope_version_replay_and_pause(ops, monkeypatch):
     with db.tx() as c:
         c.execute("UPDATE users SET active=false WHERE id='ops-manager'")
     body['expected_version']=1
-    assert actor('owner').put('/api/morning-delivery/policy', json=body).status_code == 422
+    assert actor('owner').put('/api/morning-delivery/policy', json=body, headers={'Idempotency-Key':uuid4().hex}).status_code == 422
     body['policy']['enabled']=False
-    paused=actor('owner').put('/api/morning-delivery/policy', json=body)
+    paused=actor('owner').put('/api/morning-delivery/policy', json=body, headers={'Idempotency-Key':uuid4().hex})
     assert paused.status_code == 200, paused.text
     assert paused.json()['existing_orders_preserved']
 
@@ -44,11 +44,13 @@ def test_morning_shift_inheritance_duty_and_assignment_revocation(ops, monkeypat
     driver=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager['id']})['shift']
     assert driver['delivery_window_snapshot']['period']=='morning'
     with db.tx() as c: morning_delivery.require_duty(c,'kps','kps-branch-1')
-    oid=order()
+    oid='morning-'+uuid4().hex
     with db.tx() as c:
-        c.execute("UPDATE orders SET preparation_status='new',snapshot=snapshot||%s WHERE id=%s",(db.json({'delivery_period':'morning'}),oid))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) "
+                  "VALUES(%s,'kps','kps-branch-1','ops-customer','delivery','new','pending','cash',1000,0,1000,%s,%s)",
+                  (oid,db.json({'items':[],'delivery_period':'morning','delivery_workflow':'branch_fulfillment'}),db.json({'name':'اختبار'})))
     path=f'/api/orders/{oid}/assign';body={'driver_shift_id':driver['id'],'accept_order':True}
-    assert actor('manager').post(path,json=body).status_code==409
+    assert actor('manager').post(path,json=body,headers={'Idempotency-Key':uuid4().hex}).status_code==409
     with db.tx() as c:c.execute("UPDATE orders SET preparation_status='ready' WHERE id=%s",(oid,))
     key=uuid4().hex
     assigned=post('manager',path,body,key=key)
