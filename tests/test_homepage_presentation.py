@@ -14,10 +14,15 @@ from test_browser import _context, _owner_login, _staff, chromium_browser, live_
 from tests.sms_policy_helpers import sms_step_up
 
 
-def _approve_advertising(client, mutate, monkeypatch):
+def _owner_proof(client, monkeypatch):
     with db.tx() as conn:
         principal = conn.execute("SELECT * FROM users WHERE id='admin-test-owner'").fetchone()
     sms_step_up(client, principal, monkeypatch)
+
+
+def _approve_advertising(client, mutate, monkeypatch, *, proof_ready=False):
+    if not proof_ready:
+        _owner_proof(client, monkeypatch)
     current = client.get('/api/advertising/policy').json()['policy']
     approved = mutate('PUT', '/api/advertising/policy', {
         'advertising_enabled': True, 'expected_version': current['version'],
@@ -50,6 +55,9 @@ def test_homepage_presentation_validation_and_safe_defaults():
 @pytest.mark.postgres
 def test_owner_settings_public_filtered_quote_and_preservation(owner, monkeypatch):
     client, mutate = owner
+    # Authentication legitimately changes sessions/OTP records. Capture the
+    # full preservation baseline after proof, before any presentation mutation.
+    _owner_proof(client, monkeypatch)
     before = client.get('/api/admin/config').json()
     with db.tx() as conn:
         fingerprint = db.preservation_snapshot(conn)
@@ -69,7 +77,7 @@ def test_owner_settings_public_filtered_quote_and_preservation(owner, monkeypatc
     result = mutate('PATCH', '/api/admin/settings', {'homepage_presentation': changed})
     assert result.status_code == 200, result.text
     assert client.get('/api/banners').json()['presentation']['ticker_lines'] == []
-    _approve_advertising(client, mutate, monkeypatch)
+    _approve_advertising(client, mutate, monkeypatch, proof_ready=True)
     visible = client.get('/api/banners').json()['presentation']
     assert visible['ticker_lines'] == changed['ticker_lines']
     assert visible['ticker_seconds'] == 36
