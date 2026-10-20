@@ -187,7 +187,23 @@ def _owner_login(context, base, owner):
     return headers
 
 
+def _approve_advertising(context, base, headers):
+    """Opt in through actual owner proof; production advertising stays off."""
+    sent = context.request.post(base + '/api/identity/owner/sms/request', headers=headers)
+    assert sent.ok, sent.text()
+    proof = context.request.post(base + '/api/identity/owner/sms/verify', headers=headers,
+        data={'challenge_id': sent.json()['challenge_id'], 'code': '0123'})
+    assert proof.ok, proof.text()
+    policy = context.request.get(base + '/api/advertising/policy').json()['policy']
+    approved = context.request.put(base + '/api/advertising/policy',
+        headers={**headers, 'Idempotency-Key': 'browser-ads-' + secrets.token_hex(16)},
+        data={'advertising_enabled': True, 'expected_version': policy['version'],
+              'reason': 'Explicit isolated owner advertising acceptance'})
+    assert approved.ok, approved.text()
+
+
 def _test_banner(context, base, headers):
+    _approve_advertising(context, base, headers)
     catalog = json.loads((ROOT / 'data/catalog.json').read_text())
     product = next(product for product in catalog['products'] if product['id'] == 'kps-01')
     source = ROOT / 'public' / product['image_url'].lstrip('/')
@@ -408,6 +424,9 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         owner = _staff()
         owner_context, ops, owner_errors = _context(chromium_browser, live_app)
         _staff_ui_login(ops,owner)
+        session = owner_context.request.get(live_app + '/api/session').json()
+        _approve_advertising(owner_context, live_app,
+            {'Origin': live_app, 'X-CSRF-Token': session['csrf_token']})
         expect(ops.locator('#dispatch-orders')).to_be_visible()
         _capture(ops, 'operations-dashboard-synthetic-order')
         ops.locator('#navigation [data-page=admin]').click()

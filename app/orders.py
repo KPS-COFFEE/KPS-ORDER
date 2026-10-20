@@ -409,6 +409,9 @@ def search_phone(value):
     """Only a complete contact number is searchable; never a prefix oracle."""
     import re
     compact=re.sub(r'[\s()-]','',value.translate(auth.IDENTITY_DIGITS))
+    # Staff lookup keeps its explicit full-number boundary even though customer
+    # registration also accepts the nine-digit local mobile shorthand.
+    if len(compact)==9 and compact.startswith('5'):return None
     if compact.startswith('9665') and len(compact)==12:compact='+'+compact
     try:phone=auth.normalize_phone(compact)
     except HTTPException:return None
