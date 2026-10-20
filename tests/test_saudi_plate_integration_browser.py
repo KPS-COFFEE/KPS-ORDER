@@ -38,6 +38,13 @@ def test_existing_private_vehicle_bilingual_edit_preserves_fleet_and_history(liv
         page.add_init_script(f"localStorage.setItem('kps_ops_lang','{language}')")
         page.set_viewport_size({'width': width, 'height': 900})
         page.goto(live_app + '/ops')
+        if width <= 650:
+            menu = page.locator('.dispatch-nav-toggle')
+            expect(menu).to_be_visible()
+            expect(menu).to_have_attribute('aria-expanded', 'false')
+            menu.click()
+            expect(menu).to_have_attribute('aria-expanded', 'true')
+            expect(page.locator('#navigation')).to_be_visible()
         page.locator('#navigation [data-page=fleet]').click()
         card = page.locator(f'[data-fleet-card="{car["id"]}"]')
         expect(card.locator('[data-saudi-plate]')).to_have_count(1)
@@ -78,3 +85,4 @@ def test_existing_private_vehicle_bilingual_edit_preserves_fleet_and_history(liv
         assert not errors, errors
     finally:
         context.close()
+
