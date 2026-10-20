@@ -11,12 +11,15 @@ pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
 
 
 @pytest.mark.parametrize('language', ['ar', 'en'])
-def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_access(live_app, chromium_browser, language):
+@pytest.mark.parametrize('role', ['delivery_manager', 'admin', 'owner', 'driver'])
+def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_access(live_app, chromium_browser, language, role):
     from playwright.sync_api import expect
 
     owner = _staff()
     targets = []
-    for index, role in enumerate(('delivery_manager', 'admin', 'owner', 'driver')):
+    # Each role gets its own isolated account/database. A single owner verifying
+    # all roles plus an invalid code legitimately exceeds the three-attempt limit.
+    for index, role in enumerate((role,)):
         target = _staff(role)
         target.update(email=f'resend-{role}@example.invalid', role=role)
         with db.tx() as conn:
@@ -30,7 +33,7 @@ def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_a
     try:
         response = context.request.post(live_app + f"/api/identity/staff/{targets[0]['id']}/resend", headers=headers, data={})
         assert response.status == 403
-        assert response.json()['detail']['code'] == 'OWNER_STEP_UP_REQUIRED'
+        assert response.json()['detail']['code'] == ('WORK_SMS_REQUIRED' if role == 'driver' else 'OWNER_STEP_UP_REQUIRED')
         page.goto(live_app + '/ops')
         if language == 'en':
             page.get_by_role('button', name='English', exact=True).click()
@@ -78,7 +81,9 @@ def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_a
                         assert conn.execute('SELECT invitation_status FROM users WHERE id=%s', (target['id'],)).fetchone()['invitation_status'] == 'draft'
                 sms_dialog.locator('input[name=code]').fill('0123')
                 with page.expect_response(lambda response: response.url.endswith(f"/api/identity/staff/{target['id']}/resend")) as resend:
-                    sms_dialog.locator('button[type=submit]').click()
+                    with page.expect_response(lambda response: response.url.endswith('/api/identity/owner/sms/verify')) as verification:
+                        sms_dialog.locator('button[type=submit]').click()
+                    assert verification.value.status == 200, (role, verification.value.status, verification.value.text())
                 expect(sms_dialog).to_have_count(0)
             assert resend.value.status == 403
             assert resend.value.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
