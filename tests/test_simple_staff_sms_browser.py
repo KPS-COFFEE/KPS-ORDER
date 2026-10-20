@@ -19,6 +19,8 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
         page.add_init_script(f"localStorage.setItem('kps_ops_lang','{language}')")
         page.set_viewport_size({'width':width,'height':900})
         page.goto(live_app+'/ops',wait_until='networkidle')
+        if not page.locator('#navigation [data-page=admin]').is_visible():
+            page.locator('.dispatch-nav-toggle').click()
         page.locator('#navigation [data-page=admin]').click()
         page.locator('[data-action=admin-tab][data-tab=users]').click()
         page.locator(f'[data-action=staff-permissions][data-id="{driver["id"]}"]').click()
@@ -85,6 +87,8 @@ def test_staff_sms_form_catalog_and_cross_role_printer_access(live_app,chromium_
         driver_page.add_init_script(f"localStorage.setItem('kps_ops_lang','{language}')")
         driver_page.set_viewport_size({'width':width,'height':900})
         driver_page.goto(live_app+'/ops',wait_until='networkidle')
+        if not driver_page.locator('#navigation [data-page=printers]').is_visible():
+            driver_page.locator('.dispatch-nav-toggle').click()
         expect(driver_page.locator('#navigation [data-page=printers]')).to_be_visible()
         driver_page.locator('#navigation [data-page=printers]').click()
         expect(driver_page.locator('#page-heading h1')).to_have_text('إدارة الطابعات' if language=='ar' else 'Printer management')

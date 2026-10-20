@@ -733,16 +733,24 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         _submit_modal(driver)
         expect(driver.locator('[data-action=collect]')).to_be_visible()
         driver.locator('[data-action=collect]').click()
-        driver.locator('#modal-body input[name=tendered]').fill('20.00')
-        expect(driver.locator('#change-preview')).to_contain_text('١٠')
-        _capture(driver,'driver-actual-cash-collection-and-change')
-        _submit_modal(driver,check=['confirmed'])
+        # The existing simplified driver UI records the exact amount due;
+        # tendered/change editing belongs to the non-driver collection UI.
+        expect(driver.locator('#modal-body input[name=tendered]')).to_have_count(0)
+        expect(driver.locator('#modal-body input[name=confirmed]')).to_have_count(0)
+        expect(driver.locator('#modal-body select[name=method]')).to_have_value('cash')
+        expect(driver.locator('#change-preview')).to_contain_text('٠')
+        _capture(driver,'driver-actual-cash-collection')
+        with driver.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/collect')) as paid:
+            _submit_modal(driver)
+        assert paid.value.status==200,paid.value.text()
+        assert paid.value.request.post_data_json=={'method':'cash','amount_halalas':1000,'tendered_halalas':1000,'reference':''}
         driver.locator('[data-action=delivered]').click()
         _attach_task_photo(driver)
         _submit_modal(driver,{'proof':'إثبات تسليم اختبار معزول؛ لا يوجد تسليم فعلي.'})
         with db.tx() as conn:
             collection=conn.execute('SELECT * FROM collections WHERE order_id=%s',(order_id,)).fetchone()
-            assert collection['amount_halalas']==1000 and collection['tendered_halalas']==2000 and collection['change_halalas']==1000
+            assert collection['amount_halalas']==1000 and collection['tendered_halalas']==1000 and collection['change_halalas']==0
+            assert conn.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(order_id,)).fetchone()['n']==1
             assert conn.execute('SELECT delivery_status FROM orders WHERE id=%s',(order_id,)).fetchone()['delivery_status']=='delivered'
             photos=conn.execute('SELECT stage,used_at FROM delivery_photos WHERE order_id=%s ORDER BY stage',(order_id,)).fetchall()
             assert len(photos)==2 and {row['stage'] for row in photos}=={'picked_up','delivered'} and all(row['used_at'] for row in photos)

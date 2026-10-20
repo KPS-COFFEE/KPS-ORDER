@@ -24,9 +24,16 @@ def chromium_browser():
 
 
 @pytest.fixture
-def phone_app(database,monkeypatch):
+def phone_app(database,monkeypatch,request):
     setup_provider(monkeypatch)
-    owner=_make_user('owner',username='synthetic_phone_owner',password='Synthetic-Phone-Only-42')
+    brand = getattr(request, 'param', 'legacy-owner-phone')
+    if brand != 'kps':
+        # Preserve the supported non-KPS legacy binding flow without disabling KPS policy.
+        monkeypatch.setenv('EMPLOYEE_SMS_LOGIN_ENABLED', 'false')
+        with db.tx() as conn:
+            conn.execute('INSERT INTO brands(id,name) VALUES(%s,%s)', (brand, 'Synthetic legacy owner phone'))
+            conn.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled,delivery_proven_at,sms_provider) VALUES(%s,'sms','active',true,now(),'tawked')", (brand,))
+    owner=_make_user('owner',brand=brand,username='synthetic_phone_owner',password='Synthetic-Phone-Only-42')
     from app.main import app
     with TestClient(app) as client:token,csrf=_authenticate(client,owner)
     with socket.socket() as reservation:
@@ -51,7 +58,7 @@ def phone_app(database,monkeypatch):
 
 
 @pytest.mark.parametrize('lang',['ar','en'])
-def test_owner_links_mobile_without_email_and_stays_signed_in(phone_app,chromium_browser,lang):
+def test_legacy_owner_links_mobile_without_email_and_stays_signed_in(phone_app,chromium_browser,lang):
     from playwright.sync_api import expect
     base,owner,token,csrf=phone_app
     context,page,errors=_context(chromium_browser,base)
@@ -71,7 +78,33 @@ def test_owner_links_mobile_without_email_and_stays_signed_in(phone_app,chromium
             row=conn.execute('SELECT * FROM users WHERE id=%s',(owner['id'],)).fetchone()
             assert row['phone']=='+966507778899' and row['phone_sms_verified_at']
             assert row['email_verified_at'] is None and row['role']=='owner' and row['active']
-        session=context.request.get(base+'/api/session').json()
+        session=context.request.get(base+'/api/session',headers={'X-KPS-Context':'work'}).json()
+        assert session['user']['id']==owner['id'] and session['user']['role']=='owner'
+        assert not errors,errors
+    finally:context.close()
+
+
+@pytest.mark.parametrize('phone_app', ['kps'], indirect=True)
+def test_kps_owner_password_binding_requires_sms_and_preserves_identity(phone_app,chromium_browser):
+    from playwright.sync_api import expect
+    base,owner,token,csrf=phone_app
+    context,page,errors=_context(chromium_browser,base)
+    try:
+        context.add_cookies([{'name':auth.COOKIE,'value':token,'url':base},{'name':auth.CSRF_COOKIE,'value':csrf,'url':base}])
+        page.goto(base+'/owner-phone',wait_until='networkidle')
+        page.locator('input[name=phone]').fill('0507778899')
+        page.locator('input[name=password]').fill('Synthetic-Phone-Only-42')
+        with page.expect_response(lambda response: response.url.endswith('/api/identity/step-up')) as proof:
+            page.locator('#send').click()
+        assert proof.value.status == 403
+        assert proof.value.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
+        expect(page.locator('#verify')).not_to_be_visible()
+        with db.tx() as conn:
+            row=conn.execute('SELECT * FROM users WHERE id=%s',(owner['id'],)).fetchone()
+            assert row['phone'] is None and row['phone_sms_verified_at'] is None
+            assert row['role']=='owner' and row['active']
+            assert conn.execute('SELECT count(*) n FROM owner_phone_challenges WHERE user_id=%s',(owner['id'],)).fetchone()['n']==0
+        session=context.request.get(base+'/api/session',headers={'X-KPS-Context':'work'}).json()
         assert session['user']['id']==owner['id'] and session['user']['role']=='owner'
         assert not errors,errors
     finally:context.close()

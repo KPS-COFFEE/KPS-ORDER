@@ -75,8 +75,8 @@ jobs:
       # No provider credentials or intercepted API responses are used.
       TEST_BROWSER: "1"
       RELEASE_FULL_CI: "1"
-      ROLLBACK_BASELINE_DIR: ${{ runner.temp }}/kps-rollback-baseline
-      ROLLBACK_COMPAT_DIR: ${{ runner.temp }}/kps-rollback-compat
+      ROLLBACK_BASELINE_DIR: /tmp/kps-rollback-baseline
+      ROLLBACK_COMPAT_DIR: /tmp/kps-rollback-compat
     steps:
       - uses: actions/checkout@v4
         with:

@@ -8,6 +8,16 @@ from tests.browser_sms_helpers import sms_browser_app as live_app, complete_owne
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit real Chromium opt-in required')]
 
 
+
+def _open_staff_navigation(page):
+    """Use the compact operations-room menu before normal navigation."""
+    from playwright.sync_api import expect
+    toggle = page.locator('.dispatch-nav-toggle')
+    if toggle.is_visible() and toggle.get_attribute('aria-expanded') != 'true':
+        toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+    expect(page.locator('#navigation')).to_be_visible()
+
 @pytest.mark.parametrize(('lang','width'),[('ar',390),('ar',768),('ar',1280),('en',390),('en',768),('en',1280)])
 def test_problem_status_event_rows_and_conversation_cards(live_app,chromium_browser,lang,width):
     from playwright.sync_api import expect
@@ -34,6 +44,7 @@ def test_problem_status_event_rows_and_conversation_cards(live_app,chromium_brow
         page.route('**/api/conversations/synthetic-chat/messages?*',lambda r:r.fulfill(json={'conversation':card,'messages':[]}))
         page.set_viewport_size({'width':width,'height':950})
         page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=orders]').click()
         status=page.locator('.order-summary-status')
         expect(status).to_contain_text('يتطلب إجراء مدير التوصيل' if lang=='ar' else 'Delivery manager action required')
@@ -51,6 +62,7 @@ def test_problem_status_event_rows_and_conversation_cards(live_app,chromium_brow
         expect(page.locator('#modal input[name=confirmed]')).not_to_be_checked()
         assert page.locator('#modal').evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
         page.locator('#modal .modal-head button').click()
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=chat]').click()
         expect(page.locator('.chat-layout')).to_have_class('chat-layout inbox-only')
         expect(page.locator('.conversation-customer')).to_have_text(card['customer_name'])
@@ -121,6 +133,7 @@ def test_order_table_full_text_and_responsive_layout(live_app,chromium_browser,l
         page.route('**/api/orders?*',lambda route:route.fulfill(json={'orders':[row],'next_offset':None}))
         page.set_viewport_size({'width':width,'height':950})
         page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=orders]').click()
         table=page.locator('.order-table')
         expect(table.locator('.order-summary-card')).to_have_count(1)
@@ -147,6 +160,7 @@ def test_staff_cards_and_live_partial_customer_search(live_app,chromium_browser,
         page.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
         page.set_viewport_size({'width':width,'height':950})
         page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=admin]').click()
         page.locator('[data-action=admin-tab][data-tab=users]').click()
         card=page.locator(f'.staff-card[data-staff-id="{driver["id"]}"]')
@@ -155,6 +169,7 @@ def test_staff_cards_and_live_partial_customer_search(live_app,chromium_browser,
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         assert card.evaluate('(el)=>el.scrollWidth<=el.clientWidth')
         page.screenshot(path=str(ARTIFACTS/f'staff-cards-{lang}-{width}.png'),full_page=True)
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=customers]').click()
         expect(page.locator('#customer-records-search select')).to_have_value('')
         page.locator('#customer-records-search [name=phone]').fill('123')
@@ -177,6 +192,7 @@ def test_add_staff_sms_provider_failure_can_retry_without_losing_fields(live_app
         def unavailable(*args,**kwargs):raise db.error(503,'OTP_PROVIDER_FAILURE','تعذر الاتصال بمزود التحقق. حاول لاحقًا.')
         monkeypatch.setattr(sms_verification,'start',unavailable)
         page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=admin]').click()
         page.locator('[data-action=admin-tab][data-tab=users]').click()
         page.locator('[data-action=invite-staff]').click()
@@ -216,6 +232,7 @@ def test_driver_card_vehicle_transfer_ui(live_app,chromium_browser,width):
             c.execute("UPDATE users SET display_name='سائق جديد للاختبار' WHERE id=%s",(target['id'],))
         page.set_viewport_size({'width':width,'height':950})
         page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=drivers]').click()
         page.locator(f'.staff-card[data-staff-id="{target["id"]}"] [data-action=staff-vehicle]').click()
         form=page.locator('#modal form')
@@ -259,6 +276,7 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
         context.add_init_script("localStorage.setItem('kps_ops_lang', '" + lang + "')")
         page.set_viewport_size({'width':width, 'height':1000})
         page.goto(live_app + '/ops', wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=orders]').click()
         row = page.locator('[data-order-id="' + oid + '"]')
         expect(row).to_be_visible()
@@ -285,6 +303,7 @@ def test_real_navigation_and_complete_order_rows(live_app, chromium_browser, lan
         # Follow the same normal navigation as the reported failure, with no
         # artificial browser-wide authentication header.
         with page.expect_response(lambda r: '/api/driver-work-hours/report?' in r.url) as loaded:
+            _open_staff_navigation(page)
             page.locator('#navigation a[href="/driver-hours"]').click()
         assert loaded.value.status == 200
         expect(page.locator('#hours-kpis article')).to_have_count(4)
@@ -361,6 +380,7 @@ def test_real_delivery_manager_resolves_note_from_order_card(live_app,chromium_b
         context.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
         page.set_viewport_size({'width':1280,'height':1000})
         page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=orders]').click()
         card=page.locator(f'[data-order-id="{oid}"]')
         expect(card.locator('.order-summary-notes')).to_contain_text(reason)
@@ -377,3 +397,4 @@ def test_real_delivery_manager_resolves_note_from_order_card(live_app,chromium_b
             assert c.execute("SELECT count(*) n FROM order_events WHERE order_id=%s AND event_type='task.picked_up' AND actor_id=%s",(oid,manager['id'])).fetchone()['n']==1
         assert not errors,errors
     finally:context.close()
+
