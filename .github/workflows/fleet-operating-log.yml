@@ -7,6 +7,12 @@ on:
     paths: [app/fleet.py, app/shift_vehicle.py, migrations/040_daily_vehicle_operating_log.sql, public/assets/fleet.js, public/assets/saudi-plate.js, public/assets/saudi-plate.css, public/ops.css, public/ops.html, tests/test_fleet.py, tests/test_fleet_browser.py, tests/test_saudi_plate.py, tests/test_saudi_plate.cjs, tests/test_saudi_plate_component_browser.py, tests/test_saudi_plate_integration_browser.py, .github/workflows/fleet-operating-log.yml]
 permissions:
   contents: read
+concurrency:
+  # Superseded development only; pin release PRs with ci-preserve-certification.
+  # No acceptance steps, required contexts or evidence rules are changed.
+  group: fleet-operating-log-ci-v2-${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-preserve-certification') && format('pr-{0}', github.event.pull_request.number) || format('isolated-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-preserve-certification') }}
+
 jobs:
   acceptance:
     runs-on: ubuntu-latest
