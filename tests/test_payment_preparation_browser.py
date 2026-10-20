@@ -12,6 +12,7 @@ from test_browser import (ARTIFACTS, _context, _owner_login, _staff,
 @pytest.mark.parametrize('lang,width', [('ar', 390), ('en', 1280)])
 def test_owner_prepares_multiple_providers_without_customer_activation(live_app, chromium_browser, lang, width):
     context, page, errors = _context(chromium_browser, live_app)
+    context.set_extra_http_headers({'X-KPS-Context':'work'})
     context.add_init_script("localStorage.setItem('kps_ops_lang', '" + lang + "')")
     _owner_login(context, live_app, _staff())
     provider_requests = []
@@ -21,7 +22,10 @@ def test_owner_prepares_multiple_providers_without_customer_activation(live_app,
         page.set_viewport_size({'width': width, 'height': 900})
         page.goto('/ops')
         expect(page.locator('#app-shell')).to_be_visible()
-        page.locator('#navigation [data-page=admin]').click()
+        admin_nav = page.locator('#navigation [data-page=admin]')
+        if not admin_nav.is_visible():
+            page.locator('.dispatch-nav-toggle').click()
+        admin_nav.click()
         page.locator('[data-action=admin-tab][data-tab=settings]').click()
         page.locator('[data-action=online-payment-setup]').click()
         form = page.locator('#payment-preparation-form')
@@ -58,3 +62,4 @@ def test_owner_prepares_multiple_providers_without_customer_activation(live_app,
         assert not errors and not provider_requests
     finally:
         context.close()
+

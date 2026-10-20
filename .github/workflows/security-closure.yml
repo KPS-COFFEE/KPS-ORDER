@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verification-scope:
-    if: (github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020')
+    if: (github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020')
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
@@ -27,7 +27,7 @@ jobs:
         \ then\n  echo 'final_three=true' >> \"$GITHUB_OUTPUT\"\nelse\n  echo 'final_three=false' >> \"$GITHUB_OUTPUT\"\
         \nfi\n"
   host-security-and-browser:
-    if: (github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020') && needs.verification-scope.outputs.final_three
+    if: (github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020') && needs.verification-scope.outputs.final_three
       != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -127,7 +127,7 @@ jobs:
         if [ -n "$browser" ]; then export TEST_CHROMIUM_EXECUTABLE="$browser"; fi
 
         python -m pytest -q tests/test_simple_staff_sms_browser.py tests/test_owner_staff_management.py tests/test_printer_setup_browser.py
-        tests/test_split_payment_browser.py tests/test_employee_permissions_browser.py tests/test_parallel_visual_acceptance.py tests/test_evidence_memory_browser.py --junitxml=evidence/current-operational-browser.xml | tee evidence/current-operational-browser.log
+        tests/test_split_payment_browser.py tests/test_employee_permissions_browser.py tests/test_parallel_visual_acceptance.py tests/test_evidence_memory_browser.py tests/test_driver_gps_browser.py --junitxml=evidence/current-operational-browser.xml | tee evidence/current-operational-browser.log
 
         python - <<''CHECK''
 
@@ -155,7 +155,7 @@ jobs:
         role:
         - candidate
         - rollback
-    if: (github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020') && needs.verification-scope.outputs.final_three
+    if: (github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020') && needs.verification-scope.outputs.final_three
       != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -245,6 +245,7 @@ jobs:
         \ \\\n  --mount \"type=bind,src=$PWD/requirements.txt,dst=/app/requirements.txt,readonly\" \\\n  --mount\
         \ \"type=bind,src=$PWD/.github/workflows/software-hardening.yml,dst=/app/.github/workflows/software-hardening.yml,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tools/container_entrypoint.py,dst=/app/tools/container_entrypoint.py,readonly\"\
+        \ \\\n  --mount \"type=bind,src=$PWD/tools/rollback_application_overlay,dst=/app/tools/rollback_application_overlay,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tools/profile_checkout.py,dst=/app/tools/profile_checkout.py,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tools/hardening_load.py,dst=/app/tools/hardening_load.py,readonly\"\
         \ \\\n  --mount \"type=bind,src=$(readlink -f \"$(command -v node)\"),dst=/usr/local/bin/node,readonly\"\
@@ -451,4 +452,6 @@ jobs:
     - agent/print-alert-actions-20261019
     - agent/enbishan-manual-closure-20261019
     - agent/ops-actionable-alerts-20261020
+    - agent/staff-operations-room-20261020
+    - agent/customer-journey-stage-policy-20261020
   workflow_dispatch: null

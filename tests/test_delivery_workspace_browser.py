@@ -5,7 +5,18 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 import pytest
-from test_experience_entry_browser import static_customer
+import functools
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+
+@pytest.fixture(scope='module')
+def static_customer():
+    class Handler(SimpleHTTPRequestHandler):
+        def log_message(self,*args): pass
+    server=ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Handler,directory=str(Path(__file__).resolve().parents[1]/'public')))
+    worker=Thread(target=server.serve_forever,daemon=True);worker.start()
+    yield f'http://127.0.0.1:{server.server_port}'
+    server.shutdown();server.server_close();worker.join(timeout=5)
 
 pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Chromium run')
 
@@ -28,7 +39,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
                     'delivery_workflow':'branch_fulfillment' if period=='morning' else 'manager_dispatch','items':[]}}
     orders=[order('morning','morning','new'),order('new-evening','evening','new'),order('late','evening','accepted')]
     conversation={'id':'chat1','order_reference':'late','customer_name':'عميل تجريبي','route':'delivery','status':'open','unread_count':1}
-    writes=[]
+    writes=[];order_queries=[]
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True)
         context=browser.new_context(viewport={'width':width,'height':1000})
@@ -49,8 +60,14 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
             if path=='/api/session':payload={'user':user,'csrf_token':'synthetic-token'}
             elif path=='/api/catalog':payload={'brand':{'id':'kps','name':'KPS COFFEE','theme':{}}}
             elif path=='/api/branches':payload={'branches':[{'id':'branch','name':'المروج','branch_no':1,'city':'حفر الباطن','brand_id':'kps'}]}
-            elif path=='/api/customer-map/config':payload={'enabled':False,'provider':'mapbox'}
-            elif path=='/api/orders':payload={'orders':orders,'next_offset':None}
+            elif path=='/api/operations/map-config':payload={'enabled':False,'provider':'mapbox'}
+            elif path=='/api/orders/new-evening':payload={'order':orders[1]}
+            elif path=='/api/shifts':payload={'shifts':[{'id':'driver-shift','kind':'driver','status':'open','display_name':'سائق تجريبي'}]}
+            elif path=='/api/orders/new-evening/assign':
+                orders[1]['delivery_status']='assigned';payload={'task':{'id':'task1'}}
+            elif path=='/api/orders':
+                order_queries.append(req.url)
+                payload={'orders':orders,'next_offset':None,'workspace_counts':{'all':{'total':103,'new':102,'preparing':1},'current':{'total':3,'new':2,'preparing':1}}}
             elif path=='/api/shifts/current':payload={'shifts':[shift]}
             elif path=='/api/operations/drivers':payload={'drivers':[{'id':'driver','display_name':'سائق تجريبي','branch_ids':['branch'],'availability':'available','readiness_action':'ready','active_tasks':0,'shift_id':'driver-shift','shift_status':'open','shift_available':True}]}
             elif path=='/api/conversations':payload={'conversations':[conversation]}
@@ -62,6 +79,24 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.goto(static_customer+'/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
         expect(page.locator('#dispatch-orders article')).to_have_count(3)
+        expect(page.locator('[data-count-scope=all] [data-stage=""] b')).to_have_text('١٠٣' if lang=='ar' else '103')
+        expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('[data-count-scope=current] [data-stage=""] b')).to_have_text('٣' if lang=='ar' else '3')
+        counter_geometry=page.evaluate("""()=>{
+          const all=document.querySelector('[data-count-scope=all]').getBoundingClientRect();
+          const current=document.querySelector('[data-count-scope=current]').getBoundingClientRect();
+          return {allBottom:all.bottom,currentTop:current.top,allLeft:all.left,currentLeft:current.left,
+                  allWidth:all.width,currentWidth:current.width};
+        }""")
+        assert counter_geometry['currentTop'] >= counter_geometry['allBottom'],counter_geometry
+        assert abs(counter_geometry['allLeft']-counter_geometry['currentLeft']) <= 1,counter_geometry
+        assert abs(counter_geometry['allWidth']-counter_geometry['currentWidth']) <= 1,counter_geometry
+        assert 'dispatch_workspace=true' in order_queries[0] and 'dispatch_scope=current' in order_queries[0]
+        page.locator('[data-count-scope=all] [data-stage=""]').click()
+        expect(page.locator('[data-count-scope=all] [data-stage=""]')).to_have_attribute('aria-pressed','true')
+        assert 'dispatch_scope=all' in order_queries[-1]
+        page.locator('[data-count-scope=current] [data-stage=""]').click()
+        expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
         expect(page.locator('#dispatch-map')).to_be_visible()
         expect(page.locator('#dispatch-map .dispatch-map-state')).to_contain_text(
             'الخريطة تحتاج تفعيل Mapbox' if lang=='ar' else 'Mapbox activation required')
@@ -71,6 +106,12 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         # Main operating area must be reachable immediately, not pushed below a
         # long vertical menu and stacked status cards on desktop.
         expect(page.locator('body')).to_have_class(re.compile(r'\bdelivery-room\b'))
+        # The temporary admin request panel must never push the delivery map down.
+        page.locator('#driver-checks').evaluate("host=>{host.innerHTML='<section class=panel><button>Temporary fuel checks</button><p>Temporary owner tool</p></section>';}")
+        expect(page.locator('#driver-checks')).not_to_be_visible()
+        page.locator('body').evaluate("body=>body.classList.remove('delivery-room')")
+        expect(page.locator('#driver-checks')).to_be_visible()
+        page.locator('body').evaluate("body=>body.classList.add('delivery-room')")
         if width >= 1000:
             geometry=page.evaluate("""()=>{
               const box=s=>document.querySelector(s).getBoundingClientRect();
@@ -113,6 +154,13 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         assert page.locator('[data-action="assign"][data-id="morning"]').count()==0
         page.locator('[data-action="manager-accept"][data-id="new-evening"]').click()
         expect(page.locator('[data-action="assign"][data-id="new-evening"]')).to_be_visible()
+        page.locator('[data-action="assign"][data-id="new-evening"]').click()
+        page.locator('#modal select[name=driver_shift_id]').select_option('driver-shift')
+        page.locator('#modal button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        assignment=[body for path,body in writes if path=='/api/orders/new-evening/assign']
+        assert assignment==[{'driver_shift_id':'driver-shift','accept_order':False}]
+
         assert any(path=='/api/orders/new-evening/manager-accept' and body['version']==1 for path,body in writes)
         page.locator('#dispatch-filters [name=late]').check()
         expect(page.locator('#dispatch-orders article')).to_have_count(1)

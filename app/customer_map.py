@@ -8,7 +8,8 @@ router = APIRouter(prefix='/api/customer-map', tags=['customer-map'])
 
 
 def enabled():
-    return os.getenv('MAPBOX_ENABLED', '').lower() == 'true'
+    return (os.getenv('MAPBOX_ENABLED', '').lower() == 'true'
+            and os.getenv('MAPBOX_CUSTOMER_ENABLED', '').lower() == 'true')
 
 
 def public_config(brand_id):

@@ -110,6 +110,9 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
+from . import dispatch_map
+app.include_router(dispatch_map.router)
+
 from . import driver_checks
 app.include_router(driver_checks.router)
 from . import delegated_operations, driver_work_hours, driver_hours_reports

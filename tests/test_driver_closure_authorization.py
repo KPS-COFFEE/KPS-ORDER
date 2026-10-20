@@ -76,7 +76,19 @@ def test_fuel_exception_confirmation_preserves_manager_pause(ops):
         assert row['vehicle_log']['fuel_readiness']['fuel_percent']==65
         assert c.execute('SELECT status FROM fuel_exceptions WHERE id=%s',(request['id'],)).fetchone()['status']=='consumed'
     post('manager','/api/orders/'+order()+'/assign',{'driver_shift_id':sid},status=409)
-    post('driver',f'/api/fuel-exceptions/shifts/{sid}/ready',{'odometer_km':1005,'fuel_percent':65,'fuel_exception_id':request['id']},status=409)
+    with db.tx() as c:
+        before=c.execute('SELECT available,vehicle_log FROM shifts WHERE id=%s',(sid,)).fetchone()
+        audit_count=c.execute("SELECT count(*) n FROM audit_events WHERE action='fuel.ready' AND entity_id=%s",(sid,)).fetchone()['n']
+    # Exact repeated confirmation is idempotent even with a fresh request key;
+    # it cannot clear the manager's pause or record another readiness event.
+    again=post('driver',f'/api/fuel-exceptions/shifts/{sid}/ready',{'odometer_km':1005,'fuel_percent':65,'fuel_exception_id':request['id']})
+    assert again==ready and again['available'] is False
+    with db.tx() as c:
+        assert c.execute('SELECT available,vehicle_log FROM shifts WHERE id=%s',(sid,)).fetchone()==before
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='fuel.ready' AND entity_id=%s",(sid,)).fetchone()['n']==audit_count
+        assert c.execute('SELECT status FROM fuel_exceptions WHERE id=%s',(request['id'],)).fetchone()['status']=='consumed'
+    post('driver',f'/api/fuel-exceptions/shifts/{sid}/ready',{'odometer_km':1006,'fuel_percent':65,'fuel_exception_id':request['id']},status=409)
+    post('manager','/api/orders/'+order()+'/assign',{'driver_shift_id':sid},status=409)
 
 
 @pytest.mark.postgres

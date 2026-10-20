@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
 import re
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
@@ -39,8 +40,9 @@ def capture_policy(conn, brand_id, branch_id, *, settings=None):
                             (brand_id, branch_id)).fetchone()
     result = {'captured_at': datetime.now(timezone.utc).isoformat(), 'policies': {},
               'province_id': province['id'] if province else None, 'province_name': province['name'] if province else None}
-    from .experience_policy import defaults
-    stage_policy = (settings or {}).get('experience_policy') or defaults()
+    from .experience_policy import defaults, policy
+    stage_policy = (policy(conn, brand_id) if settings is None
+                    else deepcopy(settings.get('experience_policy') or defaults()))
     if stage_policy['timing_enabled']:
         result['stage_policy'] = stage_policy
     if province:

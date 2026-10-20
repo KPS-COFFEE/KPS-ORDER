@@ -52,6 +52,10 @@ def _assert_real_fonts(page):
 def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chromium_browser):
     from playwright.sync_api import expect
     _configured_branch()
+    # This guest scenario covers deliberately unconfigured customer SMS.
+    # Staff authentication in other scenarios still uses certified synthetic SMS.
+    with db.tx() as conn:
+        conn.execute("UPDATE identity_channels SET enabled=false WHERE brand_id='kps' AND channel='sms'")
     context, page, errors = _context(chromium_browser, live_app)
     try:
         page.goto('/')
@@ -120,7 +124,7 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
         expect(page.locator('#otp-request-form')).not_to_be_visible()
         page.locator('#guest-submit').click()
         expect(page.locator('#account-dialog')).not_to_be_visible()
-        session = context.request.get(live_app + '/api/session').json()
+        session = context.request.get(live_app + '/api/session', headers={'X-KPS-Context':'customer'}).json()
         assert session['user']['identity_kind'] == 'guest'
         assert session['user']['phone_sms_verified_at'] is None
         assert session['user']['phone_whatsapp_verified_at'] is None
@@ -146,6 +150,7 @@ def test_v5_owner_explicitly_clears_disabled_branch_configuration(live_app, chro
     try:
         _staff_ui_login(page, owner)
         _assert_real_fonts(page)
+        page.locator('[data-action=operations-report]').click()
         expect(page.locator('#content')).to_contain_text('عمر الطلب الجاري تجاوز الحد')
         expect(page.locator('#delivery-performance')).to_contain_text('معيار المحافظة المحفوظ')
         page.locator('[data-page=admin]').click()
@@ -172,3 +177,4 @@ def test_v5_owner_explicitly_clears_disabled_branch_configuration(live_app, chro
         assert not errors
     finally:
         context.close()
+

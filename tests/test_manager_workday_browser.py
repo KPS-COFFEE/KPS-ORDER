@@ -18,6 +18,8 @@ def test_manager_starts_with_current_shift_and_separate_history(live_app,chromiu
         page.goto(live_app+'/ops')
         expect(page.locator('#content [data-action=open-shift]')).to_be_visible()
         expect(page.locator('#content [data-action=shift-detail]')).to_have_count(0)
+        # The unified room is the new landing page; history remains in Shifts.
+        page.locator('#navigation [data-page=shifts]').click()
         page.locator('[data-action=manager-work-view][data-target=shifts][data-history="1"]').click()
         expect(page.locator('[data-action=shift-detail][data-id="'+old+'"]').first).to_be_visible()
         with db.tx() as c:
@@ -31,3 +33,4 @@ def test_manager_starts_with_current_shift_and_separate_history(live_app,chromiu
         expect(page.locator('[data-action=manager-work-view][data-target=orders][data-history="1"]')).to_be_visible()
         assert not errors
     finally:ctx.close()
+

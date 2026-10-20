@@ -28,6 +28,7 @@ _PROVIDER_SECRETS = (
 )
 _TEST_DEFAULTS = {
     'MAPBOX_ENABLED': 'false',
+    'MAPBOX_CUSTOMER_ENABLED': 'false',
     'APP_ENV': 'testing',
     'DISPATCH_OFFER_ACCEPT_ENABLED': 'false',
     'DISPATCH_AUTO_ASSIGN_ENABLED': 'false',

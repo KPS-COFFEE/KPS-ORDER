@@ -69,3 +69,4 @@ def complete_owner_sms_dialog(page, owner):
         assert proof['step_up_at'] is not None
         consumed = conn.execute('SELECT verified_at FROM otp_challenges WHERE id=%s', (challenge['id'],)).fetchone()
         assert consumed['verified_at'] is not None
+

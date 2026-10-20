@@ -177,10 +177,10 @@ def test_variant_branch_scope_rejects_other_brand_and_malformed_scope(owner):
 
 
 @pytest.mark.postgres
-def test_delegated_product_admin_cannot_edit_global_or_expand_beyond_authorized_branches(owner):
+def test_delegated_product_admin_cannot_edit_global_or_expand_beyond_authorized_branches(owner, monkeypatch):
     client, mutate = owner
     identifier = _administrator(['products_manage'])
-    _login(client, identifier)
+    _login(client, identifier, monkeypatch)
     assert client.get('/api/admin/config').json()['products'] == []
     assert mutate('PATCH', '/api/admin/products/kps-30', {'price_halalas': 1}).status_code == 403
     for scope in (None, ['kps-branch-9'], ['kps-branch-1', 'kps-branch-9']):
@@ -197,11 +197,21 @@ def test_delegated_product_admin_cannot_edit_global_or_expand_beyond_authorized_
 
 
 @pytest.mark.postgres
-def test_legacy_admin_account_route_revokes_email_code_and_blocks_unverified_reactivation(owner, monkeypatch):
+def test_legacy_admin_account_route_revokes_email_code_and_blocks_unverified_reactivation(client, monkeypatch):
     from test_final_identity import _staff, _request, _code, _verify
-    from test_v5_identity import _mail_setup
-    client, mutate = owner
-    _mail_setup(monkeypatch)
+    from test_v5_identity import _legacy_mail_setup
+    # This retained email-code contract belongs to the synthetic non-SMS tenant.
+    # KPS keeps mandatory SMS; exercise real authentication and admin scope here.
+    _legacy_mail_setup(monkeypatch)
+    principal = _staff(role='owner', phone='+966501111222', email='owner@fixture.invalid')
+    login = client.post('/api/auth/login', json={'username':'fixture-legacy-owner',
+                                               'password':'Preserved!OwnerPassword1'})
+    assert login.status_code == 200, login.text
+    assert login.json()['user']['id'] == principal['id']
+    client.headers['X-CSRF-Token'] = login.json()['csrf_token']
+    client.headers['X-KPS-Context'] = 'work'
+    def mutate(method, path, body):
+        return client.request(method, path, json=body, headers={'Idempotency-Key':uuid4().hex})
     staff = _staff()
     challenge = _request(client)
     code = _code(challenge)

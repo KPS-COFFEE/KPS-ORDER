@@ -25,7 +25,9 @@ def defaults():
 
 def policy(conn, brand_id):
     row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
-    return deepcopy((row or {}).get('settings', {}).get('experience_policy') or defaults())
+    # Published staff-only policies predate the customer entry switch. Preserve
+    # their version and targets while introducing the new switch disabled.
+    return defaults() | deepcopy((row or {}).get('settings', {}).get('experience_policy') or {})
 
 
 def validate(value):

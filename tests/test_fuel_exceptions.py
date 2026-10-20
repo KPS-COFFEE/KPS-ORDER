@@ -93,7 +93,7 @@ def test_mobile_full_exception_request_and_manager_approval(live_app,chromium_br
         _capture(page,'TEST_ONLY_fuel_pending_'+language)
         mpage.goto(live_app+'/ops')
         if language=='en':mpage.get_by_role('button',name='English',exact=True).click()
-        mpage.locator('[data-action=fuel-inbox]').click();mpage.locator('[data-action=fuel-approve]').click()
+        mpage.locator('#operational-alerts [data-action=fuel-inbox]').click();mpage.locator('[data-action=fuel-approve]').click()
         expect(mpage.locator('[data-action=fuel-approve]')).to_have_count(0)
         form.locator('[data-action=fuel-check]').click()
         expect(form.locator('.fuel-status')).to_contain_text('تمت الموافقة' if language=='ar' else 'Approved')

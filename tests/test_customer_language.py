@@ -72,6 +72,7 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
     headers = _owner_login(owner_context, live_app, _staff())
     _configure_branches(owner_context, live_app, headers)
     context, page, errors = _context(chromium_browser, live_app)
+    context.set_extra_http_headers({'X-KPS-Context': 'customer'})
     page.set_viewport_size({'width': width, 'height': 900})
     try:
         page.goto('/')
@@ -188,4 +189,5 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
     finally:
         context.close()
         owner_context.close()
+
 

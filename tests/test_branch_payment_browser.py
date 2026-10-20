@@ -29,6 +29,7 @@ def test_cashier_only_offers_preparation_with_durable_payment_proof(live_app,chr
             c.execute("INSERT INTO branch_payment_attempts(id,order_id,brand_id,branch_id,seller_id,provider,provider_payment_id,mode,amount_halalas,currency,order_revision,accepted_by,status,verified_at) VALUES(%s,%s,'kps','kps-branch-1','fixture-seller','moyasar',%s,'test',1000,'SAR',0,%s,'verified',now())",(aid,oid,pid,staff['id']))
             c.execute("INSERT INTO branch_online_receipts(id,attempt_id,order_id,brand_id,branch_id,seller_id,provider,provider_payment_id,mode,amount_halalas,currency,disposition) VALUES(%s,%s,%s,'kps','kps-branch-1','fixture-seller','moyasar',%s,'test',1000,'SAR','applied')",('receipt_'+uuid4().hex,aid,oid,pid))
     context,page,errors=_context(chromium_browser,live_app)
+    context.set_extra_http_headers({'X-KPS-Context':'work'})
     page.set_viewport_size({'width':width,'height':900})
     try:
         _owner_login(context,live_app,staff)
@@ -51,3 +52,4 @@ def test_cashier_only_offers_preparation_with_durable_payment_proof(live_app,chr
         assert not errors
     finally:
         context.close()
+

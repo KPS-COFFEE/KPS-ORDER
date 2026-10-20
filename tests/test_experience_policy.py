@@ -150,3 +150,91 @@ def test_owner_save_is_brand_scoped_versioned_and_audited(monkeypatch):
     assert client.put('/api/experience/policy',json=body).status_code==409
     body['brand_id']='enbishan'
     assert client.put('/api/experience/policy',json=body).status_code==422
+
+
+def test_customer_entry_is_disabled_by_default_and_requires_owner():
+    p = experience.defaults(); p.pop('version')
+    assert p['customer_entry_enabled'] is False
+    p['customer_entry_enabled'] = True
+    assert experience.validate(p)['customer_entry_enabled'] is True
+    app = FastAPI(); app.include_router(experience.router)
+    app.dependency_overrides[auth.current_user] = lambda: {'role':'delivery_manager','brand_id':'kps'}
+    client = TestClient(app)
+    assert client.get('/api/experience/policy').status_code == 403
+    assert client.put('/api/experience/policy',json={'policy':p,'expected_version':0,'reason':'test'}).status_code == 403
+
+
+def test_existing_staff_policy_gains_disabled_entry_without_mutation():
+    saved = experience.defaults(); saved.pop('customer_entry_enabled')
+    saved['version'] = 3
+    saved['stages']['manager_wait']['red'] = 110
+    class Result:
+        def fetchone(self): return {'settings':{'experience_policy':saved}}
+    class Conn:
+        def execute(self, query, params): return Result()
+    restored = experience.policy(Conn(), 'kps')
+    assert restored['customer_entry_enabled'] is False
+    assert restored['version'] == 3
+    assert restored['stages']['manager_wait']['red'] == 110
+    restored['stages']['manager_wait']['red'] = 130
+    assert saved['stages']['manager_wait']['red'] == 110
+    assert 'customer_entry_enabled' not in saved
+
+
+def test_existing_capture_hook_freezes_staff_targets_without_changing_legacy_policy():
+    from app import performance
+    settings = {'experience_policy': experience.defaults()}
+    class Result:
+        def __init__(self, value): self.value = value
+        def fetchone(self): return self.value
+    class Conn:
+        def execute(self, query, params):
+            if query.startswith('SELECT p.id,p.name'):
+                return Result(None)
+            assert query == 'SELECT settings FROM app_settings WHERE brand_id=%s'
+            assert params == ('kps',)
+            return Result({'settings': settings})
+    conn = Conn()
+    legacy = performance.capture_policy(conn, 'kps', 'branch')
+    assert 'stage_policy' not in legacy and legacy['policies'] == {}
+    settings['experience_policy'].update(timing_enabled=True, version=1)
+    captured = performance.capture_policy(conn, 'kps', 'branch')
+    settings['experience_policy']['stages']['manager_wait']['red'] = 120
+    assert captured['stage_policy']['stages']['manager_wait']['red'] == 90
+    assert captured['stage_policy']['version'] == 1
+    assert captured['policies'] == legacy['policies']
+
+
+def test_enrichment_reads_actual_driver_acceptance_and_stops_its_clock():
+    from app import performance
+    order = row(preparation_status='accepted', delivery_status='accepted')
+    class Result:
+        def __init__(self, values): self.values = values
+        def fetchall(self): return self.values
+    class Conn:
+        def execute(self, query, params):
+            if query.startswith('SELECT order_id,event_type'):
+                return Result([{'order_id':'test','event_type':'preparation.accepted','created_at':START}])
+            assert 't.accepted_at' in query
+            return Result([{'order_id':'test','driver_id':'driver','display_name':'TEST',
+                'created_at':START+timedelta(seconds=10),'accepted_at':START+timedelta(seconds=70),
+                'picked_up_at':None,'delivered_at':None,'status':'accepted','reason':None}])
+    performance.enrich_orders(Conn(), [order], now=START+timedelta(minutes=10))
+    phase = order['stage_timing']['phases']['driver_acceptance']
+    assert phase == {'seconds':60.0,'running':False,'color':'normal'}
+
+
+def test_capture_reuses_transaction_settings_without_an_extra_database_read():
+    from app import performance
+    settings = {'experience_policy': experience.defaults()}
+    settings['experience_policy']['timing_enabled'] = True
+    class Result:
+        def fetchone(self): return None
+    class Conn:
+        def execute(self, query, params):
+            assert query.startswith('SELECT p.id,p.name'), 'Unexpected extra settings query'
+            return Result()
+    captured = performance.capture_policy(Conn(), 'kps', 'branch', settings=settings)
+    settings['experience_policy']['stages']['driver_acceptance']['red'] = 240
+    assert captured['stage_policy']['stages']['driver_acceptance']['red'] == 180
+    assert 'stage_policy' not in performance.capture_policy(Conn(), 'kps', 'branch', settings={})

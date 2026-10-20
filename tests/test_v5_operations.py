@@ -6,6 +6,15 @@ import math
 import pytest
 from fastapi import HTTPException
 from app import admin, auth, catalog, db, performance, shift_vehicle
+from test_operations import begin_driver_closure
+
+
+def authorize_and_begin_closure(call, driver):
+    def post(actor, path, body=None, status=200):
+        result = call(actor, 'POST', path, body)
+        assert result.status_code == status, result.text
+        return result.json()
+    return begin_driver_closure(post, driver)
 
 
 def synthetic_vehicle_inspection(odometer_km=1000):
@@ -73,7 +82,7 @@ def test_dashboard_uses_frozen_province_policy_and_rejected_orders_are_excluded(
     assert frozen['classifications']['excluded']==1
     assert frozen['valid']==1 and frozen['excluded']==1 and frozen['average_seconds']==1801
     assert dash['delivery_time']['delayed']==1 and dash['delivery_time']['valid']==1
-    assert call('driver','POST','/api/shifts/'+driver+'/closing').status_code==200
+    assert authorize_and_begin_closure(call, driver)['status'] == 'closing'
     assert call('driver','POST','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':1200,'handover_halalas':1200,'vehicle_inspection':synthetic_vehicle_inspection(1025),'handover':{'recipient_user_id':'v5-manager','to_shift_id':manager,'reference':'TEST-policy-bag'}}).status_code==200
     with db.tx() as c:transfer=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchone()['id']
     assert call('manager','POST','/api/custody/'+transfer+'/confirm').status_code==200
@@ -317,7 +326,7 @@ def test_zero_task_driver_shift_still_blocks_manager_until_approved(v5):
     driver=call('driver','POST','/api/shifts',{'kind':'driver','branch_ids':['v5-a','v5-b'],'manager_shift_id':manager,'vehicle_inspection':synthetic_vehicle_inspection()}).json()['shift']['id']
     assert call('manager','POST','/api/shifts/'+manager+'/closing').status_code==200
     assert call('manager','POST','/api/shifts/'+manager+'/submit',{'counted_halalas':0,'handover_halalas':0}).status_code==409
-    assert call('driver','POST','/api/shifts/'+driver+'/closing').status_code==200
+    assert authorize_and_begin_closure(call, driver)['status'] == 'closing'
     assert call('driver','POST','/api/shifts/'+driver+'/submit',{'terminal_total_halalas':0,'counted_halalas':0,'handover_halalas':0,'vehicle_inspection':synthetic_vehicle_inspection(),'handover':{'recipient_user_id':'v5-manager','to_shift_id':manager,'reference':'TEST-empty'}}).status_code==200
     with db.tx() as c:tid=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchone()['id']
     assert call('manager','POST','/api/custody/'+tid+'/confirm').status_code==200

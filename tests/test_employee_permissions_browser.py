@@ -10,6 +10,16 @@ from tests.browser_sms_helpers import sms_browser_app as live_app, complete_owne
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Requires isolated PostgreSQL and actual Chromium')]
 
 
+
+def _open_staff_navigation(page):
+    """Use the compact operations-room menu before normal navigation."""
+    from playwright.sync_api import expect
+    toggle = page.locator('.dispatch-nav-toggle')
+    if toggle.is_visible() and toggle.get_attribute('aria-expanded') != 'true':
+        toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+    expect(page.locator('#navigation')).to_be_visible()
+
 @pytest.mark.parametrize(('lang','width'),[('ar',390),('ar',768),('ar',1280),('en',390),('en',768),('en',1280)])
 def test_employee_permission_switches_are_named_saved_and_visible(live_app,chromium_browser,lang,width):
     from playwright.sync_api import expect
@@ -20,6 +30,7 @@ def test_employee_permission_switches_are_named_saved_and_visible(live_app,chrom
         page.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
         page.set_viewport_size({'width':width,'height':900})
         page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(page)
         page.locator('#navigation [data-page=admin]').click()
         page.locator('[data-action=admin-tab][data-tab=users]').click()
         button=page.locator(f'[data-action=staff-permissions][data-id="{target["id"]}"]')
@@ -60,6 +71,7 @@ def test_open_driver_browser_hides_withdrawn_page_without_signout(live_app,chrom
         page.goto(live_app+'/ops',wait_until='networkidle')
         expect(page.locator('#navigation [data-page=maintenance]')).to_be_visible()
         owner_page.goto(live_app+'/ops',wait_until='networkidle')
+        _open_staff_navigation(owner_page)
         owner_page.locator('#navigation [data-page=admin]').click()
         owner_page.locator('[data-action=admin-tab][data-tab=users]').click()
         owner_page.locator(f'[data-action=staff-permissions][data-id="{driver["id"]}"]').click()
@@ -80,3 +92,4 @@ def test_open_driver_browser_hides_withdrawn_page_without_signout(live_app,chrom
         assert driver_context.request.get(live_app+'/api/vehicle-maintenance/options',headers=driver_headers).status==403
         assert not errors and not owner_errors,(errors,owner_errors)
     finally:owner_context.close();driver_context.close()
+

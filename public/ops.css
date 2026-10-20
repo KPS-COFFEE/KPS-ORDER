@@ -599,3 +599,29 @@ body.delivery-room{background:#f5f5f3}
 @media(max-width:1150px) and (min-width:1000px){.delivery-room .dispatch-layout{gap:8px;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) 250px}.delivery-room .dispatch-table-head,.delivery-room .dispatch-order{font-size:10px;gap:4px;padding-inline:6px}.delivery-room .dispatch-order .pill{font-size:9px;padding:2px 4px}.delivery-room .dispatch-order strong{font-size:11px}.delivery-room .dispatch-pane-heading{padding:10px}.delivery-room .dispatch-pane-heading h2{font-size:13px}}
 @media(max-width:999px){.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1fr) minmax(260px,.8fr)}.delivery-room .dispatch-orders{grid-column:1/-1;grid-row:1}.delivery-room .dispatch-map-panel{grid-column:1;grid-row:2}.delivery-room .dispatch-side{grid-column:2;grid-row:2}.delivery-room #dispatch-map{height:520px}.delivery-room #dispatch-orders{max-height:450px}}
 @media(max-width:650px){.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1fr)}.delivery-room .dispatch-orders{grid-column:1;grid-row:1}.delivery-room .dispatch-map-panel{grid-column:1;grid-row:2}.delivery-room .dispatch-side{grid-column:1;grid-row:3}.delivery-room #dispatch-map{height:340px}.delivery-room .dispatch-table-head{display:none}.delivery-room .dispatch-order{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:12px}.delivery-room .dispatch-order .actions button{font-size:12px;padding:6px 9px;min-height:40px}.delivery-room #dispatch-drivers{max-height:250px}.delivery-room #dispatch-panel-messages .conversation-list{max-height:190px}.delivery-room #dispatch-panel-messages .messages{max-height:240px}}
+
+/* Keep delivery operations above the fold; temporary vehicle checks stay on other staff pages. */
+.delivery-room #driver-checks{display:none}
+.delivery-room #main{padding-block:10px}
+.delivery-room .page-heading{margin-bottom:8px;gap:8px}
+.delivery-room .page-heading .actions{margin:0}
+.delivery-room .page-heading p{margin-top:0}
+.delivery-room .dispatch-workspace{gap:7px}
+.delivery-room .dispatch-toolbar{padding:7px 12px;gap:6px}
+.delivery-room #dispatch-filters{padding-block:7px;gap:8px}
+.delivery-room #operational-alerts:not([hidden]){display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px}
+.delivery-room #operational-alerts>.actions{display:contents;margin:0}
+.delivery-room #operational-alerts button{font-size:12px;min-height:34px;padding:5px 9px}
+.delivery-room #operational-alerts>.notice{padding:6px 9px;margin:0}
+.delivery-room #operational-alerts>details,.delivery-room #operational-alerts>div.notice{flex-basis:100%;max-height:180px;overflow:auto}
+.delivery-room #dispatch-counts{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;overflow:visible}
+.delivery-room .dispatch-count-row{display:flex;align-items:center;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:thin;padding:3px 0}
+.delivery-room .dispatch-count-row>strong{flex:0 0 92px;font-size:12px;white-space:nowrap}
+.delivery-room .dispatch-count-row .dispatch-stage{flex:0 0 auto;min-height:32px;padding:3px 7px;font-size:11px;gap:5px}
+.delivery-room .dispatch-count-row .dispatch-stage b{font-size:11px;min-width:19px}
+@media(max-width:650px){
+  .delivery-room #main{padding-block:8px}
+  .delivery-room #operational-alerts button{min-height:40px}
+  .delivery-room .dispatch-count-row>strong{flex-basis:78px;font-size:11px}
+  .delivery-room .dispatch-count-row .dispatch-stage{min-height:38px}
+}

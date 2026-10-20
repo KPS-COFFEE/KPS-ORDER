@@ -1,6 +1,9 @@
 name: KPS ORDER Low-cost Hosting Capacity
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [agent/kps-order-emergency-v4]
   push:
     branches: [agent/kps-order-emergency-v4]
     paths:
@@ -13,11 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: kps-order-hosting-capacity-${{ github.sha }}
+  group: kps-order-hosting-capacity-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
   economy:
+    if: github.event_name == 'push' || github.head_ref == 'agent/staff-operations-room-20261020'
     name: economy-44usd (${{ matrix.repetition }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -41,11 +45,11 @@ jobs:
       TEST_DATABASE_URL: postgresql://hosting_test:isolated-hosting-only@127.0.0.1:5432/test_hosting_economy
       KPS_LOAD_RESOURCE_PROFILE: economy
       PYTHONDONTWRITEBYTECODE: '1'
-      RUNTIME_REVISION: ${{ github.sha }}
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -108,11 +112,11 @@ jobs:
       TEST_DATABASE_URL: postgresql://hosting_test:isolated-hosting-only@127.0.0.1:5432/test_hosting_medium
       KPS_LOAD_RESOURCE_PROFILE: medium
       PYTHONDONTWRITEBYTECODE: '1'
-      RUNTIME_REVISION: ${{ github.sha }}
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
