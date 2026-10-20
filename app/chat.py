@@ -138,12 +138,18 @@ def reply_alerts(user=Depends(auth.current_user)):
         params=[user['brand_id'],user.get('branch_ids',[]),
                 'branch' if user['role']=='branch_manager' else 'delivery']
     with db.tx() as c:
-        rows=c.execute('''SELECT v.id,v.order_id,v.branch_id,last.seq
+        rows=c.execute('''SELECT v.id,v.order_id,v.branch_id,last.seq,o.order_no,
+            o.snapshot->>'order_reference' order_reference,b.name branch_name,
+            u.display_name sender_name,u.role sender_role,last.text last_message,
+            last.created_at last_message_at
             FROM conversations v
-            JOIN LATERAL (SELECT m.seq,m.sender_id FROM chat_messages m
+            LEFT JOIN orders o ON o.id=v.order_id
+            LEFT JOIN branches b ON b.id=v.branch_id
+            JOIN LATERAL (SELECT m.seq,m.sender_id,m.text,m.created_at FROM chat_messages m
                 WHERE m.conversation_id=v.id ORDER BY m.seq DESC LIMIT 1) last ON true
+            LEFT JOIN users u ON u.id=last.sender_id
             WHERE '''+scope+''' AND last.sender_id=v.customer_id
-            ORDER BY last.seq LIMIT 100''',params).fetchall()
+            ORDER BY last.created_at,v.id LIMIT 100''',params).fetchall()
         return safe({'awaiting_reply':rows})
 
 
