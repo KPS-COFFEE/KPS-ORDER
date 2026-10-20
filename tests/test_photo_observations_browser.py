@@ -38,6 +38,8 @@ def test_manager_reads_photo_observation_without_closing_it(sms_browser_app,chro
 
         def open_observations():
             page.goto(base+'/ops',wait_until='networkidle')
+            if not page.locator('#navigation [data-page=orders]').is_visible():
+                page.locator('.dispatch-nav-toggle').click()
             page.locator('#navigation [data-page=orders]').click()
             page.locator(f'#content [data-action=order-detail][data-id="{oid}"]').click()
             page.locator('#modal-body [data-action=order-support]').click()

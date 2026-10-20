@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
 import re
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
@@ -33,12 +34,17 @@ def classify(seconds, policy, state='completed'):
             'province_id': (policy or {}).get('province_id'), 'state': state}
 
 
-def capture_policy(conn, brand_id, branch_id):
+def capture_policy(conn, brand_id, branch_id, *, settings=None):
     province = conn.execute('SELECT p.id,p.name FROM performance_provinces p JOIN performance_province_branches b '
                             'ON p.brand_id=b.brand_id AND p.id=b.province_id WHERE b.brand_id=%s AND b.branch_id=%s',
                             (brand_id, branch_id)).fetchone()
     result = {'captured_at': datetime.now(timezone.utc).isoformat(), 'policies': {},
               'province_id': province['id'] if province else None, 'province_name': province['name'] if province else None}
+    from .experience_policy import defaults, policy
+    stage_policy = (policy(conn, brand_id) if settings is None
+                    else deepcopy(settings.get('experience_policy') or defaults()))
+    if stage_policy['timing_enabled']:
+        result['stage_policy'] = stage_policy
     if province:
         rows = conn.execute('SELECT DISTINCT ON(metric) * FROM province_performance_policies '
                             'WHERE brand_id=%s AND province_id=%s AND effective_at<=now() '
@@ -77,7 +83,7 @@ def enrich_orders(conn, rows, now=None):
     ids = [row['id'] for row in rows]
     events = conn.execute('SELECT order_id,event_type,created_at FROM order_events WHERE order_id=ANY(%s) '
                           'ORDER BY created_at,id', (ids,)).fetchall()
-    tasks = conn.execute('SELECT t.order_id,t.driver_id,t.created_at,t.picked_up_at,t.delivered_at,t.status,t.reason,u.display_name '
+    tasks = conn.execute('SELECT t.order_id,t.driver_id,t.created_at,t.accepted_at,t.picked_up_at,t.delivered_at,t.status,t.reason,u.display_name '
                          'FROM driver_tasks t JOIN users u ON u.id=t.driver_id WHERE t.order_id=ANY(%s) '
                          'ORDER BY t.created_at,t.id', (ids,)).fetchall()
     points, names = {}, {}
@@ -119,6 +125,8 @@ def enrich_orders(conn, rows, now=None):
         row['branch_name'] = row.get('branch_name') or row.get('snapshot', {}).get('branch_name')
         row['neighborhood'] = row.get('customer', {}).get('neighborhood', '')
         row['server_now'] = now.isoformat()
+        from .experience_policy import evaluate
+        row['stage_timing'] = evaluate(row, point, [t for t in tasks if t['order_id'] == row['id']], now)
     return rows
 
 

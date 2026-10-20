@@ -21,6 +21,9 @@
 @media(max-width:760px){nav button{font-size:15px;min-height:44px}main{padding:18px 12px}.metrics{gap:10px}.metric{padding:13px}.metric .label{font-size:14px}.metric .number{font-size:23px}.filters{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.filters label{min-width:0}.page-heading{flex-wrap:wrap}.page-heading h1{font-size:24px}.page-heading .button,.page-heading button{font-size:15px}.topbar{flex-wrap:wrap}.topbar .header-actions{margin-inline-start:auto}.side{padding:12px}.table-wrap th,.table-wrap td{font-size:15px}.data-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.panel{padding:16px}.order-table table{min-width:0;display:block;width:100%}.order-table thead{display:none}.order-table tbody{display:grid;width:100%}.order-table tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:3px 12px;padding:12px;border-bottom:1px solid var(--line)}.order-table td{border:0;padding:2px;min-width:0!important;overflow-wrap:anywhere}.order-table td:first-child{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px}.order-table td:nth-child(2){grid-column:1/-1;font-weight:600}.order-table td:nth-child(4)::before{content:'تجهيز: ';color:var(--muted)}.order-table td:nth-child(5)::before{content:'توصيل: ';color:var(--muted)}html[lang=en] .order-table td:nth-child(4)::before{content:'Prep: '}html[lang=en] .order-table td:nth-child(5)::before{content:'Delivery: '}.order-table td:nth-child(6){grid-row:2;grid-column:2;text-align:end}.order-table td:nth-child(2){padding-inline-end:110px}.order-table td:last-child{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:5px}.order-table .money{font-size:16px}.order-table{overflow:visible}.order-table .pill{font-size:14px}.owner-notifications .button{font-size:15px}.form-columns{grid-template-columns:minmax(0,1fr)}.form-columns>*{min-width:0}.header-actions button{font-size:15px;min-height:44px}.financial dd{font-size:16px}.message small{font-size:12px}.message img{max-width:100%}}
 @media(max-width:390px){.filters{grid-template-columns:minmax(0,1fr)}.data-grid{grid-template-columns:minmax(0,1fr)}.header-actions{gap:5px}.panel{padding:14px}}
 
+.dispatch-layout{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(280px,1fr);gap:16px;align-items:start}.dispatch-workspace .panel,.dispatch-layout>*{min-width:0}.dispatch-toolbar{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}.dispatch-counts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}.dispatch-stage{display:flex;flex-direction:column;gap:4px}.dispatch-stage.selected{background:var(--accent-light);border-color:var(--accent);color:var(--accent)}.dispatch-stage b{font-size:23px}.dispatch-order{border:1px solid var(--line);border-inline-start:5px solid #a86828;border-radius:12px;padding:14px;margin-block:10px}.dispatch-order header{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.dispatch-order p{margin:8px 0;overflow-wrap:anywhere}.dispatch-state-new{border-inline-start-color:#5550b8}.dispatch-state-assigned{border-inline-start-color:#8a56b4}.dispatch-state-driver_accepted{border-inline-start-color:#167b87}.dispatch-state-road{border-inline-start-color:#2363a4}.dispatch-state-delivered{border-inline-start-color:#247149}.dispatch-state-cancelled,.dispatch-state-attention{border-inline-start-color:#b43d37}.dispatch-state-new .dispatch-status{color:#5147a1;background:#f0edff}.dispatch-state-road .dispatch-status{color:#1c5690;background:#eaf3ff}.dispatch-state-delivered .dispatch-status{color:#20673f;background:#eaf7ee}.dispatch-state-cancelled .dispatch-status,.dispatch-state-attention .dispatch-status{color:#9b302c;background:#fff0ed}.dispatch-note{padding:9px;background:#fff5e6;border-radius:8px}.dispatch-driver{padding:12px 0;border-bottom:1px solid var(--line)}.dispatch-driver>div{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.dispatch-driver p{font-size:14px}.dispatch-side .conversation-list{max-height:440px;overflow:auto}.dispatch-workspace #chat-detail{scroll-margin-top:20px}.dispatch-workspace .filters{grid-template-columns:repeat(4,minmax(0,1fr))}.dispatch-workspace .filters label{min-width:0}.dispatch-workspace .filters input[type=checkbox]{width:auto}
+@media(max-width:1100px){.dispatch-layout{grid-template-columns:minmax(0,1fr)}.dispatch-side{grid-template-columns:repeat(2,minmax(0,1fr))}.dispatch-workspace .filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.dispatch-side{grid-template-columns:minmax(0,1fr)}.dispatch-counts{grid-template-columns:repeat(3,minmax(0,1fr))}.dispatch-stage{font-size:13px;padding:8px}.dispatch-stage b{font-size:20px}.dispatch-workspace .filters{grid-template-columns:minmax(0,1fr)}.dispatch-order{padding:11px}.dispatch-order .actions button{min-height:44px}.dispatch-toolbar{display:block}.dispatch-toolbar .actions{margin-top:12px}}
 /* Registered-mobile sign-in keeps the legacy owner path reachable. */
 #staff-code-verify-form{margin-top:20px;padding-top:20px;border-top:1px solid var(--line)}#staff-code-verify-form[hidden]{display:none}#staff-code-verify-form input[name=code]{font-size:25px;letter-spacing:.3em;text-align:center;font-variant-numeric:tabular-nums}#staff-code-request-state:empty,#staff-code-expiry:empty{display:none}.login-panel form button{width:100%;min-height:48px}.login-panel button.quiet{margin-top:8px}.report-reference,.code{overflow-wrap:anywhere}.compact-closure .data-grid{margin-bottom:8px}
 
@@ -478,3 +481,121 @@ dialog:has(.order-detail-layout) .modal-head{position:sticky;top:-18px;backgroun
  .order-summary-actions button{width:auto;flex:1 1 140px}
 }
 @media(max-width:360px){.order-detail-section .data-grid,.order-detail-card>.data-grid,.order-detail-card>.actions{grid-template-columns:1fr}}
+
+/* Delivery room: horizontal navigation, aligned order rows and a working side pane. */
+.dispatch-nav-toggle{display:none}
+body.delivery-room{background:#f5f5f3}
+.delivery-room .topbar{min-height:66px;padding:10px 24px;background:#222725;color:#fff;border-bottom:0}
+.delivery-room .topbar .brand,.delivery-room .topbar .header-actions{color:#fff}
+.delivery-room .topbar .brand img{width:40px;height:40px}
+.delivery-room .topbar .quiet{background:#303632;color:#fff;border-color:#505650;font-size:13px;min-height:36px;padding:6px 12px}
+.delivery-room .status-line{padding:4px 24px;min-height:26px;font-size:12px;background:#ebeeea}
+.delivery-room .app-shell{display:block;max-width:none;min-height:0}
+.delivery-room .side{padding:0 24px;background:#fff;border:0;border-bottom:1px solid #e0e4df}
+.delivery-room .side p{display:none}
+.delivery-room #navigation{display:flex;align-items:center;gap:3px;overflow-x:auto;white-space:nowrap;padding:6px 0;scrollbar-width:thin}
+.delivery-room #navigation button,.delivery-room #navigation .button{width:auto;flex:0 0 auto;font-size:13px;min-height:38px;padding:7px 12px;border-radius:7px;margin:0}
+.delivery-room #navigation button.active{background:#fff2e9;color:#a94710;box-shadow:inset 0 -2px #c96829}
+.delivery-room #main{padding:16px 24px;max-width:1900px;margin:auto}
+.delivery-room .page-heading{align-items:center;margin-bottom:12px;gap:12px}
+.delivery-room .page-heading h1{font-size:23px;letter-spacing:-.5px}
+.delivery-room .page-heading p{font-size:12px;max-width:720px;margin-top:2px}
+.delivery-room .page-heading button{min-height:38px;font-size:13px;padding:7px 13px}
+.delivery-room .dispatch-workspace{gap:10px}
+.delivery-room .dispatch-toolbar{padding:10px 14px;border-radius:10px;align-items:center;gap:10px}
+.delivery-room .dispatch-toolbar strong{font-size:13px}
+.delivery-room .dispatch-toolbar .pill{font-size:11px;padding:3px 7px}
+.delivery-room .dispatch-toolbar .actions{margin:0;gap:5px}
+.delivery-room .dispatch-toolbar button{font-size:12px;min-height:34px;padding:5px 10px}
+.delivery-room #dispatch-filters{grid-template-columns:minmax(130px,1fr) minmax(150px,1fr) minmax(190px,1.5fr) auto;gap:12px;padding:10px 14px;margin:0;border-radius:10px;align-items:center}
+.delivery-room #dispatch-filters label{font-size:11px;gap:3px}
+.delivery-room #dispatch-filters label:last-child{flex-direction:row;align-items:center;gap:8px;padding-top:17px;white-space:nowrap}
+.delivery-room #dispatch-filters input:not([type=checkbox]),.delivery-room #dispatch-filters select{min-height:36px;padding:5px 9px;font-size:12px}
+.delivery-room .dispatch-counts{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.delivery-room .dispatch-stage{flex-direction:row;align-items:center;gap:8px;font-size:12px;padding:6px 10px;min-height:36px;border-radius:7px;background:transparent;border-color:transparent}
+.delivery-room .dispatch-stage b{font-size:12px;min-width:22px;background:#e7ebe5;border-radius:5px;padding:1px 5px}
+.delivery-room .dispatch-stage.selected{background:#fff;border-color:#dfc2ac;color:#a94710}
+.delivery-room .dispatch-stage.selected b{background:#fff0e3}
+.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1fr) 360px;gap:14px;align-items:start}
+.delivery-room .dispatch-orders,.delivery-room .dispatch-side{padding:0;overflow:hidden;border-radius:12px;background:#fff;box-shadow:0 3px 14px #14211c04}
+.dispatch-pane-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid #e7ebe6}
+.delivery-room .dispatch-pane-heading h2{font-size:15px;margin:0}
+.dispatch-live{display:inline-flex;gap:6px;align-items:center;font-size:11px;color:#647269}
+.dispatch-live i{width:6px;height:6px;border-radius:50%;background:#368054}
+.delivery-room .dispatch-table-head,.delivery-room .dispatch-order{display:grid;grid-template-columns:minmax(135px,1.05fr) minmax(120px,.95fr) minmax(160px,1.15fr) minmax(145px,1fr);gap:10px;align-items:center}
+.delivery-room .dispatch-table-head{padding:9px 14px;background:#f8f9f7;border-bottom:1px solid #e4e8e2;font-size:11px;font-weight:700;color:#6f796f}
+.delivery-room #dispatch-orders{max-height:calc(100dvh - 390px);min-height:250px;overflow:auto;scrollbar-width:thin}
+.delivery-room .dispatch-order{margin:0;padding:12px 14px;border:0;border-inline-start:3px solid #a86828;border-bottom:1px solid #e9ece7;border-radius:0;font-size:12px;transition:background .12s}
+.delivery-room .dispatch-order:hover{background:#fafbf8}
+.delivery-room .dispatch-order-identity,.delivery-room .dispatch-order-routing,.delivery-room .dispatch-order-stage{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}
+.delivery-room .dispatch-order strong{font-size:12px;overflow-wrap:anywhere}
+.delivery-room .dispatch-order small{font-size:10px;color:#737d74}
+.delivery-room .dispatch-order-routing>span{font-size:11px;color:#667166}
+.delivery-room .dispatch-order .order-reference{font-size:13px;min-height:28px;padding:0;background:none;color:#a94710;border:0;font-weight:700;max-width:100%;overflow-wrap:anywhere}
+.delivery-room .dispatch-order .pill{font-size:10px;padding:3px 7px;line-height:1.6;border-radius:5px}
+.delivery-room .dispatch-order .actions{gap:5px;margin:0;align-items:center}
+.delivery-room .dispatch-order .actions button{font-size:11px;min-height:32px;padding:5px 8px;border-radius:6px;flex:0 1 auto}
+.delivery-room .dispatch-note{font-size:10px;margin:5px 0 0;padding:3px 6px;background:#fff6e9}
+.delivery-room .dispatch-note p{font-size:11px}
+.delivery-room .dispatch-state-new{border-inline-start-color:#6557a8}.delivery-room .dispatch-state-assigned{border-inline-start-color:#8a56b4}.delivery-room .dispatch-state-driver_accepted{border-inline-start-color:#167b87}.delivery-room .dispatch-state-road{border-inline-start-color:#2363a4}.delivery-room .dispatch-state-delivered{border-inline-start-color:#247149}.delivery-room .dispatch-state-cancelled,.delivery-room .dispatch-state-attention{border-inline-start-color:#b43d37}
+.delivery-room .dispatch-side{display:block;position:sticky;top:12px;max-height:calc(100dvh - 330px);min-height:350px;overflow:auto;scrollbar-width:thin}
+.dispatch-panel-tabs{display:flex;padding:7px;gap:5px;border-bottom:1px solid #e5e9e2;background:#fcfcfa;position:sticky;top:0;z-index:2}
+.delivery-room .dispatch-panel-tabs button{flex:1;font-size:11px;min-height:36px;padding:5px;border-radius:6px;white-space:nowrap}
+.delivery-room .dispatch-panel-tabs button.active{background:#fff0e5;color:#a94710;border-color:#e9cbb3}
+.delivery-room #dispatch-drivers{padding:0 13px}
+.delivery-room .dispatch-driver{padding:12px 0}
+.delivery-room .dispatch-driver strong{font-size:13px}
+.delivery-room .dispatch-driver .pill{font-size:10px;padding:2px 6px}
+.delivery-room .dispatch-driver p{font-size:11px;margin:5px 0;color:#727b72}
+.delivery-room .dispatch-driver .actions{margin-top:7px;gap:5px}
+.delivery-room .dispatch-driver button{min-height:32px;font-size:11px;padding:5px 9px}
+.delivery-room .dispatch-side .conversation-list{max-height:190px;overflow:auto;padding:10px;border-bottom:1px solid #e6eae3}
+.delivery-room .dispatch-side .conversation{padding:9px;margin-bottom:6px;border-radius:8px}
+.delivery-room .dispatch-side .conversation strong{font-size:12px}
+.delivery-room .dispatch-side .conversation span,.delivery-room .dispatch-side .conversation small{font-size:10px}
+.delivery-room #chat-detail{padding:12px}
+.delivery-room #chat-detail h2{font-size:13px;margin:0}
+.delivery-room #chat-detail .toolbar{gap:5px;margin-bottom:10px}
+.delivery-room #chat-detail button{font-size:10px;min-height:32px;padding:4px 7px}
+.delivery-room #chat-detail .messages{min-height:120px;max-height:210px;padding:8px;gap:7px}
+.delivery-room #chat-detail .message{font-size:12px;padding:7px 9px}
+.delivery-room #chat-detail .message small{font-size:9px}
+.delivery-room #chat-detail .compose{gap:7px;margin-top:10px}
+.delivery-room #chat-detail label,.delivery-room #chat-detail .file-help{font-size:10px}
+.delivery-room #chat-detail input,.delivery-room #chat-detail textarea{font-size:12px;min-height:35px;padding:6px}
+.delivery-room #chat-detail textarea{min-height:64px}
+.delivery-room #dispatch-panel-details{padding:12px}
+.delivery-room #dispatch-panel-details .panel{padding:10px;border:0}
+.delivery-room #dispatch-panel-details h3{font-size:15px}
+.delivery-room #dispatch-panel-details p,.delivery-room #dispatch-panel-details span,.delivery-room #dispatch-panel-details dt,.delivery-room #dispatch-panel-details dd{font-size:12px}
+.delivery-room #dispatch-panel-details button{font-size:11px;min-height:34px;padding:6px 8px}
+.delivery-room .empty{padding:28px 14px;font-size:12px;border:0}
+@media(max-width:1250px){.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1fr) 310px}.delivery-room .dispatch-table-head,.delivery-room .dispatch-order{grid-template-columns:minmax(100px,1fr) minmax(100px,.9fr) minmax(120px,1.1fr) minmax(110px,.9fr);gap:7px}.delivery-room #main{padding:14px}.delivery-room .dispatch-order{padding:10px}}
+@media(max-width:999px){.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1fr)}.delivery-room .dispatch-side{position:static;max-height:600px;min-height:250px}.delivery-room #dispatch-orders{max-height:520px}.delivery-room .dispatch-table-head,.delivery-room .dispatch-order{grid-template-columns:1.1fr 1fr 1.15fr 1fr}}
+@media(max-width:650px){.delivery-room .topbar{padding:9px 12px;min-height:60px}.delivery-room .topbar .brand{font-size:12px}.delivery-room .topbar .brand img{width:34px;height:34px}.delivery-room .topbar .quiet{font-size:11px;min-height:34px}.delivery-room .status-line{padding:4px 12px;font-size:10px}.delivery-room .side{padding:6px 12px}.delivery-room .dispatch-nav-toggle{display:block;font-size:12px;min-height:36px;padding:5px 12px}.delivery-room #navigation{display:none;flex-wrap:wrap;white-space:normal;max-height:220px;overflow:auto;padding-top:8px}.delivery-room .side.nav-open #navigation{display:flex}.delivery-room #navigation button,.delivery-room #navigation .button{font-size:12px;min-height:38px;padding:6px 10px}.delivery-room #main{padding:12px 10px}.delivery-room .page-heading{gap:6px;margin-bottom:10px}.delivery-room .page-heading h1{font-size:21px}.delivery-room .page-heading p{font-size:11px}.delivery-room .page-heading button{font-size:12px;min-height:38px;padding:6px 10px}.delivery-room .dispatch-toolbar{padding:9px}.delivery-room .dispatch-toolbar .actions{margin-top:8px}.delivery-room .dispatch-toolbar button{min-height:36px;font-size:11px}.delivery-room #dispatch-filters{grid-template-columns:1fr 1fr;gap:8px;padding:10px}.delivery-room #dispatch-filters label:nth-child(3){grid-column:1/-1}.delivery-room #dispatch-filters label:last-child{padding-top:0;grid-column:1/-1}.delivery-room #dispatch-filters input:not([type=checkbox]),.delivery-room #dispatch-filters select{font-size:13px;min-height:40px}.delivery-room .dispatch-counts{gap:4px;flex-wrap:nowrap;overflow:auto;padding-bottom:4px}.delivery-room .dispatch-stage{flex-shrink:0;min-height:38px;font-size:11px}.delivery-room .dispatch-table-head{display:none}.delivery-room #dispatch-orders{max-height:540px}.delivery-room .dispatch-order{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:12px;border-inline-start-width:4px}.delivery-room .dispatch-order-stage{grid-column:1}.delivery-room .dispatch-order-actions{grid-column:2}.delivery-room .dispatch-order .actions button{min-height:40px;font-size:12px;padding:6px 9px}.delivery-room .dispatch-order strong{font-size:13px}.delivery-room .dispatch-order .pill{font-size:11px}.delivery-room .dispatch-order small{font-size:11px}.delivery-room .dispatch-panel-tabs button{font-size:12px;min-height:40px}.delivery-room .dispatch-side{max-height:none}.delivery-room #dispatch-drivers{max-height:340px;overflow:auto}.delivery-room .dispatch-driver button{font-size:12px;min-height:40px}.delivery-room #chat-detail button{min-height:40px;font-size:12px}.delivery-room #chat-detail label{font-size:12px}.delivery-room #chat-detail textarea{font-size:16px}.delivery-room #dispatch-panel-details button{min-height:40px;font-size:12px}}
+
+/* One operations room: orders, map, drivers and conversations stay in view. */
+.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr) minmax(260px,.8fr);gap:12px;align-items:start}
+.delivery-room .dispatch-orders{grid-column:1;grid-row:1}
+.delivery-room .dispatch-map-panel{grid-column:2;grid-row:1;padding:0;min-width:0;overflow:hidden;border-radius:12px}
+.delivery-room .dispatch-side{grid-column:3;grid-row:1;position:static;max-height:none;min-height:0;overflow:visible}
+.delivery-room .dispatch-table-head,.delivery-room .dispatch-order{grid-template-columns:minmax(0,1fr) minmax(0,.95fr) minmax(0,1.2fr) minmax(0,.85fr);gap:7px;padding-inline:10px}
+.delivery-room .dispatch-order-actions,.delivery-room .dispatch-order-actions .actions{min-width:0}
+.delivery-room .dispatch-order .actions button{max-width:100%;overflow-wrap:anywhere;white-space:normal;font-size:10px;padding:5px}
+.delivery-room #dispatch-orders{max-height:clamp(420px,calc(100dvh - 365px),740px)}
+.delivery-room #dispatch-map{height:clamp(470px,calc(100dvh - 320px),790px);min-width:0;background:#edf1eb;position:relative}
+.delivery-room #dispatch-map>p{padding:18px;font-size:13px}
+.delivery-room #dispatch-panel-drivers{border-bottom:1px solid #e0e6dd}
+.delivery-room #dispatch-drivers{max-height:195px;overflow:auto;padding:0 12px;scrollbar-width:thin}
+.delivery-room #dispatch-panel-messages{display:block}
+.delivery-room #dispatch-panel-messages .conversation-list{max-height:125px;overflow:auto}
+.delivery-room #dispatch-panel-messages #chat-detail{padding:10px}
+.delivery-room #dispatch-panel-messages .messages{max-height:175px;min-height:60px}
+.delivery-room #dispatch-panel-messages .compose textarea{min-height:65px}
+.delivery-room #dispatch-panel-details{border-top:1px solid #e0e6dd;max-height:450px;overflow:auto}
+.delivery-room .dispatch-side .dispatch-pane-heading{padding:10px 12px}
+.delivery-room .dispatch-side .dispatch-pane-heading h2{font-size:13px}
+@media(min-width:1000px){html[dir=ltr] .delivery-room .dispatch-orders{grid-column:3}html[dir=ltr] .delivery-room .dispatch-side{grid-column:1}html[dir=ltr] .delivery-room .dispatch-layout{grid-template-columns:minmax(260px,.8fr) minmax(0,1fr) minmax(0,1.35fr)}}
+@media(max-width:1150px) and (min-width:1000px){.delivery-room .dispatch-layout{gap:8px;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) 250px}.delivery-room .dispatch-table-head,.delivery-room .dispatch-order{font-size:10px;gap:4px;padding-inline:6px}.delivery-room .dispatch-order .pill{font-size:9px;padding:2px 4px}.delivery-room .dispatch-order strong{font-size:11px}.delivery-room .dispatch-pane-heading{padding:10px}.delivery-room .dispatch-pane-heading h2{font-size:13px}}
+@media(max-width:999px){.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1fr) minmax(260px,.8fr)}.delivery-room .dispatch-orders{grid-column:1/-1;grid-row:1}.delivery-room .dispatch-map-panel{grid-column:1;grid-row:2}.delivery-room .dispatch-side{grid-column:2;grid-row:2}.delivery-room #dispatch-map{height:520px}.delivery-room #dispatch-orders{max-height:450px}}
+@media(max-width:650px){.delivery-room .dispatch-layout{grid-template-columns:minmax(0,1fr)}.delivery-room .dispatch-orders{grid-column:1;grid-row:1}.delivery-room .dispatch-map-panel{grid-column:1;grid-row:2}.delivery-room .dispatch-side{grid-column:1;grid-row:3}.delivery-room #dispatch-map{height:340px}.delivery-room .dispatch-table-head{display:none}.delivery-room .dispatch-order{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:12px}.delivery-room .dispatch-order .actions button{font-size:12px;padding:6px 9px;min-height:40px}.delivery-room #dispatch-drivers{max-height:250px}.delivery-room #dispatch-panel-messages .conversation-list{max-height:190px}.delivery-room #dispatch-panel-messages .messages{max-height:240px}}

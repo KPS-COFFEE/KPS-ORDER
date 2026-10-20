@@ -20,7 +20,7 @@ def test_uploaded_preview_cache_and_private_admin_boundary(owner):
     assert original.status_code==preview.status_code==200
     assert len(preview.content)<len(original.content)
     assert preview.headers['cache-control']=='public, max-age=60'
-    assert client.get(upload.json()['preview_url']).headers['cache-control']=='no-store'
+    assert set(client.get(upload.json()['preview_url']).headers['cache-control'].split(', ')) == {'private', 'no-store'}
     with db.tx() as c:c.execute("UPDATE products SET settings=settings||'{\"enabled\":false}' WHERE id='kps-01'")
     assert client.get(url+'?preview=true').status_code==404
 

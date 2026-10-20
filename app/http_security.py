@@ -83,6 +83,18 @@ class SecurityMiddleware:
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
                     "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+                # Mapbox permissions apply exclusively to the staff document.
+                # All customer paths retain the production security headers above.
+                from .dispatch_map import enabled as dispatch_map_enabled
+                if path in ('/ops', '/ops.html') and dispatch_map_enabled():
+                    headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+                    headers['Content-Security-Policy'] = (
+                        "default-src 'self'; script-src 'self' https://api.mapbox.com/mapbox-gl-js/v3.33.0/; "
+                        "style-src 'self' 'unsafe-inline' https://api.mapbox.com/mapbox-gl-js/v3.33.0/; "
+                        "img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; "
+                        "connect-src 'self' https://api.mapbox.com/v4/ https://api.mapbox.com/styles/v1/mapbox/ "
+                        "https://api.mapbox.com/fonts/v1/mapbox/ https://api.mapbox.com/map-sessions/v1 https://events.mapbox.com/; "
+                        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
                 if os.getenv('APP_ENV', 'production') == 'production':
                     headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
                 public_image = (path.startswith(('/api/product-assets/', '/api/banner-assets/'))

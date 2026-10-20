@@ -53,6 +53,8 @@ def test_manager_confirms_invoice_before_customer_preparation(sms_browser_app, c
         expect(open_customer()).to_have_text('Your order has been received' if lang == 'en' else 'تم استلام طلبك')
         _owner_login(manager_ctx, base, manager)
         manager_page.goto(base+'/ops', wait_until='networkidle')
+        if not manager_page.locator('#navigation [data-page=orders]').is_visible():
+            manager_page.locator('.dispatch-nav-toggle').click()
         manager_page.locator('#navigation [data-page=orders]').click()
         manager_page.locator(f'#content [data-action=order-detail][data-id="{oid}"]').click()
         manager_page.locator(f'#modal-body [data-action=confirm-print-output][data-id="{oid}"]').click()
