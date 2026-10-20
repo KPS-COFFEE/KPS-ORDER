@@ -5,11 +5,10 @@ and session creation; it does not claim delivery to a physical phone.
 """
 from copy import deepcopy
 import os
-import re
 
 import pytest
 
-from app import db, email_delivery, reporting
+from app import db, reporting
 from test_v5_reports import sample
 from test_browser import _context, _capture, chromium_browser, live_app, synthetic_mail
 
@@ -82,7 +81,9 @@ def test_final_mobile_code_screen_registered_phone_requires_certified_sms(live_a
         assert page.locator('#staff-code-request-state').inner_text()==''
         assert context.request.get(live_app+'/api/session', headers={'X-KPS-Context':'work'}).json()['user'] is None
         with db.tx() as conn:
-            conn.execute("UPDATE identity_channels SET state='active',enabled=true WHERE brand_id='kps' AND channel='email'")
+            conn.execute("UPDATE identity_channels SET state='active',enabled=true WHERE brand_id='kps' AND channel='sms'")
+            channel=conn.execute("SELECT delivery_proven_at,sms_provider FROM identity_channels WHERE brand_id='kps' AND channel='sms'").fetchone()
+            assert channel['delivery_proven_at'] is not None and channel['sms_provider']=='tawked'
         page.locator('#staff-code-request-submit').click()
         expect(page.locator('#staff-code-verify-form')).to_be_visible()
         expect(page.locator('#staff-code-note')).to_contain_text('SMS')

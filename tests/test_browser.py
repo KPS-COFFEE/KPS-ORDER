@@ -68,10 +68,12 @@ from tests.browser_sms_helpers import sms_browser_app
 
 
 @pytest.fixture
-def live_app(synthetic_mail, sms_browser_app):
+def live_app(database, monkeypatch, synthetic_mail):
     # Real HTTP/auth routes with only provider I/O synthetic, in-process so the
     # canonical SMS provider monkeypatch survives. Keep synthetic email outbox.
-    yield sms_browser_app
+    # Consumers import live_app alone; delegate directly rather than requiring
+    # pytest to discover an additional fixture in every importing test module.
+    yield from sms_browser_app.__wrapped__(database, monkeypatch)
 
 
 @pytest.fixture
