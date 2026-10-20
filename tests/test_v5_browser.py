@@ -24,6 +24,7 @@ from app import auth, db
 from tests.browser_sms_helpers import complete_owner_sms_dialog
 from test_browser import (ARTIFACTS, WIDTHS, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
+                          _approve_driver_closure_from_browser,
                           _match_manager_finances,
                           _inspection_payload, _fill_closure_inspection, _attach_task_photo,
                           chromium_browser, ROOT)
@@ -286,14 +287,22 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _attach_task_photo(driver)
         _submit_modal(driver)
         driver.locator('[data-action=collect]').click()
-        driver.locator('#modal-body [name=tendered]').fill(f'{total/100:.2f}')
-        _submit_modal(driver, check=['confirmed'])
+        expect(driver.locator('#modal-body input[name=tendered]')).to_have_count(0)
+        expect(driver.locator('#modal-body input[name=confirmed]')).to_have_count(0)
+        expect(driver.locator('#modal-body select[name=method]')).to_have_value('cash')
+        with driver.expect_response(lambda response: response.request.method=='POST' and response.url.endswith('/collect')) as paid:
+            _submit_modal(driver)
+        assert paid.value.status==200,paid.value.text()
+        assert paid.value.request.post_data_json=={'method':'cash','amount_halalas':total,'tendered_halalas':total,'reference':''}
+        with db.tx() as conn:
+            collection=conn.execute('SELECT * FROM collections WHERE order_id=%s',(order_id,)).fetchone()
+            assert collection['amount_halalas']==total and collection['tendered_halalas']==total and collection['change_halalas']==0
         driver.locator('[data-action=delivered]').click()
         _attach_task_photo(driver)
         _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
-        driver.locator('[data-confirm-driver-close]').click()
+        _approve_driver_closure_from_browser(driver,contexts['delivery_manager'],base,driver_shift)
         driver.locator('#blind-closure-form [name=counted]').fill(f'{total/100:.2f}')
         driver.locator('#blind-closure-form [name=terminal_total]').fill('0')
         driver.locator('#save-blind-closure').click()
