@@ -11,6 +11,19 @@ from app import admin, db
 from app.exports import build_archive, restore_archive
 from test_admin import owner
 from test_browser import _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from tests.sms_policy_helpers import sms_step_up
+
+
+def _approve_advertising(client, mutate, monkeypatch):
+    with db.tx() as conn:
+        principal = conn.execute("SELECT * FROM users WHERE id='admin-test-owner'").fetchone()
+    sms_step_up(client, principal, monkeypatch)
+    current = client.get('/api/advertising/policy').json()['policy']
+    approved = mutate('PUT', '/api/advertising/policy', {
+        'advertising_enabled': True, 'expected_version': current['version'],
+        'reason': 'Explicit owner approval in isolated presentation test',
+    })
+    assert approved.status_code == 200, approved.text
 
 
 def test_homepage_presentation_validation_and_safe_defaults():
@@ -35,7 +48,7 @@ def test_homepage_presentation_validation_and_safe_defaults():
 
 
 @pytest.mark.postgres
-def test_owner_settings_public_filtered_quote_and_preservation(owner):
+def test_owner_settings_public_filtered_quote_and_preservation(owner, monkeypatch):
     client, mutate = owner
     before = client.get('/api/admin/config').json()
     with db.tx() as conn:
@@ -55,6 +68,8 @@ def test_owner_settings_public_filtered_quote_and_preservation(owner):
     }
     result = mutate('PATCH', '/api/admin/settings', {'homepage_presentation': changed})
     assert result.status_code == 200, result.text
+    assert client.get('/api/banners').json()['presentation']['ticker_lines'] == []
+    _approve_advertising(client, mutate, monkeypatch)
     visible = client.get('/api/banners').json()['presentation']
     assert visible['ticker_lines'] == changed['ticker_lines']
     assert visible['ticker_seconds'] == 36
@@ -84,7 +99,7 @@ def test_owner_settings_public_filtered_quote_and_preservation(owner):
 
 
 @pytest.mark.postgres
-def test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activation(owner):
+def test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activation(owner, monkeypatch):
     client, mutate = owner
     saved = {'ticker_enabled': True, 'ticker_lines': ['Speciality Coffee', 'عبارة محفوظة للمالك'],
              'ticker_seconds': 42, 'quote_enabled': True, 'quote_text': 'نص البنر المحفوظ'}
@@ -106,7 +121,7 @@ def test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activ
         assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='presentation.owner_ticker_paused'").fetchone()['n'] == 1
     hidden = client.get('/api/banners').json()['presentation']
     assert not hidden['ticker_enabled'] and hidden['ticker_lines'] == []
-    assert hidden['quote_text'] == saved['quote_text']
+    assert hidden['quote_text'] == ''
     assert client.get('/api/admin/config').json()['settings']['homepage_presentation']['ticker_lines'] == saved['ticker_lines']
     # The pause audit must also round-trip through an empty-schema restore,
     # without migrations inserting a duplicate audit before archive import.
@@ -129,6 +144,8 @@ def test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activ
     assert not client.get('/api/banners').json()['presentation']['ticker_enabled']
     restored = mutate('PATCH', '/api/admin/settings', {'homepage_presentation': {'ticker_enabled': True}})
     assert restored.status_code == 200, restored.text
+    assert client.get('/api/banners').json()['presentation']['ticker_lines'] == []
+    _approve_advertising(client, mutate, monkeypatch)
     db.migrate()
     assert client.get('/api/banners').json()['presentation']['ticker_lines'] == saved['ticker_lines']
 
@@ -146,6 +163,19 @@ def test_customer_banner_no_watermark_and_owner_rotating_presentation(live_app, 
     response = context.request.patch(live_app + '/api/admin/settings',
                                      headers={**owner_headers, 'Idempotency-Key': 'presentation-settings-' + uuid4().hex}, data=body)
     assert response.status == 200, response.text()
+    # Public presentation still requires a separate, explicit owner decision.
+    assert context.request.get(live_app + '/api/banners').json()['presentation']['ticker_lines'] == []
+    challenge = context.request.post(live_app + '/api/identity/owner/sms/request', headers=owner_headers)
+    assert challenge.ok, challenge.text()
+    proof = context.request.post(live_app + '/api/identity/owner/sms/verify', headers=owner_headers,
+                                 data={'challenge_id': challenge.json()['challenge_id'], 'code': '0123'})
+    assert proof.ok, proof.text()
+    current = context.request.get(live_app + '/api/advertising/policy', headers=owner_headers).json()['policy']
+    approved = context.request.put(live_app + '/api/advertising/policy',
+        headers={**owner_headers, 'Idempotency-Key': 'presentation-approval-' + uuid4().hex},
+        data={'advertising_enabled': True, 'expected_version': current['version'],
+              'reason': 'Explicit owner approval in isolated browser test'})
+    assert approved.ok, approved.text()
     for i in range(2):
         created = context.request.post(
             live_app + '/api/admin/banners',

@@ -86,6 +86,8 @@ from . import experience_policy
 app.include_router(experience_policy.router)
 from . import first_order_gift
 app.include_router(first_order_gift.router)
+from . import storefront_advertising
+app.include_router(storefront_advertising.router)
 from . import morning_delivery
 app.include_router(morning_delivery.router)
 from . import customer_map
