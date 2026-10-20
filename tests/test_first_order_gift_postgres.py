@@ -5,6 +5,10 @@ from uuid import uuid4
 import io
 import json
 import zipfile
+import os
+import psycopg
+from psycopg import sql
+from psycopg.rows import dict_row
 import pytest
 from fastapi import HTTPException
 from app import auth, catalog, db, exports, first_order_gift as gift, orders
@@ -31,11 +35,6 @@ def gift_setup(ops,monkeypatch):
         user=c.execute("SELECT * FROM users WHERE id='ops-customer'").fetchone()
     user['customer_verified_at']=datetime.now(timezone.utc)
     user['customer_phone_required']=True
-    def login():
-        # Existing identity suites cover actual SMS proof; this fixture isolates
-        # business logic and real PostgreSQL transactions after verification.
-        actor('customer').app.dependency_overrides[auth.current_user]=lambda:user
-        return actor('customer')
     def customer_client():
         client=actor('customer');client.app.dependency_overrides[auth.current_user]=lambda:user
         return client
@@ -101,3 +100,47 @@ def test_unverified_contact_and_other_brand_cannot_get_a_gift(gift_setup):
     assert client().post('/api/gifts/quote',json=body).status_code==403
     body['brand_id']='ops-other'
     assert client().post('/api/gifts/quote',json=body).status_code==403
+
+
+def test_backup_restore_preserves_used_phone_without_regranting(gift_setup):
+    client,user,body,_=gift_setup
+    created=client().post('/api/orders',json=body,headers={'Idempotency-Key':uuid4().hex})
+    assert created.status_code==200,created.text
+    with db.tx() as conn:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        archive,_=exports.build_archive(conn,full=True)
+    target='kps_restore_'+uuid4().hex
+    url=os.environ['TEST_DATABASE_URL']
+    try:
+        exports.restore_archive(archive,target_url=url,target_schema=target)
+        with psycopg.connect(url,row_factory=dict_row) as conn:
+            conn.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
+            assert conn.execute("SELECT count(*) n FROM first_order_gift_claims WHERE brand_id='ops-brand' AND phone='+966512345678'").fetchone()['n']==1
+            typed=catalog.QuoteBody.model_validate(body)
+            quote=catalog.quote_order(conn,typed)
+            settings=conn.execute("SELECT settings FROM app_settings WHERE brand_id='ops-brand'").fetchone()['settings']
+            assert gift.prepare(conn,typed,quote,user,settings) is None
+            assert quote['first_order_gift']['status']=='claimed'
+    finally:
+        # Only the exact new UUID schema owned by this test may be removed.
+        with psycopg.connect(url,autocommit=True) as conn:
+            conn.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(target)))
+
+
+def test_failure_after_claim_insert_rolls_back_order_claim_and_replay_key(gift_setup):
+    _,user,body,_=gift_setup
+    with db.tx() as conn:
+        conn.execute("CREATE FUNCTION fail_synthetic_gift() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic gift failure'; END $$")
+        conn.execute('CREATE TRIGGER fail_synthetic_gift AFTER INSERT ON first_order_gift_claims FOR EACH ROW EXECUTE FUNCTION fail_synthetic_gift()')
+    typed=catalog.QuoteBody.model_validate(body);key=uuid4().hex
+    with pytest.raises(psycopg.Error):
+        orders._create_order(typed,None,user,key)
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n']==0
+        assert conn.execute('SELECT count(*) n FROM first_order_gift_claims').fetchone()['n']==0
+        conn.execute('DROP TRIGGER fail_synthetic_gift ON first_order_gift_claims')
+    retry=orders._create_order(typed,None,user,key)
+    if isinstance(retry,str):retry=json.loads(retry)
+    assert retry['order']['snapshot']['first_order_gift']['status']=='eligible'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM first_order_gift_claims').fetchone()['n']==1

@@ -89,7 +89,10 @@ def save_policy(body: PolicyChange, user=Depends(auth.require_roles('owner')),
             for selection in candidate['items']:
                 product = conn.execute('SELECT * FROM products WHERE id=%s AND brand_id=%s FOR SHARE',
                                        (selection['product_id'], user['brand_id'])).fetchone()
-                _item(product, selection, None)
+                if not product:
+                    raise db.error(409, 'GIFT_ITEM_UNAVAILABLE', 'صنف الهدية غير متاح ضمن هذا البراند.')
+                if candidate['enabled']:
+                    _item(product, selection, None)
             row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR UPDATE', (user['brand_id'],)).fetchone()
             if not row:
                 raise db.error(404, 'BRAND_NOT_FOUND', 'إعدادات البراند غير متاحة.')
