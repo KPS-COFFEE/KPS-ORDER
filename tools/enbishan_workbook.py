@@ -221,9 +221,9 @@ def reference_menu(inspection, owner_approved=False):
                 issues = []
             elif number in range(52, 55):
                 approved_name, approved_en = {
-                    52: ('موهيتو مع صحن فتة', 'Mojito with fatta plate'),
-                    53: ('موهيتو مع صحن محاشي مشكل', 'Mojito with mixed mahashi plate'),
-                    54: ('موهيتو مع صحن ورق عنب', 'Mojito with grape leaves plate')}[number]
+                    52: ('موهيتو مع فتة', 'Mojito with fatta'),
+                    53: ('موهيتو مع محاشي مشكل', 'Mojito with mixed mahashi'),
+                    54: ('موهيتو مع ورق عنب', 'Mojito with grape leaves')}[number]
                 flavours = [part.strip() for part in options.split(' - ')]
                 if flavours != ['باشن فروت', 'بلاك بيرى', 'راسبيرى', 'ستروبرى', 'بلولوجن', 'رمان']:
                     raise ValueError('Reviewed mojito flavours changed.')
