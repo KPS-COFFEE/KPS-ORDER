@@ -245,6 +245,7 @@ jobs:
         \ \\\n  --mount \"type=bind,src=$PWD/requirements.txt,dst=/app/requirements.txt,readonly\" \\\n  --mount\
         \ \"type=bind,src=$PWD/.github/workflows/software-hardening.yml,dst=/app/.github/workflows/software-hardening.yml,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tools/container_entrypoint.py,dst=/app/tools/container_entrypoint.py,readonly\"\
+        \ \\\n  --mount \"type=bind,src=$PWD/tools/rollback_application_overlay,dst=/app/tools/rollback_application_overlay,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tools/profile_checkout.py,dst=/app/tools/profile_checkout.py,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tools/hardening_load.py,dst=/app/tools/hardening_load.py,readonly\"\
         \ \\\n  --mount \"type=bind,src=$(readlink -f \"$(command -v node)\"),dst=/usr/local/bin/node,readonly\"\
