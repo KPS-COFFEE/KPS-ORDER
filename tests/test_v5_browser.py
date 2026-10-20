@@ -1,8 +1,8 @@
 """V5 browser-operated guest → staff → driver → final-report journey.
 
-Real HTTP and isolated PostgreSQL only, no browser API interception. The invite
-link is read from the isolated encrypted test outbox with the test key; no real
-external mail is sent and this does not certify a production email channel.
+Real HTTP and isolated PostgreSQL only, no browser API interception. Staff use
+four-digit SMS through the actual UI; only external provider I/O is synthetic.
+The restartable server preserves database and authenticated-session assertions.
 """
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app import auth, db, email_delivery
+from app import db
 from tests.browser_sms_helpers import complete_owner_sms_dialog
-from test_browser import (ARTIFACTS, WIDTHS, PASSWORD, _context, _capture, _staff,
+from test_browser import (ARTIFACTS, WIDTHS, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
                           _match_manager_finances,
                           _inspection_payload, _fill_closure_inspection, _attach_task_photo,
@@ -119,15 +119,6 @@ def _font_evidence(page):
     return result
 
 
-def _read_synthetic_invitation(email):
-    with db.tx() as conn:
-        row = conn.execute("SELECT * FROM email_outbox WHERE recipient=%s AND kind='identity' ORDER BY created_at DESC LIMIT 1", (email,)).fetchone()
-        assert row and row['status'] == 'pending'
-        payload = email_delivery._payload(row)
-    # The secret stays in memory and is never added to screenshots or artifacts.
-    return next(line for line in payload['text'].splitlines() if '/#identity_challenge=' in line)
-
-
 def _close_detail(page):
     if page.locator('#modal').is_visible():
         page.locator('#modal-close').click()
@@ -158,6 +149,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
     try:
         for role, user in users.items():
             context, page, page_errors = _context(chromium_browser, base)
+            context.set_extra_http_headers({'X-KPS-Context':'work'})
             contexts[role], pages[role] = context, page
             errors.append(page_errors)
             _staff_ui_login(page, user)
@@ -185,6 +177,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             assert registered_driver and registered_driver['role']=='driver'
             assert registered_driver['phone_sms_verified_at'] is None
         driver_context, driver, driver_errors = _context(chromium_browser, base)
+        driver_context.set_extra_http_headers({'X-KPS-Context':'work'})
         contexts['driver'], pages['driver'] = driver_context, driver
         errors.append(driver_errors)
         _staff_ui_login(driver, registered_driver)
@@ -198,6 +191,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         manager_shift = _authenticated_post(contexts['delivery_manager'], base, '/api/shifts', {'kind': 'manager', 'branch_ids': ['kps-branch-1','kps-branch-9']})['shift']['id']
         driver_shift = _authenticated_post(driver_context, base, '/api/shifts', {'kind': 'driver', 'branch_ids': ['kps-branch-1','kps-branch-9'], 'manager_shift_id': manager_shift, 'vehicle_inspection': _inspection_payload()})['shift']['id']
         customer_context, customer, customer_errors = _context(chromium_browser, base)
+        customer_context.set_extra_http_headers({'X-KPS-Context':'customer'})
         contexts['guest'], pages['guest'] = customer_context, customer
         errors.append(customer_errors)
         customer.goto('/')
@@ -380,7 +374,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         assert base.restart_count == 1
         assert persistence_state() == before_restart
         for role, context in contexts.items():
-            session = context.request.get(base+'/api/session')
+            session = context.request.get(base+'/api/session', headers={'X-KPS-Context':'customer' if role=='guest' else 'work'})
             assert session.status == 200 and session.json()['user'] and session.json()['csrf_token'], role
         tracked = customer_context.request.get(base+'/api/orders/'+order_id)
         assert tracked.status == 200 and tracked.json()['order']['snapshot'] == original_customer_snapshot
