@@ -53,7 +53,7 @@
         let item=markers.get(pin.key);
         if(!item){const element=document.createElement('button');element.type='button';
           const popupRoot=document.createElement('div');popupRoot.className='dispatch-map-popup';
-          const popup=new library.Popup({offset:20}).setDOMContent(popupRoot);
+          const popup=new library.Popup({offset:20,focusAfterOpen:false}).setDOMContent(popupRoot);
           const marker=new library.Marker({element}).setLngLat([pin.location.lng,pin.location.lat]).setPopup(popup).addTo(map);
           item={element,popupRoot,marker};markers.set(pin.key,item);
         }

@@ -112,3 +112,74 @@ def test_real_browser_manager_marker_moves_and_expires(gps_page):
     assert page.locator('.dispatch-map-pin.driver').count() == 0
     assert page.evaluate('window.markers[0].removed')
     page.evaluate('window.mapController.destroy()')
+
+
+def test_order_pin_popup_does_not_scroll_or_reload_page(gps_page):
+    """Mapbox 3.33 Popup focuses its first button by default, without preventScroll."""
+    page = gps_page
+    page.evaluate('''() => {
+      document.body.style.margin='0';document.body.style.paddingBottom='1000px';
+      const host=document.querySelector('#map');
+      host.style.cssText='margin-top:900px;height:600px;position:relative';
+      window.openedOrders=[];window.mapsCreated=0;window.popupFocusCalls=0;window.useDefaultPopupFocus=true;
+      class Popup {
+        constructor(options){this.options=window.useDefaultPopupFocus?{focusAfterOpen:true}:{focusAfterOpen:true,...options};}
+        setDOMContent(root){this.root=root;return this;}
+        addTo(map){
+          this.root.style.cssText='position:absolute;top:0;background:white';
+          map.container.append(this.root);
+          // Exact relevant behavior of Mapbox Popup._focusFirstElement:
+          // firstFocusable.focus(), with no preventScroll option.
+          if(this.options.focusAfterOpen){window.popupFocusCalls++;this.root.querySelector('button')?.focus();}
+          return this;
+        }
+      }
+      class Marker {
+        constructor({element}){this.element=element;}
+        setLngLat(value){return this;}
+        setPopup(value){this.popup=value;return this;}
+        addTo(map){
+          this.element.style.cssText='position:absolute;top:450px';
+          map.container.append(this.element);
+          this.element.addEventListener('click',()=>this.popup.addTo(map));return this;
+        }
+        remove(){this.element.remove();}
+      }
+      class Map {
+        constructor(options){this.container=options.container;window.mapsCreated++;}
+        addControl(){}on(name,fn){if(name==='load')setTimeout(fn,0);}resize(){}fitBounds(){}remove(){}
+      }
+      window.mapboxgl={Map,Marker,Popup,NavigationControl:class {},LngLatBounds:class {extend(){}},supported:()=>true};
+      window.order={id:'delivered-order',order_reference:'HFR-123',delivery_status:'delivered',customer_location:{lat:28.4,lng:45.9}};
+    }''')
+    page.add_script_tag(path=str(ROOT / 'public/assets/dispatch-map.js'))
+    mount="""async()=>{window.controller=await KPSDispatchMap.mount(document.querySelector('#map'),{
+      api:async()=>({enabled:true,provider:'mapbox',public_token:'pk.synthetic',style:'synthetic'}),
+      orders:[window.order],lang:'en',onSelectOrder:id=>window.openedOrders.push(id)});} """
+    # Control: reproduce the default SDK focus behavior and native document jump.
+    page.evaluate(mount)
+    page.wait_for_selector('.dispatch-map-pin.delivered')
+    page.evaluate('window.scrollTo(0,1100);window.scrollBefore=window.scrollY')
+    page.locator('.dispatch-map-pin.delivered').click()
+    assert page.evaluate('window.popupFocusCalls') == 1
+    assert page.evaluate('Math.abs(window.scrollY-window.scrollBefore)') > 20
+    # Actual production options disable that default; the same click stays put.
+    page.evaluate('window.controller.destroy();window.useDefaultPopupFocus=false;window.mapsCreated=0;window.popupFocusCalls=0')
+    page.evaluate(mount)
+    page.wait_for_selector('.dispatch-map-pin.delivered')
+    page.evaluate('window.scrollTo(0,1100);window.scrollBefore=window.scrollY;window.documentBefore=document;window.markerBefore=document.querySelector(".dispatch-map-pin")')
+    page.locator('.dispatch-map-pin.delivered').click()
+    assert page.evaluate('Math.abs(window.scrollY-window.scrollBefore)') <= 1
+    assert page.evaluate('window.popupFocusCalls') == 0
+    assert page.evaluate('window.openedOrders') == []
+    assert page.evaluate('window.documentBefore===document && window.mapsCreated===1')
+    assert page.locator('.dispatch-map-popup').is_visible()
+    # Ordinary location polling keeps the map instance and viewport.
+    page.evaluate('window.controller.update({orders:[window.order]})')
+    assert page.evaluate('window.markerBefore===document.querySelector(".dispatch-map-pin")')
+    assert page.evaluate('Math.abs(window.scrollY-window.scrollBefore)') <= 1
+    # Explicitly opening an order is a callback, never a navigation or form submit.
+    page.locator('.dispatch-map-popup button').evaluate('button=>button.click()')
+    assert page.evaluate('window.openedOrders') == ['delivered-order']
+    assert page.evaluate('window.documentBefore===document && window.mapsCreated===1')
+    page.evaluate('window.controller.destroy()')
