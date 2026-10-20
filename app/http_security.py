@@ -83,10 +83,10 @@ class SecurityMiddleware:
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
                     "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-                # Only the explicitly enabled storefront can load the map SDK.
+                # Only explicitly enabled customer and dispatch surfaces load the map SDK.
                 # URL-restricted public Mapbox tokens require an origin referrer.
                 from .customer_map import enabled as customer_map_enabled
-                if path in ('/', '/index.html') and customer_map_enabled():
+                if path in ('/', '/index.html', '/ops', '/ops.html') and customer_map_enabled():
                     headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
                     headers['Content-Security-Policy'] = (
                         "default-src 'self'; script-src 'self' https://api.mapbox.com/mapbox-gl-js/v3.33.0/; "
