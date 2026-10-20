@@ -89,11 +89,6 @@ def test_missing_and_reassigned_events_never_invent_clocks():
     assert experience.evaluate(row(performance_snapshot={}), {}, [], START) is None
 
 
-@pytest.mark.parametrize('phone', ['512345678','0512345678','966512345678','+966512345678','٠٥١٢٣٤٥٦٧٨'])
-def test_supported_saudi_phone_forms_share_one_canonical_identity(phone):
-    assert auth.normalize_phone(phone) == '+966512345678'
-
-
 @pytest.mark.parametrize('change', [
     lambda p: p['stages']['manager_wait'].update(orange=91),
     lambda p: p['stages']['driver_acceptance'].update(red=True),

@@ -126,7 +126,7 @@ def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(m
     monkeypatch.setattr(orders,'_ensure_manager_duty',lambda *a:None)
     monkeypatch.setattr(orders.catalog,'quote_order',lambda *a,**kw:{'branch_id':'b','branch_city':'CITY','branch_no':2,'total_halalas':1200,'subtotal_halalas':1000,'delivery_fee_halalas':200,'items':[]})
     monkeypatch.setattr(orders.invoice_profiles,'capture',lambda *a,**kw:{'seller':'ORIGINAL'})
-    monkeypatch.setattr(orders.performance,'capture_policy',lambda *a:{})
+    monkeypatch.setattr(orders.performance,'capture_policy',lambda *a,**kw:{})
     body=orders.DeliveryCenterOrder(brand_id='brand',branch_id='b',service='delivery',payment_method='cash',items=[{'product_id':'p','quantity':1}],customer={'phone':'0501234567','neighborhood':'الحي','address':'عنوان','location':{'lat':28.0,'lng':45.0}},expected_total_halalas=1200)
     actor={'id':'manager','brand_id':'brand','role':'delivery_manager','branch_ids':['b']}
     result=orders.create_delivery_center_order(body,None,actor,'request-key')

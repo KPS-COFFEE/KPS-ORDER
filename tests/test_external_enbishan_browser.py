@@ -19,6 +19,13 @@ def test_manager_records_external_summary(sms_browser_app,chromium_browser,lang,
         page.set_viewport_size({'width':width,'height':950})
         _owner_login(context,sms_browser_app,manager)
         page.goto(sms_browser_app+'/ops',wait_until='networkidle')
+        if width <= 650:
+            toggle=page.locator('.dispatch-nav-toggle')
+            expect(toggle).to_be_visible()
+            expect(toggle).to_have_attribute('aria-expanded','false')
+            toggle.click()
+            expect(toggle).to_have_attribute('aria-expanded','true')
+            expect(page.locator('#navigation')).to_be_visible()
         page.locator('#navigation [data-page=shifts]').click()
         page.locator('#content [data-action=shift-detail][data-id=external-driver]').click()
         page.locator('#modal [data-action=external-enbishan]').click()
@@ -36,3 +43,4 @@ def test_manager_records_external_summary(sms_browser_app,chromium_browser,lang,
         assert value['order_count']==3 and value['total_halalas']==4000
         assert not errors
     finally:context.close()
+

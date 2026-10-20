@@ -115,11 +115,12 @@ def test_queued_guest_audit_failure_rolls_back_identity_and_cookie_but_preserves
                      "BEGIN IF NEW.action='session.created' THEN RAISE EXCEPTION 'TEST audit rejection' USING ERRCODE='23514'; "
                      "END IF; RETURN NEW; END $$")
         conn.execute('CREATE TRIGGER reject_guest_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION test_reject_guest_audit()')
-    with TestClient(client.app, base_url='http://testserver', headers={'Origin': 'http://testserver'}) as fresh:
+    with TestClient(client.app, base_url='http://testserver', headers={'Origin': 'http://testserver', 'X-KPS-Context': 'customer'}) as fresh:
+        cookie_name, csrf_name = auth.context_cookie_names('customer') if auth.context_cookies_enabled() else (auth.COOKIE, auth.CSRF_COOKIE)
         failed = fresh.post('/api/identity/guest', json=body)
         assert failed.status_code == 503, failed.text
         assert failed.json()['detail']['code'] == 'SERVICE_UNAVAILABLE'
-        assert fresh.cookies.get(auth.COOKIE) is None and fresh.cookies.get(auth.CSRF_COOKIE) is None
+        assert fresh.cookies.get(cookie_name) is None and fresh.cookies.get(csrf_name) is None
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) n FROM sessions').fetchone()['n'] == before_sessions
             assert conn.execute('SELECT id FROM users WHERE brand_id=%s AND phone=%s', (user['brand_id'], normalized)).fetchone() is None
@@ -128,9 +129,10 @@ def test_queued_guest_audit_failure_rolls_back_identity_and_cookie_but_preserves
             conn.execute('DROP TRIGGER reject_guest_audit ON audit_events')
         retried = fresh.post('/api/identity/guest', json=body)
         assert retried.status_code == 200, retried.text
-        assert fresh.cookies.get(auth.COOKIE) and fresh.cookies.get(auth.CSRF_COOKIE)
+        assert fresh.cookies.get(cookie_name) and fresh.cookies.get(csrf_name)
         with db.tx() as conn:
             rows = conn.execute('SELECT id FROM users WHERE brand_id=%s AND phone=%s', (user['brand_id'], normalized)).fetchall()
             assert len(rows) == 1
             assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (rows[0]['id'],)).fetchone()['n'] == 1
             assert conn.execute("SELECT count(*) n FROM audit_events WHERE actor_id=%s AND action='session.created'", (rows[0]['id'],)).fetchone()['n'] == 1
+

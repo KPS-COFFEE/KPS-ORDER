@@ -931,30 +931,33 @@ def hosting_report_checks(db_url, origin, workloads):
     identity, provider call or financial mutation is involved.
     """
     import io
-    from http.cookies import SimpleCookie
-    from fastapi import Response
-    from app import auth, db, exports
+    from fastapi.testclient import TestClient
+    from pytest import MonkeyPatch
+    from app import db, exports
+    from app.main import app
+    from tests.sms_policy_helpers import sms_login
 
     expected_count = sum(w.concurrency * w.rounds for w in workloads)
     expected_total = sum(order['total'] for w in workloads for order in w.confirmed)
-    response = Response()
     with db.tx() as conn:
         conn.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) "
                      "VALUES('load-report-owner','TEST report owner','owner','kps',%s)",
                      (db.json(['kps-branch-1', 'kps-branch-2']),))
         owner = conn.execute("SELECT * FROM users WHERE id='load-report-owner'").fetchone()
-        auth.establish_session(conn, owner, response)
         stored = conn.execute('SELECT count(*) orders,coalesce(sum(total_halalas),0)::bigint total_halalas '
                               'FROM orders').fetchone()
-    cookies = SimpleCookie()
-    for key, value in response.raw_headers:
-        if key.lower() == b'set-cookie':
-            cookies.load(value.decode())
+    # Exercise the canonical SMS request/verify flow in this same isolated DB.
+    # Only the external provider is synthetic; authorization and issued cookies
+    # remain real. The bounded subprocess serves every report/export below.
+    with MonkeyPatch.context() as patch:
+        with TestClient(app, base_url=origin, headers={'Origin':origin,'X-KPS-Context':'work'}) as login_client:
+            sms_login(login_client, owner, patch)
+            cookies = dict(login_client.cookies)
     # Reports cannot hide writes: order fingerprints must remain identical.
     before = order_fingerprints(db_url)
     report = {'expected_orders': expected_count, 'expected_total_halalas': expected_total,
               'database_orders': stored['orders'], 'database_total_halalas': stored['total_halalas']}
-    with httpx.Client(base_url=origin, cookies={k: v.value for k, v in cookies.items()}, timeout=60) as client:
+    with httpx.Client(base_url=origin, cookies=cookies, headers={'X-KPS-Context':'work'}, timeout=60) as client:
         exported = client.get('/api/admin/export')
         exported.raise_for_status()
         archive, manifest = exports.verify_archive(exported.content)
