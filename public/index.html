@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/assets/appearance.css?v=1">
   <link rel="stylesheet" href="/customer.css?v=progress-photo-20261018">
+  <link rel="stylesheet" href="/assets/customer-entry.css?v=20261020">
   <link rel="stylesheet" href="/assets/order-amendments.css?v=1">
   <script defer src="/assets/order-amendments.js?v=customer-requests-20261018"></script>
   <script defer src="/customer.js?v=progress-photo-20261018"></script>
@@ -57,6 +58,7 @@
     <div id="banner-controls" class="banner-controls" hidden></div>
   </section>
   <div id="site-notice" class="notice" role="status" hidden></div>
+  <section id="customer-entry" class="panel customer-entry" hidden aria-labelledby="entry-title"></section>
   <section class="service-panel panel" aria-labelledby="service-title">
     <div class="section-heading"><div><span class="eyebrow" data-i18n="before_you_choose">قبل أن تختار</span><h2 id="service-title" data-i18n="how_would_you_like_to_receive_your_order">كيف تستلم طلبك؟</h2></div><div class="branch-summary-actions"><span id="branch-summary" class="muted" data-i18n="choose_a_branch_to_check_availability">حدد الفرع للتحقق من الإتاحة</span><a id="branch-directions" class="button quiet" target="_blank" rel="noopener noreferrer" hidden data-i18n="directions_to_branch">الاتجاهات إلى الفرع</a></div></div>
     <div class="service-form">
@@ -98,4 +100,5 @@
 <dialog id="address-dialog" class="dialog" aria-labelledby="address-title"><div class="dialog-header"><h2 id="address-title" data-i18n="saved_addresses">عناويني المحفوظة</h2><button class="icon-button" data-close type="button" aria-label="إغلاق" data-i18n-aria-label="close_sign_in">×</button></div><div class="dialog-scroll"><form id="address-form"><label class="field"><span data-i18n="address_label">اسم العنوان</span><input id="address-label" maxlength="100" required></label><label class="field"><span data-i18n="address_description">وصف العنوان</span><input id="address-text" maxlength="500" autocomplete="street-address" required></label><label class="field"><span data-i18n="neighborhood">الحي</span><input id="address-neighborhood" maxlength="120" autocomplete="address-level3"></label><label class="field"><span data-i18n="google_maps_link">رابط Google Maps</span><span class="muted" data-i18n="optional">اختياري</span><input id="address-map" type="url" dir="ltr" maxlength="2000" placeholder="https://maps.app.goo.gl/…"></label><div class="row wrap"><button id="address-locate" class="button secondary" type="button" data-i18n="use_my_current_location">استخدام موقعي الحالي</button><button id="address-clear-pin" class="button quiet" type="button" data-i18n="clear_selected_location">إلغاء الموقع المحدد</button></div><p id="address-pin-status" class="small muted" role="status"></p><div id="address-error" class="notice error" role="alert" hidden></div><button id="address-save" class="button primary full" type="submit" data-i18n="save_data">حفظ البيانات</button></form></div></dialog>
 </body>
 </html>
+
 

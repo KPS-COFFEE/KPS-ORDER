@@ -174,7 +174,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 from . import channel_commercial
                 profiles = (config or {}).get('settings', {}).get('invoice_profiles') or invoice_profiles.defaults('kps')
                 quote['channel_commercial'] = channel_commercial.capture(profiles, execution_branch_id, quote, user['id'])
-            performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id)
+            performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id, settings=(config or {}).get('settings'))
             order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
@@ -679,3 +679,4 @@ def operational_confirmation(order_id:str,body:ContactConfirmationBody,
             return {'order_id':order_id,'result':body.result,'phone_verified':bool(order['customer'].get('phone_verified')),
                     'operational_confirmation_only':True}
         return db.idempotent(conn,user['id'],idempotency_key,'order.operational_confirmation:'+order_id,body.model_dump(),perform)
+

@@ -82,6 +82,8 @@ async def database_unavailable(request: Request, exc):
 # routes first without changing a route's dependencies or relative precedence
 # within its router. No permission/session result is cached.
 app.include_router(orders.router)
+from . import experience_policy
+app.include_router(experience_policy.router)
 from . import branch_payments
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
@@ -181,3 +183,4 @@ def frontend_file(filename: str):
 if (PUBLIC / 'assets').exists():
     app.include_router(image_previews.router)
     app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')
+

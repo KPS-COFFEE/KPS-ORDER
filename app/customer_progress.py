@@ -43,11 +43,11 @@ def enrich_orders(conn, orders):
         "AND e.details->>'branch_id'=o.branch_id "
         "AND COALESCE(e.details->>'revision','0')=COALESCE(o.amendment_revision,0)::text", (ids,)).fetchall()}
     departed = {row['order_id'] for row in conn.execute(
-        "SELECT DISTINCT x.order_id FROM driver_work_trip_orders x "
-        "JOIN driver_work_trips w ON w.id=x.trip_id JOIN orders o ON o.id=x.order_id "
-        "JOIN driver_tasks t ON t.order_id=x.order_id AND t.driver_id=w.driver_id AND t.shift_id=w.shift_id "
-        "WHERE x.order_id=ANY(%s) AND w.brand_id=o.brand_id AND w.departure_branch_id=o.branch_id "
-        "AND w.departed_at IS NOT NULL AND t.picked_up_at IS NOT NULL "
+        "SELECT DISTINCT t.order_id FROM driver_tasks t "
+        "JOIN orders o ON o.id=t.order_id "
+        "JOIN shifts s ON s.id=t.shift_id AND s.brand_id=o.brand_id AND s.user_id=t.driver_id "
+        "WHERE t.order_id=ANY(%s) AND t.picked_up_at IS NOT NULL "
         "AND t.status IN ('picked_up','delivered','problem')", (ids,)).fetchall()}
     for order in orders:
         order['customer_progress'] = progress(order, printed=order['id'] in printed, departed=order['id'] in departed)
+
