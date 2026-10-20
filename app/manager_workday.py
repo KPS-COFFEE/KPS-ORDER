@@ -18,3 +18,41 @@ def current_orders(shift, user):
         OR EXISTS(SELECT 1 FROM order_events we WHERE we.order_id=o.id
             AND we.actor_id=%s AND we.event_type='preparation.cancelled' AND we.created_at>=%s))"""
     return sql, [shift['id'],shift['branch_ids'],user['id'],shift['opened_at']]
+
+
+STAGE_SQL = """CASE
+ WHEN o.preparation_status IN ('cancelled','rejected') OR o.delivery_status='cancelled' THEN 'cancelled'
+ WHEN o.delivery_status='delivered' OR o.completed_at IS NOT NULL THEN 'delivered'
+ WHEN o.delivery_status='problem' THEN 'attention'
+ WHEN o.delivery_status='picked_up' THEN 'road'
+ WHEN o.delivery_status='assigned' THEN 'assigned'
+ WHEN o.delivery_status='accepted' THEN 'driver_accepted'
+ WHEN o.preparation_status='new' THEN 'new' ELSE 'preparing' END"""
+
+
+def workspace_orders(conn, user):
+    """Owner sees the union of real active manager shifts; no invented day window."""
+    if user['role'] == 'delivery_manager':
+        return current_orders(current_shift(conn, user), user)
+    shifts = conn.execute("SELECT * FROM shifts WHERE brand_id=%s AND kind='manager' AND status<>'closed'", (user['brand_id'],)).fetchall()
+    predicates, values = [], []
+    for shift in shifts:
+        predicate, params = current_orders(shift, {'id': shift['user_id']})
+        predicates.append(predicate)
+        values.extend(params)
+    return ('('+' OR '.join(predicates)+')', values) if predicates else ('FALSE', [])
+
+
+def workspace_counts(conn, conditions, params, predicate, current_params):
+    # Count the full authorized result, before the paginated page of 100 records.
+    rows = conn.execute('SELECT '+STAGE_SQL+' AS stage,count(*) AS all_count,'
+                        'count(*) FILTER (WHERE '+predicate+') AS current_count '
+                        'FROM orders o JOIN branches b ON b.id=o.branch_id WHERE '+
+                        ' AND '.join(conditions)+' GROUP BY stage', (*current_params, *params)).fetchall()
+    result = {'all': {'total': 0}, 'current': {'total': 0}}
+    for row in rows:
+        for scope in result:
+            count = int(row[scope+'_count'])
+            result[scope][row['stage']] = count
+            result[scope]['total'] += count
+    return result
