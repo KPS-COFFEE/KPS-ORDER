@@ -5,7 +5,7 @@
   const tr = (ar, en) => state.lang === 'en' ? en : ar;
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = v => new Intl.NumberFormat(state.lang === 'en' ? 'en-SA' : 'ar-SA', { style: 'currency', currency: 'SAR' }).format(Number(v || 0) / 100);
-  const num = v => new Intl.NumberFormat(state.lang === 'en' ? 'en' : 'ar').format(Number(v || 0));
+  const num = v => new Intl.NumberFormat(state.lang === 'en' ? 'en' : 'ar', { numberingSystem: state.lang === 'en' ? 'latn' : 'arab' }).format(Number(v || 0));
   const datetime = v => v ? new Intl.DateTimeFormat(state.lang === 'en' ? 'en-GB' : 'ar-SA-u-ca-gregory', { timeZone: 'Asia/Riyadh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(v)) : '—';
   const moneyInput = v => (Number(v || 0) / 100).toFixed(2);
   let alertAudio=null,alertBusy=false;
