@@ -202,6 +202,12 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         fonts['driver'] = _font_evidence(driver)
         manager_shift = _authenticated_post(contexts['delivery_manager'], base, '/api/shifts', {'kind': 'manager', 'branch_ids': ['kps-branch-1','kps-branch-9']})['shift']['id']
         driver_shift = _authenticated_post(driver_context, base, '/api/shifts', {'kind': 'driver', 'branch_ids': ['kps-branch-1','kps-branch-9'], 'manager_shift_id': manager_shift, 'vehicle_inspection': _inspection_payload()})['shift']['id']
+        # Exercise the supported guest fallback deliberately. Staff login above
+        # still required certified SMS; no guest is represented as verified.
+        with db.tx() as conn:
+            customer_sms = conn.execute("SELECT enabled FROM identity_channels WHERE brand_id='kps' AND channel='sms'").fetchone()
+            assert customer_sms and customer_sms['enabled'] is True
+            conn.execute("UPDATE identity_channels SET enabled=false WHERE brand_id='kps' AND channel='sms'")
         customer_context, customer, customer_errors = _context(chromium_browser, base)
         customer_context.set_extra_http_headers({'X-KPS-Context':'customer'})
         contexts['guest'], pages['guest'] = customer_context, customer
@@ -244,6 +250,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             order = conn.execute("SELECT * FROM orders WHERE customer->>'name'='ضيف اختبار V5 فقط'").fetchone()
             assert order and order['customer']['identity_kind'] == 'guest'
             assert not order['customer']['phone_verified']
+            conn.execute("UPDATE identity_channels SET enabled=%s WHERE brand_id='kps' AND channel='sms'",(customer_sms['enabled'],))
         order_id, total = order['id'], order['total_halalas']
         public_created = customer_context.request.get(base+'/api/orders/'+order_id)
         assert public_created.status == 200
