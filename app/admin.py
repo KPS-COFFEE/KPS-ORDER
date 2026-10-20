@@ -199,7 +199,7 @@ def validate_options(groups, variants=None):
                 raise db.error(422,'VARIANTS_INVALID','لون العرض غير صحيح.')
 
 
-def validate_branch_settings(settings, branch_city):
+def validate_branch_settings(settings, branch_city, *, brand_id='kps', branch_no=None):
     allowed = {'active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
                'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified','online_payment_seller'}
     keys(settings, allowed)
@@ -245,8 +245,8 @@ def validate_branch_settings(settings, branch_city):
                 if not isinstance(point,list) or len(point)!=2:
                     raise db.error(422, 'COVERAGE_INVALID', 'النقطة بصيغة [خط الطول، خط العرض].')
                 coordinate({'lng':point[0],'lat':point[1]})
-    if settings.get('delivery_enabled') and city(branch_city) not in DELIVERY_CITIES:
-        raise db.error(422, 'DELIVERY_CITY_FORBIDDEN', 'التوصيل معتمد للمدن الست فقط في الإطلاق الحالي.')
+    if settings.get('delivery_enabled') and not catalog.delivery_city_eligible({'brand_id': brand_id, 'branch_no': branch_no, 'city': branch_city}):
+        raise db.error(422, 'DELIVERY_CITY_FORBIDDEN', 'التوصيل غير معتمد لهذا الفرع ومدينة البراند.')
 
 
 @router.get('/admin/config')
@@ -298,7 +298,7 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
             name = text(body.get('name',row['name']),200,'اسم الفرع')
             branch_city = text(body.get('city',row['city']),100,'المدينة')
             changes = body.get('settings',{})
-            validate_branch_settings(changes,branch_city)
+            validate_branch_settings(changes,branch_city,brand_id=row['brand_id'],branch_no=row['branch_no'])
             if 'online_payment_seller' in changes:
                 from . import invoice_profiles
                 if user['role'] != 'owner':
@@ -317,7 +317,7 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
                 settings['location_verified'] = False
             elif 'location' in changes and changes['location'] != row['settings'].get('location') and 'location_verified' not in changes:
                 settings['location_verified'] = False
-            if settings.get('delivery_enabled') and city(branch_city) not in DELIVERY_CITIES:
+            if settings.get('delivery_enabled') and not catalog.delivery_city_eligible(dict(row, city=branch_city)):
                 raise db.error(422,'DELIVERY_CITY_FORBIDDEN','أوقف التوصيل قبل نقل الفرع إلى مدينة غير معتمدة.')
             enabled = any(settings.get(f) for f in ('pickup_enabled','car_enabled','delivery_enabled'))
             if enabled and (not settings.get('ordering_verified') or not settings.get('opening_hours') or not settings.get('payment_methods')):
@@ -722,7 +722,7 @@ def create_branch(body:dict,user=Depends(owner),idem:str|None=Header(None,alias=
     supplied_settings=body.get('settings',{})
     if supplied_settings.get('online_payment_seller') is not None:
         raise db.error(422, 'INITIAL_PAYMENT_SELLER_PENDING', 'اعتمد منشأة الدفع بعد إنشاء الفرع.')
-    validate_branch_settings(supplied_settings,branch_city)
+    validate_branch_settings(supplied_settings,branch_city,brand_id=user['brand_id'],branch_no=branch_no)
     if any(supplied_settings.get(key) for key in ('pickup_enabled','car_enabled','delivery_enabled')):
         raise db.error(422,'INITIAL_BRANCH_DISABLED','أنشئ الفرع متوقفًا ثم راجع بيانات تشغيله قبل التفعيل.')
     with db.tx() as conn:

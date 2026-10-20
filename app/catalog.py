@@ -192,6 +192,16 @@ def _minute(value):
     return hour * 60 + minute
 
 
+def delivery_city_eligible(branch):
+    """Owner-approved Enbishan locations; KPS city policy remains unchanged."""
+    city_name = normalize_city(branch.get('city', ''))
+    if branch.get('brand_id') == 'enbishan':
+        approved = {1: 'حفر الباطن', 2: 'حفر الباطن', 3: 'الدمام', 4: 'القيصومة'}
+        number = branch.get('branch_no')
+        return type(number) is int and approved.get(number) == city_name
+    return city_name in DELIVERY_CITIES
+
+
 def branch_service(branch: dict, service: str, now=None, brand_settings=None) -> tuple[bool, str | None, str | None]:
     now = now or service_hours.now_riyadh()
     settings = branch['settings']
@@ -202,7 +212,7 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None) ->
         return False, 'BRAND_SERVICE_DISABLED', 'هذه الخدمة موقوفة من إدارة البراند.'
     if settings.get('active', True) is not True:
         return False, 'BRANCH_DISABLED', 'الفرع متوقف عن استقبال الطلبات الجديدة.'
-    if service == 'delivery' and normalize_city(branch['city']) not in DELIVERY_CITIES:
+    if service == 'delivery' and not delivery_city_eligible(branch):
         return False, 'DELIVERY_CITY_NOT_ELIGIBLE', 'هذا الفرع غير مشمول بخدمة التوصيل حاليًا.'
     if settings.get(service + '_enabled') is not True:
         return False, 'SERVICE_DISABLED', 'هذه الخدمة غير مفعلة لهذا الفرع.'
@@ -357,6 +367,10 @@ def public_product(product: dict, branch=None, service=None) -> dict:
     available, reason = product_availability(product, branch, service=service)
     result = {key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')}
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
+    if product['brand_id'] == 'enbishan':
+        from .enbishan_menu_assets import valid_bundled
+        result['variant_images'] = [entry for entry in settings.get('variant_images', [])
+                                    if isinstance(entry, dict) and valid_bundled(entry.get('image_url'))]
     if 'variant_price_matrix' in settings:
         from .menu_variants import validated
         try:
@@ -454,7 +468,7 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
         item['directions_url'] = directions_url(branch)
         item['location_verified'] = location_verified(branch)
         item['payment_methods'] = branch['settings'].get('payment_methods') or []
-        item['delivery_eligible'] = normalize_city(branch['city']) in DELIVERY_CITIES
+        item['delivery_eligible'] = delivery_city_eligible(branch)
         item['delivery_schedule'] = hours_status(branch['settings'].get('delivery_hours'), now)
         item['services'] = {}
         for service in ('pickup', 'car', 'delivery'):

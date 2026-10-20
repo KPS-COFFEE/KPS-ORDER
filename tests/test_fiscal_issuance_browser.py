@@ -6,7 +6,8 @@ import pytest
 from PIL import Image
 import zxingcpp
 from app import db, fiscal
-from test_browser import _context, _owner_login, _staff, _customer_session, chromium_browser, live_app, synthetic_mail
+from test_browser import _context, _owner_login, _staff, _customer_session, chromium_browser, synthetic_mail
+from tests.browser_sms_helpers import sms_browser_app as live_app
 from test_fiscal import sample, decode
 
 pytestmark = [pytest.mark.postgres, pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit isolated browser run required')]
@@ -31,7 +32,7 @@ def test_owner_issued_invoice_preserves_thermal_layout(live_app,chromium_browser
         page.goto(live_app+'/ops')
         page.get_by_role('button',name='الطلبات',exact=True).click()
         if language=='en':page.get_by_role('button',name='English',exact=True).click()
-        page.locator(f'[data-action="order-detail"][data-id="{oid}"]').click()
+        page.locator(f'#content [data-action="order-detail"][data-id="{oid}"]').click()
         with page.expect_popup() as opened:
             page.locator(f'[data-action="print-order"][data-id="{oid}"]').click()
         popup=opened.value

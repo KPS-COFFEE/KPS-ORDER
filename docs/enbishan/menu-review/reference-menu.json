@@ -218,14 +218,12 @@
       "product_code": "enb-9aaf08c9efbb70f893716679",
       "sale_halalas": 1200,
       "original_halalas": 1200,
-      "size_label": "صغير · 6 قطعة",
-      "size_label_en": "Small · 6 pieces",
+      "size_label": "صغير · 6 قطعة (3 ورق عنب + 3 ملفوف)",
+      "size_label_en": "Small · 6 pieces (3 grape leaves + 3 cabbage)",
       "category_label": "المحاشي",
       "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/qz8efnhvvc",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
+      "review_required": []
     },
     {
       "source_row": 11,
@@ -248,14 +246,12 @@
       "product_code": "enb-9aaf08c9efbb70f893716679",
       "sale_halalas": 1450,
       "original_halalas": 2200,
-      "size_label": "وسط · 12 قطعة",
-      "size_label_en": "Medium · 12 pieces",
+      "size_label": "وسط · 12 قطعة (6 ورق عنب + 6 ملفوف)",
+      "size_label_en": "Medium · 12 pieces (6 grape leaves + 6 cabbage)",
       "category_label": "المحاشي",
       "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/4nvjjab34c",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
+      "review_required": []
     },
     {
       "source_row": 12,
@@ -278,14 +274,12 @@
       "product_code": "enb-9aaf08c9efbb70f893716679",
       "sale_halalas": 4200,
       "original_halalas": 4200,
-      "size_label": "كبير · 24 قطعة",
-      "size_label_en": "Large · 24 pieces",
+      "size_label": "كبير · 24 قطعة (12 ورق عنب + 12 ملفوف)",
+      "size_label_en": "Large · 24 pieces (12 grape leaves + 12 cabbage)",
       "category_label": "المحاشي",
       "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/h864vptvdn",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
+      "review_required": []
     },
     {
       "source_row": 13,
@@ -308,14 +302,12 @@
       "product_code": "enb-9aaf08c9efbb70f893716679",
       "sale_halalas": 4500,
       "original_halalas": 6200,
-      "size_label": "عائلي · 36 قطعة",
-      "size_label_en": "Family · 36 pieces",
+      "size_label": "عائلي · 36 قطعة (18 ورق عنب + 18 ملفوف)",
+      "size_label_en": "Family · 36 pieces (18 grape leaves + 18 cabbage)",
       "category_label": "المحاشي",
       "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/z8dcsgwzz9",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
+      "review_required": []
     },
     {
       "source_row": 14,
@@ -475,7 +467,7 @@
         "M": "250",
         "N": ""
       },
-      "product_code": "enb-ad3609d94607d31a7a1cd11c",
+      "product_code": "enb-ad3609d94607d31a7a1cd11c-choose3",
       "sale_halalas": 2000,
       "original_halalas": 2000,
       "size_label": "صغير",
@@ -483,9 +475,7 @@
       "category_label": "المحاشي",
       "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/yed9c9gbrf",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
+      "review_required": []
     },
     {
       "source_row": 20,
@@ -1095,14 +1085,12 @@
       "product_code": "enb-4adce196bfbcefa5609d85f5",
       "sale_halalas": 1800,
       "original_halalas": 1800,
-      "size_label": "وسط · 10 قطعة",
-      "size_label_en": "Medium · 10 pieces",
+      "size_label": "وسط · 10 قطعة (5 كريسبي + 5 ملفوف)",
+      "size_label_en": "Medium · 10 pieces (5 crispy grape leaves + 5 cabbage)",
       "category_label": "المحاشي",
       "category_label_en": "Stuffed",
       "image_reference": "https://ibb.co/4wRJsqqK",
-      "review_required": [
-        "تعارض الاسم العربي والإنجليزي"
-      ]
+      "review_required": []
     },
     {
       "source_row": 42,
@@ -1121,7 +1109,7 @@
         "M": "",
         "N": ""
       },
-      "product_code": "enb-e0bf81af9d99b97fcbd1be72",
+      "product_code": "enb-khalyah-owner-20261020",
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
@@ -1129,9 +1117,7 @@
       "category_label": "المخبوزات",
       "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 43,
@@ -1150,7 +1136,7 @@
         "M": "",
         "N": ""
       },
-      "product_code": "enb-53f62353ffc536fdee27692a",
+      "product_code": "enb-khalyah-owner-20261020",
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
@@ -1158,9 +1144,7 @@
       "category_label": "المخبوزات",
       "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 44,
@@ -1179,7 +1163,7 @@
         "M": "",
         "N": ""
       },
-      "product_code": "enb-1e5cef797e5469df010e766e",
+      "product_code": "enb-khalyah-owner-20261020",
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
@@ -1187,9 +1171,7 @@
       "category_label": "المخبوزات",
       "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 45,
@@ -1208,7 +1190,7 @@
         "M": "",
         "N": ""
       },
-      "product_code": "enb-071a272b6e23c7bca27791af",
+      "product_code": "enb-khalyah-owner-20261020",
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
@@ -1216,9 +1198,7 @@
       "category_label": "المخبوزات",
       "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 46,
@@ -1408,10 +1388,7 @@
       "category_label": "أصناف أخرى",
       "category_label_en": "Other",
       "image_reference": "https://ibb.co/gLx4p8Sh",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار",
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 53,
@@ -1439,10 +1416,7 @@
       "category_label": "أصناف أخرى",
       "category_label_en": "Other",
       "image_reference": "https://ibb.co/gLx4p8Sh",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار",
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 54,
@@ -1470,10 +1444,7 @@
       "category_label": "أصناف أخرى",
       "category_label_en": "Other",
       "image_reference": "https://ibb.co/gLx4p8Sh",
-      "review_required": [
-        "تأكيد بنية الاختيارات والتكرار",
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 55,
@@ -1500,9 +1471,7 @@
       "category_label": "أصناف أخرى",
       "category_label_en": "Other",
       "image_reference": "https://ibb.co/Y71svMLq",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 56,
@@ -1529,9 +1498,7 @@
       "category_label": "أصناف أخرى",
       "category_label_en": "Other",
       "image_reference": "",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 57,
@@ -1559,9 +1526,7 @@
       "category_label": "أصناف أخرى",
       "category_label_en": "Other",
       "image_reference": "https://ibb.co/Z6zn17hk",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     },
     {
       "source_row": 58,
@@ -1589,9 +1554,7 @@
       "category_label": "أصناف أخرى",
       "category_label_en": "Other",
       "image_reference": "https://ibb.co/7LnvyRw",
-      "review_required": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
+      "review_required": []
     }
   ],
   "rows": [
@@ -1862,6 +1825,230 @@
       "image": "https://files.fm/f/4c2zkd3pb8"
     },
     {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "صغير · 6 قطعة (3 ورق عنب + 3 ملفوف)",
+      "size_en": "Small · 6 pieces (3 grape leaves + 3 cabbage)",
+      "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
+      "price": "12",
+      "price_before": "12",
+      "image": "https://files.fm/f/qz8efnhvvc"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "صغير · 6 قطعة (3 ورق عنب + 3 ملفوف)",
+      "size_en": "Small · 6 pieces (3 grape leaves + 3 cabbage)",
+      "flavour": "ليمون",
+      "flavour_en": "Lemon",
+      "price": "12",
+      "price_before": "12",
+      "image": "https://files.fm/f/qz8efnhvvc"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "صغير · 6 قطعة (3 ورق عنب + 3 ملفوف)",
+      "size_en": "Small · 6 pieces (3 grape leaves + 3 cabbage)",
+      "flavour": "سبايسي",
+      "flavour_en": "Spicy",
+      "price": "12",
+      "price_before": "12",
+      "image": "https://files.fm/f/qz8efnhvvc"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "صغير · 6 قطعة (3 ورق عنب + 3 ملفوف)",
+      "size_en": "Small · 6 pieces (3 grape leaves + 3 cabbage)",
+      "flavour": "مشكل",
+      "flavour_en": "Mixed",
+      "price": "12",
+      "price_before": "12",
+      "image": "https://files.fm/f/qz8efnhvvc"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "وسط · 12 قطعة (6 ورق عنب + 6 ملفوف)",
+      "size_en": "Medium · 12 pieces (6 grape leaves + 6 cabbage)",
+      "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
+      "price": "14.5",
+      "price_before": "22",
+      "image": "https://files.fm/f/4nvjjab34c"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "وسط · 12 قطعة (6 ورق عنب + 6 ملفوف)",
+      "size_en": "Medium · 12 pieces (6 grape leaves + 6 cabbage)",
+      "flavour": "ليمون",
+      "flavour_en": "Lemon",
+      "price": "14.5",
+      "price_before": "22",
+      "image": "https://files.fm/f/4nvjjab34c"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "وسط · 12 قطعة (6 ورق عنب + 6 ملفوف)",
+      "size_en": "Medium · 12 pieces (6 grape leaves + 6 cabbage)",
+      "flavour": "سبايسي",
+      "flavour_en": "Spicy",
+      "price": "14.5",
+      "price_before": "22",
+      "image": "https://files.fm/f/4nvjjab34c"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "وسط · 12 قطعة (6 ورق عنب + 6 ملفوف)",
+      "size_en": "Medium · 12 pieces (6 grape leaves + 6 cabbage)",
+      "flavour": "مشكل",
+      "flavour_en": "Mixed",
+      "price": "14.5",
+      "price_before": "22",
+      "image": "https://files.fm/f/4nvjjab34c"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "كبير · 24 قطعة (12 ورق عنب + 12 ملفوف)",
+      "size_en": "Large · 24 pieces (12 grape leaves + 12 cabbage)",
+      "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
+      "price": "42",
+      "price_before": "42",
+      "image": "https://files.fm/f/h864vptvdn"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "كبير · 24 قطعة (12 ورق عنب + 12 ملفوف)",
+      "size_en": "Large · 24 pieces (12 grape leaves + 12 cabbage)",
+      "flavour": "ليمون",
+      "flavour_en": "Lemon",
+      "price": "42",
+      "price_before": "42",
+      "image": "https://files.fm/f/h864vptvdn"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "كبير · 24 قطعة (12 ورق عنب + 12 ملفوف)",
+      "size_en": "Large · 24 pieces (12 grape leaves + 12 cabbage)",
+      "flavour": "سبايسي",
+      "flavour_en": "Spicy",
+      "price": "42",
+      "price_before": "42",
+      "image": "https://files.fm/f/h864vptvdn"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "كبير · 24 قطعة (12 ورق عنب + 12 ملفوف)",
+      "size_en": "Large · 24 pieces (12 grape leaves + 12 cabbage)",
+      "flavour": "مشكل",
+      "flavour_en": "Mixed",
+      "price": "42",
+      "price_before": "42",
+      "image": "https://files.fm/f/h864vptvdn"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "عائلي · 36 قطعة (18 ورق عنب + 18 ملفوف)",
+      "size_en": "Family · 36 pieces (18 grape leaves + 18 cabbage)",
+      "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
+      "price": "45",
+      "price_before": "62",
+      "image": "https://files.fm/f/z8dcsgwzz9"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "عائلي · 36 قطعة (18 ورق عنب + 18 ملفوف)",
+      "size_en": "Family · 36 pieces (18 grape leaves + 18 cabbage)",
+      "flavour": "ليمون",
+      "flavour_en": "Lemon",
+      "price": "45",
+      "price_before": "62",
+      "image": "https://files.fm/f/z8dcsgwzz9"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "عائلي · 36 قطعة (18 ورق عنب + 18 ملفوف)",
+      "size_en": "Family · 36 pieces (18 grape leaves + 18 cabbage)",
+      "flavour": "سبايسي",
+      "flavour_en": "Spicy",
+      "price": "45",
+      "price_before": "62",
+      "image": "https://files.fm/f/z8dcsgwzz9"
+    },
+    {
+      "product_code": "enb-9aaf08c9efbb70f893716679",
+      "name": "ورق عنب وملفوف",
+      "name_en": "Grape Leaves & Cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "عائلي · 36 قطعة (18 ورق عنب + 18 ملفوف)",
+      "size_en": "Family · 36 pieces (18 grape leaves + 18 cabbage)",
+      "flavour": "مشكل",
+      "flavour_en": "Mixed",
+      "price": "45",
+      "price_before": "62",
+      "image": "https://files.fm/f/z8dcsgwzz9"
+    },
+    {
       "product_code": "enb-3f2cae0ad1ea8e03ad043214",
       "name": "بطاطس",
       "name_en": "Potatoes",
@@ -1930,6 +2117,21 @@
       "price": "52",
       "price_before": "52",
       "image": "https://files.fm/f/vek69www7a"
+    },
+    {
+      "product_code": "enb-ad3609d94607d31a7a1cd11c-choose3",
+      "name": "محاشي مشكل",
+      "name_en": "Mixed Mahashi",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "صغير",
+      "size_en": "Small",
+      "flavour": "",
+      "flavour_en": "",
+      "price": "20",
+      "price_before": "20",
+      "image": "https://files.fm/f/yed9c9gbrf",
+      "selection_set": "mahashi_choose_three"
     },
     {
       "product_code": "enb-ad3609d94607d31a7a1cd11c",
@@ -2226,6 +2428,76 @@
       "image": ""
     },
     {
+      "product_code": "enb-4adce196bfbcefa5609d85f5",
+      "name": "ورق عنب كريسبي وملفوف",
+      "name_en": "Crispy grape leaves & cabbage",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
+      "size": "وسط · 10 قطعة (5 كريسبي + 5 ملفوف)",
+      "size_en": "Medium · 10 pieces (5 crispy grape leaves + 5 cabbage)",
+      "flavour": "",
+      "flavour_en": "",
+      "price": "18",
+      "price_before": "18",
+      "image": "https://ibb.co/4wRJsqqK"
+    },
+    {
+      "product_code": "enb-khalyah-owner-20261020",
+      "name": "خلية",
+      "name_en": "Khaliya",
+      "category": "المخبوزات",
+      "category_en": "Bakery",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "سينابون",
+      "flavour_en": "Cinnabon",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/xtjQpZXH"
+    },
+    {
+      "product_code": "enb-khalyah-owner-20261020",
+      "name": "خلية",
+      "name_en": "Khaliya",
+      "category": "المخبوزات",
+      "category_en": "Bakery",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "كلاسيك",
+      "flavour_en": "Classic",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/xtjQpZXH"
+    },
+    {
+      "product_code": "enb-khalyah-owner-20261020",
+      "name": "خلية",
+      "name_en": "Khaliya",
+      "category": "المخبوزات",
+      "category_en": "Bakery",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "مكس",
+      "flavour_en": "Mix",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/xtjQpZXH"
+    },
+    {
+      "product_code": "enb-khalyah-owner-20261020",
+      "name": "خلية",
+      "name_en": "Khaliya",
+      "category": "المخبوزات",
+      "category_en": "Bakery",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "بيكان",
+      "flavour_en": "Pecan",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/xtjQpZXH"
+    },
+    {
       "product_code": "enb-902d0a4dd63711ccd24bef7f",
       "name": "مسخن",
       "name_en": "Musakhan",
@@ -2308,115 +2580,317 @@
       "price": "12",
       "price_before": "12",
       "image": "https://ibb.co/r2Fg6kdJ"
+    },
+    {
+      "product_code": "enb-45c335eea6e9a027a0a25d80",
+      "name": "موهيتو مع صحن فتة",
+      "name_en": "Mojito with fatta plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "باشن فروت",
+      "flavour_en": "Passion fruit",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-45c335eea6e9a027a0a25d80",
+      "name": "موهيتو مع صحن فتة",
+      "name_en": "Mojito with fatta plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "بلاك بيرى",
+      "flavour_en": "Blackberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-45c335eea6e9a027a0a25d80",
+      "name": "موهيتو مع صحن فتة",
+      "name_en": "Mojito with fatta plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "راسبيرى",
+      "flavour_en": "Raspberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-45c335eea6e9a027a0a25d80",
+      "name": "موهيتو مع صحن فتة",
+      "name_en": "Mojito with fatta plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "ستروبرى",
+      "flavour_en": "Strawberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-45c335eea6e9a027a0a25d80",
+      "name": "موهيتو مع صحن فتة",
+      "name_en": "Mojito with fatta plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "بلولوجن",
+      "flavour_en": "Blue Lagoon",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-45c335eea6e9a027a0a25d80",
+      "name": "موهيتو مع صحن فتة",
+      "name_en": "Mojito with fatta plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "رمان",
+      "flavour_en": "Pomegranate",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-b54c043c94afde2a0947da54",
+      "name": "موهيتو مع صحن محاشي مشكل",
+      "name_en": "Mojito with mixed mahashi plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "باشن فروت",
+      "flavour_en": "Passion fruit",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-b54c043c94afde2a0947da54",
+      "name": "موهيتو مع صحن محاشي مشكل",
+      "name_en": "Mojito with mixed mahashi plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "بلاك بيرى",
+      "flavour_en": "Blackberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-b54c043c94afde2a0947da54",
+      "name": "موهيتو مع صحن محاشي مشكل",
+      "name_en": "Mojito with mixed mahashi plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "راسبيرى",
+      "flavour_en": "Raspberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-b54c043c94afde2a0947da54",
+      "name": "موهيتو مع صحن محاشي مشكل",
+      "name_en": "Mojito with mixed mahashi plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "ستروبرى",
+      "flavour_en": "Strawberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-b54c043c94afde2a0947da54",
+      "name": "موهيتو مع صحن محاشي مشكل",
+      "name_en": "Mojito with mixed mahashi plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "بلولوجن",
+      "flavour_en": "Blue Lagoon",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-b54c043c94afde2a0947da54",
+      "name": "موهيتو مع صحن محاشي مشكل",
+      "name_en": "Mojito with mixed mahashi plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "رمان",
+      "flavour_en": "Pomegranate",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-88282747bcacc9e36651a920",
+      "name": "موهيتو مع صحن ورق عنب",
+      "name_en": "Mojito with grape leaves plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "باشن فروت",
+      "flavour_en": "Passion fruit",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-88282747bcacc9e36651a920",
+      "name": "موهيتو مع صحن ورق عنب",
+      "name_en": "Mojito with grape leaves plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "بلاك بيرى",
+      "flavour_en": "Blackberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-88282747bcacc9e36651a920",
+      "name": "موهيتو مع صحن ورق عنب",
+      "name_en": "Mojito with grape leaves plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "راسبيرى",
+      "flavour_en": "Raspberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-88282747bcacc9e36651a920",
+      "name": "موهيتو مع صحن ورق عنب",
+      "name_en": "Mojito with grape leaves plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "ستروبرى",
+      "flavour_en": "Strawberry",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-88282747bcacc9e36651a920",
+      "name": "موهيتو مع صحن ورق عنب",
+      "name_en": "Mojito with grape leaves plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "بلولوجن",
+      "flavour_en": "Blue Lagoon",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-88282747bcacc9e36651a920",
+      "name": "موهيتو مع صحن ورق عنب",
+      "name_en": "Mojito with grape leaves plate",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "فردية",
+      "size_en": "Single",
+      "flavour": "رمان",
+      "flavour_en": "Pomegranate",
+      "price": "19.5",
+      "price_before": "19.5",
+      "image": "https://ibb.co/gLx4p8Sh"
+    },
+    {
+      "product_code": "enb-70cae76f734d457145481686",
+      "name": "بوكس رمضان · 5 كبة + 12 مسخن",
+      "name_en": "Ramadan box · 5 kibbeh + 12 musakhan",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "كبير · 17 قطعة",
+      "size_en": "Large · 17 pieces",
+      "flavour": "",
+      "flavour_en": "",
+      "price": "18",
+      "price_before": "18",
+      "image": "https://ibb.co/Y71svMLq"
+    },
+    {
+      "product_code": "enb-d0258154e9dbb5a87e7db80f",
+      "name": "بوكس رمضان · 5 كبة + 6 مسخن + 5 سمبوسة",
+      "name_en": "Ramadan box · 5 kibbeh + 6 musakhan + 5 samosa",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "كبير · 16 قطعة",
+      "size_en": "Large · 16 pieces",
+      "flavour": "",
+      "flavour_en": "",
+      "price": "16.5",
+      "price_before": "16.5",
+      "image": ""
+    },
+    {
+      "product_code": "enb-b3b07ac3a4058591841701a0",
+      "name": "بوكس رمضان · 5 كبة + 5 سمبوسة + 5 ورق عنب كريسبي",
+      "name_en": "Ramadan box · 5 kibbeh + 5 samosa + 5 crispy grape leaves",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "كبير · 15 قطعة",
+      "size_en": "Large · 15 pieces",
+      "flavour": "",
+      "flavour_en": "",
+      "price": "20",
+      "price_before": "20",
+      "image": "https://ibb.co/Z6zn17hk"
+    },
+    {
+      "product_code": "enb-77458381f75cffe2038f7781",
+      "name": "بوكس رمضان · 5 سمبوسة + 12 مسخن",
+      "name_en": "Ramadan box · 5 samosa + 12 musakhan",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
+      "size": "كبير · 17 قطعة",
+      "size_en": "Large · 17 pieces",
+      "flavour": "",
+      "flavour_en": "",
+      "price": "16.5",
+      "price_before": "16.5",
+      "image": "https://ibb.co/7LnvyRw"
     }
   ],
-  "unresolved": [
-    {
-      "source_row": 10,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
-    },
-    {
-      "source_row": 11,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
-    },
-    {
-      "source_row": 12,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
-    },
-    {
-      "source_row": 13,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
-    },
-    {
-      "source_row": 19,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار"
-      ]
-    },
-    {
-      "source_row": 41,
-      "issues": [
-        "تعارض الاسم العربي والإنجليزي"
-      ]
-    },
-    {
-      "source_row": 42,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 43,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 44,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 45,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 52,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار",
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 53,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار",
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 54,
-      "issues": [
-        "تأكيد بنية الاختيارات والتكرار",
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 55,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 56,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 57,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    },
-    {
-      "source_row": 58,
-      "issues": [
-        "اعتماد الاسم والتركيبة والتوفر"
-      ]
-    }
-  ],
+  "unresolved": [],
   "ordering_enabled": false,
   "missing_images": [
     35,
@@ -3165,6 +3639,176 @@
         }
       },
       {
+        "id": "enbishan-menu-d99fd6d6d3f908666e604235",
+        "brand_id": "enbishan",
+        "name": "موهيتو مع صحن فتة",
+        "category": "أصناف أخرى",
+        "price_halalas": 1950,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-45c335eea6e9a027a0a25d80",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-f956d9167fe84c3ce4bd91a8",
+                  "name": "فردية",
+                  "name_en": "Single",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "FLAVOUR",
+              "name": "النكهة",
+              "name_en": "Flavour",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-0648331d8c487bc633f3dfcd",
+                  "name": "باشن فروت",
+                  "name_en": "Passion fruit",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-2e537d9cd7148f6a198d5d62",
+                  "name": "بلاك بيرى",
+                  "name_en": "Blackberry",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-cc3971eb583b962536a0d133",
+                  "name": "بلولوجن",
+                  "name_en": "Blue Lagoon",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-2c3a36587e2510bc4a6f2c5c",
+                  "name": "راسبيرى",
+                  "name_en": "Raspberry",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-af81bab458678c11d1199f87",
+                  "name": "رمان",
+                  "name_en": "Pomegranate",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-c15c65cd891cb3baa03fac95",
+                  "name": "ستروبرى",
+                  "name_en": "Strawberry",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Mojito with fatta plate",
+          "category_en": "Other",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-cc3971eb583b962536a0d133"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-af81bab458678c11d1199f87"
+              },
+              "price_halalas": 1950
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-cc3971eb583b962536a0d133"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-af81bab458678c11d1199f87"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            }
+          ]
+        }
+      },
+      {
         "id": "enbishan-menu-97454e7c5796562295e4937c",
         "brand_id": "enbishan",
         "name": "نودلز",
@@ -3212,6 +3856,57 @@
                 "SIZE": "v-f956d9167fe84c3ce4bd91a8"
               },
               "image": "https://files.fm/f/kbzkjqaeyw"
+            }
+          ]
+        }
+      },
+      {
+        "id": "enbishan-menu-cfe9ad0bccc96e0d0537be28",
+        "brand_id": "enbishan",
+        "name": "ورق عنب كريسبي وملفوف",
+        "category": "المحاشي",
+        "price_halalas": 1800,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-4adce196bfbcefa5609d85f5",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-f5e13f8169208e047d65bbd2",
+                  "name": "وسط · 10 قطعة (5 كريسبي + 5 ملفوف)",
+                  "name_en": "Medium · 10 pieces (5 crispy grape leaves + 5 cabbage)",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Crispy grape leaves & cabbage",
+          "category_en": "Stuffed",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-f5e13f8169208e047d65bbd2"
+              },
+              "price_halalas": 1800
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-f5e13f8169208e047d65bbd2"
+              },
+              "image": "https://ibb.co/4wRJsqqK"
             }
           ]
         }
@@ -3299,6 +3994,108 @@
                 "SIZE": "v-774fa9ee015940670c61c84c"
               },
               "image": "https://ibb.co/r2Fg6kdJ"
+            }
+          ]
+        }
+      },
+      {
+        "id": "enbishan-menu-f7a3a347bc71bf37d6645975",
+        "brand_id": "enbishan",
+        "name": "بوكس رمضان · 5 كبة + 12 مسخن",
+        "category": "أصناف أخرى",
+        "price_halalas": 1800,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-70cae76f734d457145481686",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-8d233ce061e384d30eea3f77",
+                  "name": "كبير · 17 قطعة",
+                  "name_en": "Large · 17 pieces",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Ramadan box · 5 kibbeh + 12 musakhan",
+          "category_en": "Other",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-8d233ce061e384d30eea3f77"
+              },
+              "price_halalas": 1800
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-8d233ce061e384d30eea3f77"
+              },
+              "image": "https://ibb.co/Y71svMLq"
+            }
+          ]
+        }
+      },
+      {
+        "id": "enbishan-menu-e739fd96698117d6fc9cd87d",
+        "brand_id": "enbishan",
+        "name": "بوكس رمضان · 5 سمبوسة + 12 مسخن",
+        "category": "أصناف أخرى",
+        "price_halalas": 1650,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-77458381f75cffe2038f7781",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-8d233ce061e384d30eea3f77",
+                  "name": "كبير · 17 قطعة",
+                  "name_en": "Large · 17 pieces",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Ramadan box · 5 samosa + 12 musakhan",
+          "category_en": "Other",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-8d233ce061e384d30eea3f77"
+              },
+              "price_halalas": 1650
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-8d233ce061e384d30eea3f77"
+              },
+              "image": "https://ibb.co/7LnvyRw"
             }
           ]
         }
@@ -3502,6 +4299,176 @@
         }
       },
       {
+        "id": "enbishan-menu-fff314143ea1fb39265e203f",
+        "brand_id": "enbishan",
+        "name": "موهيتو مع صحن ورق عنب",
+        "category": "أصناف أخرى",
+        "price_halalas": 1950,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-88282747bcacc9e36651a920",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-f956d9167fe84c3ce4bd91a8",
+                  "name": "فردية",
+                  "name_en": "Single",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "FLAVOUR",
+              "name": "النكهة",
+              "name_en": "Flavour",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-0648331d8c487bc633f3dfcd",
+                  "name": "باشن فروت",
+                  "name_en": "Passion fruit",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-2e537d9cd7148f6a198d5d62",
+                  "name": "بلاك بيرى",
+                  "name_en": "Blackberry",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-cc3971eb583b962536a0d133",
+                  "name": "بلولوجن",
+                  "name_en": "Blue Lagoon",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-2c3a36587e2510bc4a6f2c5c",
+                  "name": "راسبيرى",
+                  "name_en": "Raspberry",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-af81bab458678c11d1199f87",
+                  "name": "رمان",
+                  "name_en": "Pomegranate",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-c15c65cd891cb3baa03fac95",
+                  "name": "ستروبرى",
+                  "name_en": "Strawberry",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Mojito with grape leaves plate",
+          "category_en": "Other",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-cc3971eb583b962536a0d133"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-af81bab458678c11d1199f87"
+              },
+              "price_halalas": 1950
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-cc3971eb583b962536a0d133"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-af81bab458678c11d1199f87"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            }
+          ]
+        }
+      },
+      {
         "id": "enbishan-menu-028afa83b0694d93a171b9b5",
         "brand_id": "enbishan",
         "name": "مسخن",
@@ -3584,6 +4551,330 @@
                 "SIZE": "v-969127f17958a830d1bcc973"
               },
               "image": "https://ibb.co/dXkFBYF"
+            }
+          ]
+        }
+      },
+      {
+        "id": "enbishan-menu-c434c397f9072844ba9c93b4",
+        "brand_id": "enbishan",
+        "name": "ورق عنب وملفوف",
+        "category": "المحاشي",
+        "price_halalas": 1200,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-9aaf08c9efbb70f893716679",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-a0c277ce10ff7c635fd1e9ec",
+                  "name": "صغير · 6 قطعة (3 ورق عنب + 3 ملفوف)",
+                  "name_en": "Small · 6 pieces (3 grape leaves + 3 cabbage)",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-f79d0c0c352f2bb2fc40e13a",
+                  "name": "عائلي · 36 قطعة (18 ورق عنب + 18 ملفوف)",
+                  "name_en": "Family · 36 pieces (18 grape leaves + 18 cabbage)",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-b804a3f4814cc6028d7ef9da",
+                  "name": "كبير · 24 قطعة (12 ورق عنب + 12 ملفوف)",
+                  "name_en": "Large · 24 pieces (12 grape leaves + 12 cabbage)",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-5eaf865e16c194c339bace33",
+                  "name": "وسط · 12 قطعة (6 ورق عنب + 6 ملفوف)",
+                  "name_en": "Medium · 12 pieces (6 grape leaves + 6 cabbage)",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "FLAVOUR",
+              "name": "النكهة",
+              "name_en": "Flavour",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-91f67e8b7351adcf1014135a",
+                  "name": "دبس رمان",
+                  "name_en": "Pomegranate molasses",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-37d0336de98e6dc7d6d50959",
+                  "name": "سبايسي",
+                  "name_en": "Spicy",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-7b580db54a84af523166d2da",
+                  "name": "ليمون",
+                  "name_en": "Lemon",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-2606b799a8a89a992bffd12e",
+                  "name": "مشكل",
+                  "name_en": "Mixed",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Grape Leaves & Cabbage",
+          "category_en": "Stuffed",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "price_halalas": 1200
+            },
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "price_halalas": 1200
+            },
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "price_halalas": 1200
+            },
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "price_halalas": 1200
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "price_halalas": 1450,
+              "compare_at_halalas": 2200
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "price_halalas": 1450,
+              "compare_at_halalas": 2200
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "price_halalas": 1450,
+              "compare_at_halalas": 2200
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "price_halalas": 1450,
+              "compare_at_halalas": 2200
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "price_halalas": 4200
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "price_halalas": 4200
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "price_halalas": 4200
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "price_halalas": 4200
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "price_halalas": 4500,
+              "compare_at_halalas": 6200
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "price_halalas": 4500,
+              "compare_at_halalas": 6200
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "price_halalas": 4500,
+              "compare_at_halalas": 6200
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "price_halalas": 4500,
+              "compare_at_halalas": 6200
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "image": "https://files.fm/f/qz8efnhvvc"
+            },
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "image": "https://files.fm/f/qz8efnhvvc"
+            },
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "image": "https://files.fm/f/qz8efnhvvc"
+            },
+            {
+              "options": {
+                "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "image": "https://files.fm/f/qz8efnhvvc"
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "image": "https://files.fm/f/4nvjjab34c"
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "image": "https://files.fm/f/4nvjjab34c"
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "image": "https://files.fm/f/4nvjjab34c"
+            },
+            {
+              "options": {
+                "SIZE": "v-5eaf865e16c194c339bace33",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "image": "https://files.fm/f/4nvjjab34c"
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "image": "https://files.fm/f/h864vptvdn"
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "image": "https://files.fm/f/h864vptvdn"
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "image": "https://files.fm/f/h864vptvdn"
+            },
+            {
+              "options": {
+                "SIZE": "v-b804a3f4814cc6028d7ef9da",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "image": "https://files.fm/f/h864vptvdn"
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+              },
+              "image": "https://files.fm/f/z8dcsgwzz9"
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-7b580db54a84af523166d2da"
+              },
+              "image": "https://files.fm/f/z8dcsgwzz9"
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+              },
+              "image": "https://files.fm/f/z8dcsgwzz9"
+            },
+            {
+              "options": {
+                "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+                "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+              },
+              "image": "https://files.fm/f/z8dcsgwzz9"
             }
           ]
         }
@@ -3799,6 +5090,1493 @@
         }
       },
       {
+        "id": "enbishan-menu-ba943fd11771582e9003ac47",
+        "brand_id": "enbishan",
+        "name": "محاشي مشكل",
+        "category": "المحاشي",
+        "price_halalas": 2000,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-ad3609d94607d31a7a1cd11c-choose3",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-560ef2b6869cbecee1bdd900",
+                  "name": "صغير",
+                  "name_en": "Small",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "CHOICE_1",
+              "name": "الاختيار 1",
+              "name_en": "Choice 1",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "potato",
+                  "name": "بطاطس · حبة",
+                  "name_en": "Potato · 1 piece",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "pepper",
+                  "name": "فليفلة · حبة",
+                  "name_en": "Pepper · 1 piece",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "grape",
+                  "name": "ورق عنب · حبتان",
+                  "name_en": "Grape leaves · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "onion",
+                  "name": "بصل · حبتان",
+                  "name_en": "Onion · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "zucchini",
+                  "name": "كوسا · حبتان",
+                  "name_en": "Zucchini · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "eggplant",
+                  "name": "باذنجان · حبتان",
+                  "name_en": "Eggplant · 2 pieces",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "CHOICE_2",
+              "name": "الاختيار 2",
+              "name_en": "Choice 2",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "potato",
+                  "name": "بطاطس · حبة",
+                  "name_en": "Potato · 1 piece",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "pepper",
+                  "name": "فليفلة · حبة",
+                  "name_en": "Pepper · 1 piece",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "grape",
+                  "name": "ورق عنب · حبتان",
+                  "name_en": "Grape leaves · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "onion",
+                  "name": "بصل · حبتان",
+                  "name_en": "Onion · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "zucchini",
+                  "name": "كوسا · حبتان",
+                  "name_en": "Zucchini · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "eggplant",
+                  "name": "باذنجان · حبتان",
+                  "name_en": "Eggplant · 2 pieces",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "CHOICE_3",
+              "name": "الاختيار 3",
+              "name_en": "Choice 3",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "potato",
+                  "name": "بطاطس · حبة",
+                  "name_en": "Potato · 1 piece",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "pepper",
+                  "name": "فليفلة · حبة",
+                  "name_en": "Pepper · 1 piece",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "grape",
+                  "name": "ورق عنب · حبتان",
+                  "name_en": "Grape leaves · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "onion",
+                  "name": "بصل · حبتان",
+                  "name_en": "Onion · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "zucchini",
+                  "name": "كوسا · حبتان",
+                  "name_en": "Zucchini · 2 pieces",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "eggplant",
+                  "name": "باذنجان · حبتان",
+                  "name_en": "Eggplant · 2 pieces",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Mixed Mahashi",
+          "category_en": "Stuffed",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "potato",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "pepper",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "grape",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "onion",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "eggplant"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "zucchini",
+                "CHOICE_2": "eggplant",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "potato",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "pepper",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "grape",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "onion",
+                "CHOICE_3": "zucchini"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "potato"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "pepper"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "grape"
+              },
+              "price_halalas": 2000
+            },
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900",
+                "CHOICE_1": "eggplant",
+                "CHOICE_2": "zucchini",
+                "CHOICE_3": "onion"
+              },
+              "price_halalas": 2000
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-560ef2b6869cbecee1bdd900"
+              },
+              "image": "https://files.fm/f/yed9c9gbrf"
+            }
+          ]
+        }
+      },
+      {
+        "id": "enbishan-menu-3facf0781142b248264e4be9",
+        "brand_id": "enbishan",
+        "name": "بوكس رمضان · 5 كبة + 5 سمبوسة + 5 ورق عنب كريسبي",
+        "category": "أصناف أخرى",
+        "price_halalas": 2000,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-b3b07ac3a4058591841701a0",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-355ce388c67a995c750fa30b",
+                  "name": "كبير · 15 قطعة",
+                  "name_en": "Large · 15 pieces",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Ramadan box · 5 kibbeh + 5 samosa + 5 crispy grape leaves",
+          "category_en": "Other",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-355ce388c67a995c750fa30b"
+              },
+              "price_halalas": 2000
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-355ce388c67a995c750fa30b"
+              },
+              "image": "https://ibb.co/Z6zn17hk"
+            }
+          ]
+        }
+      },
+      {
+        "id": "enbishan-menu-fda651bf4e57088442d6c972",
+        "brand_id": "enbishan",
+        "name": "موهيتو مع صحن محاشي مشكل",
+        "category": "أصناف أخرى",
+        "price_halalas": 1950,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-b54c043c94afde2a0947da54",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-f956d9167fe84c3ce4bd91a8",
+                  "name": "فردية",
+                  "name_en": "Single",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "FLAVOUR",
+              "name": "النكهة",
+              "name_en": "Flavour",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-0648331d8c487bc633f3dfcd",
+                  "name": "باشن فروت",
+                  "name_en": "Passion fruit",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-2e537d9cd7148f6a198d5d62",
+                  "name": "بلاك بيرى",
+                  "name_en": "Blackberry",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-cc3971eb583b962536a0d133",
+                  "name": "بلولوجن",
+                  "name_en": "Blue Lagoon",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-2c3a36587e2510bc4a6f2c5c",
+                  "name": "راسبيرى",
+                  "name_en": "Raspberry",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-af81bab458678c11d1199f87",
+                  "name": "رمان",
+                  "name_en": "Pomegranate",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-c15c65cd891cb3baa03fac95",
+                  "name": "ستروبرى",
+                  "name_en": "Strawberry",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Mojito with mixed mahashi plate",
+          "category_en": "Other",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-cc3971eb583b962536a0d133"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-af81bab458678c11d1199f87"
+              },
+              "price_halalas": 1950
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-0648331d8c487bc633f3dfcd"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2e537d9cd7148f6a198d5d62"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-2c3a36587e2510bc4a6f2c5c"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-c15c65cd891cb3baa03fac95"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-cc3971eb583b962536a0d133"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-af81bab458678c11d1199f87"
+              },
+              "image": "https://ibb.co/gLx4p8Sh"
+            }
+          ]
+        }
+      },
+      {
         "id": "enbishan-menu-65951417eb274f9faffea78c",
         "brand_id": "enbishan",
         "name": "سفن اب دايت",
@@ -3894,6 +6672,50 @@
         }
       },
       {
+        "id": "enbishan-menu-babdb49012d7b67402db8fc2",
+        "brand_id": "enbishan",
+        "name": "بوكس رمضان · 5 كبة + 6 مسخن + 5 سمبوسة",
+        "category": "أصناف أخرى",
+        "price_halalas": 1650,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-d0258154e9dbb5a87e7db80f",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-ec6a1ea71637fe5a95981a3b",
+                  "name": "كبير · 16 قطعة",
+                  "name_en": "Large · 16 pieces",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Ramadan box · 5 kibbeh + 6 musakhan + 5 samosa",
+          "category_en": "Other",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-ec6a1ea71637fe5a95981a3b"
+              },
+              "price_halalas": 1650
+            }
+          ],
+          "source_image_references": []
+        }
+      },
+      {
         "id": "enbishan-menu-42ee29097332e39b98c58885",
         "brand_id": "enbishan",
         "name": "بيبسي دايت",
@@ -3980,20 +6802,153 @@
           ],
           "source_image_references": []
         }
+      },
+      {
+        "id": "enbishan-menu-b912778fdbf8eeb4211ccf60",
+        "brand_id": "enbishan",
+        "name": "خلية",
+        "category": "المخبوزات",
+        "price_halalas": 1950,
+        "settings": {
+          "enabled": false,
+          "lifecycle": "draft",
+          "source_verified": false,
+          "source_id": "enb-khalyah-owner-20261020",
+          "option_groups": [
+            {
+              "code": "SIZE",
+              "name": "الحجم",
+              "name_en": "Size",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-f956d9167fe84c3ce4bd91a8",
+                  "name": "فردية",
+                  "name_en": "Single",
+                  "price_delta_halalas": 0
+                }
+              ]
+            },
+            {
+              "code": "FLAVOUR",
+              "name": "النكهة",
+              "name_en": "Flavour",
+              "required": true,
+              "min_select": 1,
+              "max_select": 1,
+              "type": "select",
+              "values": [
+                {
+                  "code": "v-b0d476f1539cd3b162a08884",
+                  "name": "بيكان",
+                  "name_en": "Pecan",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-fcdb9008ab654ee829014225",
+                  "name": "سينابون",
+                  "name_en": "Cinnabon",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-de821d9f2eb4a4cfcc4f64d0",
+                  "name": "كلاسيك",
+                  "name_en": "Classic",
+                  "price_delta_halalas": 0
+                },
+                {
+                  "code": "v-191ae8690a8717a4cea5f903",
+                  "name": "مكس",
+                  "name_en": "Mix",
+                  "price_delta_halalas": 0
+                }
+              ]
+            }
+          ],
+          "image_url": null,
+          "name_en": "Khaliya",
+          "category_en": "Bakery",
+          "variant_price_matrix": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-fcdb9008ab654ee829014225"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-de821d9f2eb4a4cfcc4f64d0"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-191ae8690a8717a4cea5f903"
+              },
+              "price_halalas": 1950
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-b0d476f1539cd3b162a08884"
+              },
+              "price_halalas": 1950
+            }
+          ],
+          "source_image_references": [
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-fcdb9008ab654ee829014225"
+              },
+              "image": "https://ibb.co/xtjQpZXH"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-de821d9f2eb4a4cfcc4f64d0"
+              },
+              "image": "https://ibb.co/xtjQpZXH"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-191ae8690a8717a4cea5f903"
+              },
+              "image": "https://ibb.co/xtjQpZXH"
+            },
+            {
+              "options": {
+                "SIZE": "v-f956d9167fe84c3ce4bd91a8",
+                "FLAVOUR": "v-b0d476f1539cd3b162a08884"
+              },
+              "image": "https://ibb.co/xtjQpZXH"
+            }
+          ]
+        }
       }
     ],
     "unresolved_images": [
       "https://files.fm/f/2yfd4vub52",
       "https://files.fm/f/4c2zkd3pb8",
+      "https://files.fm/f/4nvjjab34c",
       "https://files.fm/f/5x9rwkrcz9",
       "https://files.fm/f/7gfw3s9dc7",
       "https://files.fm/f/7r42cw7k22",
       "https://files.fm/f/8sdauy7avz",
       "https://files.fm/f/bf59njtepk",
+      "https://files.fm/f/h864vptvdn",
       "https://files.fm/f/hnyu4znz54",
       "https://files.fm/f/j32ntqxy3d",
       "https://files.fm/f/kbzkjqaeyw",
       "https://files.fm/f/p5j6ebv2q6",
+      "https://files.fm/f/qz8efnhvvc",
       "https://files.fm/f/tse4hxa9dv",
       "https://files.fm/f/ud2xukn9u5",
       "https://files.fm/f/v4mf88e57t",
@@ -4002,25 +6957,47 @@
       "https://files.fm/f/w58mrx8d4a",
       "https://files.fm/f/wvhbwvz3yp",
       "https://files.fm/f/xtag8cu4tc",
+      "https://files.fm/f/yed9c9gbrf",
+      "https://files.fm/f/z8dcsgwzz9",
       "https://files.fm/f/zj38y4k9p7",
       "https://ibb.co/0j15TBFv",
+      "https://ibb.co/4wRJsqqK",
       "https://ibb.co/67zYqqnn",
       "https://ibb.co/7JSKs06s",
+      "https://ibb.co/7LnvyRw",
       "https://ibb.co/7NZrg21W",
       "https://ibb.co/84grmsht",
       "https://ibb.co/B215Rp9n",
       "https://ibb.co/VWVvTJJY",
+      "https://ibb.co/Y71svMLq",
+      "https://ibb.co/Z6zn17hk",
       "https://ibb.co/dXkFBYF",
+      "https://ibb.co/gLx4p8Sh",
       "https://ibb.co/qYCVSTG8",
       "https://ibb.co/r2Fg6kdJ",
       "https://ibb.co/wFFz8L4D",
-      "https://ibb.co/xqY4BjyX"
+      "https://ibb.co/xqY4BjyX",
+      "https://ibb.co/xtjQpZXH"
     ],
     "ordering_enabled": false,
     "missing_final_inputs": [
       "approved seller/VAT and branch operation configuration",
       "owner review and approval of the imported commercial values"
     ],
-    "catalog_digest": "f5ed1fbf4c92b96a504598e223ddd6361c6b25997b645c67603461fa6f2ee7cd"
+    "catalog_digest": "7632e07bf4e09660537499c315ba219584d33c01b1346f935d1dc511a4516126"
+  },
+  "owner_decisions": {
+    "approved_at": "2026-10-20",
+    "menu_decisions_resolved": true,
+    "khaliya_available_branch_numbers": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "ordering_enabled": false,
+    "ramadan_boxes_owner_editable": true,
+    "grape_cabbage_flavour_applies_to": "grape_leaves",
+    "notes": "Owner decisions change draft preparation only. Operational source approval and activation still require existing owner controls."
   }
 }

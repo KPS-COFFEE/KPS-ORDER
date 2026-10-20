@@ -1,5 +1,7 @@
 # Owner source menu review — activation OFF
 
+Current manifest: all 17 owner decisions are resolved under the 20 October approval at the end of this document: **31 draft cards / 95 canonical rows**. The original 20-card assessment below is retained as source-review history. Current artwork status is recorded in [image preparation](../image-preparation.md).
+
 Source: `Enbishan Menu_Arabic_English هنجر.xlsx`, `THE MENU`, rows 3–58.
 SHA256: `ca574c39384e250535397f4bac40dfabc234487ffee8fa1d623344e085402a1e`.
 
@@ -51,3 +53,26 @@ conflicting English/Arabic size values fail closed for review.
 Focused source acceptance: 21 PASS, one PostgreSQL test excluded from that
 source-only invocation. Database/browser certification must be reported
 separately on the final integrated revision.
+
+
+## Owner decisions — 20 October 2026
+
+The current manifest resolves all 17 formerly held rows. Reproduce the same
+source with `--reference-menu --owner-approved-20261020`. This explicit flag is
+bound to the reviewed workbook SHA256; changed workbooks fail closed pending
+review. The unapproved mode continues to show the original held decisions.
+
+The approved source produces 31 disabled draft cards from 56 source rows
+(95 canonical size/flavour rows). The small mixed-mahashi card offers three
+choice slots using the six source choices and their stated piece counts.
+Its 120 permitted distinct selections enforce no repetition on both the server
+and existing browser price matcher. The price stays SAR 20 for every selection.
+Mixed grape/cabbage and crispy/cabbage sizes state the half-and-half composition.
+Khaliya is one card with four flavours. Each mojito card includes its source
+plate and offers six drink flavours. Four Ramadan boxes retain their source
+compositions/prices and use the existing owner rename/enable/disable controls.
+Khaliya is approved for all four Enbishan branches; brand/branch operation
+activation is a separate owner-controlled step.
+
+This update does not activate ordering, send OTP, apply a production import,
+or invent missing images (including Ramadan row 56).

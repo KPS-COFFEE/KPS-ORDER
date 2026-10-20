@@ -60,7 +60,7 @@ def bound_brand(request):
             if request.url.hostname not in mapping:
                 raise HTTPException(404,{'code':'STOREFRONT_HOST_UNKNOWN'})
             return mapping[request.url.hostname]
-        mapping = {'order.enbishan.com': 'enbishan', 'enbishan.test': 'enbishan', 'kps.test': 'kps'}
+        mapping = {'enbishan.com': 'enbishan', 'order.enbishan.com': 'enbishan', 'enbishan.test': 'enbishan', 'kps.test': 'kps'}
         if configured in mapping:
             return mapping[configured]
         if configured not in KPS_HOSTS and request.url.hostname in mapping:
@@ -98,8 +98,18 @@ def customer_html(source, request):
     if brand != 'kps':
         # Remove private-to-brand fragments before sending HTML, not just
         # visually hiding them after JavaScript executes.
-        source = re.sub(r'<!-- KPS_CONTACT_START -->.*?<!-- KPS_CONTACT_END -->', '', source, flags=re.S)
+        def brand_fragment(match):
+            if brand != 'enbishan':
+                return ''
+            fragment = match.group(0)
+            if 'og:site_name' in fragment:
+                return '<meta property="og:site_name" content="Enbishan"><meta property="og:title" content="عنبيشن | Enbishan"><meta property="og:url" content="https://enbishan.com"><meta property="og:image" content="https://enbishan.com/assets/enbishan-original.jpeg">'
+            for old, new in [('KPS COFFEE', 'Enbishan'), ('كبز قهوة مختصة', 'عنبيشن'), ('0550472662', '0509895855'), ('966550472662', '966509895855'), ('+966 55 047 2662', '+966 50 989 5855'), ('kps.coffe', 'Enbishan'), ('Kps.cofee', 'Enbishan'), ('data-kps-contact', 'data-enbishan-contact')]:
+                fragment = fragment.replace(old, new)
+            return fragment
+        source = re.sub(r'<!-- KPS_CONTACT_START -->.*?<!-- KPS_CONTACT_END -->', brand_fragment, source, flags=re.S)
         if brand == 'enbishan':
             source = source.replace('<html lang="ar" dir="rtl">', '<html lang="ar" dir="rtl" data-storefront-brand="enbishan">')
+            source = source.replace('</head>', '<link rel="stylesheet" href="/assets/enbishan.css?v=20261020"></head>')
         return source
     return source

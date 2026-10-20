@@ -1,5 +1,7 @@
 # Enbishan isolated development — 2026-10-17
 
+> Historical implementation and evidence below. Current owner decisions (2026-10-20) approve `enbishan.com`, four branches, the workbook menu and supplied identity. See [current readiness report](Enbishan_Readiness_Report_AR.html), `owner-approved-operations-20261020.json` and `menu-review/README.md`. Historical test counts do not certify the current candidate.
+
 Branch: `agent/enbishan-isolated-development-20261017`.
 Baseline: `8b7fdb8d48dc38c413c79507c9097e3b43ceac32`.
 First implementation: `192ebf9639df2ab344c96a4ebe9c0e09392de602`.

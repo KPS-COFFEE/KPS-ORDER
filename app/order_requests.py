@@ -42,7 +42,7 @@ def rows(c, oid):
 def pending_inbox(c, user):
     if not auth.has_permission(user, 'orders_view'):
         return []
-    return c.execute("""SELECT o.id,o.order_no,o.service,e.id request_id,
+    return c.execute("""SELECT o.id,o.order_no,o.snapshot->>'order_reference' order_reference,o.service,e.id request_id,
         e.details->>'kind' request_kind,'requested' status
         FROM orders o JOIN order_events e ON e.order_id=o.id
         WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))

@@ -55,3 +55,42 @@ def test_enbishan_size_flavour_before_after_prices_and_missing_combination(dual_
             assert not errors,errors
         finally:
             browser.close()
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('language', ['ar', 'en'])
+def test_owner_approved_mahashi_distinct_choices_and_identity(dual_http, language):
+    from test_enbishan_owner_menu_decisions import reviewed
+    from tools.enbishan_workbook import reference_menu
+    base, _ = dual_http
+    product = next(p for p in prepare_rows(reference_menu(reviewed(), owner_approved=True)['rows'])['products']
+                   if p['settings']['source_id'].endswith('-choose3'))
+    product['settings'].update(enabled=True, lifecycle='active', source_verified=True)
+    product['settings']['owner_approved_digest'] = catalog.commercial_digest(product)
+    with db.tx() as c:
+        c.execute("INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES(%s,'enbishan',%s,%s,%s,%s)",
+                  (product['id'],product['name'],product['category'],product['price_halalas'],db.json(product['settings'])))
+    options = product['settings']['variant_price_matrix'][0]['options']
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'), args=['--no-sandbox'])
+        try:
+            page = browser.new_page(viewport={'width':390,'height':900})
+            page.goto(base+'/?brand_id=enbishan', wait_until='networkidle')
+            if language == 'en':
+                page.locator('#customer-language').click()
+            expect(page.locator('html')).to_have_attribute('lang', language)
+            expect(page.locator('html')).to_have_attribute('data-storefront-brand', 'enbishan')
+            expect(page.locator('#brand-logo')).to_be_visible()
+            assert page.locator('a[href="tel:0509895855"]').count() > 0
+            page.locator('[data-product-id="'+product['id']+'"] .product-content h3 button').click()
+            selects = page.locator('#product-options select')
+            for i, group in enumerate(product['settings']['option_groups']):
+                selects.nth(i).select_option(options[group['code']])
+            expect(page.locator('#product-price')).to_have_attribute('data-variant-price', '2000')
+            expect(page.locator('#product-add')).to_be_enabled()
+            choice2 = next(i for i,g in enumerate(product['settings']['option_groups']) if g['code']=='CHOICE_2')
+            selects.nth(choice2).select_option(options['CHOICE_1'])
+            expect(page.locator('#product-add')).to_be_disabled()
+            expect(page.locator('#product-error')).to_be_visible()
+        finally:
+            browser.close()

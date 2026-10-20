@@ -38,7 +38,11 @@ REFERENCE_CATEGORIES = {
 REFERENCE_SIZES = {'صغير': 'Small', 'وسط': 'Medium', 'كبير': 'Large',
                    'عائلي': 'Family', 'كبير جداً': 'Extra Large', 'فردية': 'Single'}
 REFERENCE_FLAVOURS = {'دبس رمان': 'Pomegranate molasses', 'ليمون': 'Lemon',
-                      'سبايسي': 'Spicy', 'مشكل': 'Mixed'}
+                      'سبايسي': 'Spicy', 'مشكل': 'Mixed',
+                      'باشن فروت': 'Passion fruit', 'بلاك بيرى': 'Blackberry',
+                      'راسبيرى': 'Raspberry', 'ستروبرى': 'Strawberry',
+                      'بلولوجن': 'Blue Lagoon', 'رمان': 'Pomegranate',
+                      'سينابون': 'Cinnabon', 'كلاسيك': 'Classic', 'مكس': 'Mix', 'بيكان': 'Pecan'}
 
 
 def xml_member(archive, name):
@@ -120,13 +124,15 @@ def read_workbook(path):
             'embedded_images': images, 'ordering_enabled': False}
 
 
-def reference_menu(inspection):
+def reference_menu(inspection, owner_approved=False):
     """Review the owner's THE MENU layout without guessing merged values or options.
 
     Source numbering is provenance, never a permanent SKU. The deterministic
     semantic key is retained in the review manifest for subsequent reimports.
     Ambiguous families remain outside the import payload until reviewed.
     """
+    if owner_approved and inspection['source_sha256'] != 'ca574c39384e250535397f4bac40dfabc234487ffee8fa1d623344e085402a1e':
+        raise ValueError('Owner decisions apply only to the reviewed source; review the changed workbook.')
     name = 'THE MENU'
     sheet = inspection['sheets'].get(name, [])
     numbers = inspection.get('source_rows', {}).get(name, [])
@@ -186,6 +192,54 @@ def reference_menu(inspection):
             issues.append('اعتماد الاسم والتركيبة والتوفر')
         if source.get('B') == 'Crispy & Cabbage':
             issues.append('تعارض الاسم العربي والإنجليزي')
+        approved_name, approved_en, selection_set = source.get('C', ''), source.get('B', ''), ''
+        if owner_approved:
+            if number in range(10, 14):
+                flavours = options.splitlines()[1:]
+                if flavours != ['دبس رمان', 'ليمون', 'سبايسي', 'مشكل'] or not count.isdigit() or int(count) % 2:
+                    raise ValueError('Reviewed mixed grape/cabbage source changed.')
+                half = int(count) // 2
+                size += f' ({half} ورق عنب + {half} ملفوف)'
+                size_en += f' ({half} grape leaves + {half} cabbage)'
+                issues = []
+            elif number == 19:
+                if options != 'أختر 3 من : قطعة بطاطس - قطعة فليفلة - 2 ورق عنب - 2 بصل - 2 كوسا - 2 باذنجان':
+                    raise ValueError('Reviewed choose-three source changed.')
+                code += '-choose3'
+                selection_set = 'mahashi_choose_three'
+                issues = []
+            elif number == 41:
+                approved_name, approved_en = 'ورق عنب كريسبي وملفوف', 'Crispy grape leaves & cabbage'
+                size += ' (5 كريسبي + 5 ملفوف)'
+                size_en += ' (5 crispy grape leaves + 5 cabbage)'
+                issues = []
+            elif number in range(42, 46):
+                # One card, four flavours; stable code independent of display name.
+                code = 'enb-khalyah-owner-20261020'
+                approved_name, approved_en = 'خلية', 'Khaliya'
+                flavours = [{42: 'سينابون', 43: 'كلاسيك', 44: 'مكس', 45: 'بيكان'}[number]]
+                issues = []
+            elif number in range(52, 55):
+                approved_name, approved_en = {
+                    52: ('موهيتو مع صحن فتة', 'Mojito with fatta plate'),
+                    53: ('موهيتو مع صحن محاشي مشكل', 'Mojito with mixed mahashi plate'),
+                    54: ('موهيتو مع صحن ورق عنب', 'Mojito with grape leaves plate')}[number]
+                flavours = [part.strip() for part in options.split(' - ')]
+                if flavours != ['باشن فروت', 'بلاك بيرى', 'راسبيرى', 'ستروبرى', 'بلولوجن', 'رمان']:
+                    raise ValueError('Reviewed mojito flavours changed.')
+                issues = []
+            elif number in range(55, 59):
+                approved_name = {
+                    55: 'بوكس رمضان · 5 كبة + 12 مسخن',
+                    56: 'بوكس رمضان · 5 كبة + 6 مسخن + 5 سمبوسة',
+                    57: 'بوكس رمضان · 5 كبة + 5 سمبوسة + 5 ورق عنب كريسبي',
+                    58: 'بوكس رمضان · 5 سمبوسة + 12 مسخن'}[number]
+                approved_en = {
+                    55: 'Ramadan box · 5 kibbeh + 12 musakhan',
+                    56: 'Ramadan box · 5 kibbeh + 6 musakhan + 5 samosa',
+                    57: 'Ramadan box · 5 kibbeh + 5 samosa + 5 crispy grape leaves',
+                    58: 'Ramadan box · 5 samosa + 12 musakhan'}[number]
+                issues = []
         image = source.get('K', '')
         if not re.fullmatch(r'https://[^\s]+', image):
             image = ''
@@ -198,11 +252,12 @@ def reference_menu(inspection):
             unresolved.append({'source_row': number, 'issues': issues})
             continue
         for flavour in flavours:
-            payload.append({'product_code': code, 'name': source.get('C', ''),
-                            'name_en': source.get('B', ''), 'category': category[0], 'category_en': category[1],
+            payload.append({'product_code': code, 'name': approved_name,
+                            'name_en': approved_en, 'category': category[0], 'category_en': category[1],
                             'size': size, 'size_en': size_en, 'flavour': flavour,
                             'flavour_en': REFERENCE_FLAVOURS.get(flavour, ''), 'price': sale,
-                            'price_before': original, 'image': image})
+                            'price_before': original, 'image': image,
+                            **({'selection_set': selection_set} if selection_set else {})})
     return {'source_sha256': inspection['source_sha256'], 'inventory': inventory,
             'rows': payload, 'unresolved': unresolved, 'ordering_enabled': False,
             'missing_images': [r['source_row'] for r in inventory if not r['image_reference']]}
@@ -237,10 +292,11 @@ def main():
     parser.add_argument('--menu-sheet', help='Omit to inspect every worksheet without interpreting it.')
     parser.add_argument('--column-map', type=Path, help='Reviewed JSON mapping from original headers to canonical fields.')
     parser.add_argument('--reference-menu', action='store_true', help='Review the approved THE MENU source layout; unresolved choices stay out of drafts.')
+    parser.add_argument('--owner-approved-20261020', action='store_true', help='Apply source-bound owner menu decisions; drafts remain disabled.')
     args = parser.parse_args()
     inspection = read_workbook(args.workbook)
     if args.reference_menu:
-        output = reference_menu(inspection)
+        output = reference_menu(inspection, owner_approved=args.owner_approved_20261020)
         output['preview'] = prepare_rows(output['rows'])
     elif args.menu_sheet:
         mapping = json.loads(args.column_map.read_text()) if args.column_map else None

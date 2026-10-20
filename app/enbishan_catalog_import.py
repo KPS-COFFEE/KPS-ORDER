@@ -2,14 +2,15 @@
 from decimal import Decimal, InvalidOperation
 import hashlib
 import re
+from itertools import permutations
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field
-from . import auth, db, menu_variants
+from . import auth, db, menu_variants, enbishan_menu_assets
 
 router = APIRouter(prefix='/api/admin/enbishan-menu')
 LABEL_LIMITS = {'product_code': 100, 'name': 200, 'name_en': 200, 'category': 100,
                 'category_en': 100, 'size': 100, 'size_en': 100,
-                'flavour': 100, 'flavour_en': 100, 'image': 500}
+                'flavour': 100, 'flavour_en': 100, 'image': 500, 'selection_set': 40}
 
 
 def label(value, field):
@@ -52,6 +53,8 @@ def prepare_rows(rows):
         for axis in ('size', 'flavour'):
             if row[axis + '_en'] and not row[axis]:
                 raise ValueError('Translated option requires its original value: ' + axis)
+        if row['selection_set'] not in ('', 'mahashi_choose_three'):
+            raise ValueError('Unknown reviewed selection set.')
         row['price_halalas'] = halalas(source.get('price'))
         before = source.get('price_before')
         row['compare_at_halalas'] = None if before in (None, '') else halalas(before)
@@ -65,7 +68,7 @@ def prepare_rows(rows):
     for code, values in sorted(grouped.items()):
         first = values[0]
         for row in values:
-            if any(row[k] != first[k] for k in ('name', 'name_en', 'category', 'category_en')):
+            if any(row[k] != first[k] for k in ('name', 'name_en', 'category', 'category_en', 'selection_set')):
                 raise ValueError('Conflicting product descriptions for code ' + code)
         axes = [key for key in ('size', 'flavour') if any(row[key] for row in values)]
         groups = []
@@ -87,12 +90,12 @@ def prepare_rows(rows):
                                       for v in sorted({r[axis] for r in values})]})
         images = sorted({row['image'] for row in values if row['image']})
         image = images[0] if len(images) == 1 else ''
-        # Uploaded branded assets only. Local filenames/URLs remain explicit
-        # inputs for the asset-upload step; this importer never fetches URLs.
-        image_url = image if re.fullmatch(r'/api/product-assets/[A-Za-z0-9_-]+', image) else None
-        unresolved_images.update(ref for ref in images if not re.fullmatch(r'/api/product-assets/[A-Za-z0-9_-]+', ref))
-        if len(images) > 1:
-            unresolved_images.update(images)
+        # Only owner-uploaded branded assets or exact hash-verified bundled
+        # artwork. Never fetch an arbitrary source URL or trust a local path.
+        resolved = {ref: (ref if re.fullmatch(r'/api/product-assets/[A-Za-z0-9_-]+', ref)
+                          else enbishan_menu_assets.resolve(ref)) for ref in images}
+        image_url = next((resolved[row['image']] for row in values if row['image'] and resolved[row['image']]), None)
+        unresolved_images.update(ref for ref, asset in resolved.items() if not asset)
         settings = {'enabled': False, 'lifecycle': 'draft', 'source_verified': False,
                     'source_id': code, 'option_groups': groups, 'image_url': image_url,
                     'name_en': first['name_en'], 'category_en': first['category_en']}
@@ -100,10 +103,33 @@ def prepare_rows(rows):
                    'price_halalas': row['price_halalas'],
                    **({'compare_at_halalas': row['compare_at_halalas']} if row['compare_at_halalas'] is not None else {})}
                   for row in values]
+        if first['selection_set']:
+            if len(matrix) * 120 > 1024:
+                raise ValueError('Reviewed choice combinations exceed the variant limit.')
+            # Three single-choice slots use the existing AR/EN customer controls.
+            # Enumerate only distinct choices: duplicate selections have no price.
+            choices = [('potato', 'بطاطس · حبة', 'Potato · 1 piece'),
+                       ('pepper', 'فليفلة · حبة', 'Pepper · 1 piece'),
+                       ('grape', 'ورق عنب · حبتان', 'Grape leaves · 2 pieces'),
+                       ('onion', 'بصل · حبتان', 'Onion · 2 pieces'),
+                       ('zucchini', 'كوسا · حبتان', 'Zucchini · 2 pieces'),
+                       ('eggplant', 'باذنجان · حبتان', 'Eggplant · 2 pieces')]
+            for slot in range(1, 4):
+                groups.append({'code': 'CHOICE_' + str(slot), 'name': 'الاختيار ' + str(slot),
+                               'name_en': 'Choice ' + str(slot), 'required': True,
+                               'min_select': 1, 'max_select': 1, 'type': 'select',
+                               'values': [{'code': code, 'name': ar, 'name_en': en,
+                                           'price_delta_halalas': 0} for code, ar, en in choices]})
+            matrix = [{**entry, 'options': {**entry['options'],
+                       **{'CHOICE_' + str(i + 1): value for i, value in enumerate(combo)}}}
+                      for entry in matrix for combo in permutations([c[0] for c in choices], 3)]
         settings['variant_price_matrix'] = matrix
+        settings['variant_images'] = [{'options': {a.upper(): stable_id('v-', row[a]) for a in axes},
+                                      'image_url': resolved[row['image']]}
+                                     for row in values if row['image'] and resolved[row['image']]]
         settings['source_image_references'] = [
-            {'options': entry['options'], 'image': row['image']}
-            for entry, row in zip(matrix, values) if row['image']]
+            {'options': {a.upper(): stable_id('v-', row[a]) for a in axes}, 'image': row['image']}
+            for row in values if row['image']]
         product = {'id': stable_id('enbishan-menu-', code), 'brand_id': 'enbishan',
                    'name': first['name'], 'category': first['category'],
                    'price_halalas': min(r['price_halalas'] for r in values), 'settings': settings}
@@ -173,8 +199,12 @@ def apply(body: ApplyInput, user=Depends(enbishan_owner), idem: str | None = Hea
                 if foreign:
                     raise db.error(409, 'MENU_SOURCE_ID_CONFLICT', 'مرجع الصنف مستخدم في نطاق آخر.')
                 image = product['settings'].get('image_url')
-                if image and not conn.execute("SELECT 1 FROM assets WHERE id=%s AND brand_id='enbishan' AND purpose='product'", (image.rsplit('/', 1)[1],)).fetchone():
+                if image and not enbishan_menu_assets.valid_bundled(image) and not conn.execute("SELECT 1 FROM assets WHERE id=%s AND brand_id='enbishan' AND purpose='product'", (image.rsplit('/', 1)[1],)).fetchone():
                     raise db.error(422, 'MENU_IMAGE_SCOPE', 'ارفع صورة الصنف داخل نطاق عنبيشن أولًا.')
+                for variant in product['settings'].get('variant_images', []):
+                    image = variant['image_url']
+                    if not enbishan_menu_assets.valid_bundled(image) and not conn.execute("SELECT 1 FROM assets WHERE id=%s AND brand_id='enbishan' AND purpose='product'", (image.rsplit('/', 1)[1],)).fetchone():
+                        raise db.error(422, 'MENU_IMAGE_SCOPE', 'ارفع صورة الصنف داخل نطاق عنبيشن أولًا.')
                 previous = existing.get(product['id'])
                 if previous and (previous['settings'].get('enabled') is not False or previous['settings'].get('lifecycle') != 'draft'):
                     raise db.error(409, 'MENU_ACTIVE_PRODUCT_LOCKED', 'تعديل صنف تشغيلي يتطلب إجراء الإدارة المعتمد؛ الاستيراد للمسودات فقط.')

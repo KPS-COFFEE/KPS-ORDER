@@ -1,6 +1,6 @@
 {
   "brand_id": "enbishan",
-  "owner_decision_at": "2026-10-20T07:34:03+03:00",
+  "owner_decision_at": "2026-10-20T10:29:27+03:00",
   "status": "approved_configuration_not_applied_to_production",
   "live_activation": false,
   "service_defaults": {
@@ -30,7 +30,11 @@
     "reuse_existing_kps_renderer": true,
     "brand_id": "enbishan",
     "separate_brand_records": true,
-    "copy_kps_customer_data": false
+    "copy_kps_customer_data": false,
+    "explicit_seller_snapshot": "app.fiscal.SELLER",
+    "vat_enabled": true,
+    "preserve_existing_owner_profiles": true,
+    "preparation_only": true
   },
   "branches": [
     {
@@ -79,12 +83,40 @@
     }
   ],
   "remaining_operational_inputs": [
-    "delivery zones and fees per branch",
-    "approved operating hours"
+    "review branch-specific coverage against approved map locations",
+    "select source KPS branch only where reviewed KPS operating defaults differ",
+    "provider approval and explicit live activation remain separate"
   ],
   "safety": {
     "production_data_unchanged": true,
     "real_sms_enabled": false,
     "real_payment_enabled": false
+  },
+  "primary_domain": "enbishan.com",
+  "infrastructure": {
+    "reuse_existing_kps_render_service": true,
+    "reuse_existing_postgresql_database": true,
+    "separate_backend": false,
+    "separate_admin_panel": false,
+    "brand_scoped_customers_orders_addresses_balances": true
+  },
+  "operating_defaults": {
+    "reference_brand": "kps",
+    "fields": [
+      "delivery_fee_halalas",
+      "minimum_order_halalas",
+      "opening_hours",
+      "delivery_hours"
+    ],
+    "copy_mode": "initial_independent_snapshot_preserve_owner_edits",
+    "owner_editable_per_branch": true,
+    "preparation_module": "app/enbishan_operations_preparation.py",
+    "apply_via": "existing brand-scoped owner branch administration",
+    "no_live_cross_brand_link": true
+  },
+  "customer_layout": {
+    "reference_brand": "kps",
+    "same_card_and_category_ordering_controls": true,
+    "identity": "Enbishan original logo and colors"
   }
 }

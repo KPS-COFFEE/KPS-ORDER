@@ -999,6 +999,12 @@
   }
   function renderVariantPrice(){
     const product=state.product;if(!product?.variant_price_matrix)return;
+    if(product.brand_id==='enbishan'){
+      const options=state.optionValues[0]||{};
+      const variant=(product.variant_images||[]).find(entry=>Object.entries(entry.options||{}).every(([key,value])=>options[key]===value));
+      const image=safeImage(variant?.image_url||product.image_url);
+      if(image){$('product-image').src=image;$('product-image').hidden=false;}
+    }
     const rows=state.optionValues.map(options=>globalThis.KPSMenuVariants?.selected(product,options));
     const complete=rows.every(Boolean);
     const total=complete?rows.reduce((sum,row)=>sum+row.price_halalas,0):product.price_halalas;
@@ -1263,6 +1269,7 @@
 
   function saveLocation(lat,lng) {if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){toast(t("enter_valid_location_coordinates"));return;}state.location={lat,lng};text('location-state',t("location_saved_for_eligible_branch_suggestions_you_choose_the_bra"));$('latitude').value=String(lat);$('longitude').value=String(lng);$('clear-location').hidden=false;queueQuote();queueNearestBranches();}
   function applyTheme(theme={}) {
+    if(state.brand.id==='enbishan')theme={accent:'#267481',background:'#f4f9f8',text:'#183e43',...theme};
     const valid=(value)=>typeof value==='string'&&/^#[a-f0-9]{6}$/i.test(value);
     const lum=(value)=>{const rgb=[1,3,5].map((start)=>parseInt(value.slice(start,start+2),16)/255).map((c)=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4);return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];};
     const contrast=(a,b)=>(Math.max(lum(a),lum(b))+.05)/(Math.min(lum(a),lum(b))+.05);
@@ -1449,7 +1456,7 @@ $('customer-language').addEventListener('click',changeLanguage);const tickerPaus
     const label=$('brand-name');label.replaceChildren();label.dir=requestedBrandId==='kps'?'ltr':'auto';
     if(requestedBrandId==='kps'){label.append(document.createTextNode('KPS '),node('span','','COFFEE'));}else label.append(document.createTextNode(name));
     label.append(node('small','',t("your_order_your_way")));text('footer-brand',name);$('banner-area').setAttribute('aria-label',t("0_announcements",{"0":()=>(name)}));
-    const logo=safeImage(state.brand.logo_url||(requestedBrandId==='kps'?'/assets/kps-logo-fb911a7b4bb4.png':''));
+    const logo=safeImage(state.brand.logo_url||(requestedBrandId==='kps'?'/assets/kps-logo-fb911a7b4bb4.png':requestedBrandId==='enbishan'?'/assets/enbishan-original.jpeg':''));
     $('brand-logo').alt=name;$('brand-logo').hidden=!logo;if(logo){$('brand-logo').src=/^\/assets\/[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(logo)?logo.replace('/assets/','/media/previews/'):logo;$('brand-logo').fetchPriority='high';$('brand-logo').addEventListener('error',()=>{$('brand-logo').src=logo;},{once:true});}else $('brand-logo').removeAttribute('src');
     renderBanner();
   }
