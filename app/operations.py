@@ -168,6 +168,7 @@ def authorize_replay(c,user,operation,body,result):
         if not row or not same_scope(user,row) or (user['role']!='owner' and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
 
 class ShiftOpen(OperationBody):
+    delivery_period: Literal['morning','evening']|None=None
     vehicle_inspection: shift_vehicle.Inspection|None=None
     kind: str
     branch_ids: list[str] = Field(default_factory=list)
@@ -177,29 +178,39 @@ class ShiftOpen(OperationBody):
     reason: str=''
 
 
-def delivery_shift_window(c, brand, branches, *, manager_preparation=False):
+def delivery_shift_window(c, brand, branches, *, manager_preparation=False, delivery_period=None, principal=None):
     """Gate fresh staffing; existing tasks and closures never expire by clock.
 
     Unconfigured legacy/internal brands retain their existing staffing flow.
     The approved default configures eligible KPS branches without enabling them.
     """
-    from . import catalog
+    from . import catalog, morning_delivery
     now = service_hours.now_riyadh()
     windows = {}
     preparation_date = None
     brand_settings = c.execute('SELECT settings FROM brands WHERE id=%s', (brand,)).fetchone()['settings']
     if brand_settings.get('services', {}).get('delivery', True) is not True:
         fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
+    morning = delivery_period == 'morning'
+    if morning:
+        approved = morning_delivery.policy(brand_settings)
+        if (not principal or not principal.get('active') or principal.get('brand_id') != brand
+                or (principal['role'] != 'owner' and
+                    (principal['role'] != 'delivery_manager' or principal['id'] not in approved['manager_user_ids']))):
+            fail(403, 'مدير الفترة الصباحية غير معتمد.')
+        if not branches or any(not morning_delivery.active(b, brand_settings, now)
+                               or b['id'] not in approved['execution_branch_ids'] for b in branches):
+            fail(409, 'الفترة الصباحية مغلقة أو الفرع غير معتمد للتنفيذ.')
     for branch in branches:
         settings = branch['settings']
-        hours = settings.get('delivery_hours')
+        hours = morning_delivery.HOURS if morning else settings.get('delivery_hours')
         if not hours:
             continue
         if catalog.normalize_city(branch['city']) not in catalog.DELIVERY_CITIES:
             fail(409, 'هذا الفرع غير مؤهل لشفتات التوصيل.')
         if settings.get('active', True) is not True or settings.get('delivery_enabled') is not True:
             fail(409, 'التوصيل موقوف لهذا الفرع؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
-        status = (service_hours.manager_shift_status(hours, now) if manager_preparation
+        status = (service_hours.manager_shift_status(hours, now) if manager_preparation and not morning
                   else service_hours.hours_status(hours, now))
         if not status['configured']:
             fail(503, 'ساعات التوصيل لهذا الفرع غير صحيحة.')
@@ -217,7 +228,8 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False):
         return None, None
     operational_date = preparation_date or service_hours.delivery_operational_date(now)
     return operational_date, {'timezone': 'Asia/Riyadh', 'operational_date': operational_date.isoformat(),
-                              'operational_day_start': '16:00', 'branches': windows}
+                              'operational_day_start': '16:00', 'branches': windows,
+                              'period': 'morning' if morning else 'evening'}
 
 @router.post('/shifts')
 def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
@@ -244,8 +256,6 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
                 if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
                 branch_rows.append(b)
-            operational_date, delivery_window = delivery_shift_window(
-                c, brand, branch_rows, manager_preparation=body.kind == 'manager')
             if body.opening_halalas:
                 roles(user,'owner')
                 if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
@@ -259,6 +269,15 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (manager_user['role']!='owner' and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
                 if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
             elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
+            period = body.delivery_period
+            if body.kind == 'driver':
+                inherited = (manager.get('delivery_window_snapshot') or {}).get('period', 'evening')
+                if period and period != inherited:
+                    fail(409, 'فترة السائق يجب أن تطابق مناوبة مديره.')
+                period = inherited
+            operational_date, delivery_window = delivery_shift_window(
+                c, brand, branch_rows, manager_preparation=body.kind == 'manager',
+                delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
             sid=uid()
             carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL FOR UPDATE',(target['id'],)).fetchall()
             carried=sum(x['amount_halalas'] for x in carryovers)
@@ -607,6 +626,10 @@ class Assignment(OperationBody):
 
 def assign_in_transaction(c,user,oid,body):
     o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+    from . import morning_delivery
+    morning_delivery.authorize_order(c, user, o)
+    if o.get('snapshot', {}).get('delivery_period') == 'morning' and o['preparation_status'] == 'new':
+        fail(409, 'ينتظر الطلب الصباحي قبول محضّر الفرع قبل الإسناد.')
     if o['service']!='delivery' or o['preparation_status'] in ('cancelled','rejected','completed') or o.get('completed_at'):fail(409,'الطلب غير قابل للإسناد')
     from .order_amendments import guard
     guard(c,o,require_branch=False)
@@ -617,6 +640,11 @@ def assign_in_transaction(c,user,oid,body):
     manager=lock_shift(c,s['manager_shift_id'])
     if not manager or manager['status']!='open':fail(409,'شفت المدير غير مفتوح')
     eligible_driver_shift(c,s,o)
+    if o.get('snapshot', {}).get('delivery_period') == 'morning':
+        principal = c.execute('SELECT * FROM users WHERE id=%s', (manager['user_id'],)).fetchone()
+        morning_delivery.authorize_order(c, principal, o)
+        if (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning':
+            fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية.')
     if user['role']=='delivery_manager' and manager['user_id']!=user['id']:fail(403,'الشفت تابع لمدير آخر')
     if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
     if body.accept_order and o['preparation_status']=='new':
@@ -637,6 +665,10 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
     if not auth.has_permission(user,'delivery_assign'):
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إسناد الطلبات متوقفة لحسابك.')
     with db.tx() as c:
+        from . import morning_delivery
+        visible=c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
+        order_access(c,user,visible)
+        morning_delivery.authorize_order(c,user,visible)
         def perform():return assign_in_transaction(c,user,oid,body)
         return mutate(c,user,request,'order.assign:'+oid,body.model_dump(),perform)
 

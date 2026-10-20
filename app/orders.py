@@ -126,7 +126,10 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             execution_branch_id = quote['branch_id']
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
-            if body.service == 'delivery' and (config or {}).get('settings', {}).get('delivery_workflow') != 'branch_without_manager':
+            if quote.get('delivery_period') == 'morning':
+                from . import morning_delivery
+                morning_delivery.require_duty(conn,body.brand_id,execution_branch_id)
+            elif body.service == 'delivery' and (config or {}).get('settings', {}).get('delivery_workflow') != 'branch_without_manager':
                 _ensure_manager_duty(conn, body.brand_id, execution_branch_id)
             customer = body.customer.model_dump(exclude_none=True)
             if body.service == 'delivery':
@@ -169,6 +172,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             quote['receipt_occasion_style'] = (config or {}).get('settings', {}).get('receipt_occasion_style', {})
             quote['receipt_occasion_text'] = (config or {}).get('settings', {}).get('receipt_occasion_text', '')
             quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
+            if quote.get('delivery_period') == 'morning':
+                quote['delivery_workflow'] = 'branch_fulfillment'
             # Read immutable receipt/policy snapshots before the per-branch
             # counter. The allocation remains in this same atomic transaction,
             # while its mandatory serial section contains only durable writes.
@@ -633,6 +638,8 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
     with db.tx() as conn:
         # Replay returns a saved response, so fresh scope authorization must precede replay lookup.
         visible = scoped_order(conn, order_id, user)
+        from . import morning_delivery
+        morning_delivery.authorize_order(conn,user,visible,preparation=user['role']=='branch_manager')
         if user['role']=='delivery_manager' and (body.status!='cancelled' or visible['service']!='delivery'):
             raise db.error(403,'DELIVERY_DECISION_ONLY','مدير التوصيل يرفض طلب التوصيل أو يقبله مع إسناد سائق؛ تجهيز الفرع له إجراء مستقل.')
         def perform():

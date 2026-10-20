@@ -50,6 +50,7 @@ def is_khaliya_branch(branch):
 def customer_quote_view(quote):
     result = dict(quote)
     result.pop('channel_commercial', None)
+    result.pop('morning_policy_version', None)
     routing = result.pop('internal_routing', None)
     if routing:
         result.update(routing['selected_branch'])
@@ -208,10 +209,12 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None) ->
     if not isinstance(settings.get('payment_methods'), list) or not settings['payment_methods']:
         return False, 'PAYMENT_UNCONFIGURED', 'طرق الدفع لهذا الفرع غير مهيأة.'
     if service == 'delivery':
-        if not settings.get('delivery_hours'):
+        from . import morning_delivery
+        delivery_hours = morning_delivery.HOURS if morning_delivery.active(branch, brand_settings, now) else settings.get('delivery_hours')
+        if not delivery_hours:
             return False, 'DELIVERY_HOURS_UNCONFIGURED', 'ساعات التوصيل لهذا الفرع غير مهيأة.'
-        if not _hours_open(settings['delivery_hours'], now):
-            return False, 'DELIVERY_CLOSED', closed_delivery_message(settings['delivery_hours'], now)
+        if not _hours_open(delivery_hours, now):
+            return False, 'DELIVERY_CLOSED', closed_delivery_message(delivery_hours, now)
         if not settings.get('coverage') or not location_verified(branch):
             return False, 'COVERAGE_UNCONFIGURED', 'نطاق التوصيل أو موقع الفرع غير مهيأ.'
         fee = settings.get('delivery_fee_halalas')
@@ -382,11 +385,26 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
         products = products_query.fetchall()
         preferences = preferences_query.fetchone()
         target = khaliya_branch(conn) if branch and brand_id == 'kps' and service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن' else None
+        from . import morning_delivery
+        morning = bool(branch and service == 'delivery' and morning_delivery.active(branch, brand['settings']))
+        execution = branch
+        if morning:
+            rows = conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no', (brand_id,)).fetchall()
+            try:
+                execution = morning_delivery.target(rows, branch, brand['settings'])
+            except HTTPException:
+                execution = None
+            try:
+                target = morning_delivery.target(rows, branch, brand['settings'], khaliya=True)
+            except HTTPException:
+                target = None
         classic = classic_query.fetchone() if classic_query else None
         public_products = []
         for product in products:
-            effective = target if target and is_khaliya(product) else branch
+            effective = target if is_khaliya(product) and target else execution
             item = public_product(product, effective, service)
+            if morning and not execution:
+                item.update(available=False, unavailable_reason='التوصيل الصباحي غير متاح حاليًا.')
             if branch and is_khaliya(product) and service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
                 if not is_khaliya_branch(target):
                     item.update(available=False, unavailable_reason='الخلية غير متاحة حاليًا.')
@@ -431,10 +449,17 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
         item['location_verified'] = location_verified(branch)
         item['payment_methods'] = branch['settings'].get('payment_methods') or []
         item['delivery_eligible'] = normalize_city(branch['city']) in DELIVERY_CITIES
-        item['delivery_schedule'] = hours_status(branch['settings'].get('delivery_hours'), now)
+        from . import morning_delivery
+        morning = morning_delivery.active(branch, brand_settings, now)
+        item['delivery_schedule'] = hours_status(morning_delivery.HOURS if morning else branch['settings'].get('delivery_hours'), now)
         item['services'] = {}
         for service in ('pickup', 'car', 'delivery'):
             available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
+            if available and service == 'delivery' and morning:
+                try:
+                    morning_delivery.target(rows, branch, brand_settings, now=now)
+                except HTTPException:
+                    available, code, reason = False, 'MORNING_EXECUTION_UNAVAILABLE', 'التوصيل الصباحي غير متاح حاليًا.'
             item['services'][service] = {'available': available, 'code': code, 'reason': reason}
         result.append(item)
     return {'branches': result,
@@ -626,7 +651,12 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
         raise db.error(409, code, reason)
     selected_branch = branch
     contains_khaliya = body.brand_id == 'kps' and any(item.product_id in KHALIYA_SOURCES.values() for item in body.items)
-    if contains_khaliya and body.service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
+    from . import morning_delivery
+    morning = body.service == 'delivery' and morning_delivery.active(selected_branch, brand['settings'])
+    if morning:
+        candidates=conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no'+lock,(body.brand_id,)).fetchall()
+        branch=morning_delivery.target(candidates,selected_branch,brand['settings'],khaliya=contains_khaliya)
+    elif contains_khaliya and body.service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن':
         branch = khaliya_branch(conn, lock)
         if not is_khaliya_branch(branch):
             raise db.error(409, 'PRODUCT_UNAVAILABLE', 'الخلية غير متاحة حاليًا.')
@@ -702,8 +732,10 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
             'subtotal_halalas': subtotal, 'delivery_fee_halalas': fee, 'total_halalas': subtotal + fee,
             'discount_halalas': 0, 'tax': {'status': 'not_configured', 'amount_halalas': None},
             'notes': body.notes, 'currency': 'SAR', 'priced_at': datetime.now(RIYADH).isoformat()}
+    if morning:
+        result.update(delivery_period='morning',morning_policy_version=morning_delivery.policy(brand['settings'])['version'])
     if selected_branch['id'] != branch['id']:
-        result['internal_routing'] = {'reason': 'khaliya_branch_2', 'selected_branch': {
+        result['internal_routing'] = {'reason': 'morning_execution' if morning else 'khaliya_branch_2', 'selected_branch': {
             'branch_id': selected_branch['id'], 'branch_no': selected_branch['branch_no'],
             'branch_name': selected_branch['name'], 'branch_city': selected_branch['city'],
             'branch_location': selected_branch['settings'].get('location')}}
@@ -1087,6 +1119,8 @@ def rank_nearest_branches(rows, point, service, brand_settings, products=(), by_
     now = service_hours.now_riyadh()
     target = next((row for row in rows if is_khaliya_branch(row)), None)
     contains_khaliya = any(is_khaliya(product) for product in products)
+    from . import morning_delivery
+    from fastapi import HTTPException
     for branch in rows:
         available, code, reason = branch_service(branch, service, now=now, brand_settings=brand_settings)
         if available and not location_verified(branch):
@@ -1097,7 +1131,12 @@ def rank_nearest_branches(rows, point, service, brand_settings, products=(), by_
         if service == 'delivery' and coverage_configured(coverage) and not covered(coverage, point):
             available, code, reason = False, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق توصيل هذا الفرع.'
         execution = branch
-        if service == 'delivery' and contains_khaliya and normalize_city(branch['city']) == 'حفر الباطن':
+        if service == 'delivery' and morning_delivery.active(branch,brand_settings,now):
+            try:
+                execution=morning_delivery.target(rows,branch,brand_settings,khaliya=contains_khaliya,now=now)
+            except HTTPException:
+                available,code,reason=False,'MORNING_EXECUTION_UNAVAILABLE','خدمة التوصيل الصباحية غير متاحة لهذه السلة حاليًا.'
+        elif service == 'delivery' and contains_khaliya and normalize_city(branch['city']) == 'حفر الباطن':
             if not target:
                 available, code, reason = False, 'PRODUCT_UNAVAILABLE', 'الخلية غير متاحة حاليًا.'
             else:
@@ -1112,7 +1151,7 @@ def rank_nearest_branches(rows, point, service, brand_settings, products=(), by_
         item.update(available=available, code=code, reason=reason, unavailable_products=missing,
                     directions_url=directions_url(branch), distance_label=DISTANCE_LABEL,
                     delivery_fee_halalas=branch['settings'].get('delivery_fee_halalas'),
-                    delivery_schedule=hours_status(branch['settings'].get('delivery_hours'), now),
+                    delivery_schedule=hours_status(morning_delivery.HOURS if morning_delivery.active(branch, brand_settings, now) else branch['settings'].get('delivery_hours'), now),
                     location_verified=location_verified(branch), covered=covered(branch['settings'].get('coverage'), point),
                     services={kind: {'available': state[0], 'code': state[1], 'reason': state[2]}
                               for kind in ('pickup', 'car', 'delivery')
