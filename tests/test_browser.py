@@ -159,12 +159,14 @@ def _owner_login(context, base, owner):
         fixture = conn.execute('SELECT * FROM users WHERE id=%s', (owner['id'],)).fetchone()
     fixture = register_synthetic_mobile(fixture)
     origin = {'Origin': base, 'X-KPS-Context': 'work'}
+    with db.tx() as conn:
+        sessions_before = conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n']
     denied = context.request.post(base + '/api/auth/login', headers=origin,
                                   data={'username': owner['username'], 'password': PASSWORD})
     assert denied.status == 403, denied.text()
     assert denied.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
     with db.tx() as conn:
-        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n'] == 0
+        assert conn.execute('SELECT count(*) n FROM sessions WHERE user_id=%s', (owner['id'],)).fetchone()['n'] == sessions_before
     sent = context.request.post(base + '/api/identity/staff/code/request', headers=origin,
                                 data={'phone': fixture['phone'], 'brand_id': fixture['brand_id']})
     assert sent.ok, sent.text()

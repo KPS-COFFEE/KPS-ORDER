@@ -1,17 +1,17 @@
-"""Owner resend confirmation against isolated PostgreSQL and real Chromium."""
+"""Owner SMS resend confirmation against isolated PostgreSQL and real Chromium."""
 import os
 
 import pytest
 
 from app import db
-from test_browser import PASSWORD, _capture, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from test_browser import _capture, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
 
 pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
     os.getenv('TEST_BROWSER') != '1', reason='Requires explicit isolated browser acceptance.')]
 
 
 @pytest.mark.parametrize('language', ['ar', 'en'])
-def test_privileged_resend_requires_password_without_changing_staff_access(live_app, chromium_browser, language):
+def test_privileged_resend_requires_sms_without_changing_staff_access(live_app, chromium_browser, language):
     from playwright.sync_api import expect
 
     owner = _staff()
@@ -58,16 +58,23 @@ def test_privileged_resend_requires_password_without_changing_staff_access(live_
                         assert conn.execute('SELECT invitation_status FROM users WHERE id=%s', (target['id'],)).fetchone()['invitation_status'] == 'draft'
                     button.click()
                     _capture(page, 'TEST_ONLY_owner_resend_confirmation_' + language)
-                    modal.locator('input[name=step_up_password]').fill('WrongSyntheticPassword!')
-                    modal.locator('button[type=submit]').click()
-                    expect(modal.locator('.form-error')).not_to_be_empty()
+                expect(modal.locator('input[name=step_up_password]')).to_have_count(0)
+                modal.locator('button[type=submit]').click()
+                sms_dialog = page.locator('dialog[open]').filter(has=page.locator('input[name=code]'))
+                expect(sms_dialog).to_be_visible()
+                expect(sms_dialog.locator('button[type=submit]')).to_be_enabled()
+                if index == 0:
+                    sms_dialog.locator('input[name=code]').fill('0000')
+                    sms_dialog.locator('button[type=submit]').click()
+                    expect(sms_dialog.locator('.form-error')).not_to_be_empty()
                     expect(page.locator('#app-shell')).to_be_visible()
                     expect(page.locator('#login-shell')).not_to_be_visible()
-                    expect(modal.locator('input[name=step_up_password]')).to_have_value('')
                     with db.tx() as conn:
                         assert conn.execute('SELECT count(*) AS n FROM email_outbox WHERE recipient=%s', (target['email'],)).fetchone()['n'] == 0
-                modal.locator('input[name=step_up_password]').fill(PASSWORD)
-                modal.locator('button[type=submit]').click()
+                        assert conn.execute('SELECT invitation_status FROM users WHERE id=%s', (target['id'],)).fetchone()['invitation_status'] == 'draft'
+                sms_dialog.locator('input[name=code]').fill('0123')
+                sms_dialog.locator('button[type=submit]').click()
+                expect(sms_dialog).to_have_count(0)
             expected = 'حُفظت الدعوة في انتظار إرسال البريد؛ التفعيل بعد تحقق الموظف.' if language == 'ar' else 'Invitation queued for email; activation requires staff verification.'
             expect(page.locator('.staff-card').filter(has_text=target['email'])).to_contain_text(
                 'بانتظار إثبات البريد' if language == 'ar' else 'Awaiting email proof')

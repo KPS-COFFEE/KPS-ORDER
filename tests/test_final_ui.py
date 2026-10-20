@@ -104,8 +104,11 @@ def test_final_mobile_code_screen_registered_phone_requires_certified_sms(live_a
         expect(page.locator('#navigation [data-page=tasks]')).to_have_attribute('aria-current','page')
         session=context.request.get(live_app+'/api/session', headers={'X-KPS-Context':'work'}).json()
         assert session['user']['id']==identifier
-        assert session['user']['phone_sms_verified_at'] is not None
+        assert session['user']['phone_sms_verified_at'] is None
         with db.tx() as conn:
+            login_proof=conn.execute("SELECT * FROM otp_challenges WHERE source_user_id=%s AND id LIKE 'employee_otp_%%' AND delivery_channel='sms' AND verified_at IS NOT NULL ORDER BY created_at DESC LIMIT 1",(identifier,)).fetchone()
+            assert login_proof and login_proof['phone']==session['user']['phone']
+            assert login_proof['source_session_id'] is None
             proof=conn.execute('SELECT step_up_at FROM sessions WHERE user_id=%s AND revoked_at IS NULL',(identifier,)).fetchone()
             assert proof and proof['step_up_at'] is None
         assert session['user']['branch_ids']==['kps-branch-1','kps-branch-9']

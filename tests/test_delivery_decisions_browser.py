@@ -23,9 +23,19 @@ def test_manager_resolves_unassigned_order(live_app,chromium_browser,lang,decisi
     try:
         page.goto(live_app+'/ops')
         page.locator('#operational-alerts [data-action=order-detail][data-id="'+oid+'"]').first.click()
-        expect(page.locator('#modal-body [data-action=assign]')).to_have_text('قبول وإسناد' if lang=='ar' else 'Accept and assign')
+        expect(page.locator('#modal-body [data-action=manager-accept]')).to_have_text('قبول الطلب' if lang=='ar' else 'Accept order')
+        expect(page.locator('#modal-body [data-action=assign]')).to_have_count(0)
         expect(page.locator('#modal-body [data-action=reject]')).to_be_visible()
-        page.locator('#modal-body [data-action='+decision+']').click()
+        if decision=='assign':
+            page.locator('#modal-body [data-action=manager-accept]').click()
+            expect(page.locator('#modal')).not_to_be_visible(timeout=20000)
+            with db.tx() as c:
+                accepted=c.execute('SELECT preparation_status,delivery_status FROM orders WHERE id=%s',(oid,)).fetchone()
+                assert accepted=={'preparation_status':'accepted','delivery_status':'pending'}
+                assert c.execute('SELECT count(*) n FROM driver_tasks WHERE order_id=%s',(oid,)).fetchone()['n']==0
+            page.locator('#dispatch-orders [data-action=assign][data-id="'+oid+'"]').click()
+        else:
+            page.locator('#modal-body [data-action=reject]').click()
         if decision=='assign':page.locator('#modal-body [name=driver_shift_id]').select_option(sid)
         else:page.locator('#modal-body [name=reason]').fill('TEST unable to fulfill')
         page.locator('#modal-body button[type=submit]').click()
@@ -41,3 +51,4 @@ def test_manager_resolves_unassigned_order(live_app,chromium_browser,lang,decisi
             assert response.json()['detail']['code']=='STAFF_PERMISSION_FORBIDDEN'
         assert not errors
     finally:ctx.close()
+

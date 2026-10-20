@@ -41,8 +41,8 @@ def test_low_fuel_closure_requests_approval_without_losing_counted_cash(live_app
             assert c.execute('SELECT count(*) n FROM fuel_exceptions WHERE shift_id=%s',(sid,)).fetchone()['n']==1
             assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='closing'
         mpage.goto(live_app+'/ops')
-        expect(mpage.locator('[data-action=fuel-inbox]')).to_have_count(1)
-        mpage.locator('[data-action=fuel-inbox]').click()
+        expect(mpage.locator('#operational-alerts [data-action=fuel-inbox]')).to_have_count(1)
+        mpage.locator('#operational-alerts [data-action=fuel-inbox]').click()
         mpage.locator('[data-action=fuel-reject]').click()
         expect(mpage.locator('[data-action=fuel-reject]')).to_have_count(0)
         form.locator('button[type=submit]').click()
@@ -52,7 +52,7 @@ def test_low_fuel_closure_requests_approval_without_losing_counted_cash(live_app
         form.locator('[data-action=fuel-submit-request]').click()
         expect(form.locator('.fuel-submit-help')).to_contain_text('بانتظار' if language=='ar' else 'Waiting')
         mpage.locator('#modal-close').click() if mpage.locator('#modal-close').count() else mpage.keyboard.press('Escape')
-        mpage.locator('[data-action=fuel-inbox]').click();mpage.locator('[data-action=fuel-approve]').click()
+        mpage.locator('#operational-alerts [data-action=fuel-inbox]').click();mpage.locator('[data-action=fuel-approve]').click()
         expect(mpage.locator('[data-action=fuel-approve]')).to_have_count(0)
         # No manual approval refresh: submission retrieves the exact approved reading.
         form.locator('button[type=submit]').click();_acknowledge_driver_end(page,language)

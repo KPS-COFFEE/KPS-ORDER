@@ -20,7 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app import db
+from app import auth, db
 from tests.browser_sms_helpers import complete_owner_sms_dialog
 from test_browser import (ARTIFACTS, WIDTHS, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
@@ -184,7 +184,16 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         expect(driver.locator('#app-shell')).to_be_visible()
         assert '#identity_token' not in driver.url
         driver_user = driver_context.request.get(base + '/api/session', headers={'X-KPS-Context':'work'}).json()['user']
-        assert driver_user['role'] == 'driver' and driver_user['phone_sms_verified_at']
+        assert driver_user['role'] == 'driver' and driver_user['id'] == registered_driver['id']
+        # Employee SMS proves this login without changing persistent contact
+        # ownership or granting the separate sensitive-owner verification.
+        assert driver_user['phone_sms_verified_at'] is None
+        with db.tx() as conn:
+            proof = conn.execute("SELECT * FROM otp_challenges WHERE source_user_id=%s AND id LIKE 'employee_otp_%%' AND delivery_channel='sms' AND verified_at IS NOT NULL ORDER BY created_at DESC LIMIT 1", (driver_user['id'],)).fetchone()
+            assert proof and proof['phone'] == registered_driver['phone']
+            assert proof['source_session_id'] is None
+            session = conn.execute('SELECT step_up_at FROM sessions WHERE token_hash=%s', (auth.token_hash(next(cookie['value'] for cookie in driver_context.cookies() if cookie['name'] == auth.COOKIE)),)).fetchone()
+            assert session and session['step_up_at'] is None
         assert driver_user['email_verified_at'] is None and driver_user['phone_whatsapp_verified_at'] is None
         assert set(driver_user['branch_ids']) == {'kps-branch-1', 'kps-branch-9'}
         fonts['driver'] = _font_evidence(driver)
