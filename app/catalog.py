@@ -734,7 +734,8 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
                               'name': product['name'], 'category': product['category'], 'quantity': item.quantity,
                               'unit_price_halalas': product['price_halalas'], 'line_total_halalas': amount,
                               'units': units, 'note': item.note})
-    minimum = max((b['settings'].get('minimum_order_halalas') for b in (selected_branch, branch)
+    minimum_branches = (selected_branch,) if morning else (selected_branch, branch)
+    minimum = max((b['settings'].get('minimum_order_halalas') for b in minimum_branches
                    if type(b['settings'].get('minimum_order_halalas')) is int), default=0)
     if body.service == 'delivery' and isinstance(minimum, int) and subtotal < minimum:
         raise db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
