@@ -82,6 +82,15 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         expect(page.locator('[data-count-scope=all] [data-stage=""] b')).to_have_text('١٠٣' if lang=='ar' else '103')
         expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
         expect(page.locator('[data-count-scope=current] [data-stage=""] b')).to_have_text('٣' if lang=='ar' else '3')
+        counter_geometry=page.evaluate("""()=>{
+          const all=document.querySelector('[data-count-scope=all]').getBoundingClientRect();
+          const current=document.querySelector('[data-count-scope=current]').getBoundingClientRect();
+          return {allBottom:all.bottom,currentTop:current.top,allLeft:all.left,currentLeft:current.left,
+                  allWidth:all.width,currentWidth:current.width};
+        }""")
+        assert counter_geometry['currentTop'] >= counter_geometry['allBottom'],counter_geometry
+        assert abs(counter_geometry['allLeft']-counter_geometry['currentLeft']) <= 1,counter_geometry
+        assert abs(counter_geometry['allWidth']-counter_geometry['currentWidth']) <= 1,counter_geometry
         assert 'dispatch_workspace=true' in order_queries[0] and 'dispatch_scope=current' in order_queries[0]
         page.locator('[data-count-scope=all] [data-stage=""]').click()
         expect(page.locator('[data-count-scope=all] [data-stage=""]')).to_have_attribute('aria-pressed','true')

@@ -614,7 +614,7 @@ body.delivery-room{background:#f5f5f3}
 .delivery-room #operational-alerts button{font-size:12px;min-height:34px;padding:5px 9px}
 .delivery-room #operational-alerts>.notice{padding:6px 9px;margin:0}
 .delivery-room #operational-alerts>details,.delivery-room #operational-alerts>div.notice{flex-basis:100%;max-height:180px;overflow:auto}
-.delivery-room #dispatch-counts{display:grid;gap:4px;overflow:visible}
+.delivery-room #dispatch-counts{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;overflow:visible}
 .delivery-room .dispatch-count-row{display:flex;align-items:center;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:thin;padding:3px 0}
 .delivery-room .dispatch-count-row>strong{flex:0 0 92px;font-size:12px;white-space:nowrap}
 .delivery-room .dispatch-count-row .dispatch-stage{flex:0 0 auto;min-height:32px;padding:3px 7px;font-size:11px;gap:5px}
