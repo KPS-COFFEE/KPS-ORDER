@@ -24,7 +24,7 @@ def test_owner_preview_has_three_real_viewports_and_preserves_the_whole_image(st
             response=route.fetch()
             route.fulfill(response=response,headers={**response.headers,
                 'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-                'X-Frame-Options':'DENY'})
+                'X-Frame-Options':'DENY','Content-Type':'application/javascript; charset=utf-8'})
         page.route('**/assets/banner-device-preview.js',security_headers)
         requests=[];errors=[]
         page.on('request',lambda request:requests.append(request.url) if '/api/' in request.url else None)
@@ -39,7 +39,13 @@ def test_owner_preview_has_three_real_viewports_and_preserves_the_whole_image(st
             assert frame.evaluate('innerWidth')==width
             assert frame.locator('.campaign-banner picture img').evaluate("el=>getComputedStyle(el).objectFit")=='contain'
             assert frame.locator('h2').first.inner_text()=='<img src=x onerror=alert(1)>'
+            assert frame.locator('.customer-entry h2').inner_text()==('الاسم والجوال أولًا' if lang=='ar' else 'Your name and mobile first')
             assert frame.locator('[onerror]').count()==0
+            assert page.locator('#'+screen+'-preview iframe').evaluate('el=>getComputedStyle(el).pointerEvents')!='none'
+            if screen=='desktop':
+                frame.evaluate('scrollTo(0,document.documentElement.scrollHeight)')
+                assert frame.evaluate('scrollY')>0
+                frame.evaluate('scrollTo(0,0)')
         assert not requests and not errors
         Path('test-results').mkdir(exist_ok=True)
         page.screenshot(path=f'test-results/customer-entry-ad-preview-{lang}.png',full_page=True)
