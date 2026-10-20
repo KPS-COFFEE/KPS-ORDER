@@ -32,7 +32,7 @@ def test_owner_issued_invoice_preserves_thermal_layout(live_app,chromium_browser
         page.goto(live_app+'/ops')
         page.get_by_role('button',name='الطلبات',exact=True).click()
         if language=='en':page.get_by_role('button',name='English',exact=True).click()
-        page.locator(f'[data-action="order-detail"][data-id="{oid}"]').click()
+        page.locator(f'#content [data-action="order-detail"][data-id="{oid}"]').click()
         with page.expect_popup() as opened:
             page.locator(f'[data-action="print-order"][data-id="{oid}"]').click()
         popup=opened.value
