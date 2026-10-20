@@ -38,11 +38,15 @@ def test_name_phone_location_eligible_branch_and_no_overflow(static_customer,lan
                   'services':{'delivery':{'available':True},'pickup':{'available':False},'car':{'available':False}}}
         user = {'id':'synthetic-customer','role':'customer','brand_id':'kps','display_name':'علي','phone':'+966512345678'}
         session = {'user':user,'csrf_token':'synthetic-only','customer_verified':True}
+        product={'id':'demo-paid','name':'صنف مدفوع','category':'قهوة','price_halalas':1000,'available':True,'source_verified':True,'option_groups':[]}
+        gift_items=[{'product_id':'demo-coffee','name':'قهوة اليوم','quantity':1,'unit_price_halalas':0,'line_total_halalas':0,'is_gift':True},{'product_id':'demo-cookie','name':'كوكيز','quantity':1,'unit_price_halalas':0,'line_total_halalas':0,'is_gift':True}]
+        quote={'subtotal_halalas':1000,'delivery_fee_halalas':500,'total_halalas':1500,'items':[{'product_id':'demo-paid','quantity':1,'line_total_halalas':1000},*gift_items],
+               'first_order_gift':{'status':'eligible','version':1,'items':gift_items}}
         def api(route):
             request = route.request;path = request.url.split('/api/',1)[1].split('?',1)[0]
             requests.append(path)
             responses = {
-                'catalog':{'brand':{'id':'kps','name':'KPS COFFEE'},'products':[],'source_verified':True},
+                'catalog':{'brand':{'id':'kps','name':'KPS COFFEE'},'products':[product],'source_verified':True},
                 'branches':{'branches':[branch,{**branch,'id':'outside-branch','name':'فرع خارج النطاق'}],
                             'brand_services':{'delivery':True,'pickup':False,'car_pickup':False}},
                 'session':{'user':None,'csrf_token':None,'customer_verified':False},
@@ -53,6 +57,9 @@ def test_name_phone_location_eligible_branch_and_no_overflow(static_customer,lan
                 'auth/otp/verify':session,
                 'customer/profile':{'addresses':[]},
                 'branches/nearest':{'branches':[{**branch,'available':True,'direct_distance_meters':500}],'excluded':[]},
+                'products/demo-paid/availability':{'available':True},
+                'quote':{'quote':quote},
+                'gifts/quote':{'quote':quote},
             }
             if path not in responses:
                 raise AssertionError('Unexpected API operation: '+path)
@@ -78,9 +85,17 @@ def test_name_phone_location_eligible_branch_and_no_overflow(static_customer,lan
         page.locator('#nearest-branches button').last.click()
         expect(page.locator('#menu')).to_be_visible()
         expect(page.locator('#branch-select option[value=outside-branch]')).to_have_count(0)
+        page.locator('#neighborhood').fill('حي اختبار');page.locator('#address').fill('عنوان اختبار')
+        page.locator('.product-add-button').first.click();page.locator('#product-add').click()
+        expect(page.locator('#quote-summary .first-order-gift')).to_be_visible()
+        expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('قهوة اليوم')
+        expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('كوكيز')
+        page.locator('#checkout-button').click()
+        expect(page.locator('#confirm-dialog .first-order-gift')).to_be_visible()
+        page.keyboard.press('Escape')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         assert 'auth/otp/request' in requests and 'auth/otp/verify' in requests
-        assert not any(path in {'orders','quote'} for path in requests)
+        assert 'gifts/quote' in requests and 'orders' not in requests
         out=ROOT/'test-results';out.mkdir(exist_ok=True)
         page.screenshot(path=str(out/f'customer-entry-{lang}-{width}.png'),full_page=True)
         assert not errors,errors

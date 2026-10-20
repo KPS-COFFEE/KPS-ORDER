@@ -154,6 +154,11 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 customer.update(auth.identity_snapshot(user))
             if supplied_phone and customer['phone'] != user.get('phone'):
                 for flag in ('phone_verified','phone_sms_verified','phone_whatsapp_verified'):customer[flag]=False
+            gift_phone = None
+            from . import first_order_gift
+            if not delivery_center:
+                gift_phone = first_order_gift.prepare(conn, body, quote, user,
+                    (config or {}).get('settings'), for_order=True)
             if user.get('identity_kind') == 'guest':
                 recent=conn.execute("SELECT 1 FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1",
                                     (body.brand_id,execution_branch_id,customer['phone'],db.json(quote['items']))).fetchone()
@@ -187,6 +192,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             # Prepare the canonical privacy projection before acquiring the
             # branch counter; do not duplicate routing/privacy rules in SQL.
             public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})
+            gift_cte, gift_params = first_order_gift.claim_cte(gift_phone, (quote.get('first_order_gift') or {}).get('version'))
             ctes = ('next_number AS (' + order_numbering.NEXT_NUMBER_SQL + '), created_order AS ('
                                'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
                                'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
@@ -197,7 +203,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                     "SELECT %s,id,%s,'order.created',%s FROM created_order RETURNING id), "
                     'created_audit AS (INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details) '
                     "SELECT %s,%s,'order.created','order',id,%s FROM created_order RETURNING id), "
-                    "operation_response AS (SELECT jsonb_build_object('order',"
+                    + gift_cte + "operation_response AS (SELECT jsonb_build_object('order',"
                     "(to_jsonb(o)-'performance_snapshot') || jsonb_build_object("
                     "'branch_id',%s::text,'customer',%s::jsonb,"
                     "'snapshot',jsonb_set(%s::jsonb,'{order_reference}',o.snapshot->'order_reference'),"
@@ -214,8 +220,12 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                                 db.new_id('audit_'), user['id'], db.json({'branch_id': execution_branch_id,
                                     'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
                                     'total_halalas': quote['total_halalas']}),
-                                public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
-        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', body.model_dump(), perform,
+                                *gift_params, public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
+        intent = body.model_dump()
+        for field in ('expected_gift', 'expected_gift_version'):
+            if intent[field] is None:
+                intent.pop(field)
+        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', intent, perform,
                                pipeline_writes=True, defer_atomic_response=True,encoded_response=request is not None)
     # The database acknowledges COMMIT before the saved JSON reaches HTTP.
     # Replays use the same durable JSON, with no new counter/event/financial write.

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response, HTTPEx
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from .responses import DatabaseJSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
 from . import auth, db, service_hours
 from .service_hours import closed_delivery_message, hours_status
@@ -539,6 +539,8 @@ class QuoteBody(_CheckoutModel):
     customer: CustomerInfo
     notes: str = Field(default='', max_length=1000)
     expected_total_halalas: StrictInt | None = Field(default=None, ge=0, le=10000000)
+    expected_gift: StrictBool | None = None
+    expected_gift_version: StrictInt | None = Field(default=None, ge=0)
 
     @model_validator(mode='before')
     @classmethod

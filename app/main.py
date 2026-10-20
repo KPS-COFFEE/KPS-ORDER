@@ -84,6 +84,8 @@ async def database_unavailable(request: Request, exc):
 app.include_router(orders.router)
 from . import experience_policy
 app.include_router(experience_policy.router)
+from . import first_order_gift
+app.include_router(first_order_gift.router)
 from . import branch_payments
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
