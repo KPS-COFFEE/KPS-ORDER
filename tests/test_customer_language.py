@@ -139,7 +139,7 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
         expect(page.locator('#order-detail')).to_contain_text('Saved order amount')
         expect(page.locator('#order-detail')).to_contain_text('Preparation')
         expect(page.locator('#order-detail')).to_contain_text('Payment')
-        session = context.request.get(live_app + '/api/session').json()
+        session = context.request.get(live_app + '/api/session', headers={'X-KPS-Context': 'customer'}).json()
         assert session['user']['identity_kind'] == 'guest'
         with db.tx() as conn:
             orders = conn.execute('SELECT * FROM orders WHERE customer_id=%s', (session['user']['id'],)).fetchall()
@@ -181,7 +181,7 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
         page.reload()
         expect(page.locator('html')).to_have_attribute('lang', 'en')
         expect(page.locator('#orders-button')).to_have_text('My orders')
-        assert context.request.get(live_app + '/api/session').json()['user']['id'] == session['user']['id']
+        assert context.request.get(live_app + '/api/session', headers={'X-KPS-Context': 'customer'}).json()['user']['id'] == session['user']['id']
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) AS n FROM orders WHERE customer_id=%s', (session['user']['id'],)).fetchone()['n'] == 1
             assert conn.execute('SELECT arrival_at FROM orders WHERE id=%s', (order['id'],)).fetchone()['arrival_at']
