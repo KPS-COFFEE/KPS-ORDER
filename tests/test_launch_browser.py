@@ -303,7 +303,7 @@ def test_owner_banner_city_speed_link_image_scope_and_ticker_edits_through_real_
         expect(form.locator('select[name=cities]')).to_have_values(['حفر الباطن'])
         expect(form.locator('input[name="banner:kps-branch-1"]')).to_be_checked()
         expect(form.locator('input[name="banner:kps-branch-9"]')).not_to_be_checked()
-        expect(form.locator('#desktop-preview img')).to_be_visible()
+        expect(page.frame_locator('#desktop-preview iframe').locator('.campaign-banner picture img')).to_be_visible()
         form.locator('input[name=title]').scroll_into_view_if_needed()
         _evidence(page, 'launch-owner-banner-1280', full_page=False, owner_interface='real saved and reopened banner form', synthetic_campaign=banner['id'])
         page.locator('#modal-close').click()
