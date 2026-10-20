@@ -45,5 +45,6 @@ def test_map_csp_does_not_change_any_customer_document_headers(monkeypatch):
     for path in ['/ops','/ops.html']:
         headers = client.get(path).headers
         assert 'https://api.mapbox.com/mapbox-gl-js/v3.33.0/' in headers['content-security-policy']
+        assert "https://api.mapbox.com/directions/v5/mapbox/driving/" in headers["content-security-policy"]
         assert "'unsafe-eval'" not in headers['content-security-policy']
         assert headers['referrer-policy'] == 'strict-origin-when-cross-origin'
