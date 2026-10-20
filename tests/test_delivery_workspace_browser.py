@@ -79,9 +79,10 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.goto(static_customer+'/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
         expect(page.locator('#dispatch-orders article')).to_have_count(3)
-        expect(page.locator('[data-count-scope=all] [data-stage=""] b')).to_have_text('١٠٣' if lang=='ar' else '103')
+        expected_counts=page.evaluate('(lang)=>[103,3].map(value=>new Intl.NumberFormat(lang).format(value))',lang)
+        expect(page.locator('[data-count-scope=all] [data-stage=""] b')).to_have_text(expected_counts[0])
         expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
-        expect(page.locator('[data-count-scope=current] [data-stage=""] b')).to_have_text('٣' if lang=='ar' else '3')
+        expect(page.locator('[data-count-scope=current] [data-stage=""] b')).to_have_text(expected_counts[1])
         counter_geometry=page.evaluate("""()=>{
           const all=document.querySelector('[data-count-scope=all]').getBoundingClientRect();
           const current=document.querySelector('[data-count-scope=current]').getBoundingClientRect();

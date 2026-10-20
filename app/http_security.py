@@ -93,7 +93,7 @@ class SecurityMiddleware:
                         "style-src 'self' 'unsafe-inline' https://api.mapbox.com/mapbox-gl-js/v3.33.0/; "
                         "img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; "
                         "connect-src 'self' https://api.mapbox.com/v4/ https://api.mapbox.com/styles/v1/mapbox/ "
-                        "https://api.mapbox.com/fonts/v1/mapbox/ https://api.mapbox.com/map-sessions/v1 https://events.mapbox.com/; "
+                        "https://api.mapbox.com/directions/v5/mapbox/driving/ https://api.mapbox.com/fonts/v1/mapbox/ https://api.mapbox.com/map-sessions/v1 https://events.mapbox.com/; "
                         "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
                 if os.getenv('APP_ENV', 'production') == 'production':
                     headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
