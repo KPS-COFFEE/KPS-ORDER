@@ -90,3 +90,45 @@ def test_location_cannot_publish_after_branch_revocation(gps_data):
     assert client.post('/api/operations/driver-location', json={'lat':28.4,'lng':45.9,'accuracy_m':10}).status_code == 403
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM driver_latest_locations').fetchone()['n'] == 0
+
+
+def test_current_and_rollback_export_register_scoped_gps_table():
+    import hashlib
+    import importlib.util
+    import json
+    from pathlib import Path
+    from app import exports
+    root = Path(__file__).resolve().parents[1]
+    path = root/'tools/rollback_application_overlay/app/exports.py'
+    spec = importlib.util.spec_from_file_location('app._gps_rollback_exports', path)
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    for module in (exports, overlay):
+        assert module.TABLES.count('driver_latest_locations') == 1
+        assert module.TABLES.index('users') < module.TABLES.index('shifts') < module.TABLES.index('driver_latest_locations')
+        assert module._scoped_sql('driver_latest_locations', 'kps') == ('brand_id=%s', ('kps',))
+        assert module._scoped_sql('driver_latest_locations', None) == ('TRUE', ())
+    manifest = json.loads((root/'tools/rollback_application_overlay/manifest.json').read_text())
+    assert manifest['files']['app/exports.py'] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.postgres
+def test_gps_point_preserved_in_full_export_and_brand_scoped(gps_data):
+    import json
+    from app import exports
+    client, user = gps_data
+    response = client.post('/api/operations/driver-location', json={'lat':28.4,'lng':45.9,'accuracy_m':10})
+    assert response.status_code == 200
+    with db.tx() as c:
+        full, manifest = exports.build_archive(c, full=True)
+        scoped, scoped_manifest = exports.build_archive(c, brand_id='kps')
+        other, other_manifest = exports.build_archive(c, brand_id='different-brand')
+    assert manifest['counts']['driver_latest_locations'] == 1
+    assert scoped_manifest['counts']['driver_latest_locations'] == 1
+    assert other_manifest['counts']['driver_latest_locations'] == 0
+    for content in (full, scoped):
+        archive, saved = exports.verify_archive(content)
+        rows = json.loads(archive.read('data/driver_latest_locations.json'))
+        assert rows[0]['driver_id'] == 'gps-driver'
+        assert rows[0]['shift_id'] == 'gps-shift'
+        assert rows[0]['lat'] == 28.4
