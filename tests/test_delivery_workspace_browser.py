@@ -1,6 +1,7 @@
 """Real operations assets; synthetic API responses, no real orders or messages."""
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 import pytest
@@ -53,6 +54,36 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.goto(static_customer+'/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
         expect(page.locator('#dispatch-orders article')).to_have_count(3)
+        # Main operating area must be reachable immediately, not pushed below a
+        # long vertical menu and stacked status cards on desktop.
+        expect(page.locator('body')).to_have_class(re.compile(r'\bdelivery-room\b'))
+        if width >= 1000:
+            geometry=page.evaluate("""()=>{
+              const box=s=>document.querySelector(s).getBoundingClientRect();
+              const nav=box('#navigation'),row=box('#dispatch-orders article'),side=box('.dispatch-side');
+              return {navTop:nav.top,navBottom:nav.bottom,navHeight:nav.height,rowTop:row.top,
+                      sideTop:side.top,sideBottom:side.bottom,height:innerHeight};
+            }""")
+            assert geometry['rowTop'] < min(650,geometry['height']*.72),geometry
+            assert 0 <= geometry['navTop'] < geometry['navBottom'] <= geometry['rowTop'],geometry
+            assert geometry['navHeight'] <= 110,geometry
+            assert geometry['sideTop'] <= geometry['rowTop'] < geometry['sideBottom'],geometry
+            expect(page.locator('.dispatch-table-head')).to_be_visible()
+        else:
+            toggle=page.locator('.dispatch-nav-toggle')
+            expect(toggle).to_be_visible()
+            expect(toggle).to_have_attribute('aria-controls','navigation')
+            expect(page.locator('#navigation')).not_to_be_visible()
+            toggle.click()
+            expect(toggle).to_have_attribute('aria-expanded','true')
+            expect(page.locator('#navigation')).to_be_visible()
+            expect(page.locator('#navigation [data-page=dashboard]')).to_be_visible()
+            toggle.click()
+            expect(toggle).to_have_attribute('aria-expanded','false')
+            expect(page.locator('#navigation')).not_to_be_visible()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        Path('test-results').mkdir(exist_ok=True)
+        page.screenshot(path=f'test-results/customer-entry-control-room-{lang}-{width}.png',full_page=True)
         assert page.locator('[data-action="manager-accept"][data-id="morning"]').count()==0
         assert page.locator('[data-action="assign"][data-id="morning"]').count()==0
         page.locator('[data-action="manager-accept"][data-id="new-evening"]').click()
@@ -61,6 +92,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.locator('#dispatch-filters [name=late]').check()
         expect(page.locator('#dispatch-orders article')).to_have_count(1)
         page.locator('#dispatch-filters [name=late]').uncheck()
+        page.locator('[data-action=dispatch-panel][data-panel=messages]').click()
         page.locator('.dispatch-side [data-action=conversation]').click()
         expect(page.locator('#message-form')).to_be_visible()
         page.locator('#message-form textarea').fill('طلبك جارٍ تجهيزه')
