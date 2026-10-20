@@ -286,14 +286,24 @@ jobs:
         PLUGIN
         python - <<'WAIT'
         import json,time,urllib.request
-        for attempt in range(100):
+        # Cold Chromium startup on a shared runner is not an application latency gate.
+        # Require a live CDP endpoint within a bounded wall-clock startup budget.
+        started = time.monotonic()
+        deadline = started + 60
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError('Chromium CDP did not become ready within 60 seconds')
             try:
-                with urllib.request.urlopen('http://127.0.0.1:19222/json/version', timeout=1) as r:
+                with urllib.request.urlopen('http://127.0.0.1:19222/json/version', timeout=min(2, remaining)) as r:
                     assert json.load(r)['webSocketDebuggerUrl']
+                print(json.dumps({'chromium_cdp_ready_seconds': round(time.monotonic() - started, 3)}))
                 break
-            except Exception:
-                if attempt == 99: raise
-                time.sleep(.1)
+            except Exception as error:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError('Chromium CDP did not become ready within 60 seconds') from error
+                time.sleep(min(.25, remaining))
         WAIT
         # Only tests/tools are mounted; app, migrations and public assets come from exact image bytes.
         docker run --rm --network host --entrypoint python \
