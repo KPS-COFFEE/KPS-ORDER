@@ -24,7 +24,8 @@ def test_same_mobile_preserves_work_identity_and_independent_logout(client, monk
     signed = client.post('/api/identity/staff/code/verify', json={'challenge_id':requested.json()['challenge_id'],'code':'٠١٢٣'})
     assert signed.status_code == 200, signed.text
     client.headers['X-CSRF-Token'] = signed.json()['csrf_token']
-    work_token = client.cookies.get(auth.COOKIE)
+    work_token = client.cookies.get(auth.context_cookie_names('work')[0])
+    assert work_token
     assert 'domain=' not in signed.headers.get('set-cookie','').lower()
     with TestClient(app) as shopper:
         shopper.headers['Origin'] = 'http://testserver'

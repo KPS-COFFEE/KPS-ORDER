@@ -193,7 +193,9 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
             proof = conn.execute("SELECT * FROM otp_challenges WHERE source_user_id=%s AND id LIKE 'employee_otp_%%' AND delivery_channel='sms' AND verified_at IS NOT NULL ORDER BY created_at DESC LIMIT 1", (driver_user['id'],)).fetchone()
             assert proof and proof['phone'] == registered_driver['phone']
             assert proof['source_session_id'] is None
-            session = conn.execute('SELECT step_up_at FROM sessions WHERE token_hash=%s', (auth.token_hash(next(cookie['value'] for cookie in driver_context.cookies() if cookie['name'] == auth.COOKIE)),)).fetchone()
+            work_cookie = auth.context_cookie_names('work')[0]
+            work_token = next(cookie['value'] for cookie in driver_context.cookies() if cookie['name'] == work_cookie)
+            session = conn.execute('SELECT step_up_at FROM sessions WHERE token_hash=%s', (auth.token_hash(work_token),)).fetchone()
             assert session and session['step_up_at'] is None
         assert driver_user['email_verified_at'] is None and driver_user['phone_whatsapp_verified_at'] is None
         assert set(driver_user['branch_ids']) == {'kps-branch-1', 'kps-branch-9'}

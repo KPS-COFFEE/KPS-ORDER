@@ -124,7 +124,7 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
         expect(page.locator('#otp-request-form')).not_to_be_visible()
         page.locator('#guest-submit').click()
         expect(page.locator('#account-dialog')).not_to_be_visible()
-        session = context.request.get(live_app + '/api/session').json()
+        session = context.request.get(live_app + '/api/session', headers={'X-KPS-Context':'customer'}).json()
         assert session['user']['identity_kind'] == 'guest'
         assert session['user']['phone_sms_verified_at'] is None
         assert session['user']['phone_whatsapp_verified_at'] is None
