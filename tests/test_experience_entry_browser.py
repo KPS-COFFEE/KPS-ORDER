@@ -52,6 +52,7 @@ def test_name_phone_location_eligible_branch_and_no_overflow(static_customer,lan
                 'session':{'user':None,'csrf_token':None,'customer_verified':False},
                 'identity/channels':{'customer_phone_required':True,'channels':{'sms':{'available':True}}},
                 'experience/public':{'customer_entry_enabled':True},
+                    'customer-map/config':{'enabled':False},
                 'banners':{'banners':[]},
                 'auth/otp/request':{'challenge_id':'synthetic-challenge','channel':'sms'},
                 'auth/otp/verify':session,

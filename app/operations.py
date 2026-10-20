@@ -79,11 +79,34 @@ def available_balance(c,s):
 def unresolved(c, sid):
     return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(sid,)).fetchone()['n']
 
+def morning_handover_coverage(c, shift):
+    """Only a real accepted, still-operational successor releases dispatch duty."""
+    from . import morning_delivery
+    covered=set()
+    successors=c.execute("SELECT s.*,h.branch_ids AS handed_branch_ids FROM manager_handovers h "
+        "JOIN shifts s ON s.id=h.to_shift_id WHERE h.from_shift_id=%s AND h.status='accepted' "
+        "AND s.kind='manager' AND s.status='open' AND s.brand_id=%s "
+        "AND s.delivery_window_snapshot->>'period'='morning' FOR SHARE OF s",
+        (shift['id'],shift['brand_id'])).fetchall()
+    for successor in successors:
+        principal=c.execute('SELECT * FROM users WHERE id=%s FOR SHARE',(successor['user_id'],)).fetchone()
+        branches=set(shift['branch_ids']) & set(successor['handed_branch_ids']) & set(successor['branch_ids'])
+        for bid in branches:
+            try:
+                morning_delivery.authorize_order(c,principal,{'brand_id':shift['brand_id'],'branch_id':bid,
+                                                              'snapshot':{'delivery_period':'morning'}})
+            except HTTPException as error:
+                if error.status_code!=403:raise
+                continue
+            covered.add(bid)
+    return covered
+
 def guard_accepted_awaiting_dispatch(c, shift):
     """A separately accepted order cannot be abandoned by closing its manager."""
     if shift['kind'] != 'manager':
         return
     if (shift.get('delivery_window_snapshot') or {}).get('period') == 'morning':
+        remaining_branches=list(set(shift['branch_ids'])-morning_handover_coverage(c,shift))
         # Morning preparation acceptance belongs to the branch, not a manager
         # event. Even a newly arrived request must retain an open dispatcher.
         # The manager row is locked by the caller; admission holds that row FOR
@@ -95,7 +118,7 @@ def guard_accepted_awaiting_dispatch(c, shift):
             "AND o.delivery_status NOT IN ('cancelled','delivered') "
             "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
             "AND t.status NOT IN ('cancelled','reassigned','transferred')) LIMIT 1",
-            (shift['brand_id'], shift['branch_ids'])).fetchone()
+            (shift['brand_id'], remaining_branches)).fetchone()
         if morning_pending:
             raise db.error(409, 'MORNING_ORDERS_AWAITING_DISPATCH',
                            'توجد طلبات صباحية بانتظار المعالجة أو الإسناد. عالجها قبل تقفيل المناوبة.')

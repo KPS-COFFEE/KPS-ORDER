@@ -64,6 +64,15 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.locator('.dispatch-side [data-action=conversation]').click()
         expect(page.locator('#message-form')).to_be_visible()
         page.locator('#message-form textarea').fill('طلبك جارٍ تجهيزه')
+        # The 15-second operational poll must keep receiving new orders while
+        # a manager composes a reply, without reconstructing the chat form.
+        page.evaluate("window.originalComposer=document.querySelector('#message-form textarea'); originalComposer.setSelectionRange(3,3)")
+        orders.append(order('arrived-during-reply','evening','new'))
+        conversation['last_message_text']='رسالة جديدة أثناء كتابة الرد'
+        expect(page.locator('#dispatch-orders article')).to_have_count(4,timeout=25000)
+        expect(page.locator('#message-form textarea')).to_have_value('طلبك جارٍ تجهيزه')
+        assert page.evaluate("document.querySelector('#message-form textarea')===originalComposer && document.activeElement===originalComposer && originalComposer.selectionStart===3")
+        expect(page.locator('.dispatch-side .conversation-preview')).to_have_text('رسالة جديدة أثناء كتابة الرد')
         assert '/ops.html' in page.url
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         assert not any('/messages' in path for path,_ in writes)

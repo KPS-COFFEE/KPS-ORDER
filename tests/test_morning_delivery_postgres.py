@@ -144,3 +144,28 @@ def test_morning_handover_cannot_move_drivers_to_evening_manager(ops, monkeypatc
         assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(driver,)).fetchone()['manager_shift_id']==manager
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(manager,)).fetchone()['status']=='open'
         assert c.execute('SELECT count(*) n FROM manager_handovers WHERE from_shift_id=%s',(manager,)).fetchone()['n']==0
+
+
+@pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
+def test_accepted_morning_handover_releases_old_manager_only_with_live_successor(ops, monkeypatch):
+    _, post, _, _ = ops
+    enable_morning(monkeypatch)
+    manager=post('manager','/api/shifts',{'kind':'manager','delivery_period':'morning'})['shift']['id']
+    successor=post('owner','/api/shifts',{'kind':'manager','delivery_period':'morning'})['shift']['id']
+    oid='morning-handover-'+uuid4().hex
+    with db.tx() as c:
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) "
+                  "VALUES(%s,'kps','kps-branch-1','ops-customer','delivery','new','pending','cash',1000,0,1000,%s,'{}')",
+                  (oid,db.json({'items':[],'delivery_period':'morning'})))
+    handover=post('manager',f'/api/shifts/{manager}/handover-manager',
+                  {'target_manager_shift_id':successor,'reason':'استلام مسؤولية الطلبات الصباحية'})['handover_id']
+    body={'counted_halalas':0,'handover_halalas':0}
+    assert post('manager',f'/api/shifts/{manager}/submit',body,status=409)['detail']['code']=='MORNING_ORDERS_AWAITING_DISPATCH'
+    post('owner',f'/api/manager-handovers/{handover}/accept')
+    assert post('manager',f'/api/shifts/{manager}/submit',body)['status']=='submitted'
+    with db.tx() as c:c.execute("UPDATE users SET active=false WHERE id='ops-owner'")
+    assert post('manager',f'/api/shifts/{manager}/approve',status=409)['detail']['code']=='MORNING_ORDERS_AWAITING_DISPATCH'
+    with db.tx() as c:c.execute("UPDATE users SET active=true WHERE id='ops-owner'")
+    assert post('manager',f'/api/shifts/{manager}/approve')['status']=='closed'
+    # Pending work now keeps the accepted successor on duty instead.
+    assert post('owner',f'/api/shifts/{successor}/closing',status=409)['detail']['code']=='MORNING_ORDERS_AWAITING_DISPATCH'

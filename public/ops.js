@@ -409,7 +409,39 @@
     form.addEventListener('input',apply);form.addEventListener('change',apply);form.addEventListener('submit',e=>e.preventDefault());renderDispatchRows();
     if(state.selectedConversation&&state.conversations.some(c=>c.id===state.selectedConversation))await conversation(state.selectedConversation);
   }
+  let dispatchPolling=false;
+  async function pollDispatchWorkspace(){
+    if(dispatchPolling||state.loading||!state.user||state.page!=='dashboard'||state.showOperationsReport||document.hidden||!navigator.onLine||$('#modal').open||state.busy.size)return;
+    const rowsRoot=$('#dispatch-orders'),driversRoot=$('#dispatch-drivers'),inbox=$('.dispatch-side .conversation-list');
+    if(!rowsRoot||!driversRoot)return;
+    const scope=()=>JSON.stringify([state.user?.id,state.user?.brand_id,state.user?.branch_ids,state.user?.effective_permissions,state.user?.role]);
+    const originalScope=scope(),query=new URLSearchParams({service:'delivery',limit:'100'});
+    if(state.user.role==='delivery_manager')query.set('manager_view','current');
+    dispatchPolling=true;
+    try{
+      const results=await Promise.allSettled([
+        can('orders_view')?api('/api/orders?'+query):Promise.resolve({orders:[]}),
+        can('drivers_view')?api('/api/operations/drivers'):Promise.resolve({drivers:[]}),
+        can('chat_view')?api('/api/conversations'):Promise.resolve({conversations:[]})
+      ]);
+      if(state.loading||state.page!=='dashboard'||state.showOperationsReport||scope()!==originalScope||rowsRoot!==$('#dispatch-orders')||driversRoot!==$('#dispatch-drivers')||$('#modal').open||state.busy.size)return;
+      if(results[0].status==='fulfilled')state.orders=(results[0].value.orders||[]).map(normalizeOrder);
+      if(results[1].status==='fulfilled')state.dispatchDrivers=results[1].value.drivers||[];
+      renderDispatchRows();
+      if(results[2].status==='fulfilled'&&inbox===$('.dispatch-side .conversation-list')){
+        state.conversations=results[2].value.conversations||[];
+        const active=document.activeElement,focused=inbox.contains(active)?active.closest('[data-action=conversation]')?.dataset.id:null,top=inbox.scrollTop;
+        inbox.innerHTML=state.conversations.filter(c=>c.status!=='resolved'||c.unread_count).map(conversationCard).join('')||empty(tr('لا توجد محادثات معلقة.','No pending conversations.'));
+        inbox.scrollTop=top;
+        if(focused){const button=[...inbox.querySelectorAll('[data-action=conversation]')].find(b=>b.dataset.id===focused);if(button)button.focus({preventScroll:true});else{inbox.tabIndex=-1;inbox.focus({preventScroll:true});}}
+      }
+      if(results.some(r=>r.status==='rejected'))setStatus(tr('تعذر تحديث جزء من مركز التوصيل؛ البيانات السابقة باقية وستتم إعادة المحاولة.','Part of delivery control could not refresh; previous data remains and will retry.'),true);
+    }finally{dispatchPolling=false;}
+  }
   function renderDispatchRows(){
+    const active=document.activeElement,focusContainers=['dispatch-counts','dispatch-orders','dispatch-drivers'];
+    const focusRoot=focusContainers.find(id=>$('#'+id)?.contains(active));
+    const focusData=focusRoot?{action:active.dataset.action,id:active.dataset.id,stage:active.dataset.stage}:null;
     const f=state.dispatchFilters||{},matchesBranch=id=>{const branch=state.branches.find(b=>b.id===id);return (!f.branch||id===f.branch)&&(!f.city||branch?.city===f.city);};
     const base=(state.orders||[]).filter(o=>matchesBranch(o.branch_id)&&(!f.search||[orderLabel(o),o.customer_name,o.customer?.phone].filter(Boolean).join(' ').toLocaleLowerCase().includes(f.search.toLocaleLowerCase()))&&(!f.late||o.stage_timing?.color==='red'));
     $('#dispatch-counts').innerHTML=[['',tr('الكل','All')],...Object.entries(dispatchNames).map(([k,v])=>[k,tr(...v)])].map(([k,label])=>`<button class="quiet dispatch-stage ${f.stage===k?'selected':''}" data-action="dispatch-filter" data-stage="${k}" aria-pressed="${(f.stage||'')===k}"><span>${esc(label)}</span><b>${num(k?base.filter(o=>dispatchStage(o)===k).length:base.length)}</b></button>`).join('');
@@ -417,6 +449,7 @@
     $('#dispatch-orders').innerHTML=rows.map(o=>`<article class="dispatch-order dispatch-state-${dispatchStage(o)}"><header><button class="quiet order-reference" data-action="order-detail" data-id="${esc(o.id)}">${esc(orderLabel(o))}</button><span class="pill dispatch-status">${esc(tr(...dispatchNames[dispatchStage(o)]))}</span>${stageTimingBadge(o)}</header><p><strong>${esc(o.customer_name||'—')}</strong> · ${esc(branchLabel(o))} · ${esc(o.customer?.neighborhood||'')}</p><p class="muted small-text">${esc(o.driver_name||tr('بدون سائق','No driver'))} · ${esc(datetime(o.created_at))}${o.snapshot?.delivery_period==='morning'?' · '+esc(tr('صباحي','Morning')):''}</p>${o.notes||o.snapshot?.notes?`<p class="dispatch-note">${esc(o.notes||o.snapshot.notes)}</p>`:''}<div class="actions">${dispatchActions(o)}</div></article>`).join('')||empty(tr('لا توجد طلبات تطابق الاختيار.','No matching orders.'));
     $('#dispatch-drivers').innerHTML=(state.dispatchDrivers||[]).filter(d=>(d.branch_ids||[]).some(matchesBranch)).map(d=>`<article class="dispatch-driver"><div><strong>${esc(d.display_name)}</strong><span class="pill ${d.availability==='available'?'good':'warn'}">${esc(tr(...(readinessLabels[d.availability]||['غير جاهز','Not ready'])))}</span></div><p>${esc(tr('مهام نشطة','Active tasks'))}: ${num(d.active_tasks)} · ${esc(tr(...(readinessActions[d.readiness_action]||['راجع جاهزية الشفت','Review shift readiness'])))}</p><div class="actions">${d.shift_id&&can('shifts_view')?`<button class="quiet small" data-action="shift-detail" data-id="${esc(d.shift_id)}">${esc(tr('الشفت والتقفيلة','Shift & closing'))}</button>`:''}${d.shift_id&&d.shift_status==='open'&&can('drivers_availability')?`<button class="quiet small" data-action="driver-availability" data-id="${esc(d.shift_id)}" data-available="${d.shift_available===false?'true':'false'}">${esc(d.shift_available===false?tr('استئناف','Resume'):tr('إيقاف الإسناد','Pause assignment'))}</button>`:''}</div></article>`).join('')||empty(tr('لا يوجد سائقون ضمن النطاق المختار.','No drivers in this scope.'));
     hideUnavailableActions();
+    if(focusData){const root=$('#'+focusRoot),replacement=[...root.querySelectorAll('[data-action]')].find(b=>!b.hidden&&b.dataset.action===focusData.action&&b.dataset.id===focusData.id&&b.dataset.stage===focusData.stage);if(replacement)replacement.focus({preventScroll:true});else{root.tabIndex=-1;root.focus({preventScroll:true});}}
   }
   function orderItems(o) {
     return `<ul class="items">${(o.items||o.lines||o.snapshot?.items||[]).map(item=>{
@@ -1797,7 +1830,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
   window.addEventListener('offline',()=>setStatus(tr('الاتصال منقطع. العمليات المالية لا تؤكد حتى الحفظ على الخادم.','Connection offline. Financial operations require server confirmation.'),true));
   setInterval(()=>{if(!document.hidden&&navigator.onLine&&state.user&&!$('#modal').open&&!state.busy.size)pollConversation();},5000);
   setInterval(updateBreakCountdown,1000);
-  let polling=false;setInterval(async()=>{if(state.page==='chat'&&!document.hidden&&navigator.onLine&&state.user){await pollInbox();return;}if(polling||state.loading||!state.user||document.hidden||!navigator.onLine||$('#modal').open||state.busy.size||['admin','accounting','chat','reports','timing','fleet'].includes(state.page)||/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||''))return;const draft=$('#message-form textarea');if(draft?.value.trim()||$('#message-form input[type=file]')?.files?.length)return;polling=true;const old=new Set((state.orders||[]).map(o=>o.id));try{await loadPage(true);if(state.page==='orders'&&state.orders.some(o=>!old.has(o.id))){setStatus(tr('وصل طلب جديد. القائمة محدثة.','A new order arrived. The list is refreshed.'));document.title=tr('طلب جديد — KPS ORDER','New order — KPS ORDER');}}finally{polling=false;}},15000);
+  let polling=false;setInterval(async()=>{if(state.page==='dashboard'&&!state.showOperationsReport){await pollDispatchWorkspace();return;}if(state.page==='chat'&&!document.hidden&&navigator.onLine&&state.user){await pollInbox();return;}if(polling||state.loading||!state.user||document.hidden||!navigator.onLine||$('#modal').open||state.busy.size||['admin','accounting','chat','reports','timing','fleet'].includes(state.page)||/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||''))return;const draft=$('#message-form textarea');if(draft?.value.trim()||$('#message-form input[type=file]')?.files?.length)return;polling=true;const old=new Set((state.orders||[]).map(o=>o.id));try{await loadPage(true);if(state.page==='orders'&&state.orders.some(o=>!old.has(o.id))){setStatus(tr('وصل طلب جديد. القائمة محدثة.','A new order arrived. The list is refreshed.'));document.title=tr('طلب جديد — KPS ORDER','New order — KPS ORDER');}}finally{polling=false;}},15000);
   function currentOdometer(log){const p=log.odometer_checkpoint||{};let rows=[log.start||{},log.fuel_readiness||{},...(log.refuels||[])];if(p.recorded_at)rows=rows.filter(r=>(r.recorded_at||'')>p.recorded_at);return Math.max(p.odometer_km||0,...rows.map(r=>r.odometer_km||0));}
   const driverChecks=window.KPSDriverChecks.init({api,mutation,tr,esc,modal,closeModal,getUser:()=>state.user,getLang:()=>state.lang,can,error:message=>setStatus(message,true)});
   setTimeout(()=>driverChecks.refresh(),1500);
