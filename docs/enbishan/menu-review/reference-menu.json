@@ -23,6 +23,9 @@
       "sale_halalas": 1200,
       "original_halalas": 1200,
       "size_label": "صغير · 6 قطعة",
+      "size_label_en": "Small · 6 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/tse4hxa9dv",
       "review_required": []
     },
@@ -48,6 +51,9 @@
       "sale_halalas": 1450,
       "original_halalas": 2200,
       "size_label": "وسط · 12 قطعة",
+      "size_label_en": "Medium · 12 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/7r42cw7k22",
       "review_required": []
     },
@@ -73,6 +79,9 @@
       "sale_halalas": 5400,
       "original_halalas": 5400,
       "size_label": "كبير · 30 قطعة",
+      "size_label_en": "Large · 30 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/2yfd4vub52",
       "review_required": []
     },
@@ -98,6 +107,9 @@
       "sale_halalas": 6450,
       "original_halalas": 9500,
       "size_label": "عائلي · 60 قطعة",
+      "size_label_en": "Family · 60 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/vsgbdsawn2",
       "review_required": []
     },
@@ -123,6 +135,9 @@
       "sale_halalas": 1200,
       "original_halalas": 1200,
       "size_label": "صغير · 6 قطعة",
+      "size_label_en": "Small · 6 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/j32ntqxy3d",
       "review_required": []
     },
@@ -148,6 +163,9 @@
       "sale_halalas": 2200,
       "original_halalas": 2200,
       "size_label": "وسط · 12 قطعة",
+      "size_label_en": "Medium · 12 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/5x9rwkrcz9",
       "review_required": []
     },
@@ -173,6 +191,9 @@
       "sale_halalas": 3250,
       "original_halalas": 4300,
       "size_label": "كبير · 24 قطعة",
+      "size_label_en": "Large · 24 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/4c2zkd3pb8",
       "review_required": []
     },
@@ -198,6 +219,9 @@
       "sale_halalas": 1200,
       "original_halalas": 1200,
       "size_label": "صغير · 6 قطعة",
+      "size_label_en": "Small · 6 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/qz8efnhvvc",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار"
@@ -225,6 +249,9 @@
       "sale_halalas": 1450,
       "original_halalas": 2200,
       "size_label": "وسط · 12 قطعة",
+      "size_label_en": "Medium · 12 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/4nvjjab34c",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار"
@@ -252,6 +279,9 @@
       "sale_halalas": 4200,
       "original_halalas": 4200,
       "size_label": "كبير · 24 قطعة",
+      "size_label_en": "Large · 24 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/h864vptvdn",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار"
@@ -279,6 +309,9 @@
       "sale_halalas": 4500,
       "original_halalas": 6200,
       "size_label": "عائلي · 36 قطعة",
+      "size_label_en": "Family · 36 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/z8dcsgwzz9",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار"
@@ -306,6 +339,9 @@
       "sale_halalas": 1250,
       "original_halalas": 1250,
       "size_label": "صغير · 3 قطعة",
+      "size_label_en": "Small · 3 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/7gfw3s9dc7",
       "review_required": []
     },
@@ -331,6 +367,9 @@
       "sale_halalas": 2500,
       "original_halalas": 2500,
       "size_label": "وسط · 6 قطعة",
+      "size_label_en": "Medium · 6 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/zj38y4k9p7",
       "review_required": []
     },
@@ -356,6 +395,9 @@
       "sale_halalas": 7200,
       "original_halalas": 7200,
       "size_label": "عائلي · 18 قطعة",
+      "size_label_en": "Family · 18 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/bf59njtepk",
       "review_required": []
     },
@@ -381,6 +423,9 @@
       "sale_halalas": 1500,
       "original_halalas": 1500,
       "size_label": "صغير · 6 قطعة",
+      "size_label_en": "Small · 6 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/w58mrx8d4a",
       "review_required": []
     },
@@ -406,6 +451,9 @@
       "sale_halalas": 5200,
       "original_halalas": 5200,
       "size_label": "كبير · 20 قطعة",
+      "size_label_en": "Large · 20 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/vek69www7a",
       "review_required": []
     },
@@ -431,6 +479,9 @@
       "sale_halalas": 2000,
       "original_halalas": 2000,
       "size_label": "صغير",
+      "size_label_en": "Small",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/yed9c9gbrf",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار"
@@ -458,6 +509,9 @@
       "sale_halalas": 3600,
       "original_halalas": 3600,
       "size_label": "كبير · 10 قطعة",
+      "size_label_en": "Large · 10 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/ud2xukn9u5",
       "review_required": []
     },
@@ -483,6 +537,9 @@
       "sale_halalas": 4950,
       "original_halalas": 7400,
       "size_label": "كبير جداً · 21 قطعة",
+      "size_label_en": "Extra Large · 21 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/hnyu4znz54",
       "review_required": []
     },
@@ -508,6 +565,9 @@
       "sale_halalas": 6200,
       "original_halalas": 6200,
       "size_label": "كبير · 18 قطعة",
+      "size_label_en": "Large · 18 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/xtag8cu4tc",
       "review_required": []
     },
@@ -533,6 +593,9 @@
       "sale_halalas": 12000,
       "original_halalas": 12000,
       "size_label": "عائلي · 44 قطعة",
+      "size_label_en": "Family · 44 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://files.fm/f/v4mf88e57t",
       "review_required": []
     },
@@ -558,6 +621,9 @@
       "sale_halalas": 1400,
       "original_halalas": 1400,
       "size_label": "صغير · 4 قطعة",
+      "size_label_en": "Small · 4 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://files.fm/f/wvhbwvz3yp",
       "review_required": []
     },
@@ -583,6 +649,9 @@
       "sale_halalas": 1250,
       "original_halalas": 2100,
       "size_label": "وسط · 7 قطعة",
+      "size_label_en": "Medium · 7 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://files.fm/f/p5j6ebv2q6",
       "review_required": []
     },
@@ -608,6 +677,9 @@
       "sale_halalas": 5050,
       "original_halalas": 9500,
       "size_label": "عائلي · 30 قطعة",
+      "size_label_en": "Family · 30 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://files.fm/f/p5j6ebv2q6",
       "review_required": []
     },
@@ -633,6 +705,9 @@
       "sale_halalas": 650,
       "original_halalas": 800,
       "size_label": "صغير · 6 قطعة",
+      "size_label_en": "Small · 6 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://ibb.co/7JSKs06s",
       "review_required": []
     },
@@ -658,6 +733,9 @@
       "sale_halalas": 1100,
       "original_halalas": 1700,
       "size_label": "وسط · 10 قطعة",
+      "size_label_en": "Medium · 10 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://ibb.co/VWVvTJJY",
       "review_required": []
     },
@@ -683,6 +761,9 @@
       "sale_halalas": 1500,
       "original_halalas": 2500,
       "size_label": "كبير · 15 قطعة",
+      "size_label_en": "Large · 15 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://ibb.co/xqY4BjyX",
       "review_required": []
     },
@@ -708,6 +789,9 @@
       "sale_halalas": 2850,
       "original_halalas": 3400,
       "size_label": "عائلي · 30 قطعة",
+      "size_label_en": "Family · 30 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://ibb.co/B215Rp9n",
       "review_required": []
     },
@@ -733,6 +817,9 @@
       "sale_halalas": 1750,
       "original_halalas": 2400,
       "size_label": "وسط · 15 قطعة",
+      "size_label_en": "Medium · 15 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://ibb.co/wFFz8L4D",
       "review_required": []
     },
@@ -758,6 +845,9 @@
       "sale_halalas": 2150,
       "original_halalas": 2900,
       "size_label": "كبير · 20 قطعة",
+      "size_label_en": "Large · 20 pieces",
+      "category_label": "المقليات",
+      "category_label_en": "Fried",
       "image_reference": "https://ibb.co/67zYqqnn",
       "review_required": []
     },
@@ -783,6 +873,9 @@
       "sale_halalas": 950,
       "original_halalas": 1600,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://files.fm/f/kbzkjqaeyw",
       "review_required": []
     },
@@ -808,6 +901,9 @@
       "sale_halalas": 1050,
       "original_halalas": 1800,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://files.fm/f/8sdauy7avz",
       "review_required": []
     },
@@ -833,6 +929,9 @@
       "sale_halalas": 250,
       "original_halalas": 250,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المشروبات",
+      "category_label_en": "Beverage",
       "image_reference": "",
       "review_required": []
     },
@@ -858,6 +957,9 @@
       "sale_halalas": 250,
       "original_halalas": 250,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المشروبات",
+      "category_label_en": "Beverage",
       "image_reference": "",
       "review_required": []
     },
@@ -883,6 +985,9 @@
       "sale_halalas": 250,
       "original_halalas": 250,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المشروبات",
+      "category_label_en": "Beverage",
       "image_reference": "",
       "review_required": []
     },
@@ -908,6 +1013,9 @@
       "sale_halalas": 250,
       "original_halalas": 250,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المشروبات",
+      "category_label_en": "Beverage",
       "image_reference": "",
       "review_required": []
     },
@@ -933,6 +1041,9 @@
       "sale_halalas": 100,
       "original_halalas": 100,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المشروبات",
+      "category_label_en": "Beverage",
       "image_reference": "",
       "review_required": []
     },
@@ -958,6 +1069,9 @@
       "sale_halalas": 250,
       "original_halalas": 250,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المشروبات",
+      "category_label_en": "Beverage",
       "image_reference": "",
       "review_required": []
     },
@@ -982,6 +1096,9 @@
       "sale_halalas": 1800,
       "original_halalas": 1800,
       "size_label": "وسط · 10 قطعة",
+      "size_label_en": "Medium · 10 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://ibb.co/4wRJsqqK",
       "review_required": [
         "تعارض الاسم العربي والإنجليزي"
@@ -1008,6 +1125,9 @@
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المخبوزات",
+      "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1034,6 +1154,9 @@
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المخبوزات",
+      "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1060,6 +1183,9 @@
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المخبوزات",
+      "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1086,6 +1212,9 @@
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "المخبوزات",
+      "category_label_en": "Bakery",
       "image_reference": "https://ibb.co/xtjQpZXH",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1112,6 +1241,9 @@
       "sale_halalas": 1250,
       "original_halalas": 1250,
       "size_label": "وسط · 12 قطعة",
+      "size_label_en": "Medium · 12 pieces",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/84grmsht",
       "review_required": []
     },
@@ -1136,6 +1268,9 @@
       "sale_halalas": 1850,
       "original_halalas": 1850,
       "size_label": "كبير · 18 قطعة",
+      "size_label_en": "Large · 18 pieces",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/0j15TBFv",
       "review_required": []
     },
@@ -1160,6 +1295,9 @@
       "sale_halalas": 600,
       "original_halalas": 600,
       "size_label": "صغير · 6 قطعة",
+      "size_label_en": "Small · 6 pieces",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/dXkFBYF",
       "review_required": []
     },
@@ -1184,6 +1322,9 @@
       "sale_halalas": 2650,
       "original_halalas": 2650,
       "size_label": "وسط · 15 قطعة",
+      "size_label_en": "Medium · 15 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://ibb.co/7NZrg21W",
       "review_required": []
     },
@@ -1208,6 +1349,9 @@
       "sale_halalas": 1700,
       "original_halalas": 1700,
       "size_label": "وسط · 10 قطعة",
+      "size_label_en": "Medium · 10 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://ibb.co/qYCVSTG8",
       "review_required": []
     },
@@ -1232,6 +1376,9 @@
       "sale_halalas": 1200,
       "original_halalas": 1200,
       "size_label": "صغير · 5 قطعة",
+      "size_label_en": "Small · 5 pieces",
+      "category_label": "المحاشي",
+      "category_label_en": "Stuffed",
       "image_reference": "https://ibb.co/r2Fg6kdJ",
       "review_required": []
     },
@@ -1257,6 +1404,9 @@
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/gLx4p8Sh",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار",
@@ -1285,6 +1435,9 @@
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/gLx4p8Sh",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار",
@@ -1313,6 +1466,9 @@
       "sale_halalas": 1950,
       "original_halalas": 1950,
       "size_label": "فردية",
+      "size_label_en": "Single",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/gLx4p8Sh",
       "review_required": [
         "تأكيد بنية الاختيارات والتكرار",
@@ -1340,6 +1496,9 @@
       "sale_halalas": 1800,
       "original_halalas": 1800,
       "size_label": "كبير · 17 قطعة",
+      "size_label_en": "Large · 17 pieces",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/Y71svMLq",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1366,6 +1525,9 @@
       "sale_halalas": 1650,
       "original_halalas": 1650,
       "size_label": "كبير · 16 قطعة",
+      "size_label_en": "Large · 16 pieces",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1393,6 +1555,9 @@
       "sale_halalas": 2000,
       "original_halalas": 2000,
       "size_label": "كبير · 15 قطعة",
+      "size_label_en": "Large · 15 pieces",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/Z6zn17hk",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1420,6 +1585,9 @@
       "sale_halalas": 1650,
       "original_halalas": 1650,
       "size_label": "كبير · 17 قطعة",
+      "size_label_en": "Large · 17 pieces",
+      "category_label": "أصناف أخرى",
+      "category_label_en": "Other",
       "image_reference": "https://ibb.co/7LnvyRw",
       "review_required": [
         "اعتماد الاسم والتركيبة والتوفر"
@@ -1431,9 +1599,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
       "price": "12",
       "price_before": "12",
       "image": "https://files.fm/f/tse4hxa9dv"
@@ -1442,9 +1613,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "ليمون",
+      "flavour_en": "Lemon",
       "price": "12",
       "price_before": "12",
       "image": "https://files.fm/f/tse4hxa9dv"
@@ -1453,9 +1627,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "سبايسي",
+      "flavour_en": "Spicy",
       "price": "12",
       "price_before": "12",
       "image": "https://files.fm/f/tse4hxa9dv"
@@ -1464,9 +1641,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "مشكل",
+      "flavour_en": "Mixed",
       "price": "12",
       "price_before": "12",
       "image": "https://files.fm/f/tse4hxa9dv"
@@ -1475,9 +1655,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 12 قطعة",
+      "size_en": "Medium · 12 pieces",
       "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
       "price": "14.5",
       "price_before": "22",
       "image": "https://files.fm/f/7r42cw7k22"
@@ -1486,9 +1669,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 12 قطعة",
+      "size_en": "Medium · 12 pieces",
       "flavour": "ليمون",
+      "flavour_en": "Lemon",
       "price": "14.5",
       "price_before": "22",
       "image": "https://files.fm/f/7r42cw7k22"
@@ -1497,9 +1683,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 12 قطعة",
+      "size_en": "Medium · 12 pieces",
       "flavour": "سبايسي",
+      "flavour_en": "Spicy",
       "price": "14.5",
       "price_before": "22",
       "image": "https://files.fm/f/7r42cw7k22"
@@ -1508,9 +1697,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 12 قطعة",
+      "size_en": "Medium · 12 pieces",
       "flavour": "مشكل",
+      "flavour_en": "Mixed",
       "price": "14.5",
       "price_before": "22",
       "image": "https://files.fm/f/7r42cw7k22"
@@ -1519,9 +1711,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 30 قطعة",
+      "size_en": "Large · 30 pieces",
       "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
       "price": "54",
       "price_before": "54",
       "image": "https://files.fm/f/2yfd4vub52"
@@ -1530,9 +1725,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 30 قطعة",
+      "size_en": "Large · 30 pieces",
       "flavour": "ليمون",
+      "flavour_en": "Lemon",
       "price": "54",
       "price_before": "54",
       "image": "https://files.fm/f/2yfd4vub52"
@@ -1541,9 +1739,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 30 قطعة",
+      "size_en": "Large · 30 pieces",
       "flavour": "سبايسي",
+      "flavour_en": "Spicy",
       "price": "54",
       "price_before": "54",
       "image": "https://files.fm/f/2yfd4vub52"
@@ -1552,9 +1753,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 30 قطعة",
+      "size_en": "Large · 30 pieces",
       "flavour": "مشكل",
+      "flavour_en": "Mixed",
       "price": "54",
       "price_before": "54",
       "image": "https://files.fm/f/2yfd4vub52"
@@ -1563,9 +1767,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "عائلي · 60 قطعة",
+      "size_en": "Family · 60 pieces",
       "flavour": "دبس رمان",
+      "flavour_en": "Pomegranate molasses",
       "price": "64.5",
       "price_before": "95",
       "image": "https://files.fm/f/vsgbdsawn2"
@@ -1574,9 +1781,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "عائلي · 60 قطعة",
+      "size_en": "Family · 60 pieces",
       "flavour": "ليمون",
+      "flavour_en": "Lemon",
       "price": "64.5",
       "price_before": "95",
       "image": "https://files.fm/f/vsgbdsawn2"
@@ -1585,9 +1795,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "عائلي · 60 قطعة",
+      "size_en": "Family · 60 pieces",
       "flavour": "سبايسي",
+      "flavour_en": "Spicy",
       "price": "64.5",
       "price_before": "95",
       "image": "https://files.fm/f/vsgbdsawn2"
@@ -1596,9 +1809,12 @@
       "product_code": "enb-191d36db5f1dbea679e15d76",
       "name": "ورق عنب",
       "name_en": "Grape Leaves",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "عائلي · 60 قطعة",
+      "size_en": "Family · 60 pieces",
       "flavour": "مشكل",
+      "flavour_en": "Mixed",
       "price": "64.5",
       "price_before": "95",
       "image": "https://files.fm/f/vsgbdsawn2"
@@ -1607,9 +1823,12 @@
       "product_code": "enb-22507789b6ac4721127a0a88",
       "name": "ملفوف",
       "name_en": "Stuffed Cabbage",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "12",
       "price_before": "12",
       "image": "https://files.fm/f/j32ntqxy3d"
@@ -1618,9 +1837,12 @@
       "product_code": "enb-22507789b6ac4721127a0a88",
       "name": "ملفوف",
       "name_en": "Stuffed Cabbage",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 12 قطعة",
+      "size_en": "Medium · 12 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "22",
       "price_before": "22",
       "image": "https://files.fm/f/5x9rwkrcz9"
@@ -1629,9 +1851,12 @@
       "product_code": "enb-22507789b6ac4721127a0a88",
       "name": "ملفوف",
       "name_en": "Stuffed Cabbage",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 24 قطعة",
+      "size_en": "Large · 24 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "32.5",
       "price_before": "43",
       "image": "https://files.fm/f/4c2zkd3pb8"
@@ -1640,9 +1865,12 @@
       "product_code": "enb-3f2cae0ad1ea8e03ad043214",
       "name": "بطاطس",
       "name_en": "Potatoes",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 3 قطعة",
+      "size_en": "Small · 3 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "12.5",
       "price_before": "12.5",
       "image": "https://files.fm/f/7gfw3s9dc7"
@@ -1651,9 +1879,12 @@
       "product_code": "enb-3f2cae0ad1ea8e03ad043214",
       "name": "بطاطس",
       "name_en": "Potatoes",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 6 قطعة",
+      "size_en": "Medium · 6 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "25",
       "price_before": "25",
       "image": "https://files.fm/f/zj38y4k9p7"
@@ -1662,9 +1893,12 @@
       "product_code": "enb-3f2cae0ad1ea8e03ad043214",
       "name": "بطاطس",
       "name_en": "Potatoes",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "عائلي · 18 قطعة",
+      "size_en": "Family · 18 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "72",
       "price_before": "72",
       "image": "https://files.fm/f/bf59njtepk"
@@ -1673,9 +1907,12 @@
       "product_code": "enb-acbe04486c68bb36157bec37",
       "name": "بصل",
       "name_en": "Onions",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "15",
       "price_before": "15",
       "image": "https://files.fm/f/w58mrx8d4a"
@@ -1684,9 +1921,12 @@
       "product_code": "enb-acbe04486c68bb36157bec37",
       "name": "بصل",
       "name_en": "Onions",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 20 قطعة",
+      "size_en": "Large · 20 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "52",
       "price_before": "52",
       "image": "https://files.fm/f/vek69www7a"
@@ -1695,9 +1935,12 @@
       "product_code": "enb-ad3609d94607d31a7a1cd11c",
       "name": "محاشي مشكل",
       "name_en": "Mixed Mahashi",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 10 قطعة",
+      "size_en": "Large · 10 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "36",
       "price_before": "36",
       "image": "https://files.fm/f/ud2xukn9u5"
@@ -1706,9 +1949,12 @@
       "product_code": "enb-ad3609d94607d31a7a1cd11c",
       "name": "محاشي مشكل",
       "name_en": "Mixed Mahashi",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير جداً · 21 قطعة",
+      "size_en": "Extra Large · 21 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "49.5",
       "price_before": "74",
       "image": "https://files.fm/f/hnyu4znz54"
@@ -1717,9 +1963,12 @@
       "product_code": "enb-c7c8a7bca3d6308cd3d72a9b",
       "name": "عنبيشن كبير",
       "name_en": "Enbishan",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "كبير · 18 قطعة",
+      "size_en": "Large · 18 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "62",
       "price_before": "62",
       "image": "https://files.fm/f/xtag8cu4tc"
@@ -1728,9 +1977,12 @@
       "product_code": "enb-0ca17f8654042412db97fccb",
       "name": "عنبيشن سيجنتشر",
       "name_en": "Enbishan Signature",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "عائلي · 44 قطعة",
+      "size_en": "Family · 44 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "120",
       "price_before": "120",
       "image": "https://files.fm/f/v4mf88e57t"
@@ -1739,9 +1991,12 @@
       "product_code": "enb-81170a43a0e4f279c22b1d71",
       "name": "كبة",
       "name_en": "Kibbeh",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "صغير · 4 قطعة",
+      "size_en": "Small · 4 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "14",
       "price_before": "14",
       "image": "https://files.fm/f/wvhbwvz3yp"
@@ -1750,9 +2005,12 @@
       "product_code": "enb-81170a43a0e4f279c22b1d71",
       "name": "كبة",
       "name_en": "Kibbeh",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "وسط · 7 قطعة",
+      "size_en": "Medium · 7 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "12.5",
       "price_before": "21",
       "image": "https://files.fm/f/p5j6ebv2q6"
@@ -1761,9 +2019,12 @@
       "product_code": "enb-81170a43a0e4f279c22b1d71",
       "name": "كبة",
       "name_en": "Kibbeh",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "عائلي · 30 قطعة",
+      "size_en": "Family · 30 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "50.5",
       "price_before": "95",
       "image": "https://files.fm/f/p5j6ebv2q6"
@@ -1772,9 +2033,12 @@
       "product_code": "enb-7c690b9de4ce8f57db2818a0",
       "name": "سمبوسة",
       "name_en": "sambosah",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "6.5",
       "price_before": "8",
       "image": "https://ibb.co/7JSKs06s"
@@ -1783,9 +2047,12 @@
       "product_code": "enb-7c690b9de4ce8f57db2818a0",
       "name": "سمبوسة",
       "name_en": "sambosah",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "وسط · 10 قطعة",
+      "size_en": "Medium · 10 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "11",
       "price_before": "17",
       "image": "https://ibb.co/VWVvTJJY"
@@ -1794,9 +2061,12 @@
       "product_code": "enb-7c690b9de4ce8f57db2818a0",
       "name": "سمبوسة",
       "name_en": "sambosah",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "كبير · 15 قطعة",
+      "size_en": "Large · 15 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "15",
       "price_before": "25",
       "image": "https://ibb.co/xqY4BjyX"
@@ -1805,9 +2075,12 @@
       "product_code": "enb-7c690b9de4ce8f57db2818a0",
       "name": "سمبوسة",
       "name_en": "sambosah",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "عائلي · 30 قطعة",
+      "size_en": "Family · 30 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "28.5",
       "price_before": "34",
       "image": "https://ibb.co/B215Rp9n"
@@ -1816,9 +2089,12 @@
       "product_code": "enb-ac8eadc178e725ed3751c1d3",
       "name": "كبة و سمبوسة",
       "name_en": "Kibbeh & sambosah",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "وسط · 15 قطعة",
+      "size_en": "Medium · 15 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "17.5",
       "price_before": "24",
       "image": "https://ibb.co/wFFz8L4D"
@@ -1827,9 +2103,12 @@
       "product_code": "enb-ac8eadc178e725ed3751c1d3",
       "name": "كبة و سمبوسة",
       "name_en": "Kibbeh & sambosah",
-      "category": "Fried",
+      "category": "المقليات",
+      "category_en": "Fried",
       "size": "كبير · 20 قطعة",
+      "size_en": "Large · 20 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "21.5",
       "price_before": "29",
       "image": "https://ibb.co/67zYqqnn"
@@ -1838,9 +2117,12 @@
       "product_code": "enb-4abf336ddf8d444211d0bdbd",
       "name": "نودلز",
       "name_en": "Noodles",
-      "category": "Other",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "9.5",
       "price_before": "16",
       "image": "https://files.fm/f/kbzkjqaeyw"
@@ -1849,9 +2131,12 @@
       "product_code": "enb-0faba09b15712dfc350d9b5b",
       "name": "فتة",
       "name_en": "Fattah",
-      "category": "Other",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "10.5",
       "price_before": "18",
       "image": "https://files.fm/f/8sdauy7avz"
@@ -1860,9 +2145,12 @@
       "product_code": "enb-2e070f45d5bf744d690a5471",
       "name": "بيبسي",
       "name_en": "Pepsi",
-      "category": "المشروبات - Beverage",
+      "category": "المشروبات",
+      "category_en": "Beverage",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "2.5",
       "price_before": "2.5",
       "image": ""
@@ -1871,9 +2159,12 @@
       "product_code": "enb-d1dbec7c9b6807c2ac279729",
       "name": "بيبسي دايت",
       "name_en": "Pepsi Diet",
-      "category": "المشروبات - Beverage",
+      "category": "المشروبات",
+      "category_en": "Beverage",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "2.5",
       "price_before": "2.5",
       "image": ""
@@ -1882,9 +2173,12 @@
       "product_code": "enb-e280cf67030a17429d29363f",
       "name": "سفن اب",
       "name_en": "7up",
-      "category": "المشروبات - Beverage",
+      "category": "المشروبات",
+      "category_en": "Beverage",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "2.5",
       "price_before": "2.5",
       "image": ""
@@ -1893,9 +2187,12 @@
       "product_code": "enb-b668a68a8f8104f89fdc8567",
       "name": "سفن اب دايت",
       "name_en": "7up Diet",
-      "category": "المشروبات - Beverage",
+      "category": "المشروبات",
+      "category_en": "Beverage",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "2.5",
       "price_before": "2.5",
       "image": ""
@@ -1904,9 +2201,12 @@
       "product_code": "enb-3e3bfca2b787a5a48ff26488",
       "name": "ماء",
       "name_en": "water",
-      "category": "المشروبات - Beverage",
+      "category": "المشروبات",
+      "category_en": "Beverage",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "1",
       "price_before": "1",
       "image": ""
@@ -1915,9 +2215,12 @@
       "product_code": "enb-078a4053bf0eef33bfe3557f",
       "name": "ميرندا",
       "name_en": "Mirinda 240m",
-      "category": "المشروبات - Beverage",
+      "category": "المشروبات",
+      "category_en": "Beverage",
       "size": "فردية",
+      "size_en": "Single",
       "flavour": "",
+      "flavour_en": "",
       "price": "2.5",
       "price_before": "2.5",
       "image": ""
@@ -1926,9 +2229,12 @@
       "product_code": "enb-902d0a4dd63711ccd24bef7f",
       "name": "مسخن",
       "name_en": "Musakhan",
-      "category": "Other",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
       "size": "وسط · 12 قطعة",
+      "size_en": "Medium · 12 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "12.5",
       "price_before": "12.5",
       "image": "https://ibb.co/84grmsht"
@@ -1937,9 +2243,12 @@
       "product_code": "enb-902d0a4dd63711ccd24bef7f",
       "name": "مسخن",
       "name_en": "Musakhan",
-      "category": "Other",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
       "size": "كبير · 18 قطعة",
+      "size_en": "Large · 18 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "18.5",
       "price_before": "18.5",
       "image": "https://ibb.co/0j15TBFv"
@@ -1948,9 +2257,12 @@
       "product_code": "enb-902d0a4dd63711ccd24bef7f",
       "name": "مسخن",
       "name_en": "Musakhan",
-      "category": "Other",
+      "category": "أصناف أخرى",
+      "category_en": "Other",
       "size": "صغير · 6 قطعة",
+      "size_en": "Small · 6 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "6",
       "price_before": "6",
       "image": "https://ibb.co/dXkFBYF"
@@ -1959,9 +2271,12 @@
       "product_code": "enb-6a9fa4ce56e6ec111966afce",
       "name": "ورق عنب كريسبى",
       "name_en": "Waraq Enab Crisby",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 15 قطعة",
+      "size_en": "Medium · 15 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "26.5",
       "price_before": "26.5",
       "image": "https://ibb.co/7NZrg21W"
@@ -1970,9 +2285,12 @@
       "product_code": "enb-6a9fa4ce56e6ec111966afce",
       "name": "ورق عنب كريسبى",
       "name_en": "Waraq Enab Crisby",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "وسط · 10 قطعة",
+      "size_en": "Medium · 10 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "17",
       "price_before": "17",
       "image": "https://ibb.co/qYCVSTG8"
@@ -1981,9 +2299,12 @@
       "product_code": "enb-6a9fa4ce56e6ec111966afce",
       "name": "ورق عنب كريسبى",
       "name_en": "Waraq Enab Crisby",
-      "category": "Stuffed",
+      "category": "المحاشي",
+      "category_en": "Stuffed",
       "size": "صغير · 5 قطعة",
+      "size_en": "Small · 5 pieces",
       "flavour": "",
+      "flavour_en": "",
       "price": "12",
       "price_before": "12",
       "image": "https://ibb.co/r2Fg6kdJ"
@@ -2113,7 +2434,7 @@
         "id": "enbishan-menu-8697d93da85e6b96b2c05908",
         "brand_id": "enbishan",
         "name": "ميرندا",
-        "category": "المشروبات - Beverage",
+        "category": "المشروبات",
         "price_halalas": 250,
         "settings": {
           "enabled": false,
@@ -2133,6 +2454,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2140,7 +2462,7 @@
           ],
           "image_url": null,
           "name_en": "Mirinda 240m",
-          "category_en": "",
+          "category_en": "Beverage",
           "variant_price_matrix": [
             {
               "options": {
@@ -2156,7 +2478,7 @@
         "id": "enbishan-menu-7b0752b4daa269674e08576f",
         "brand_id": "enbishan",
         "name": "عنبيشن سيجنتشر",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 12000,
         "settings": {
           "enabled": false,
@@ -2176,6 +2498,7 @@
                 {
                   "code": "v-b77b6cf14198f496f49c1d3c",
                   "name": "عائلي · 44 قطعة",
+                  "name_en": "Family · 44 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2183,7 +2506,7 @@
           ],
           "image_url": null,
           "name_en": "Enbishan Signature",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -2206,7 +2529,7 @@
         "id": "enbishan-menu-9a85ab30d44850bc6d2e6e18",
         "brand_id": "enbishan",
         "name": "فتة",
-        "category": "Other",
+        "category": "أصناف أخرى",
         "price_halalas": 1050,
         "settings": {
           "enabled": false,
@@ -2226,6 +2549,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2233,7 +2557,7 @@
           ],
           "image_url": null,
           "name_en": "Fattah",
-          "category_en": "",
+          "category_en": "Other",
           "variant_price_matrix": [
             {
               "options": {
@@ -2257,7 +2581,7 @@
         "id": "enbishan-menu-894fad254b67890eafc2c47e",
         "brand_id": "enbishan",
         "name": "ورق عنب",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 1200,
         "settings": {
           "enabled": false,
@@ -2277,21 +2601,25 @@
                 {
                   "code": "v-969127f17958a830d1bcc973",
                   "name": "صغير · 6 قطعة",
+                  "name_en": "Small · 6 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-4d099242d361cb106794a77c",
                   "name": "عائلي · 60 قطعة",
+                  "name_en": "Family · 60 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-11c6710e023eb15c7985af50",
                   "name": "كبير · 30 قطعة",
+                  "name_en": "Large · 30 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-037e5bbee12e0d9a177f149f",
                   "name": "وسط · 12 قطعة",
+                  "name_en": "Medium · 12 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2308,21 +2636,25 @@
                 {
                   "code": "v-91f67e8b7351adcf1014135a",
                   "name": "دبس رمان",
+                  "name_en": "Pomegranate molasses",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-37d0336de98e6dc7d6d50959",
                   "name": "سبايسي",
+                  "name_en": "Spicy",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-7b580db54a84af523166d2da",
                   "name": "ليمون",
+                  "name_en": "Lemon",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-2606b799a8a89a992bffd12e",
                   "name": "مشكل",
+                  "name_en": "Mixed",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2330,7 +2662,7 @@
           ],
           "image_url": null,
           "name_en": "Grape Leaves",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -2573,7 +2905,7 @@
         "id": "enbishan-menu-2abc3c6b5efd0180c521eef0",
         "brand_id": "enbishan",
         "name": "ملفوف",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 1200,
         "settings": {
           "enabled": false,
@@ -2593,16 +2925,19 @@
                 {
                   "code": "v-969127f17958a830d1bcc973",
                   "name": "صغير · 6 قطعة",
+                  "name_en": "Small · 6 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-595e30afdccc68f585b1030d",
                   "name": "كبير · 24 قطعة",
+                  "name_en": "Large · 24 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-037e5bbee12e0d9a177f149f",
                   "name": "وسط · 12 قطعة",
+                  "name_en": "Medium · 12 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2610,7 +2945,7 @@
           ],
           "image_url": null,
           "name_en": "Stuffed Cabbage",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -2658,7 +2993,7 @@
         "id": "enbishan-menu-2bafb30d47293596fcc41f07",
         "brand_id": "enbishan",
         "name": "بيبسي",
-        "category": "المشروبات - Beverage",
+        "category": "المشروبات",
         "price_halalas": 250,
         "settings": {
           "enabled": false,
@@ -2678,6 +3013,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2685,7 +3021,7 @@
           ],
           "image_url": null,
           "name_en": "Pepsi",
-          "category_en": "",
+          "category_en": "Beverage",
           "variant_price_matrix": [
             {
               "options": {
@@ -2701,7 +3037,7 @@
         "id": "enbishan-menu-b3de6ed8adc01188db5d239b",
         "brand_id": "enbishan",
         "name": "ماء",
-        "category": "المشروبات - Beverage",
+        "category": "المشروبات",
         "price_halalas": 100,
         "settings": {
           "enabled": false,
@@ -2721,6 +3057,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2728,7 +3065,7 @@
           ],
           "image_url": null,
           "name_en": "water",
-          "category_en": "",
+          "category_en": "Beverage",
           "variant_price_matrix": [
             {
               "options": {
@@ -2744,7 +3081,7 @@
         "id": "enbishan-menu-0d6d5352fce7cbd44ad6594a",
         "brand_id": "enbishan",
         "name": "بطاطس",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 1250,
         "settings": {
           "enabled": false,
@@ -2764,16 +3101,19 @@
                 {
                   "code": "v-0c3c6975d14be803eadb81c3",
                   "name": "صغير · 3 قطعة",
+                  "name_en": "Small · 3 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-ed6f8b4385ec00c2519aadd4",
                   "name": "عائلي · 18 قطعة",
+                  "name_en": "Family · 18 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-5aa17088e68c7f2d82d1483f",
                   "name": "وسط · 6 قطعة",
+                  "name_en": "Medium · 6 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2781,7 +3121,7 @@
           ],
           "image_url": null,
           "name_en": "Potatoes",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -2828,7 +3168,7 @@
         "id": "enbishan-menu-97454e7c5796562295e4937c",
         "brand_id": "enbishan",
         "name": "نودلز",
-        "category": "Other",
+        "category": "أصناف أخرى",
         "price_halalas": 950,
         "settings": {
           "enabled": false,
@@ -2848,6 +3188,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2855,7 +3196,7 @@
           ],
           "image_url": null,
           "name_en": "Noodles",
-          "category_en": "",
+          "category_en": "Other",
           "variant_price_matrix": [
             {
               "options": {
@@ -2879,7 +3220,7 @@
         "id": "enbishan-menu-6c7a9f521d5f21500c2e6d9a",
         "brand_id": "enbishan",
         "name": "ورق عنب كريسبى",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 1200,
         "settings": {
           "enabled": false,
@@ -2899,16 +3240,19 @@
                 {
                   "code": "v-774fa9ee015940670c61c84c",
                   "name": "صغير · 5 قطعة",
+                  "name_en": "Small · 5 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-ae30aa8905d03bd330310bfb",
                   "name": "وسط · 10 قطعة",
+                  "name_en": "Medium · 10 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-186258c13214fb740e8c8334",
                   "name": "وسط · 15 قطعة",
+                  "name_en": "Medium · 15 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -2916,7 +3260,7 @@
           ],
           "image_url": null,
           "name_en": "Waraq Enab Crisby",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -2963,7 +3307,7 @@
         "id": "enbishan-menu-8b9c0ac992a637fc6e97e3e9",
         "brand_id": "enbishan",
         "name": "سمبوسة",
-        "category": "Fried",
+        "category": "المقليات",
         "price_halalas": 650,
         "settings": {
           "enabled": false,
@@ -2983,21 +3327,25 @@
                 {
                   "code": "v-969127f17958a830d1bcc973",
                   "name": "صغير · 6 قطعة",
+                  "name_en": "Small · 6 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-160dc4939c7ad157f2860b0d",
                   "name": "عائلي · 30 قطعة",
+                  "name_en": "Family · 30 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-355ce388c67a995c750fa30b",
                   "name": "كبير · 15 قطعة",
+                  "name_en": "Large · 15 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-ae30aa8905d03bd330310bfb",
                   "name": "وسط · 10 قطعة",
+                  "name_en": "Medium · 10 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3005,7 +3353,7 @@
           ],
           "image_url": null,
           "name_en": "sambosah",
-          "category_en": "",
+          "category_en": "Fried",
           "variant_price_matrix": [
             {
               "options": {
@@ -3068,7 +3416,7 @@
         "id": "enbishan-menu-d9c5375981f3b70a043b43c9",
         "brand_id": "enbishan",
         "name": "كبة",
-        "category": "Fried",
+        "category": "المقليات",
         "price_halalas": 1250,
         "settings": {
           "enabled": false,
@@ -3088,16 +3436,19 @@
                 {
                   "code": "v-5882ebc52c9272d677f69192",
                   "name": "صغير · 4 قطعة",
+                  "name_en": "Small · 4 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-160dc4939c7ad157f2860b0d",
                   "name": "عائلي · 30 قطعة",
+                  "name_en": "Family · 30 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-f5d5e6c461d0eac78c8c6c2a",
                   "name": "وسط · 7 قطعة",
+                  "name_en": "Medium · 7 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3105,7 +3456,7 @@
           ],
           "image_url": null,
           "name_en": "Kibbeh",
-          "category_en": "",
+          "category_en": "Fried",
           "variant_price_matrix": [
             {
               "options": {
@@ -3154,7 +3505,7 @@
         "id": "enbishan-menu-028afa83b0694d93a171b9b5",
         "brand_id": "enbishan",
         "name": "مسخن",
-        "category": "Other",
+        "category": "أصناف أخرى",
         "price_halalas": 600,
         "settings": {
           "enabled": false,
@@ -3174,16 +3525,19 @@
                 {
                   "code": "v-969127f17958a830d1bcc973",
                   "name": "صغير · 6 قطعة",
+                  "name_en": "Small · 6 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-3301de500e7478b4e03b3a73",
                   "name": "كبير · 18 قطعة",
+                  "name_en": "Large · 18 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-037e5bbee12e0d9a177f149f",
                   "name": "وسط · 12 قطعة",
+                  "name_en": "Medium · 12 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3191,7 +3545,7 @@
           ],
           "image_url": null,
           "name_en": "Musakhan",
-          "category_en": "",
+          "category_en": "Other",
           "variant_price_matrix": [
             {
               "options": {
@@ -3238,7 +3592,7 @@
         "id": "enbishan-menu-43ff27d14aa7990095f3af11",
         "brand_id": "enbishan",
         "name": "كبة و سمبوسة",
-        "category": "Fried",
+        "category": "المقليات",
         "price_halalas": 1750,
         "settings": {
           "enabled": false,
@@ -3258,11 +3612,13 @@
                 {
                   "code": "v-bc42129f258572396b767e58",
                   "name": "كبير · 20 قطعة",
+                  "name_en": "Large · 20 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-186258c13214fb740e8c8334",
                   "name": "وسط · 15 قطعة",
+                  "name_en": "Medium · 15 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3270,7 +3626,7 @@
           ],
           "image_url": null,
           "name_en": "Kibbeh & sambosah",
-          "category_en": "",
+          "category_en": "Fried",
           "variant_price_matrix": [
             {
               "options": {
@@ -3307,7 +3663,7 @@
         "id": "enbishan-menu-7f0dd1ebba3e28f5b134aea5",
         "brand_id": "enbishan",
         "name": "بصل",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 1500,
         "settings": {
           "enabled": false,
@@ -3327,11 +3683,13 @@
                 {
                   "code": "v-969127f17958a830d1bcc973",
                   "name": "صغير · 6 قطعة",
+                  "name_en": "Small · 6 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-bc42129f258572396b767e58",
                   "name": "كبير · 20 قطعة",
+                  "name_en": "Large · 20 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3339,7 +3697,7 @@
           ],
           "image_url": null,
           "name_en": "Onions",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -3374,7 +3732,7 @@
         "id": "enbishan-menu-eea4f81998c7705a69c69532",
         "brand_id": "enbishan",
         "name": "محاشي مشكل",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 3600,
         "settings": {
           "enabled": false,
@@ -3394,11 +3752,13 @@
                 {
                   "code": "v-8bc5ff94ef1484666fa0cfde",
                   "name": "كبير · 10 قطعة",
+                  "name_en": "Large · 10 pieces",
                   "price_delta_halalas": 0
                 },
                 {
                   "code": "v-7ec6c327c235a99f12ee1173",
                   "name": "كبير جداً · 21 قطعة",
+                  "name_en": "Extra Large · 21 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3406,7 +3766,7 @@
           ],
           "image_url": null,
           "name_en": "Mixed Mahashi",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -3442,7 +3802,7 @@
         "id": "enbishan-menu-65951417eb274f9faffea78c",
         "brand_id": "enbishan",
         "name": "سفن اب دايت",
-        "category": "المشروبات - Beverage",
+        "category": "المشروبات",
         "price_halalas": 250,
         "settings": {
           "enabled": false,
@@ -3462,6 +3822,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3469,7 +3830,7 @@
           ],
           "image_url": null,
           "name_en": "7up Diet",
-          "category_en": "",
+          "category_en": "Beverage",
           "variant_price_matrix": [
             {
               "options": {
@@ -3485,7 +3846,7 @@
         "id": "enbishan-menu-b641eb7a3572b133717e64ef",
         "brand_id": "enbishan",
         "name": "عنبيشن كبير",
-        "category": "Stuffed",
+        "category": "المحاشي",
         "price_halalas": 6200,
         "settings": {
           "enabled": false,
@@ -3505,6 +3866,7 @@
                 {
                   "code": "v-3301de500e7478b4e03b3a73",
                   "name": "كبير · 18 قطعة",
+                  "name_en": "Large · 18 pieces",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3512,7 +3874,7 @@
           ],
           "image_url": null,
           "name_en": "Enbishan",
-          "category_en": "",
+          "category_en": "Stuffed",
           "variant_price_matrix": [
             {
               "options": {
@@ -3535,7 +3897,7 @@
         "id": "enbishan-menu-42ee29097332e39b98c58885",
         "brand_id": "enbishan",
         "name": "بيبسي دايت",
-        "category": "المشروبات - Beverage",
+        "category": "المشروبات",
         "price_halalas": 250,
         "settings": {
           "enabled": false,
@@ -3555,6 +3917,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3562,7 +3925,7 @@
           ],
           "image_url": null,
           "name_en": "Pepsi Diet",
-          "category_en": "",
+          "category_en": "Beverage",
           "variant_price_matrix": [
             {
               "options": {
@@ -3578,7 +3941,7 @@
         "id": "enbishan-menu-3a1075f078a64e58726b861e",
         "brand_id": "enbishan",
         "name": "سفن اب",
-        "category": "المشروبات - Beverage",
+        "category": "المشروبات",
         "price_halalas": 250,
         "settings": {
           "enabled": false,
@@ -3598,6 +3961,7 @@
                 {
                   "code": "v-f956d9167fe84c3ce4bd91a8",
                   "name": "فردية",
+                  "name_en": "Single",
                   "price_delta_halalas": 0
                 }
               ]
@@ -3605,7 +3969,7 @@
           ],
           "image_url": null,
           "name_en": "7up",
-          "category_en": "",
+          "category_en": "Beverage",
           "variant_price_matrix": [
             {
               "options": {
@@ -3657,6 +4021,6 @@
       "approved seller/VAT and branch operation configuration",
       "owner review and approval of the imported commercial values"
     ],
-    "catalog_digest": "0ee4c4b2cdd3443c299ca367941afc1a072c3db547699b2dc2d6084559da2b78"
+    "catalog_digest": "f5ed1fbf4c92b96a504598e223ddd6361c6b25997b645c67603461fa6f2ee7cd"
   }
 }

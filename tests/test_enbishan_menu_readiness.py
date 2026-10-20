@@ -72,6 +72,24 @@ def test_equal_original_and_sale_prices_show_one_price_without_false_discount():
     assert selected_price(product, choices(product, 'كبير', 'توت'))['compare_at_halalas'] == 1900
 
 
+def test_option_translations_preserve_ids_and_prices_and_reject_conflicts():
+    source = rows()
+    before = prepare_rows(source)['products'][0]
+    for row in source:
+        row['size_en'] = {'صغير': 'Small', 'كبير': 'Large'}[row['size']]
+        row['flavour_en'] = {'توت': 'Berry', 'رمان': 'Pomegranate'}[row['flavour']]
+    after = prepare_rows(source)['products'][0]
+    assert before['id'] == after['id']
+    assert before['settings']['variant_price_matrix'] == after['settings']['variant_price_matrix']
+    assert {v['name_en'] for g in after['settings']['option_groups'] for v in g['values']} == {'Small', 'Large', 'Berry', 'Pomegranate'}
+    assert [[v['code'] for v in g['values']] for g in before['settings']['option_groups']] == [[v['code'] for v in g['values']] for g in after['settings']['option_groups']]
+    source[1]['flavour_en'] = 'Wrong translation for same source value'
+    with pytest.raises(ValueError, match='Conflicting option translations'):
+        prepare_rows(source)
+    with pytest.raises(ValueError, match='requires its original value'):
+        prepare_rows([{'product_code':'X', 'name':'Test', 'category':'Test', 'price':'1', 'flavour_en':'Spicy'}])
+
+
 @pytest.mark.parametrize('change', ['duplicate', 'missing_axis', 'different_identity', 'bad_before', 'cross_brand', 'missing_code'])
 def test_ambiguous_or_injected_file_rows_fail_closed(change):
     values = rows()
@@ -119,7 +137,7 @@ def test_reference_layout_preserves_merges_prices_piece_counts_and_pending_choic
     headers = {'B': 'Name Item English', 'C': 'اسم الصنف بالعربي', 'D': 'Category - القسم',
                'G': 'العدد', 'H': 'الاختيارات', 'I': 'سعر المنيو بعد الخصم',
                'J': 'السعر الاساسى', 'K': 'Image Link - رابط الصورة', 'L': 'Item Price'}
-    base = {'B': 'TEST ONLY', 'C': 'اختبار', 'D': 'TEST', 'F': 'وسط',
+    base = {'B': 'TEST ONLY', 'C': 'اختبار', 'D': 'Stuffed', 'E': 'Medium', 'F': 'وسط',
             'G': '10', 'I': '14.5', 'J': '22', 'L': '999', 'K': 'https://example.invalid/one'}
     second = {**base, 'C': '', 'D': '', 'G': '15', 'I': '26.5', 'J': '26.5',
               'K': 'https://example.invalid/two'}
@@ -136,9 +154,18 @@ def test_reference_layout_preserves_merges_prices_piece_counts_and_pending_choic
     assert len(product['settings']['variant_price_matrix']) == 2
     assert product['price_halalas'] == 1450  # never Item Price 999
     assert {v['name'] for v in product['settings']['option_groups'][0]['values']} == {'وسط · 10 قطعة', 'وسط · 15 قطعة'}
+    assert {v['name_en'] for v in product['settings']['option_groups'][0]['values']} == {'Medium · 10 pieces', 'Medium · 15 pieces'}
+    assert product['category'] == 'المحاشي' and product['settings']['category_en'] == 'Stuffed'
     assert product['settings']['image_url'] is None
     assert len(product['settings']['source_image_references']) == 2
     assert prepare_rows(result['rows'])['catalog_digest'] == prepare_rows(reference_menu(inspection)['rows'])['catalog_digest']
+    base['H'] = 'دبس رمان\nليمون\nسبايسي\nمشكل'
+    bilingual = reference_menu(inspection)
+    assert {r['flavour_en'] for r in bilingual['rows'] if r['flavour']} == {'Pomegranate molasses', 'Lemon', 'Spicy', 'Mixed'}
+    base['E'] = 'Large'
+    with pytest.raises(ValueError, match='conflicting size translation'):
+        reference_menu(inspection)
+    base['E'] = 'Medium'
     inspection['sheets']['THE MENU'][1]['I'] = 'Item Price'
     with pytest.raises(ValueError, match='headers changed'):
         reference_menu(inspection)

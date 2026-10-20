@@ -42,6 +42,12 @@ existing import API additionally requires Enbishan owner scope, reviewed and
 current catalog digests, owner SMS step-up and idempotency. No import or
 activation against production was performed.
 
-Focused source acceptance: 20 PASS, one PostgreSQL test excluded from that
+Compiled option values include explicit English size/piece and flavour labels.
+Categories have Arabic and English presentation labels from a fixed mapping of
+the source categories. These translations do not change source-derived product
+IDs, option IDs or prices. Conflicting labels for the same source option and
+conflicting English/Arabic size values fail closed for review.
+
+Focused source acceptance: 21 PASS, one PostgreSQL test excluded from that
 source-only invocation. Database/browser certification must be reported
 separately on the final integrated revision.

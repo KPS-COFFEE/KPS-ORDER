@@ -14,13 +14,20 @@ from app.enbishan_catalog_import import prepare_rows
 @pytest.mark.parametrize('width',[390,1280])
 def test_enbishan_size_flavour_before_after_prices_and_missing_combination(dual_http,language,width):
     base,_=dual_http
-    product=prepare_rows(rows())['products'][0]
+    source=rows()
+    for row in source:
+        size=row['size']
+        row['size']=size+(' · 6 قطعة' if size=='صغير' else ' · 12 قطعة')
+        row['size_en']='Small · 6 pieces' if size=='صغير' else 'Large · 12 pieces'
+        row['flavour']='دبس رمان' if row['flavour']=='توت' else 'ليمون'
+        row['flavour_en']='Pomegranate molasses' if row['flavour']=='دبس رمان' else 'Lemon'
+    product=prepare_rows(source)['products'][0]
     product['settings'].update(enabled=True,lifecycle='active',source_verified=True)
     product['settings']['owner_approved_digest']=catalog.commercial_digest(product)
     with db.tx() as c:
         c.execute("INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES(%s,'enbishan',%s,%s,%s,%s)",
                   (product['id'],product['name'],product['category'],product['price_halalas'],db.json(product['settings'])))
-    small=choices(product,'صغير','توت');large=choices(product,'كبير','رمان')
+    small=choices(product,'صغير · 6 قطعة','دبس رمان');large=choices(product,'كبير · 12 قطعة','ليمون')
     with sync_playwright() as p:
         browser=p.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'),args=['--no-sandbox'])
         try:
@@ -33,9 +40,13 @@ def test_enbishan_size_flavour_before_after_prices_and_missing_combination(dual_
             page.locator('[data-product-id="'+product['id']+'"] .product-content h3 button').click()
             selects=page.locator('#product-options select')
             selects.nth(0).select_option(small['SIZE']);selects.nth(1).select_option(small['FLAVOUR'])
+            expect(selects.nth(0).locator('option:checked')).to_have_text('Small · 6 pieces' if language=='en' else 'صغير · 6 قطعة')
+            expect(selects.nth(1).locator('option:checked')).to_have_text('Pomegranate molasses' if language=='en' else 'دبس رمان')
             expect(page.locator('#product-price')).to_have_attribute('data-variant-price','1300')
             expect(page.locator('#product-price del')).to_have_count(1)
             selects.nth(0).select_option(large['SIZE']);selects.nth(1).select_option(large['FLAVOUR'])
+            expect(selects.nth(0).locator('option:checked')).to_have_text('Large · 12 pieces' if language=='en' else 'كبير · 12 قطعة')
+            expect(selects.nth(1).locator('option:checked')).to_have_text('Lemon' if language=='en' else 'ليمون')
             expect(page.locator('#product-price')).to_have_attribute('data-variant-price','1850')
             expect(page.locator('#product-price del')).to_have_count(0)
             selects.nth(0).select_option(small['SIZE'])

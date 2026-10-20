@@ -8,7 +8,8 @@ from . import auth, db, menu_variants
 
 router = APIRouter(prefix='/api/admin/enbishan-menu')
 LABEL_LIMITS = {'product_code': 100, 'name': 200, 'name_en': 200, 'category': 100,
-                'category_en': 100, 'size': 100, 'flavour': 100, 'image': 500}
+                'category_en': 100, 'size': 100, 'size_en': 100,
+                'flavour': 100, 'flavour_en': 100, 'image': 500}
 
 
 def label(value, field):
@@ -48,6 +49,9 @@ def prepare_rows(rows):
         row = {key: label(source.get(key), key) for key in LABEL_LIMITS}
         if not row['product_code'] or not row['name'] or not row['category']:
             raise ValueError('Product code, name and category are required on row ' + str(number))
+        for axis in ('size', 'flavour'):
+            if row[axis + '_en'] and not row[axis]:
+                raise ValueError('Translated option requires its original value: ' + axis)
         row['price_halalas'] = halalas(source.get('price'))
         before = source.get('price_before')
         row['compare_at_halalas'] = None if before in (None, '') else halalas(before)
@@ -68,10 +72,18 @@ def prepare_rows(rows):
         for axis in axes:
             if any(not row[axis] for row in values):
                 raise ValueError('Every variant must specify ' + axis + ' for ' + code)
+            translations = {}
+            for row in values:
+                original, translated = row[axis], row[axis + '_en']
+                if original in translations and translations[original] != translated:
+                    raise ValueError('Conflicting option translations for ' + axis + ' in ' + code)
+                translations[original] = translated
             groups.append({'code': axis.upper(), 'name': 'الحجم' if axis == 'size' else 'النكهة',
                            'name_en': 'Size' if axis == 'size' else 'Flavour', 'required': True,
                            'min_select': 1, 'max_select': 1, 'type': 'select',
-                           'values': [{'code': stable_id('v-', v), 'name': v, 'price_delta_halalas': 0}
+                           'values': [{'code': stable_id('v-', v), 'name': v,
+                                       **({'name_en': translations[v]} if translations[v] else {}),
+                                       'price_delta_halalas': 0}
                                       for v in sorted({r[axis] for r in values})]})
         images = sorted({row['image'] for row in values if row['image']})
         image = images[0] if len(images) == 1 else ''

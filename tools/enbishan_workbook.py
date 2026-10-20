@@ -21,11 +21,24 @@ HEADERS = {
     'category': ['category', 'category_ar', 'القسم', 'التصنيف'],
     'category_en': ['category_en', 'القسم بالانجليزي'],
     'size': ['size', 'الحجم', 'المقاس'],
+    'size_en': ['size_en', 'الحجم بالانجليزي'],
     'flavour': ['flavour', 'flavor', 'النكهة'],
+    'flavour_en': ['flavour_en', 'flavor_en', 'النكهة بالانجليزي'],
     'price': ['price', 'price_after', 'السعر', 'السعر بعد', 'السعر بعد الخصم'],
     'price_before': ['price_before', 'السعر قبل', 'السعر قبل الخصم'],
     'image': ['image', 'image_url', 'الصورة', 'رابط الصورة'],
 }
+
+# Presentation translations of exact source values, not new menu choices.
+REFERENCE_CATEGORIES = {
+    'Stuffed': ('المحاشي', 'Stuffed'), 'Fried': ('المقليات', 'Fried'),
+    'Other': ('أصناف أخرى', 'Other'), 'Bakery': ('المخبوزات', 'Bakery'),
+    'المشروبات - Beverage': ('المشروبات', 'Beverage'),
+}
+REFERENCE_SIZES = {'صغير': 'Small', 'وسط': 'Medium', 'كبير': 'Large',
+                   'عائلي': 'Family', 'كبير جداً': 'Extra Large', 'فردية': 'Single'}
+REFERENCE_FLAVOURS = {'دبس رمان': 'Pomegranate molasses', 'ليمون': 'Lemon',
+                      'سبايسي': 'Spicy', 'مشكل': 'Mixed'}
 
 
 def xml_member(archive, name):
@@ -152,9 +165,16 @@ def reference_menu(inspection):
         semantic_key = '|'.join(source.get(k, '') for k in ('B', 'C', 'D'))
         code = 'enb-' + hashlib.sha256(semantic_key.encode()).hexdigest()[:24]
         size = source.get('F', '')
+        size_en = REFERENCE_SIZES.get(size)
+        if size_en is None or (source.get('E') and source['E'] != size_en):
+            raise ValueError('Review unknown or conflicting size translation at source row ' + str(number))
+        category = REFERENCE_CATEGORIES.get(source.get('D', ''))
+        if category is None:
+            raise ValueError('Review unknown source category at row ' + str(number))
         count = source.get('G', '')
         if count.isdigit():
             size += ' · ' + count + ' قطعة'
+            size_en += ' · ' + count + (' piece' if int(count) == 1 else ' pieces')
         issues = []
         options = source.get('H', '')
         # Only the unambiguous grape-leaf flavour list is compiled. Other
@@ -171,14 +191,17 @@ def reference_menu(inspection):
             image = ''
         inventory.append({'source_row': number, 'source': source, 'product_code': code,
                           'sale_halalas': halalas(sale), 'original_halalas': halalas(original),
-                          'size_label': size, 'image_reference': image, 'review_required': issues})
+                          'size_label': size, 'size_label_en': size_en,
+                          'category_label': category[0], 'category_label_en': category[1],
+                          'image_reference': image, 'review_required': issues})
         if issues:
             unresolved.append({'source_row': number, 'issues': issues})
             continue
         for flavour in flavours:
             payload.append({'product_code': code, 'name': source.get('C', ''),
-                            'name_en': source.get('B', ''), 'category': source.get('D', ''),
-                            'size': size, 'flavour': flavour, 'price': sale,
+                            'name_en': source.get('B', ''), 'category': category[0], 'category_en': category[1],
+                            'size': size, 'size_en': size_en, 'flavour': flavour,
+                            'flavour_en': REFERENCE_FLAVOURS.get(flavour, ''), 'price': sale,
                             'price_before': original, 'image': image})
     return {'source_sha256': inspection['source_sha256'], 'inventory': inventory,
             'rows': payload, 'unresolved': unresolved, 'ordering_enabled': False,
