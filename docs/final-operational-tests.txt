@@ -82,3 +82,4 @@ tests/test_driver_locations.py
 tests/test_driver_map_pins.py
 
 tests/test_dispatch_order_sort.py
+tests/test_dispatch_workspace_counts.py

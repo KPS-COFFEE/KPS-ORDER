@@ -245,8 +245,17 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 search: str | None = Query(default=None, max_length=80),
                 phone: str | None = Query(default=None, min_length=8, max_length=30),
                 manager_view: str | None = None,
+                dispatch_workspace: bool = False, dispatch_scope: Literal['current','all'] = 'current',
+                dispatch_city: str | None = Query(default=None, max_length=120),
+                dispatch_stage: str | None = Query(default=None, max_length=30),
                 customer_view: Literal['active','history','cancelled'] | None = None):
     conditions, params = ['o.brand_id=%s'], [user['brand_id']]
+    if dispatch_workspace:
+        if user['role'] not in {'owner','delivery_manager'}:
+            raise db.error(403, 'DISPATCH_WORKSPACE_FORBIDDEN', 'مركز التوصيل غير متاح لهذا الحساب.')
+        conditions.append("o.service='delivery'")
+        if dispatch_city:
+            conditions.append('b.city=%s'); params.append(dispatch_city)
     if user['role'] == 'customer':
         conditions.append('o.customer_id=ANY(%s)')
         params.append(auth.customer_ids(user))
@@ -313,6 +322,19 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             return {'orders': [], 'next_offset': None}
         period_info = None
         workspace_shift = None
+        dispatch_counts = None
+        if dispatch_workspace:
+            from . import manager_workday
+            predicate, workspace_params = manager_workday.workspace_orders(conn, user)
+            dispatch_counts = manager_workday.workspace_counts(conn, conditions, params, predicate, workspace_params)
+            if dispatch_scope == 'current':
+                conditions.append(predicate); params.extend(workspace_params)
+            if dispatch_stage:
+                if dispatch_stage not in {'new','preparing','assigned','driver_accepted','road','delivered','cancelled','attention'}:
+                    raise db.error(422, 'DISPATCH_STAGE_INVALID', 'حالة الطلب غير صحيحة.')
+                conditions.append('('+manager_workday.STAGE_SQL+')=%s'); params.append(dispatch_stage)
+            ordering = "CASE WHEN ("+manager_workday.STAGE_SQL+") IN ('delivered','cancelled') THEN 1 ELSE 0 END,o.created_at DESC,o.order_no DESC"
+            period=start=end=None
         if manager_view:
             if user['role']!='delivery_manager' or manager_view not in ('current','history'):
                 raise db.error(403,'MANAGER_WORKSPACE_SCOPE','عرض شفت المدير غير متاح لهذا الحساب.')
@@ -365,7 +387,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             from .customer_progress import enrich_orders as enrich_customer_progress
             enrich_customer_progress(conn, rows[:limit])
             rows=[customer_order_view(row) for row in rows]
-    return {'sort':sort, 'orders': rows[:limit], 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info}
+    return {'sort':sort, 'orders': rows[:limit], 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info, **({'workspace_counts':dispatch_counts,'workspace_scope':dispatch_scope} if dispatch_workspace else {})}
 
 
 def search_phone(value):

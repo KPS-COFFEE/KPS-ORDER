@@ -39,7 +39,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
                     'delivery_workflow':'branch_fulfillment' if period=='morning' else 'manager_dispatch','items':[]}}
     orders=[order('morning','morning','new'),order('new-evening','evening','new'),order('late','evening','accepted')]
     conversation={'id':'chat1','order_reference':'late','customer_name':'عميل تجريبي','route':'delivery','status':'open','unread_count':1}
-    writes=[]
+    writes=[];order_queries=[]
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True)
         context=browser.new_context(viewport={'width':width,'height':1000})
@@ -65,7 +65,9 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
             elif path=='/api/shifts':payload={'shifts':[{'id':'driver-shift','kind':'driver','status':'open','display_name':'سائق تجريبي'}]}
             elif path=='/api/orders/new-evening/assign':
                 orders[1]['delivery_status']='assigned';payload={'task':{'id':'task1'}}
-            elif path=='/api/orders':payload={'orders':orders,'next_offset':None}
+            elif path=='/api/orders':
+                order_queries.append(req.url)
+                payload={'orders':orders,'next_offset':None,'workspace_counts':{'all':{'total':103,'new':102,'preparing':1},'current':{'total':3,'new':2,'preparing':1}}}
             elif path=='/api/shifts/current':payload={'shifts':[shift]}
             elif path=='/api/operations/drivers':payload={'drivers':[{'id':'driver','display_name':'سائق تجريبي','branch_ids':['branch'],'availability':'available','readiness_action':'ready','active_tasks':0,'shift_id':'driver-shift','shift_status':'open','shift_available':True}]}
             elif path=='/api/conversations':payload={'conversations':[conversation]}
@@ -77,6 +79,15 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.goto(static_customer+'/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
         expect(page.locator('#dispatch-orders article')).to_have_count(3)
+        expect(page.locator('[data-count-scope=all] [data-stage=""] b')).to_have_text('١٠٣' if lang=='ar' else '103')
+        expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('[data-count-scope=current] [data-stage=""] b')).to_have_text('٣' if lang=='ar' else '3')
+        assert 'dispatch_workspace=true' in order_queries[0] and 'dispatch_scope=current' in order_queries[0]
+        page.locator('[data-count-scope=all] [data-stage=""]').click()
+        expect(page.locator('[data-count-scope=all] [data-stage=""]')).to_have_attribute('aria-pressed','true')
+        assert 'dispatch_scope=all' in order_queries[-1]
+        page.locator('[data-count-scope=current] [data-stage=""]').click()
+        expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
         expect(page.locator('#dispatch-map')).to_be_visible()
         expect(page.locator('#dispatch-map .dispatch-map-state')).to_contain_text(
             'الخريطة تحتاج تفعيل Mapbox' if lang=='ar' else 'Mapbox activation required')
@@ -86,6 +97,12 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         # Main operating area must be reachable immediately, not pushed below a
         # long vertical menu and stacked status cards on desktop.
         expect(page.locator('body')).to_have_class(re.compile(r'\bdelivery-room\b'))
+        # The temporary admin request panel must never push the delivery map down.
+        page.locator('#driver-checks').evaluate("host=>{host.innerHTML='<section class=panel><button>Temporary fuel checks</button><p>Temporary owner tool</p></section>';}")
+        expect(page.locator('#driver-checks')).not_to_be_visible()
+        page.locator('body').evaluate("body=>body.classList.remove('delivery-room')")
+        expect(page.locator('#driver-checks')).to_be_visible()
+        page.locator('body').evaluate("body=>body.classList.add('delivery-room')")
         if width >= 1000:
             geometry=page.evaluate("""()=>{
               const box=s=>document.querySelector(s).getBoundingClientRect();
