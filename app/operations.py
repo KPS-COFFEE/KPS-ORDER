@@ -79,6 +79,22 @@ def available_balance(c,s):
 def unresolved(c, sid):
     return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(sid,)).fetchone()['n']
 
+def guard_accepted_awaiting_dispatch(c, shift):
+    """A separately accepted order cannot be abandoned by closing its manager."""
+    if shift['kind'] != 'manager':
+        return
+    pending = c.execute("SELECT 1 FROM order_events e JOIN orders o ON o.id=e.order_id "
+        "WHERE e.event_type='preparation.accepted' AND e.details->>'manager_shift_id'=%s "
+        "AND e.details->>'dispatch_pending'='true' AND o.brand_id=%s "
+        "AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
+        "AND o.delivery_status NOT IN ('cancelled','delivered') "
+        "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
+        "AND t.status NOT IN ('cancelled','reassigned','transferred')) LIMIT 1",
+        (shift['id'],shift['brand_id'])).fetchone()
+    if pending:
+        raise db.error(409, 'ACCEPTED_ORDERS_AWAITING_DISPATCH',
+                       'لديك طلبات مقبولة بانتظار إسناد سائق. عالجها قبل تقفيل المناوبة.')
+
 def valid_cash_amount(amount):
     if not -MAX_HALALAS-1<=amount<=MAX_HALALAS:fail(422,'المبلغ النقدي يتجاوز النطاق المدعوم')
 
@@ -437,6 +453,7 @@ def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
             s=lock_shift(c,sid); shift_access(c,user,s)
+            guard_accepted_awaiting_dispatch(c,s)
             from .driver_work_hours import guard_shift_completion
             guard_shift_completion(c,s)
             from .driver_breaks import guard as break_guard
@@ -466,6 +483,7 @@ class ClosureSubmit(OperationBody):
 
 def submit_close_in_tx(c,user,sid,body):
     s=lock_shift(c,sid); shift_access(c,user,s)
+    guard_accepted_awaiting_dispatch(c,s)
     from .driver_work_hours import guard_shift_completion
     guard_shift_completion(c,s)
     if s['status']!='closing': fail(409,'اطلب التقفيلة أولا')
@@ -528,6 +546,7 @@ def approve_close_in_tx(c,user,sid,body):
     own_manager=bool(s and s['kind']=='manager' and s['user_id']==user['id'] and user['role']=='delivery_manager')
     shift_access(c,user,s,manager=not own_manager)
     if s['kind']=='manager' and not own_manager:roles(user,'owner')
+    guard_accepted_awaiting_dispatch(c,s)
     from .driver_work_hours import guard_shift_completion
     guard_shift_completion(c,s)
     if s['status']!='submitted': fail(409,'التقفيلة غير مرسلة')

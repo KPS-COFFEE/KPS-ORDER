@@ -86,3 +86,16 @@ def test_assignment_and_driver_acceptance_leave_customer_preparing(ops):
     post('driver',f"/api/tasks/{task['id']}/transition",{'status':'accepted'})
     assert actor('customer').get('/api/orders/'+oid).json()['order']['customer_progress']['stage']=='preparing'
 
+
+def test_manager_cannot_close_with_accepted_unassigned_order(ops):
+    actor,post,_,_=ops
+    sid=post('manager','/api/shifts',{'kind':'manager','branch_ids':['ops-branch']})['shift']['id']
+    oid=new_order()
+    post('manager',f'/api/orders/{oid}/manager-accept',{'version':1})
+    response=actor('manager').post(f'/api/shifts/{sid}/closing',json={},headers={'Idempotency-Key':uuid4().hex})
+    assert response.status_code==409,response.text
+    assert response.json()['detail']['code']=='ACCEPTED_ORDERS_AWAITING_DISPATCH'
+    with db.tx() as c:assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='open'
+    post('manager',f'/api/orders/{oid}/preparation',{'version':2,'status':'cancelled','reason':'طلب العميل الإلغاء'})
+    assert post('manager',f'/api/shifts/{sid}/closing')['status']=='closing'
+
