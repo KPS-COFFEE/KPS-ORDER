@@ -126,7 +126,10 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             execution_branch_id = quote['branch_id']
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
-            if body.service == 'delivery' and (config or {}).get('settings', {}).get('delivery_workflow') != 'branch_without_manager':
+            if quote.get('delivery_period') == 'morning':
+                from . import morning_delivery
+                morning_delivery.require_duty(conn,body.brand_id,execution_branch_id)
+            elif body.service == 'delivery' and (config or {}).get('settings', {}).get('delivery_workflow') != 'branch_without_manager':
                 _ensure_manager_duty(conn, body.brand_id, execution_branch_id)
             customer = body.customer.model_dump(exclude_none=True)
             if body.service == 'delivery':
@@ -154,6 +157,11 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 customer.update(auth.identity_snapshot(user))
             if supplied_phone and customer['phone'] != user.get('phone'):
                 for flag in ('phone_verified','phone_sms_verified','phone_whatsapp_verified'):customer[flag]=False
+            gift_phone = None
+            from . import first_order_gift
+            if not delivery_center:
+                gift_phone = first_order_gift.prepare(conn, body, quote, user,
+                    (config or {}).get('settings'), for_order=True)
             if user.get('identity_kind') == 'guest':
                 recent=conn.execute("SELECT 1 FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1",
                                     (body.brand_id,execution_branch_id,customer['phone'],db.json(quote['items']))).fetchone()
@@ -164,6 +172,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             quote['receipt_occasion_style'] = (config or {}).get('settings', {}).get('receipt_occasion_style', {})
             quote['receipt_occasion_text'] = (config or {}).get('settings', {}).get('receipt_occasion_text', '')
             quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
+            if quote.get('delivery_period') == 'morning':
+                quote['delivery_workflow'] = 'branch_fulfillment'
             # Read immutable receipt/policy snapshots before the per-branch
             # counter. The allocation remains in this same atomic transaction,
             # while its mandatory serial section contains only durable writes.
@@ -188,6 +198,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             # Prepare the canonical privacy projection before acquiring the
             # branch counter; do not duplicate routing/privacy rules in SQL.
             public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})
+            gift_cte, gift_params = first_order_gift.claim_cte(gift_phone, (quote.get('first_order_gift') or {}).get('version'))
             ctes = ('next_number AS (' + order_numbering.NEXT_NUMBER_SQL + '), created_order AS ('
                                'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
                                'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
@@ -198,7 +209,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                     "SELECT %s,id,%s,'order.created',%s FROM created_order RETURNING id), "
                     'created_audit AS (INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details) '
                     "SELECT %s,%s,'order.created','order',id,%s FROM created_order RETURNING id), "
-                    "operation_response AS (SELECT jsonb_build_object('order',"
+                    + gift_cte + "operation_response AS (SELECT jsonb_build_object('order',"
                     "(to_jsonb(o)-'performance_snapshot') || jsonb_build_object("
                     "'branch_id',%s::text,'customer',%s::jsonb,"
                     "'snapshot',jsonb_set(%s::jsonb,'{order_reference}',o.snapshot->'order_reference'),"
@@ -215,8 +226,12 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                                 db.new_id('audit_'), user['id'], db.json({'branch_id': execution_branch_id,
                                     'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
                                     'total_halalas': quote['total_halalas']}),
-                                public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
-        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', body.model_dump(), perform,
+                                *gift_params, public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
+        intent = body.model_dump()
+        for field in ('expected_gift', 'expected_gift_version'):
+            if intent[field] is None:
+                intent.pop(field)
+        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', intent, perform,
                                pipeline_writes=True, defer_atomic_response=True,encoded_response=request is not None)
     # The database acknowledges COMMIT before the saved JSON reaches HTTP.
     # Replays use the same durable JSON, with no new counter/event/financial write.
@@ -394,6 +409,9 @@ def search_phone(value):
     """Only a complete contact number is searchable; never a prefix oracle."""
     import re
     compact=re.sub(r'[\s()-]','',value.translate(auth.IDENTITY_DIGITS))
+    # Staff lookup keeps its explicit full-number boundary even though customer
+    # registration also accepts the nine-digit local mobile shorthand.
+    if len(compact)==9 and compact.startswith('5'):return None
     if compact.startswith('9665') and len(compact)==12:compact='+'+compact
     try:phone=auth.normalize_phone(compact)
     except HTTPException:return None
@@ -646,6 +664,8 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
     with db.tx() as conn:
         # Replay returns a saved response, so fresh scope authorization must precede replay lookup.
         visible = scoped_order(conn, order_id, user)
+        from . import morning_delivery
+        morning_delivery.authorize_order(conn,user,visible,preparation=user['role']=='branch_manager')
         if user['role']=='delivery_manager' and (body.status!='cancelled' or visible['service']!='delivery'):
             raise db.error(403,'DELIVERY_DECISION_ONLY','مدير التوصيل يرفض طلب التوصيل أو يقبله مع إسناد سائق؛ تجهيز الفرع له إجراء مستقل.')
         def perform():

@@ -16,8 +16,9 @@
     const {policy}=await api('/api/experience/policy');
     const draft=JSON.parse(JSON.stringify(policy));delete draft.version;
     const limit=(name,value)=>`<input type="number" name="${name}" min="0.1" max="240" step="0.1" value="${value===null?'':value/60}" inputmode="decimal">`;
-    modal(tr('معايير مراحل الطلب','Order stage targets'),`<form id="experience-policy-form" class="stack">
+    modal(tr('رحلة الزبون ومعايير المراحل','Customer journey and stage targets'),`<form id="experience-policy-form" class="stack">
       <p>${esc(tr('تعديلات هذه الشاشة خاصة بالبراند الحالي. تُحفظ المعايير مع الطلب الجديد لحماية التقارير السابقة.','Changes apply to the current brand. New orders capture the targets to preserve historical reports.'))}</p>
+      <label><input type="checkbox" name="customer_entry_enabled" ${draft.customer_entry_enabled?'checked':''}>${esc(tr('تفعيل رحلة الزبون: الاسم والجوال ثم الموقع والفروع المؤهلة','Enable customer journey: name and mobile, then location and eligible branches'))}</label>
       <label><input type="checkbox" name="timing_enabled" ${draft.timing_enabled?'checked':''}>${esc(tr('تفعيل معايير المراحل للطلبات الجديدة','Enable stage targets for new orders'))}</label>
       <div class="form-columns"><label>${esc(tr('إجمالي حفر الباطن — أحمر عند، بالدقائق','Hafar total — red at, minutes'))}${limit('hafar',draft.total_seconds.hafar)}</label><label>${esc(tr('خارج حفر الباطن — أحمر عند، بالدقائق','Outside Hafar total — red at, minutes'))}${limit('outside',draft.total_seconds.outside)}</label></div>
       <div class="table-scroll"><table><thead><tr><th>${esc(tr('المرحلة','Stage'))}</th><th>${esc(tr('برتقالي عند، دقيقة','Orange at, minutes'))}</th><th>${esc(tr('أحمر عند، دقيقة','Red at, minutes'))}</th></tr></thead><tbody>${Object.entries(labels).map(([key,l])=>`<tr><td>${esc(tr(l[0],l[1]))}<small>${esc(tr(l[2],l[3]))}</small></td><td>${limit(key+'_orange',draft.stages[key].orange)}</td><td>${limit(key+'_red',draft.stages[key].red)}</td></tr>`).join('')}</tbody></table></div>
@@ -34,7 +35,7 @@
     });
     function read(fd){
       const seconds=(name,nullable=false)=>{const value=String(fd.get(name)||'').trim();if(!value&&nullable)return null;if(!value||!Number.isFinite(Number(value)))throw new Error(tr('أدخل مدة صحيحة','Enter a valid duration'));return Math.round(Number(value)*60);};
-      const next={...draft,timing_enabled:fd.has('timing_enabled'),assignment_start:fd.get('assignment_start'),total_seconds:{hafar:seconds('hafar'),outside:seconds('outside')},stages:{}};
+      const next={...draft,customer_entry_enabled:fd.has('customer_entry_enabled'),timing_enabled:fd.has('timing_enabled'),assignment_start:fd.get('assignment_start'),total_seconds:{hafar:seconds('hafar'),outside:seconds('outside')},stages:{}};
       for(const key of Object.keys(labels)){const orange=seconds(key+'_orange',true),red=seconds(key+'_red');if(red<=0||red>14400||orange!==null&&(orange<=0||orange>=red))throw new Error(tr('البرتقالي يجب أن يكون أقل من الأحمر','Orange must be earlier than red'));next.stages[key]={orange,red};}
       return next;
     }

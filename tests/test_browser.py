@@ -187,7 +187,26 @@ def _owner_login(context, base, owner):
     return headers
 
 
+def _approve_advertising(context, base, headers):
+    """Opt in through actual owner proof; production advertising stays off."""
+    headers = {**headers, 'X-KPS-Context': 'work'}
+    sent = context.request.post(base + '/api/identity/owner/sms/request', headers=headers)
+    assert sent.ok, sent.text()
+    proof = context.request.post(base + '/api/identity/owner/sms/verify', headers=headers,
+        data={'challenge_id': sent.json()['challenge_id'], 'code': '0123'})
+    assert proof.ok, proof.text()
+    current = context.request.get(base + '/api/advertising/policy', headers=headers)
+    assert current.ok, current.text()
+    policy = current.json()['policy']
+    approved = context.request.put(base + '/api/advertising/policy',
+        headers={**headers, 'Idempotency-Key': 'browser-ads-' + secrets.token_hex(16)},
+        data={'advertising_enabled': True, 'expected_version': policy['version'],
+              'reason': 'Explicit isolated owner advertising acceptance'})
+    assert approved.ok, approved.text()
+
+
 def _test_banner(context, base, headers):
+    _approve_advertising(context, base, headers)
     catalog = json.loads((ROOT / 'data/catalog.json').read_text())
     product = next(product for product in catalog['products'] if product['id'] == 'kps-01')
     source = ROOT / 'public' / product['image_url'].lstrip('/')
@@ -408,6 +427,13 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         owner = _staff()
         owner_context, ops, owner_errors = _context(chromium_browser, live_app)
         _staff_ui_login(ops,owner)
+        work_headers = {'Origin': live_app, 'X-KPS-Context': 'work'}
+        session_response = owner_context.request.get(live_app + '/api/session', headers=work_headers)
+        assert session_response.ok, session_response.text()
+        session = session_response.json()
+        assert session['user']['id'] == owner['id'] and session['csrf_token']
+        _approve_advertising(owner_context, live_app,
+            {**work_headers, 'X-CSRF-Token': session['csrf_token']})
         expect(ops.locator('#dispatch-orders')).to_be_visible()
         _capture(ops, 'operations-dashboard-synthetic-order')
         ops.locator('#navigation [data-page=admin]').click()
@@ -428,8 +454,8 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         now=datetime.now(ZoneInfo('Asia/Riyadh'))
         ops.locator('#banner-form input[name=starts]').fill((now-timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M'))
         ops.locator('#banner-form input[name=ends]').fill((now+timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M'))
-        expect(ops.locator('#desktop-preview')).to_contain_text(banner_title)
-        expect(ops.locator('#mobile-preview')).to_contain_text(banner_title)
+        expect(ops.frame_locator('#desktop-preview iframe').locator('body')).to_contain_text(banner_title)
+        expect(ops.frame_locator('#mobile-preview iframe').locator('body')).to_contain_text(banner_title)
         _capture(ops, 'operations-banner-editor')
         ops.locator('#banner-form button[type=submit]').click()
         expect(ops.locator('#modal')).not_to_be_visible()

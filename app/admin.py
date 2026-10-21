@@ -653,6 +653,9 @@ def active_banners(conn,brand_id,branch_id,city_name=None):
         city_name=conn.execute('SELECT city FROM branches WHERE id=%s AND brand_id=%s',(branch_id,brand_id)).fetchone()['city']
     if city_name:
         city_name=catalog.normalize_city(city_name)
+    from .storefront_advertising import enabled
+    if not enabled(conn,brand_id):
+        return []
     return conn.execute("SELECT * FROM banners WHERE brand_id=%s AND active AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now()) AND (branch_ids='[]'::jsonb OR branch_ids ? %s) AND (cities='[]'::jsonb OR cities ? %s) ORDER BY sort_order,created_at LIMIT 20",(brand_id,branch_id or '',city_name or '')).fetchall()
 
 
@@ -662,6 +665,9 @@ def public_banners(brand_id:str='kps',branch_id:str|None=None,city:str|None=None
         rows=active_banners(conn,brand_id,branch_id,city)
         configuration=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand_id,)).fetchone()
         presentation=homepage_presentation_config((configuration or {}).get('settings',{}).get('homepage_presentation'),brand_id=brand_id)
+        from .storefront_advertising import policy as advertising_policy
+        if advertising_policy((configuration or {}).get('settings'))['advertising_enabled'] is not True:
+            presentation= dict(presentation, ticker_enabled=False, quote_enabled=False)
     def asset_url(identifier):
         from urllib.parse import urlencode
         return f'/api/banner-assets/{identifier}?'+urlencode({'brand_id':brand_id,**({'branch_id':branch_id} if branch_id else {}),**({'city':city} if city else {})}) if identifier else None

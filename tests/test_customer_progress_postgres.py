@@ -1,4 +1,4 @@
-"""Real scoped API responses, private evidence and order-specific trip joins."""
+"""Real scoped API responses, private evidence and order-specific pickup."""
 import pytest
 from app import db
 from app.customer_progress import enrich_orders
@@ -17,7 +17,7 @@ def test_customer_progress_print_trip_and_private_history(ops):
         first='progress-manager-order'
         snapshot={**source['snapshot'],'delivery_workflow':'manager_dispatch'}
         c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','handed_over','picked_up','cash',1000,0,1000,%s,'{}')",(first,db.json(snapshot)))
-        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at) VALUES('progress-task',%s,'ops-driver',%s,'picked_up','ops-manager',now())",(first,sid))
+        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at) VALUES('progress-task',%s,'ops-driver',%s,'accepted','ops-manager',now())",(first,sid))
         db.event(c,first,'ops-manager','driver_evidence.observation',{'private':'driver observation'})
         db.event(c,first,'ops-manager','driver_evidence.observation_read',{'private':'read by employee'})
         db.event(c,first,'ops-manager','order.print_output_confirmed',{'branch_id':'ops-branch','revision':99})
@@ -35,7 +35,7 @@ def test_customer_progress_print_trip_and_private_history(ops):
         c.execute("INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES('progress-trip',%s)",(second,))
     assert actor('customer').get('/api/orders/'+first).json()['order']['customer_progress']['stage']=='preparing'
     with db.tx() as c:
-        c.execute("INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES('progress-trip',%s)",(first,))
+        c.execute("UPDATE driver_tasks SET status='picked_up',picked_up_at=now() WHERE id='progress-task'")
     detail=actor('customer').get('/api/orders/'+first).json()['order']
     assert detail['customer_progress']['stage']=='on_the_way'
     listing=actor('customer').get('/api/orders').json()['orders']

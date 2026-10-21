@@ -214,8 +214,10 @@ def test_verified_admin_invitation_retains_only_owner_selected_permissions(owner
 
 
 @pytest.mark.postgres
-def test_city_scoped_banner_asset_schedule_speed_and_owner_edits_persist_without_data_changes(owner):
+def test_city_scoped_banner_asset_schedule_speed_and_owner_edits_persist_without_data_changes(owner, monkeypatch):
     client, mutate = owner
+    from tests.test_homepage_presentation import _approve_advertising
+    _approve_advertising(client, mutate, monkeypatch)
     image = io.BytesIO()
     Image.new('RGB', (60, 24), 'orange').save(image, format='PNG')
     uploaded = mutate('POST', '/api/admin/assets', files={'file': ('synthetic-banner.png', image.getvalue(), 'image/png')})

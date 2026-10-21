@@ -89,6 +89,11 @@ def test_missing_and_reassigned_events_never_invent_clocks():
     assert experience.evaluate(row(performance_snapshot={}), {}, [], START) is None
 
 
+@pytest.mark.parametrize('phone', ['512345678','0512345678','966512345678','+966512345678','٠٥١٢٣٤٥٦٧٨'])
+def test_supported_saudi_phone_forms_share_one_canonical_identity(phone):
+    assert auth.normalize_phone(phone) == '+966512345678'
+
+
 @pytest.mark.parametrize('change', [
     lambda p: p['stages']['manager_wait'].update(orange=91),
     lambda p: p['stages']['driver_acceptance'].update(red=True),
@@ -147,14 +152,33 @@ def test_owner_save_is_brand_scoped_versioned_and_audited(monkeypatch):
     assert client.put('/api/experience/policy',json=body).status_code==422
 
 
-def test_staff_policy_cannot_enable_customer_entry():
+def test_customer_entry_is_disabled_by_default_and_requires_owner():
     p = experience.defaults(); p.pop('version')
+    assert p['customer_entry_enabled'] is False
     p['customer_entry_enabled'] = True
-    with pytest.raises(HTTPException) as error:
-        experience.validate(p)
-    assert error.value.status_code == 422
+    assert experience.validate(p)['customer_entry_enabled'] is True
     app = FastAPI(); app.include_router(experience.router)
-    assert TestClient(app).get('/api/experience/public').status_code == 404
+    app.dependency_overrides[auth.current_user] = lambda: {'role':'delivery_manager','brand_id':'kps'}
+    client = TestClient(app)
+    assert client.get('/api/experience/policy').status_code == 403
+    assert client.put('/api/experience/policy',json={'policy':p,'expected_version':0,'reason':'test'}).status_code == 403
+
+
+def test_existing_staff_policy_gains_disabled_entry_without_mutation():
+    saved = experience.defaults(); saved.pop('customer_entry_enabled')
+    saved['version'] = 3
+    saved['stages']['manager_wait']['red'] = 110
+    class Result:
+        def fetchone(self): return {'settings':{'experience_policy':saved}}
+    class Conn:
+        def execute(self, query, params): return Result()
+    restored = experience.policy(Conn(), 'kps')
+    assert restored['customer_entry_enabled'] is False
+    assert restored['version'] == 3
+    assert restored['stages']['manager_wait']['red'] == 110
+    restored['stages']['manager_wait']['red'] = 130
+    assert saved['stages']['manager_wait']['red'] == 110
+    assert 'customer_entry_enabled' not in saved
 
 
 def test_existing_capture_hook_freezes_staff_targets_without_changing_legacy_policy():

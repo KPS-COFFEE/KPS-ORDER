@@ -93,8 +93,10 @@ def test_cities_and_branch_availability_policy_are_admin_authorized_not_url_over
 
 
 @pytest.mark.postgres
-def test_real_banner_upload_schedule_scope_edit_persistence_and_private_preview(owner):
+def test_real_banner_upload_schedule_scope_edit_persistence_and_private_preview(owner, monkeypatch):
     client,mutate=owner
+    from tests.test_homepage_presentation import _approve_advertising
+    _approve_advertising(client, mutate, monkeypatch)
     image=io.BytesIO();Image.new('RGB',(50,20),'orange').save(image,format='PNG')
     uploaded=mutate('POST','/api/admin/assets',files={'file':('TEST.png',image.getvalue(),'image/png')})
     assert uploaded.status_code==200,uploaded.text

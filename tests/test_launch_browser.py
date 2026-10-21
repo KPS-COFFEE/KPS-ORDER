@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from test_browser import ARTIFACTS, ROOT, _context, _owner_login, _staff, chromium_browser, live_app, synthetic_mail
+from test_browser import ARTIFACTS, ROOT, _context, _owner_login, _staff, _approve_advertising, chromium_browser, live_app, synthetic_mail
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
@@ -98,6 +98,7 @@ def test_editable_text_only_noto_ticker_above_header_left_to_right_and_dynamic_r
     _patch(owner_context, live_app, headers, '/api/admin/settings', {'theme': {'profile': 'ORIGINAL_Light'}})
     # The owner has now paused the strip by default. This isolated test
     # explicitly enables it to retain text/motion acceptance coverage.
+    _approve_advertising(owner_context, live_app, headers)
     _patch(owner_context, live_app, headers, '/api/admin/settings', {'homepage_presentation': {'ticker_enabled': True}})
     for number in (1, 2):
         response = owner_context.request.post(live_app + '/api/admin/banners', headers={
@@ -266,7 +267,8 @@ def test_denied_geolocation_retains_city_branch_manual_choice_and_car_directions
 def test_owner_banner_city_speed_link_image_scope_and_ticker_edits_through_real_forms(live_app, chromium_browser):
     from playwright.sync_api import expect
     context, page, errors = _context(chromium_browser, live_app)
-    _owner_login(context, live_app, _staff())
+    headers = _owner_login(context, live_app, _staff())
+    _approve_advertising(context, live_app, headers)
     try:
         page.goto('/ops')
         expect(page.locator('#app-shell')).to_be_visible()
@@ -301,7 +303,7 @@ def test_owner_banner_city_speed_link_image_scope_and_ticker_edits_through_real_
         expect(form.locator('select[name=cities]')).to_have_values(['حفر الباطن'])
         expect(form.locator('input[name="banner:kps-branch-1"]')).to_be_checked()
         expect(form.locator('input[name="banner:kps-branch-9"]')).not_to_be_checked()
-        expect(form.locator('#desktop-preview img')).to_be_visible()
+        expect(page.frame_locator('#desktop-preview iframe').locator('.campaign-banner picture img')).to_be_visible()
         form.locator('input[name=title]').scroll_into_view_if_needed()
         _evidence(page, 'launch-owner-banner-1280', full_page=False, owner_interface='real saved and reopened banner form', synthetic_campaign=banner['id'])
         page.locator('#modal-close').click()

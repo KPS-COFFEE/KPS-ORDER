@@ -375,6 +375,10 @@ def normalize_phone(value: str) -> str:
     value = re.sub(r'[\s()-]', '', value)
     if re.fullmatch(r'05[0-9]{8}', value):
         value = '+966' + value[1:]
+    elif re.fullmatch(r'5[0-9]{8}', value):
+        value = '+966' + value
+    elif re.fullmatch(r'9665[0-9]{8}', value):
+        value = '+' + value
     elif value.startswith('00'):
         value = '+' + value[2:]
     if not re.fullmatch(r'\+[1-9][0-9]{7,14}', value):
@@ -1793,3 +1797,4 @@ def update_identity_settings(body:ChannelUpdateBody,user=Depends(require_roles('
 def email_outbox_status(user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         return {'messages':conn.execute('SELECT id,kind,status,attempts,last_error,created_at,delivery_at FROM email_outbox WHERE brand_id=%s ORDER BY created_at DESC LIMIT 100',(user['brand_id'],)).fetchall()}
+

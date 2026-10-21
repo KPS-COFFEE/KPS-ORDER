@@ -86,6 +86,16 @@ from . import branch_payments
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
+from . import experience_policy
+app.include_router(experience_policy.router)
+from . import first_order_gift
+app.include_router(first_order_gift.router)
+from . import storefront_advertising
+app.include_router(storefront_advertising.router)
+from . import morning_delivery
+app.include_router(morning_delivery.router)
+from . import customer_map
+app.include_router(customer_map.router)
 from . import owner_phone
 app.include_router(owner_phone.router)
 from . import employee_sms, sms_rollout, sms_pilot_ui
@@ -100,9 +110,8 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
-from . import dispatch_map, experience_policy
+from . import dispatch_map
 app.include_router(dispatch_map.router)
-app.include_router(experience_policy.router)
 
 from . import driver_checks
 app.include_router(driver_checks.router)

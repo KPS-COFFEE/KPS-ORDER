@@ -240,3 +240,4 @@ def policies(user=Depends(auth.require_roles('owner', 'delivery_manager', 'deliv
         rows = [dict(row, branch_ids=by_province.get(row['province_id'], []), basis=BASIS[row['metric']]) for row in rows
                 if user['role'] == 'owner' or set(by_province.get(row['province_id'], [])) <= set(user['branch_ids'])]
     return {'policies': rows, 'metrics': BASIS}
+

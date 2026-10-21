@@ -1,10 +1,10 @@
-"""Owner-controlled operational stage targets.
+"""Owner-controlled customer entry flow and operational stage targets.
 
 Brand-scoped settings share the existing database, authorization and replay engine.
 Targets are captured with each new order; historical reports remain immutable.
 """
 from copy import deepcopy
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from . import auth, db
 
 router = APIRouter(prefix='/api/experience', tags=['experience'])
@@ -12,7 +12,7 @@ STAGES = ('manager_wait', 'assignment', 'driver_acceptance', 'delivery', 'prepar
 
 
 def defaults():
-    return {'version': 0, 'timing_enabled': False,
+    return {'version': 0, 'customer_entry_enabled': False, 'timing_enabled': False,
             'assignment_start': 'manager_accepted',
             'total_seconds': {'hafar': 2700, 'outside': 1800},
             'stages': {'manager_wait': {'orange': 60, 'red': 90},
@@ -25,14 +25,16 @@ def defaults():
 
 def policy(conn, brand_id):
     row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
-    return deepcopy((row or {}).get('settings', {}).get('experience_policy') or defaults())
+    # Published staff-only policies predate the customer entry switch. Preserve
+    # their version and targets while introducing the new switch disabled.
+    return defaults() | deepcopy((row or {}).get('settings', {}).get('experience_policy') or {})
 
 
 def validate(value):
     shape = set(defaults()) - {'version'}
     if not isinstance(value, dict) or set(value) != shape:
         raise db.error(422, 'EXPERIENCE_POLICY_INVALID', 'أرسل جميع معايير المراحل المعتمدة.')
-    if any(type(value[k]) is not bool for k in ('timing_enabled',)):
+    if any(type(value[k]) is not bool for k in ('customer_entry_enabled', 'timing_enabled')):
         raise db.error(422, 'EXPERIENCE_POLICY_INVALID', 'اختر حالة التفعيل بصورة صحيحة.')
     if value['assignment_start'] not in ('created', 'manager_accepted'):
         raise db.error(422, 'EXPERIENCE_POLICY_INVALID', 'اختر بداية عداد الإسناد.')
@@ -50,6 +52,17 @@ def validate(value):
                 type(orange) is not int or not 1 <= orange < red)):
             raise db.error(422, 'EXPERIENCE_POLICY_INVALID', 'البرتقالي أقل من الأحمر؛ يمكن ترك البرتقالي فارغًا.')
     return deepcopy(value)
+
+
+@router.get('/public')
+def public_policy(brand_id: str = Query(default='kps', max_length=80)):
+    from .storefront_scope import require_brand
+    require_brand(brand_id)
+    with db.tx() as conn:
+        if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (brand_id,)).fetchone():
+            raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
+        p = policy(conn, brand_id)
+    return {'customer_entry_enabled': p['customer_entry_enabled']}
 
 
 @router.get('/policy')
