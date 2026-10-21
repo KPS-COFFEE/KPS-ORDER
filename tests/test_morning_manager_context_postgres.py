@@ -2,6 +2,7 @@
 from copy import deepcopy
 from uuid import uuid4
 import pytest
+from psycopg.errors import RaiseException
 from app import auth, db, employee_permissions, service_hours, shift_vehicle
 from test_core import _authenticate
 from test_operations import ops
@@ -124,12 +125,16 @@ def test_fresh_revocation_blocks_reads_and_saved_acceptance_replay(morning_manag
         c.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,token_hash,created_by,approved_at) VALUES(%s,'kps',%s,'test',%s,'ops-owner',now())",('revocation-printer-'+uuid4().hex,B2,uuid4().hex))
     body={'version':1};first=post(client,path,body,key)
     assert first.status_code==200,first.text
+    if change=='snapshot_parent':
+        with pytest.raises(RaiseException,match='approved immutable revision'):
+            with db.tx() as c:
+                c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{manager_shift_id}',%s) WHERE id=%s",(db.json('ctx-other-duty'),ids['morning']))
     with db.tx() as c:
         if change=='policy':c.execute("UPDATE brands SET settings=jsonb_set(settings,'{morning_delivery,manager_user_ids}','[]') WHERE id='kps'")
         elif change=='branch':c.execute("UPDATE users SET branch_ids=%s WHERE id='ops-manager'",(db.json([B3]),))
         elif change=='inactive':c.execute("UPDATE users SET active=false WHERE id='ops-manager'")
         elif change=='duty_closed':c.execute("UPDATE shifts SET status='closed' WHERE id='ctx-duty'")
-        elif change=='snapshot_parent':c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{manager_shift_id}',%s) WHERE id=%s",(db.json('ctx-other-duty'),ids['morning']))
+        elif change=='snapshot_parent':db.event(c,ids['morning'],'ops-manager','preparation.accepted',{'manager_shift_id':'ctx-other-duty'})
         elif change=='event_parent':db.event(c,ids['morning'],'ops-manager','preparation.accepted',{'manager_shift_id':'ctx-other-duty'})
         else:c.execute("UPDATE shifts SET delivery_window_snapshot=%s WHERE id='ctx-duty'",(db.json({'period':'evening'}),))
     assert client.get('/api/orders/'+ids['morning']).status_code in (401,403,404)

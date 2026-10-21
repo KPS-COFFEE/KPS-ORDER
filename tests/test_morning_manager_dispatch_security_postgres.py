@@ -2,6 +2,7 @@
 from uuid import uuid4
 
 import pytest
+from psycopg.errors import RaiseException
 
 from app import db, employee_permissions, service_hours
 from test_morning_delivery import at
@@ -25,9 +26,16 @@ def assigned(client, ids):
 
 def pin_order(c, oid, mode, duty):
     if mode == 'snapshot':
-        c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{manager_shift_id}',%s) WHERE id=%s", (db.json(duty), oid))
+        pinned = 'ctx-pinned-'+uuid4().hex
+        # Confirmed snapshots are immutable: construct the pinned fixture at
+        # insertion, just as the WhatsApp order creation path does.
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) "
+                  "SELECT %s,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,jsonb_set(snapshot,'{manager_shift_id}',%s),customer FROM orders WHERE id=%s",
+                  (pinned, db.json(duty), oid))
+        return pinned
     else:
         db.event(c, oid, 'ops-manager', 'preparation.accepted', {'manager_shift_id': duty})
+        return oid
 
 
 @pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
@@ -35,7 +43,7 @@ def pin_order(c, oid, mode, duty):
 def test_explicit_foreign_morning_parent_hides_unassigned_order_and_all_writes(morning_manager, mode):
     client, ids, _ = morning_manager; oid = ids['morning']
     with db.tx() as c:
-        pin_order(c, oid, mode, 'ctx-other-duty')
+        oid = pin_order(c, oid, mode, 'ctx-other-duty')
     response = client.get('/api/orders')
     assert response.status_code == 200, response.text
     assert oid not in {o['id'] for o in response.json()['orders']}
@@ -52,8 +60,17 @@ def test_saved_assignment_response_never_replays_after_explicit_parent_changes(m
     client, ids, _ = morning_manager; oid = ids['morning']; key = uuid4().hex
     body = {'driver_shift_id': 'ctx-driver'}; path = f'/api/orders/{oid}/assign'
     assert post(client, path, body, key).status_code == 200
+    if mode == 'snapshot':
+        # Rebinding a confirmed order directly is itself prohibited. Keep that
+        # protection intact, then exercise actual dynamic revocation via the
+        # accepted-event pin below (the original snapshot remains unbound).
+        with pytest.raises(RaiseException, match='approved immutable revision'):
+            with db.tx() as c:
+                c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{manager_shift_id}',%s) WHERE id=%s", (db.json('ctx-other-duty'), oid))
+        with db.tx() as c:
+            assert not c.execute('SELECT snapshot FROM orders WHERE id=%s', (oid,)).fetchone()['snapshot'].get('manager_shift_id')
     with db.tx() as c:
-        pin_order(c, oid, mode, 'ctx-other-duty')
+        pin_order(c, oid, 'event', 'ctx-other-duty')
     assert post(client, path, body, key).status_code == 404
     response = client.get('/api/orders')
     assert oid not in {o['id'] for o in response.json()['orders']}
@@ -65,10 +82,10 @@ def test_saved_assignment_response_never_replays_after_explicit_parent_changes(m
 def test_own_explicit_parent_retains_read_and_assignment(morning_manager, mode):
     client, ids, _ = morning_manager; oid = ids['morning']
     with db.tx() as c:
-        pin_order(c, oid, mode, 'ctx-duty')
+        oid = pin_order(c, oid, mode, 'ctx-duty')
     assert client.get('/api/orders/'+oid).status_code == 200
     assert oid in {o['id'] for o in client.get('/api/orders').json()['orders']}
-    assigned(client, ids)
+    assigned(client, ids | {'morning': oid})
 
 
 @pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)

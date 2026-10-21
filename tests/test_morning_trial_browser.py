@@ -107,9 +107,25 @@ def test_owner_sms_start_zero_permission_members_and_complete_rehearsal(static_c
             assert trial['order']['status']=='driver_accepted'
             worker.locator('#morning-trial-fallback-reason').fill('Preparer delayed')
         worker.locator('[data-trial-action=preparing]').click()
-        if fallback:worker.locator('#morning-trial-fallback-reason').fill('Preparer delayed')
+        expect(worker.locator('#morning-trial-order-status')).to_have_attribute('data-state','preparing')
+        expect(worker.locator('[data-trial-action=ready]')).to_be_enabled()
+        if fallback:
+            # Busy/adopt/finally renders must preserve the draft; a background
+            # refresh must not erase an employee's typed justification either.
+            expect(worker.locator('#morning-trial-fallback-reason')).to_have_value('Preparer delayed')
+            worker.locator('#morning-trial-fallback-reason').fill('Preparer delayed after refresh')
+            with worker.expect_response(lambda response:urlparse(response.url).path=='/api/morning-trial/trial-synthetic' and response.request.method=='GET'):
+                worker.locator('#morning-trial-refresh').click()
+            expect(worker.locator('#morning-trial-fallback-reason')).to_have_value('Preparer delayed after refresh')
+            worker.locator('#morning-trial-fallback-reason').fill('Preparer delayed')
         worker.locator('[data-trial-action=ready]').click()
-        driver.locator('#morning-trial-refresh').click();driver.locator('[data-trial-action=picked_up]').click()
+        expect(worker.locator('#morning-trial-order-status')).to_have_attribute('data-state','ready')
+        expect(worker.locator('#morning-trial-error')).to_be_empty()
+        assert trial['order']['status']=='ready', {'trial':trial,'errors':errors,'writes':writes}
+        assert not errors
+        driver.locator('#morning-trial-refresh').click()
+        expect(driver.locator('#morning-trial-order-status')).to_have_attribute('data-state','ready')
+        driver.locator('[data-trial-action=picked_up]').click()
         driver.locator('[data-trial-action=delivered]').click()
         manager.locator('#morning-trial-refresh').click();manager.locator('[data-trial-action=close]').click()
         owner.locator('#morning-trial-refresh').click()
