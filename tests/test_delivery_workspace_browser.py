@@ -41,7 +41,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
     conversation={'id':'chat1','order_reference':'late','customer_name':'عميل تجريبي','route':'delivery','status':'open','unread_count':1}
     writes=[];order_queries=[]
     with sync_playwright() as p:
-        browser=p.chromium.launch(headless=True)
+        browser=p.chromium.launch(headless=True,executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None)
         context=browser.new_context(viewport={'width':width,'height':1000})
         context.add_init_script(f"localStorage.setItem('kps_ops_lang',{json.dumps(lang)})")
         page=context.new_page();errors=[];external_requests=[]
@@ -67,7 +67,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
                 orders[1]['delivery_status']='assigned';payload={'task':{'id':'task1'}}
             elif path=='/api/orders':
                 order_queries.append(req.url)
-                payload={'orders':orders,'next_offset':None,'workspace_counts':{'all':{'total':103,'new':102,'preparing':1},'current':{'total':3,'new':2,'preparing':1}}}
+                payload={'orders':orders,'next_offset':None,'workspace_counts':{'all':{'total':103,'new':102,'preparing':1,'sources':{'manager':51,'website':52}},'current':{'total':3,'new':2,'preparing':1,'sources':{'manager':1,'website':2}}}}
             elif path=='/api/shifts/current':payload={'shifts':[shift]}
             elif path=='/api/operations/drivers':payload={'drivers':[{'id':'driver','display_name':'سائق تجريبي','branch_ids':['branch'],'availability':'available','readiness_action':'ready','active_tasks':0,'shift_id':'driver-shift','shift_status':'open','shift_available':True}]}
             elif path=='/api/conversations':payload={'conversations':[conversation]}
@@ -79,6 +79,8 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.goto(static_customer+'/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
         expect(page.locator('#dispatch-orders article')).to_have_count(3)
+        expect(page.locator('[data-source-scope=current] [data-order-source=manager]')).to_contain_text('طلبات مدير التوصيل' if lang=='ar' else 'Delivery manager orders')
+        expect(page.locator('[data-source-scope=current] [data-order-source=website] b')).to_have_text(page.evaluate('(lang)=>new Intl.NumberFormat(lang).format(2)',lang))
         expected_counts=page.evaluate('(lang)=>[103,3].map(value=>new Intl.NumberFormat(lang).format(value))',lang)
         expect(page.locator('[data-count-scope=all] [data-stage=""] b')).to_have_text(expected_counts[0])
         expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
@@ -96,6 +98,8 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.locator('[data-count-scope=all] [data-stage=""]').click()
         expect(page.locator('[data-count-scope=all] [data-stage=""]')).to_have_attribute('aria-pressed','true')
         assert 'dispatch_scope=all' in order_queries[-1]
+        expect(page.locator('[data-source-scope=all] [data-order-source=website] b')).to_have_text(page.evaluate('(lang)=>new Intl.NumberFormat(lang).format(52)',lang))
+        expect(page.locator('[data-source-scope=all] [data-order-source=manager] b')).to_have_text(page.evaluate('(lang)=>new Intl.NumberFormat(lang).format(51)',lang))
         page.locator('[data-count-scope=current] [data-stage=""]').click()
         expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
         expect(page.locator('#dispatch-map')).to_be_visible()

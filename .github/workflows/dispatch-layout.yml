@@ -4,7 +4,7 @@ on:
     branches: [agent/dispatch-personal-layout-20261021]
   pull_request:
     branches: [agent/kps-order-emergency-v4]
-    paths: [public/assets/dispatch-layout.*, public/ops.js, public/ops.html, tests/test_delivery_workspace_browser.py, .github/workflows/dispatch-layout.yml]
+    paths: [public/assets/dispatch-layout.*, public/ops.js, public/ops.css, public/ops.html, app/manager_workday.py, tests/test_dispatch_workspace_counts.py, tests/test_order_amendments.py, tests/test_delivery_workspace_browser.py, .github/workflows/dispatch-layout.yml]
 permissions:
   contents: read
 jobs:
@@ -33,7 +33,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/assets/dispatch-layout.js && node --check public/ops.js
-      - run: python -m pytest -q tests/test_delivery_workspace_browser.py tests/test_dispatch_workspace_counts.py tests/test_dispatch_order_sort.py tests/test_delivery_manager_operations_only.py tests/test_dispatch_map_browser.py --junitxml=test-results/dispatch-layout.xml
+      - run: python -m pytest -q tests/test_delivery_workspace_browser.py tests/test_dispatch_workspace_counts.py tests/test_order_amendments.py tests/test_delivery_center_matching.py tests/test_dispatch_order_sort.py tests/test_delivery_manager_operations_only.py tests/test_dispatch_map_browser.py --junitxml=test-results/dispatch-layout.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
