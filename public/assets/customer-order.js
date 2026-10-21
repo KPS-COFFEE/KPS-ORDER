@@ -3,9 +3,11 @@
   'use strict';
   window.KPSCustomerOrder={open:async function(ctx){
     const {api,mutation,tr,esc,money,modal,closeModal,user,branches,onCreated,complimentary=false}=ctx;
+    const morning=Boolean(user.delivery_context);
+    if(morning&&complimentary)throw new Error(tr('الضيافة والتعويض غير متاحين في صلاحيات الصباح.','Hospitality and compensation are not available in morning access.'));
     const current=await api('/api/shifts/current');
     const covered=new Set((current.shifts||[]).filter(s=>s.user_id===user.id&&s.kind==='manager'&&s.status==='open').flatMap(s=>s.branch_ids||[]));
-    const allowed=branches.filter(b=>covered.has(b.id));
+    const allowed=branches.filter(b=>covered.has(b.id)&&(!morning||user.delivery_context.branch_ids.includes(b.id)));
     if(!allowed.length)throw new Error(tr('افتح شفت مدير توصيل أولًا.','Open your delivery manager shift first.'));
     let products=[],cart=[],review=null,sequence=0,lookupSequence=0,lookupTimer,selectedContactPhone=null;
     const input=(label,name,type='text',extra='')=>`<label>${esc(label)}<input name="${name}" type="${type}" ${extra}></label>`;
@@ -51,6 +53,11 @@
       closeModal();await onCreated(result.order.id);
     });
     const form=document.querySelector('#staff-order-form'),select=form.querySelector('#staff-product'),options=form.querySelector('#staff-options'),add=form.querySelector('#staff-add');
+    if(morning){
+      form.querySelector('p.notice').textContent=tr('طلب واتساب — صباحي حفر الباطن، تجهيز فرع 2. أدخل بيانات العميل وموقعه كما أرسلها؛ الجوال غير موثق بهذه العملية.','WhatsApp order — Hafar morning, prepared at Branch 2. Enter the customer details and location as provided; this does not verify mobile ownership.');
+      form.elements.branch_id.disabled=true;
+      form.addEventListener('formdata',event=>event.formData.set('branch_id',allowed[0].id));
+    }
     if(complimentary){
       form.querySelector('p.notice').textContent=tr('توصيل ضيافة أو تعويض بدون تحصيل. اختر الأصناف وأدخل المستلم وموقعه والسبب.','Hospitality or compensation delivery with no collection. Select items, recipient, location and reason.');
       const payment=form.elements.payment_method;payment.value='cash';payment.closest('label').hidden=true;
@@ -62,11 +69,14 @@
     function invalidate(){review=null;form.querySelector('#staff-review').textContent='';form.querySelector('[type=submit]').textContent=tr('مراجعة الإجمالي','Review total');}
     form.addEventListener('input',invalidate);form.addEventListener('change',invalidate);
     const lookupBox=form.querySelector('#staff-customer-lookup');
+    if(morning)lookupBox.textContent=tr('أدخل بيانات العميل من محادثة الواتساب. سجل العملاء السابق غير متاح بهذه الصلاحية.','Enter customer details from the WhatsApp conversation. Previous customer history is not available with this access.');
     function normalizedPhone(value){const digits=String(value).replace(/[٠-٩]/g,d=>String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[۰-۹]/g,d=>String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[^0-9]/g,'');return /^05[0-9]{8}$/.test(digits)?'+966'+digits.slice(1):/^9665[0-9]{8}$/.test(digits)?'+'+digits:/^009665[0-9]{8}$/.test(digits)?'+'+digits.slice(2):null;}
     async function lookupCustomer(){const seq=++lookupSequence,phone=normalizedPhone(form.elements.phone.value);if(!phone){lookupBox.textContent=tr('أدخل رقم جوال سعودي كاملًا.','Enter a complete Saudi mobile number.');return;}lookupBox.textContent=tr('جارٍ البحث…','Searching…');try{const data=await api('/api/orders/customer-lookup?'+new URLSearchParams({phone,branch_id:form.elements.branch_id.value}));if(seq!==lookupSequence||!form.isConnected)return;const contacts=data.contacts||[];lookupBox.innerHTML=`<p>${esc(contacts.length?data.ambiguous?tr('توجد بيانات متعددة؛ اختر البيانات المناسبة بعد تأكيدها مع العميل. لا يتم دمج الحسابات.','Multiple records found. Confirm with the customer and choose the appropriate details. Accounts are not merged.'):tr('بيانات مسجلة — اختر العنوان بعد تأكيده مع العميل.','Saved details — confirm the address with the customer before selecting.'):tr('رقم جديد؛ تحفظ بيانات العميل عند تأكيد أول طلب.','New number. Customer details are saved when the first order is confirmed.'))}</p><p class="small-text">${esc(tr('الجوال غير موثق بهذه العملية.','This operation does not verify mobile ownership.'))}</p>`;contacts.forEach(contact=>{const addresses=contact.addresses?.length?contact.addresses:[contact];addresses.forEach(address=>{const item={...contact,...address};const button=document.createElement('button');button.type='button';button.className='quiet customer-address-choice';button.textContent=[item.name,item.phone,item.neighborhood,item.address,item.location?`${item.location.lat}, ${item.location.lng}`:''].filter(Boolean).join(' · ');button.addEventListener('click',()=>{if(normalizedPhone(form.elements.phone.value)!==phone)return;selectedContactPhone=phone;for(const key of ['name','address','neighborhood'])form.elements[key].value=item[key]||'';form.elements.lat.value=item.location?.lat??'';form.elements.lng.value=item.location?.lng??'';form.elements.map_url.value='';invalidate();lookupBox.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));});lookupBox.append(button);});});}catch(e){if(seq===lookupSequence)lookupBox.textContent=e.message;}}
     function clearSelectedContact(){if(!selectedContactPhone)return;selectedContactPhone=null;for(const key of ['name','address','neighborhood','lat','lng','map_url'])form.elements[key].value='';invalidate();}
-    form.elements.phone.addEventListener('input',()=>{if(selectedContactPhone&&normalizedPhone(form.elements.phone.value)!==selectedContactPhone)clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupBox.textContent=tr('أدخل الجوال كاملًا للبحث.','Enter the complete mobile to search.');lookupTimer=setTimeout(lookupCustomer,400);});
-    form.elements.branch_id.addEventListener('change',()=>{clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupCustomer();});
+    if(!morning){
+      form.elements.phone.addEventListener('input',()=>{if(selectedContactPhone&&normalizedPhone(form.elements.phone.value)!==selectedContactPhone)clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupBox.textContent=tr('أدخل الجوال كاملًا للبحث.','Enter the complete mobile to search.');lookupTimer=setTimeout(lookupCustomer,400);});
+      form.elements.branch_id.addEventListener('change',()=>{clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupCustomer();});
+    }
     function drawOptions(){const p=products.find(p=>p.id===select.value);options.innerHTML=(p?.option_groups||[]).map((g,i)=>`<fieldset><legend>${esc(g.name)} · ${esc(tr('الاختيارات','Selections'))} ${g.min_select??(g.required===false?0:1)}–${g.max_select??1}</legend>${(g.values||[]).filter(v=>v.available!==false&&v.enabled!==false).map(v=>`<label><input type="checkbox" data-group="${i}" value="${esc(v.code||v.id)}">${esc(v.name)} ${Number(v.price_delta_halalas)?`(+${esc(money(v.price_delta_halalas))})`:''}</label>`).join('')}</fieldset>`).join('');add.disabled=!p;}
     async function load(){const seq=++sequence;add.disabled=true;select.disabled=true;try{const d=await api(`/api/catalog?brand_id=${encodeURIComponent(user.brand_id)}&branch_id=${encodeURIComponent(form.elements.branch_id.value)}&service=delivery`);if(seq!==sequence||!form.isConnected)return;products=d.products.filter(p=>p.available);select.innerHTML=products.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} — ${esc(money(p.price_halalas))}</option>`).join('');drawOptions();}catch(e){if(seq===sequence)fail(e);}finally{if(seq===sequence)select.disabled=false;}}
     function drawCart(){form.querySelector('#staff-cart').innerHTML=cart.map((item,i)=>`<div class="actions"><span>${esc(item.label)} × ${item.quantity}${item.note?` · ${esc(item.note)}`:''}</span><button type="button" class="quiet" data-remove="${i}">${esc(tr('حذف','Remove'))}</button></div>`).join('');invalidate();}

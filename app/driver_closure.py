@@ -33,8 +33,14 @@ class Decision(Reason):
     decision: Literal['approved', 'rejected']
     request_id: str
 
-def manager(c, user, shift):
+def manager(c, user, shift, *, revalidate_morning=False):
     roles(user, 'owner', 'delivery_manager')
+    if revalidate_morning and not auth.has_permission(user, 'shifts_approve') and shift and (shift.get('delivery_window_snapshot') or {}).get('period') == 'morning':
+        # An approval is revalidated later by the driver's request with a fresh
+        # database principal, not with the manager's prior HTTP context object.
+        from .morning_manager_context import resolve, require_shift
+        user = resolve(c, user, shift_id=shift.get('manager_shift_id'))
+        require_shift(user, shift)
     if not auth.has_permission(user, 'shifts_approve'):
         raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مخول لاعتماد التقفيلة / Closure approval forbidden')
     shift_access(c, user, shift, manager=True)
@@ -60,7 +66,7 @@ def guard(c, user, shift):
     if approval.get('status') == 'approved' and approval.get('scheduled_end_at') == schedule:
         principal = c.execute('SELECT * FROM users WHERE id=%s', (approval.get('decided_by'),)).fetchone()
         if principal and principal['active'] and principal['role'] in ('owner', 'delivery_manager'):
-            manager(c, principal, shift)
+            manager(c, principal, shift, revalidate_morning=True)
             return
     raise db.error(409, 'EARLY_CLOSURE_APPROVAL_REQUIRED',
                    'اطلب موافقة مدير التوصيل قبل بدء التقفيلة / Request delivery manager approval before closing')
