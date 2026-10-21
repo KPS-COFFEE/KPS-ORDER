@@ -147,6 +147,17 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                 p.locator(f'#navigation [data-page={screen}]').click()
                 expect(p.locator('#content')).to_have_attribute('aria-busy','false')
                 _capture_theme(p,role+'-'+screen)
+                if screen == 'tracking':
+                    # Wall mode intentionally hides navigation. Leave through
+                    # its real Back control (the same selector in Arabic/English).
+                    expect(p.locator('#navigation')).not_to_be_visible()
+                    back = p.locator('.tracking-toolbar [data-page=dashboard]')
+                    expect(back).to_be_visible()
+                    back.click()
+                    expect(p.locator('.tracking-screen')).to_have_count(0)
+                    expect(p.locator('#content')).to_have_attribute('aria-busy','false')
+                    expect(p.locator('#navigation')).to_be_visible()
+                    expect(p.locator('#navigation [data-page=dashboard]')).to_be_visible()
             if role=='owner':
                 p.locator('[data-action=admin-tab][data-tab=settings]').click()
                 expect(p.locator('#appearance-settings')).to_be_visible()
