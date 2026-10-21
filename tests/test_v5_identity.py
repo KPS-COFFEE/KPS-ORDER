@@ -436,9 +436,9 @@ class TestV5Identity:
             assert conn.execute("SELECT count(*) n FROM users WHERE phone_verified_at IS NOT NULL").fetchone()['n']==0
             assert conn.execute('SELECT verified_at FROM otp_challenges WHERE id=%s',(sent['challenge_id'],)).fetchone()['verified_at'] is None
 
-    @pytest.mark.parametrize('neighborhood',['','   ','...','\u200b\u200f','\x00الحزم'])
+    @pytest.mark.parametrize('neighborhood',['\x00الحزم'])
     @pytest.mark.parametrize('identity',['guest','email_verified'])
-    def test_delivery_quote_and_checkout_require_meaningful_neighborhood(self,client,neighborhood,identity):
+    def test_delivery_quote_and_checkout_reject_nul_neighborhood(self,client,neighborhood,identity):
         _prepare_catalog()
         if identity=='guest':
             _guest(client)
@@ -465,17 +465,18 @@ class TestV5Identity:
         result=_create(client,body,key='non-delivery-no-district')
         assert result.status_code==200,result.text
 
-    def test_delivery_keeps_trimmed_neighborhood_in_durable_order(self,client):
+    @pytest.mark.parametrize('neighborhood',['','   ','...','\u200b\u200f','  حي الحزم  '])
+    def test_delivery_keeps_optional_trimmed_neighborhood_in_durable_order(self,client,neighborhood):
         _prepare_catalog()
         manager=_make_user('delivery_manager',branches=['kps-branch-1'])
         with db.tx() as conn:
             conn.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager',%s,'kps',%s)",(db.new_id('shift_'),manager['id'],db.json(['kps-branch-1'])))
         _guest(client)
         body=_body('delivery')
-        body['customer']['neighborhood']='  حي الحزم  '
+        body['customer']['neighborhood']=neighborhood
         result=_create(client,body,key='district-snapshot')
         assert result.status_code==200,result.text
         order=result.json()['order']
-        assert order['customer']['neighborhood']=='حي الحزم'
+        assert order['customer']['neighborhood']==neighborhood.strip()
         db.migrate()
         assert client.get('/api/orders/'+order['id']).json()['order']['customer']['neighborhood']=='حي الحزم'
