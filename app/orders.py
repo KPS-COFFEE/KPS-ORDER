@@ -511,12 +511,17 @@ def customer_lookup(phone: str=Query(min_length=8,max_length=30),branch_id: str=
 
 class DeliveryLocationChange(catalog._CheckoutModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
-    address: str=Field(min_length=1,max_length=500)
-    neighborhood: str=Field(min_length=2,max_length=120)
+    address: str=Field(default='',max_length=500)
+    neighborhood: str=Field(default='',max_length=120)
     location: catalog.Location
     expected_location: catalog.Location
     reason: str=Field(min_length=3,max_length=500)
     whatsapp_reference: str|None=Field(default=None,max_length=300)
+
+    @field_validator('address','neighborhood',mode='before')
+    @classmethod
+    def optional_address_text(cls,value):
+        return '' if value is None else value
 
 
 def apply_delivery_location_revision(conn,row,customer,user,body):
@@ -774,4 +779,5 @@ def operational_confirmation(order_id:str,body:ContactConfirmationBody,
             return {'order_id':order_id,'result':body.result,'phone_verified':bool(order['customer'].get('phone_verified')),
                     'operational_confirmation_only':True}
         return db.idempotent(conn,user['id'],idempotency_key,'order.operational_confirmation:'+order_id,body.model_dump(),perform)
+
 

@@ -5,11 +5,15 @@ concurrency:
   group: application-rollback-${{ github.ref }}
   cancel-in-progress: true
 on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   push:
-    branches: [agent/kps-order-security-closure-20261018, agent/print-alert-actions-20261019, agent/enbishan-manual-closure-20261019, agent/ops-actionable-alerts-20261020, agent/staff-operations-room-20261020, agent/customer-journey-stage-policy-20261020, agent/customer-open-menu-map-20261021, agent/dispatch-personal-layout-20261021, agent/owner-accountant-shift-permissions-20261021]
+    branches: [agent/kps-order-security-closure-20261018, agent/print-alert-actions-20261019, agent/enbishan-manual-closure-20261019, agent/ops-actionable-alerts-20261020, agent/staff-operations-room-20261020, agent/customer-journey-stage-policy-20261020, agent/customer-open-menu-map-20261021, agent/dispatch-personal-layout-20261021, agent/owner-accountant-shift-permissions-20261021, agent/optional-customer-address-20261021]
 jobs:
   prior-application:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/optional-customer-address-20261021'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:

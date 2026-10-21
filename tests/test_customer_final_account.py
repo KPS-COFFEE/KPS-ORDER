@@ -30,7 +30,7 @@ def test_address_create_edit_replay_delete_and_other_customer(required,monkeypat
     assert required.get('/api/customer/profile').json()['addresses']==[]
     assert required.patch('/api/customer/addresses/'+identifier,json=changed,headers={'Idempotency-Key':'test-address-edit'}).status_code==404
 
-@pytest.mark.parametrize('changes',[{'label':'  '},{'address':'  '},{'lat':True},{'lat':91},{'lng':181},{'lat':None},{'customer_id':'someone-else'},{'brand_id':'other'}])
+@pytest.mark.parametrize('changes',[{'label':'  '},{'lat':True},{'lat':91},{'lng':181},{'lat':None},{'customer_id':'someone-else'},{'brand_id':'other'}])
 def test_address_strict_input(required,monkeypatch,changes):
     verify(required,monkeypatch)
     assert required.post('/api/customer/addresses',json={**ADDRESS,**changes},headers={'Idempotency-Key':'test-address-invalid'}).status_code==422
@@ -84,3 +84,12 @@ def test_refunds_public_without_identity_and_no_invented_entity(required,languag
     assert r.status_code==200 and title in r.text
     assert 'checkbox' not in r.text and '312720875900003' not in r.text
     assert 'Cache-Control' in r.headers
+
+@pytest.mark.parametrize('text',['', '  '])
+def test_address_text_is_optional_with_a_confirmed_pin(required,monkeypatch,text):
+    verify(required,monkeypatch)
+    r=required.post('/api/customer/addresses',json={**ADDRESS,'address':text,'neighborhood':text},headers={'Idempotency-Key':'test-address-optional'})
+    assert r.status_code==200,r.text
+    saved=r.json()['address']
+    assert saved['address']==saved['neighborhood']==''
+    assert saved['lat']==ADDRESS['lat'] and saved['lng']==ADDRESS['lng']
