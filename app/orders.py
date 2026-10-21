@@ -345,10 +345,15 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             if dispatch_scope == 'current':
                 conditions.append(predicate); params.extend(workspace_params)
             if dispatch_stage:
-                if dispatch_stage not in {'new','preparing','assigned','driver_accepted','road','delivered','cancelled','attention'}:
+                if dispatch_stage not in {'active','new','preparing','assigned','driver_accepted','road','delivered','cancelled','attention'}:
                     raise db.error(422, 'DISPATCH_STAGE_INVALID', 'حالة الطلب غير صحيحة.')
-                conditions.append('('+manager_workday.STAGE_SQL+')=%s'); params.append(dispatch_stage)
+                if dispatch_stage == 'active':
+                    conditions.append('('+manager_workday.STAGE_SQL+") NOT IN ('delivered','cancelled')")
+                else:
+                    conditions.append('('+manager_workday.STAGE_SQL+')=%s'); params.append(dispatch_stage)
             ordering = "CASE WHEN ("+manager_workday.STAGE_SQL+") IN ('delivered','cancelled') THEN 1 ELSE 0 END,o.created_at DESC,o.order_no DESC"
+            if dispatch_stage == 'delivered':
+                ordering = 'COALESCE(o.completed_at,o.created_at) DESC,o.order_no DESC'
             period=start=end=None
         if manager_view:
             if user['role']!='delivery_manager' or manager_view not in ('current','history'):

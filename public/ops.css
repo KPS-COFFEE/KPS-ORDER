@@ -625,3 +625,12 @@ body.delivery-room{background:#f5f5f3}
   .delivery-room .dispatch-count-row>strong{flex-basis:78px;font-size:11px}
   .delivery-room .dispatch-count-row .dispatch-stage{min-height:38px}
 }
+
+body.tracking-tv .topbar,body.tracking-tv .status-line,body.tracking-tv .side,body.tracking-tv #page-heading,body.tracking-tv #driver-checks{display:none}
+body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.tracking-tv main{padding:10px}
+.tracking-screen{height:calc(100dvh - 20px);display:flex;flex-direction:column;gap:8px;background:var(--bg,#f8faf9);min-height:480px}.tracking-screen:fullscreen{height:100dvh;padding:12px;overflow:auto}
+.tracking-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.tracking-toolbar h1{margin-inline-end:auto;font-size:24px}.tracking-toolbar label{font-size:12px}.tracking-toolbar select{min-width:150px}.tracking-rotate{display:flex;flex-direction:row;align-items:center}.tracking-metrics{display:flex;gap:8px}.tracking-metrics button[aria-pressed=true]{outline:2px solid var(--ink)}.tracking-status{font-size:12px;min-height:20px}
+.tracking-body{display:grid;grid-template-columns:minmax(0,3fr) minmax(280px,1fr);gap:12px;flex:1;min-height:0}.tracking-map{min-width:0;min-height:0;overflow:auto}.tracking-map .dispatch-map-canvas{flex:1;height:auto;min-height:280px}.tracking-orders{overflow:auto;padding:12px;border:1px solid var(--line);border-radius:12px;background:white}.tracking-order{display:grid;grid-template-columns:1fr auto;gap:5px;padding:12px 0;border-bottom:1px solid var(--line)}.tracking-order time{font-size:12px;grid-column:1/-1}.tracking-order strong{overflow-wrap:anywhere}
+@media(max-width:760px){.tracking-screen{height:auto;min-height:100dvh}.tracking-body{grid-template-columns:1fr}.tracking-map .dispatch-map-canvas{height:50vh;min-height:300px}.tracking-orders{max-height:55vh}.tracking-toolbar h1{width:100%}.tracking-toolbar{gap:6px}}
+
+.tracking-driver{padding:10px 0;border-bottom:1px solid var(--line);display:flex;gap:5px 8px;flex-wrap:wrap;align-items:center}.tracking-driver p{flex-basis:100%;font-size:12px}.tracking-drivers{margin-bottom:16px}

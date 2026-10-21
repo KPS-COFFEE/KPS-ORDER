@@ -29,6 +29,11 @@ def test_workspace_counts_are_not_page_length_and_keep_overnight_work(ops):
     assert current['workspace_counts']['current']['total'] == 103
     all_done = actor('manager').get('/api/orders?dispatch_workspace=true&dispatch_scope=all&dispatch_stage=delivered').json()
     assert [r['id'] for r in all_done['orders']] == [old]
+    active = actor('manager').get('/api/orders?dispatch_workspace=true&dispatch_scope=all&dispatch_stage=active&limit=100').json()
+    assert len(active['orders']) == 100
+    assert old not in {r['id'] for r in active['orders']}
+    assert active['workspace_counts']['all']['delivered'] == 1
+    assert active['next_offset'] is not None
     own = actor('owner').get('/api/orders?dispatch_workspace=true').json()
     assert own['workspace_counts']['current']['total'] == 103
     empty = actor('manager').get('/api/orders?dispatch_workspace=true&dispatch_city=missing').json()

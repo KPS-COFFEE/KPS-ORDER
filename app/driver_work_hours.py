@@ -83,6 +83,69 @@ def order_activity(shifts, tasks, breaks, lo, hi, now, stops=()):
             'missing_order_timing_count': len(missing)}
 
 
+def completed_order_evidence(tasks, lo, hi, now):
+    """Evidence only: intent is not arrival, and no promise means no lateness score."""
+    orders = {}
+    for task in sorted(tasks, key=lambda t: t.get('delivered_at') or lo):
+        delivered, pickup = task.get('delivered_at'), task.get('picked_up_at')
+        if task.get('status') != 'delivered' or delivered is None or not lo <= delivered < hi or delivered > now:
+            continue
+        valid = pickup is not None and pickup <= delivered
+        returned = task.get('returned_at')
+        if returned is not None and (returned < delivered or returned > now):
+            returned = None
+        destination = task.get('next_destination')
+        orders[task['order_id']] = {
+            'order_id': task['order_id'], 'picked_up_at': pickup, 'delivered_at': delivered,
+            'delivery_seconds': (delivered-pickup).total_seconds() if valid else None,
+            'trip_id': task.get('trip_id'), 'departed_at': task.get('departed_at'),
+            'returned_at': returned, 'return_branch_id': task.get('return_branch_id') if returned else None,
+            'next_destination': destination,
+            'timing_evidence': 'recorded' if valid else 'missing_or_invalid_pickup',
+        }
+    rows = list(orders.values())
+    timed = sum(row['delivery_seconds'] is not None for row in rows)
+    return {'completed_orders': rows, 'performance': {
+        'completed_order_count': len(rows), 'timed_order_count': timed,
+        'missing_pickup_count': len(rows)-timed,
+        'punctuality_available': False,
+        'punctuality_unavailable_reason': 'no_recorded_delivery_promise',
+        'on_time_count': None, 'late_count': None,
+        'gps_gaps_affect_performance': False,
+    }}
+
+
+def report_completed_orders(c, user, driver_id, shift_ids, allowed, lo, hi, now):
+    # Explicit brand/branch/driver/shift predicates also defend inconsistent old rows.
+    rows = c.execute("""
+        SELECT t.order_id,t.status,t.picked_up_at,t.delivered_at,
+               w.id trip_id,w.departed_at,w.returned_at,w.return_branch_id,
+               CASE WHEN d.created_at IS NOT NULL THEN
+                 jsonb_build_object('kind',d.details->>'kind','branch_id',d.details->>'branch_id',
+                   'declared_at',d.created_at,'source','driver_declared_intent') END next_destination
+        FROM driver_tasks t JOIN orders o ON o.id=t.order_id
+        LEFT JOIN LATERAL (
+          SELECT w.* FROM driver_work_trips w JOIN driver_work_trip_orders x ON x.trip_id=w.id
+          WHERE x.order_id=t.order_id AND w.shift_id=t.shift_id AND w.driver_id=t.driver_id
+            AND w.brand_id=o.brand_id ORDER BY w.departed_at DESC LIMIT 1
+        ) w ON true
+        LEFT JOIN LATERAL (
+          SELECT a.created_at,a.details FROM audit_events a
+          WHERE a.entity_type='shift' AND a.entity_id=t.shift_id AND a.actor_id=t.driver_id
+            AND a.action='driver.next_destination' AND a.created_at>=t.delivered_at AND a.created_at<=%s
+            AND (a.details->>'kind'='external_enbishan' OR
+                 (a.details->>'kind'='branch' AND a.details->>'branch_id'=ANY(%s)))
+            AND NOT EXISTS(SELECT 1 FROM driver_tasks newer WHERE newer.shift_id=t.shift_id
+              AND newer.driver_id=t.driver_id AND newer.created_at>t.delivered_at AND newer.created_at<=a.created_at)
+          ORDER BY a.created_at,a.id LIMIT 1
+        ) d ON true
+        WHERE t.shift_id=ANY(%s) AND t.driver_id=%s AND o.brand_id=%s AND o.branch_id=ANY(%s)
+          AND t.status='delivered' AND t.delivered_at>=%s AND t.delivered_at<%s
+        ORDER BY t.delivered_at,t.id
+    """, (now,list(allowed),shift_ids,driver_id,user['brand_id'],list(allowed),lo,hi)).fetchall()
+    return completed_order_evidence(rows,lo,hi,now)
+
+
 class Movement(BaseModel):
     model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
     branch_id: str = Field(min_length=1,max_length=100)
@@ -226,6 +289,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
         count=c.execute("SELECT count(DISTINCT order_id) n,avg(extract(epoch FROM(delivered_at-picked_up_at))) FILTER(WHERE delivered_at>=picked_up_at) average FROM driver_tasks WHERE shift_id=ANY(%s) AND status='delivered' AND delivered_at>=%s AND delivered_at<%s",(sids,lo,hi)).fetchone()
         activity_tasks=c.execute("SELECT order_id,status,picked_up_at,delivered_at FROM driver_tasks WHERE shift_id=ANY(%s) AND driver_id=%s AND (delivered_at>=%s OR (status IN ('picked_up','problem') AND picked_up_at<%s))",(sids,p['id'],lo,hi)).fetchall()
         activity=order_activity(ss,activity_tasks,[(b['started_at'],b['ended_at'] or now) for b in bs],lo,hi,now,stops)
+        evidence=report_completed_orders(c,user,p['id'],sids,allowed,lo,hi,now)
         confirmed=[t for t in ts if t['returned_at']]
         for t in ts:
             t['status']='returned' if t['returned_at'] else 'awaiting_return'
@@ -235,7 +299,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
                         'trip_count':len(confirmed),'pending_trip_count':len(ts)-len(confirmed),'order_count':count['n'],
                         'average_trip_seconds':sum(t['duration_seconds'] for t in confirmed)/len(confirmed) if confirmed else None,
                         'average_order_delivery_seconds':float(count['average']) if count['average'] is not None else None,
-                        'missing_trip_evidence':bool(missing_ids),'trips':ts})
+                        'missing_trip_evidence':bool(missing_ids),'trips':ts,**evidence})
     keys=('shift_seconds','actual_seconds','delivery_seconds','waiting_seconds','break_seconds','other_work_seconds','unclassified_seconds','trip_count','pending_trip_count','order_count','order_activity_seconds','active_delivery_seconds','remaining_shift_seconds','missing_order_timing_count')
     totals={key:sum(d[key] for d in drivers) for key in keys}
     totals['order_utilization_percent']=round(totals['order_activity_seconds']/totals['shift_seconds']*100,2) if totals['shift_seconds'] else 0
