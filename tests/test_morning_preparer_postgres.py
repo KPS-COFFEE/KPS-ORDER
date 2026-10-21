@@ -8,7 +8,7 @@ pytestmark = pytest.mark.postgres
 
 
 def configure(order, *, period='morning', branch='kps-branch-2', devices=1, approved=True):
-    oid = order('delivery')
+    oid = 'morning-preparer-' + uuid4().hex
     with db.tx() as c:
         policy = {'enabled':True,'version':1,'execution_branch_ids':[branch],
                   'preparer_user_ids':['ops-branch'],'manager_user_ids':['ops-manager']}
@@ -17,8 +17,9 @@ def configure(order, *, period='morning', branch='kps-branch-2', devices=1, appr
                   if 'branch_manager' in roles and code not in {'orders_view','orders_prepare'}]
         c.execute("UPDATE users SET branch_ids=%s,permission_denials=%s WHERE id='ops-branch'",
                   (db.json([branch]),db.json(denied)))
-        c.execute("UPDATE orders SET branch_id=%s,preparation_status='new',snapshot=snapshot||%s WHERE id=%s",
-                  (branch,db.json({'delivery_period':period}),oid))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) "
+                  "VALUES(%s,'kps',%s,'ops-customer','delivery','new','pending','cash',1000,0,1000,%s,'{}')",
+                  (oid,branch,db.json({'items':[],'delivery_period':period})))
         for index in range(devices):
             c.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,token_hash,created_by,approved_at) "
                       "VALUES(%s,'kps',%s,'isolated printer',%s,'ops-owner',CASE WHEN %s THEN now() END)",
