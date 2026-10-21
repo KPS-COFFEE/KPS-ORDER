@@ -94,6 +94,8 @@ def public_user(user: dict, conn=None) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials', 'extra_permissions')}
     output['employee_sms_email_retired'] = staff_email_retired(user.get('brand_id','kps'), conn=conn)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
+    if user.get('_morning_manager_context'):
+        output['delivery_context'] = user['_morning_manager_context']
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')) | employee_permissions.grantable(user.get('role')))
     output['base_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
     output['grantable_permissions'] = sorted(employee_permissions.grantable(user.get('role')))
@@ -181,6 +183,9 @@ def _find_session(conn, request: Request):
 def current_user(request: Request) -> dict:
     with db.tx(pipeline=True) as conn:
         user = _find_session(conn, request)
+        if user:
+            from .morning_manager_context import apply as delivery_context
+            user = delivery_context(conn, user, request)
     if not user:
         raise db.error(401, 'AUTHENTICATION_REQUIRED', 'سجّل الدخول للوصول إلى هذه البيانات.')
     if request.method not in {'GET', 'HEAD', 'OPTIONS'}:
@@ -214,6 +219,9 @@ def customer_ids(user):
 
 
 def can_access_order(user: dict, order: dict, conn) -> bool:
+    from .morning_manager_context import order_allowed
+    if not order_allowed(user, order, conn):
+        return False
     if not user.get('active', True) or user['brand_id'] != order['brand_id']:
         return False
     role = user['role']
@@ -272,6 +280,9 @@ def session(request: Request, response: Response):
     response.headers['Cache-Control'] = 'no-store'
     with db.tx() as conn:
         user = _find_session(conn, request)
+        if user:
+            from .morning_manager_context import apply as delivery_context
+            user = delivery_context(conn, user, request, session=True)
     if not user:
         context=session_context(request) if context_cookies_enabled() else None
         if context:
