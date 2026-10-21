@@ -35,6 +35,7 @@ window.KPSDispatchLayout = (() => {
     const trigger=document.createElement('summary');trigger.textContent=t('تخصيص الشاشة','Customize screen');settings.append(trigger);
     const editor=document.createElement('div');editor.className='dispatch-layout-editor';settings.append(editor);
     controls.append(summary,map,settings);workspace.querySelector('#dispatch-counts').before(controls);
+    const sources=root.querySelector('#dispatch-source-counts');if(sources)controls.prepend(sources);
     const panels=Object.fromEntries(Object.entries(selectors).map(([k,s])=>[k,root.querySelector(s)]));
     panels.map.id='dispatch-personal-map';
     const contents={orders:root.querySelector('#dispatch-orders'),map:root.querySelector('#dispatch-map'),drivers:root.querySelector('#dispatch-drivers'),messages:root.querySelector('#dispatch-panel-messages .conversation-list')};
