@@ -20,6 +20,49 @@ def _open_staff_navigation(page):
         expect(toggle).to_have_attribute('aria-expanded', 'true')
     expect(page.locator('#navigation')).to_be_visible()
 
+
+@pytest.mark.parametrize('lang', ['ar', 'en'])
+def test_owner_can_select_accountant_shift_grants_and_read_only_has_no_write_controls(live_app, chromium_browser, lang):
+    from playwright.sync_api import expect
+    from app import employee_permissions as policy
+    owner, target, manager = _staff(), _staff('admin'), _staff('delivery_manager')
+    with db.tx() as conn:
+        conn.execute("UPDATE users SET extra_permissions='[\"shifts_view\"]' WHERE id=%s", (target['id'],))
+        conn.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES('accountant-browser-shift','manager',%s,'kps','[\"kps-branch-1\"]')", (manager['id'],))
+    context, page, errors = _context(chromium_browser, live_app)
+    owner_context, owner_page, owner_errors = _context(chromium_browser, live_app)
+    try:
+        _owner_login(owner_context, live_app, owner)
+        owner_page.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
+        owner_page.goto(live_app + '/ops', wait_until='networkidle')
+        _open_staff_navigation(owner_page)
+        owner_page.locator('#navigation [data-page=admin]').click()
+        owner_page.locator('[data-action=admin-tab][data-tab=users]').click()
+        owner_page.locator(f'[data-action=staff-permissions][data-id="{target["id"]}"]').click()
+        picker = owner_page.locator('#modal .employee-permission-picker')
+        picker.locator('details').filter(has=owner_page.locator('input[name="permission:shifts_view"]')).locator('summary').click()
+        for code in policy.SHIFT_DELEGATIONS:
+            expect(picker.locator(f'input[name="permission:{code}"]')).to_be_enabled()
+        expect(picker.locator('input[name="permission:shifts_view"]')).to_be_checked()
+        _owner_login(context, live_app, target)
+        page.add_init_script(f"localStorage.setItem('kps_ops_lang','{lang}')")
+        page.goto(live_app + '/ops', wait_until='networkidle')
+        _open_staff_navigation(page)
+        expect(page.locator('#navigation [data-page=shifts]')).to_be_visible()
+        page.locator('#navigation [data-page=shifts]').click()
+        expect(page.locator('[data-action=shift-detail]')).to_be_visible()
+        expect(page.locator('[data-action=open-shift]')).not_to_be_visible()
+        expect(page.locator('[data-action=start-closing]')).not_to_be_visible()
+        expect(page.locator('[data-action=handover-manager]')).not_to_be_visible()
+        page.locator('[data-action=shift-detail]').click()
+        expect(page.locator('#modal')).to_be_visible()
+        expect(page.locator('#closure-form')).to_have_count(0)
+        expect(page.locator('[data-action=approve-shift]')).to_have_count(0)
+        expect(page.locator('[data-action=return-shift]')).to_have_count(0)
+        assert not errors and not owner_errors, (errors, owner_errors)
+    finally:
+        context.close(); owner_context.close()
+
 @pytest.mark.parametrize(('lang','width'),[('ar',390),('ar',768),('ar',1280),('en',390),('en',768),('en',1280)])
 def test_employee_permission_switches_are_named_saved_and_visible(live_app,chromium_browser,lang,width):
     from playwright.sync_api import expect

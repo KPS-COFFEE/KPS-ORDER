@@ -18,7 +18,8 @@ def test_grants_are_explicit_allowlisted_and_never_change_the_role():
     assert not policy.grantable('driver') & {'refunds_manage','shifts_approve','accounting_review','payments_collect'}
     catalog={p['code']:p for p in policy.catalog()}
     assert 'driver' in catalog['branch_printers_manage']['delegable_roles']
-    assert catalog['shifts_approve']['delegation_status']=='role_policy_required'
+    assert catalog['shifts_approve']['delegation_status']=='scoped'
+    assert catalog['shifts_approve']['delegable_roles']==['admin']
     assert not catalog['accounting_review']['delegable_roles']
     assert '/api/printing/migration-status' in catalog['branch_printers_manage']['api_contract']['paths']
     from app.branch_printing import migration_status

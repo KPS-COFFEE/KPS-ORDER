@@ -83,6 +83,12 @@ EXTRA_GRANT_ROLES = {
     'driver_hours_reports': {'driver', 'branch_manager', 'delivery_staff', 'admin'},
 }
 
+# Accounting staff use the existing admin role. These are separate, explicit
+# owner grants; neither accounting access nor a read grant implies a mutation.
+SHIFT_DELEGATIONS = {'shifts_view', 'shifts_open', 'shifts_close',
+                     'shifts_approve', 'shifts_delegate_close', 'shifts_handover'}
+EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
+
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
@@ -92,6 +98,14 @@ EXTRA_API_CONTRACTS = {
     'branch_availability': {'methods':['POST'], 'paths':['/api/branches/{branch_id}/products/{product_id}/availability'], 'scope':'current_brand_and_assigned_branches_stock_only'},
     'branch_printers_manage': {'methods':['GET','POST'], 'paths':['/api/printing/devices','/api/printing/setup','/api/printing/devices/{identifier}/revoke','/api/printing/devices/{identifier}/test','/api/printing/devices/{identifier}/approve','/api/printing/jobs','/api/printing/windows-bridge.zip','/api/printing/migration-status'], 'scope':'current_brand_and_assigned_branches_printer_management_only'},
 }
+EXTRA_API_CONTRACTS.update({
+    'shifts_view': {'methods': ['GET'], 'paths': ['/api/shifts', '/api/shifts/current', '/api/shifts/{sid}', '/api/shifts/{sid}/draft', '/api/manager-handovers'], 'scope': 'current_brand_and_all_shift_branches_read_only'},
+    'shifts_open': {'methods': ['POST'], 'paths': ['/api/shifts'], 'scope': 'open_for_existing_eligible_staff_in_assigned_branches_no_opening_cash_override'},
+    'shifts_close': {'methods': ['POST'], 'paths': ['/api/shifts/{sid}/closing', '/api/shifts/{sid}/submit'], 'scope': 'scoped_manager_closure_no_receipt_or_approval_override'},
+    'shifts_approve': {'methods': ['POST'], 'paths': ['/api/shifts/{sid}/approve', '/api/shifts/{sid}/return'], 'scope': 'all_shift_branches_existing_receipt_and_financial_guards'},
+    'shifts_delegate_close': {'methods': ['POST'], 'paths': ['/api/shifts/{sid}/closing', '/api/shifts/{sid}/submit'], 'scope': 'scoped_driver_submission_with_reason_no_receipt_or_approval_override'},
+    'shifts_handover': {'methods': ['POST'], 'paths': ['/api/shifts/{sid}/handover-manager'], 'scope': 'scoped_manager_handover_request_actual_recipient_must_accept'},
+})
 
 
 def grantable(role):
@@ -140,7 +154,7 @@ ROUTES = {
     'operations': {
         'dashboard': 'dashboard_view', 'operational_alerts': 'operational_alerts',
         'open_shift': 'shifts_open', 'shifts': 'shifts_view', 'shift_detail': 'shifts_view', 'save_external_enbishan': 'shifts_delegate_close',
-        'people': ('custody_view', 'drivers_view', 'delivery_assign', 'shifts_close'), 'driver_roster': 'drivers_view',
+        'people': ('custody_view', 'drivers_view', 'delivery_assign', 'shifts_view', 'shifts_open', 'shifts_close', 'shifts_delegate_close', 'shifts_handover'), 'driver_roster': 'drivers_view',
         'refuel_shift': 'vehicle_refuel', 'request_close': 'shifts_close',
         'submit_close': 'shifts_close', 'return_close': 'shifts_approve', 'approve_close': 'shifts_approve',
         'assign': 'delivery_assign', 'tasks': 'tasks_view', 'task_transition': 'tasks_update', 'resolve_delivery': 'tasks_resolve_delivery',
@@ -196,5 +210,7 @@ def required_for(endpoint, role):
     if role in {'owner', 'customer'} or endpoint is None:
         return None
     module = endpoint.__module__.rsplit('.', 1)[-1]
+    if role == 'admin' and module == 'operations' and endpoint.__name__ in ('request_close', 'submit_close'):
+        return ('shifts_close', 'shifts_delegate_close')
     value = ROUTES.get(module, {}).get(endpoint.__name__)
     return value.get(role) if isinstance(value, dict) else value

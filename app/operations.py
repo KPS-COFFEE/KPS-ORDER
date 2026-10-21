@@ -55,10 +55,21 @@ def same_scope(user, row):
 def order_access(c, user, order):
     if not order or not auth.can_access_order(user, order, c): fail(404, 'الطلب غير موجود')
 
-def shift_access(c, user, shift, manager=False):
+def delegated_shift(user, capability):
+    """An explicit accounting grant, never an alternate employee role."""
+    return user['role']=='admin' and auth.has_permission(user, capability)
+
+def shift_roles(user, capability, *allowed):
+    if not delegated_shift(user, capability):roles(user, *allowed)
+
+def close_capability(shift):
+    return 'shifts_delegate_close' if shift and shift['kind']=='driver' else 'shifts_close'
+
+def shift_access(c, user, shift, manager=False, capability=None):
     if not shift or not same_scope(user, shift): fail(404, 'الشفت غير موجود')
     if user['role']=='owner': return
     if not set(shift['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'تم سحب صلاحية أحد فروع الشفت')
+    if capability and delegated_shift(user, capability) and shift['branch_ids']: return
     if shift['user_id']==user['id'] and not manager: return
     if user['role']=='delivery_manager':
         parent = c.execute('SELECT user_id FROM shifts WHERE id=%s', (shift.get('manager_shift_id'),)).fetchone()
@@ -168,7 +179,13 @@ def authorize_replay(c,user,operation,body,result):
         history_result_access(c,user,oid)
     sid=result.get('shift_id') or (result.get('shift') or {}).get('id')
     if operation.startswith('cash.event:'):sid=operation.split(':',1)[1]
-    if sid:shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone())
+    if sid:
+        shift=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()
+        capability = ('shifts_open' if operation=='shift.open' else
+                      'shifts_approve' if operation.startswith(('shift.approve:', 'shift.return:')) else
+                      'shifts_handover' if operation.startswith('manager.handover:') else
+                      close_capability(shift) if operation.startswith(('shift.closing:', 'shift.submit:')) else None)
+        shift_access(c,user,shift,capability=capability)
     task=(result.get('task') or {}).get('id') or result.get('task_id')
     if task:
         t=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(task,)).fetchone()
@@ -272,7 +289,7 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
 
 @router.post('/shifts')
 def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager','driver')
+    shift_roles(user,'shifts_open','owner','delivery_manager','driver')
     if user['role']=='driver' and body.branch_ids and set(body.branch_ids)!=set(user.get('branch_ids',[])):
         fail(403,'فروع السائق يحددها مدير التوصيل؛ لا يمكن تغيير نطاق الشفت')
     with db.tx() as c:
@@ -280,7 +297,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
             if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')
             if target['id']!=user['id']:
-                roles(user,'owner','delivery_manager')
+                shift_roles(user,'shifts_open','owner','delivery_manager')
                 if user['role']=='delivery_manager' and (target['role']!='driver' or body.kind!='driver'):fail(403,'المدير يفتح شفتات السائقين التابعين فقط')
             if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
             if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
@@ -356,9 +373,9 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
            owner_view: Literal['current','review','history'] | None = None,
            search: str = '', start: date | None = None, end: date | None = None,
            offset: int = Query(0, ge=0)):
-    roles(user,'owner','delivery_manager','driver','delivery_staff')
+    shift_roles(user,'shifts_view','owner','delivery_manager','driver','delivery_staff')
     if owner_view:
-        roles(user,'owner')
+        shift_roles(user,'shifts_view','owner')
         if order_id or task_id:fail(422,'لا يمكن الجمع بين عرض الشفتات واختيار سائق')
         if start and end and start>end:fail(422,'تاريخ البداية بعد النهاية')
     with db.tx() as c:
@@ -368,6 +385,9 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             # behind hundreds of newer historical records. Never change state.
             statuses={'current':['open'],'review':['closing','submitted'],'history':['closed']}[owner_view]
             where=['s.brand_id=%s','s.status=ANY(%s)'];params=[user['brand_id'],statuses]
+            if user['role']!='owner':
+                where.extend(["s.branch_ids <> '[]'::jsonb", 's.branch_ids <@ %s::jsonb'])
+                params.append(db.json(user.get('branch_ids',[])))
             if search.strip():
                 where.append('(strpos(lower(u.display_name),lower(%s))>0 OR strpos(lower(s.id),lower(%s))>0)')
                 params.extend([search.strip(),search.strip()])
@@ -379,6 +399,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             rows=c.execute('SELECT s.*,u.display_name'+source+' ORDER BY s.opened_at DESC,s.id LIMIT 50 OFFSET %s',params+[offset]).fetchall()
             page_meta={'total':total,'offset':offset,'next_offset':offset+50 if offset+50<total else None}
         elif user['role']=='owner': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
+        elif user['role']=='admin': rows=c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.branch_ids <> '[]'::jsonb AND s.branch_ids <@ %s::jsonb ORDER BY opened_at DESC LIMIT 200",(user['brand_id'],db.json(user.get('branch_ids',[])))).fetchall()
         elif user['role']=='delivery_manager': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s OR s.manager_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY opened_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
         elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
         else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
@@ -426,7 +447,8 @@ def people_data(c,user):
 
 @router.get('/operations/people')
 def people(user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager','delivery_staff','driver')
+    if not any(delegated_shift(user, cap) for cap in ('shifts_view','shifts_open','shifts_close','shifts_delegate_close','shifts_handover')):
+        roles(user,'owner','delivery_manager','delivery_staff','driver')
     with db.tx() as c:
         data=people_data(c,user);return safe({'users':data['authorized_receivers'],**data})
 
@@ -486,7 +508,7 @@ def save_external_enbishan(sid:str, body:ExternalEnbishan, request:Request, user
 @router.get('/shifts/{sid}')
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
-        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s)
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s,capability='shifts_view')
         task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
@@ -522,7 +544,7 @@ def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(
 def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
-            s=lock_shift(c,sid); shift_access(c,user,s)
+            s=lock_shift(c,sid); shift_access(c,user,s,capability=close_capability(s))
             guard_accepted_awaiting_dispatch(c,s)
             from .driver_work_hours import guard_shift_completion
             guard_shift_completion(c,s)
@@ -552,7 +574,7 @@ class ClosureSubmit(OperationBody):
     retained_halalas: StrictInt=Field(0,ge=0,le=MAX_HALALAS)
 
 def submit_close_in_tx(c,user,sid,body):
-    s=lock_shift(c,sid); shift_access(c,user,s)
+    s=lock_shift(c,sid); shift_access(c,user,s,capability=close_capability(s))
     guard_accepted_awaiting_dispatch(c,s)
     from .driver_work_hours import guard_shift_completion
     guard_shift_completion(c,s)
@@ -564,8 +586,10 @@ def submit_close_in_tx(c,user,sid,body):
     if body.counted_halalas!=body.handover_halalas+body.retained_halalas: fail(422,'المعدود يجب أن يساوي التسليم مع المحتفظ به')
     delegated=s['kind']=='driver' and s['user_id']!=user['id']
     if delegated:
-        roles(user,'owner','delivery_manager')
+        shift_roles(user,'shifts_delegate_close','owner','delivery_manager')
         if not body.exception_reason.strip():fail(422,'اكتب سبب إقفال الشفت نيابة عن السائق؛ سيظهر للمالك')
+    elif user['role']=='admin':
+        if not body.exception_reason.strip():fail(422,'سجل سبب إرسال التقفيلة بالنيابة')
     elif body.exception_reason.strip():fail(403,'الإقفال الاستثنائي لمدير التوصيل فقط')
     if s['kind']=='driver':
         if body.terminal_total_halalas is None:fail(422,'أدخل مبلغ موازنة جهاز الشبكة الفعلي، أو صفر إذا لم توجد عمليات')
@@ -583,7 +607,7 @@ def submit_close_in_tx(c,user,sid,body):
     if delegated:values['delegated_closure']={'by':user['id'],'reason':body.exception_reason.strip()}
     c.execute("UPDATE shifts SET status='submitted',submission=%s,submitted_at=now() WHERE id=%s",(db.json(values),sid))
     if body.handover:
-        create_custody(c,user,Custody(from_shift_id=sid,amount_halalas=body.handover_halalas,closure=True,**body.handover.model_dump()))
+        create_custody(c,user,Custody(from_shift_id=sid,amount_halalas=body.handover_halalas,closure=True,**body.handover.model_dump()),capability=close_capability(s))
     db.audit(c,user['id'],'shift.submit','shift',sid,values)
     return {'shift_id':sid,'status':'submitted','submission':values}
 
@@ -599,10 +623,10 @@ class Review(OperationBody):
 
 @router.post('/shifts/{sid}/return')
 def return_close(sid:str,body:Review,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager')
+    shift_roles(user,'shifts_approve','owner','delivery_manager')
     with db.tx() as c:
         def perform():
-            s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
+            s=lock_shift(c,sid);shift_access(c,user,s,manager=True,capability='shifts_approve')
             if s['status']!='submitted' or not body.reason.strip(): fail(422,'تحتاج تقفيلة مرسلة وسبب تصحيح')
             if c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchone(): fail(409,'تم تأكيد التسليم النهائي؛ يلزم قيد تصحيح مرتبط')
             c.execute("UPDATE custody_transfers SET status='rejected' WHERE from_shift_id=%s AND closure AND status='pending'",(sid,))
@@ -614,8 +638,8 @@ def return_close(sid:str,body:Review,request:Request,user=Depends(auth.current_u
 def approve_close_in_tx(c,user,sid,body):
     s=lock_shift(c,sid)
     own_manager=bool(s and s['kind']=='manager' and s['user_id']==user['id'] and user['role']=='delivery_manager')
-    shift_access(c,user,s,manager=not own_manager)
-    if s['kind']=='manager' and not own_manager:roles(user,'owner')
+    shift_access(c,user,s,manager=not own_manager,capability='shifts_approve')
+    if s['kind']=='manager' and not own_manager:shift_roles(user,'shifts_approve','owner')
     guard_accepted_awaiting_dispatch(c,s)
     from .driver_work_hours import guard_shift_completion
     guard_shift_completion(c,s)
@@ -649,7 +673,7 @@ def approve_close_in_tx(c,user,sid,body):
 
 @router.post('/shifts/{sid}/approve')
 def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager')
+    shift_roles(user,'shifts_approve','owner','delivery_manager')
     with db.tx() as c:
         def perform():return approve_close_in_tx(c,user,sid,body)
         result=mutate(c,user,request,'shift.approve:'+sid,body.model_dump(),perform)
@@ -1110,9 +1134,9 @@ class Custody(OperationBody):
     closure:bool=False
     receiving_branch_id:str|None=None
 
-def create_custody(c,user,body):
+def create_custody(c,user,body,capability=None):
     ids=sorted(set([body.from_shift_id]+([body.to_shift_id] if body.to_shift_id else [])))
-    locked={i:lock_shift(c,i) for i in ids};src=locked[body.from_shift_id];shift_access(c,user,src)
+    locked={i:lock_shift(c,i) for i in ids};src=locked[body.from_shift_id];shift_access(c,user,src,capability=capability)
     to=locked.get(body.to_shift_id)
     if src['status']=='closed' or (to and (to['status'] not in ('open','closing') or to['brand_id']!=src['brand_id'])):fail(409,'شفت عهدة غير متاح')
     recipient=(to['user_id'] if to else body.recipient_user_id)
@@ -1354,11 +1378,12 @@ def morning_handover_scope(c, source, target):
 
 @router.post('/shifts/{sid}/handover-manager')
 def manager_handover(sid:str,body:ManagerHandover,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager')
+    shift_roles(user,'shifts_handover','owner','delivery_manager')
     with db.tx() as c:
         def perform():
             ids=sorted(set([sid,body.target_manager_shift_id]));ss={i:lock_shift(c,i) for i in ids};src=ss[sid];target=ss[body.target_manager_shift_id]
-            shift_access(c,user,src)
+            shift_access(c,user,src,capability='shifts_handover')
+            if user['role']=='admin':shift_access(c,user,target,capability='shifts_handover')
             if not target or src['kind']!='manager' or target['kind']!='manager' or src['id']==target['id'] or src['status'] not in ('open','closing') or target['status']!='open' or src['brand_id']!=target['brand_id'] or not set(src['branch_ids'])<=set(target['branch_ids']):fail(409,'المناوبة البديلة غير مؤهلة')
             morning_handover_scope(c, src, target)
             if c.execute("SELECT 1 FROM manager_handovers WHERE from_shift_id=%s AND status='pending'",(sid,)).fetchone():fail(409,'يوجد تسليم مناوبة معلق')
@@ -1371,9 +1396,9 @@ def manager_handover(sid:str,body:ManagerHandover,request:Request,user=Depends(a
 
 @router.get('/manager-handovers')
 def manager_handover_list(user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager')
+    shift_roles(user,'shifts_view','owner','delivery_manager')
     with db.tx() as c:
-        rows=c.execute('SELECT h.* FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE s.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) ORDER BY h.created_at DESC LIMIT 100',(user['brand_id'],user['id'],user['id'],user['role']=='owner')).fetchall();rows=[r for r in rows if user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[]))];return safe({'handovers':rows})
+        rows=c.execute('SELECT h.* FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE s.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) ORDER BY h.created_at DESC LIMIT 100',(user['brand_id'],user['id'],user['id'],user['role']=='owner' or delegated_shift(user,'shifts_view'))).fetchall();rows=[r for r in rows if user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[]))];return safe({'handovers':rows})
 
 @router.post('/manager-handovers/{hid}/accept')
 def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_user)):
@@ -1430,7 +1455,7 @@ class ClosureDraft(OperationBody):
 @router.get('/shifts/{sid}/draft')
 def closure_draft(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
-        shift=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,shift)
+        shift=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,shift,capability='shifts_view')
         row=c.execute('SELECT * FROM closure_drafts WHERE shift_id=%s',(sid,)).fetchone()
         return safe(blind_closure.driver_view(user,{'draft':dict(row['draft'],revision=row['revision'],updated_at=row['updated_at']) if row else None,
                      'expected_halalas':balance(c,shift),'status':shift['status']},shift_money=shift['status'] in ('submitted','closed')))
