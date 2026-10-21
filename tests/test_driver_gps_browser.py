@@ -102,6 +102,7 @@ def test_real_browser_manager_marker_moves_and_expires(gps_page):
       window.clock=Date.now();Date.now=()=>window.clock;
       window.driver=(lat,age)=>({id:'d1',display_name:'Synthetic Driver',gps:{location:{lat,lng:45.9},updated_at:new Date(window.clock-age).toISOString(),accuracy_m:12}});
     }''')
+    page.add_style_tag(path=str(ROOT / 'public/assets/dispatch-map.css'))
     page.add_style_tag(content='.mapboxgl-marker{position:absolute;top:0;left:0}.dispatch-map-canvas{position:relative;height:300px}')
     page.add_script_tag(path=str(ROOT / 'public/assets/dispatch-map.js'))
     page.evaluate("async()=>{window.mapController=await KPSDispatchMap.mount(document.querySelector('#map'),{api:async()=>({enabled:true,provider:'mapbox',public_token:'pk.synthetic-for-browser-only',style:'synthetic'}),drivers:[window.driver(28.4,1000)],lang:'en'});}")
@@ -112,6 +113,19 @@ def test_real_browser_manager_marker_moves_and_expires(gps_page):
     assert marker.evaluate("el=>el.classList.contains('mapboxgl-marker-anchor-center')")
     assert marker.evaluate("el=>getComputedStyle(el).position") == 'absolute'
     assert marker.is_visible()
+    assert marker.locator('.dispatch-driver-name').inner_text() == 'Synthetic Driver'
+    assert marker.locator('svg.dispatch-driver-car').count() == 1
+    assert 'brand-neutral' in marker.get_attribute('class')
+    for brand, color in [('kps', 'rgb(234, 88, 12)'), ('enbishan', 'rgb(8, 145, 178)'), ('mixed', None)]:
+        page.evaluate("brand=>{const d=window.driver(28.4,1000);d.gps.active_order_brand={id:brand};d.gps.movement_state='delivering';window.mapController.update({drivers:[d]});}", brand)
+        assert 'brand-' + brand in marker.get_attribute('class')
+        swatch = page.locator('.dispatch-driver-swatch.brand-' + brand)
+        assert marker.evaluate('el=>getComputedStyle(el).background') == swatch.evaluate('el=>getComputedStyle(el).background')
+        if color:
+            assert marker.evaluate('el=>getComputedStyle(el).backgroundColor') == color
+        assert marker.evaluate("el=>getComputedStyle(el).position") == 'absolute'
+        assert marker.locator('.dispatch-driver-name').is_visible()
+        assert page.evaluate('window.markers[0].popup.root.querySelector(".dispatch-driver-movement").textContent') == 'Delivering an order'
     page.evaluate('window.mapController.update({drivers:[window.driver(28.5,1000)]})')
     assert page.evaluate('window.markers.length') == 1
     assert page.evaluate('window.markers[0].position') == [45.9, 28.5]
