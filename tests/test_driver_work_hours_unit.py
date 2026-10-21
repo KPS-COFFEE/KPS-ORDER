@@ -74,39 +74,3 @@ def test_transferred_order_preserves_each_drivers_actual_work():
     assert first['delivery_seconds']==2700
     assert second['delivery_seconds']==3600
     assert first['delivery_seconds']+second['delivery_seconds']==6300
-
-
-def test_completed_orders_retained_without_inventing_return_or_lateness():
-    from app.driver_work_hours import completed_order_evidence
-    tasks=[{'order_id':'a','status':'delivered','picked_up_at':at(10),'delivered_at':at(30)},
-           {'order_id':'b','status':'delivered','picked_up_at':None,'delivered_at':at(40)},
-           {'order_id':'c','status':'cancelled','picked_up_at':at(0),'delivered_at':at(50)}]
-    report=completed_order_evidence(tasks,at(0),at(120),at(120))
-    assert len(report['completed_orders'])==2
-    assert report['completed_orders'][0]['delivery_seconds']==1200
-    assert report['completed_orders'][0]['returned_at'] is None
-    assert report['performance']=={'completed_order_count':2,'timed_order_count':1,'missing_pickup_count':1,
-        'punctuality_available':False,'punctuality_unavailable_reason':'no_recorded_delivery_promise',
-        'on_time_count':None,'late_count':None,'gps_gaps_affect_performance':False}
-
-
-def test_completed_order_actual_return_distinct_from_declared_intent():
-    from app.driver_work_hours import completed_order_evidence
-    task={'order_id':'a','status':'delivered','picked_up_at':at(10),'delivered_at':at(30),
-          'trip_id':'trip','departed_at':at(11),'returned_at':at(60),'return_branch_id':'branch',
-          'next_destination':{'kind':'branch','branch_id':'branch','source':'driver_declared_intent'}}
-    row=completed_order_evidence([task],at(0),at(120),at(120))['completed_orders'][0]
-    assert row['returned_at']==at(60) and row['next_destination']['source']=='driver_declared_intent'
-    task['returned_at']=at(20)
-    assert completed_order_evidence([task],at(0),at(120),at(120))['completed_orders'][0]['returned_at'] is None
-
-
-def test_completed_order_period_dedup_and_union_activity_no_parallel_double_count():
-    from app.driver_work_hours import completed_order_evidence, order_activity
-    a={'order_id':'a','status':'delivered','picked_up_at':at(0),'delivered_at':at(60)}
-    b={'order_id':'b','status':'delivered','picked_up_at':at(30),'delivered_at':at(90)}
-    future={'order_id':'future','status':'delivered','picked_up_at':at(30),'delivered_at':at(150)}
-    assert completed_order_evidence([a,a,b,future],at(0),at(180),at(120))['performance']['completed_order_count']==2
-    assert order_activity([shift()],[a,b],[],at(0),at(120),at(120))['order_activity_seconds']==5400
-    assert completed_order_evidence([a],at(60),at(120),at(120))['performance']['completed_order_count']==1
-    assert completed_order_evidence([a],at(0),at(60),at(120))['performance']['completed_order_count']==0

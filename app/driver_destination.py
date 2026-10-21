@@ -57,7 +57,8 @@ def metadata(c, user, rows):
         active = [t for t in driver_tasks if t['status'] not in ('delivered','cancelled','transferred','reassigned')
                   and not t['completed_at'] and t['delivery_status'] not in ('delivered','cancelled')
                   and t['preparation_status'] not in ('cancelled','rejected')]
-        brands = {t['brand_id'] for t in active if t['branch_id'] in allowed}
+        visible_active = [t for t in active if t['branch_id'] in allowed]
+        brands = {t['brand_id'] for t in visible_active}
         saved = row.get('next_destination') or {}
         try:
             declared = datetime.fromisoformat(saved['declared_at'])
@@ -82,7 +83,14 @@ def metadata(c, user, rows):
                     destination = {'kind':'branch', 'branch_id':bid, 'name':branch['name'], 'source':source,
                                    'location':branch['settings'].get('location') if catalog.location_verified(branch) else None}
         brand = next(iter(brands)) if len(brands) == 1 else 'mixed' if brands else None
+        # Operational task/intent state only; never an inference of physical motion.
+        movement = ('delivering' if any(t['status'] in ('picked_up','problem') for t in visible_active) else
+                    'awaiting_pickup' if any(t['status'] in ('assigned','accepted') for t in visible_active) else
+                    'returning' if destination and destination['kind'] == 'branch' else
+                    'external_enbishan' if destination and destination['kind'] == 'external_enbishan' else
+                    'awaiting_destination')
         result[row['id']] = {
+            'movement_state':movement, 'visible_active_task_count':len(visible_active),
             'active_order_brand': ({'id':brand, 'name':{'kps':'KPS','enbishan':'Enbishan','mixed':'Mixed'}.get(brand,brand),
                                     'source':'active_task' if active else 'driver_declared'} if brand else None),
             'next_destination':destination, 'destination_choice_required':hafar and not active and destination is None,

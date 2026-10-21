@@ -30,19 +30,6 @@ def test_trip_multiorder_scope_replay_and_confirmed_return(ops):
     with db.tx() as c:c.execute("UPDATE driver_tasks SET status='delivered',delivered_at=now() WHERE order_id=ANY(%s)",(ids,))
     result=post('driver','/api/driver-work-hours/'+tid+'/return',{'branch_id':'ops-branch'},key='hours-return')
     assert result['trip']['returned_at']
-    report=actor('owner').get('/api/driver-work-hours/report').json()
-    completed=next(d for d in report['drivers'] if d['driver_id']=='ops-driver')
-    assert completed['performance']['completed_order_count']==2
-    assert completed['performance']['on_time_count'] is None
-    assert {o['order_id'] for o in completed['completed_orders']}==set(ids)
-    assert all(o['returned_at']==result['trip']['returned_at'] for o in completed['completed_orders'])
-    assert all(o['next_destination'] is None for o in completed['completed_orders'])
-    with db.tx() as c:
-        db.audit(c,'ops-driver','driver.next_destination','shift',sid,{'kind':'branch','branch_id':'ops-branch'})
-        db.audit(c,'ops-driver2','driver.next_destination','shift',sid,{'kind':'external_enbishan'})
-    completed=next(d for d in actor('owner').get('/api/driver-work-hours/report').json()['drivers'] if d['driver_id']=='ops-driver')
-    assert all(o['next_destination']['branch_id']=='ops-branch' for o in completed['completed_orders'])
-    assert all(o['next_destination']['source']=='driver_declared_intent' for o in completed['completed_orders'])
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM driver_work_trips').fetchone()['n']==1
         assert c.execute('SELECT count(*) n FROM driver_work_trip_orders').fetchone()['n']==2

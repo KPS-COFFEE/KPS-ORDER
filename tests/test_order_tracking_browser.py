@@ -27,7 +27,7 @@ def test_tracking_city_rotation_completed_drilldown_and_cleanup():
           window.KPSDispatchMap={mount:async(host,options)=>{window.mapData.push(options);host.classList.add('dispatch-map-host');return {update(data){window.mapData.push(data);},fit(){},resize(){},destroy(){window.stopped=true;}};}};
           window.api=async path=>{
             window.requests.push(path);
-            if(path.includes('driver-locations'))return {drivers:[{id:'d1',display_name:'Driver A',branch_ids:['a']},{id:'d2',display_name:'Driver B',branch_ids:['b']}]};
+            if(path.includes('driver-locations'))return {drivers:[{id:'d1',display_name:'Driver A',movement_state:'delivering',branch_ids:['a']},{id:'d2',display_name:'Driver B',branch_ids:['b']}]};
             const q=new URL(path,'https://test').searchParams;
             const completed=q.get('dispatch_stage')==='delivered';
             return {orders:completed?[{id:'old',order_no:'Old order',created_at:'2026-10-20T01:00:00Z',delivery_status:'delivered'},{id:'new',order_no:'New order',created_at:'2026-10-21T01:00:00Z',delivery_status:'delivered'}]:[{id:'active',order_no:'Active order',created_at:'2026-10-21T01:00:00Z',preparation_status:'new'}],next_offset:null,workspace_counts:{current:{total:5,new:1,preparing:1,delivered:2,cancelled:1}}};
@@ -41,6 +41,8 @@ def test_tracking_city_rotation_completed_drilldown_and_cleanup():
         page.wait_for_function('window.mapData.at(-1).drivers.length===1')
         assert page.evaluate('window.mapData.at(-1).drivers[0].id') == 'd1'
         assert page.locator('.tracking-driver strong').all_text_contents() == ['Driver A']
+        assert page.locator('.tracking-driver-phase').inner_text() == 'Delivering an order'
+        assert 'Next destination is set after completing orders' in page.locator('.tracking-driver').inner_text()
         assert any('dispatch_city=Hafar' in q for q in page.evaluate('window.requests'))
         page.get_by_role('button', name='Completed: 2').click()
         page.wait_for_selector('text=Completed — newest first')

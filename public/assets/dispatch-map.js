@@ -21,7 +21,7 @@
     for(const driver of data.drivers||[]){
       const gps=driver.gps,location=point(gps?.location),updated=Date.parse(gps?.updated_at);
       if(!location||!Number.isFinite(updated)||Date.now()-updated>900000)continue;
-      result.push({key:'driver:'+driver.id,id:driver.id,kind:'driver',location,label:String(driver.display_name||driver.name||driver.id),updated_at:gps.updated_at,accuracy_m:gps.accuracy_m,next_destination:gps.next_destination,brand_source:gps.active_order_brand?.source,brand:['kps','enbishan','mixed'].includes(gps.active_order_brand?.id)?gps.active_order_brand.id:'neutral',stale:gps.stale||Date.now()-updated>120000});
+      result.push({key:'driver:'+driver.id,id:driver.id,kind:'driver',location,label:String(driver.display_name||driver.name||driver.id),updated_at:gps.updated_at,accuracy_m:gps.accuracy_m,movement_state:gps.movement_state,next_destination:gps.next_destination,brand_source:gps.active_order_brand?.source,brand:['kps','enbishan','mixed'].includes(gps.active_order_brand?.id)?gps.active_order_brand.id:'neutral',stale:gps.stale||Date.now()-updated>120000});
     }
     return result;
   }
@@ -140,6 +140,8 @@
         item.element.setAttribute('aria-label',tr(pin.kind==='driver'?'سائق ':pin.kind==='branch'?'فرع ':'طلب ',pin.kind==='driver'?'Driver ':pin.kind==='branch'?'Branch ':'Order ')+pin.label);
         const title=document.createElement('strong');title.textContent=pin.label;item.popupRoot.replaceChildren(title);
         if(pin.kind==='driver'){
+          const movementLabels={delivering:tr('يوصل طلبًا','Delivering an order'),awaiting_pickup:tr('بانتظار استلام الطلب','Awaiting order pickup'),returning:tr('متجه للفرع — وجهة مخططة وليست إثبات وصول','Heading to branch — planned destination, not confirmed arrival'),external_enbishan:tr('متجه لعنبيشان — بإفادة السائق','Heading to Enbishan — driver-declared'),awaiting_destination:tr('بانتظار تحديد الوجهة التالية','Awaiting next destination')};
+          const movement=document.createElement('p');movement.className='dispatch-driver-movement';movement.textContent=movementLabels[pin.movement_state]||tr('حالة الحركة غير متاحة','Movement state unavailable');item.popupRoot.append(movement);
           const brandInfo=document.createElement('p');brandInfo.textContent=(pin.brand==='kps'?'KPS':pin.brand==='enbishan'?tr('عنبيشان','Enbishan'):pin.brand==='mixed'?tr('طلبات متعددة البراندات','Mixed brands'):tr('بدون طلب نشط','No active order'))+(pin.brand_source==='driver_declared'?tr(' — بإفادة السائق',' — driver-declared'):'');item.popupRoot.append(brandInfo);
           if(pin.next_destination){const next=document.createElement('p');next.textContent=tr('الوجهة المخططة: ','Planned destination: ')+(pin.next_destination.kind==='external_enbishan'?tr('عنبيشان — إفادة السائق','Enbishan — driver declaration'):(pin.next_destination.name||tr('الفرع','Branch')));item.popupRoot.append(next);}
           const detail=document.createElement('p');

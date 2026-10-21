@@ -99,7 +99,7 @@ def driver_locations(user=Depends(auth.require_roles('owner', 'delivery_manager'
             visible.append({'id': row['id'], 'display_name': row['display_name'], 'branch_ids': branches,
                             'shift_id': row['shift_id'], 'location': {'lat': row['lat'], 'lng': row['lng']},
                             'accuracy_m': row['accuracy_m'], 'updated_at': row['updated_at'], 'stale': row['stale'],
-                            **{k:destinations[row['id']][k] for k in ('active_order_brand','next_destination','destination_choice_required')}})
+                            **{k:destinations[row['id']][k] for k in ('active_order_brand','next_destination','destination_choice_required','movement_state','visible_active_task_count')}})
         return safe({'drivers': visible, 'stale_after_seconds': STALE_AFTER_SECONDS})
 
 

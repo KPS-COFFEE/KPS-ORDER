@@ -86,3 +86,4 @@ tests/test_dispatch_workspace_counts.py
 
 tests/test_driver_routes.py
 tests/test_driver_destination.py
+tests/test_driver_completed_evidence.py

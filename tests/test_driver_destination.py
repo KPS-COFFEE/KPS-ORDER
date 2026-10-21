@@ -100,3 +100,20 @@ def test_actual_return_supersedes_declared_destination(kind):
         assert after['next_destination'] is None
         assert after['active_order_brand'] is None
         assert after['destination_choice_required']
+
+
+@pytest.mark.parametrize('status,expected',[('picked_up','delivering'),('problem','delivering'),('assigned','awaiting_pickup'),('accepted','awaiting_pickup')])
+def test_movement_state_is_scoped_task_state_not_physical_movement(status, expected):
+    visible = state(tasks=[task(status=status)])
+    assert visible['movement_state'] == expected
+    assert visible['visible_active_task_count'] == 1
+    hidden = state(tasks=[task(status=status,branch_id='hidden')])
+    assert hidden['movement_state'] == 'awaiting_destination'
+    assert hidden['visible_active_task_count'] == 0
+
+
+def test_movement_state_for_confirmed_intent_sources():
+    assert state('رفحاء')['movement_state'] == 'returning'
+    assert state()['movement_state'] == 'awaiting_destination'
+    declared = {'kind':'external_enbishan','declared_at':datetime.now(timezone.utc).isoformat()}
+    assert state(saved=declared)['movement_state'] == 'external_enbishan'

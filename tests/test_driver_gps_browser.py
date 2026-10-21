@@ -117,7 +117,7 @@ def test_real_browser_manager_marker_moves_and_expires(gps_page):
     assert marker.locator('svg.dispatch-driver-car').count() == 1
     assert 'brand-neutral' in marker.get_attribute('class')
     for brand, color in [('kps', 'rgb(234, 88, 12)'), ('enbishan', 'rgb(8, 145, 178)'), ('mixed', None)]:
-        page.evaluate("brand=>{const d=window.driver(28.4,1000);d.gps.active_order_brand={id:brand};window.mapController.update({drivers:[d]});}", brand)
+        page.evaluate("brand=>{const d=window.driver(28.4,1000);d.gps.active_order_brand={id:brand};d.gps.movement_state='delivering';window.mapController.update({drivers:[d]});}", brand)
         assert 'brand-' + brand in marker.get_attribute('class')
         swatch = page.locator('.dispatch-driver-swatch.brand-' + brand)
         assert marker.evaluate('el=>getComputedStyle(el).background') == swatch.evaluate('el=>getComputedStyle(el).background')
@@ -125,6 +125,7 @@ def test_real_browser_manager_marker_moves_and_expires(gps_page):
             assert marker.evaluate('el=>getComputedStyle(el).backgroundColor') == color
         assert marker.evaluate("el=>getComputedStyle(el).position") == 'absolute'
         assert marker.locator('.dispatch-driver-name').is_visible()
+        assert page.evaluate('window.markers[0].popup.root.querySelector(".dispatch-driver-movement").textContent') == 'Delivering an order'
     page.evaluate('window.mapController.update({drivers:[window.driver(28.5,1000)]})')
     assert page.evaluate('window.markers.length') == 1
     assert page.evaluate('window.markers[0].position') == [45.9, 28.5]
