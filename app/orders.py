@@ -289,6 +289,11 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         params.append(user['id'])
     elif user['role'] != 'owner':
         raise db.error(403, 'ROLE_FORBIDDEN', 'الوصول غير مسموح.')
+    if user.get('_morning_manager_context'):
+        conditions.append("o.snapshot->>'delivery_period'='morning'")
+        conditions.append("NOT EXISTS (SELECT 1 FROM driver_tasks ct JOIN shifts cs ON cs.id=ct.shift_id WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned') AND cs.manager_shift_id IS DISTINCT FROM %s)")
+        params.append(user['_morning_manager_context']['shift_id'])
+        conditions.append("(EXISTS (SELECT 1 FROM driver_tasks ct WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned')) OR (o.completed_at IS NULL AND o.preparation_status NOT IN ('completed','cancelled','rejected') AND o.delivery_status NOT IN ('delivered','cancelled')))")
     if customer_view:
         if user['role'] != 'customer':
             raise db.error(403, 'ROLE_FORBIDDEN', 'هذا العرض مخصص للعميل.')
@@ -683,6 +688,10 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                 guard(conn,order)
             transitions = {'new': {'accepted', 'cancelled'}, 'accepted': {'preparing', 'cancelled'},
                            'preparing': {'ready', 'cancelled'}, 'ready': {'handed_over', 'completed', 'cancelled'}}
+            from . import branch_printing
+            morning_preparer = branch_printing.morning_preparer_branch(conn, user, order)
+            if morning_preparer:
+                transitions['accepted'].add('ready')
             if body.status not in transitions.get(current, set()):
                 raise db.error(409, 'PREPARATION_TRANSITION_INVALID', 'انتقال حالة التجهيز غير مسموح.')
             if body.status in {'preparing','ready','completed'}:
@@ -724,7 +733,10 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                       'branch_id': order['branch_id'], 'actor_id': user['id'],
                       'actor_name': user.get('display_name', ''), 'actor_role': user['role']})
             db.audit(conn, user['id'], 'order.preparation', 'order', order_id, {'from': current, 'to': body.status, 'reason': body.reason})
-            return {'order': row}
+            result = {'order': row}
+            if morning_preparer and current == 'new' and body.status == 'accepted':
+                result['printing'] = branch_printing.enqueue_morning_preparer_receipt(conn, user, row, morning_preparer)
+            return result
         return db.idempotent(conn, user['id'], idempotency_key, 'order.preparation:' + order_id, body.model_dump(), perform)
 
 

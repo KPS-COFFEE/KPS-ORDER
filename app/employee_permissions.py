@@ -113,6 +113,9 @@ def eligible(role):
 
 
 def effective(user):
+    if user.get('_morning_manager_context'):
+        from .morning_manager_context import CAPABILITIES
+        return set(CAPABILITIES)
     role = user.get('role')
     if role == 'owner':
         return eligible(role)

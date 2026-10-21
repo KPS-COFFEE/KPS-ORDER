@@ -46,6 +46,9 @@ def source_rows(c,user,start=None,end=None,shift_id=None,order_id=None,driver_id
     if order_id:query+=' AND o.id=%s';args.append(order_id)
     if driver_id:query+=' AND t.driver_id=%s';args.append(driver_id)
     scope,params=scoped(user);query+=scope;args+=params
+    if user.get('_morning_manager_context'):
+        query+=" AND s.manager_shift_id=%s AND o.snapshot->>'delivery_period'='morning'"
+        args.append(user['_morning_manager_context']['shift_id'])
     if user['role']!='owner':
         query+=' AND s.branch_ids <@ %s::jsonb AND o.branch_id=ANY(%s)';args.extend([db.json(user.get('branch_ids',[])),user.get('branch_ids',[])])
     if branch_ids is not None:query+=' AND o.branch_id=ANY(%s)';args.append(branch_ids)

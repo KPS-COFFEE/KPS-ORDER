@@ -323,6 +323,54 @@ class JobBody(BaseModel):
     reprint_reason:str=Field(default='',max_length=300)
 
 
+def morning_preparer_branch(conn, user, order):
+    """The approved two-action preparer workflow is limited to morning Branch 2."""
+    if (user.get('role') != 'branch_manager' or order.get('brand_id') != 'kps'
+            or order.get('service') != 'delivery'
+            or (order.get('snapshot') or {}).get('delivery_period') != 'morning'):
+        return None
+    from . import morning_delivery
+    morning_delivery.authorize_order(conn, user, order, preparation=True)
+    branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',
+                          (order['branch_id'], order['brand_id'])).fetchone()
+    return branch if branch and branch['branch_no'] == 2 else None
+
+
+def enqueue_morning_preparer_receipt(conn, user, order, branch):
+    """Called under the preparation transaction's order lock; never reprint.
+
+    Queueing does not assert physical paper output. An ambiguous or unapproved
+    destination fails acceptance atomically instead of choosing another branch.
+    """
+    previous = conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s "
+                            "AND kind='order' AND status<>'cancelled' LIMIT 1",
+                            (order['id'],)).fetchone()
+    if previous:
+        return {'id': previous['id'], 'status': 'already_requested'}
+    devices = conn.execute('SELECT * FROM branch_print_devices WHERE brand_id=%s AND branch_id=%s '
+                           'AND revoked_at IS NULL AND token_hash IS NOT NULL AND approved_at IS NOT NULL '
+                           'ORDER BY id FOR UPDATE', (order['brand_id'], branch['id'])).fetchall()
+    if len(devices) != 1:
+        raise db.error(409, 'MORNING_PRINTER_NOT_READY',
+                       'يلزم وجود طابعة واحدة مرتبطة ومعتمدة في فرع 2 قبل قبول الطلب الصباحي.')
+    device = devices[0]
+    from .fiscal_issuance import original
+    from .fiscal import print_order
+    doc = original(conn, order['id'])
+    printable = {**order, **print_order(doc, order)} if doc else order
+    payload = receipt(printable, branch, 'order', 'en', print_translations.for_order(conn, order))
+    payload['order_revision'] = order.get('amendment_revision', 0)
+    identifier = db.new_id('print_')
+    conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason,created_at) '
+                 'VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp())',
+                 (identifier, order['brand_id'], branch['id'], device['id'], order['id'], 'order',
+                  db.json(payload), user['id'], ''))
+    db.audit(conn, user['id'], 'printer.job.queued', 'print_job', identifier,
+             {'order_id': order['id'], 'order_branch_id': branch['id'], 'destination_branch_id': branch['id'],
+              'device_id': device['id'], 'kind': 'order', 'source': 'morning_preparer_acceptance'})
+    return {'id': identifier, 'status': 'queued'}
+
+
 @router.post('/orders/{order_id}')
 def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=Header(None,alias='Idempotency-Key')):
     with db.tx() as conn:
