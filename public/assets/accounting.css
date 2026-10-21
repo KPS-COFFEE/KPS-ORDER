@@ -27,3 +27,9 @@
 @media(max-width:1100px){.accounting .ac-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.accounting .ac-filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:760px){.accounting .ac-filters{grid-template-columns:repeat(2,minmax(0,1fr));padding:16px}.accounting .ac-tabs .ac-section-card{padding:14px;gap:9px}.accounting .ac-section-mark{width:30px;height:30px}.accounting .ac-actions{justify-content:stretch}.accounting .ac-actions>button{flex:1 1 140px}}
 @media(max-width:480px){.accounting .ac-tabs{grid-template-columns:1fr}.accounting .ac-tabs .ac-section-card{min-height:84px}.accounting .ac-filters{grid-template-columns:1fr}.accounting .ac-actions{padding:12px}}
+.ac-manager-card{margin-block:14px;padding:14px;min-width:0}
+.ac-manager-card>summary{display:flex;align-items:center;flex-wrap:wrap;gap:12px;cursor:pointer;padding:8px;border-radius:8px;background:#f7f3ef}
+.ac-manager-card>summary strong{font-size:1.15rem;margin-inline-end:auto}
+.ac-manager-card td:last-child{min-width:210px}
+.ac-manager-card td button,.ac-manager-card td a{display:inline-block;margin:4px}
+.ac-day-report{display:flex;align-items:center;flex-wrap:wrap;gap:16px;padding-block:12px}

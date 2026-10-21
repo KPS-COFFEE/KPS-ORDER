@@ -6,6 +6,14 @@ from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 LABELS={
+ 'completed_orders':('الطلبات المكتملة','Completed orders'),'manager':('مدير التوصيل','Delivery manager'),
+ 'bank':('الموازنة المعتمدة','Approved balance'),'cash_due':('الكاش المطلوب','Cash due'),
+ 'cash_received':('الكاش المستلم بالخزنة','Cash received in treasury'),'pending_cash':('الكاش المنتظر','Pending cash'),
+ 'violations':('قيمة المخالفات المسجلة','Recorded incident value'),'traffic':('المخالفات المرورية','Traffic violations'),
+ 'incident_notes':('المخالفات وأسبابها وقيمتها','Incidents, reasons and amounts'),
+ 'traffic_notes':('تفاصيل المخالفات المرورية','Traffic violation details'),
+ 'adjustments':('التعديلات: قبل وبعد والمنفذ والوقت والسبب','Changes: before, after, actor, time and reason'),
+ 'status':('حالة الاعتماد','Approval status'),
  'eligible':('طلبات مستحقة للحافز','Eligible orders'),'excluded':('مستبعدة بسبب السائق','Excluded: driver'),
  'pending_review':('بانتظار تحديد المسؤولية','Responsibility pending'),'awaiting_approval':('بانتظار اعتماد الشفت','Awaiting shift approval'),
  'open_shifts':('شفتات غير معتمدة','Unapproved shifts'),'incomplete':('غير مكتملة','Incomplete'),
@@ -26,9 +34,10 @@ LABELS={
  'kind':('النوع','Type'),'amount':('المبلغ','Amount'),'method':('وسيلة الدفع','Payment method'),
  'reason':('السبب','Reason'),'actor':('منفذ / معتمد الإجراء','Actor / authorizer'),'action':('الإجراء المتخذ','Action taken'),
  'weekday':('اليوم','Day'),'period':('الفترة بتوقيت الرياض','Period, Riyadh')}
-MONEY={'gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','approved_shortage','amount'}
+MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','approved_shortage','amount'}
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
 COLUMNS={
+ 'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
  'complimentary':['day','label','kind','branch','driver','amount','reason','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
@@ -47,7 +56,7 @@ def presentation(data,lang='ar'):
             d=date.fromisoformat(r['day']);r['weekday']=(['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'] if lang=='ar' else ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'])[d.weekday()]
             r['period']='16:00 → 16:00 (+1)'
         rows.append(r)
-    totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k in ('eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
+    totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k in ('completed_orders','eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
     # Item counts overlap between items; financial action amounts overlap across
     # cancellation/refund records. Neither may be presented as a grand sales sum.
     if data['group']=='items':totals.pop('correct',None);totals.pop('processed',None)
@@ -62,6 +71,7 @@ def render(data,format,lang):
     keys,rows,totals=presentation(data,lang)
     titles={'driver_incentives':('استحقاق السائقين اليومي والشهري','Daily and monthly driver entitlement'),'driver_incentive_details':('تفاصيل وأسباب استحقاق السائقين','Driver entitlement decisions and reasons'),'daily':('إجمالي يوم التشغيل','Operational day totals'),'branch':('مبيعات الفروع','Branch sales'),'items':('مبيعات الأصناف','Item sales'),'driver':('مبيعات السائقين','Driver sales'),'driver_daily':('عداد السائق اليومي','Daily driver counter'),'deficits':('العجز والزيادة','Shortages and surpluses'),'actions':('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments'),'cases':('ملاحظات المركبات والطلبات','Vehicle and order incidents')}
     titles['complimentary']=('الضيافة والتعويض والإلغاء وإعادة الطباعة','Hospitality, compensation, cancellations and reprints')
+    titles['driver_statement']=('كشف السائق اليومي والشهري','Daily and monthly driver statement')
     title=('المحاسبة - ' if lang=='ar' else 'Accounting - ')+titles[data['group']][lang=='en']
     headers=[LABELS[k][lang=='en'] for k in keys]
     summary={keys[0]:'الإجمالي / Total',**totals}
@@ -69,6 +79,19 @@ def render(data,format,lang):
     units="" if data['group'].startswith('driver_incentive') else "SAR | "
     meta=f"{data['period']['start']} — {data['period']['end']} | Asia/Riyadh | "+units+('كشف مقفل / Closed statement' if data.get('frozen') else 'تقرير مباشر / Live report')
     if format=='xlsx':return xlsx([headers,*values],keys,[title,meta,data['definitions']],lang)
+    if data['group']=='driver_statement':
+        # A separate page per driver and section keeps daily figures readable;
+        # long notes/audit entries never compress all columns onto one page.
+        sections=[]
+        for driver in dict.fromkeys(r['driver_id'] for r in rows):
+            entries=[r for r in rows if r['driver_id']==driver]
+            for section_keys in (['day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','status'],
+                                 ['day','notes','incident_notes','violations','traffic_notes','traffic'],['day','adjustments']):
+                section_rows=[[LABELS[k][lang=='en'] for k in section_keys]]
+                section_rows += [[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k),(int,float)) else r.get(k,'') for k in section_keys] for r in entries]
+                section_rows.append([('الإجمالي' if lang=='ar' else 'Total') if i==0 else sum(r.get(k,0) for r in entries)/100 if k in MONEY else sum(r.get(k,0) for r in entries) if k=='completed_orders' else '' for i,k in enumerate(section_keys)])
+                sections.append(dict(title=entries[0]['driver'],keys=section_keys,rows=section_rows))
+        return pdf([headers,*values],keys,title,meta,data['definitions'],lang,sections=sections or None,compact=True)
     return pdf([headers,*values],keys,title,meta,data['definitions'],lang)
 
 def xlsx(rows,keys,notes,lang):
@@ -99,7 +122,7 @@ def xlsx(rows,keys,notes,lang):
         z.writestr('xl/worksheets/sheet2.xml',f'<worksheet xmlns="{root}"><cols><col min="1" max="1" width="120" customWidth="1"/></cols><sheetData>'+''.join(f'<row r="{i}">'+cell(n,f'A{i}',0)+'</row>' for i,n in enumerate(notes,1))+'</sheetData></worksheet>')
     return out.getvalue()
 
-def pdf(rows,keys,title,meta,definitions,lang,sections=None):
+def pdf(rows,keys,title,meta,definitions,lang,sections=None,compact=False):
     import arabic_reshaper
     from bidi.algorithm import get_display
     from reportlab.pdfbase import pdfmetrics
@@ -110,7 +133,7 @@ def pdf(rows,keys,title,meta,definitions,lang,sections=None):
     from reportlab.lib import colors
     name='AccountingKufi'
     if name not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont(name,str(Path(__file__).resolve().parents[1]/'public/assets/fonts/NotoKufiArabic-Regular.ttf')))
-    style=ParagraphStyle('accounting',fontName=name,fontSize=9,leading=16,alignment=2 if lang=='ar' else 0)
+    style=ParagraphStyle('accounting',fontName=name,fontSize=9,leading=14 if compact else 16,alignment=2 if lang=='ar' else 0)
     class ArabicText(Flowable):
         def __init__(self,value,style):
             Flowable.__init__(self);self.value=str(value);self.style=style
@@ -146,7 +169,7 @@ def pdf(rows,keys,title,meta,definitions,lang,sections=None):
         cells=[[text(f'{v:,.2f}' if isinstance(v,float) else v) for v in row] for row in section_rows]
         keys=list(section_keys)
         if lang=='ar':cells=[list(reversed(r)) for r in cells];keys=list(reversed(keys))
-        weights=[2.8 if k in ('notes','reason','action','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
+        weights=[7 if k=='adjustments' else 2.8 if k in ('notes','incident_notes','traffic_notes','reason','action','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
         widths=[available*w/sum(weights) for w in weights]
         table=LongTable(cells,colWidths=widths,repeatRows=1,splitByRow=1,splitInRow=1)
         commands=[('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eeeeee')),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#cccccc')),('VALIGN',(0,0),(-1,-1),'TOP')]
