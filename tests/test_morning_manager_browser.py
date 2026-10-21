@@ -56,9 +56,10 @@ def test_scoped_manager_accepts_without_driver_or_financial_controls(static_cust
         expect(accept).to_have_text('قبول بدل الفرع' if lang=='ar' else 'Accept for branch')
         assert page.locator('#modal [data-action=prepare]').count()==0
         accept.click()
+        expect(page.locator('#modal')).not_to_be_visible()
         assert writes==[('/api/orders/morning-order/manager-accept',{'version':1})]
         page.locator('[data-action=order-detail][data-id=morning-order]').click()
-        assert page.locator('#modal [data-action=manager-accept],#modal [data-action=prepare]').count()==0
+        expect(page.locator('#modal [data-action=manager-accept],#modal [data-action=prepare]')).to_have_count(0)
         # The branch preparer, not the manager, supplies the ready event.
         order['preparation_status']='ready';order['version']+=1
         page.reload()
