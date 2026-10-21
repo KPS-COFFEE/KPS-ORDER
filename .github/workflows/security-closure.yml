@@ -264,6 +264,7 @@ jobs:
         browser=$(command -v google-chrome || command -v google-chrome-stable)
         "$browser" --headless --no-sandbox --disable-gpu --remote-debugging-address=127.0.0.1 --remote-debugging-port=19222 --remote-allow-origins=http://127.0.0.1:19222 --user-data-dir="$RUNNER_TEMP/exact-image-chromium" about:blank > evidence/image-chromium.log 2>&1 &
         chrome_pid=$!
+        export KPS_CHROME_PID="$chrome_pid"
         trap 'kill "$chrome_pid" 2>/dev/null || true' EXIT
         mkdir -p ci-image-browser evidence/image-browser-screenshots
         chmod 0777 evidence/image-browser-screenshots
@@ -285,15 +286,17 @@ jobs:
             return browser
         PLUGIN
         python - <<'WAIT'
-        import json,time,urllib.request
-        for attempt in range(100):
+        import json,os,time,urllib.request
+        deadline = time.monotonic() + 60
+        while True:
+            os.kill(int(os.environ['KPS_CHROME_PID']), 0)
             try:
                 with urllib.request.urlopen('http://127.0.0.1:19222/json/version', timeout=1) as r:
                     assert json.load(r)['webSocketDebuggerUrl']
                 break
             except Exception:
-                if attempt == 99: raise
-                time.sleep(.1)
+                if time.monotonic() >= deadline: raise
+                time.sleep(.25)
         WAIT
         # Only tests/tools are mounted; app, migrations and public assets come from exact image bytes.
         docker run --rm --network host --entrypoint python \

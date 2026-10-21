@@ -5,7 +5,7 @@
     let destroyed=false,map=null,busy=false,generation=0,city='',completed=false,nextOffset=null,orders=[],lastCity='',rotateAt=Date.now();
     const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;if(cls)n.className=cls;return n;};
     const root=el('section',null,'tracking-screen'),bar=el('div',null,'tracking-toolbar'),title=el('h1',tr('تتبع الطلبات','Order tracking'));
-    const cityLabel=el('label',tr('المحافظة','City')),citySelect=el('select');cityLabel.append(citySelect);
+    const cityLabel=el('label',tr('المحافظة','City')),citySelect=el('select');citySelect.setAttribute('aria-label',tr('المحافظة','City'));cityLabel.append(citySelect);
     const cities=[...new Set(branches.map(b=>b.city).filter(Boolean))].sort();
     for(const value of ['',...cities]){const o=el('option',value||tr('جميع المحافظات','All cities'));o.value=value;citySelect.append(o);}
     const rotateLabel=el('label',null,'tracking-rotate'),rotate=el('input');rotate.type='checkbox';rotateLabel.append(rotate,document.createTextNode(tr('تبديل المحافظة كل 30 ثانية','Rotate city every 30 seconds')));
