@@ -28,12 +28,18 @@ jobs:
           mkdir -p build/policy
           javac -d build/policy app/src/main/java/sa/kps/driver/TrackingPolicy.java tests/TrackingPolicyTest.java
           java -cp build/policy TrackingPolicyTest
-      - name: Compile Android pilot
+      - name: Compile and lint Android variants
         working-directory: android-driver
-        run: gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug :app:assembleRelease :app:bundleRelease :app:lintRelease --no-daemon
+      - name: Verify compiled APK identity, permissions and signing
+        run: python3 android-driver/tests/audit_apks.py
       - uses: actions/upload-artifact@v4
         with:
-          name: kps-driver-android-pilot-debug
-          path: android-driver/app/build/outputs/apk/debug/app-debug.apk
+          name: kps-driver-release-preparation
+          path: |
+            android-driver/app/build/outputs/apk/release/app-release-unsigned.apk
+            android-driver/app/build/outputs/bundle/release/app-release.aab
+            android-driver/app/build/reports/release-audit.json
+            android-driver/app/build/reports/lint-results-release.*
           if-no-files-found: error
           retention-days: 7

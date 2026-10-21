@@ -89,6 +89,7 @@ public final class ShiftLocationService extends Service implements LocationListe
     }
     private void subscribe(){
         if(ended || subscribed)return;
+        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){finish();return;}
         try {
             boolean provider=false;
             for(String name:new String[]{LocationManager.GPS_PROVIDER,LocationManager.NETWORK_PROVIDER}) {
@@ -104,6 +105,7 @@ public final class ShiftLocationService extends Service implements LocationListe
         notification("تعذر التحديث؛ ستتم المحاولة تلقائيًا عند عودة الاتصال");
     }
     private void notification(String body){
+        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
         PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(7101,
             new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_menu_mylocation)
