@@ -1,7 +1,8 @@
 """Real transaction, minimal capability and duplicate protection contracts."""
 from uuid import uuid4
 import pytest
-from app import db, employee_permissions
+from app import auth, db, employee_permissions
+from test_core import _authenticate
 from test_operations import ops
 
 pytestmark = pytest.mark.postgres
@@ -31,22 +32,33 @@ def configure(order, *, period='morning', branch='kps-branch-2', devices=1, appr
 def test_minimal_preparer_acceptance_prints_once_and_can_mark_ready(ops):
     actor,post,order,_ = ops
     oid = configure(order)
+    client = actor('branch')
+    client.app.dependency_overrides.pop(auth.current_user, None)
+    with db.tx() as c:
+        employee = c.execute("SELECT * FROM users WHERE id='ops-branch'").fetchone()
+    assert employee_permissions.effective(employee) == {'orders_view','orders_prepare'}
+    _authenticate(client, employee)
+    def send(body, key=None, status=200):
+        response = client.post(f'/api/orders/{oid}/preparation',json=body,
+                               headers={'Idempotency-Key':key or uuid4().hex})
+        assert response.status_code == status, response.text
+        return response.json()
     body = {'status':'accepted','version':1}
     key = uuid4().hex
-    result = post('branch',f'/api/orders/{oid}/preparation',body,key=key)
+    result = send(body,key=key)
     assert result['printing']['status'] == 'queued'
-    assert post('branch',f'/api/orders/{oid}/preparation',body,key=key) == result
-    post('branch',f'/api/orders/{oid}/preparation',body,status=409)
+    assert send(body,key=key) == result
+    send(body,status=409)
     with db.tx() as c:
         jobs = c.execute('SELECT * FROM branch_print_jobs WHERE order_id=%s',(oid,)).fetchall()
         assert len(jobs) == 1
         assert jobs[0]['branch_id'] == 'kps-branch-2' and jobs[0]['kind'] == 'order'
         assert jobs[0]['status'] == 'queued' and jobs[0]['payload']['order_revision'] == 0
-    post('branch',f'/api/orders/{oid}/preparation',{'status':'ready','version':2})
-    assert actor('branch').get('/api/orders/'+oid).status_code == 200
-    assert actor('branch').get('/api/identity/staff').status_code == 403
-    assert actor('branch').post('/api/printing/orders/'+oid,json={'device_id':jobs[0]['device_id']},
-                                headers={'Idempotency-Key':uuid4().hex}).status_code == 403
+    send({'status':'ready','version':2})
+    assert client.get('/api/orders/'+oid).status_code == 200
+    assert client.get('/api/identity/staff').status_code == 403
+    assert client.post('/api/printing/orders/'+oid,json={'device_id':jobs[0]['device_id']},
+                       headers={'Idempotency-Key':uuid4().hex}).status_code == 403
 
 
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
