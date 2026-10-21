@@ -30,7 +30,7 @@ SOURCE="""SELECT o.id order_id,coalesce(o.snapshot->>'order_reference',o.order_n
  WHERE o.brand_id=%s"""
 
 def read_access(user=Depends(auth.current_user)):
-    permitted=user['role'] in ('owner','driver','delivery_manager') or auth.has_permission(user,'accounting_reports') or auth.has_permission(user,'shifts_view')
+    permitted=user['role'] in ('owner','driver','delivery_manager') or auth.has_permission(user,'accounting_reports') or (user['role']=='admin' and auth.has_permission(user,'shifts_view'))
     if not permitted:fail(403,'صلاحية عرض استحقاق السائقين غير متاحة')
     return user
 

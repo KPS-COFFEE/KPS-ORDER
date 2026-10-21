@@ -216,12 +216,15 @@ def authorize_replay(c,user,operation,body,result):
             permitted=(row.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(source['branch_ids'])<=set(user.get('branch_ids',[])))
             if not same_scope(user,source) or (user['role']!='owner' and not permitted):fail(403,'تم سحب صلاحية التسليم')
         else:shift_access(c,user,source)
-    if result.get('report_id'):
+    if result.get('report_id') and not (operation.startswith('shift.approve:') and delegated_shift(user,'shifts_approve')):
         from .reporting import report
         report(c,user,result['report_id'])
     if result.get('handover_id'):
         row=c.execute('SELECT h.*,s.brand_id,s.branch_ids,s.user_id source_user,t.user_id target_user FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE h.id=%s',(result['handover_id'],)).fetchone()
-        if not row or not same_scope(user,row) or (user['role']!='owner' and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
+        if row and operation.startswith('manager.handover:') and delegated_shift(user,'shifts_handover'):
+            for key in ('from_shift_id','to_shift_id'):
+                shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(row[key],)).fetchone(),capability='shifts_handover')
+        elif not row or not same_scope(user,row) or (user['role']!='owner' and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
 
 class ShiftOpen(OperationBody):
     delivery_period: Literal['morning','evening']|None=None
@@ -296,6 +299,8 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
         def perform():
             target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
             if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')
+            if user['role']=='admin' and target['role'] not in ('driver','delivery_manager'):
+                fail(403,'افتح الشفت لموظف تشغيل مخول فقط')
             if target['id']!=user['id']:
                 shift_roles(user,'shifts_open','owner','delivery_manager')
                 if user['role']=='delivery_manager' and (target['role']!='driver' or body.kind!='driver'):fail(403,'المدير يفتح شفتات السائقين التابعين فقط')

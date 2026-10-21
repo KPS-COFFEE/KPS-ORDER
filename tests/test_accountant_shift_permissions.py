@@ -128,9 +128,11 @@ def test_owner_can_grant_read_only_and_revoke_in_the_same_live_session(client, m
 
 @pytest.mark.postgres
 def test_approval_grant_preserves_actual_receipt_and_branch_guards(client, monkeypatch):
+    from app import reporting
+    monkeypatch.setattr(reporting, 'generate_files', lambda rid: None)
     target = _make_user('admin', branches=['kps-branch-1'])
     owner = _make_user('owner')
-    seed_shifts()
+    manager, driver = seed_shifts()
     sms_login(client, owner, monkeypatch); sms_step_up(client, owner, monkeypatch)
     result = _save(client, target, {'shifts_view', 'shifts_approve'})
     assert result.status_code == 200, result.text
@@ -146,4 +148,21 @@ def test_approval_grant_preserves_actual_receipt_and_branch_guards(client, monke
     assert client.post('/api/shifts/accountant-outside/return', json={'reason': 'Out of scope'}, headers={'Idempotency-Key': 'accountant-outside'}).status_code == 403
     assert client.post('/api/shifts/accountant-foreign/return', json={'reason': 'Other brand'}, headers={'Idempotency-Key': 'accountant-foreign'}).status_code == 404
     assert client.post('/api/shifts/accountant-driver/driver-close', json={'received_halalas': 0, 'confirmed': True}).status_code == 403
+    # The accountant cannot confirm a receipt assigned to the actual manager.
+    with db.tx() as c:
+        c.execute("INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,recipient_user_id,amount_halalas,reference,closure,created_by) VALUES('accountant-receipt','accountant-driver','accountant-manager',%s,0,'Verified zero-cash handover',true,%s)", (manager['id'], driver['id']))
+    assert client.post('/api/custody/accountant-receipt/confirm', json={}).status_code == 403
+    target_cookies, target_csrf = dict(client.cookies), client.headers['X-CSRF-Token']
+    _authenticate(client, manager)
+    confirmed = client.post('/api/custody/accountant-receipt/confirm', json={}, headers={'Idempotency-Key': 'actual-manager-receipt'})
+    assert confirmed.status_code == 200, confirmed.text
+    client.cookies.clear(); client.cookies.update(target_cookies); client.headers['X-CSRF-Token'] = target_csrf
+    approved = client.post('/api/shifts/accountant-driver/approve', json={}, headers={'Idempotency-Key': 'accountant-verified-approval'})
+    assert approved.status_code == 200, approved.text
+    replay = client.post('/api/shifts/accountant-driver/approve', json={}, headers={'Idempotency-Key': 'accountant-verified-approval'})
+    assert replay.status_code == 200 and replay.json() == approved.json()
+    with db.tx() as c:
+        row = c.execute("SELECT status,approved_by FROM shifts WHERE id='accountant-driver'").fetchone()
+        assert row['status'] == 'closed' and row['approved_by'] == target['id']
+        assert c.execute("SELECT count(*) n FROM closure_reports WHERE shift_id='accountant-driver'").fetchone()['n'] == 1
 
