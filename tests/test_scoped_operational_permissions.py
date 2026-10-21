@@ -9,7 +9,8 @@ def test_safe_grants_are_explicit_and_financial_approvals_remain_closed():
     for role in ('driver','branch_manager','delivery_staff','delivery_manager','admin'):
         assert 'staff_catalog_view' in policy.grantable(role)
         assert 'orders_operational_view' in policy.grantable(role)
-        assert not policy.grantable(role) & {'refunds_manage','shifts_approve','accounting_review','drivers_manage','payments_collect'}
+        assert not policy.grantable(role) & {'refunds_manage','accounting_review','drivers_manage','payments_collect'}
+        assert ('shifts_approve' in policy.grantable(role)) == (role=='admin')
         assert 'orders_operational_view' not in policy.effective({'role':role})
     assert 'driver_hours_reports' in policy.eligible('delivery_manager')
     assert 'driver_hours_reports' not in policy.effective({'role':'driver'})
