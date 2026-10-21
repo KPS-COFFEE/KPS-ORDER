@@ -355,7 +355,10 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         raise db.error(403, 'ROLE_FORBIDDEN', 'الوصول غير مسموح.')
     if user.get('_morning_manager_context'):
         conditions.append("o.snapshot->>'delivery_period'='morning'")
-        conditions.append("NOT EXISTS (SELECT 1 FROM driver_tasks ct JOIN shifts cs ON cs.id=ct.shift_id WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned') AND cs.manager_shift_id IS DISTINCT FROM %s)")
+        preferred="COALESCE(NULLIF(o.snapshot->>'manager_shift_id',''),(SELECT NULLIF(ce.details->>'manager_shift_id','') FROM order_events ce WHERE ce.order_id=o.id AND ce.event_type='preparation.accepted' AND ce.details ? 'manager_shift_id' ORDER BY ce.created_at DESC,ce.id DESC LIMIT 1))"
+        conditions.append('COALESCE('+preferred+',%s)=%s')
+        params.extend([user['_morning_manager_context']['shift_id']]*2)
+        conditions.append("NOT EXISTS (SELECT 1 FROM driver_tasks ct JOIN shifts cs ON cs.id=ct.shift_id WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned') AND (cs.manager_shift_id IS DISTINCT FROM %s OR cs.kind<>'driver' OR cs.brand_id IS DISTINCT FROM o.brand_id OR cs.delivery_window_snapshot->>'period' IS DISTINCT FROM 'morning' OR cs.branch_ids<>jsonb_build_array(o.branch_id)))")
         params.append(user['_morning_manager_context']['shift_id'])
         conditions.append("(EXISTS (SELECT 1 FROM driver_tasks ct WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned')) OR (o.completed_at IS NULL AND o.preparation_status NOT IN ('completed','cancelled','rejected') AND o.delivery_status NOT IN ('delivered','cancelled')))")
     if customer_view:
@@ -472,6 +475,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         enrich_payments(conn, rows[:limit])
         if user['role']!='customer':
             performance.enrich_orders(conn,rows[:limit])
+            from . import morning_dispatch
+            morning_dispatch.enrich(conn,rows[:limit])
         else:
             from .customer_progress import enrich_orders as enrich_customer_progress
             enrich_customer_progress(conn, rows[:limit])
@@ -663,6 +668,8 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
         enrich_payments(conn, [row])
         if user['role']!='customer':
             performance.enrich_orders(conn,[row])
+            from . import morning_dispatch
+            morning_dispatch.enrich(conn,[row])
             row['print_labels_en']=print_translations.for_order(conn,row)
             row['receipt_qr']=invoice_profiles.ordinary_qr(row)
             from .fiscal_issuance import original
@@ -747,6 +754,11 @@ def manager_accept(order_id: str, body: ManagerAcceptanceBody,
                 from .branch_printing import enqueue_morning_preparer_receipt
                 result['printing'] = enqueue_morning_preparer_receipt(
                     conn, user, row, morning_branch, source='morning_manager_acceptance')
+                from . import morning_dispatch
+                result['auto_assignment'] = morning_dispatch.try_assign(conn, order_id)
+                row = conn.execute('SELECT * FROM orders WHERE id=%s', (order_id,)).fetchone()
+                morning_dispatch.enrich(conn,[row])
+                result['order'] = row
             return result
         return db.idempotent(conn, user['id'], idempotency_key, 'order.manager_accept:' + order_id,
                              body.model_dump(), perform)
@@ -762,8 +774,19 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
         visible = scoped_order(conn, order_id, user)
         from . import morning_delivery
         morning_delivery.authorize_order(conn,user,visible,preparation=user['role']=='branch_manager')
-        if user['role']=='delivery_manager' and (body.status!='cancelled' or visible['service']!='delivery'):
+        from . import morning_dispatch
+        if morning_dispatch.actual_morning(visible):
+            # Assignment/closure already use this lock order. Acquire the lane
+            # before locking the order, including acceptance→auto-assignment.
+            morning_dispatch.lock_operations(conn)
+        morning_fallback = bool(user.get('_morning_manager_context') and morning_dispatch.launch_order(conn,visible))
+        if morning_fallback and (body.status not in {'preparing','ready'}
+                or not 3 <= len(body.reason.strip()) <= 500 or '\x00' in body.reason):
+            raise db.error(403,'MORNING_PREPARATION_INTERVENTION','تدخل مدير الصباح للتجهيز فقط مع توضيح السبب.')
+        if user['role']=='delivery_manager' and not morning_fallback and (body.status!='cancelled' or visible['service']!='delivery'):
             raise db.error(403,'DELIVERY_DECISION_ONLY','مدير التوصيل يرفض طلب التوصيل أو يقبله مع إسناد سائق؛ تجهيز الفرع له إجراء مستقل.')
+        if body.status in {'preparing','ready'}:
+            morning_dispatch.require_driver_acceptance(conn,visible)
         def perform():
             order = scoped_order(conn, order_id, user, lock=True)
             if order['version'] != body.version:
@@ -776,8 +799,6 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                            'preparing': {'ready', 'cancelled'}, 'ready': {'handed_over', 'completed', 'cancelled'}}
             from . import branch_printing
             morning_preparer = branch_printing.morning_preparer_branch(conn, user, order)
-            if morning_preparer:
-                transitions['accepted'].add('ready')
             if body.status not in transitions.get(current, set()):
                 raise db.error(409, 'PREPARATION_TRANSITION_INVALID', 'انتقال حالة التجهيز غير مسموح.')
             if body.status in {'preparing','ready','completed'}:
@@ -823,6 +844,11 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
             result = {'order': row}
             if morning_preparer and current == 'new' and body.status == 'accepted':
                 result['printing'] = branch_printing.enqueue_morning_preparer_receipt(conn, user, row, morning_preparer)
+            if body.status in {'accepted','preparing','ready'} and morning_dispatch.actual_morning(row):
+                result['auto_assignment'] = morning_dispatch.try_assign(conn, order_id)
+                if result['auto_assignment']['status'] == 'assigned':
+                    result['order'] = conn.execute('SELECT * FROM orders WHERE id=%s', (order_id,)).fetchone()
+                morning_dispatch.enrich(conn,[result['order']])
             return result
         return db.idempotent(conn, user['id'], idempotency_key, 'order.preparation:' + order_id, body.model_dump(), perform)
 

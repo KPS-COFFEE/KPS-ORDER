@@ -16,6 +16,8 @@ pytestmark = pytest.mark.postgres
 
 def printer_and_new_order(ids, *, devices=1, approved=True):
     with db.tx() as c:
+        # These tests isolate acceptance/print atomicity, not automatic dispatch.
+        c.execute("UPDATE shifts SET available=false WHERE id='ctx-driver'")
         c.execute("UPDATE orders SET preparation_status='new' WHERE id=%s", (ids['morning'],))
         for _ in range(devices):
             c.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,token_hash,created_by,approved_at) "
@@ -35,8 +37,9 @@ def test_manager_fallback_queues_once_and_preparer_can_mark_ready(morning_manage
     assert first.json()['order']['delivery_status'] == 'pending'
     assert post(client, path, {'version': 1}, key).json() == first.json()
     assert post(client, path, {'version': 1}).status_code == 409
-    # The manager's fallback does not grant preparation-completion or manual print.
-    assert post(client, f'/api/orders/{oid}/preparation', {'status': 'ready', 'version': 2}).status_code == 403
+    # Intervention never bypasses a driver's actual acceptance or the reason gate.
+    denied = post(client, f'/api/orders/{oid}/preparation', {'status': 'ready', 'version': 2})
+    assert denied.status_code in (403, 409, 422), denied.text
     with db.tx() as c:
         jobs = c.execute('SELECT * FROM branch_print_jobs WHERE order_id=%s', (oid,)).fetchall()
         assert len(jobs) == 1 and jobs[0]['branch_id'] == B2
@@ -45,11 +48,21 @@ def test_manager_fallback_queues_once_and_preparer_can_mark_ready(morning_manage
         assert len(event) == 1 and event[0]['details']['manager_shift_id'] == 'ctx-duty'
         assert not c.execute('SELECT 1 FROM driver_tasks WHERE order_id=%s', (oid,)).fetchone()
         preparer = c.execute("SELECT * FROM users WHERE id='ops-branch'").fetchone()
+        driver = c.execute("SELECT * FROM users WHERE id='ops-driver'").fetchone()
+        c.execute("UPDATE shifts SET available=true WHERE id='ctx-driver'")
+    assignment = post(client, f'/api/orders/{oid}/assign', {'driver_shift_id': 'ctx-driver'})
+    assert assignment.status_code == 200, assignment.text
     del client.headers['X-Delivery-Period']
+    _authenticate(client, driver)
+    accepted = post(client, '/api/tasks/'+assignment.json()['task']['id']+'/transition', {'status': 'accepted'})
+    assert accepted.status_code == 200, accepted.text
     _authenticate(client, preparer)
-    ready = post(client, f'/api/orders/{oid}/preparation', {'status': 'ready', 'version': 2})
-    assert ready.status_code == 200, ready.text
-    assert ready.json()['order']['preparation_status'] == 'ready'
+    for state in ('preparing', 'ready'):
+        with db.tx() as c:
+            version = c.execute('SELECT version FROM orders WHERE id=%s', (oid,)).fetchone()['version']
+        prepared = post(client, f'/api/orders/{oid}/preparation', {'status': state, 'version': version})
+        assert prepared.status_code == 200, prepared.text
+    assert prepared.json()['order']['preparation_status'] == 'ready'
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM branch_print_jobs WHERE order_id=%s', (oid,)).fetchone()['n'] == 1
 

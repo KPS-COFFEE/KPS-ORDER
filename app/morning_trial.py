@@ -29,7 +29,8 @@ class Start(BaseModel):
 
 class Action(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    action: Literal['accept', 'ready', 'assign', 'driver_accept', 'delivered', 'close', 'stop']
+    action: Literal['accept', 'preparing', 'ready', 'driver_accept', 'picked_up', 'delivered', 'close', 'stop']
+    reason: str = Field(default='', max_length=500)
 
 
 def _principal(user):
@@ -184,7 +185,7 @@ def start(body: Start, user=Depends(auth.current_user), idem: str | None = Heade
         candidate = {'id': db.new_id('trial_'), 'status': 'open', 'created_at': now.isoformat(),
                      'expires_at': (now + timedelta(minutes=20)).isoformat(), 'branch_id': branch['id'],
                      'branch_name': branch['name'], 'participants': participants, 'reason': body.reason,
-                     'authorized_by': user['id'], 'simulated': True, 'financial_effect': False,
+                     'authorized_by': user['id'], 'flow_version': 2, 'simulated': True, 'financial_effect': False,
                      'order': {'id': 'TRIAL-' + db.new_id()[:12], 'status': 'new', 'item_label': 'طلب تجريبي — لا يتم التجهيز الفعلي', 'print_job_id': None},
                      'events': []}
         _fresh(c, user, candidate, write=True)
@@ -222,20 +223,31 @@ def action(trial_id: str, body: Action, user=Depends(auth.current_user), idem: s
         now = c.execute('SELECT now() n').fetchone()['n']
         if body.action != 'stop' and (trial['status'] != 'open' or datetime.fromisoformat(trial['expires_at']) <= now):
             raise db.error(409, 'MORNING_TRIAL_EXPIRED', 'انتهت التجربة؛ التقرير متاح للقراءة فقط.')
-        allowed = {'accept': {'manager', 'preparer'}, 'ready': {'preparer'}, 'assign': {'owner'},
-                   'driver_accept': {'driver'}, 'delivered': {'driver'}, 'close': {'owner'}, 'stop': {'owner'}}
+        allowed = {'accept': {'manager', 'preparer'}, 'preparing': {'manager', 'preparer'},
+                   'ready': {'manager', 'preparer'}, 'driver_accept': {'driver'}, 'picked_up': {'driver'},
+                   'delivered': {'driver'}, 'close': {'manager', 'owner'}, 'stop': {'owner'}}
         if role not in allowed[body.action]:
             raise db.error(403, 'MORNING_TRIAL_ACTION', 'هذا الإجراء ليس ضمن دورك في التجربة.')
+        fallback = role == 'manager' and body.action in {'preparing', 'ready'}
+        reason = body.reason.strip()
+        if fallback and len(reason) < 3:
+            raise db.error(422, 'MORNING_TRIAL_FALLBACK_REASON', 'اكتب سبب قيام المدير بالتجهيز بدل المحضّر المتأخر.')
+        if reason and not fallback:
+            raise db.error(422, 'MORNING_TRIAL_REASON_SCOPE', 'سبب الإنابة متاح فقط لتجهيز المدير بدل المحضّر.')
         def perform():
             previous = trial['order']['status']
             if trial['status'] != 'open':
                 raise db.error(409, 'MORNING_TRIAL_ENDED', 'التجربة منتهية؛ التقرير للقراءة فقط.')
-            transitions = {'accept': ('new', 'accepted'), 'ready': ('accepted', 'ready'), 'assign': ('ready', 'assigned'),
-                           'driver_accept': ('assigned', 'driver_accepted'), 'delivered': ('driver_accepted', 'delivered'), 'close': ('delivered', 'delivered')}
+            transitions = {'accept': ('new', 'assigned'), 'driver_accept': ('assigned', 'driver_accepted'),
+                           'preparing': ('driver_accepted', 'preparing'), 'ready': ('preparing', 'ready'),
+                           'picked_up': ('ready', 'picked_up'), 'delivered': ('picked_up', 'delivered'),
+                           'close': ('delivered', 'delivered')}
             if body.action != 'stop':
                 before, after = transitions[body.action]
                 if previous != before:
                     raise db.error(409, 'MORNING_TRIAL_TRANSITION', 'تغيرت مرحلة التجربة؛ حدّث الشاشة.')
+                if trial.get('flow_version') != 2:
+                    raise db.error(409, 'MORNING_TRIAL_OLD_FLOW', 'هذه تجربة قديمة؛ أوقفها وابدأ تجربة جديدة. التقرير محفوظ.')
                 trial['order']['status'] = after
             if body.action == 'accept':
                 devices = c.execute("SELECT id,label FROM branch_print_devices WHERE brand_id='kps' AND branch_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL AND approved_at IS NOT NULL ORDER BY id FOR UPDATE", (trial['branch_id'],)).fetchall()
@@ -246,15 +258,29 @@ def action(trial_id: str, body: Action, user=Depends(auth.current_user), idem: s
                 payload = {'language': 'ar', 'kind': 'test', 'morning_trial_id': trial['id'], 'lines': lines}
                 c.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,kind,payload,requested_by) VALUES(%s,'kps',%s,%s,'test',%s,%s)", (job_id, trial['branch_id'], devices[0]['id'], db.json(payload), user['id']))
                 trial['order']['print_job_id'] = job_id
+                trial['order']['assigned_driver_id'] = trial['participants']['driver']['id']
+                trial['order']['assigned_at'] = now.isoformat()
+            if body.action == 'driver_accept':
+                trial['order']['driver_accepted_by'] = user['id']
+                trial['order']['driver_accepted_at'] = now.isoformat()
             if body.action in {'stop', 'close'}:
                 trial['status'] = 'stopped' if body.action == 'stop' else 'closed'
                 trial['ended_at'] = now.isoformat()
                 if body.action == 'stop' and trial['order']['print_job_id']:
                     c.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE id=%s AND kind='test' AND status='queued' AND payload->>'morning_trial_id'=%s", (trial['order']['print_job_id'], trial['id']))
             event = {'action': body.action, 'actor_id': user['id'], 'actor_name': user.get('display_name', ''), 'role': role, 'at': now.isoformat(), 'simulated': True}
+            if fallback:
+                event.update(on_behalf_of=trial['participants']['preparer']['id'], reason=reason)
             trial['events'].append(event)
+            if body.action == 'accept':
+                trial['events'].append({'action': 'auto_assign', 'actor_id': user['id'],
+                    'actor_name': user.get('display_name', ''), 'role': role, 'at': now.isoformat(),
+                    'driver_id': trial['participants']['driver']['id'], 'automatic': True,
+                    'simulated': True})
             _save(c, settings)
-            db.audit(c, user['id'], 'morning.trial.' + body.action, 'morning_trial', trial['id'], {'simulated': True, 'previous': previous, 'status': trial['order']['status'], 'branch_id': trial['branch_id']})
+            db.audit(c, user['id'], 'morning.trial.' + body.action, 'morning_trial', trial['id'], {'simulated': True, 'previous': previous, 'status': trial['order']['status'], 'branch_id': trial['branch_id'], 'reason': reason if fallback else None,
+                'on_behalf_of': trial['participants']['preparer']['id'] if fallback else None,
+                'auto_assigned_driver_id': trial['participants']['driver']['id'] if body.action == 'accept' else None})
             return _view(c, trial)
         db.idempotent(c, user['id'], idem, 'morning.trial.action:' + trial_id, body.model_dump(), perform)
         return _view(c, trial)

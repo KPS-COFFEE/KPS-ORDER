@@ -128,8 +128,8 @@ def eligible(role):
 
 def effective(user):
     if user.get('_morning_manager_context'):
-        from .morning_manager_context import CAPABILITIES
-        return set(CAPABILITIES)
+        from .morning_manager_context import capabilities
+        return set(capabilities(user))
     role = user.get('role')
     if role == 'owner':
         return eligible(role)
@@ -209,10 +209,13 @@ ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branc
                                 for name in ('order_output_status','confirm_order_output')})
 
 
-def required_for(endpoint, role):
+def required_for(endpoint, role, *, user=None):
     if role in {'owner', 'customer'} or endpoint is None:
         return None
     module = endpoint.__module__.rsplit('.', 1)[-1]
+    if (role == 'delivery_manager' and user and user.get('_morning_manager_context')
+            and module == 'orders' and endpoint.__name__ == 'preparation'):
+        return 'orders_prepare'
     if role == 'admin' and module == 'operations' and endpoint.__name__ in ('request_close', 'submit_close'):
         return ('shifts_close', 'shifts_delegate_close')
     value = ROUTES.get(module, {}).get(endpoint.__name__)

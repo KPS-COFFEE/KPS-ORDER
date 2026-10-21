@@ -194,7 +194,7 @@ def current_user(request: Request) -> dict:
         if not token or not hmac.compare_digest(token_hash(token), user['csrf_hash']):
             raise db.error(403, 'CSRF_REJECTED', 'انتهى التحقق الآمن للطلب. حدّث الصفحة.')
     # Database result is fresh on every request: disabling an employee or changing branch access is immediate.
-    required = employee_permissions.required_for(request.scope.get('endpoint'), user['role'])
+    required = employee_permissions.required_for(request.scope.get('endpoint'), user['role'], user=user)
     if required and not any(has_permission(user, value) for value in ((required,) if isinstance(required, str) else required)):
         raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'هذه الصلاحية متوقفة لحسابك. تواصل مع المالك.')
     return user

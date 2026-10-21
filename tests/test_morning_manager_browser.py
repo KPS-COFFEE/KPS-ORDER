@@ -9,7 +9,7 @@ pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Ch
 
 
 @pytest.mark.parametrize('lang,width',[('ar',390),('en',390),('ar',1366),('en',1366)])
-def test_scoped_manager_accepts_without_driver_or_financial_controls(static_customer,lang,width):
+def test_scoped_manager_accepts_with_dispatch_but_without_financial_controls(static_customer,lang,width):
     from playwright.sync_api import sync_playwright, expect
     from app.morning_manager_context import CAPABILITIES
     user={'id':'manager','brand_id':'kps','role':'delivery_manager','display_name':'محمد تجريبي',
@@ -32,7 +32,7 @@ def test_scoped_manager_accepts_without_driver_or_financial_controls(static_cust
         page.on('pageerror',lambda error:errors.append(str(error)))
         def api(route):
             request=route.request;path=urlparse(request.url).path;payload={}
-            assert path not in {'/api/operations/people','/api/operations/drivers','/api/tasks','/api/shifts'}
+            assert path not in {'/api/operations/people','/api/operations/drivers','/api/shifts'}
             assert not path.startswith('/api/shifts/morning-duty')
             headers.append(request.headers.get('x-delivery-period'))
             if path=='/api/session':payload={'user':user,'csrf_token':'synthetic'}
@@ -41,6 +41,9 @@ def test_scoped_manager_accepts_without_driver_or_financial_controls(static_cust
             elif path=='/api/shifts/current':payload={'shifts':[manager]}
             elif path=='/api/orders':payload={'orders':[order],'next_offset':None}
             elif path=='/api/orders/morning-order':payload={'order':order,'events':[]}
+            elif path=='/api/tasks':
+                assert 'order_id=morning-order' in request.url
+                payload={'tasks':[]}
             elif path=='/api/orders/morning-order/manager-accept':
                 writes.append((path,request.post_data_json));order['preparation_status']='accepted';order['version']+=1
                 payload={'order':order,'printing':{'status':'queued'}}
@@ -64,7 +67,8 @@ def test_scoped_manager_accepts_without_driver_or_financial_controls(static_cust
         order['preparation_status']='ready';order['version']+=1
         page.reload()
         page.locator('[data-action=order-detail][data-id=morning-order]').click()
-        assert page.locator('[data-action=assign]:visible,[data-action=prepare]:visible').count()==0
+        expect(page.locator('#modal [data-action=assign]')).to_be_visible()
+        assert page.locator('[data-action=prepare]:visible').count()==0
         assert page.locator('[data-action=shift-detail]:visible,[data-action=open-shift]:visible,[data-action=approve-shift]:visible').count()==0
         assert page.locator('[data-action=print-order]:visible,[data-action=fiscal-documents]:visible,[data-action=confirm-print-output]:visible').count()==0
         assert writes==[('/api/orders/morning-order/manager-accept',{'version':1})]
@@ -117,6 +121,7 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
         page.goto(static_customer+'/ops.html?delivery_period=morning')
         page.locator('#page-heading [data-action=customer-order]').click()
         form=page.locator('#staff-order-form')
+        expect(form).to_contain_text('كطلب جديد بانتظار القبول' if lang=='ar' else 'new order awaiting acceptance')
         expect(form.locator('[name=branch_id]')).to_be_disabled()
         expect(form.locator('[name=branch_id] option')).to_have_count(1)
         expect(form.locator('[name=branch_id]')).to_have_value('branch2')
@@ -132,6 +137,8 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
         form.locator('[type=submit]').click()
         expect(page.locator('#modal [data-action=manager-accept]')).to_be_visible()
         assert [path for path,_ in writes]==['/api/quote','/api/orders/delivery-center']
+        assert created['preparation_status']=='new' and created['delivery_status']=='pending'
+        assert 'preparation_status' not in writes[-1][1]  # Creation never accepts for the branch.
         assert all(body['branch_id']=='branch2' and body['service']=='delivery' for _,body in writes)
         assert writes[-1][1]['expected_total_halalas']==1000
         assert not any('customer-lookup' in path for path in requests)

@@ -54,7 +54,7 @@
     });
     const form=document.querySelector('#staff-order-form'),select=form.querySelector('#staff-product'),options=form.querySelector('#staff-options'),add=form.querySelector('#staff-add');
     if(morning){
-      form.querySelector('p.notice').textContent=tr('طلب واتساب — صباحي حفر الباطن، تجهيز فرع 2. أدخل بيانات العميل وموقعه كما أرسلها؛ الجوال غير موثق بهذه العملية.','WhatsApp order — Hafar morning, prepared at Branch 2. Enter the customer details and location as provided; this does not verify mobile ownership.');
+      form.querySelector('p.notice').textContent=tr('طلب واتساب — صباحي حفر الباطن، تجهيز فرع 2. يصل للمحضّر كطلب جديد بانتظار القبول. أدخل بيانات العميل وموقعه كما أرسلها؛ الجوال غير موثق بهذه العملية.','WhatsApp order — Hafar morning, prepared at Branch 2. It reaches the preparer as a new order awaiting acceptance. Enter the customer details and location as provided; this does not verify mobile ownership.');
       form.elements.branch_id.disabled=true;
       form.addEventListener('formdata',event=>event.formData.set('branch_id',allowed[0].id));
     }
