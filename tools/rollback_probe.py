@@ -37,7 +37,7 @@ try:
  with db.tx() as conn:
   conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
   archive,manifest=exports.build_archive(conn,full=True)
-  out['export']={'status':'ok','counts':{t:manifest['counts'].get(t) for t in ('driver_work_trips','driver_work_trip_orders','driver_work_trip_events','orders','branch_print_devices','branch_print_jobs')}}
+  out['export']={'status':'ok','counts':{t:manifest['counts'].get(t) for t in ('driver_work_trips','driver_work_trip_orders','driver_work_trip_events','orders','branch_print_devices','branch_print_jobs','driver_accounting_settlements')}}
 except HTTPException as e:out['export']={'status':'rejected','code':e.detail.get('code')}
 if mode=='compat':
  from app import driver_work_hours
