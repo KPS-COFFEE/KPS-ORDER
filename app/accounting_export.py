@@ -91,7 +91,7 @@ def render(data,format,lang):
                 section_rows += [[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k),(int,float)) else r.get(k,'') for k in section_keys] for r in entries]
                 section_rows.append([('الإجمالي' if lang=='ar' else 'Total') if i==0 else sum(r.get(k,0) for r in entries)/100 if k in MONEY else sum(r.get(k,0) for r in entries) if k=='completed_orders' else '' for i,k in enumerate(section_keys)])
                 sections.append(dict(title=entries[0]['driver'],keys=section_keys,rows=section_rows))
-        return pdf([headers,*values],keys,title,meta,data['definitions'],lang,sections=sections or None)
+        return pdf([headers,*values],keys,title,meta,data['definitions'],lang,sections=sections or None,compact=True)
     return pdf([headers,*values],keys,title,meta,data['definitions'],lang)
 
 def xlsx(rows,keys,notes,lang):
@@ -122,7 +122,7 @@ def xlsx(rows,keys,notes,lang):
         z.writestr('xl/worksheets/sheet2.xml',f'<worksheet xmlns="{root}"><cols><col min="1" max="1" width="120" customWidth="1"/></cols><sheetData>'+''.join(f'<row r="{i}">'+cell(n,f'A{i}',0)+'</row>' for i,n in enumerate(notes,1))+'</sheetData></worksheet>')
     return out.getvalue()
 
-def pdf(rows,keys,title,meta,definitions,lang,sections=None):
+def pdf(rows,keys,title,meta,definitions,lang,sections=None,compact=False):
     import arabic_reshaper
     from bidi.algorithm import get_display
     from reportlab.pdfbase import pdfmetrics
@@ -133,7 +133,7 @@ def pdf(rows,keys,title,meta,definitions,lang,sections=None):
     from reportlab.lib import colors
     name='AccountingKufi'
     if name not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont(name,str(Path(__file__).resolve().parents[1]/'public/assets/fonts/NotoKufiArabic-Regular.ttf')))
-    style=ParagraphStyle('accounting',fontName=name,fontSize=9,leading=16,alignment=2 if lang=='ar' else 0)
+    style=ParagraphStyle('accounting',fontName=name,fontSize=9,leading=14 if compact else 16,alignment=2 if lang=='ar' else 0)
     class ArabicText(Flowable):
         def __init__(self,value,style):
             Flowable.__init__(self);self.value=str(value);self.style=style
@@ -169,7 +169,7 @@ def pdf(rows,keys,title,meta,definitions,lang,sections=None):
         cells=[[text(f'{v:,.2f}' if isinstance(v,float) else v) for v in row] for row in section_rows]
         keys=list(section_keys)
         if lang=='ar':cells=[list(reversed(r)) for r in cells];keys=list(reversed(keys))
-        weights=[2.8 if k in ('notes','reason','action','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
+        weights=[7 if k=='adjustments' else 2.8 if k in ('notes','incident_notes','traffic_notes','reason','action','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
         widths=[available*w/sum(weights) for w in weights]
         table=LongTable(cells,colWidths=widths,repeatRows=1,splitByRow=1,splitInRow=1)
         commands=[('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eeeeee')),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#cccccc')),('VALIGN',(0,0),(-1,-1),'TOP')]

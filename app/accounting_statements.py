@@ -122,10 +122,11 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             kind=kind,amount=amount,reason=r['description'],responsibility=responsibility,action=r['action']))
     audit=settlement_audit(c,user,rows,changes)
     for e in audit:
-        daily[e['driver_id'],e['day']]['adjustments']+=f"{e['actor']} · {e['at'].astimezone(TZ).isoformat()} · {e['reason']} · " + \
-            f"{'Card' if en else 'الشبكة'} {e['before_bank']/100:.2f} → {e['after_bank']/100:.2f}; " + \
-            f"{'Cash due' if en else 'الكاش المطلوب'} {e['before_cash']/100:.2f} → {e['after_cash']/100:.2f}; " + \
-            f"{'Received' if en else 'المستلم'} {('—' if e['before_received'] is None else format(e['before_received']/100,'.2f'))} → {('—' if e['after_received'] is None else format(e['after_received']/100,'.2f'))}\n"
+        before='before' if en else 'قبل';after='after' if en else 'بعد'
+        daily[e['driver_id'],e['day']]['adjustments']+=f"{e['actor']} · {e['at'].astimezone(TZ).strftime('%Y/%m/%d %H:%M')} · {e['reason']}\n" + \
+            f"{'Card' if en else 'الشبكة'}: {before} {e['before_bank']/100:.2f} / {after} {e['after_bank']/100:.2f}; " + \
+            f"{'Cash due' if en else 'الكاش المطلوب'}: {before} {e['before_cash']/100:.2f} / {after} {e['after_cash']/100:.2f}; " + \
+            f"{'Received' if en else 'المستلم'}: {before} {('—' if e['before_received'] is None else format(e['before_received']/100,'.2f'))} / {after} {('—' if e['after_received'] is None else format(e['after_received']/100,'.2f'))}\n"
     for item in daily.values():
         if item['closure_count']:
             item['status']=('Pending balance' if en else 'بانتظار الموازنة') if item['pending_balance'] else ('Pending cash' if en else 'بانتظار الكاش') if item['pending_receipt'] else ('Approved' if en else 'معتمد')
