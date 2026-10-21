@@ -30,8 +30,8 @@
         if(state==='assigned'&&role==='driver')actions.push(['driver_accept',tr('قبول التوصيل التجريبي','Accept rehearsal delivery')]);
         if(state==='driver_accepted'&&role==='driver')actions.push(['delivered',tr('تم التوصيل — محاكاة فقط','Delivered — simulation only')]);
         if(state==='delivered'&&owner)actions.push(['close',tr('إقفال التجربة وعرض التقرير','Close rehearsal and view report')]);
-        if(owner)actions.push(['stop',tr('إيقاف التجربة','Stop rehearsal')]);
       }
+      if(owner&&trial.status==='open')actions.push(['stop',tr('إيقاف التجربة','Stop rehearsal')]);
       const label=active()?statusLabel(trial.status):statusLabel(trial.status==='open'?'expired':trial.status);
       const people=Object.entries(trial.participants||{}).map(([key,person])=>`<p>${esc(({manager:tr('المدير','Manager'),preparer:tr('المحضّر','Preparer'),driver:tr('السائق','Driver')})[key]||key)}: <strong>${esc(person.display_name)}</strong></p>`).join('');
       const link='/ops?morning_trial=1&trial_id='+encodeURIComponent(trial.id);
@@ -44,7 +44,7 @@
     function showError(error){const host=root.querySelector('#morning-trial-error');if(host)host.textContent=error.message;else onError(error.message);}
     function adopt(data){trial=data.trial||null;if(trial&&(trial.simulated!==true||trial.financial_effect!==false))throw new Error(tr('تعذر إثبات عزل هذه التجربة؛ لم يتم تنفيذ أي إجراء.','Rehearsal isolation could not be verified; no action was performed.'));printing=data.print_job||null;render();}
     async function refresh(){if(!getUser()||busy)return;const data=await api(trial?'/api/morning-trial/'+encodeURIComponent(trial.id):'/api/morning-trial/current');adopt(data);}
-    async function act(action){if(busy||!active())return;let failure=null;busy=true;render();try{adopt(await mutation('/api/morning-trial/'+encodeURIComponent(trial.id)+'/action',{action}));}catch(error){failure=error;}finally{busy=false;render();if(failure)showError(failure);}}
+    async function act(action){const ownerStop=owner&&action==='stop'&&trial?.status==='open';if(busy||(!active()&&!ownerStop))return;let failure=null;busy=true;render();try{adopt(await mutation('/api/morning-trial/'+encodeURIComponent(trial.id)+'/action',{action}));}catch(error){failure=error;}finally{busy=false;render();if(failure)showError(failure);}}
     async function setup(){
       const data=await api('/api/morning-trial/setup');
       const branch=data.branch;

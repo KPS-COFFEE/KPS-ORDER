@@ -124,3 +124,40 @@ def test_missing_eligible_accounts_stays_blocked_without_automatic_grants(static
         expect(page.locator('#morning-trial-start .form-error a')).to_have_attribute('href','/ops')
         assert writes==[]
         browser.close()
+
+
+def test_expired_owner_can_stop_and_cancel_only_queued_rehearsal_print(static_customer):
+    from playwright.sync_api import sync_playwright,expect
+    trial={'id':'trial-expired','status':'open','branch_id':'branch2',
+           'expires_at':(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(),
+           'participants':{'manager':{'id':'manager','display_name':'Manager'},
+                           'preparer':{'id':'preparer','display_name':'Preparer'},
+                           'driver':{'id':'driver','display_name':'Driver'}},
+           'simulated':True,'financial_effect':False,
+           'order':{'id':'TRIAL-EXPIRED','status':'accepted','print_job_id':'test-print'},'events':[]}
+    print_job={'id':'test-print','status':'queued'};writes=[]
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True);page=browser.new_page()
+        def api(route):
+            request=route.request;path=urlparse(request.url).path
+            assert request.headers.get('x-delivery-period') is None
+            payload={}
+            if path=='/api/session':payload={'user':{'id':'owner','brand_id':'kps','role':'owner','display_name':'Owner','effective_permissions':[]},'csrf_token':'synthetic'}
+            elif path=='/api/morning-trial/current':payload={'trial':trial,'print_job':print_job}
+            elif path=='/api/morning-trial/trial-expired/action':
+                assert request.method=='POST' and request.headers.get('idempotency-key')
+                writes.append((path,request.post_data_json))
+                assert request.post_data_json=={'action':'stop'}
+                trial['status']='stopped';print_job['status']='cancelled'
+                payload={'trial':trial,'print_job':print_job}
+            else:assert request.method=='GET'
+            route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
+        page.route('**/api/**',api);page.goto(static_customer+'/ops.html?morning_trial=1')
+        expect(page.locator('#content')).to_contain_text('انتهت المدة')
+        expect(page.locator('[data-trial-action=stop]')).to_be_visible()
+        assert page.locator('[data-trial-action]:not([data-trial-action=stop])').count()==0
+        page.locator('[data-trial-action=stop]').click()
+        expect(page.locator('#morning-trial-print')).to_have_text('أُلغي أمر الاختبار')
+        assert trial['status']=='stopped' and print_job['status']=='cancelled'
+        assert writes==[('/api/morning-trial/trial-expired/action',{'action':'stop'})]
+        browser.close()
