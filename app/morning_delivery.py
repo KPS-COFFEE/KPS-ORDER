@@ -80,7 +80,7 @@ def read_policy(user=Depends(auth.require_roles('owner'))):
     with db.tx() as c:
         row=c.execute('SELECT settings FROM brands WHERE id=%s',(user['brand_id'],)).fetchone()
         branches=c.execute('SELECT id,branch_no,name,city FROM branches WHERE brand_id=%s ORDER BY branch_no',(user['brand_id'],)).fetchall()
-        users=c.execute("SELECT id,display_name,role,branch_ids FROM users WHERE brand_id=%s AND active "
+        users=c.execute("SELECT id,display_name,phone,role,branch_ids FROM users WHERE brand_id=%s AND active "
                         "AND role IN ('branch_manager','delivery_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
         return {'policy':policy((row or {}).get('settings')), 'hours':HOURS, 'timezone':'Asia/Riyadh',
                 'branches':[b for b in branches if user['brand_id']=='kps' and ''.join(b['city'].split())=='حفرالباطن'],
