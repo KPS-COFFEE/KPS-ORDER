@@ -546,6 +546,11 @@ class CustomerInfo(_CheckoutModel):
     location: Location | None = None
     car: Car | None = None
 
+    @field_validator('address', 'neighborhood', mode='before')
+    @classmethod
+    def optional_address_text(cls, value):
+        return '' if value is None else value
+
     @field_validator('name')
     @classmethod
     def customer_name_required(cls, value):
@@ -682,11 +687,8 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     if not all(required_methods.issubset(b['settings']['payment_methods']) for b in (selected_branch, branch)):
         raise db.error(409, 'PAYMENT_METHOD_UNAVAILABLE', 'طريقة الدفع غير متاحة لهذا الفرع.')
     if body.service == 'delivery':
-        if not body.customer.location or not body.customer.address.strip():
-            raise db.error(422, 'DELIVERY_ADDRESS_REQUIRED', 'حدد موقع وعنوان التوصيل.')
-        neighborhood = body.customer.neighborhood.strip()
-        if '\x00' in neighborhood or sum(character.isalnum() for character in neighborhood) < 2:
-            raise db.error(422, 'DELIVERY_NEIGHBORHOOD_REQUIRED', 'أدخل اسم حي التوصيل بصورة واضحة.')
+        if not body.customer.location:
+            raise db.error(422, 'DELIVERY_ADDRESS_REQUIRED', 'حدد موقع التوصيل.')
         if not covered(selected_branch['settings']['coverage'], body.customer.location.model_dump()):
             raise db.error(409, 'OUTSIDE_COVERAGE', 'العنوان خارج نطاق توصيل هذا الفرع.')
     if body.service == 'car' and not body.customer.car:
@@ -1207,3 +1209,4 @@ def nearest_branches(body: NearestBody, user=Depends(auth.require_roles('owner',
         products, by_id, selected = _nearest_catalog(conn, user['brand_id'], body)
     scoped_rows = [branch for branch in rows if user['role'] == 'owner' or branch['id'] in user['branch_ids']]
     return rank_nearest_branches(scoped_rows, point, 'delivery', brand['settings'], products, by_id, selected)
+

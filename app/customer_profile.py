@@ -1,6 +1,6 @@
 """Verified customer self-service; no phone-number based data lookup."""
 from fastapi import APIRouter, Depends, Header, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from . import auth, db
 router=APIRouter(prefix='/api/customer',tags=['customer-profile'])
 
@@ -30,10 +30,15 @@ def update(body:Profile,user=Depends(auth.require_roles('customer'))):
 class Address(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True,allow_inf_nan=False)
     label:str=Field(min_length=1,max_length=100)
-    address:str=Field(min_length=1,max_length=500)
+    address:str=Field(default='',max_length=500)
     neighborhood:str=Field(default='',max_length=120)
     lat:float|None=Field(default=None,ge=-90,le=90,strict=True)
     lng:float|None=Field(default=None,ge=-180,le=180,strict=True)
+
+    @field_validator('address','neighborhood',mode='before')
+    @classmethod
+    def optional_address_text(cls,value):
+        return '' if value is None else value
 
     @model_validator(mode='after')
     def paired_location(self):
@@ -79,3 +84,4 @@ def delete(identifier:str,user=Depends(auth.require_roles('customer'))):
         if not row:raise db.error(404,'ADDRESS_NOT_FOUND','العنوان غير موجود.')
         db.audit(c,user['id'],'customer.address.deleted','address',identifier)
         return {'ok':True}
+
