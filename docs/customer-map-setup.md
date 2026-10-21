@@ -27,3 +27,9 @@ Actual map rendering, mobile WebGL, token restrictions and map labels require
 verification with the configured account before activation approval.
 
 Reference: https://docs.mapbox.com/mapbox-gl-js/guides/security-and-testing/
+
+## Open browsing and location precision (2026-10-21)
+
+Menu browsing and the map picker never require login. The optional early name/mobile form remains available; an active, started gift offer also shows it independently of the journey toggle. Visitors can explicitly choose to browse without signing in. Gift eligibility and order creation still require the existing verified-identity checks.
+
+Device location requests use high accuracy, a fresh reading, and a 15-second timeout. The map displays reported accuracy in metres and warns above 50 metres. The visitor confirms the entrance pin explicitly; late GPS callbacks cannot overwrite a manually moved pin. Accuracy depends on the device and surroundings and is not guaranteed by the map provider.

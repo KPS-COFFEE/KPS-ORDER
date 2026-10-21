@@ -1,7 +1,7 @@
 name: Customer entry and stage timing acceptance
 on:
   push:
-    branches: [agent/customer-journey-stage-policy-20261020]
+    branches: [agent/customer-journey-stage-policy-20261020, agent/customer-open-menu-map-20261021]
   workflow_dispatch:
 permissions:
   contents: read

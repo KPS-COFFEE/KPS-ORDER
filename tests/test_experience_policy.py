@@ -238,3 +238,39 @@ def test_capture_reuses_transaction_settings_without_an_extra_database_read():
     settings['experience_policy']['stages']['driver_acceptance']['red'] = 240
     assert captured['stage_policy']['stages']['driver_acceptance']['red'] == 180
     assert 'stage_policy' not in performance.capture_policy(Conn(), 'kps', 'branch', settings={})
+
+
+@pytest.mark.parametrize('entry_enabled',[False,True])
+@pytest.mark.parametrize('gift_state,offer_active',[
+    ('missing',False),('disabled',False),('scheduled',False),('active',True),
+])
+def test_public_offer_prompt_only_for_enabled_started_gift(monkeypatch,entry_enabled,gift_state,offer_active):
+    """The optional prompt follows the real gift policy independently of entry UI."""
+    settings={'experience_policy':{'customer_entry_enabled':entry_enabled}}
+    if gift_state!='missing':
+        settings['first_order_gift']={
+            'version':3,'enabled':gift_state!='disabled',
+            'starts_at':(datetime.now(timezone.utc)+timedelta(days=1 if gift_state=='scheduled' else -1)).isoformat(),
+            'items':[{'product_id':'coffee','options':{}},{'product_id':'cookie','options':{}}],
+        }
+    queries=[]
+    class Result:
+        def __init__(self,value): self.value=value
+        def fetchone(self): return self.value
+    class Conn:
+        def execute(self,query,params):
+            queries.append((query,params))
+            assert params==('kps',)
+            if query.startswith('SELECT 1 FROM brands'):
+                return Result({'active':True})
+            if query.startswith('SELECT settings'):
+                return Result({'settings':deepcopy(settings)})
+            raise AssertionError(query)
+    @contextmanager
+    def tx(): yield Conn()
+    monkeypatch.setattr(experience.db,'tx',tx)
+    app=FastAPI();app.include_router(experience.router)
+    response=TestClient(app).get('/api/experience/public?brand_id=kps')
+    assert response.status_code==200
+    assert response.json()=={'customer_entry_enabled':entry_enabled,'gift_offer_active':offer_active}
+    assert queries and all(query.startswith('SELECT') for query,_ in queries)

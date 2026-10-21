@@ -62,7 +62,11 @@ def public_policy(brand_id: str = Query(default='kps', max_length=80)):
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (brand_id,)).fetchone():
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
         p = policy(conn, brand_id)
-    return {'customer_entry_enabled': p['customer_entry_enabled']}
+        from .first_order_gift import configured, eligibility
+        row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (brand_id,)).fetchone()
+        gift = configured((row or {}).get('settings'))
+        offer_active = eligibility(gift, verified=False, claimed=False) == 'verification_required'
+    return {'customer_entry_enabled': p['customer_entry_enabled'], 'gift_offer_active': offer_active}
 
 
 @router.get('/policy')
