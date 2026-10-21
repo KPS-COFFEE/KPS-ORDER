@@ -649,8 +649,11 @@
   function entryVerified(){const u=state.session.user;return !!(u?.role==='customer'&&u.brand_id===requestedBrandId&&state.session.csrf_token&&state.session.customer_verified===true);}
   function renderCustomerEntry(){
     const section=$('customer-entry');if(!section)return;
-    section.hidden=!state.entryEnabled;document.body.classList.toggle('customer-entry-flow',state.entryEnabled);
-    if(!state.entryEnabled)return;
+    const showEntry=state.entryEnabled||state.offerActive;section.hidden=!showEntry;document.body.classList.toggle('customer-entry-flow',showEntry);
+    $('menu').hidden=false;$('basket').hidden=false;
+    const servicePanel=document.querySelector('.service-panel');if(servicePanel)servicePanel.hidden=false;
+    document.querySelector('.branch-picker')?.classList.remove('entry-branch-hidden');
+    if(!showEntry)return;
     const verified=entryVerified(),locationReady=state.service!=='delivery'||!!state.location;
     const branchReady=!!state.branchId&&(state.service!=='delivery'||!state.nearest.pending&&!state.nearest.error&&state.nearest.branches.some(b=>b.id===state.branchId));
     const step=!verified?0:!locationReady?1:!branchReady?2:3;
@@ -662,7 +665,7 @@
       section.replaceChildren(steps);
       const title=node('h2','',!verified?entryText('أهلًا بك، نبدأ باسمك وجوالك','Welcome, let’s start with your name and mobile'):!locationReady?entryText('وين نوصّل طلبك؟','Where should we deliver?'):!branchReady?entryText('اختر الفرع اللي يخدمك','Choose a branch serving you'):entryText('جاهز لطلبك','Ready for your order'));title.id='entry-title';section.append(title);
       if(!verified){
-        section.append(node('p','entry-description',entryText('تحقق من جوالك مرة واحدة، وتابع طلباتك وهداياك من حسابك.','Verify your mobile once to follow your orders and gifts from your account.')));
+        section.append(node('p','entry-description',state.offerActive?entryText('سجل اسمك وجوالك من البداية للتحقق من استحقاق الهدية مع طلب مؤهل. أو تصفح المنيو بدون تسجيل.','Enter your name and mobile now to check your gift eligibility with a qualifying order. Or browse the menu without signing in.'):entryText('سجل من البداية لتسهيل طلبك، أو تصفح المنيو بدون تسجيل.','Sign in now for easier ordering, or browse the menu without signing in.')));
         const form=node('form','entry-form');form.id='entry-form';
         const nameLabel=node('label','',entryText('الاسم','Name')),name=node('input');name.name='name';name.autocomplete='name';name.required=true;name.minLength=2;name.maxLength=100;name.value=$('customer-name').value;
         const phoneLabel=node('label','',entryText('رقم الجوال','Mobile number')),phone=node('input');phone.name='phone';phone.type='tel';phone.inputMode='tel';phone.autocomplete='tel';phone.required=true;phone.maxLength=30;phone.dir='ltr';phone.placeholder='05XXXXXXXX';phone.value=$('customer-phone').value;
@@ -671,18 +674,13 @@
         nameLabel.append(name);phoneLabel.append(phone);
         const submit=node('button','button',entryText('متابعة والتحقق من الجوال','Continue and verify mobile'));submit.type='submit';form.append(nameLabel,phoneLabel,submit);
         form.addEventListener('submit',async event=>{event.preventDefault();if(!form.reportValidity())return;$('customer-name').value=name.value.trim();$('customer-phone').value=phone.value.trim();state.identityIntent='login';renderAccount();$('otp-name').value=name.value.trim();$('phone').value=phone.value.trim();openDialog('account-dialog');if(state.session.user&&state.session.user.role!=='customer'||state.session.user&&state.session.user.brand_id!==requestedBrandId)return;await requestOTP({preventDefault(){}});});
-        section.append(form);
+        const browse=node('button','button quiet',entryText('تصفح المنيو بدون تسجيل','Browse menu without signing in'));browse.id='entry-browse';browse.type='button';browse.addEventListener('click',()=>{$('menu').scrollIntoView({behavior:'smooth'});$('search').focus({preventScroll:true});});form.append(browse);section.append(form);
       }else{
         const summary=node('div','entry-summary');summary.append(node('p','entry-description',step===3?entryText('اختر أصنافك، ثم راجع السلة وأكد طلبك.','Choose your items, review your basket, then confirm.'):entryText('نظهر لك الفروع المؤهلة لخدمة موقعك، والاختيار لك.','We show branches eligible to serve your location. You choose the branch.')));
         const account=node('button','button quiet',entryText('حسابي','My account'));account.type='button';account.addEventListener('click',()=>{renderAccount();openDialog('account-dialog');});summary.append(account);section.append(summary);
       }
     }
     section.dataset.lang=language;
-    const servicePanel=document.querySelector('.service-panel');if(servicePanel)servicePanel.hidden=!verified;
-    $('menu').hidden=!verified||!locationReady||!branchReady;$('basket').hidden=!verified||!locationReady||!branchReady;
-    const picker=document.querySelector('.branch-picker');if(picker)picker.classList.toggle('entry-branch-hidden',!locationReady||state.service==='delivery');
-    if(state.service==='delivery')$('nearest-excluded').hidden=true;
-    if(!verified||!locationReady||!branchReady)$('mobile-basket').hidden=true;
   }
   state.channels={guest:{available:false},email:{available:false},sms:{available:false},whatsapp:{available:false}};
   state.cityFilter='';
@@ -1502,6 +1500,7 @@ $('customer-language').addEventListener('click',changeLanguage);const tickerPaus
     const params=new URLSearchParams({brand_id:requestedBrandId});
     const results=await Promise.allSettled([api(`/api/catalog?${params}`),api(`/api/branches?${params}`),api('/api/session'),api(`/api/identity/channels?${params}`),api(`/api/experience/public?${params}`)]);
     state.entryEnabled=results[4].status==='fulfilled'&&results[4].value.customer_entry_enabled===true;
+    state.offerActive=results[4].status==='fulfilled'&&results[4].value.gift_offer_active===true;
     const [catalogResult,branchResult,sessionResult,channelResult]=results;if(channelResult.status==='fulfilled'){state.phoneRequired=channelResult.value.customer_phone_required;state.channels=channelResult.value.channels||channelResult.value;}
     if(catalogResult.status==='fulfilled'){
       const data=catalogResult.value;
@@ -1515,7 +1514,7 @@ $('customer-language').addEventListener('click',changeLanguage);const tickerPaus
     state.identityReady=true;renderAccount();renderService();renderCart();loadBanners();await verifyEmailLink();
     if(state.entryEnabled&&entryVerified()){try{const point=JSON.parse(localStorage.getItem(`order-location:${requestedBrandId}:${state.session.user.id}`)||'null');if(point&&Number.isFinite(point.lat)&&Number.isFinite(point.lng))saveLocation(point.lat,point.lng);}catch{}}
     renderCustomerEntry();
-    window.KPSCustomerMap?.mount({api,brandId:requestedBrandId,host:document.querySelector('.branch-location-tools .row'),getLocation:()=>state.location,onConfirm:saveLocation,tr:entryText,canOpen:()=>!state.entryEnabled||entryVerified()});
+    window.KPSCustomerMap?.mount({api,brandId:requestedBrandId,host:document.querySelector('.branch-location-tools .row'),getLocation:()=>state.location,onConfirm:saveLocation,tr:entryText});
   }
   init().catch(()=>{state.identityReady=Boolean(requestedBrandId);renderAccount();showError('site-notice',t("unable_to_load_part_of_the_page_refresh_to_try_again"));});
 })();

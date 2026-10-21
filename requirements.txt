@@ -9,3 +9,4 @@ reportlab==5.0.1
 arabic-reshaper==3.0.1
 python-bidi==0.6.11
 cryptography==50.0.1
+certifi==2026.10.19

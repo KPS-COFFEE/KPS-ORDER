@@ -1,0 +1,24 @@
+/* Additive controls; default workspace geometry remains in ops.css. */
+.delivery-room .dispatch-personal-controls{display:flex;gap:5px;align-items:center;justify-content:flex-end;position:relative;min-width:0;flex-wrap:wrap}
+.delivery-room button.dispatch-layout-button,.delivery-room .dispatch-layout-settings>summary{font-size:11px;font-weight:400;color:var(--muted);background:transparent;border:0;min-height:28px;padding:3px 7px;border-radius:6px;cursor:pointer}
+.delivery-room .dispatch-layout-settings>summary{list-style:none}
+.delivery-room .dispatch-layout-settings[open]>summary{background:var(--surface);color:var(--ink)}
+.delivery-room .dispatch-layout-editor{position:absolute;inset-inline-end:0;top:100%;z-index:20;width:min(340px,calc(100vw - 32px));max-height:65vh;overflow:auto;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:0 8px 28px #0002;display:grid;gap:8px}
+.delivery-room .dispatch-layout-editor fieldset{padding:8px;display:flex;gap:6px;flex-wrap:wrap}
+.delivery-room .dispatch-layout-editor label{flex:1 1 110px;font-size:11px}
+.delivery-room .dispatch-layout-editor input{min-height:28px;padding:0}
+.delivery-room button.dispatch-height-grip{display:block;width:100%;min-height:16px;height:16px;padding:0;line-height:14px;font-size:12px;color:var(--muted);background:transparent;border:0;cursor:ns-resize;touch-action:none;opacity:.5}
+.delivery-room button.dispatch-height-grip:hover,.delivery-room button.dispatch-height-grip:focus-visible{opacity:1;background:var(--accent-light)}
+.delivery-room .dispatch-layout.dispatch-without-map:not(.dispatch-personal-grid){grid-template-columns:minmax(0,1.8fr) minmax(260px,1fr)}
+.delivery-room .dispatch-without-map:not(.dispatch-personal-grid) .dispatch-side{grid-column:2}
+.delivery-room .dispatch-layout.dispatch-personal-grid{grid-template-columns:repeat(12,minmax(0,1fr));align-items:start}
+.delivery-room .dispatch-personal-grid>.dispatch-side{display:contents}
+.delivery-room .dispatch-personal-grid>.dispatch-orders,.delivery-room .dispatch-personal-grid>.dispatch-map-panel,.delivery-room .dispatch-personal-grid>.dispatch-side>section{grid-column:auto / span var(--personal-span,3);grid-row:auto;order:var(--personal-order,5);min-width:0}
+.delivery-room .dispatch-personal-grid>.dispatch-side>section{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.delivery-room .dispatch-personal-grid #dispatch-panel-details{grid-column:1/-1;order:10}
+@media(max-width:1000px){.delivery-room .dispatch-layout.dispatch-personal-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.delivery-room .dispatch-personal-grid>.dispatch-orders,.delivery-room .dispatch-personal-grid>.dispatch-map-panel,.delivery-room .dispatch-personal-grid>.dispatch-side>section{grid-column:auto}.delivery-room .dispatch-layout.dispatch-without-map:not(.dispatch-personal-grid){grid-template-columns:1fr 1fr}.delivery-room .dispatch-without-map:not(.dispatch-personal-grid) .dispatch-side{grid-column:2}}
+@media(max-width:650px){.delivery-room .dispatch-layout.dispatch-personal-grid,.delivery-room .dispatch-layout.dispatch-without-map:not(.dispatch-personal-grid){grid-template-columns:minmax(0,1fr)}.delivery-room .dispatch-without-map:not(.dispatch-personal-grid) .dispatch-side{grid-column:1;grid-row:auto}.delivery-room .dispatch-personal-controls{gap:2px}.delivery-room .dispatch-layout-button,.delivery-room .dispatch-layout-settings>summary{min-height:32px}}
+@media print{.dispatch-personal-controls,.dispatch-height-grip{display:none!important}}
+
+.delivery-room button.dispatch-move-grip{display:none;min-height:24px;padding:0 5px;background:transparent;border:0;color:var(--muted);cursor:grab;font-size:15px}
+.delivery-room .dispatch-layout-editing button.dispatch-move-grip{display:inline-block}
