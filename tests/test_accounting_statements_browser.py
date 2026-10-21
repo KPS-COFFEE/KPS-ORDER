@@ -2,7 +2,7 @@
 import os
 import pytest
 from app import db
-from test_browser import _staff,_context,_owner_login,_submit_modal,_capture,live_app,chromium_browser
+from test_browser import _staff,_context,_owner_login,_submit_modal,_capture,live_app,chromium_browser,synthetic_mail
 
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit browser acceptance')]
 

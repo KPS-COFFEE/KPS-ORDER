@@ -630,6 +630,11 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
     with db.tx() as conn:
         before=conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()
         assert before['snapshot']['shift']['submission']['operational_approved'] is True
+        manager_report_id,manager_before=report_id,before
+        children=conn.execute("SELECT r.id FROM closure_reports r JOIN shifts s ON s.id=r.shift_id WHERE s.manager_shift_id=(SELECT shift_id FROM closure_reports WHERE id=%s) AND r.kind='driver'",(report_id,)).fetchall()
+        assert len(children)==1,'This journey has one driver under its manager card'
+        report_id=children[0]['id']
+        before=conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()
         assert not conn.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchone()
     page.locator('#navigation [data-page=accounting]').click()
     page.locator('[data-ac=matching]').click()
@@ -644,7 +649,7 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
         _submit_modal(page,{'bank':f'{bank/100:.2f}','cash_due':f'{cash/100:.2f}',
                            'note':'TEST ONLY independently reviewed bank and cash due'})
     assert approved.value.status==200
-    rows=context.request.get(base+'/api/accounting/driver-settlements?kind=manager').json()['settlements']
+    rows=context.request.get(base+'/api/accounting/driver-settlements?kind=driver').json()['settlements']
     waiting=next(row for row in rows if row['id']==report_id)
     assert waiting['stage']=='balance_approved' and waiting['revision']==1
     assert waiting['cash_received_halalas'] is None and waiting['cash_difference_halalas'] is None
@@ -677,7 +682,7 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
     expect(page.locator('#ac-results')).to_contain_text('تم استلام الكاش واعتماد التسوية')
     expect(page.locator(f'[data-driver-balance="{report_id}"]')).to_have_count(0)
     expect(page.locator(f'[data-driver-receipt="{report_id}"]')).to_have_count(0)
-    rows=context.request.get(base+'/api/accounting/driver-settlements?kind=manager').json()['settlements']
+    rows=context.request.get(base+'/api/accounting/driver-settlements?kind=driver').json()['settlements']
     saved=next(row for row in rows if row['id']==report_id)
     assert saved['stage']=='cash_received' and saved['revision']==2
     assert saved['bank_halalas']==bank and saved['cash_received_halalas']==cash
@@ -689,6 +694,7 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
         assert all(row['actor_id']!=before['snapshot']['shift']['user_id'] for row in matches)
         assert not conn.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchone()
         assert conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()==before
+        assert conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(manager_report_id,)).fetchone()==manager_before
 
 
 def _inspection_payload(km=1000,fuel=100):

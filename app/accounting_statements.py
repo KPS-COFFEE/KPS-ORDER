@@ -8,7 +8,7 @@ from . import db
 def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
     q="""SELECT r.*,s.manager_shift_id,s.submission,mu.display_name manager_name,
       u.display_name driver_name,
-      coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) day
+      coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) AS "day"
       FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=r.user_id
       JOIN shifts m ON m.id=s.manager_shift_id JOIN users mu ON mu.id=m.user_id
       WHERE r.brand_id=%s AND r.kind='driver' AND m.status='closed' AND r.branch_ids ?| %s"""
@@ -17,7 +17,7 @@ def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
         q+=" AND coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) BETWEEN %s AND %s"
         args.extend([ds,de])
     if manager_shift_id:q+=' AND s.manager_shift_id=%s';args.append(manager_shift_id)
-    rows=c.execute(q+' ORDER BY day,r.created_at,r.id',args).fetchall()
+    rows=c.execute(q+' ORDER BY "day",r.created_at,r.id',args).fetchall()
     allowed=set(user.get('branch_ids',[]))
     return [r for r in rows if user['role']=='owner' or set(r['branch_ids'])<=allowed]
 
@@ -142,19 +142,24 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
 
 
 def manager_cards(c,user,bids):
-    from .accounting import driver_settlement_values
+    from .accounting import driver_settlement_values,TZ
+    from .catalog import normalize_city
     from .operations import safe
     rows=source_rows(c,user,bids)
     changes=histories(c,user,rows);groups={}
+    local={b['id'] for b in c.execute('SELECT id,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall() if normalize_city(b['city'])=='حفر الباطن'}
     approved={r['manager_shift_id']:r for r in c.execute('SELECT id,manager_shift_id,created_at FROM accounting_daily_closures WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
     for r in rows:
         history=changes[r['id']];v=driver_settlement_values(r['snapshot'],history[-1] if history else None)
-        group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id'])))
+        due=r['day']+timedelta(days=1) if set(r['branch_ids'])&local else None
+        group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id']),due_on=None))
+        if due and (not group['due_on'] or due<group['due_on']):group['due_on']=due
         group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,**v))
     for group in groups.values():
         group['completed']=sum(r['stage']=='cash_received' for r in group['drivers'])
         group['total']=len(group['drivers'])
         group['ready']=group['completed']==group['total']
+        group['overdue']=bool(group['due_on'] and datetime.now(TZ).date()>group['due_on'] and not group['ready'])
     return safe({'cards':sorted(groups.values(),key=lambda g:(bool(g['approved_day']),-g['day'].toordinal(),g['manager_name']))})
 
 
