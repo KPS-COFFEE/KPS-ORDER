@@ -113,6 +113,11 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
             expect(page.locator('#branch-select option[value=outside-branch]')).to_have_count(0)
         page.locator('#neighborhood').fill('حي اختبار');page.locator('#address').fill('عنوان اختبار')
         page.locator('.product-add-button').first.click();page.locator('#product-add').click()
+        if auth_stage=='checkout':
+            # The basket collects recipient details for quoting; this is not a login.
+            page.locator('#customer-name').fill('علي')
+            page.locator('#customer-phone').fill('512345678')
+            assert 'auth/otp/request' not in requests
         expect(page.locator('#quote-summary .first-order-gift')).to_be_visible()
         if auth_stage=='early':
             expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('قهوة اليوم')
