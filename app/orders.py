@@ -125,8 +125,12 @@ def create_delivery_center_order(body: DeliveryCenterOrder, request: Request = N
 def delivery_center_scope(conn, user, branch_id):
     if user['role'] not in {'owner','delivery_manager'} or (user['role'] != 'owner' and branch_id not in user.get('branch_ids', [])):
         raise db.error(403, 'BRANCH_FORBIDDEN', 'الفرع خارج نطاق مدير التوصيل.')
-    shift = conn.execute("SELECT id FROM shifts WHERE brand_id=%s AND user_id=%s AND kind='manager' AND status='open' AND branch_ids ? %s FOR SHARE",
-                         (user['brand_id'],user['id'],branch_id)).fetchone()
+    context = user.get('_morning_manager_context')
+    # A morning view must never select another open manager duty belonging to
+    # the same employee, including an evening duty on the same branch.
+    extra = " AND id=%s AND delivery_window_snapshot->>'period'='morning'" if context else ''
+    params = (user['brand_id'],user['id'],branch_id) + ((context['shift_id'],) if context else ())
+    shift = conn.execute("SELECT id FROM shifts WHERE brand_id=%s AND user_id=%s AND kind='manager' AND status='open' AND branch_ids ? %s" + extra + ' FOR SHARE', params).fetchone()
     if not shift:
         raise db.error(409,'MANAGER_SHIFT_REQUIRED','افتح شفت مدير توصيل يغطي فرع الطلب أولًا.')
     return shift['id']
@@ -148,6 +152,15 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             # Replays must satisfy today's branch and duty scope before reading
             # a saved response. Never let idempotency retain revoked access.
             delivery_center_scope(conn,user,body.branch_id)
+            if user.get('_morning_manager_context'):
+                from . import morning_delivery
+                branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',
+                                      (body.branch_id, body.brand_id)).fetchone()
+                brand = conn.execute('SELECT settings FROM brands WHERE id=%s', (body.brand_id,)).fetchone()
+                if (not branch or branch['branch_no'] != 2
+                        or not morning_delivery.active(branch, (brand or {}).get('settings'))):
+                    raise db.error(403, 'MORNING_CUSTOMER_ORDER_SCOPE',
+                                   'استقبال طلبات مدير الصباح متاح خلال الفترة الصباحية بفرع 2 فقط.')
         else:
             auth.assert_customer_order_eligible(conn,user,phone_required=phone_required)
         def perform():
@@ -162,6 +175,18 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 from . import complimentary
                 quote=complimentary.prepare(quote,body.kind,body.reason,user['id'])
             execution_branch_id = quote['branch_id']
+            if user.get('_morning_manager_context'):
+                # The clock and routing are authoritative on the server. A
+                # morning header cannot create an evening or other-city order.
+                from .morning_manager_context import order_allowed
+                candidate = {'brand_id': body.brand_id, 'branch_id': execution_branch_id,
+                             'service': body.service, 'snapshot': quote}
+                if (not delivery_center or complimentary_order
+                        or not order_allowed(user, candidate)
+                        or quote['branch_no'] != 2
+                        or catalog.normalize_city(quote['branch_city']) != 'حفر الباطن'):
+                    raise db.error(403, 'MORNING_CUSTOMER_ORDER_SCOPE',
+                                   'طلب مدير الصباح مخصص للتوصيل الصباحي من فرع 2 بحفر الباطن فقط.')
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
             if quote.get('delivery_period') == 'morning':
@@ -328,6 +353,11 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         params.append(user['id'])
     elif user['role'] != 'owner':
         raise db.error(403, 'ROLE_FORBIDDEN', 'الوصول غير مسموح.')
+    if user.get('_morning_manager_context'):
+        conditions.append("o.snapshot->>'delivery_period'='morning'")
+        conditions.append("NOT EXISTS (SELECT 1 FROM driver_tasks ct JOIN shifts cs ON cs.id=ct.shift_id WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned') AND cs.manager_shift_id IS DISTINCT FROM %s)")
+        params.append(user['_morning_manager_context']['shift_id'])
+        conditions.append("(EXISTS (SELECT 1 FROM driver_tasks ct WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned')) OR (o.completed_at IS NULL AND o.preparation_status NOT IN ('completed','cancelled','rejected') AND o.delivery_status NOT IN ('delivered','cancelled')))")
     if customer_view:
         if user['role'] != 'customer':
             raise db.error(403, 'ROLE_FORBIDDEN', 'هذا العرض مخصص للعميل.')
@@ -677,9 +707,21 @@ def manager_accept(order_id: str, body: ManagerAcceptanceBody,
                      ('operations:' + user['brand_id'],))
         order = scoped_order(conn, order_id, user, lock=True)
         manager_shift_id = delivery_center_scope(conn, user, order['branch_id'])
-        if (order['service'] != 'delivery'
-                or order['snapshot'].get('delivery_workflow') != 'manager_dispatch'
-                or order['snapshot'].get('delivery_period') == 'morning'):
+        morning = bool(user.get('_morning_manager_context')
+                       and order['snapshot'].get('delivery_period') == 'morning')
+        morning_branch = None
+        if morning:
+            from . import morning_delivery
+            morning_delivery.authorize_order(conn, user, order)
+            morning_branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',
+                                          (order['branch_id'], order['brand_id'])).fetchone()
+            if (not morning_branch or morning_branch['branch_no'] != 2
+                    or catalog.normalize_city(morning_branch['city']) != 'حفر الباطن'):
+                raise db.error(403, 'MORNING_MANAGER_BRANCH', 'قبول الصباح مخصص لفرع 2 بحفر الباطن فقط.')
+        applicable = (order['snapshot'].get('delivery_workflow') == 'branch_fulfillment' if morning else
+                      order['snapshot'].get('delivery_workflow') == 'manager_dispatch'
+                      and order['snapshot'].get('delivery_period') != 'morning')
+        if order['service'] != 'delivery' or not applicable:
             raise db.error(409, 'MANAGER_ACCEPTANCE_NOT_APPLICABLE', 'الطلب لا يتبع مسار قبول مدير التوصيل.')
         def perform():
             if order['version'] != body.version:
@@ -700,7 +742,12 @@ def manager_accept(order_id: str, body: ManagerAcceptanceBody,
                        'dispatch_pending': True}
             db.event(conn, order_id, user['id'], 'preparation.accepted', details)
             db.audit(conn, user['id'], 'order.manager_accepted', 'order', order_id, details)
-            return {'order': row}
+            result = {'order': row}
+            if morning_branch:
+                from .branch_printing import enqueue_morning_preparer_receipt
+                result['printing'] = enqueue_morning_preparer_receipt(
+                    conn, user, row, morning_branch, source='morning_manager_acceptance')
+            return result
         return db.idempotent(conn, user['id'], idempotency_key, 'order.manager_accept:' + order_id,
                              body.model_dump(), perform)
 
@@ -727,6 +774,10 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                 guard(conn,order)
             transitions = {'new': {'accepted', 'cancelled'}, 'accepted': {'preparing', 'cancelled'},
                            'preparing': {'ready', 'cancelled'}, 'ready': {'handed_over', 'completed', 'cancelled'}}
+            from . import branch_printing
+            morning_preparer = branch_printing.morning_preparer_branch(conn, user, order)
+            if morning_preparer:
+                transitions['accepted'].add('ready')
             if body.status not in transitions.get(current, set()):
                 raise db.error(409, 'PREPARATION_TRANSITION_INVALID', 'انتقال حالة التجهيز غير مسموح.')
             if body.status in {'preparing','ready','completed'}:
@@ -769,7 +820,10 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                       'branch_id': order['branch_id'], 'actor_id': user['id'],
                       'actor_name': user.get('display_name', ''), 'actor_role': user['role']})
             db.audit(conn, user['id'], 'order.preparation', 'order', order_id, {'from': current, 'to': body.status, 'reason': body.reason})
-            return {'order': row}
+            result = {'order': row}
+            if morning_preparer and current == 'new' and body.status == 'accepted':
+                result['printing'] = branch_printing.enqueue_morning_preparer_receipt(conn, user, row, morning_preparer)
+            return result
         return db.idempotent(conn, user['id'], idempotency_key, 'order.preparation:' + order_id, body.model_dump(), perform)
 
 
