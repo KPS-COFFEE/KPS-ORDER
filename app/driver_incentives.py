@@ -30,7 +30,7 @@ SOURCE="""SELECT o.id order_id,coalesce(o.snapshot->>'order_reference',o.order_n
  WHERE o.brand_id=%s"""
 
 def read_access(user=Depends(auth.current_user)):
-    permitted=user['role'] in ('owner','driver','delivery_manager') or auth.has_permission(user,'accounting_reports')
+    permitted=user['role'] in ('owner','driver','delivery_manager') or auth.has_permission(user,'accounting_reports') or (user['role']=='admin' and auth.has_permission(user,'shifts_view'))
     if not permitted:fail(403,'صلاحية عرض استحقاق السائقين غير متاحة')
     return user
 
@@ -120,7 +120,7 @@ def achievement(month:str='',driver_id:str='',user=Depends(read_access)):
 @router.get('/shifts/{sid}')
 def shift_review(sid:str,user=Depends(read_access)):
     with db.tx() as c:
-        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,s)
+        s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone();shift_access(c,user,s,capability='shifts_view')
         if user['role']=='driver':return {'entries':[]}
         return safe({'entries':[classify(r) for r in source_rows(c,user,shift_id=sid)]})
 
