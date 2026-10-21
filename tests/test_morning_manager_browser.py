@@ -64,7 +64,10 @@ def test_scoped_manager_navigation_and_assignment(static_customer,lang,width):
         expect(page.locator('#modal')).not_to_be_visible()
         assert writes==[('/api/orders/morning-order/assign',{'driver_shift_id':'driver-shift','accept_order':False})]
         page.locator('#navigation [data-page=shifts]').click()
-        expect(page.locator('[data-action=shift-detail][data-id=morning-duty]')).to_be_visible()
+        closure = page.locator('.shift-grid [data-action=shift-detail][data-id=morning-duty]')
+        expect(closure).to_be_visible()
+        closure.click()
+        expect(page.locator('#modal')).to_be_visible()
         assert not page.locator('#navigation [data-page=admin],#navigation [data-page=custody],#navigation [data-page=reports]').count()
         assert headers and all(header=='morning' for header in headers)
         assert not errors
