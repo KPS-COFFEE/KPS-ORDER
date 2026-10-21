@@ -49,6 +49,9 @@ def test_trial_receives_accepts_but_cannot_confirm_pickup(ops,monkeypatch):
     r=actor('owner').post('/api/shifts',json=body,headers={'Idempotency-Key':uuid4().hex})
     assert r.status_code==200,r.text
     sid=r.json()['shift']['id'];oid='trial-order-'+uuid4().hex
+    readiness=actor('owner').get('/api/operations/drivers')
+    assert readiness.status_code==200,readiness.text
+    assert any(row['id']=='ops-driver' and row['assignment_eligible'] for row in readiness.json()['drivers'])
     with db.tx() as c:
         c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-2','ops-customer','delivery','ready','pending','cash',1000,0,1000,%s,'{}')",(oid,db.json({'delivery_period':'morning','delivery_workflow':'branch_fulfillment','items':[]})))
     task=post('owner',f'/api/orders/{oid}/assign',{'driver_shift_id':sid})['task']
@@ -58,3 +61,14 @@ def test_trial_receives_accepts_but_cannot_confirm_pickup(ops,monkeypatch):
     with db.tx() as c:
         t=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(task['id'],)).fetchone()
         assert t['status']=='accepted' and t['picked_up_at'] is None and t['delivered_at'] is None
+
+
+@pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
+def test_owner_step_up_is_required_before_trial_shift_creation(ops,monkeypatch):
+    from fastapi import HTTPException
+    actor,post,body,_=setup_trial(ops,monkeypatch)
+    def denied(c,u):raise HTTPException(403,detail={'code':'OWNER_STEP_UP_REQUIRED'})
+    monkeypatch.setattr(auth,'require_owner_step_up',denied)
+    r=actor('owner').post('/api/shifts',json=body,headers={'Idempotency-Key':uuid4().hex})
+    assert r.status_code==403,r.text
+    with db.tx() as c:assert not c.execute("SELECT 1 FROM shifts WHERE user_id='ops-driver'").fetchone()

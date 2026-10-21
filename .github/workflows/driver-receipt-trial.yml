@@ -29,7 +29,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: node --check public/ops.js
-      - run: python -m pytest -q tests/test_driver_receipt_trial_queue_unit.py tests/test_driver_receipt_trial_postgres.py tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_morning_customer_postgres.py tests/test_branch_printing.py tests/test_employee_permissions.py --junitxml=test-results/driver-receipt-trial.xml
+      - run: python -m pytest -q tests/test_driver_receipt_trial.py tests/test_driver_receipt_trial_postgres.py tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_morning_customer_postgres.py tests/test_branch_printing.py tests/test_employee_permissions.py --junitxml=test-results/driver-receipt-trial.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
