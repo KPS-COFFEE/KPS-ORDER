@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope='module')
 def static_customer():
     class Handler(SimpleHTTPRequestHandler):
+        extensions_map = {**SimpleHTTPRequestHandler.extensions_map, '.js': 'application/javascript; charset=utf-8'}
         def log_message(self,*args): pass
     server = ThreadingHTTPServer(('127.0.0.1',0), functools.partial(Handler,directory=str(ROOT/'public')))
     worker = Thread(target=server.serve_forever,daemon=True);worker.start()
@@ -25,8 +26,10 @@ def static_customer():
     server.shutdown();server.server_close();worker.join(timeout=5)
 
 
+@pytest.mark.parametrize('entry_enabled,offer_active',[(True,False),(False,True)])
+@pytest.mark.parametrize('auth_stage',['early','checkout'])
 @pytest.mark.parametrize('lang,width', [(lang,width) for lang in ('ar','en') for width in (390,768,1366)])
-def test_name_phone_location_eligible_branch_and_no_overflow(static_customer,lang,width):
+def test_public_menu_optional_early_login_and_verified_checkout(static_customer,lang,width,auth_stage,entry_enabled,offer_active):
     from playwright.sync_api import sync_playwright, expect
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -51,33 +54,50 @@ def test_name_phone_location_eligible_branch_and_no_overflow(static_customer,lan
                             'brand_services':{'delivery':True,'pickup':False,'car_pickup':False}},
                 'session':{'user':None,'csrf_token':None,'customer_verified':False},
                 'identity/channels':{'customer_phone_required':True,'channels':{'sms':{'available':True}}},
-                'experience/public':{'customer_entry_enabled':True},
-                    'customer-map/config':{'enabled':False},
+                'experience/public':{'customer_entry_enabled':entry_enabled,'gift_offer_active':offer_active},
+                    'customer-map/config':{'enabled':True,'provider':'mapbox','public_token':'pk.synthetic-test-only','style':'mapbox://styles/mapbox/streets-v12'},
                 'banners':{'banners':[]},
                 'auth/otp/request':{'challenge_id':'synthetic-challenge','channel':'sms'},
                 'auth/otp/verify':session,
                 'customer/profile':{'addresses':[]},
                 'branches/nearest':{'branches':[{**branch,'available':True,'direct_distance_meters':500}],'excluded':[]},
                 'products/demo-paid/availability':{'available':True},
-                'quote':{'quote':quote},
+                'quote':{'quote':{**quote,'items':quote['items'][:1],
+                    'first_order_gift':{'status':'verification_required','version':1,'items':[]}}},
                 'gifts/quote':{'quote':quote},
             }
             if path not in responses:
                 raise AssertionError('Unexpected API operation: '+path)
             route.fulfill(status=200,content_type='application/json',body=json.dumps(responses[path]))
         page.route('**/api/**',api)
+        page.route('https://api.mapbox.com/**',lambda route:route.abort())
+        context.add_init_script('''
+            class Map {constructor(){this.events={};}on(name,cb){this.events[name]=cb;if(name==='load')setTimeout(cb,0);}addControl(){}resize(){}jumpTo(){}remove(){}}
+            class Marker {setLngLat(){return this;}addTo(){return this;}on(){}}
+            window.mapboxgl={Map,Marker,NavigationControl:class {}};
+        ''')
         context.add_init_script(f"localStorage.setItem('kps_customer_lang','{lang}')")
         page.goto(static_customer+'/',wait_until='networkidle')
+        # Browsing is public even when the owner enables the enhanced journey.
+        expect(page.locator('#menu')).to_be_visible()
+        expect(page.locator('.product-add-button').first).to_be_visible()
+        expect(page.locator('#account-dialog')).not_to_be_visible()
         expect(page.locator('#entry-form')).to_be_visible()
-        expect(page.locator('#menu')).to_be_hidden()
-        page.locator('#entry-form [name=name]').fill('علي')
-        page.locator('#entry-form [name=phone]').fill('512345678')
-        page.locator('#entry-form [type=submit]').click()
-        expect(page.locator('#otp-verify-form')).to_be_visible()
-        page.locator('#otp-code').fill('1234')
-        page.locator('#verify-otp').click()
         expect(page.locator('.service-panel')).to_be_visible()
-        expect(page.locator('#menu')).to_be_hidden()
+        assert 'auth/otp/request' not in requests
+        # Location selection is also available to unauthenticated visitors.
+        page.locator('.branch-location-tools .row > button').first.click()
+        expect(page.locator('.customer-map-dialog')).to_be_visible()
+        page.locator('.map-toolbar button').click()
+        assert 'auth/otp/request' not in requests
+        if auth_stage=='early':
+            page.locator('#entry-form [name=name]').fill('علي')
+            page.locator('#entry-form [name=phone]').fill('512345678')
+            page.locator('#entry-form [type=submit]').click()
+            expect(page.locator('#otp-verify-form')).to_be_visible()
+            page.locator('#otp-code').fill('1234')
+            page.locator('#verify-otp').click()
+            expect(page.locator('#menu')).to_be_visible()
         page.locator('#manual-location-button').click()
         page.locator('#manual-location details summary').click()
         page.locator('#latitude').fill('28.4');page.locator('#longitude').fill('45.9')
@@ -85,19 +105,44 @@ def test_name_phone_location_eligible_branch_and_no_overflow(static_customer,lan
         expect(page.locator('#nearest-branches .nearest-branch-card')).to_have_count(1)
         page.locator('#nearest-branches button').last.click()
         expect(page.locator('#menu')).to_be_visible()
-        expect(page.locator('#branch-select option[value=outside-branch]')).to_have_count(0)
+        # The nearest list is server-qualified in both modes. The legacy manual
+        # dropdown may still list other branches when entry policy is disabled.
+        expect(page.locator('#nearest-branches')).not_to_contain_text('فرع خارج النطاق')
+        expect(page.locator('#branch-select')).to_have_value('demo-branch')
+        if entry_enabled:
+            expect(page.locator('#branch-select option[value=outside-branch]')).to_have_count(0)
         page.locator('#neighborhood').fill('حي اختبار');page.locator('#address').fill('عنوان اختبار')
         page.locator('.product-add-button').first.click();page.locator('#product-add').click()
+        if auth_stage=='checkout':
+            # The basket collects recipient details for quoting; this is not a login.
+            page.locator('#customer-name').fill('علي')
+            page.locator('#customer-phone').fill('512345678')
+            assert 'auth/otp/request' not in requests
         expect(page.locator('#quote-summary .first-order-gift')).to_be_visible()
-        expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('قهوة اليوم')
-        expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('كوكيز')
+        if auth_stage=='early':
+            expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('قهوة اليوم')
+            expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('كوكيز')
+        else:
+            expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('تحقق' if lang=='ar' else 'Verify')
+        if auth_stage=='checkout':
+            assert 'auth/otp/request' not in requests
         page.locator('#checkout-button').click()
+        if auth_stage=='checkout':
+            expect(page.locator('#otp-request-form')).to_be_visible()
+            page.locator('#otp-name').fill('علي')
+            page.locator('#phone').fill('512345678')
+            page.locator('#otp-request-form [type=submit]').click()
+            expect(page.locator('#otp-verify-form')).to_be_visible()
+            page.locator('#otp-code').fill('1234')
+            page.locator('#verify-otp').click()
         expect(page.locator('#confirm-dialog .first-order-gift')).to_be_visible()
+        expect(page.locator('#confirm-dialog .first-order-gift')).to_contain_text('قهوة اليوم')
+        expect(page.locator('#confirm-dialog .first-order-gift')).to_contain_text('كوكيز')
         page.keyboard.press('Escape')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         assert 'auth/otp/request' in requests and 'auth/otp/verify' in requests
         assert 'gifts/quote' in requests and 'orders' not in requests
         out=ROOT/'test-results';out.mkdir(exist_ok=True)
-        page.screenshot(path=str(out/f'customer-entry-{lang}-{width}.png'),full_page=True)
+        page.screenshot(path=str(out/f'customer-entry-{entry_enabled}-{offer_active}-{auth_stage}-{lang}-{width}.png'),full_page=True)
         assert not errors,errors
         context.close();browser.close()
