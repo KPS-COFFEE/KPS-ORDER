@@ -479,4 +479,4 @@ class TestV5Identity:
         order=result.json()['order']
         assert order['customer']['neighborhood']==neighborhood.strip()
         db.migrate()
-        assert client.get('/api/orders/'+order['id']).json()['order']['customer']['neighborhood']=='حي الحزم'
+        assert client.get('/api/orders/'+order['id']).json()['order']['customer']['neighborhood']==neighborhood.strip()
