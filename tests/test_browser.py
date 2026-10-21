@@ -633,17 +633,33 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
         assert not conn.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchone()
     page.locator('#navigation [data-page=accounting]').click()
     page.locator('[data-ac=matching]').click()
-    action=page.locator(f'[data-match-id="{report_id}"]')
+    action=page.locator(f'[data-driver-balance="{report_id}"]')
     expect(action).to_be_visible()
-    expect(action.locator('xpath=ancestor::tr')).to_contain_text('بانتظار المطابقة المالية')
+    expect(action.locator('xpath=ancestor::tr')).to_contain_text('بانتظار اعتماد الموازنة')
     action.click()
-    for name in ('bank','cash'):
-        expect(page.locator(f'#modal-body [name={name}]')).to_have_value('')
-    matching_url=base+'/api/accounting/manager-closures/'+report_id+'/match'
+    expect(page.locator('#modal-body [name=cash_received]')).to_have_count(0)
+    settlement_url=base+'/api/accounting/driver-settlements/'+report_id
+    balance_url=settlement_url+'/approve-balance'
+    with page.expect_response(lambda response:response.request.method=='POST' and response.url==balance_url) as approved:
+        _submit_modal(page,{'bank':f'{bank/100:.2f}','cash_due':f'{cash/100:.2f}',
+                           'note':'TEST ONLY independently reviewed bank and cash due'})
+    assert approved.value.status==200
+    rows=context.request.get(base+'/api/accounting/driver-settlements?kind=manager').json()['settlements']
+    waiting=next(row for row in rows if row['id']==report_id)
+    assert waiting['stage']=='balance_approved' and waiting['revision']==1
+    assert waiting['cash_received_halalas'] is None and waiting['cash_difference_halalas'] is None
+    assert waiting['pending_cash_halalas']==cash
+    receipt=page.locator(f'[data-driver-receipt="{report_id}"]')
+    expect(receipt).to_be_visible()
+    expect(receipt.locator('xpath=ancestor::tr')).to_contain_text('الموازنة معتمدة — بانتظار الكاش')
+    receipt.click()
+    expect(page.locator('#modal-body [name=cash_received]')).to_have_value('')
+    expect(page.locator('#modal-body [name=bank]')).to_have_count(0)
+    matching_url=settlement_url+'/receive-cash'
     with page.expect_response(lambda response:response.request.method=='POST' and response.url==matching_url) as matched:
-        _submit_modal(page,{'bank':f'{bank/100:.2f}','cash':f'{cash/100:.2f}',
-                           'bank_reference':'TEST ONLY BANK STATEMENT',
-                           'cash_reference':'TEST ONLY ACCOUNTANT CASH RECEIPT'})
+        _submit_modal(page,{'cash_received':f'{cash/100:.2f}',
+                           'receipt_reference':'TEST ONLY ACCOUNTANT CASH RECEIPT',
+                           'note':'TEST ONLY physical cash independently received'})
     assert matched.value.status==200
     request=matched.value.request
     # Request.headers is Playwright's reduced header map; use the actual wire
@@ -657,18 +673,21 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
     assert repeated.json()==matched.value.json()
     duplicated=context.request.post(matching_url,headers={**headers,'idempotency-key':secrets.token_hex(16)},data=request.post_data_json)
     assert duplicated.status==409,duplicated.text()
-    assert duplicated.json()['detail']['code']=='ALREADY_MATCHED'
-    expect(page.locator('#ac-results')).to_contain_text('معتمدة ماليًا — مطابقة')
-    expect(page.locator(f'[data-match-id="{report_id}"]')).to_have_count(0)
-    rows=context.request.get(base+'/api/accounting/manager-closures').json()['closures']
+    assert duplicated.json()['detail']['code']=='SETTLEMENT_FINAL'
+    expect(page.locator('#ac-results')).to_contain_text('تم استلام الكاش واعتماد التسوية')
+    expect(page.locator(f'[data-driver-balance="{report_id}"]')).to_have_count(0)
+    expect(page.locator(f'[data-driver-receipt="{report_id}"]')).to_have_count(0)
+    rows=context.request.get(base+'/api/accounting/driver-settlements?kind=manager').json()['settlements']
     saved=next(row for row in rows if row['id']==report_id)
-    assert saved['financial_status']=='matched'
-    assert saved['bank_halalas']==bank and saved['cash_halalas']==cash
-    assert saved['expected_bank_halalas']==bank and saved['expected_cash_halalas']==cash
+    assert saved['stage']=='cash_received' and saved['revision']==2
+    assert saved['bank_halalas']==bank and saved['cash_received_halalas']==cash
+    assert saved['cash_due_halalas']==cash and saved['cash_difference_halalas']==0
+    assert saved['pending_cash_halalas']==0
     with db.tx() as conn:
-        matches=conn.execute('SELECT * FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchall()
-        assert len(matches)==1 and matches[0]['status']=='matched'
-        assert matches[0]['reviewer_id']!=before['snapshot']['shift']['user_id']
+        matches=conn.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision',(report_id,)).fetchall()
+        assert len(matches)==2 and [row['stage'] for row in matches]==['balance_approved','cash_received']
+        assert all(row['actor_id']!=before['snapshot']['shift']['user_id'] for row in matches)
+        assert not conn.execute('SELECT 1 FROM manager_financial_matches WHERE report_id=%s',(report_id,)).fetchone()
         assert conn.execute('SELECT snapshot,pdf_data,csv_data FROM closure_reports WHERE id=%s',(report_id,)).fetchone()==before
 
 
