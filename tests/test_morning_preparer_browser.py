@@ -9,7 +9,7 @@ pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Ch
 
 
 @pytest.mark.parametrize('lang,width',[('ar',390),('en',390),('ar',1366),('en',1366)])
-def test_preparer_has_accept_then_ready_without_extra_print_click(static_customer,lang,width):
+def test_preparer_waits_for_driver_acceptance_before_preparing_then_ready(static_customer,lang,width):
     from playwright.sync_api import sync_playwright, expect
     user={'id':'preparer','brand_id':'kps','role':'branch_manager','display_name':'محضّر تجريبي',
           'branch_ids':['branch2'],'effective_permissions':['orders_view','orders_prepare']}
@@ -20,7 +20,7 @@ def test_preparer_has_accept_then_ready_without_extra_print_click(static_custome
            # Customer selected branch 9; actual morning execution is branch 2.
            'snapshot':{'branch_no':9,'branch_name':'فرع اختاره العميل','items':[],
                        'delivery_period':'morning','delivery_workflow':'branch_fulfillment'}}
-    writes=[]
+    writes=[];print_jobs=[]
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True)
         context=browser.new_context(viewport={'width':width,'height':1000})
@@ -37,8 +37,15 @@ def test_preparer_has_accept_then_ready_without_extra_print_click(static_custome
             elif path=='/api/orders/morning-order/preparation':
                 body=request.post_data_json;writes.append((path,body))
                 assert body['version']==order['version']
+                if body['status']=='accepted':
+                    assert order['preparation_status']=='new'
+                    print_jobs.append('queued')
+                    order.update(delivery_status='assigned',morning_driver_accepted=False,morning_task_status='assigned',morning_driver_name='عمرو')
+                elif body['status']=='preparing':assert order['preparation_status']=='accepted' and order['morning_driver_accepted']
+                elif body['status']=='ready':assert order['preparation_status']=='preparing' and order['morning_driver_accepted']
                 order['preparation_status']=body['status'];order['version']+=1
-                payload={'order':order,'printing':{'id':'queued','status':'queued'}}
+                payload={'order':order}
+                if body['status']=='accepted':payload['printing']={'id':'queued','status':'queued'}
             elif request.method!='GET':
                 raise AssertionError('Unexpected mutation: '+path)
             route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
@@ -51,12 +58,22 @@ def test_preparer_has_accept_then_ready_without_extra_print_click(static_custome
         assert page.locator('[data-action=remote-print]:visible').count()==0
         accept.click()
         details.click()
+        assert page.locator('[data-action=prepare]:visible').count()==0
+        expect(page.locator('#modal')).to_contain_text('بانتظار قبول السائق' if lang=='ar' else 'Waiting for the current driver')
+        # The real driver's server event, never the cashier, supplies acceptance.
+        order.update(morning_driver_accepted=True,morning_task_status='accepted')
+        page.locator('#modal [data-action=morning-refresh-order]').click()
+        prepare=page.locator('[data-action=prepare][data-status=preparing]')
+        expect(prepare).to_have_text('تحضير الطلب' if lang=='ar' else 'Prepare order')
+        assert page.locator('[data-action=prepare][data-status=ready]:visible').count()==0
+        prepare.click();details.click()
         ready=page.locator('[data-action=prepare][data-status=ready]')
         expect(ready).to_have_text('تم التجهيز' if lang=='ar' else 'Mark ready')
         assert page.locator('[data-action=prepare][data-status=preparing]:visible').count()==0
         ready.click()
         details.click()
         assert page.locator('[data-action=prepare]:visible').count()==0
-        assert [body['status'] for _,body in writes]==['accepted','ready']
+        assert [body['status'] for _,body in writes]==['accepted','preparing','ready']
+        assert print_jobs==['queued']
         assert not errors
         browser.close()

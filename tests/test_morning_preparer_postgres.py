@@ -29,7 +29,7 @@ def configure(order, *, period='morning', branch='kps-branch-2', devices=1, appr
 
 
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
-def test_minimal_preparer_acceptance_prints_once_and_can_mark_ready(ops):
+def test_minimal_preparer_acceptance_prints_once_then_waits_for_driver(ops):
     actor,post,order,_ = ops
     oid = configure(order)
     client = actor('branch')
@@ -54,7 +54,8 @@ def test_minimal_preparer_acceptance_prints_once_and_can_mark_ready(ops):
         assert len(jobs) == 1
         assert jobs[0]['branch_id'] == 'kps-branch-2' and jobs[0]['kind'] == 'order'
         assert jobs[0]['status'] == 'queued' and jobs[0]['payload']['order_revision'] == 0
-    send({'status':'ready','version':2})
+    send({'status':'preparing','version':2},status=409)
+    send({'status':'ready','version':2},status=409)
     assert client.get('/api/orders/'+oid).status_code == 200
     assert client.get('/api/identity/staff').status_code == 403
     assert client.post('/api/printing/orders/'+oid,json={'device_id':jobs[0]['device_id']},

@@ -28,6 +28,25 @@ def test_context_capabilities_are_ephemeral_and_exact():
     assert base==before
 
 
+def test_bootstrap_has_no_order_task_or_financial_capabilities_and_no_shift_scope():
+    pending = scoped_user()
+    pending['_morning_manager_context'] = {'period': 'morning', 'shift_id': None,
+        'branch_ids': ['branch2'], 'bootstrap': True}
+    assert employee_permissions.effective(pending) == {'shifts_view', 'shifts_open'}
+    for cap in ('orders_view', 'orders_prepare', 'delivery_assign', 'tasks_view', 'tasks_transfer', 'shifts_close', 'custody_transfer'):
+        assert not auth.has_permission(pending, cap)
+    orphan = {'id': 'driver', 'manager_shift_id': None, 'brand_id': 'kps', 'branch_ids': ['branch2'],
+        'delivery_window_snapshot': {'period': 'morning'}}
+    assert not context.shift_allowed(pending, orphan)
+
+
+def test_preparation_permission_mapping_changes_only_for_scoped_manager():
+    endpoint = SimpleNamespace(__module__='app.orders', __name__='preparation')
+    assert employee_permissions.required_for(endpoint, 'delivery_manager') == 'orders_cancel'
+    assert employee_permissions.required_for(endpoint, 'delivery_manager', user=user()) == 'orders_cancel'
+    assert employee_permissions.required_for(endpoint, 'delivery_manager', user=scoped_user()) == 'orders_prepare'
+
+
 @pytest.mark.parametrize('changed',[{'branch_id':'branch3'},{'brand_id':'enbishan'},
     {'snapshot':{'delivery_period':'evening'}},{'snapshot':{}},{'service':'pickup'}])
 def test_order_scope_fail_closed(changed):

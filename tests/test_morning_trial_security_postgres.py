@@ -112,8 +112,8 @@ def test_rehearsal_completes_with_real_sessions_without_operational_or_financial
     trial = opened.json()['trial']
     duration = datetime.fromisoformat(trial['expires_at'])-datetime.fromisoformat(trial['created_at'])
     assert 0 < duration.total_seconds() <= 1200
-    for who, name in [('branch', 'accept'), ('branch', 'ready'), ('owner', 'assign'),
-                      ('driver', 'driver_accept'), ('driver', 'delivered'), ('owner', 'close')]:
+    for who, name in [('branch', 'accept'), ('driver', 'driver_accept'), ('branch', 'preparing'),
+                      ('branch', 'ready'), ('driver', 'picked_up'), ('driver', 'delivered'), ('manager', 'close')]:
         result = action(login, tid, who, name)
         assert result.status_code == 200, result.text
         assert result.json()['trial']['financial_effect'] is False
@@ -141,14 +141,14 @@ def test_start_and_acceptance_replay_never_duplicate_trial_or_paper_job(trial_ac
     assert accepted.status_code == 200, accepted.text
     assert action(login, tid, 'manager', 'accept', key=accept_key).json() == accepted.json()
     assert action(login, tid, 'branch', 'accept').status_code == 409
-    assert action(login, tid, 'manager', 'ready', key=accept_key).status_code in (403, 409)
+    assert action(login, tid, 'manager', 'ready', key=accept_key).status_code in (403, 409, 422)
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM branch_print_jobs').fetchone()['n'] == 1
 
 
 @pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
-@pytest.mark.parametrize('who,name', [('driver', 'accept'), ('manager', 'ready'),
-    ('branch', 'assign'), ('manager', 'assign'), ('branch', 'driver_accept'),
+@pytest.mark.parametrize('who,name', [('driver', 'accept'), ('owner', 'accept'), ('driver', 'preparing'),
+    ('owner', 'ready'), ('branch', 'driver_accept'), ('manager', 'picked_up'),
     ('manager', 'delivered'), ('driver', 'close'), ('manager', 'stop')])
 def test_each_selected_actor_has_only_their_rehearsal_actions(trial_accounts, who, name):
     login, body = trial_accounts; tid, _ = start_trial(login, body)
@@ -308,8 +308,84 @@ def test_live_morning_policy_changes_do_not_grant_or_revoke_simulated_actor_acce
             'execution_branch_ids': [B3], 'manager_user_ids': [], 'preparer_user_ids': []}
         c.execute("UPDATE brands SET settings=%s WHERE id='kps'", (db.json(settings),))
     assert login('manager').get(f'{BASE}/{tid}').status_code == 200
+    assert action(login, tid, 'driver', 'driver_accept').status_code == 200
+    assert action(login, tid, 'branch', 'preparing').status_code == 200
     ready = action(login, tid, 'branch', 'ready')
     assert ready.status_code == 200, ready.text
     assert login('manager').get('/api/orders').status_code == 403
     with db.tx() as c:
         assert c.execute("SELECT settings FROM brands WHERE id='kps'").fetchone()['settings'] == settings
+
+
+@pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
+@pytest.mark.parametrize('steps,who,name', [
+    ([], 'driver', 'driver_accept'),
+    ([('branch','accept')], 'branch', 'preparing'),
+    ([('branch','accept')], 'branch', 'ready'),
+    ([('branch','accept')], 'driver', 'picked_up'),
+    ([('branch','accept'),('driver','driver_accept')], 'branch', 'ready'),
+    ([('branch','accept'),('driver','driver_accept')], 'driver', 'delivered'),
+    ([('branch','accept'),('driver','driver_accept'),('branch','preparing')], 'driver', 'picked_up'),
+])
+def test_required_actual_driver_acceptance_and_preparation_sequence(trial_accounts, steps, who, name):
+    login, body = trial_accounts; tid, _ = start_trial(login, body)
+    for actor, step in steps:
+        result = action(login, tid, actor, step)
+        assert result.status_code == 200, result.text
+    before = operational_snapshot()
+    result = action(login, tid, who, name)
+    assert result.status_code == 409, result.text
+    assert operational_snapshot() == before
+
+
+@pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
+def test_manager_fallback_requires_reason_and_never_accepts_for_driver(trial_accounts):
+    login, body = trial_accounts; tid, _ = start_trial(login, body)
+    assert action(login, tid, 'manager', 'accept').status_code == 200
+    assert action(login, tid, 'manager', 'driver_accept').status_code == 403
+    assert action(login, tid, 'manager', 'preparing', extra={'reason':'preparer delayed'}).status_code == 409
+    assert action(login, tid, 'driver', 'driver_accept').status_code == 200
+    for step in ('preparing','ready'):
+        assert action(login, tid, 'manager', step).status_code == 422
+        assert action(login, tid, 'manager', step, extra={'reason':' '}).status_code == 422
+        key=uuid4().hex
+        result=action(login, tid, 'manager', step, key=key, extra={'reason':'preparer delayed'})
+        assert result.status_code == 200, result.text
+        assert action(login, tid, 'manager', step, key=key, extra={'reason':'preparer delayed'}).json() == result.json()
+        assert action(login, tid, 'manager', step, key=key, extra={'reason':'changed reason'}).status_code == 409
+    report=login('manager').get(f'{BASE}/{tid}').json()['trial']
+    assert report['order']['assigned_driver_id']=='ops-driver'
+    assert report['order']['driver_accepted_by']=='ops-driver'
+    fallback=[event for event in report['events'] if event['action'] in ('preparing','ready')]
+    assert len(fallback)==2 and all(event['actor_id']=='ops-manager' and event['on_behalf_of']=='ops-branch' and event['reason']=='preparer delayed' for event in fallback)
+    for who,name in [('driver','picked_up'),('driver','delivered'),('manager','close')]:
+        result=action(login,tid,who,name);assert result.status_code==200,result.text
+    assert result.json()['trial']['status']=='closed'
+    assert action(login,tid,'manager','ready',extra={'reason':'preparer delayed'}).status_code==409
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM branch_print_jobs').fetchone()['n']==1
+
+
+@pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
+def test_owner_cannot_manually_assign_or_impersonate_selected_workers(trial_accounts):
+    login, body = trial_accounts; tid, _ = start_trial(login, body)
+    assert action(login,tid,'branch','accept').status_code==200
+    assert action(login,tid,'owner','assign').status_code==422
+    for name in ('driver_accept','preparing','ready','picked_up','delivered'):
+        assert action(login,tid,'owner',name).status_code==403
+    report=login('owner').get(f'{BASE}/{tid}').json()['trial']
+    assert report['order']['status']=='assigned'
+    assert [e['action'] for e in report['events']]==['accept','auto_assign']
+
+
+@pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
+def test_legacy_closed_trial_report_remains_readable_without_migration(trial_accounts):
+    login, body = trial_accounts; tid, _ = start_trial(login, body)
+    with db.tx() as c:
+        row=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()
+        settings=row['settings'];legacy=settings['morning_trial_sessions'][tid]
+        legacy.pop('flow_version');legacy['status']='closed';legacy['order']['status']='delivered'
+        legacy['events']=[{'action':'assign','actor_id':'ops-owner','role':'owner','simulated':True}]
+        c.execute("UPDATE app_settings SET settings=%s WHERE brand_id='kps'",(db.json(settings),))
+    report=login('manager').get(f'{BASE}/{tid}')
+    assert report.status_code==200 and report.json()['trial']['events'][0]['action']=='assign'

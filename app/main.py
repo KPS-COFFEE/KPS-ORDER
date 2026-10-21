@@ -38,6 +38,8 @@ async def lifespan(app):
             from . import email_delivery, report_notifications, order_support
             if os.getenv('APP_ENV')!='testing':
                 background_tasks.append(asyncio.create_task(order_support.poll_loop(), name='delivery-photo-cleanup'))
+                from . import morning_dispatch
+                background_tasks.append(asyncio.create_task(morning_dispatch.poll_loop(), name='morning-branch2-dispatch'))
             if email_delivery.configuration()['configured'] and os.getenv('EMAIL_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
             if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':

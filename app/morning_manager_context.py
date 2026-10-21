@@ -6,13 +6,14 @@ context is a separate least-privilege view of one approved Branch 2 duty.
 from . import db
 
 HEADER = 'x-delivery-period'
-# delivery_assign authorizes only manager_accept through the endpoint allowlist.
-# shifts_view supplies the employee's own duty to the customer-order form.
-CAPABILITIES = frozenset({'orders_view', 'orders_create_customer', 'delivery_assign', 'shifts_view'})
+# Capabilities remain bounded by the endpoint and fresh resource allowlists.
+CAPABILITIES = frozenset({'orders_view', 'orders_create_customer', 'delivery_assign', 'shifts_view',
+                          'tasks_view', 'tasks_transfer', 'orders_prepare'})
+BOOTSTRAP_CAPABILITIES = frozenset({'shifts_view', 'shifts_open'})
 ENDPOINTS = {
     'auth': {'logout'},
-    'orders': {'list_orders', 'get_order', 'manager_accept', 'create_delivery_center_order'},
-    'operations': {'shifts'},
+    'orders': {'list_orders', 'get_order', 'manager_accept', 'create_delivery_center_order', 'preparation'},
+    'operations': {'shifts', 'open_shift', 'assign', 'tasks', 'task_handover'},
 }
 
 
@@ -20,10 +21,15 @@ def enabled(user):
     return user.get('_morning_manager_context')
 
 
-def resolve(conn, user, *, shift_id=None):
+def capabilities(user):
+    return BOOTSTRAP_CAPABILITIES if enabled(user).get('bootstrap') else CAPABILITIES
+
+
+def resolve(conn, user, *, shift_id=None, allow_bootstrap=False):
     """Fresh owner policy, existing employee scope and real duty are mandatory."""
     from . import morning_delivery, catalog
-    if not user.get('active') or user.get('role') != 'delivery_manager' or user.get('brand_id') != 'kps':
+    if (not user.get('active') or user.get('invitation_status', 'active') != 'active'
+            or user.get('role') != 'delivery_manager' or user.get('brand_id') != 'kps'):
         raise db.error(403, 'MORNING_MANAGER_SCOPE', 'هذا السياق مخصص لمدير الصباح المعتمد.')
     row = conn.execute('SELECT settings FROM brands WHERE id=%s', (user['brand_id'],)).fetchone()
     policy = morning_delivery.policy((row or {}).get('settings'))
@@ -32,6 +38,18 @@ def resolve(conn, user, *, shift_id=None):
     duty = conn.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='manager' "
         "AND status IN ('open','closing','submitted') AND delivery_window_snapshot->>'period'='morning' "
         "ORDER BY opened_at DESC,id DESC LIMIT 1", (user['id'], user['brand_id'])).fetchone()
+    if not duty and allow_bootstrap and not shift_id:
+        if not policy['enabled']:
+            raise db.error(403, 'MORNING_MANAGER_REVOKED', 'التشغيل الصباحي غير مفعل لفتح مناوبة جديدة.')
+        branches = conn.execute('SELECT id,branch_no,city FROM branches WHERE brand_id=%s AND id=ANY(%s)',
+            (user['brand_id'], list(set(user.get('branch_ids') or []) & set(policy['execution_branch_ids'])))).fetchall()
+        branches = [b for b in branches if b['branch_no'] == 2 and catalog.normalize_city(b['city']) == 'حفر الباطن']
+        if len(branches) != 1:
+            raise db.error(403, 'MORNING_MANAGER_BRANCH', 'يلزم اعتماد فرع 2 بحفر الباطن.')
+        scoped = dict(user, branch_ids=[branches[0]['id']])
+        scoped['_morning_manager_context'] = {'period': 'morning', 'shift_id': None,
+            'branch_ids': scoped['branch_ids'], 'bootstrap': True}
+        return scoped
     if not duty or shift_id and duty['id'] != shift_id:
         raise db.error(403, 'MORNING_MANAGER_DUTY', 'يلزم شفت صباحي فعلي تابع لحسابك.')
     branches = conn.execute('SELECT id,branch_no,city FROM branches WHERE brand_id=%s AND id=ANY(%s)',
@@ -60,15 +78,21 @@ def apply(conn, user, request, *, session=False):
         module = getattr(endpoint, '__module__', '').rsplit('.', 1)[-1]
         if getattr(endpoint, '__name__', '') not in ENDPOINTS.get(module, set()):
             raise db.error(403, 'MORNING_CONTEXT_ENDPOINT', 'هذا الإجراء غير متاح في سياق الصباح.')
-    scoped = resolve(conn, user)
+    endpoint = request.scope.get('endpoint')
+    module = getattr(endpoint, '__module__', '').rsplit('.', 1)[-1]
+    name = getattr(endpoint, '__name__', '')
+    scoped = resolve(conn, user, allow_bootstrap=session or module == 'operations' and name in {'open_shift', 'shifts'})
     # Resource checks precede endpoint-specific idempotency replay. A saved
     # response must never escape a newly narrowed or revoked context.
     params = request.path_params
+    if enabled(scoped).get('bootstrap') and (params or any(request.query_params.get(key)
+            for key in ('order_id', 'task_id', 'owner_view'))):
+        raise db.error(403, 'MORNING_MANAGER_DUTY', 'افتح مناوبتك الصباحية أولًا.')
     sid = params.get('sid')
     if sid:
         require_shift(scoped, conn.execute('SELECT * FROM shifts WHERE id=%s', (sid,)).fetchone())
     oid = params.get('oid') or params.get('order_id') or request.query_params.get('order_id')
-    task_id = request.query_params.get('task_id')
+    task_id = params.get('tid') or request.query_params.get('task_id')
     if task_id:
         task = conn.execute('SELECT * FROM driver_tasks WHERE id=%s', (task_id,)).fetchone()
         if not task:
@@ -90,10 +114,19 @@ def order_allowed(user, order, conn=None):
         return False
     if conn is None:
         return True  # Pure scope checks; authenticated resource reads always pass conn.
-    bindings = conn.execute("SELECT s.manager_shift_id FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id "
+    preferred = (order.get('snapshot') or {}).get('manager_shift_id')
+    if not preferred:
+        accepted = conn.execute("SELECT details->>'manager_shift_id' AS manager_shift_id FROM order_events "
+            "WHERE order_id=%s AND event_type='preparation.accepted' AND details ? 'manager_shift_id' "
+            "ORDER BY created_at DESC,id DESC LIMIT 1", (order['id'],)).fetchone()
+        preferred = (accepted or {}).get('manager_shift_id')
+    if preferred and preferred != context['shift_id']:
+        return False
+    bindings = conn.execute("SELECT s.* FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id "
         "WHERE t.order_id=%s AND t.status NOT IN ('cancelled','transferred','reassigned')", (order['id'],)).fetchall()
     if bindings:
-        return all(row['manager_shift_id'] == context['shift_id'] for row in bindings)
+        return all(row['kind'] == 'driver' and row['manager_shift_id'] == context['shift_id']
+                   and shift_allowed(user, row) for row in bindings)
     # Unassigned active morning orders form the preparation queue. History from
     # another duty is never made visible merely because its task was removed.
     return (order.get('completed_at') is None
@@ -103,7 +136,7 @@ def order_allowed(user, order, conn=None):
 
 def shift_allowed(user, shift):
     context = enabled(user)
-    return not context or bool(shift and shift.get('brand_id') == user['brand_id']
+    return not context or bool(not context.get('bootstrap') and shift and shift.get('brand_id') == user['brand_id']
         and shift.get('branch_ids') and set(shift['branch_ids']) <= set(user['branch_ids'])
         and (shift.get('delivery_window_snapshot') or {}).get('period') == 'morning'
         and (shift['id'] == context['shift_id'] or shift.get('manager_shift_id') == context['shift_id']))

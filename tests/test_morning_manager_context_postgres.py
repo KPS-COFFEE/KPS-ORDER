@@ -76,20 +76,21 @@ def test_context_order_idor_and_assignment_never_cross_period(morning_manager,la
     client,ids,_=morning_manager
     assert client.get('/api/orders/'+ids[label]).status_code==404
     response=post(client,'/api/orders/'+ids[label]+'/assign',{'driver_shift_id':'ctx-driver'})
-    assert response.status_code==403,response.text
+    assert response.status_code==404,response.text
 
 
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
-def test_assignment_tasks_and_parent_tampering_are_unavailable_to_minimal_role(morning_manager):
+def test_assignment_and_tasks_are_scoped_to_own_morning_duty(morning_manager):
     client,ids,_=morning_manager;path='/api/orders/'+ids['morning']+'/assign'
     for sid in ('ctx-other-driver','ctx-evening-driver','ctx-other-branch'):
         r=post(client,path,{'driver_shift_id':sid});assert r.status_code in (403,404),r.text
     key=uuid4().hex;body={'driver_shift_id':'ctx-driver'}
-    first=post(client,path,body,key);assert first.status_code==403,first.text
-    assert post(client,path,body,key).status_code==403
-    assert client.get('/api/tasks').status_code==403
+    first=post(client,path,body,key);assert first.status_code==200,first.text
+    assert post(client,path,body,key).status_code==200
+    tasks=client.get('/api/tasks');assert tasks.status_code==200,tasks.text
+    assert {r['order_id'] for r in tasks.json()['tasks']}=={ids['morning']}
     with db.tx() as c:
-        assert not c.execute('SELECT 1 FROM driver_tasks WHERE order_id=%s',(ids['morning'],)).fetchone()
+        assert c.execute('SELECT count(*) n FROM driver_tasks WHERE order_id=%s',(ids['morning'],)).fetchone()['n']==1
     # Same idempotency key cannot replay an out-of-context driver target.
     assert post(client,path,{'driver_shift_id':'ctx-other-driver'},key).status_code in (403,404)
 
@@ -115,7 +116,7 @@ def test_shift_lists_details_and_closure_idor_are_scoped(morning_manager):
 
 
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
-@pytest.mark.parametrize('change',['policy','branch','inactive','duty_closed','duty_evening'])
+@pytest.mark.parametrize('change',['policy','branch','inactive','duty_closed','duty_evening','snapshot_parent','event_parent'])
 def test_fresh_revocation_blocks_reads_and_saved_acceptance_replay(morning_manager,change):
     client,ids,_=morning_manager;path='/api/orders/'+ids['morning']+'/manager-accept';key=uuid4().hex
     with db.tx() as c:
@@ -128,9 +129,11 @@ def test_fresh_revocation_blocks_reads_and_saved_acceptance_replay(morning_manag
         elif change=='branch':c.execute("UPDATE users SET branch_ids=%s WHERE id='ops-manager'",(db.json([B3]),))
         elif change=='inactive':c.execute("UPDATE users SET active=false WHERE id='ops-manager'")
         elif change=='duty_closed':c.execute("UPDATE shifts SET status='closed' WHERE id='ctx-duty'")
+        elif change=='snapshot_parent':c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{manager_shift_id}',%s) WHERE id=%s",(db.json('ctx-other-duty'),ids['morning']))
+        elif change=='event_parent':db.event(c,ids['morning'],'ops-manager','preparation.accepted',{'manager_shift_id':'ctx-other-duty'})
         else:c.execute("UPDATE shifts SET delivery_window_snapshot=%s WHERE id='ctx-duty'",(db.json({'period':'evening'}),))
-    assert client.get('/api/orders/'+ids['morning']).status_code in (401,403)
-    assert post(client,path,body,key).status_code in (401,403)
+    assert client.get('/api/orders/'+ids['morning']).status_code in (401,403,404)
+    assert post(client,path,body,key).status_code in (401,403,404)
 
 
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)

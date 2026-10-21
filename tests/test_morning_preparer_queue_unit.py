@@ -15,7 +15,7 @@ class Connection:
     def __init__(self, devices=None, previous=None, branch_no=2):
         self.devices = devices if devices is not None else [{'id': 'printer-2'}]
         self.previous = previous
-        self.branch = {'id': 'branch-2', 'branch_no': branch_no}
+        self.branch = {'id': 'branch-2', 'branch_no': branch_no, 'city':'حفر الباطن'}
         self.statements = []
         self.inserted = []
 
@@ -105,16 +105,18 @@ def test_preexisting_manual_receipt_is_never_automatically_reprinted(helpers):
 
 @pytest.mark.parametrize('period,branch_no,current,target,allowed,print_count', [
     ('morning',2,'new','accepted',True,1),
-    ('morning',2,'accepted','ready',True,0),
+    ('morning',2,'accepted','ready',False,0),
+    ('morning',2,'accepted','preparing',True,0),
+    ('morning',2,'preparing','ready',True,0),
     ('morning',2,'new','ready',False,0),
     ('evening',2,'accepted','ready',False,0),
     ('morning',1,'accepted','ready',False,0),
 ])
-def test_preparation_endpoint_only_shortcuts_approved_morning_branch_two(
+def test_preparation_endpoint_requires_preparing_stage_before_ready(
         monkeypatch, period, branch_no, current, target, allowed, print_count):
     from contextlib import contextmanager
     from fastapi import HTTPException
-    from app import orders, branch_printing, branch_payments, order_amendments, morning_delivery
+    from app import orders, branch_printing, branch_payments, order_amendments, morning_delivery, morning_dispatch
     row = order(snapshot={'delivery_period':period}) | {'version':1,'preparation_status':current,'customer':{},'payment_status':'unpaid'}
     conn = Connection(branch_no=branch_no)
     execute = conn.execute
@@ -136,6 +138,10 @@ def test_preparation_endpoint_only_shortcuts_approved_morning_branch_two(
     monkeypatch.setattr(morning_delivery, 'authorize_order', lambda *args,**kwargs:None)
     monkeypatch.setattr(order_amendments, 'guard', lambda *args,**kwargs:None)
     monkeypatch.setattr(branch_payments, 'require_verified', lambda *args:None)
+    monkeypatch.setattr(morning_dispatch, 'lock_operations', lambda *args:None)
+    monkeypatch.setattr(morning_dispatch, 'try_assign', lambda *args:{'status':'manager_required'})
+    monkeypatch.setattr(morning_dispatch, 'enrich', lambda *args:None)
+    monkeypatch.setattr(morning_dispatch, 'require_driver_acceptance', lambda *args:None)
     queued = []
     def queue(*args):
         queued.append(args)

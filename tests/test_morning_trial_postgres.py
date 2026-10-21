@@ -66,20 +66,22 @@ def test_full_simulated_journey_at_night_does_not_create_real_operations(rehears
     assert accepted.status_code == 200, accepted.text
     assert send(actor, acceptor, path, {'action': 'accept'}, accept_key).json() == accepted.json()
     assert accepted.json()['print_job']['status'] == 'queued'
+    assert accepted.json()['trial']['order']['status'] == 'assigned'
+    assert accepted.json()['trial']['order']['assigned_driver_id'] == 'ops-driver'
     with db.tx() as c:
         jobs = c.execute("SELECT * FROM branch_print_jobs WHERE payload->>'morning_trial_id'=%s", (tid,)).fetchall()
         assert len(jobs) == 1 and jobs[0]['kind'] == 'test' and jobs[0]['order_id'] is None
         assert jobs[0]['branch_id'] == B2 and jobs[0]['device_id'] == 'rehearsal-device'
         assert any('NOT AN INVOICE' in line['text'] for line in jobs[0]['payload']['lines'])
-    for who, action, expected in [('branch', 'ready', 'ready'), ('owner', 'assign', 'assigned'),
-                                  ('driver', 'driver_accept', 'driver_accepted'), ('driver', 'delivered', 'delivered'),
-                                  ('owner', 'close', 'delivered')]:
+    for who, action, expected in [('driver', 'driver_accept', 'driver_accepted'), ('branch', 'preparing', 'preparing'),
+                                  ('branch', 'ready', 'ready'), ('driver', 'picked_up', 'picked_up'),
+                                  ('driver', 'delivered', 'delivered'), ('manager', 'close', 'delivered')]:
         result = send(actor, who, path, {'action': action})
         assert result.status_code == 200, result.text
         assert result.json()['trial']['order']['status'] == expected
     report = actor('manager').get(f'/api/morning-trial/{tid}')
     assert report.status_code == 200 and report.json()['trial']['status'] == 'closed'
-    assert [event['action'] for event in report.json()['trial']['events']] == ['accept', 'ready', 'assign', 'driver_accept', 'delivered', 'close']
+    assert [event['action'] for event in report.json()['trial']['events']] == ['accept', 'auto_assign', 'driver_accept', 'preparing', 'ready', 'picked_up', 'delivered', 'close']
     assert operational_snapshot() == before
 
 

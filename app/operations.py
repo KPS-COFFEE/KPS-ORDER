@@ -301,20 +301,18 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
 @router.post('/shifts')
 def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
     context = user.get('_morning_manager_context')
-    if context and (body.kind != 'driver' or body.manager_shift_id != context['shift_id']
-            or body.delivery_period not in (None, 'morning')
-            or body.branch_ids and not set(body.branch_ids) <= set(user['branch_ids'])):
-        raise db.error(403, 'MORNING_SHIFT_SCOPE', 'افتح شفت السائق ضمن مناوبتك الصباحية فقط.')
+    if context and (not context.get('bootstrap') or context.get('shift_id') is not None
+            or body.kind != 'manager' or body.user_id not in (None, user['id'])
+            or body.manager_shift_id is not None or body.delivery_period != 'morning'
+            or body.branch_ids and set(body.branch_ids) != set(user['branch_ids'])
+            or body.opening_halalas != 0 or body.receipt_trial or body.vehicle_inspection is not None):
+        raise db.error(403, 'MORNING_SHIFT_SCOPE', 'افتح مناوبتك الصباحية فقط دون عهدة أو شفت موظف آخر.')
     shift_roles(user,'shifts_open','owner','delivery_manager','driver')
     if user['role']=='driver' and body.branch_ids and set(body.branch_ids)!=set(user.get('branch_ids',[])):
         fail(403,'فروع السائق يحددها مدير التوصيل؛ لا يمكن تغيير نطاق الشفت')
     with db.tx() as c:
-        if context:
-            target = c.execute('SELECT * FROM users WHERE id=%s', (body.user_id or user['id'],)).fetchone()
-            if (not target or not target['active'] or target['role'] != 'driver'
-                    or not same_scope(user, target)
-                    or not set(body.branch_ids or user['branch_ids']) <= set(target.get('branch_ids') or [])):
-                raise db.error(403, 'MORNING_DRIVER_SCOPE', 'السائق غير معتمد لفروع مناوبتك الصباحية.')
+        if context and c.execute("SELECT 1 FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL LIMIT 1",(user['id'],)).fetchone():
+            raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','راجع اعتماد العهدة السابقة قبل فتح مناوبة الصباح المحدودة.')
         def perform():
             target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
             if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')
@@ -373,6 +371,8 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
             sid=uid()
             carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL FOR UPDATE',(target['id'],)).fetchall()
+            if context and carryovers:
+                raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','هذه المناوبة لا تنقل عهدًا مالية سابقة.')
             carried=sum(x['amount_halalas'] for x in carryovers)
             permanent_float=None
             if body.kind=='driver':
@@ -412,6 +412,34 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
         page_meta={}
         context = user.get('_morning_manager_context')
         if context:
+            if order_id or task_id:
+                prior_task = None
+                if task_id:
+                    prior_task = c.execute('SELECT * FROM driver_tasks WHERE id=%s', (task_id,)).fetchone()
+                    if not prior_task:fail(404,'المهمة غير موجودة')
+                    shift_access(c,user,lock_shift(c,prior_task['shift_id']))
+                    order_id = prior_task['order_id']
+                order = c.execute('SELECT * FROM orders WHERE id=%s', (order_id,)).fetchone()
+                order_access(c,user,order)
+                rows = c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.brand_id,s.branch_ids,s.status,s.opened_at,s.delivery_window_snapshot,u.display_name "
+                                 "FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.manager_shift_id=%s "
+                                 "AND s.kind='driver' AND s.status='open' AND s.delivery_window_snapshot->>'period'='morning' "
+                                 "AND s.branch_ids <@ %s::jsonb ORDER BY s.opened_at,s.id",
+                                 (user['brand_id'],context['shift_id'],db.json(user['branch_ids']))).fetchall()
+                eligible=[]
+                for row in rows:
+                    if prior_task and row['id']==prior_task['shift_id']:continue
+                    candidate=lock_shift(c,row['id'])
+                    try:
+                        shift_access(c,user,candidate)
+                        eligible_driver_shift(c,candidate,order)
+                    except HTTPException as error:
+                        if error.status_code not in (403,404,409):raise
+                        continue
+                    row['active_tasks']=c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred','reassigned')",(row['id'],)).fetchone()['n']
+                    row['assignment_eligible']=True
+                    eligible.append(row)
+                return safe({'shifts':eligible})
             rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.brand_id,s.branch_ids,s.status,s.opened_at,s.delivery_window_snapshot,u.display_name "
                            "FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.id=%s AND s.user_id=%s "
                            "AND s.delivery_window_snapshot->>'period'='morning' AND s.branch_ids <@ %s::jsonb",
@@ -751,6 +779,17 @@ def eligible_driver_shift(c,s,order):
         morning_delivery.authorize_order(c, principal, order)
         if (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning':
             fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية.')
+        from . import morning_dispatch
+        if morning_dispatch.actual_morning(order):
+            branch=c.execute('SELECT branch_no,city FROM branches WHERE id=%s AND brand_id=%s',(order['branch_id'],order['brand_id'])).fetchone()
+            if branch and branch['branch_no']==2 and ''.join(branch['city'].split())=='حفرالباطن':
+                if driver.get('invitation_status','active')!='active' or principal.get('invitation_status','active')!='active':
+                    raise db.error(409,'MORNING_EMPLOYEE_INACTIVE','اعتماد حساب السائق أو مدير الصباح غير ساري.')
+                if s['branch_ids'] != [order['branch_id']] or manager['branch_ids'] != [order['branch_id']]:
+                    raise db.error(403,'MORNING_DRIVER_BRANCH_SCOPE','مناوبات الصباح الحالية محصورة بفرع 2 فقط.')
+                load=c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred','reassigned') AND (%s::text IS NULL OR order_id<>%s)", (s['id'],order.get('id'),order.get('id'))).fetchone()['n']
+                if load>=morning_dispatch.CAPACITY:
+                    raise db.error(409,'MORNING_DRIVER_CAPACITY','وصل السائق لسعة مهام الصباح الحالية.')
     return manager
 
 class Assignment(OperationBody):
@@ -800,7 +839,11 @@ def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_use
         order_access(c,user,visible)
         morning_delivery.authorize_order(c,user,visible)
         if user.get('_morning_manager_context'):
-            shift_access(c, user, lock_shift(c, body.driver_shift_id))
+            from .morning_dispatch import lock_operations
+            lock_operations(c)
+            target = lock_shift(c, body.driver_shift_id)
+            shift_access(c, user, target)
+            eligible_driver_shift(c, target, visible)
         def perform():return assign_in_transaction(c,user,oid,body)
         return mutate(c,user,request,'order.assign:'+oid,body.model_dump(),perform)
 
@@ -818,7 +861,7 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
         if user.get('_morning_manager_context'):
             from .morning_manager_context import order_allowed
             context = user['_morning_manager_context']
-            rows = [r for r in rows if order_allowed(user, dict(r, service='delivery'), c)]
+            rows = [r for r in rows if order_allowed(user, dict(r, id=r['order_id'], service='delivery'), c)]
         if order_id:
             rows=[r for r in rows if r['order_id']==order_id]
         if user['role']=='driver':
@@ -917,6 +960,10 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(t['order_id'],)).fetchone()
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             s=lock_shift(c,t['shift_id']);shift_access(c,user,s)
+            from . import morning_dispatch
+            if (body.status=='accepted' and morning_dispatch.launch_order(c,o)
+                    and (user['role']!='driver' or t['driver_id']!=user['id'])):
+                raise db.error(403,'MORNING_DRIVER_ACCEPTANCE_ONLY','قبول مهمة الصباح من السائق المكلف نفسه فقط.')
             from .driver_receipt_trial import physical_guard
             physical_guard(s,body.status)
             if body.status=='accepted':
@@ -940,8 +987,12 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status not in allowed.get(t['status'],()):fail(409,'انتقال حالة غير صالح')
             if o['preparation_status'] in ('cancelled','rejected') and body.status in ('accepted','picked_up','delivered'):
                 fail(409,'الطلب ملغى أو مرفوض')
+            from . import morning_dispatch
+            morning_pickup = morning_dispatch.launch_order(c,o)
+            if body.status=='picked_up' and morning_pickup and o['preparation_status'] not in {'ready','handed_over'}:
+                raise db.error(409,'MORNING_PREPARATION_REQUIRED','انتظر اكتمال تجهيز الفرع قبل الاستلام الفعلي.')
             if body.status=='picked_up' and o['preparation_status']!='handed_over':
-                if o['snapshot'].get('delivery_workflow')!='manager_dispatch':
+                if o['snapshot'].get('delivery_workflow')!='manager_dispatch' and not morning_pickup:
                     fail(409,'يلزم تأكيد تسليم الفرع للسائق')
                 if user['role']!='driver' or t['driver_id']!=user['id']:
                     fail(403,'تأكيد الاستلام الفعلي من السائق المكلف فقط')
@@ -1008,6 +1059,23 @@ class TaskHandover(OperationBody): driver_shift_id:str; reason:str=Field(min_len
 def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager')
     with db.tx() as c:
+        if user.get('_morning_manager_context'):
+            from .morning_dispatch import lock_operations
+            lock_operations(c)
+            prior = c.execute('SELECT * FROM driver_tasks WHERE id=%s', (tid,)).fetchone()
+            if not prior:fail(404,'المهمة غير موجودة')
+            shift_access(c,user,lock_shift(c,prior['shift_id']))
+            order = c.execute('SELECT * FROM orders WHERE id=%s', (prior['order_id'],)).fetchone()
+            order_access(c,user,order)
+            from . import morning_delivery
+            morning_delivery.authorize_order(c,user,order)
+            target = lock_shift(c,body.driver_shift_id)
+            shift_access(c,user,target)
+            eligible_driver_shift(c,target,order)
+            from .driver_receipt_trial import physical_guard
+            physical_guard(target,prior['status'])
+            if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(prior['order_id'],)).fetchone():
+                fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
         def perform():
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             if not t:fail(404,'المهمة غير موجودة')
