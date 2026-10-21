@@ -4,10 +4,15 @@ on:
     branches: [agent/kps-order-emergency-v4]
     paths:
       - app/accounting.py
+      - app/accounting_statements.py
+      - app/accounting_export.py
       - app/operations.py
       - migrations/091_driver_accounting_settlements.sql
+      - migrations/092_accounting_driver_statements.sql
       - public/assets/accounting.*
       - tests/test_driver_accounting_settlements.py
+      - tests/test_accounting_driver_statements.py
+      - tests/test_accounting_statements_browser.py
       - tests/test_accounting_cards_browser.py
       - .github/workflows/accounting-settlements.yml
 permissions:
@@ -38,7 +43,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/assets/accounting.js && node --check public/ops.js
-      - run: python -m pytest -q tests/test_driver_accounting_settlements.py tests/test_accounting_cards_browser.py tests/test_accounting.py tests/test_accounting_browser.py tests/test_delivery_center_matching.py tests/test_simple_driver_close.py tests/test_complimentary_deliveries.py --junitxml=test-results/accounting-settlements.xml
+      - run: python -m pytest -q tests/test_accounting_driver_statements.py tests/test_accounting_statements_browser.py tests/test_driver_accounting_settlements.py tests/test_accounting_cards_browser.py tests/test_accounting.py tests/test_accounting_browser.py tests/test_delivery_center_matching.py tests/test_simple_driver_close.py tests/test_complimentary_deliveries.py tests/test_backup.py --junitxml=test-results/accounting-settlements.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -46,3 +51,4 @@ jobs:
           path: |
             test-results/accounting-settlements.xml
             test-artifacts/accounting-cards-*.png
+            test-artifacts/accounting-driver-statement-*.png

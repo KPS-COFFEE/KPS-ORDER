@@ -6,6 +6,7 @@ window.KPSAccounting={async open(ctx){
   if(!user||!host.isConnected)return;
   const text=(ar,en)=>esc(tr(ar,en));
   const groups={complimentary:tr('الضيافة والتعويض والإلغاء والطباعة','Hospitality, compensation, cancellations and reprints'),driver_incentives:tr('استحقاق السائقين اليومي والشهري','Daily and monthly driver entitlement'),driver_incentive_details:tr('تفاصيل وأسباب الاستحقاق','Entitlement details and reasons'),daily:tr('إجمالي يوم التشغيل','Operational day totals'),branch:tr('حسب الفروع','By branch'),items:tr('حسب الأصناف','By item'),driver:tr('حسب السائق','By driver'),driver_daily:tr('عداد السائق اليومي','Daily driver counter'),deficits:tr('العجز والزيادة','Shortages and surpluses'),actions:tr('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments')};
+  groups.driver_statement=tr('كشف السائق اليومي والشهري','Daily and monthly driver statement');
   let tab=options.can_report?'reports':'cases',data=null,frozen='',busy=false;
   const filters={start:options.today,end:options.today,group:'daily',branch_ids:[],driver_id:'',product_id:'',subject_id:'',category:'',status:''};
   const opt=(rows,key='id',label='name',selected='')=>rows.map(r=>`<option value="${esc(r[key])}" ${Array.isArray(selected)?selected.includes(r[key])?'selected':'':selected===r[key]?'selected':''}>${esc(r[label])}</option>`).join('');
@@ -34,7 +35,7 @@ window.KPSAccounting={async open(ctx){
     return p;
   }
   function url(format='json'){
-    if(frozen&&tab==='reports')return `/api/accounting/months/${encodeURIComponent(frozen)}?${new URLSearchParams({group:filters.group,format,lang})}`;
+    if(frozen&&tab==='reports')return `/api/accounting/months/${encodeURIComponent(frozen)}?${new URLSearchParams({group:filters.group,driver_id:filters.driver_id,format,lang})}`;
     return `/api/accounting/${tab==='cases'?'cases':'reports'}?${query(format)}`;
   }
   function shell(){
@@ -60,13 +61,14 @@ window.KPSAccounting={async open(ctx){
     });
   }
   async function loadDriverSettlements(){
+    if(tab==='settlements'){await loadManagerCards();return;}
     const result=await api('/api/accounting/driver-settlements?kind='+(tab==='matching'?'manager':'driver'));
     if(!host.isConnected||!['settlements','matching'].includes(tab))return;
     host.querySelector('#ac-filters').hidden=true;
     host.querySelector('.ac-actions').hidden=true;
     host.querySelector('#ac-description').textContent=tr('مرحلتان مستقلتان: اعتماد الموازنة، ثم تسجيل استلام الكاش عند وصوله ولو بعد أيام. المبلغ المنتظر لا يُحسب عجزًا بسبب التأخير.','Two separate stages: approve the balance, then record cash when it arrives, even days later. Waiting cash is not a shortage.');
     const rows=result.settlements||[];
-    const states={pending_balance:tr('بانتظار اعتماد الموازنة','Awaiting balance approval'),balance_approved:tr('الموازنة معتمدة — بانتظار الكاش','Balance approved — awaiting cash'),cash_received:tr('تم استلام الكاش واعتماد التسوية','Cash received — settlement approved')};
+    const states=settlementStates();
     const cols=[tr('السائق / الموازنة','Driver / balance'),tr('اليوم التشغيلي','Operational day'),tr('الشبكة المعتمدة','Approved card total'),tr('الكاش المطلوب','Cash due'),tr('المستلم فعليًا','Actually received'),tr('فرق الاستلام','Receipt difference'),tr('الحالة','Status'),tr('الإجراء','Action')];
     host.querySelector('#ac-results').innerHTML=`<div class="ac-table" tabindex="0"><table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.driver_name)}<br><small>${esc(r.label)}</small></td><td>${esc(r.day)}</td><td>${esc(money(r.bank_halalas))}</td><td>${esc(money(r.cash_due_halalas))}</td><td>${r.cash_received_halalas===null?'—':esc(money(r.cash_received_halalas))}</td><td>${r.cash_difference_halalas===null?'—':esc(money(r.cash_difference_halalas))}</td><td>${esc(states[r.stage])}${r.stage==='balance_approved'?`<br><small>${text('مدة الانتظار بالأيام','Waiting days')}: ${esc(r.waiting_days)}</small>`:''}</td><td>${options.can_review&&r.user_id!==user.id&&r.stage!=='cash_received'?`<button type="button" data-driver-balance="${esc(r.id)}">${r.stage==='pending_balance'?text('مراجعة واعتماد الموازنة','Review and approve balance'):text('تعديل الموازنة مع السبب','Amend balance with reason')}</button>${r.stage==='balance_approved'?`<button type="button" data-driver-receipt="${esc(r.id)}">${text('استلام الكاش واعتماد التسوية','Receive cash and approve settlement')}</button>`:''}`:''}<button type="button" data-driver-history="${esc(r.id)}">${text('الأصل وسجل التعديلات','Original and history')}</button></td></tr>`).join('')||`<tr><td colspan="8">${text('لا توجد موازنات ضمن نطاقك','No driver balances in your scope')}</td></tr>`}</tbody></table></div>`;
     host.querySelectorAll('#ac-results tbody tr').forEach((tr,i)=>{
@@ -75,6 +77,11 @@ window.KPSAccounting={async open(ctx){
       if(r.due_on){const deadline=document.createElement('p');deadline.textContent=ctx.tr('آخر موعد للإقفال: ','Closure deadline: ')+r.due_on+(r.overdue?ctx.tr(' — متأخر',' — overdue'):'');if(r.overdue)deadline.className='ac-shortage';tr.cells[6].append(deadline);}
       const link=document.createElement('a');link.href='/api/accounting/driver-settlements/'+encodeURIComponent(r.id)+'/print';link.target='_blank';link.rel='noopener';link.textContent=ctx.tr('عرض التقفيلة كاملة','View complete closure');tr.cells[7].append(link);
     });
+    bindSettlementActions(rows);
+  }
+  function settlementStates(){return {pending_balance:tr('بانتظار اعتماد الموازنة','Awaiting balance approval'),balance_approved:tr('الموازنة معتمدة — بانتظار الكاش','Balance approved — awaiting cash'),cash_pending_balance:tr('الكاش مستلم — بانتظار الموازنة','Cash received — awaiting balance'),cash_received:tr('تم استلام الكاش واعتماد التسوية','Cash received — settlement approved')};}
+  function bindSettlementActions(rows){
+    const states=settlementStates();
     host.querySelectorAll('[data-driver-history]').forEach(b=>b.onclick=()=>{
       const r=rows.find(x=>x.id===b.dataset.driverHistory);
       modal(tr('أصل الموازنة وسجل الاعتماد','Original balance and approval history'),`<p>${text('أصل موازنة الشبكة','Original card balance')}: ${esc(money(r.original_bank_halalas))} · ${text('أصل الكاش المطلوب','Original cash due')}: ${esc(money(r.original_cash_halalas))}</p>${r.history.map(e=>`<div class="panel"><p>${esc(states[e.stage])} · ${esc(e.actor_name)} · ${esc(new Date(e.created_at).toLocaleString(lang==='en'?'en-GB':'ar-SA',{timeZone:'Asia/Riyadh'}))}</p><p>${text('الشبكة','Card')}: ${esc(money(e.bank_halalas))} · ${text('الكاش المطلوب','Cash due')}: ${esc(money(e.cash_due_halalas))}</p>${e.stage==='cash_received'?`<p>${text('المستلم','Received')}: ${esc(money(e.cash_received_halalas))} · ${esc(e.received_on)} · ${esc(e.receipt_reference)}</p>`:''}<p>${esc(e.note)}</p></div>`).join('')||`<p>${text('لم يعتمد بعد','No approval yet')}</p>`}`);
@@ -93,6 +100,18 @@ window.KPSAccounting={async open(ctx){
       });
     });
   }
+
+  async function loadManagerCards(){
+    const result=await api('/api/accounting/manager-cards');
+    if(!host.isConnected||tab!=='settlements')return;
+    host.querySelector('#ac-filters').hidden=true;host.querySelector('.ac-actions').hidden=true;
+    host.querySelector('#ac-description').textContent=tr('افتح بطاقة مدير التوصيل وأكمل كل سائق لحاله. اعتمد ورقة الموازنة عند مراجعتها، والكاش عند وصوله للخزنة؛ كل واحدة بوقتها.','Open a delivery manager card and complete each driver independently. Approve the balance paper when reviewed, and cash when physically received.');
+    const cards=result.cards||[],rows=cards.flatMap(c=>c.drivers),states=settlementStates();
+    host.querySelector('#ac-results').innerHTML=cards.map(c=>`<details class="ac-manager-card panel" data-manager-card="${esc(c.id)}" ${!c.approved_day?'open':''}><summary><strong>${esc(c.manager_name)}</strong><span>${esc(c.day)}</span><span>${c.completed} / ${c.total} ${text('سائق مكتمل','drivers complete')}</span></summary><div class="ac-table" tabindex="0"><table><thead><tr>${[tr('السائق','Driver'),tr('الموازنة','Balance'),tr('الكاش المطلوب','Cash due'),tr('الكاش المستلم','Cash received'),tr('العجز','Shortage'),tr('الفائض','Surplus'),tr('الحالة والإجراء','Status and action')].map(s=>`<th>${esc(s)}</th>`).join('')}</tr></thead><tbody>${c.drivers.map(r=>`<tr data-driver-row="${esc(r.id)}"><td>${esc(r.driver_name)}</td><td>${esc(money(r.bank_halalas))}<br><small>${r.balance_approved?text('معتمدة','Approved'):text('بانتظار الورقة','Awaiting paper')}</small></td><td>${esc(money(r.cash_due_halalas))}</td><td>${r.cash_recorded?esc(money(r.cash_received_halalas)):'—'}</td><td class="ac-shortage">${esc(money(r.shortage_halalas))}</td><td>${esc(money(r.surplus_halalas))}</td><td><p>${esc(states[r.stage])}</p>${options.can_review&&r.user_id!==user.id&&r.stage!=='cash_received'?`${!r.balance_approved||!r.cash_recorded?`<button type="button" data-driver-balance="${esc(r.id)}">${r.balance_approved?text('تعديل الموازنة مع السبب','Amend balance with reason'):text('اعتماد الموازنة','Approve balance')}</button>`:''}${!r.cash_recorded?`<button type="button" data-driver-receipt="${esc(r.id)}">${text('استلام الكاش','Receive cash')}</button>`:''}`:''}<button type="button" data-driver-history="${esc(r.id)}">${text('الأصل والتعديلات','Original and changes')}</button><a href="/api/accounting/driver-settlements/${encodeURIComponent(r.id)}/print" target="_blank" rel="noopener">${text('التقفيلة الأصلية','Original closure')}</a></td></tr>`).join('')}</tbody></table></div>${c.approved_day?dayLinks(c.approved_day.id):options.can_review?`<button type="button" data-day-approve="${esc(c.id)}" ${!c.ready?'disabled':''}>${text('اعتماد تقفيلة اليوم وإصدار التقرير','Approve day closure and issue report')}</button><p>${text('يتاح بعد اعتماد الموازنة والكاش لكل السائقين في البطاقة.','Available when every driver in this card has both balance and cash approved.')}</p>`:''}</details>`).join('')||`<p>${text('لا توجد تقفيلات مديرين ضمن نطاقك','No manager closures in your scope')}</p>`;
+    bindSettlementActions(rows);
+    host.querySelectorAll('[data-day-approve]').forEach(b=>b.onclick=()=>modal(tr('اعتماد تقفيلة اليوم','Approve day closure'),`<form class="ac-case-form"><p>${text('يحفظ تقريرًا ثابتًا باسم كل سائق، بالمبالغ والفروقات وسجل التعديلات.','Saves a fixed report per driver with amounts, variances and adjustment history.')}</p><label>${text('ملاحظة الاعتماد','Approval note')}<textarea name="note" required minlength="3" maxlength="2000"></textarea></label><button type="submit">${text('اعتماد وإصدار التقرير','Approve and issue report')}</button></form>`,async fd=>{await mutation('/api/accounting/manager-cards/'+encodeURIComponent(b.dataset.dayApprove)+'/approve-day',{note:fd.get('note')});closeModal();await loadManagerCards();}));
+  }
+  function dayLinks(id){return `<div class="ac-day-report"><strong>${text('تقفيلة اليوم معتمدة — التقرير محفوظ','Day closure approved — report saved')}</strong> <a href="/api/accounting/days/${encodeURIComponent(id)}?format=pdf&lang=${lang}" target="_blank" rel="noopener">PDF</a> <a href="/api/accounting/days/${encodeURIComponent(id)}?format=xlsx&lang=${lang}">Excel</a></div>`;}
 
   async function load(){
     if(tab==='settlements'){await loadDriverSettlements();return;}
