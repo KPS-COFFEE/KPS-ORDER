@@ -10,8 +10,8 @@ anyio==4.15.1 \
     --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101
 arabic-reshaper==3.0.1 \
     --hash=sha256:41c5adc2420f85758eada7e880251c4b6a2adbd83377bd27e5d4eba71f648bc7
-certifi==2026.7.22 \
-    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+certifi==2026.10.19 \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
 cffi==2.1.1 \
     --hash=sha256:c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf
 charset-normalizer==3.5.2 \
