@@ -208,6 +208,7 @@ def authorize_replay(c,user,operation,body,result):
 
 class ShiftOpen(OperationBody):
     delivery_period: Literal['morning','evening']|None=None
+    receipt_trial: StrictBool=False
     vehicle_inspection: shift_vehicle.Inspection|None=None
     kind: str
     branch_ids: list[str] = Field(default_factory=list)
@@ -324,6 +325,9 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 if period and period != inherited:
                     fail(409, 'فترة السائق يجب أن تطابق مناوبة مديره.')
                 period = inherited
+            if body.receipt_trial:
+                from . import driver_receipt_trial
+                driver_receipt_trial.authorize_open(c, user, target, body, manager, branch_rows)
             operational_date, delivery_window = delivery_shift_window(
                 c, brand, branch_rows, manager_preparation=body.kind == 'manager',
                 delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
@@ -342,8 +346,11 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 from .fuel_exceptions import consume
                 if body.vehicle_inspection and body.vehicle_inspection.fuel_exception_id:
                     consume(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),body.vehicle_inspection,'start',target.get('vehicle') or {})
-                vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
-                vehicle_log['awaiting_refuel']=body.vehicle_inspection.fuel_percent<100 and not body.vehicle_inspection.fuel_exception_id
+                if body.receipt_trial:
+                    vehicle_log=driver_receipt_trial.opening_log(c,user,body.reason)
+                else:
+                    vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
+                    vehicle_log['awaiting_refuel']=body.vehicle_inspection.fuel_percent<100 and not body.vehicle_inspection.fuel_exception_id
                 c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
             for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
             db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'previous_carry_halalas':sum(x['amount_halalas'] for x in carryovers),'permanent_float':permanent_float,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
@@ -658,6 +665,8 @@ def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_
     return result
 
 def eligible_driver_shift(c,s,order):
+    from .driver_receipt_trial import assignment_guard
+    assignment_guard(s,order)
     from .fuel_exceptions import readiness_guard
     if s:readiness_guard(s)
     from .driver_breaks import guard as break_guard
@@ -828,6 +837,11 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(t['order_id'],)).fetchone()
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             s=lock_shift(c,t['shift_id']);shift_access(c,user,s)
+            from .driver_receipt_trial import physical_guard
+            physical_guard(s,body.status)
+            if body.status=='accepted':
+                from .driver_receipt_trial import assignment_guard
+                assignment_guard(s,o)
             if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
             resolving_problem=t['status']=='problem' and body.status!='problem'
             if resolving_problem:
@@ -920,6 +934,8 @@ def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.cu
             to=lock_shift(c,body.driver_shift_id);o=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone()
             if t['status'] in TERMINAL or not to or to['status']!='open' or to['kind']!='driver' or to['brand_id']!=o['brand_id'] or o['branch_id'] not in to['branch_ids'] or to['id']==t['shift_id']:fail(409,'شفت الاستلام غير مؤهل')
             eligible_driver_shift(c,to,o)
+            from .driver_receipt_trial import physical_guard
+            physical_guard(to,t['status'])
             if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(t['order_id'],)).fetchone():fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
             c.execute('UPDATE driver_tasks SET transfer_shift_id=%s,transfer_requested_by=%s,reason=%s WHERE id=%s',(to['id'],user['id'],body.reason,tid))
             db.audit(c,user['id'],'task.handover.request','task',tid,body.model_dump())
@@ -940,6 +956,8 @@ def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)
             to=lock_shift(c,t['transfer_shift_id']);shift_access(c,user,to)
             if to['user_id']!=user['id'] or to['status']!='open':fail(409,'الشفت غير متاح')
             order=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone();eligible_driver_shift(c,to,order)
+            from .driver_receipt_trial import physical_guard
+            physical_guard(to,t['status'])
             status='picked_up' if t['status']=='picked_up' else 'accepted'
             c.execute("UPDATE driver_tasks SET status='transferred' WHERE id=%s",(tid,));newid=uid()
             c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at) VALUES(%s,%s,%s,%s,%s,%s,now(),%s)',(newid,t['order_id'],user['id'],to['id'],status,t['transfer_requested_by'],t['picked_up_at']))
