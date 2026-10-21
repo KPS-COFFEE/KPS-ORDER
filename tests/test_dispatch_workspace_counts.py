@@ -9,21 +9,14 @@ pytestmark = pytest.mark.postgres
 def test_workspace_counts_are_not_page_length_and_keep_overnight_work(ops):
     actor, post, order, shifts = ops
     mid, sid = shifts()
-    old = order(name='workspace-old-complete')
+    old = order(name='workspace-old-complete',source='delivery_center')
     carried = order(name='workspace-overnight-task')
     with db.tx() as c:
         c.execute("UPDATE orders SET delivery_status='delivered',completed_at=now() WHERE id=%s",(old,))
         c.execute("UPDATE orders SET created_at=now()-interval '3 days',delivery_status='picked_up' WHERE id=%s",(carried,))
         c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) VALUES('workspace-task',%s,'ops-driver',%s,'picked_up','ops-manager')",(carried,sid))
-    with db.tx() as c:
-        c.execute("UPDATE orders SET snapshot=snapshot||%s WHERE id=%s",
-                  (db.json({'order_source':'delivery_center','created_by_staff_id':'ops-manager'}),old))
     for index in range(102):
-        oid=order(name='workspace-unassigned-'+str(index))
-        if index % 2 == 0:
-            with db.tx() as c:
-                c.execute("UPDATE orders SET snapshot=snapshot||%s WHERE id=%s",
-                          (db.json({'order_source':'delivery_center','created_by_staff_id':'ops-manager'}),oid))
+        order(name='workspace-unassigned-'+str(index),source='delivery_center' if index % 2 == 0 else None)
     data = actor('manager').get('/api/orders?dispatch_workspace=true&limit=2').json()
     assert len(data['orders']) == 2
     assert data['workspace_scope'] == 'current'
@@ -70,11 +63,10 @@ def test_source_counts_exclude_unauthorized_branches_and_other_services(ops):
     actor, post, order, shifts = ops
     shifts()
     website = order()
-    hidden = order()
     order(service='pickup')
     with db.tx() as c:
         c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('source-hidden',2,'source-hidden','ops-brand','فرع محجوب','رفحاء','{}')")
-        c.execute("UPDATE orders SET branch_id='source-hidden',snapshot=snapshot||%s WHERE id=%s",(db.json({'order_source':'delivery_center'}),hidden))
+    order(source='delivery_center',branch='source-hidden')
     path = '/api/orders?dispatch_workspace=true&dispatch_scope=all'
     counts = actor('manager').get(path).json()['workspace_counts']['all']
     assert counts['total'] == 1

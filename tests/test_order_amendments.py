@@ -47,8 +47,8 @@ def amendment_case(ops,monkeypatch):
         total=sum(x['line_total_halalas'] for x in items)
         return {'brand_id':'ops-brand','branch_id':'ops-branch','branch_name':'فرع اختبار','service':b.service,'items':items,'notes':b.notes,'subtotal_halalas':total,'delivery_fee_halalas':0,'total_halalas':total}
     monkeypatch.setattr(catalog,'quote_order',quote)
-    def make(service='pickup',quantity=2):
-        oid=order(service=service,total=1000*quantity,items=[{'product_id':'ops-product','name':'قهوة تجربة','quantity':quantity,'unit_price_halalas':1000,'line_total_halalas':1000*quantity,'units':[],'note':''}])
+    def make(service='pickup',quantity=2,source=None):
+        oid=order(service=service,total=1000*quantity,source=source,items=[{'product_id':'ops-product','name':'قهوة تجربة','quantity':quantity,'unit_price_halalas':1000,'line_total_halalas':1000*quantity,'units':[],'note':''}])
         with db.tx() as c:c.execute("UPDATE orders SET preparation_status='accepted' WHERE id=%s",(oid,))
         return oid
     def propose(oid,qty=1,who='customer'):
@@ -101,11 +101,7 @@ def test_manager_offsite_consent_branch_feasibility_and_scope(amendment_case):
 def test_manager_amendment_preserves_original_order_source(amendment_case, ops, source):
     actor, post, make, propose, decision = amendment_case
     ops[3]()
-    oid = make('delivery')
-    if source:
-        with db.tx() as c:
-            c.execute('UPDATE orders SET snapshot=snapshot||%s WHERE id=%s',
-                      (db.json({'order_source':source,'created_by_staff_id':'ops-manager'}),oid))
+    oid = make('delivery',source=source)
     expected = {'manager':int(source == 'delivery_center'), 'website':int(source is None)}
     path = '/api/orders?dispatch_workspace=true'
     assert actor('manager').get(path).json()['workspace_counts']['current']['sources'] == expected

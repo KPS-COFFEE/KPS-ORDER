@@ -639,4 +639,4 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 .delivery-room .dispatch-source-counts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
 .delivery-room .dispatch-source-counts>strong{font-size:11px}
 .delivery-room .dispatch-source{flex:0 0 auto;flex-direction:row;align-items:center;min-height:32px;padding:3px 8px;background:var(--accent-light);border:1px solid var(--line);border-radius:8px;font-size:11px;white-space:nowrap}
-.delivery-room .dispatch-source b{font-variant-numeric:tabular-nums}
+.delivery-room .dispatch-source b{font-size:14px;font-variant-numeric:tabular-nums}
