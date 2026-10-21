@@ -33,7 +33,7 @@
     const say=(ar,en)=>status.textContent=tr(ar,en);
     function labels(){button.textContent=tr('حدد موقعك على الخريطة','Choose location on map');title.textContent=tr('حدد مكان التوصيل','Choose delivery location');close.textContent=tr('إغلاق','Close');locate.textContent=tr('استخدام موقعي الحالي','Use my current location');confirm.textContent=tr('تأكيد الموقع وعرض الفروع','Confirm location and show branches');}
     function choose(p){if(!valid(p)||!marker)return;draft={lat:p.lat,lng:p.lng};marker.setLngLat([draft.lng,draft.lat]);confirm.disabled=!ready;say('حرّك الدبوس أو اضغط على مكان آخر، ثم أكد الموقع.','Drag the pin or tap another place, then confirm.');}
-    function failure(){generation++;ready=false;confirm.disabled=true;locate.disabled=true;if(map){map.remove();map=null;marker=null;}say('تعذر تحميل الخريطة. أغلقها واستخدم موقعك الحالي أو أدخل الموقع يدويًا.','The map could not load. Close it and use your current location or enter the location manually.');}
+    function failure(reason){generation++;ready=false;confirm.disabled=true;locate.disabled=true;if(map){map.remove();map=null;marker=null;}if(reason==='webgl')say('هذا المتصفح لا يدعم عرض الخريطة. استخدم متصفحًا حديثًا أو حدد موقعك من خارج الخريطة.','This browser cannot display the map. Use a current browser or select your location outside the map.');else say('تعذر تحميل الخريطة. أغلقها واستخدم موقعك الحالي أو أدخل الموقع يدويًا.','The map could not load. Close it and use your current location or enter the location manually.');}
     async function open(){
       if(opening||canOpen&&!canOpen())return;opening=true;labels();dialog.showModal();generation++;draft=null;confirm.disabled=true;locate.disabled=!ready;say('جاري تحميل الخريطة…','Loading map…');
       const current=getLocation();
@@ -51,7 +51,7 @@
         }
         map.resize();if(valid(current)){choose(current);map.jumpTo({center:[current.lng,current.lat],zoom:16});}
         else if(ready)say('اضغط على مكان التوصيل أو استخدم موقعك الحالي، ثم أكد.','Tap your delivery location or use your current location, then confirm.');
-      }catch{failure();}finally{opening=false;}
+      }catch(error){failure(error.message==='webgl'?'webgl':undefined);}finally{opening=false;}
     }
     button.addEventListener('click',open);close.addEventListener('click',()=>dialog.close());
     dialog.addEventListener('close',()=>{generation++;draft=null;confirm.disabled=true;locate.disabled=false;button.focus();});
