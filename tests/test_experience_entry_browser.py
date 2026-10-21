@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope='module')
 def static_customer():
     class Handler(SimpleHTTPRequestHandler):
+        extensions_map = {**SimpleHTTPRequestHandler.extensions_map, '.js': 'application/javascript; charset=utf-8'}
         def log_message(self,*args): pass
     server = ThreadingHTTPServer(('127.0.0.1',0), functools.partial(Handler,directory=str(ROOT/'public')))
     worker = Thread(target=server.serve_forever,daemon=True);worker.start()
