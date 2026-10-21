@@ -74,11 +74,20 @@ window.testBeeps=0;window.testStopped=0;window.AudioContext=class{constructor(){
         # A failed refresh/read/open is never an acknowledgment or mute.
         offline=True;page.clock.run_for(16000)
         assert page.evaluate('window.testStopped')==0
+        # The 60s cache TTL starts when the asynchronous initial response
+        # completes, not when the 15s interval starts. Its t=60 callback may
+        # therefore still be cached; cross t=75 and await the actual failure
+        # while the order remains actionable, rather than assuming t=74 did it.
+        with page.expect_response(lambda response:
+                urlparse(response.url).path=='/api/operations/alert-policy' and response.status==503):
+            page.clock.run_for(31000)
+        assert len(policy_reads)>=2
+        assert page.evaluate('window.testStopped')==0
+        assert page.evaluate('window.testBeeps')==5  # Continuous oscillator survived.
         offline=False;order.update(preparation_status='accepted',delivery_status='assigned')
         page.clock.run_for(16000)
         expect(alerts).not_to_contain_text('MORNING-TEST')
         assert page.evaluate('window.testStopped')==1
-        assert len(policy_reads)>=2  # A later failed cadence read did not mute.
         # Only a real server-confirmed driver acceptance enables preparation.
         order['morning_driver_accepted']=True;page.clock.run_for(16000)
         expect(alerts).to_contain_text('MORNING-TEST')
