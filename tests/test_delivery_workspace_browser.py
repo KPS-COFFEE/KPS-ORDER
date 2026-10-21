@@ -185,4 +185,55 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         assert not errors,errors
         Path('test-results').mkdir(exist_ok=True)
         page.screenshot(path=f'test-results/customer-entry-delivery-dashboard-{lang}-{width}.png',full_page=True)
+        # Personal controls must not perform operational writes or alter scope.
+        before_writes=len(writes)
+        summary_toggle=page.locator('.dispatch-personal-controls button[aria-controls="dispatch-summary-all"]')
+        map_toggle=page.locator('.dispatch-personal-controls button[aria-controls="dispatch-personal-map"]')
+        summary_toggle.click()
+        expect(page.locator('[data-count-scope=all]')).not_to_be_visible()
+        expect(page.locator('[data-count-scope=current]')).to_be_visible()
+        page.locator('#dispatch-filters [name=late]').check()
+        expect(page.locator('[data-count-scope=all]')).not_to_be_visible()
+        map_toggle.click()
+        expect(page.locator('.dispatch-map-panel')).not_to_be_visible()
+        expect(map_toggle).to_be_visible()
+        page.locator('.dispatch-layout-settings>summary').click()
+        orders_height=page.locator('[data-panel=orders][data-dimension=height]')
+        orders_height.focus()
+        orders_height.press('End')
+        assert page.locator('#dispatch-orders').evaluate('el=>el.style.height')=='1600px'
+        drivers_height=page.locator('[data-panel=drivers][data-dimension=height]')
+        drivers_height.focus()
+        drivers_height.press('End')
+        assert page.locator('#dispatch-drivers').evaluate('el=>el.style.height')=='1600px'
+        page.locator('[data-move="messages:-1"]').click()
+        expect(page.locator('.dispatch-layout')).to_have_class(re.compile('dispatch-personal-grid'))
+        width_slider=page.locator('[data-panel=orders][data-dimension=width]')
+        width_slider.focus()
+        width_slider.press('End')
+        assert page.locator('.dispatch-orders').evaluate('el=>el.style.getPropertyValue("--personal-span")')=='12'
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        page.locator('.dispatch-layout-settings>summary').click()
+        page.reload()
+        expect(page.locator('[data-count-scope=current]')).to_be_visible()
+        expect(page.locator('[data-count-scope=all]')).not_to_be_visible()
+        expect(page.locator('.dispatch-map-panel')).not_to_be_visible()
+        assert page.locator('#dispatch-drivers').evaluate('el=>el.style.height')=='1600px'
+        # Another manager using the same browser receives the default view.
+        user['id']='another-manager'
+        page.reload()
+        expect(page.locator('[data-count-scope=all]')).to_be_visible()
+        expect(page.locator('.dispatch-map-panel')).to_be_visible()
+        user['id']='manager'
+        page.reload()
+        expect(page.locator('[data-count-scope=all]')).not_to_be_visible()
+        page.locator('.dispatch-layout-settings>summary').click()
+        page.get_by_role('button',name='استعادة الافتراضي' if lang=='ar' else 'Restore defaults',exact=True).click()
+        expect(page.locator('[data-count-scope=all]')).to_be_visible()
+        expect(page.locator('.dispatch-map-panel')).to_be_visible()
+        assert page.locator('#dispatch-drivers').evaluate('el=>el.style.height')==''
+        assert 'dispatch-personal-grid' not in page.locator('.dispatch-layout').get_attribute('class')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        assert len(writes)==before_writes
+        assert not errors,errors
         browser.close()
