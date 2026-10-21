@@ -85,3 +85,4 @@ tests/test_dispatch_order_sort.py
 tests/test_dispatch_workspace_counts.py
 
 tests/test_driver_routes.py
+tests/test_driver_destination.py

@@ -21,7 +21,7 @@
     for(const driver of data.drivers||[]){
       const gps=driver.gps,location=point(gps?.location),updated=Date.parse(gps?.updated_at);
       if(!location||!Number.isFinite(updated)||Date.now()-updated>900000)continue;
-      result.push({key:'driver:'+driver.id,id:driver.id,kind:'driver',location,label:String(driver.display_name||driver.name||driver.id),updated_at:gps.updated_at,accuracy_m:gps.accuracy_m,stale:gps.stale||Date.now()-updated>120000});
+      result.push({key:'driver:'+driver.id,id:driver.id,kind:'driver',location,label:String(driver.display_name||driver.name||driver.id),updated_at:gps.updated_at,accuracy_m:gps.accuracy_m,next_destination:gps.next_destination,brand_source:gps.active_order_brand?.source,brand:['kps','enbishan','mixed'].includes(gps.active_order_brand?.id)?gps.active_order_brand.id:'neutral',stale:gps.stale||Date.now()-updated>120000});
     }
     return result;
   }
@@ -99,12 +99,16 @@
       }catch(error){if(!destroyed&&generation===routeGeneration)routeStatus.textContent=error.status===429?tr('انتظر دقيقة أو تحقق من حد المسارات الشهري.','Wait one minute or check the monthly route limit.'):tr('تعذر حساب المسار. يلزم موقع حديث ووجهة متاحة؛ لم تتم إعادة المحاولة تلقائيًا.','Could not calculate route. Fresh location and an available destination are required; no automatic retry was made.');}
       finally{routeBusy=false;if(!destroyed)routeDrivers();}
     });
+    const brandLegend=document.createElement('div');brandLegend.className='dispatch-map-brand-legend';host.append(brandLegend);
     let stateKind='loading';
     function labels(){
       const values=pins(data),orders=values.filter(p=>p.kind==='order').length,branches=values.filter(p=>p.kind==='branch').length,drivers=values.filter(p=>p.kind==='driver').length;
       count.textContent=tr(`${drivers} سائقين · ${orders} مواقع طلبات · ${branches} فروع`,`${drivers} drivers · ${orders} order locations · ${branches} branches`);
       note.textContent=tr('مواقع السائقين تتحدث أثناء مشاركة الموقع والصفحة مفتوحة. العلامة الرمادية آخر موقع قديم وليست موقعًا مباشرًا.','Driver locations update while sharing with the page visible. Gray markers are stale last-known positions, not live locations.');
       fit.textContent=tr('عرض جميع المواقع','Show all locations');
+      brandLegend.replaceChildren();
+      for(const [brand,label] of [['kps','KPS'],['enbishan',tr('عنبيشان','Enbishan')],['mixed',tr('طلبات متعددة البراندات','Mixed brands')],['neutral',tr('بدون طلب نشط','No active order')],['stale',tr('موقع قديم','Stale location')]]){const entry=document.createElement('span'),swatch=document.createElement('i');swatch.className='dispatch-driver-swatch brand-'+brand;swatch.setAttribute('aria-hidden','true');entry.append(swatch,document.createTextNode(label));brandLegend.append(entry);}
+
       const messages={loading:[tr('جاري تجهيز الخريطة','Preparing map'),tr('تحميل إعدادات الخريطة…','Loading map settings…')],missing:[tr('الخريطة تحتاج تفعيل Mapbox','Mapbox activation required'),tr('لم يُضف مفتاح الخرائط لهذا البراند بعد. ستظهر هنا مواقع الطلبات والفروع بعد الربط.','No map key is configured for this brand. Order and branch locations will appear here once connected.')],failed:[tr('تعذر تحميل الخريطة','Map could not load'),tr('راجع اتصال الشبكة وإعدادات مفتاح الخرائط. يمكنك متابعة الطلبات من القائمة.','Check the connection and map key configuration. Orders remain available in the list.')]};
       if(messages[stateKind]){const title=document.createElement('strong'),body=document.createElement('span');title.textContent=messages[stateKind][0];body.textContent=messages[stateKind][1];state.replaceChildren(title,body);}
     }
@@ -123,14 +127,21 @@
         }
         item.marker.setLngLat([pin.location.lng,pin.location.lat]);
         // Keep Mapbox's marker/anchor classes: they supply absolute positioning.
-        item.element.classList.remove('driver','stale','branch','late','delivered','road');
+        item.element.classList.remove('driver','stale','branch','late','delivered','road','brand-kps','brand-enbishan','brand-mixed','brand-neutral');
         item.element.classList.add('dispatch-map-pin');
         const appearance=pin.kind==='driver'?(pin.stale?['driver','stale']:['driver']):pin.kind==='branch'?['branch']:pin.late?['late']:pin.status==='delivered'?['delivered']:pin.status==='picked_up'||pin.status==='on_the_way'?['road']:[];
         item.element.classList.add(...appearance);
-        item.element.textContent=pin.kind==='branch'?pin.reference:pin.kind==='driver'?'🚗':'●';
+        if(pin.kind==='driver'){
+          item.element.classList.add('brand-'+pin.brand);
+          const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('aria-hidden','true');icon.classList.add('dispatch-driver-car');
+          const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M5 4h14l2 7v9h-3v-3H6v3H3v-9l2-7zm2 2-1.4 5h12.8L17 6H7zm-.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm11 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z');icon.append(path);
+          const name=document.createElement('span');name.className='dispatch-driver-name';name.textContent=pin.label;name.dir='auto';item.element.replaceChildren(icon,name);item.element.title=pin.label;
+        }else item.element.textContent=pin.kind==='branch'?pin.reference:'●';
         item.element.setAttribute('aria-label',tr(pin.kind==='driver'?'سائق ':pin.kind==='branch'?'فرع ':'طلب ',pin.kind==='driver'?'Driver ':pin.kind==='branch'?'Branch ':'Order ')+pin.label);
         const title=document.createElement('strong');title.textContent=pin.label;item.popupRoot.replaceChildren(title);
         if(pin.kind==='driver'){
+          const brandInfo=document.createElement('p');brandInfo.textContent=(pin.brand==='kps'?'KPS':pin.brand==='enbishan'?tr('عنبيشان','Enbishan'):pin.brand==='mixed'?tr('طلبات متعددة البراندات','Mixed brands'):tr('بدون طلب نشط','No active order'))+(pin.brand_source==='driver_declared'?tr(' — بإفادة السائق',' — driver-declared'):'');item.popupRoot.append(brandInfo);
+          if(pin.next_destination){const next=document.createElement('p');next.textContent=tr('الوجهة المخططة: ','Planned destination: ')+(pin.next_destination.kind==='external_enbishan'?tr('عنبيشان — إفادة السائق','Enbishan — driver declaration'):(pin.next_destination.name||tr('الفرع','Branch')));item.popupRoot.append(next);}
           const detail=document.createElement('p');
           detail.textContent=tr(pin.stale?'آخر موقع قديم · ':'آخر تحديث · ',pin.stale?'Stale last location · ':'Last update · ')+new Date(pin.updated_at).toLocaleTimeString(data.lang==='en'?'en-GB':'ar-SA')+tr(' · الدقة ',' · Accuracy ')+Math.round(pin.accuracy_m||0)+tr(' متر',' m');item.popupRoot.append(detail);
         }
@@ -140,7 +151,7 @@
     }
     fit.addEventListener('click',fitAll);labels();
     const freshnessTimer=setInterval(()=>{if(!destroyed&&!document.hidden)refresh();},15000);
-    const controller={update(next){data={...data,...next};refresh();},resize(){map?.resize();},destroy(){destroyed=true;clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();map?.remove();map=null;}};
+    const controller={update(next){data={...data,...next};refresh();},resize(){map?.resize();},fit:fitAll,destroy(){destroyed=true;clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();map?.remove();map=null;}};
     try{
       const config=await options.api('/api/operations/map-config');
       if(destroyed||!host.isConnected)return controller;

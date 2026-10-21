@@ -28,7 +28,7 @@ def map_config(user=Depends(auth.require_roles('owner', 'delivery_manager', 'del
 # clocks; callers cannot refresh an old position by providing a timestamp.
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi import HTTPException
-from . import db, catalog
+from . import db, catalog, driver_destination
 from .operations import safe, shift_access
 
 STALE_AFTER_SECONDS = 120
@@ -80,7 +80,7 @@ def driver_locations(user=Depends(auth.require_roles('owner', 'delivery_manager'
     if not auth.has_permission(user, 'drivers_view'):
         raise HTTPException(403, 'صلاحية عرض السائقين غير متاحة.')
     with db.tx() as c:
-        rows = c.execute("SELECT u.id,u.display_name,u.branch_ids,s.id shift_id,s.branch_ids shift_branches,"
+        rows = c.execute("SELECT u.id,u.display_name,u.branch_ids,s.id shift_id,s.branch_ids shift_branches,s.next_destination,"
                          "g.lat,g.lng,g.accuracy_m,g.updated_at,"
                          "g.updated_at < now()-interval '120 seconds' AS stale "
                          "FROM driver_latest_locations g JOIN users u ON u.id=g.driver_id AND u.brand_id=g.brand_id "
@@ -88,6 +88,7 @@ def driver_locations(user=Depends(auth.require_roles('owner', 'delivery_manager'
                          "WHERE g.brand_id=%s AND u.active AND u.role='driver' AND s.kind='driver' AND s.status='open' "
                          "AND g.updated_at > now()-interval '24 hours' ORDER BY u.display_name,u.id",
                          (user['brand_id'],)).fetchall()
+        destinations = driver_destination.metadata(c, user, rows)
         visible = []
         for row in rows:
             branches = [bid for bid in row['branch_ids'] if bid in row['shift_branches']]
@@ -97,7 +98,8 @@ def driver_locations(user=Depends(auth.require_roles('owner', 'delivery_manager'
                 continue
             visible.append({'id': row['id'], 'display_name': row['display_name'], 'branch_ids': branches,
                             'shift_id': row['shift_id'], 'location': {'lat': row['lat'], 'lng': row['lng']},
-                            'accuracy_m': row['accuracy_m'], 'updated_at': row['updated_at'], 'stale': row['stale']})
+                            'accuracy_m': row['accuracy_m'], 'updated_at': row['updated_at'], 'stale': row['stale'],
+                            **{k:destinations[row['id']][k] for k in ('active_order_brand','next_destination','destination_choice_required')}})
         return safe({'drivers': visible, 'stale_after_seconds': STALE_AFTER_SECONDS})
 
 
@@ -139,7 +141,7 @@ def route_context(c, user, driver_id):
         raise HTTPException(403, 'صلاحية عرض السائقين غير متاحة.')
     if not map_config(user).get('enabled'):
         raise HTTPException(409, 'خدمة الخريطة غير مفعلة.')
-    row = c.execute("SELECT u.branch_ids,s.branch_ids shift_branches,s.id shift_id,g.lat,g.lng,g.updated_at "
+    row = c.execute("SELECT u.id,u.branch_ids,s.branch_ids shift_branches,s.id shift_id,s.next_destination,g.lat,g.lng,g.updated_at "
                     "FROM users u JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
                     "JOIN driver_latest_locations g ON g.driver_id=u.id AND g.shift_id=s.id AND g.brand_id=u.brand_id "
                     "WHERE u.id=%s AND u.brand_id=%s AND u.role='driver' AND u.active "
@@ -165,7 +167,8 @@ def route_context(c, user, driver_id):
     returns = [{'id': b['id'], 'name': b['name'], 'location': p} for b in branch_rows
                if catalog.location_verified(b) and (p := route_point((b['settings'] or {}).get('location')))]
     return {'driver_id': driver_id, 'origin': {'lat': row['lat'], 'lng': row['lng']},
-            'updated_at': row['updated_at'], 'tasks': destinations, 'return_branches': returns}
+            'updated_at': row['updated_at'], 'tasks': destinations, 'return_branches': returns,
+            'next_destination': driver_destination.metadata(c, user, [row])[driver_id]['next_destination']}
 
 
 def consume_route_budget(c, driver_id, manager_id):
@@ -219,3 +222,15 @@ def permit_driver_route(body: DriverRouteRequest,
         issued_at = consume_route_budget(c, body.driver_id, user['id'])
         return safe({'driver_id': body.driver_id, 'origin': context['origin'], 'destination': destination['location'],
                      'kind': kind, 'target_id': selected, 'issued_at': issued_at})
+
+
+@router.get('/driver-destination')
+def own_driver_destination(user=Depends(auth.require_roles('driver'))):
+    with db.tx() as c:
+        return safe(driver_destination.own_view(c, user, driver_destination.own_shift(c, user)))
+
+
+@router.put('/driver-destination')
+def choose_driver_destination(body: driver_destination.DestinationChoice, user=Depends(auth.require_roles('driver'))):
+    with db.tx() as c:
+        return safe(driver_destination.save_choice(c, user, body))
