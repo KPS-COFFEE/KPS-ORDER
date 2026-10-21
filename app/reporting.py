@@ -601,6 +601,12 @@ def v5_tables(snap,view='compact'):
         ['المعد / المعتمد',name(snap.get('prepared_by'))+' / '+name(snap.get('approved_by'))],
     ])
     orders=snap.get('orders',[]);tasks=snap.get('tasks',[]);refunds=snap.get('refunds',[])
+    from .complimentary import KINDS
+    table('complimentary','الضيافة والتعويض — بدون تحصيل',['الطلب','النوع','الأصناف','القيمة المرجعية (ر.س)','السبب','الحالة'],[
+        [display_order_label(o),KINDS[o['snapshot']['complimentary']['kind']][0],
+         ' / '.join(str(i['quantity'])+' × '+i['name'] for i in o['snapshot'].get('items',[])),
+         v5_money(o['snapshot']['complimentary']['catalog_value_halalas']),o['snapshot']['complimentary']['reason'],label(o.get('delivery_status'))]
+        for o in orders if (o.get('snapshot') or {}).get('complimentary',{}).get('kind') in KINDS])
     cancelled=len({t.get('order_id') for t in tasks if t.get('status')=='cancelled'}|{o['id'] for o in orders if o.get('preparation_status')=='cancelled'})
     table('outcomes','نتائج الطلبات',['مكتمل','ملغى','مرتجع/جزئي','قيمة المكتمل (ر.س)'],[[
         summary.get('completed_orders',0),cancelled,len({r.get('order_id') for r in refunds}),v5_money(summary.get('gross_completed_halalas',0))]])

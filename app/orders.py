@@ -80,6 +80,41 @@ class DeliveryCenterOrder(catalog.QuoteBody):
     customer: DeliveryCenterCustomer
 
 
+class ComplimentaryOrder(DeliveryCenterOrder):
+    service: Literal['delivery']='delivery'
+    payment_method: Literal['cash']='cash'
+    kind: Literal['hospitality','advertising','compensation']
+    reason: str=Field(min_length=1,max_length=1000)
+
+    @field_validator('reason')
+    @classmethod
+    def meaningful_reason(cls,value):
+        if not value.strip():raise ValueError('Reason required')
+        return value.strip()
+
+
+@router.post('/complimentary/quote')
+def quote_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('delivery_manager'))):
+    if not auth.has_permission(user,'orders_create_customer'):
+        raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إنشاء الطلب متوقفة.')
+    if user['brand_id']!=body.brand_id:raise db.error(403,'BRAND_FORBIDDEN','البراند خارج نطاقك.')
+    with db.tx() as conn:
+        delivery_center_scope(conn,user,body.branch_id)
+        from . import complimentary
+        quote=catalog.quote_order(conn,body,complimentary=True)
+        delivery_center_scope(conn,user,quote['branch_id'])
+        return {'quote':complimentary.prepare(quote,body.kind,body.reason,user['id'])}
+
+
+@router.post('/complimentary')
+def create_complimentary(body:ComplimentaryOrder,request:Request=None,
+                         user=Depends(auth.require_roles('delivery_manager')),
+                         idempotency_key:str|None=Header(default=None)):
+    if not auth.has_permission(user,'orders_create_customer'):
+        raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إنشاء الطلب متوقفة.')
+    return _create_order(body,request,user,idempotency_key,delivery_center=True,complimentary_order=True)
+
+
 @router.post('/delivery-center')
 def create_delivery_center_order(body: DeliveryCenterOrder, request: Request = None,
                                  user=Depends(auth.require_roles('owner','delivery_manager')),
@@ -97,7 +132,7 @@ def delivery_center_scope(conn, user, branch_id):
     return shift['id']
 
 
-def _create_order(body, request, user, idempotency_key, *, delivery_center=False):
+def _create_order(body, request, user, idempotency_key, *, delivery_center=False, complimentary_order=False):
     if user['brand_id'] != body.brand_id:
         raise db.error(403, 'BRAND_FORBIDDEN', 'حساب العميل لا يتبع هذا البراند.')
     with db.tx(pipeline=True) as conn:
@@ -122,7 +157,10 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             if request and not db.rate_limit(conn,'order-ip:'+(request.client.host if request.client else 'unknown'),200,600):
                 raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
             if delivery_center:delivery_center_scope(conn,user,body.branch_id)
-            quote = catalog.quote_order(conn, body, for_update=True)
+            quote = catalog.quote_order(conn, body, for_update=True, **({'complimentary':True} if complimentary_order else {}))
+            if complimentary_order:
+                from . import complimentary
+                quote=complimentary.prepare(quote,body.kind,body.reason,user['id'])
             execution_branch_id = quote['branch_id']
             if body.expected_total_halalas is not None and quote['total_halalas'] != body.expected_total_halalas:
                 raise db.error(409, 'PRICE_CHANGED', 'تغير سعر الطلب. راجع الإجمالي الجديد وأكد موافقتك.')
@@ -180,7 +218,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             quote['receipt_profile'] = invoice_profiles.capture(
                 conn, body.brand_id, execution_branch_id, brand_settings=(config or {}).get('settings', {}),
                 channel='kps_order' if body.service == 'delivery' else body.service)
-            if body.brand_id == 'kps' and body.service == 'delivery':
+            if body.brand_id == 'kps' and body.service == 'delivery' and not complimentary_order:
                 from . import channel_commercial
                 profiles = (config or {}).get('settings', {}).get('invoice_profiles') or invoice_profiles.defaults('kps')
                 quote['channel_commercial'] = channel_commercial.capture(profiles, execution_branch_id, quote, user['id'])
@@ -200,9 +238,9 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})
             gift_cte, gift_params = first_order_gift.claim_cte(gift_phone, (quote.get('first_order_gift') or {}).get('version'))
             ctes = ('next_number AS (' + order_numbering.NEXT_NUMBER_SQL + '), created_order AS ('
-                               'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,'
+                               'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,payment_status,'
                                'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
-                               "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
+                               "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
                                "to_jsonb(%s::text || lpad(last_number::text,greatest(4,length(last_number::text)),'0'))),"
                                '%s,%s,%s FROM next_number RETURNING *), '
                     'created_event AS (INSERT INTO order_events(id,order_id,actor_id,event_type,details) '
@@ -220,6 +258,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             return db.AtomicIdempotentWrite(ctes,
                                (execution_branch_id, order_id, body.brand_id, execution_branch_id, customer_owner_id, body.service,
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
+                                'not_required' if complimentary_order else 'unpaid',
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
                                 db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day,
                                 db.new_id('evt_'), user['id'], db.json({'service': body.service}),
@@ -700,7 +739,8 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                 if not body.reason.strip():
                     raise db.error(422, 'CANCELLATION_REASON_REQUIRED', 'اكتب سبب رفض أو إلغاء الطلب.')
                 from .order_amendments import balance as paid_balance
-                if order['payment_status'] not in {'unpaid', 'refunded'} or paid_balance(conn,order)>0:
+                from .complimentary import is_free
+                if (order['payment_status'] not in {'unpaid', 'refunded'} and not is_free(order)) or paid_balance(conn,order)>0:
                     raise db.error(409, 'REFUND_WORKFLOW_REQUIRED', 'الطلب محصل. يلزم مسار الاسترداد المعتمد قبل الإلغاء.')
                 if conn.execute("SELECT to_regclass('driver_tasks') AS n").fetchone()['n']:
                     if conn.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','reassigned','delivered','transferred')", (order_id,)).fetchone():

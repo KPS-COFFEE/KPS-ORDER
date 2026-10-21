@@ -2,14 +2,14 @@
 (() => {
   'use strict';
   window.KPSCustomerOrder={open:async function(ctx){
-    const {api,mutation,tr,esc,money,modal,closeModal,user,branches,onCreated}=ctx;
+    const {api,mutation,tr,esc,money,modal,closeModal,user,branches,onCreated,complimentary=false}=ctx;
     const current=await api('/api/shifts/current');
     const covered=new Set((current.shifts||[]).filter(s=>s.user_id===user.id&&s.kind==='manager'&&s.status==='open').flatMap(s=>s.branch_ids||[]));
     const allowed=branches.filter(b=>covered.has(b.id));
     if(!allowed.length)throw new Error(tr('افتح شفت مدير توصيل أولًا.','Open your delivery manager shift first.'));
     let products=[],cart=[],review=null,sequence=0,lookupSequence=0,lookupTimer,selectedContactPhone=null;
     const input=(label,name,type='text',extra='')=>`<label>${esc(label)}<input name="${name}" type="${type}" ${extra}></label>`;
-    modal(tr('طلب نيابة عن العميل','Order for a customer'),`<form class="form-columns" id="staff-order-form">
+    modal(complimentary?tr('ضيافة / تعويض — توصيل','Hospitality / compensation — delivery'):tr('طلب نيابة عن العميل','Order for a customer'),`<form class="form-columns" id="staff-order-form">
       <p class="notice full">${esc(tr('الفاتورة باسم مركز التوصيل. اختر فرع التجهيز وأدخل بيانات العميل. الدفع يسجل عند التحصيل الفعلي.','The receipt shows Delivery Center. Select the fulfillment branch and enter customer details. Payment is recorded when actually collected.'))}</p>
       <label>${esc(tr('فرع التجهيز','Fulfillment branch'))}<select name="branch_id">${allowed.map(b=>`<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select></label>
       <label>${esc(tr('الدفع عند الاستلام','Payment on delivery'))}<select name="payment_method"><option value="cash">${esc(tr('كاش','Cash'))}</option><option value="card">${esc(tr('شبكة','Card'))}</option><option value="split">${esc(tr('كاش وشبكة','Cash and card'))}</option></select></label>
@@ -38,17 +38,26 @@
         location={lat:Number(fd.get('lat')),lng:Number(fd.get('lng'))};
       }
       const body={brand_id:user.brand_id,branch_id:fd.get('branch_id'),service:'delivery',payment_method:fd.get('payment_method'),customer:{name:fd.get('name').trim()||'عميل',phone:fd.get('phone'),neighborhood:fd.get('neighborhood'),address:fd.get('address'),location},notes:fd.get('notes'),items:cart.map(({label,...item})=>item)};
+      if(complimentary){body.kind=fd.get('kind');body.reason=String(fd.get('notes')||'').trim();body.payment_method='cash';if(!body.reason)throw new Error(tr('اكتب السبب باختصار.','Enter a short reason.'));}
       const key=JSON.stringify(body);
       if(!review||review.key!==key){
-        const {quote}=await mutation('/api/quote',body);
+        const {quote}=await mutation(complimentary?'/api/orders/complimentary/quote':'/api/quote',body);
         review={key,total:quote.total_halalas};
         form.querySelector('#staff-review').innerHTML=`<div class="notice"><p>${esc(tr('الأصناف','Subtotal'))}: <b>${esc(money(quote.subtotal_halalas))}</b></p><p>${esc(tr('التوصيل','Delivery'))}: <b>${esc(money(quote.delivery_fee_halalas))}</b></p><p>${esc(tr('الإجمالي','Total'))}: <b>${esc(money(quote.total_halalas))}</b></p><p>${esc(tr('راجع البيانات مع العميل ثم أكد الطلب.','Review with the customer, then confirm.'))}</p></div>`;
-        form.querySelector('[type=submit]').textContent=tr('تأكيد وإنشاء الطلب','Confirm and create order');return;
+        if(complimentary){const p=document.createElement('p');p.textContent=tr('بدون تحصيل — القيمة المرجعية للأصناف: ','No collection — reference item value: ')+money(quote.complimentary.catalog_value_halalas);form.querySelector('#staff-review').append(p);}
+        form.querySelector('[type=submit]').textContent=complimentary?tr('إرسال للفرع بدون تحصيل','Send to branch — no collection'):tr('تأكيد وإنشاء الطلب','Confirm and create order');return;
       }
-      const result=await mutation('/api/orders/delivery-center',{...body,expected_total_halalas:review.total});
+      const result=await mutation(complimentary?'/api/orders/complimentary':'/api/orders/delivery-center',{...body,expected_total_halalas:review.total});
       closeModal();await onCreated(result.order.id);
     });
     const form=document.querySelector('#staff-order-form'),select=form.querySelector('#staff-product'),options=form.querySelector('#staff-options'),add=form.querySelector('#staff-add');
+    if(complimentary){
+      form.querySelector('p.notice').textContent=tr('توصيل ضيافة أو تعويض بدون تحصيل. اختر الأصناف وأدخل المستلم وموقعه والسبب.','Hospitality or compensation delivery with no collection. Select items, recipient, location and reason.');
+      const payment=form.elements.payment_method;payment.value='cash';payment.closest('label').hidden=true;
+      const label=document.createElement('label');label.textContent=tr('النوع','Type');const kinds=document.createElement('select');kinds.name='kind';
+      for(const [value,ar,en] of [['hospitality','ضيافة','Hospitality'],['advertising','ضيافة إعلانية','Advertising hospitality'],['compensation','تعويض','Compensation']]){const option=document.createElement('option');option.value=value;option.textContent=tr(ar,en);kinds.append(option);}label.append(kinds);payment.closest('label').after(label);
+      form.elements.notes.required=true;form.elements.notes.placeholder=tr('السبب، مثل منتج تالف أو خطأ بالطلب','Reason, e.g. damaged product or order error');
+    }
     const fail=e=>{form.querySelector('.form-error').textContent=e.message;};
     function invalidate(){review=null;form.querySelector('#staff-review').textContent='';form.querySelector('[type=submit]').textContent=tr('مراجعة الإجمالي','Review total');}
     form.addEventListener('input',invalidate);form.addEventListener('change',invalidate);

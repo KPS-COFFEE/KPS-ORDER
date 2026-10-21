@@ -246,6 +246,11 @@ def receipt(order, branch, kind, language, translations=None):
         add(('نسخة معدلة رقم ' if ar else 'REVISED COPY ')+str(order['amendment_revision']+1),True,True)
         add('تلغي نسخة الطلب السابقة' if ar else 'Replaces previous order copy',True,True)
     def amount(value): return f'{int(value or 0)/100:.2f} '+('ر.س' if ar else 'SAR')
+    free=snap.get('complimentary')
+    if free:
+        from .complimentary import KINDS
+        add(KINDS[free['kind']][0 if ar else 1]+' — '+('بدون تحصيل' if ar else 'NO COLLECTION'),True,True)
+        row('السبب' if ar else 'Reason',free['reason'])
     occasion_style = {'font': 'Arial', 'size': 18, 'bold': True, 'align': 'center'} | (snap.get('receipt_occasion_style') or {})
     if kind == 'order':
         for occasion_line in (snap.get('receipt_occasion_text') or '').splitlines():
@@ -300,8 +305,8 @@ def receipt(order, branch, kind, language, translations=None):
             row('الصافي قبل الضريبة' if ar else 'Net before VAT',amount(fiscal['net_halalas']))
             row('ضريبة القيمة المضافة 15%' if ar else 'VAT 15%',amount(fiscal['tax_halalas']))
         methods={'cash':('كاش','Cash'),'card':('شبكة','Card'),'split':('كاش وشبكة','Cash and card')}
-        row('الدفع' if ar else 'Payment',methods.get(order['payment_method'],(order['payment_method'],)*2)[0 if ar else 1])
-        statuses={'paid':('تم التحصيل','Paid'),'unpaid':('لم يتم التحصيل','Unpaid'),'partially_refunded':('مسترد جزئيًا','Partially refunded'),'refunded':('مسترد','Refunded')}
+        row('الدفع' if ar else 'Payment',('بدون تحصيل' if ar else 'No collection') if free else methods.get(order['payment_method'],(order['payment_method'],)*2)[0 if ar else 1])
+        statuses={'not_required':('بدون تحصيل','No collection'),'paid':('تم التحصيل','Paid'),'unpaid':('لم يتم التحصيل','Unpaid'),'partially_refunded':('مسترد جزئيًا','Partially refunded'),'refunded':('مسترد','Refunded')}
         row('حالة التحصيل' if ar else 'Collection',statuses.get(order['payment_status'],('راجع حالة التحصيل بالنظام','Check collection status in system'))[0 if ar else 1],True)
         add('────────────────────',False,True)
         add(('معاينة فقط — غير صالحة للإصدار الرسمي' if ar else 'PREVIEW ONLY — not officially issued') if fiscal and fiscal.get('status')!='issued' else ('نسخة محفوظة' if ar else 'Archived invoice') if fiscal else ('فاتورة طلب — ليست فاتورة ضريبية' if ar else 'Order receipt — not a tax invoice'),False,True,role='caption')

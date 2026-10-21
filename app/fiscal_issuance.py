@@ -78,6 +78,9 @@ def original(conn, order_id):
 def issue_sale(conn, order_id, actor, *, required=False):
     # All entry paths lock the canonical sale, including distinct retry keys.
     order = conn.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE', (order_id,)).fetchone()
+    if order['snapshot'].get('complimentary'):
+        if required:raise db.error(409,'COMPLIMENTARY_NOT_SALE','طلب تجهيز ضيافة أو تعويض؛ ليس فاتورة بيع.')
+        return None
     existing = original(conn, order_id)
     if existing: return existing
     if order['brand_id'] != 'kps' or order['service'] != 'delivery':
