@@ -288,6 +288,12 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
     if user['role']=='driver' and body.branch_ids and set(body.branch_ids)!=set(user.get('branch_ids',[])):
         fail(403,'فروع السائق يحددها مدير التوصيل؛ لا يمكن تغيير نطاق الشفت')
     with db.tx() as c:
+        if context:
+            target = c.execute('SELECT * FROM users WHERE id=%s', (body.user_id or user['id'],)).fetchone()
+            if (not target or not target['active'] or target['role'] != 'driver'
+                    or not same_scope(user, target)
+                    or not set(body.branch_ids or user['branch_ids']) <= set(target.get('branch_ids') or [])):
+                raise db.error(403, 'MORNING_DRIVER_SCOPE', 'السائق غير معتمد لفروع مناوبتك الصباحية.')
         def perform():
             target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
             if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')

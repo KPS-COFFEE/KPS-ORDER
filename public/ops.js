@@ -120,7 +120,7 @@
     modal(tr('معالجة تنبيه الطباعة','Handle printing alert'),`<form><p>${esc(tr('تحقق من الفرع قبل التأكيد أو إعادة الطباعة. هذا الإجراء لا يغير حالة الطلب.','Check with the branch before confirming or reprinting. This does not change order status.'))}</p><label>${esc(tr('الإجراء','Action'))}<select name="action"><option value="confirmed">${esc(tr('تم التحقق من الطباعة','Paper output verified'))}</option><option value="reprint">${esc(tr('إعادة الطباعة — لم تخرج الورقة','Reprint — paper did not print'))}</option><option value="escalated">${esc(tr('تعذّر الحل — تصعيد للإدارة','Unresolved — escalate to management'))}</option></select></label>${textarea(tr('سبب الإجراء ونتيجة التحقق','Reason and verification result'),'reason','',true)}<label><input type="checkbox" name="paper_checked">${esc(tr('تحققت من خروج الورقة أو عدم خروجها لدى الفرع','I checked whether paper printed at the branch'))}</label>${formEnd(tr('تنفيذ الإجراء','Apply action'))}</form>`,async fd=>{await mutation('/api/printing/jobs/'+encodeURIComponent(id)+'/resolve-alert',{action:fd.get('action'),reason:fd.get('reason'),paper_checked:fd.get('paper_checked')==='on'});closeModal();await refreshOperationalAlerts();});
   }
   async function refreshOperationalAlerts(){
-    if(state.user?.delivery_context){$('#operational-alerts').innerHTML='';return;}
+    if(state.user?.delivery_context){const host=$('#operational-alerts');if(host)host.innerHTML='';return;}
     if(state.user&&!alertAudio)void ensureMandatoryAlertSound();
     await refreshAlertPolicy();
     let host=$('#operational-alerts');

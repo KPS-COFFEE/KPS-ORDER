@@ -59,7 +59,7 @@ def test_context_view_and_unchanged_base_permissions(morning_manager):
     user=session.json()['user']
     assert user['branch_ids']==[B2] and user['delivery_context']['shift_id']=='ctx-duty'
     assert 'orders_view' in user['effective_permissions'] and 'orders_print' not in user['effective_permissions']
-    rows=client.get('/api/orders?period=all');assert rows.status_code==200,rows.text
+    rows=client.get('/api/orders');assert rows.status_code==200,rows.text
     assert {r['id'] for r in rows.json()['orders']}=={ids['morning']}
     with db.tx() as c:
         after=c.execute("SELECT * FROM users WHERE id='ops-manager'").fetchone()
