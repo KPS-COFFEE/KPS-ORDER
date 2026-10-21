@@ -45,14 +45,24 @@ def workspace_orders(conn, user):
 
 def workspace_counts(conn, conditions, params, predicate, current_params):
     # Count the full authorized result, before the paginated page of 100 records.
-    rows = conn.execute('SELECT '+STAGE_SQL+' AS stage,count(*) AS all_count,'
+    # The immutable creation snapshot determines origin; later staff actions do
+    # not turn a website order into a delivery-center order. Website orders
+    # historically omit order_source. Keep future, unknown sources separate.
+    source = """CASE WHEN o.snapshot->>'order_source'='delivery_center' THEN 'manager'
+        WHEN coalesce(o.snapshot->>'order_source','') IN ('','website','customer') THEN 'website'
+        ELSE 'other' END"""
+    rows = conn.execute('SELECT '+STAGE_SQL+' AS stage,'+source+' AS source,count(*) AS all_count,'
                         'count(*) FILTER (WHERE '+predicate+') AS current_count '
                         'FROM orders o JOIN branches b ON b.id=o.branch_id WHERE '+
-                        ' AND '.join(conditions)+' GROUP BY stage', (*current_params, *params)).fetchall()
-    result = {'all': {'total': 0}, 'current': {'total': 0}}
+                        ' AND '.join(conditions)+' GROUP BY stage,source',
+                        (*current_params, *params)).fetchall()
+    result = {scope: {'total': 0, 'sources': {'manager': 0, 'website': 0}}
+              for scope in ('all', 'current')}
     for row in rows:
         for scope in result:
             count = int(row[scope+'_count'])
-            result[scope][row['stage']] = count
+            result[scope][row['stage']] = result[scope].get(row['stage'], 0) + count
             result[scope]['total'] += count
+            if row['source'] in result[scope]['sources']:
+                result[scope]['sources'][row['source']] += count
     return result

@@ -97,6 +97,28 @@ def test_manager_offsite_consent_branch_feasibility_and_scope(amendment_case):
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('source', [None, 'delivery_center'])
+def test_manager_amendment_preserves_original_order_source(amendment_case, ops, source):
+    actor, post, make, propose, decision = amendment_case
+    ops[3]()
+    oid = make('delivery')
+    if source:
+        with db.tx() as c:
+            c.execute('UPDATE orders SET snapshot=snapshot||%s WHERE id=%s',
+                      (db.json({'order_source':source,'created_by_staff_id':'ops-manager'}),oid))
+    expected = {'manager':int(source == 'delivery_center'), 'website':int(source is None)}
+    path = '/api/orders?dispatch_workspace=true'
+    assert actor('manager').get(path).json()['workspace_counts']['current']['sources'] == expected
+    aid, _ = propose(oid, who='manager')
+    decision(aid, 'confirm_branch')
+    decision(aid, 'offer', who='manager')
+    decision(aid, 'accept', who='manager', channel='whatsapp', note='وافق العميل')
+    assert actor('manager').get(path).json()['workspace_counts']['current']['sources'] == expected
+    with db.tx() as c:
+        assert c.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()['snapshot'].get('order_source') == source
+
+
+@pytest.mark.postgres
 def test_paid_reduction_refunds_difference_without_rewriting_collection(amendment_case):
     actor,post,make,propose,decision=amendment_case;oid=make()
     collected=post('branch','/api/orders/'+oid+'/collect',{'method':'cash','amount_halalas':2000,'tendered_halalas':2000})
