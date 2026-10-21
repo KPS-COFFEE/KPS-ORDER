@@ -10,7 +10,7 @@ from test_operations import ops
 ROOT=Path(__file__).resolve().parents[1]
 BASE=Path(os.environ.get('ROLLBACK_BASELINE_DIR', ROOT/'test-artifacts/rollback-baseline-source'))
 COMPAT=Path(os.environ.get('ROLLBACK_COMPAT_DIR', ROOT/'test-artifacts/rollback-compat-source'))
-SPECIAL=('driver_work_trips','driver_work_trip_orders','driver_work_trip_events','branch_print_devices','branch_print_jobs')
+SPECIAL=('driver_work_trips','driver_work_trip_orders','driver_work_trip_events','branch_print_devices','branch_print_jobs','driver_accounting_settlements')
 
 def probe(path,mode,spec):
  image=os.environ.get('ROLLBACK_COMPAT_IMAGE') if mode=='compat' else None
@@ -51,6 +51,8 @@ def test_prior_application_failure_and_compatibility_rollback_without_database_r
   c.execute("UPDATE driver_tasks SET status='delivered',delivered_at=now() WHERE order_id=ANY(%s)",([old,new],))
   c.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,token_hash,created_by) VALUES('rollback-printer','ops-brand','ops-branch','Synthetic rollback device','synthetic-hash','ops-owner')")
   c.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,status,payload,requested_by) VALUES('rollback-print-job','ops-brand','ops-branch','rollback-printer',%s,'order','queued','{}','ops-owner')",(new,))
+  c.execute("INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES('rollback-settlement-report',%s,'driver','ops-brand','[\"ops-branch\"]','ops-driver','{}')",(sid,))
+  c.execute("INSERT INTO driver_accounting_settlements(id,report_id,brand_id,revision,stage,bank_halalas,cash_due_halalas,note,actor_id) VALUES('rollback-settlement','rollback-settlement-report','ops-brand',1,'balance_approved',500,1000,'TEST pending cash survives rollback','ops-owner')")
   before=exact_rows(c,('orders','users','shifts','driver_tasks',*SPECIAL))
  spec={'shift':sid,'trip':trip}
  raw=probe(BASE,'baseline',spec)
@@ -73,9 +75,10 @@ def test_prior_application_failure_and_compatibility_rollback_without_database_r
  assert result['export']['status']=='ok'
  assert result['export']['counts']['driver_work_trips']==1
  assert result['export']['counts']['driver_work_trip_orders']==2
+ assert result['export']['counts']['driver_accounting_settlements']==1
  assert set(SPECIAL)<=set(result['preservation_tables'])
  with db.tx() as c:
-  for table in ('orders','users','shifts','driver_tasks','driver_work_trip_orders','branch_print_devices','branch_print_jobs'):
+  for table in ('orders','users','shifts','driver_tasks','driver_work_trip_orders','branch_print_devices','branch_print_jobs','driver_accounting_settlements'):
    assert exact_rows(c,(table,))[table]==before[table]
   saved=c.execute('SELECT * FROM driver_work_trips WHERE id=%s',(trip,)).fetchone()
   assert saved['returned_at'] and saved['departure_evidence']==before['driver_work_trips'][0]['departure_evidence']

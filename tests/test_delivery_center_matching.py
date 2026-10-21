@@ -134,11 +134,11 @@ def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(m
     assert inserted[0][0].startswith('customer_') and inserted[0][0]!='manager'
     assert inserted[0][1]=='عميل'
     assert result.params[4]==inserted[0][0] # Ownership is not the employee or phone account.
-    assert result.params[17]=='manager' and result.params[20]=='manager' # Real event/audit actor.
-    snap=result.params[11].obj
+    assert result.params[18]=='manager' and result.params[21]=='manager' # Real event/audit actor, after explicit payment_status.
+    snap=result.params[12].obj
     assert snap['order_source']=='delivery_center' and snap['manager_shift_id']=='manager-shift'
     assert snap['receipt_profile']=={'seller':'ORIGINAL'}
-    assert result.params[13].obj['phone_verified'] is False
+    assert result.params[14].obj['phone_verified'] is False
     body.expected_total_halalas=1
     with pytest.raises(HTTPException) as e:orders.create_delivery_center_order(body,None,actor,'other-key')
     assert e.value.status_code==409 and len(inserted)==1

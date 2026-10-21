@@ -802,7 +802,8 @@ def validate_delivery_resolution(body, task, order, now):
     pickup = task.get('picked_up_at')
     if pickup is None or not (order['created_at'] <= pickup <= body.delivered_at <= now):
         raise db.error(422, 'DELIVERY_ACTUAL_TIME_REQUIRED', 'يلزم استلام مسجل ووقت تسليم فعلي بعد الاستلام ولا يتجاوز الوقت الحالي.')
-    if order['payment_status'] != 'paid':
+    from .complimentary import is_free
+    if order['payment_status'] != 'paid' and not is_free(order):
         raise db.error(409, 'DELIVERY_PAYMENT_REQUIRED', 'يلزم استكمال التحصيل الفعلي قبل توثيق التسليم.')
 
 
@@ -883,7 +884,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
                 c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(o['id'],))
                 db.event(c,o['id'],user['id'],'preparation.handed_over',
                          {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch'})
-            if body.status=='delivered' and o['payment_status']!='paid':fail(409,'يلزم تحصيل فعلي ودليل تسليم')
+            from .complimentary import is_free
+            if body.status=='delivered' and o['payment_status']!='paid' and not is_free(o):fail(409,'يلزم تحصيل فعلي ودليل تسليم')
             if body.status in ('picked_up','delivered'):
                 from .order_support import require_photo
                 if resolving_problem and body.status=='picked_up':
@@ -992,6 +994,8 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
     with db.tx() as c:
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+            if o['snapshot'].get('complimentary'):
+                raise db.error(409,'NO_COLLECTION_REQUIRED','طلب ضيافة أو تعويض؛ بدون تحصيل.')
             from .branch_payments import online_order
             if online_order(o):
                 raise db.error(409,'ONLINE_PAYMENT_ONLY','هذا الطلب يتطلب دفعًا إلكترونيًا موثقًا؛ التحصيل اليدوي غير متاح.')
@@ -1228,6 +1232,44 @@ class DriverClose(OperationBody):
     counted_halalas: StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
     confirmed: StrictBool
     exception_reason: str=Field(default='',max_length=2000)
+
+
+class DriverAmountReview(OperationBody):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    counted_halalas: StrictInt=Field(ge=0,le=MAX_HALALAS)
+    terminal_total_halalas: StrictInt=Field(ge=0,le=MAX_HALALAS)
+    reason: str=Field(min_length=3,max_length=2000)
+
+
+@router.post('/shifts/{sid}/review-amounts')
+def review_driver_amounts(sid:str,body:DriverAmountReview,request:Request,user=Depends(auth.current_user)):
+    """Manager correction before approval; original submission remains in audit."""
+    roles(user,'delivery_manager')
+    if not auth.has_permission(user,'shifts_approve'):fail(403,'صلاحية مراجعة التقفيلة غير متاحة')
+    with db.tx() as c:
+        def perform():
+            s=lock_shift(c,sid);shift_access(c,user,s,manager=True,capability='shifts_approve')
+            if s['kind']!='driver' or s['status']!='submitted':fail(409,'التعديل لتقفيلة سائق مرسلة وقبل اعتمادها فقط')
+            manager=lock_shift(c,s['manager_shift_id'])
+            if not manager or manager['user_id']!=user['id'] or manager['status']!='open':fail(403,'المراجعة لمدير الشفت المسؤول فقط')
+            transfers=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected' FOR UPDATE",(sid,)).fetchall()
+            if any(t['status']=='confirmed' for t in transfers):fail(409,'الاستلام مؤكد؛ التصحيح اللاحق من خلال تسوية المحاسبة')
+            if len(transfers)>1:fail(409,'توجد تسليمات متعددة؛ أعد التقفيلة للتصحيح والمراجعة')
+            from .driver_float import split
+            handover,retained=split(s,body.counted_halalas)
+            original=dict(s['submission']);updated=dict(original)
+            updated.update(counted_halalas=body.counted_halalas,handover_halalas=handover,retained_halalas=retained,
+                           terminal_total_halalas=body.terminal_total_halalas,
+                           difference_halalas=body.counted_halalas-original['expected_halalas'])
+            updated.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas,(s.get('external_enbishan') or {}).get('card_halalas',0)))
+            updated['driver_original_submission']=original.get('driver_original_submission') or {k:v for k,v in original.items() if k!='driver_original_submission'}
+            c.execute('UPDATE shifts SET submission=%s WHERE id=%s',(db.json(updated),sid))
+            for transfer in transfers:
+                c.execute('UPDATE custody_transfers SET amount_halalas=%s WHERE id=%s',(handover,transfer['id']))
+            db.audit(c,user['id'],'shift.manager_amount_review','shift',sid,
+                     {'before':original,'after':updated,'reason':body.reason,'fields':['counted_halalas','terminal_total_halalas']})
+            return {'shift_id':sid,'submission':updated}
+        return mutate(c,user,request,'shift.manager_amount_review:'+sid,body.model_dump(),perform)
 
 @router.post('/shifts/{sid}/driver-close')
 def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(auth.current_user)):

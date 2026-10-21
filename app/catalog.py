@@ -657,7 +657,7 @@ def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list
     return total, snapshots
 
 
-def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
+def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False) -> dict:
     now = service_hours.now_riyadh()
     lock = ' FOR SHARE' if for_update else ''
     with conn.pipeline():
@@ -684,7 +684,7 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
         if not ready:
             raise db.error(409, code, reason)
     required_methods={'cash','card'} if body.payment_method=='split' else {body.payment_method}
-    if not all(required_methods.issubset(b['settings']['payment_methods']) for b in (selected_branch, branch)):
+    if not complimentary and not all(required_methods.issubset(b['settings']['payment_methods']) for b in (selected_branch, branch)):
         raise db.error(409, 'PAYMENT_METHOD_UNAVAILABLE', 'طريقة الدفع غير متاحة لهذا الفرع.')
     if body.service == 'delivery':
         if not body.customer.location:
@@ -739,7 +739,7 @@ def quote_order(conn, body: QuoteBody, for_update=False) -> dict:
     minimum_branches = (selected_branch,) if morning else (selected_branch, branch)
     minimum = max((b['settings'].get('minimum_order_halalas') for b in minimum_branches
                    if type(b['settings'].get('minimum_order_halalas')) is int), default=0)
-    if body.service == 'delivery' and isinstance(minimum, int) and subtotal < minimum:
+    if not complimentary and body.service == 'delivery' and isinstance(minimum, int) and subtotal < minimum:
         raise db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
     fee = selected_branch['settings']['delivery_fee_halalas'] if body.service == 'delivery' else 0
     if subtotal + fee > 10000000:

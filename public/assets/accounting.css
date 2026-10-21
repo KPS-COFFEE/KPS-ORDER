@@ -1,2 +1,29 @@
 .accounting{min-width:0;display:grid;gap:1rem}.accounting .ac-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem;align-items:end}.accounting label{display:grid;gap:.4rem}.accounting select[multiple]{min-height:100px}.accounting .ac-tabs,.accounting .ac-actions{display:flex;gap:.6rem;flex-wrap:wrap}.accounting .ac-table{overflow:auto;max-width:100%;border:1px solid var(--line,#ddd);border-radius:12px}.accounting table{border-collapse:collapse;width:100%;font-size:.86rem}.accounting th,.accounting td{padding:.8rem;text-align:start;white-space:nowrap;border-bottom:1px solid #ddd;word-break:normal;overflow-wrap:normal}.accounting th{background:#f5eee8;color:#30241e;position:sticky;top:0}.accounting td.ac-text{white-space:normal;min-width:200px;max-width:360px;overflow-wrap:break-word;line-height:1.9}.accounting tfoot{font-weight:700;background:#faf5ef}.accounting .ac-shortage{color:#b42318;font-weight:700}.accounting .ac-note{line-height:1.9;max-width:100%;white-space:normal}.accounting [role=alert]{color:#b42318}.ac-case-form{display:grid;gap:1rem}.ac-case-form label{display:grid;gap:.4rem}.ac-case-history{padding:.8rem;border-bottom:1px solid #ddd}.ac-case-history p{white-space:pre-wrap;overflow-wrap:break-word}.ac-files{display:flex;flex-wrap:wrap;gap:1rem}.ac-files img{width:140px;max-height:140px;object-fit:contain}@media(max-width:600px){.accounting .ac-filters{grid-template-columns:1fr}.accounting th,.accounting td{padding:.6rem}.accounting .ac-actions>*{flex:1}}
 .accounting{grid-template-columns:minmax(0,1fr)}.accounting>*{min-width:0;max-width:100%}.accounting .ac-tabs button,.accounting .ac-actions button{max-width:100%;white-space:normal}.accounting #ac-results{min-width:0}.accounting .ac-filters label{min-width:0}
+
+/* Equal navigation cards and a readable filter panel at every viewport. */
+.accounting .ac-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.accounting .ac-tabs .ac-section-card{display:flex;align-items:center;gap:12px;min-height:106px;width:100%;padding:18px;text-align:start;border:1px solid var(--line,#e5ddd5);border-radius:16px;background:#fff;color:#30241e;box-shadow:0 2px 8px #30241e05;transition:border-color .15s,background .15s,box-shadow .15s}
+.accounting .ac-section-mark{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:#fff3e9;color:#a64116;font-size:.8rem;font-weight:700;font-variant-numeric:tabular-nums}
+.accounting .ac-section-copy{display:grid;gap:5px;min-width:0;flex:1}
+.accounting .ac-section-title{font-size:.95rem;font-weight:750;line-height:1.6}
+.accounting .ac-section-subtitle{font-size:.77rem;font-weight:400;line-height:1.7;color:#766b63}
+.accounting .ac-section-arrow{font-size:1.5rem;color:#a3978c;flex:none}
+[dir=ltr] .accounting .ac-section-arrow{transform:rotate(180deg)}
+.accounting .ac-tabs .ac-section-card:hover{border-color:#bb5a2d;background:#fffaf6}
+.accounting .ac-tabs .ac-section-card[aria-pressed=true]{border-color:#a64116;background:#fff5ec;box-shadow:inset 0 0 0 1px #a64116}
+.accounting .ac-tabs .ac-section-card:focus-visible{outline:3px solid #c46a36;outline-offset:3px}
+.accounting .ac-filters{grid-template-columns:repeat(4,minmax(0,1fr));padding:22px;border:1px solid var(--line,#e5ddd5);border-radius:16px;background:#fff;gap:18px 16px;align-items:start}
+.accounting .ac-filters label{font-size:.84rem;font-weight:650;line-height:1.7}
+.accounting .ac-filters input,.accounting .ac-filters select{box-sizing:border-box;width:100%;max-width:100%;min-height:44px;border-radius:10px;font-size:.88rem;font-weight:400}
+.accounting .ac-filters select[multiple]{height:112px;min-height:112px;padding:7px}
+.accounting .ac-filters select[multiple] option{padding:6px 8px;border-radius:5px}
+.accounting .ac-filters>button{align-self:end;min-height:44px;margin:0;border-radius:10px}
+.accounting .ac-actions{justify-content:flex-end;gap:10px;padding:14px 18px;border:1px solid var(--line,#e5ddd5);border-radius:14px;background:#fff}
+.accounting .ac-actions>button{min-height:42px;border-radius:9px;padding:10px 16px;font-size:.85rem}
+.accounting .ac-note{margin:0;padding:0 4px;font-size:.82rem;color:#766b63}
+.accounting #ac-error:empty{display:none}
+.accounting [hidden]{display:none!important}
+@media(max-width:1100px){.accounting .ac-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.accounting .ac-filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.accounting .ac-filters{grid-template-columns:repeat(2,minmax(0,1fr));padding:16px}.accounting .ac-tabs .ac-section-card{padding:14px;gap:9px}.accounting .ac-section-mark{width:30px;height:30px}.accounting .ac-actions{justify-content:stretch}.accounting .ac-actions>button{flex:1 1 140px}}
+@media(max-width:480px){.accounting .ac-tabs{grid-template-columns:1fr}.accounting .ac-tabs .ac-section-card{min-height:84px}.accounting .ac-filters{grid-template-columns:1fr}.accounting .ac-actions{padding:12px}}

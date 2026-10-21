@@ -29,6 +29,7 @@ LABELS={
 MONEY={'gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','approved_shortage','amount'}
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
 COLUMNS={
+ 'complimentary':['day','label','kind','branch','driver','amount','reason','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
  'driver_daily':['label','correct','processed','cumulative','cash','card','refunds','total'],
@@ -50,7 +51,7 @@ def presentation(data,lang='ar'):
     # Item counts overlap between items; financial action amounts overlap across
     # cancellation/refund records. Neither may be presented as a grand sales sum.
     if data['group']=='items':totals.pop('correct',None);totals.pop('processed',None)
-    if data['group'] in ('actions','cases'):totals={}
+    if data['group'] in ('actions','cases','complimentary'):totals={}
     return keys,rows,totals
 
 def contract(data,lang):
@@ -60,6 +61,7 @@ def contract(data,lang):
 def render(data,format,lang):
     keys,rows,totals=presentation(data,lang)
     titles={'driver_incentives':('استحقاق السائقين اليومي والشهري','Daily and monthly driver entitlement'),'driver_incentive_details':('تفاصيل وأسباب استحقاق السائقين','Driver entitlement decisions and reasons'),'daily':('إجمالي يوم التشغيل','Operational day totals'),'branch':('مبيعات الفروع','Branch sales'),'items':('مبيعات الأصناف','Item sales'),'driver':('مبيعات السائقين','Driver sales'),'driver_daily':('عداد السائق اليومي','Daily driver counter'),'deficits':('العجز والزيادة','Shortages and surpluses'),'actions':('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments'),'cases':('ملاحظات المركبات والطلبات','Vehicle and order incidents')}
+    titles['complimentary']=('الضيافة والتعويض والإلغاء وإعادة الطباعة','Hospitality, compensation, cancellations and reprints')
     title=('المحاسبة - ' if lang=='ar' else 'Accounting - ')+titles[data['group']][lang=='en']
     headers=[LABELS[k][lang=='en'] for k in keys]
     summary={keys[0]:'الإجمالي / Total',**totals}

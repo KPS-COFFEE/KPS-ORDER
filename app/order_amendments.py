@@ -41,6 +41,8 @@ def balance(c, o):
 
 
 def editable(o, c):
+    if o['snapshot'].get('complimentary'):
+        raise db.error(409,'COMPLIMENTARY_AMENDMENT','للتصحيح ألغِ طلب الضيافة أو التعويض مع السبب، ثم أنشئ الصحيح.')
     from .branch_payments import online_order
     if online_order(o) and c.execute('SELECT 1 FROM branch_payment_attempts WHERE order_id=%s',(o['id'],)).fetchone():
         raise db.error(409,'PAYMENT_RECONCILIATION_REQUIRED','يلزم تسوية محاولة الدفع قبل تعديل مبلغ الطلب.')

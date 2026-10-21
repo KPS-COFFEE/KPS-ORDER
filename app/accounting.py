@@ -61,6 +61,8 @@ def new_row(label):
 def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar'):
     ds,de,lo,hi=period(start,end);bs=branches(c,u,branch_ids);bids=[b['id'] for b in bs];bn={b['id']:b['name'] for b in bs}
     if driver_id:person(c,u,driver_id,bids)
+    if group=='complimentary':
+        return complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang)
     if group in ('driver_incentives','driver_incentive_details'):
         from .driver_incentives import report_data
         if product_id:fail('INCENTIVE_FILTER','استحقاق السائق يحسب على مستوى الطلب؛ أزل فلتر الصنف.')
@@ -90,6 +92,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,lo,hi]
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
+    q+=" AND NOT (o.snapshot ? 'complimentary')"
     orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders]
     cols=c.execute('SELECT * FROM collections WHERE order_id=ANY(%s) AND created_at<%s ORDER BY created_at,id',(ids,hi)).fetchall()
     refs=c.execute('SELECT r.*,u.display_name actor_name FROM refunds r JOIN users u ON u.id=r.authorized_by WHERE order_id=ANY(%s) AND r.created_at<%s ORDER BY r.created_at,r.id',(ids,hi)).fetchall()
@@ -180,6 +183,46 @@ def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
         s=r['snapshot']['summary'];output.append({'id':r['id'],'label':r['snapshot'].get('closure_label') or r['id'],'day':r['accounting_day'].isoformat(),'review_id':r['review_id'],'driver':r['driver_name'],'driver_id':r['user_id'],'orders':s.get('completed_orders',0),'cash':s.get('cash_collected_halalas',0),'card':s.get('card_collected_halalas',0),'total':s.get('net_collections_halalas',0),'shortage':max(0,-difference),'surplus':max(0,difference),'approved_shortage':max(0,-difference) if r['review_id'] else 0,'review':('معتمد / Reviewed' if r['review_id'] else 'بانتظار المحاسبة / Pending accounting'),'notes':r['review_note'] or sub.get('notes','')})
     return output
 
+
+def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
+    from .complimentary import KINDS
+    en=lang=='en'
+    rows=c.execute("""SELECT o.*,b.name branch_name,creator.display_name creator_name,
+      t.driver_id,driver.display_name driver_name,e.details cancel_details,e.created_at cancelled_at
+      FROM orders o JOIN branches b ON b.id=o.branch_id
+      LEFT JOIN users creator ON creator.id=o.snapshot->>'created_by_staff_id'
+      LEFT JOIN LATERAL (SELECT driver_id FROM driver_tasks WHERE order_id=o.id ORDER BY created_at DESC,id DESC LIMIT 1) t ON true
+      LEFT JOIN users driver ON driver.id=t.driver_id
+      LEFT JOIN LATERAL (SELECT details,created_at FROM order_events WHERE order_id=o.id
+         AND event_type IN ('preparation.cancelled','task.cancelled') ORDER BY created_at DESC,id DESC LIMIT 1) e ON true
+      WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
+        AND (o.snapshot ? 'complimentary' OR o.preparation_status IN ('cancelled','rejected') OR o.delivery_status='cancelled')
+        AND ((o.created_at>=%s AND o.created_at<%s) OR (e.created_at>=%s AND e.created_at<%s))
+      ORDER BY o.created_at DESC,o.id""",(u['brand_id'],bids,lo,hi,lo,hi)).fetchall()
+    output=[]
+    for o in rows:
+        if driver_id and o['driver_id']!=driver_id:continue
+        if product_id and not any(i.get('product_id')==product_id for i in o['snapshot'].get('items',[])):continue
+        free=o['snapshot'].get('complimentary') or {}
+        output.append(dict(day=opday(o['created_at']),label=str(o['snapshot'].get('order_reference') or o['order_no']),
+            branch=o['branch_name'],driver=o['driver_name'] or '—',kind=KINDS.get(free.get('kind'),('طلب ملغى','Cancelled order'))[en],
+            amount=free.get('catalog_value_halalas',o['total_halalas']),reason=free.get('reason') or (o['cancel_details'] or {}).get('reason','—'),
+            actor=o['creator_name'] or (o['cancel_details'] or {}).get('actor_name','—'),
+            action=o['delivery_status'] if o['preparation_status'] not in ('cancelled','rejected') else o['preparation_status'],
+            notes=' / '.join(str(i['quantity'])+' × '+i['name'] for i in o['snapshot'].get('items',[]))))
+    if not driver_id and not product_id:
+        reprints=c.execute("""SELECT j.*,o.order_no,o.snapshot,u.display_name actor_name,b.name branch_name
+          FROM branch_print_jobs j JOIN orders o ON o.id=j.order_id JOIN users u ON u.id=j.requested_by JOIN branches b ON b.id=j.branch_id
+          WHERE j.brand_id=%s AND j.branch_id=ANY(%s) AND o.branch_id=ANY(%s)
+          AND j.created_at>=%s AND j.created_at<%s AND length(trim(j.reprint_reason))>0 ORDER BY j.created_at DESC""",(u['brand_id'],bids,bids,lo,hi)).fetchall()
+        for p in reprints:
+            output.append(dict(day=opday(p['created_at']),label=str(p['snapshot'].get('order_reference') or p['order_no']),
+                branch=p['branch_name'],driver='—',kind='Reprint' if en else 'إعادة طباعة',amount=0,
+                reason=p['reprint_reason'],actor=p['actor_name'],action=p['status'],notes='No new order or charge' if en else 'بدون طلب أو مبلغ إضافي'))
+    return safe({'rows':output,'group':'complimentary','branches':bs,'period':{'start':ds,'end':de,'timezone':'Asia/Riyadh'},
+        'definitions':'Reference menu values, not sales or actual product costs. Reprints add no order or charge.' if en else 'القيمة مرجعية من المنيو وليست مبيعات أو تكلفة الأصناف الفعلية. إعادة الطباعة لا تضيف طلبًا أو مبلغًا.',
+        'generated_at':datetime.now(TZ)})
+
 @router.get('/options')
 def options(user=Depends(case_access)):
     with db.tx() as c:
@@ -187,7 +230,7 @@ def options(user=Depends(case_access)):
         people=c.execute("SELECT id,display_name,role,branch_ids,vehicle FROM users WHERE brand_id=%s AND role IN ('driver','delivery_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
         return {'branches':bs,'people':[p for p in people if set(p['branch_ids'])&bids],'products':c.execute('SELECT id,name FROM products WHERE brand_id=%s ORDER BY name',(user['brand_id'],)).fetchall(),'today':service_hours.delivery_operational_date(),'can_review':auth.has_permission(user,REVIEW),'can_report':auth.has_permission(user,READ),'can_follow':can_follow(c,user),'categories':KINDS,'states':STATES,'responsibilities':RESP,'manager_followup':(c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(user['brand_id'],)).fetchone() or {}).get('settings',{}).get('accounting_manager_followup',True)}
 
-Group=Literal['daily','branch','items','driver','driver_daily','driver_incentives','driver_incentive_details','deficits','actions']
+Group=Literal['daily','branch','items','driver','driver_daily','driver_incentives','driver_incentive_details','deficits','actions','complimentary']
 @router.get('/reports')
 def reports(start:str='',end:str='',branch_ids:str='',driver_id:str='',product_id:str='',group:Group='daily',lang:Literal['ar','en']='ar',format:Literal['json','pdf','xlsx']='json',user=Depends(access)):
     with db.tx() as c:
@@ -344,7 +387,7 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
         bs=branches(c,user,body.branch_ids);bids=sorted(b['id'] for b in bs);h=hashlib.sha256(','.join(bids).encode()).hexdigest()
         _,_,lo,hi=period(ds.isoformat(),de.isoformat())
         if c.execute("SELECT 1 FROM shifts WHERE brand_id=%s AND status<>'closed' AND opened_at<%s AND coalesce(submitted_at,now())>=%s AND branch_ids ?| %s",(user['brand_id'],hi,lo,bids)).fetchone():fail('OPEN_SHIFTS','توجد شفتات غير مقفلة في الشهر.',409)
-        if c.execute("SELECT 1 FROM closure_reports r WHERE r.brand_id=%s AND r.kind='manager' AND r.created_at>=%s AND r.created_at<%s AND r.branch_ids ?| %s AND r.snapshot->'shift'->'submission'->>'operational_approved'='true' AND NOT EXISTS(SELECT 1 FROM manager_financial_matches m WHERE m.report_id=r.id AND m.status='matched') LIMIT 1",(user['brand_id'],lo,hi,bids)).fetchone():
+        if c.execute("SELECT 1 FROM closure_reports r WHERE r.brand_id=%s AND r.kind='manager' AND r.created_at>=%s AND r.created_at<%s AND r.branch_ids ?| %s AND r.snapshot->'shift'->'submission'->>'operational_approved'='true' AND NOT EXISTS(SELECT 1 FROM manager_financial_matches m WHERE m.report_id=r.id AND m.status='matched') AND NOT EXISTS(SELECT 1 FROM driver_accounting_settlements d WHERE d.report_id=r.id AND d.stage='cash_received') LIMIT 1",(user['brand_id'],lo,hi,bids)).fetchone():
             fail('PENDING_MANAGER_MATCHES','ثبّت البنك والكاش لتقفيلات المدير قبل إقفال الشهر.',409)
         from .driver_incentives import report_data
         entitlements=report_data(c,user,ds,de,branch_ids=bids)
@@ -438,3 +481,142 @@ def match_manager_closure(report_id:str,body:FinancialMatch,request:Request,user
             db.audit(c,user['id'],'accounting.manager_match','report',report_id,{'match_id':row['id'],'status':row['status'],'revision':revision+1})
             return safe(row)
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.manager_match:'+report_id,body.model_dump(),perform)
+
+
+class DriverBalanceApproval(Note):
+    expected_revision: StrictInt = Field(ge=0)
+    bank_halalas: StrictInt = Field(ge=0, le=100000000000)
+    cash_due_halalas: StrictInt = Field(ge=0, le=100000000000)
+
+
+class DriverCashReceipt(Note):
+    expected_revision: StrictInt = Field(ge=1)
+    cash_received_halalas: StrictInt = Field(ge=0, le=100000000000)
+    received_on: date
+    receipt_reference: str = Field(min_length=1, max_length=200)
+
+
+def driver_settlement_values(snapshot, latest=None):
+    sub = (snapshot.get('shift') or {}).get('submission') or {}
+    summary = snapshot.get('summary') or {}
+    submitted = sub.get('driver_original_submission') or sub
+    net_card = int(summary.get('card_collected_halalas', 0))-int(summary.get('card_refunded_halalas', 0))
+    original_bank = int(submitted.get('terminal_total_halalas', net_card) or 0)
+    original_cash = int(submitted.get('handover_halalas') or 0)
+    stage = latest['stage'] if latest else 'pending_balance'
+    cash_due = latest['cash_due_halalas'] if latest else int(sub.get('handover_halalas') or 0)
+    received = latest['cash_received_halalas'] if latest else None
+    return dict(original_bank_halalas=original_bank, original_cash_halalas=original_cash,
+                system_bank_halalas=int(sub.get('expected_card_halalas', summary.get('card_collected_halalas', 0)) or 0),
+                bank_halalas=latest['bank_halalas'] if latest else int(sub.get('terminal_total_halalas', net_card) or 0),
+                cash_due_halalas=cash_due, cash_received_halalas=received,
+                cash_difference_halalas=received-cash_due if received is not None else None,
+                pending_cash_halalas=cash_due if received is None else 0,
+                stage=stage, revision=latest['revision'] if latest else 0)
+
+
+def driver_settlement_scope(c, user, report_id):
+    # Lock the parent to serialize first approval, amendments and final receipt.
+    row = c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind IN ('driver','manager') FOR UPDATE",
+                    (report_id, user['brand_id'])).fetchone()
+    if not row or (user['role'] != 'owner' and not set(row['branch_ids']) <= set(user.get('branch_ids', []))):
+        fail('REPORT_SCOPE', 'التقفيلة غير متاحة.', 404)
+    if row['user_id'] == user['id']:
+        fail('SELF_SETTLEMENT', 'اعتماد التسوية من حساب محاسب مستقل.', 403)
+    if row['kind']=='driver':
+        shift = c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s', (row['shift_id'],)).fetchone()
+        manager = c.execute("SELECT id FROM shifts WHERE id=%s AND kind='manager' AND status='closed'",
+                            (shift['manager_shift_id'],)).fetchone()
+        if not manager:
+            fail('MANAGER_CLOSURE_REQUIRED', 'تنتقل الموازنة للمحاسب بعد إقفال شفت مدير التوصيل.', 409)
+    return row
+
+
+@router.get('/driver-settlements/{report_id}/print')
+def settlement_original_report(report_id:str,user=Depends(access)):
+    with db.tx() as c:
+        row=driver_settlement_scope(c,user,report_id)
+        from .reporting import make_print_html
+        return Response(make_print_html(row['snapshot']),media_type='text/html',headers={'Cache-Control':'no-store'})
+
+
+@router.get('/driver-settlements')
+def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(access)):
+    with db.tx() as c:
+        # No date restriction: cash from an older operational day remains visible.
+        rows = c.execute("""SELECT r.*,u.display_name driver_name,
+          coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) accounting_day
+          FROM closure_reports r JOIN users u ON u.id=r.user_id JOIN shifts s ON s.id=r.shift_id
+          LEFT JOIN shifts manager ON manager.id=s.manager_shift_id
+          WHERE r.brand_id=%s AND r.kind=%s AND (r.kind='manager' OR manager.status='closed')
+          ORDER BY r.created_at DESC,r.id""", (user['brand_id'],kind)).fetchall()
+        events = c.execute("""SELECT e.*,u.display_name actor_name FROM driver_accounting_settlements e
+          JOIN users u ON u.id=e.actor_id WHERE e.brand_id=%s ORDER BY e.report_id,e.revision""", (user['brand_id'],)).fetchall()
+        history = defaultdict(list)
+        for event in events: history[event['report_id']].append(event)
+        result = []
+        for row in rows:
+            if user['role'] != 'owner' and not set(row['branch_ids']) <= set(user.get('branch_ids', [])): continue
+            changes = history[row['id']]
+            latest = changes[-1] if changes else None
+            if row['kind']=='manager' and not latest:
+                legacy=c.execute("SELECT * FROM manager_financial_matches WHERE report_id=%s AND status='matched' ORDER BY revision DESC LIMIT 1",(row['id'],)).fetchone()
+                if legacy:
+                    latest=dict(stage='cash_received',revision=0,bank_halalas=legacy['bank_halalas'],cash_due_halalas=legacy['expected_cash_halalas'],cash_received_halalas=legacy['cash_halalas'],received_on=legacy['created_at'].date())
+            approved = next((e for e in changes if e['stage'] == 'balance_approved'), None)
+            from .catalog import normalize_city
+            local = any(normalize_city(b['city']) == 'حفر الباطن' for b in c.execute(
+                'SELECT city FROM branches WHERE id=ANY(%s)', (row['branch_ids'],)).fetchall())
+            due_on = row['accounting_day'] + timedelta(days=1) if local else None
+            result.append(dict(id=row['id'], user_id=row['user_id'], driver_name=row['driver_name'],kind=row['kind'],
+                branch_ids=row['branch_ids'], day=row['accounting_day'],
+                label=row['snapshot'].get('closure_label') or row['id'],
+                due_on=due_on, overdue=bool(due_on and datetime.now(TZ).date()>due_on and not (latest and latest['stage']=='cash_received')),
+                waiting_days=max(0, (datetime.now(TZ).date()-approved['created_at'].astimezone(TZ).date()).days) if approved and not latest.get('received_on') else 0,
+                history=changes, **driver_settlement_values(row['snapshot'], latest)))
+        result.sort(key=lambda r: r['stage'] == 'cash_received')
+        return safe({'settlements': result})
+
+
+def save_driver_settlement(c, user, report_id, body, receipt=False):
+    row = driver_settlement_scope(c, user, report_id)
+    if row['kind']=='manager' and c.execute("SELECT 1 FROM manager_financial_matches WHERE report_id=%s AND status='matched'",(report_id,)).fetchone():
+        fail('SETTLEMENT_FINAL','التقفيلة معتمدة ماليًا مسبقًا.',409)
+    previous = c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1', (report_id,)).fetchone()
+    revision = previous['revision'] if previous else 0
+    if previous and previous['stage'] == 'cash_received':
+        fail('SETTLEMENT_FINAL', 'تم اعتماد استلام الكاش والتسوية نهائيًا.', 409)
+    if revision != body.expected_revision: fail('SETTLEMENT_CHANGED', 'حدثت مراجعة أحدث؛ حدّث القائمة.', 409)
+    if receipt:
+        if not previous: fail('BALANCE_REQUIRED', 'اعتمد الموازنة أولًا.', 409)
+        # Actual receipt date is independent of operational day and approval time.
+        shift = c.execute('SELECT opened_at FROM shifts WHERE id=%s', (row['shift_id'],)).fetchone()
+        if body.received_on > datetime.now(TZ).date() or body.received_on < shift['opened_at'].astimezone(TZ).date():
+            fail('RECEIPT_DATE', 'تاريخ الاستلام يجب أن يكون بين بداية الشفت واليوم.')
+        bank, due = previous['bank_halalas'], previous['cash_due_halalas']
+    else: bank, due = body.bank_halalas, body.cash_due_halalas
+    event = c.execute("""INSERT INTO driver_accounting_settlements
+      (id,report_id,brand_id,revision,stage,bank_halalas,cash_due_halalas,cash_received_halalas,received_on,receipt_reference,note,actor_id)
+      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+      (db.new_id('das_'),report_id,user['brand_id'],revision+1,'cash_received' if receipt else 'balance_approved',
+       bank,due,body.cash_received_halalas if receipt else None,body.received_on if receipt else None,
+       body.receipt_reference if receipt else None,body.note,user['id'])).fetchone()
+    db.audit(c,user['id'],'accounting.driver_settlement.'+event['stage'],'report',report_id,
+             {'event_id':event['id'],'revision':event['revision'],'reason':body.note})
+    return safe(event)
+
+
+@router.post('/driver-settlements/{report_id}/approve-balance')
+def approve_driver_balance(report_id:str,body:DriverBalanceApproval,request:Request,user=Depends(access)):
+    if not auth.has_permission(user, REVIEW): fail('ACCOUNTING_FORBIDDEN','صلاحية الاعتماد غير متاحة.',403)
+    with db.tx() as c:
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.driver_balance:'+report_id,
+            body.model_dump(),lambda:save_driver_settlement(c,user,report_id,body))
+
+
+@router.post('/driver-settlements/{report_id}/receive-cash')
+def receive_driver_cash(report_id:str,body:DriverCashReceipt,request:Request,user=Depends(access)):
+    if not auth.has_permission(user, REVIEW): fail('ACCOUNTING_FORBIDDEN','صلاحية الاعتماد غير متاحة.',403)
+    with db.tx() as c:
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.driver_receipt:'+report_id,
+            body.model_dump(mode='json'),lambda:save_driver_settlement(c,user,report_id,body,receipt=True))
