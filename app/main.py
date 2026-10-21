@@ -92,8 +92,9 @@ from . import first_order_gift
 app.include_router(first_order_gift.router)
 from . import storefront_advertising
 app.include_router(storefront_advertising.router)
-from . import morning_delivery
+from . import morning_delivery, morning_trial
 app.include_router(morning_delivery.router)
+app.include_router(morning_trial.router)
 from . import customer_map
 app.include_router(customer_map.router)
 from . import owner_phone
