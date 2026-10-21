@@ -17,7 +17,10 @@ def describe(c, row):
     from .operations import eligible_driver_shift
     eligible=[]
     for bid in row['branch_ids']:
-        try: eligible_driver_shift(c,s,{'brand_id':s['brand_id'],'branch_id':bid})
+        candidate={'brand_id':s['brand_id'],'branch_id':bid}
+        if (s.get('vehicle_log') or {}).get('receipt_trial'):
+            candidate['snapshot']={'delivery_period':'morning'}
+        try: eligible_driver_shift(c,s,candidate)
         except HTTPException as exc:
             if exc.status_code not in (403,404,409): raise
         else: eligible.append(bid)
