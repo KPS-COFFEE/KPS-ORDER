@@ -61,7 +61,8 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
                 'customer/profile':{'addresses':[]},
                 'branches/nearest':{'branches':[{**branch,'available':True,'direct_distance_meters':500}],'excluded':[]},
                 'products/demo-paid/availability':{'available':True},
-                'quote':{'quote':quote},
+                'quote':{'quote':{**quote,'items':quote['items'][:1],
+                    'first_order_gift':{'status':'verification_required','version':1,'items':[]}}},
                 'gifts/quote':{'quote':quote},
             }
             if path not in responses:
@@ -103,12 +104,20 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
         expect(page.locator('#nearest-branches .nearest-branch-card')).to_have_count(1)
         page.locator('#nearest-branches button').last.click()
         expect(page.locator('#menu')).to_be_visible()
-        expect(page.locator('#branch-select option[value=outside-branch]')).to_have_count(0)
+        # The nearest list is server-qualified in both modes. The legacy manual
+        # dropdown may still list other branches when entry policy is disabled.
+        expect(page.locator('#nearest-branches')).not_to_contain_text('فرع خارج النطاق')
+        expect(page.locator('#branch-select')).to_have_value('demo-branch')
+        if entry_enabled:
+            expect(page.locator('#branch-select option[value=outside-branch]')).to_have_count(0)
         page.locator('#neighborhood').fill('حي اختبار');page.locator('#address').fill('عنوان اختبار')
         page.locator('.product-add-button').first.click();page.locator('#product-add').click()
         expect(page.locator('#quote-summary .first-order-gift')).to_be_visible()
-        expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('قهوة اليوم')
-        expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('كوكيز')
+        if auth_stage=='early':
+            expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('قهوة اليوم')
+            expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('كوكيز')
+        else:
+            expect(page.locator('#quote-summary .first-order-gift')).to_contain_text('تحقق' if lang=='ar' else 'Verify')
         if auth_stage=='checkout':
             assert 'auth/otp/request' not in requests
         page.locator('#checkout-button').click()
@@ -121,6 +130,8 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
             page.locator('#otp-code').fill('1234')
             page.locator('#verify-otp').click()
         expect(page.locator('#confirm-dialog .first-order-gift')).to_be_visible()
+        expect(page.locator('#confirm-dialog .first-order-gift')).to_contain_text('قهوة اليوم')
+        expect(page.locator('#confirm-dialog .first-order-gift')).to_contain_text('كوكيز')
         page.keyboard.press('Escape')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         assert 'auth/otp/request' in requests and 'auth/otp/verify' in requests

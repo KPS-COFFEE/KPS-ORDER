@@ -31,6 +31,8 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/customer.js && node --check public/ops.js && node --check public/assets/experience-policy.js && node --check public/assets/first-order-gift.js && node --check public/assets/banner-device-preview.js && node --check public/assets/morning-delivery.js && node --check public/assets/customer-map.js
+      - name: Verify open browsing, early offer login and confirmed map pins
+        run: python -m pytest -q -x tests/test_customer_map_browser.py tests/test_experience_entry_browser.py --junitxml=test-results/open-menu-map.xml
       - name: Verify legacy owner advertising integration and shared map budget first
         run: >-
           python -m pytest -q
@@ -45,7 +47,7 @@ jobs:
       - run: python -m pytest -q tests/test_delivery_hours.py::test_manager_preparation_is_separate_from_customer_admission tests/test_delivery_hours.py::test_manager_fresh_shift_and_customer_quote_boundaries tests/test_delivery_hours.py::test_driver_fresh_shift_cannot_start_outside_window tests/test_delivery_hours.py::test_manager_prepares_new_day_without_opening_customer_service
       - run: node --check public/assets/advertising-policy.js && python -m pytest -q tests/test_storefront_advertising.py tests/test_storefront_advertising_postgres.py tests/test_storefront_advertising_browser.py tests/test_homepage_presentation.py
       - run: node --check public/assets/dispatch-map.js && python -m pytest -q tests/test_dispatch_map_browser.py tests/test_dispatch_map_config.py tests/test_driver_gps_browser.py tests/test_driver_map_pins.py tests/test_driver_locations.py tests/test_dispatch_workspace_counts.py tests/test_dispatch_order_sort.py
-      - run: python -m pytest -q tests/test_customer_map.py tests/test_customer_map_browser.py tests/test_delivery_workspace_browser.py tests/test_morning_customer_postgres.py tests/test_morning_policy_browser.py tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_manager_acceptance_postgres.py tests/test_banner_device_preview_browser.py tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py tests/test_core.py tests/test_experience_policy.py tests/test_experience_policy_postgres.py tests/test_customer_progress.py tests/test_customer_progress_postgres.py tests/test_experience_entry_browser.py --junitxml=test-results/customer-entry.xml
+      - run: python -m pytest -q tests/test_customer_map.py tests/test_delivery_workspace_browser.py tests/test_morning_customer_postgres.py tests/test_morning_policy_browser.py tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_manager_acceptance_postgres.py tests/test_banner_device_preview_browser.py tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py tests/test_core.py tests/test_experience_policy.py tests/test_experience_policy_postgres.py tests/test_customer_progress.py tests/test_customer_progress_postgres.py --junitxml=test-results/customer-entry.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -53,4 +55,5 @@ jobs:
           path: |
             test-results/owner-integration.xml
             test-results/customer-entry.xml
+            test-results/open-menu-map.xml
             test-results/customer-entry-*.png
