@@ -45,6 +45,80 @@ def test_provider_errors_are_sanitized(monkeypatch,status):
     assert 'synthetic_secret' not in str(err.value.detail)
 
 
+@pytest.mark.parametrize('status,provider_error,expected_status,expected_code', [
+    (429, 'rate_limited', 429, 'OTP_PROVIDER_DESTINATION_LIMIT'),
+    (429, 'too_many_requests', 429, 'OTP_PROVIDER_RATE_LIMIT'),
+    (429, 'ip_rate_limited', 429, 'OTP_PROVIDER_IP_LIMIT'),
+    (429, 'spend_cap_reached', 429, 'OTP_PROVIDER_SPEND_CAP'),
+    (429, 'sandbox_quota_exceeded', 429, 'OTP_PROVIDER_SANDBOX_LIMIT'),
+    (402, 'insufficient_credits', 503, 'OTP_PROVIDER_BALANCE_REQUIRED'),
+    (403, 'application_paused', 503, 'OTP_PROVIDER_APPLICATION_PAUSED'),
+    (403, 'account_not_active', 503, 'OTP_PROVIDER_ACCOUNT_INACTIVE'),
+    (401, 'unauthorized', 503, 'OTP_PROVIDER_CONFIGURATION'),
+    (401, 'key_expired', 503, 'OTP_PROVIDER_CONFIGURATION'),
+    (403, 'ip_not_allowed', 503, 'OTP_PROVIDER_CONFIGURATION'),
+    (403, 'insufficient_scope', 503, 'OTP_PROVIDER_CONFIGURATION'),
+])
+@pytest.mark.parametrize('path', ['start', 'check'])
+def test_documented_rejections_are_distinct_sanitized_and_never_retried(
+        monkeypatch, status, provider_error, expected_status, expected_code, path):
+    monkeypatch.setenv('TAWKED_API_KEY', 'tk_test_synthetic_secret')
+    calls = []
+    def handle(request):
+        calls.append(request.url.path)
+        return httpx.Response(status, headers={'Retry-After': 'SENSITIVE_HEADER'}, json={
+            'error': provider_error, 'message': 'SENSITIVE_BODY',
+            'phone': '+966500000000', 'code': '1234', 'token': 'SENSITIVE_TOKEN'})
+    original = httpx.Client
+    monkeypatch.setattr(sms_verification.httpx, 'Client',
+        lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    with pytest.raises(HTTPException) as result:
+        sms_verification._call(path, {})
+    error = result.value
+    assert error.status_code == expected_status
+    assert error.detail['code'] == expected_code
+    assert error.sms_failure_reason == 'provider_rejected'
+    assert error.headers is None
+    assert calls == ['/v1/verify/' + path]
+    assert not any(value in str(error.detail) for value in (
+        'SENSITIVE', '+966500000000', '1234', 'tk_test_', provider_error))
+
+
+@pytest.mark.parametrize('status,body', [
+    (429, {'error': 'unknown_secret_error', 'message': 'SENSITIVE_BODY'}),
+    (500, {'error': 'rate_limited'}),
+    (403, {'error': 'spend_cap_reached'}),
+    (429, {'error': {'code': 'rate_limited'}}),
+    (429, {'error': ['rate_limited']}),
+    (429, {'code': 'rate_limited'}),
+    (429, ['rate_limited']),
+    (429, None),
+])
+def test_unknown_malformed_or_mismatched_rejections_remain_generic(monkeypatch, status, body):
+    monkeypatch.setenv('TAWKED_API_KEY', 'tk_test_synthetic_secret')
+    original = httpx.Client
+    monkeypatch.setattr(sms_verification.httpx, 'Client', lambda **kw:
+        original(transport=httpx.MockTransport(lambda request: httpx.Response(status, json=body)), **kw))
+    with pytest.raises(HTTPException) as result:
+        sms_verification._call('start', {})
+    assert result.value.status_code == 503
+    assert result.value.detail['code'] == 'OTP_PROVIDER_FAILURE'
+    assert result.value.sms_failure_reason == 'provider_rejected'
+    assert not any(value in str(result.value.detail) for value in ('SENSITIVE', 'rate_limited', 'spend_cap_reached'))
+
+
+def test_non_json_rejection_remains_generic_without_body_disclosure(monkeypatch):
+    monkeypatch.setenv('TAWKED_API_KEY', 'tk_test_synthetic_secret')
+    original = httpx.Client
+    monkeypatch.setattr(sms_verification.httpx, 'Client', lambda **kw:
+        original(transport=httpx.MockTransport(lambda request: httpx.Response(429, text='SENSITIVE_BODY')), **kw))
+    with pytest.raises(HTTPException) as result:
+        sms_verification._call('start', {})
+    assert result.value.status_code == 503
+    assert result.value.detail['code'] == 'OTP_PROVIDER_FAILURE'
+    assert 'SENSITIVE' not in str(result.value.detail)
+
+
 @pytest.mark.parametrize('code',['123','12345','123456','١٢٣٤','12a4',' 1234'])
 def test_four_ascii_digits_only(code):
     with pytest.raises(ValueError):
