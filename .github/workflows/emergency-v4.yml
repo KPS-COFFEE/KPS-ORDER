@@ -162,6 +162,28 @@ jobs:
           python tools/rollback_prepare_compat.py --repository "$PWD" --output "$ROLLBACK_COMPAT_DIR"
           mkdir "$ROLLBACK_BASELINE_DIR"
           git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$ROLLBACK_BASELINE_DIR"
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep Ubuntu suites, components and signing keys unchanged. Only the
+          # slow Azure mirror host is replaced with the official Ubuntu archive.
+          configured=false
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              configured=true
+            fi
+          done
+          if [ "$configured" != true ]; then
+            echo 'Expected Ubuntu APT sources were not found.' >&2
+            exit 1
+          fi
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
       - name: Install Chromium and required system libraries
         run: python -m playwright install --with-deps chromium webkit
       - name: Check Python and browser script syntax
