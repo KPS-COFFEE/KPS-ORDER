@@ -53,6 +53,9 @@ def test_proposal_runs_do_not_replace_current_budget_or_reduce_workload():
 def test_hosting_candidates_require_their_exact_kernel_limits_and_never_certify_current(
         budgets, monkeypatch, name, db_cpu, db_memory):
     monkeypatch.setenv('KPS_LOAD_RESOURCE_PROFILE', name)
+    # Economy now equals the deployed plans. An undersized database must
+    # still fail before we install either candidate's exact kernel limits.
+    (budgets.db / 'cpu.max').write_text('10000 100000')
     with pytest.raises(ValueError):
         profile(budgets)
     (budgets.app / 'cpu.max').write_text('100000 100000')
@@ -138,10 +141,10 @@ def budgets(tmp_path, monkeypatch):
     app = root / ('kps_order_load_' + 'a' * 32)
     db = root / 'docker-synthetic-postgres'
     write_group(app, load.RENDER_APP_CPU_MAX, load.RENDER_APP_MEMORY_BYTES)
-    write_group(db, '10000 100000', load.RENDER_DB_MEMORY_BYTES, '100091\n100092\n')
+    write_group(db, '50000 100000', load.RENDER_DB_MEMORY_BYTES, '100091\n100092\n')
     generator = root / 'runner'
     memberships = {os.getpid(): generator, 100091: db, 100002: app, 100003: app, 100004: app}
-    inspected = {'HostConfig': {'NanoCpus': 100_000_000, 'Memory': load.RENDER_DB_MEMORY_BYTES,
+    inspected = {'HostConfig': {'NanoCpus': 500_000_000, 'Memory': load.RENDER_DB_MEMORY_BYTES,
                                'MemorySwap': load.RENDER_DB_MEMORY_BYTES},
                  'State': {'Running': True, 'Pid': 100091}}
     monkeypatch.setattr(load, 'inspect_test_container', lambda *args: inspected)
@@ -166,15 +169,15 @@ def test_real_budget_and_owned_worker_proof_exclude_the_controller_and_generator
     assert os.getpid() not in observation['application']['pids']
 
 
-@pytest.mark.parametrize('file,value', [('cpu.max', '60000 100000'), ('cpu.max', 'max 100000'),
-                                       ('memory.max', '1073741824'), ('memory.swap.max', '1')])
-def test_an_unconstrained_or_larger_application_cannot_certify_the_small_render_plan(budgets, file, value):
+@pytest.mark.parametrize('file,value', [('cpu.max', '200000 100000'), ('cpu.max', 'max 100000'),
+                                       ('memory.max', '4294967296'), ('memory.swap.max', '1')])
+def test_an_unconstrained_or_larger_application_cannot_certify_the_deployed_render_plan(budgets, file, value):
     (budgets.app / file).write_text(value)
     with pytest.raises(ValueError):
         profile(budgets)
 
 
-@pytest.mark.parametrize('field,value', [('NanoCpus', 1_000_000_000), ('Memory', 1_073_741_824),
+@pytest.mark.parametrize('field,value', [('NanoCpus', 1_000_000_000), ('Memory', 2_147_483_648),
                                         ('MemorySwap', -1)])
 def test_docker_metadata_must_match_the_requested_database_budget(budgets, field, value):
     budgets.inspected['HostConfig'][field] = value
@@ -221,7 +224,7 @@ def test_worker_outside_the_group_invalidates_the_measurement(budgets):
 def test_changing_limits_after_startup_invalidates_the_measurement(budgets):
     configured = profile(budgets)
     (budgets.app / 'cgroup.procs').write_text('100002\n100003\n100004\n')
-    (budgets.app / 'cpu.max').write_text('100000 100000')
+    (budgets.app / 'cpu.max').write_text('200000 100000')
     with pytest.raises(ValueError):
         configured.observe(100002, [100003, 100004])
 
@@ -237,8 +240,25 @@ def test_two_resource_runs_retain_the_original_workload_and_generator_budget():
     workflow = Path(__file__).resolve().parents[1] / '.github/workflows/software-hardening.yml'
     section = workflow.read_text().split('  representative-render-budget:', 1)[1]
     assert 'repetition: [1, 2]' in section and 'fail-fast: false' in section
-    assert '--cpus 0.1 --memory 256m --memory-swap 256m' in section
+    assert '--cpus 0.5 --memory 1g --memory-swap 1g' in section
     assert '--application-cgroup "$KPS_LOAD_CGROUP_PATH"' in section
     for option in ('--levels', '--rounds', '--p95-ms', '--p99-ms', '--max-error-rate', '--request-timeout'):
         assert option not in section
+
+
+def test_current_profile_matches_verified_render_plans_and_legacy_stays_explicit(monkeypatch):
+    assert load.resource_budget() == {
+        'name': 'current', 'app_cpu_tenths': 10, 'app_memory': 2 * 1024 ** 3,
+        'db_cpu_tenths': 5, 'db_memory': 1024 ** 3}
+    monkeypatch.setenv('KPS_LOAD_RESOURCE_PROFILE', 'legacy_small')
+    assert load.resource_budget() == {
+        'name': 'legacy_small', 'app_cpu_tenths': 5, 'app_memory': 512 * 1024 ** 2,
+        'db_cpu_tenths': 1, 'db_memory': 256 * 1024 ** 2}
+
+
+def test_old_plan_cannot_be_misrepresented_as_current(budgets):
+    (budgets.app / 'cpu.max').write_text('50000 100000')
+    (budgets.app / 'memory.max').write_text(str(512 * 1024 ** 2))
+    with pytest.raises(ValueError):
+        profile(budgets)
 
