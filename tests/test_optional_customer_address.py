@@ -1,4 +1,4 @@
-"""Optional address text must never bypass delivery location or coverage guards."""
+"""Customer delivery requires a neighborhood; description and shared staff models stay optional."""
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -12,7 +12,7 @@ LOCATION = {'lat': 28.4, 'lng': 45.9}
 
 
 @pytest.mark.parametrize('neighborhood,address', TEXT_CASES)
-def test_checkout_models_allow_optional_text(neighborhood, address):
+def test_shared_staff_checkout_and_saved_address_models_keep_optional_text(neighborhood, address):
     payload = _body('delivery')
     payload['customer'].update(neighborhood=neighborhood, address=address)
     body = catalog.QuoteBody.model_validate(payload)
@@ -62,12 +62,19 @@ def optional_address_customer(client, monkeypatch):
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('neighborhood,address', TEXT_CASES)
-def test_quote_order_and_saved_address_keep_optional_text_and_exact_pin(optional_address_customer,
+def test_customer_checkout_requires_neighborhood_but_description_stays_optional(optional_address_customer,
                                                                        neighborhood, address):
     client, user = optional_address_customer
     payload = _body('delivery')
     payload['customer'].update(neighborhood=neighborhood, address=address)
-    quote = client.post('/api/quote', json=payload)
+    quote = client.post('/api/quote', json=payload, headers={'X-KPS-Context':'customer'})
+    if not neighborhood.strip():
+        assert quote.status_code == 422 and quote.json()['detail']['code'] == 'DELIVERY_NEIGHBORHOOD_REQUIRED'
+        rejected = client.post('/api/orders', json=payload, headers={'Idempotency-Key':uuid4().hex})
+        assert rejected.status_code == 422 and rejected.json()['detail']['code'] == 'DELIVERY_NEIGHBORHOOD_REQUIRED'
+        with db.tx() as conn:
+            assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n'] == 0
+        return
     assert quote.status_code == 200, quote.text
     created = client.post('/api/orders', json=payload, headers={'Idempotency-Key': uuid4().hex})
     assert created.status_code == 200, created.text
@@ -122,3 +129,46 @@ def test_blank_text_never_bypasses_required_location_or_coverage(optional_addres
         assert response.json()['detail']['code'] == code
     with db.tx() as conn:
         assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n'] == 0
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('context',[None,'work','customer'])
+def test_customer_order_cannot_bypass_neighborhood_by_changing_header(optional_address_customer,context):
+    client,_=optional_address_customer
+    body=_body('delivery');body['customer'].update(neighborhood='',address='')
+    headers={'Idempotency-Key':uuid4().hex}
+    if context is not None:headers['X-KPS-Context']=context
+    response=client.post('/api/orders',json=body,headers=headers)
+    assert response.status_code==422,response.text
+    assert response.json()['detail']['code']=='DELIVERY_NEIGHBORHOOD_REQUIRED'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n']==0
+
+
+@pytest.mark.postgres
+def test_gift_quote_requires_neighborhood_and_allows_empty_description(optional_address_customer):
+    client,_=optional_address_customer
+    body=_body('delivery');body['customer'].update(neighborhood='',address='')
+    response=client.post('/api/gifts/quote',json=body)
+    assert response.status_code==422 and response.json()['detail']['code']=='DELIVERY_NEIGHBORHOOD_REQUIRED'
+    body['customer']['neighborhood']='حي اختبار'
+    response=client.post('/api/gifts/quote',json=body)
+    assert response.status_code==200,response.text
+
+
+@pytest.mark.postgres
+def test_prepolicy_blank_neighborhood_order_replay_keeps_original_durable_result(optional_address_customer,monkeypatch):
+    client,_=optional_address_customer
+    body=_body('delivery');body['customer'].update(neighborhood='',address='')
+    headers={'Idempotency-Key':uuid4().hex}
+    # Simulate a committed historical order under the former optional policy.
+    with monkeypatch.context() as old_policy:
+        old_policy.setattr(catalog,'require_customer_delivery_neighborhood',lambda body:None)
+        original=client.post('/api/orders',json=body,headers=headers)
+    assert original.status_code==200,original.text
+    replay=client.post('/api/orders',json=body,headers=headers)
+    assert replay.status_code==200 and replay.content==original.content
+    new_order=client.post('/api/orders',json=body,headers={'Idempotency-Key':uuid4().hex})
+    assert new_order.status_code==422 and new_order.json()['detail']['code']=='DELIVERY_NEIGHBORHOOD_REQUIRED'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) AS n FROM orders').fetchone()['n']==1

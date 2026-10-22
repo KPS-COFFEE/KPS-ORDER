@@ -142,6 +142,7 @@
     "error_KHALIYA_TYPE_REQUIRED":{"ar": "اختر النوع: كلاسيك أو بيكان.", "en": "Choose a Khaliya type: Classic or Pecan."},
     "error_PRODUCT_VARIANT_UNAVAILABLE":{"ar": "نوع أو خيار الصنف المحدد غير متاح في هذا الفرع.", "en": "The selected type or option is unavailable at this branch."},
     "error_MINIMUM_ORDER_NOT_MET":{"ar": "السلة أقل من الحد الأدنى المعتمد للتوصيل.", "en": "Your basket is below the delivery minimum."},
+    "delivery_minimum_remaining":{ar:"الحد الأدنى للمنتجات {minimum} قبل رسوم التوصيل. أضف {remaining} لإكمال طلبك.",en:"The item minimum is {minimum}, before delivery fees. Add {remaining} to continue."},
     "error_ORDER_VALUE_LIMIT":{"ar": "قيمة الطلب أعلى من الحد المسموح للموقع.", "en": "Your order exceeds the allowed amount."},
     "error_MAP_URL_NOT_ALLOWED":{"ar": "اختر دبوسًا أو رابط Google Maps معتمدًا.", "en": "Choose a supported Google Maps link or pin."},
     "error_MAP_PIN_REQUIRED":{"ar": "تعذر استخراج دبوس موثوق من الرابط. حدد الموقع مباشرة.", "en": "A verified pin cannot be extracted from this link. Set your location directly."},
@@ -224,6 +225,7 @@
     "your_choices": {ar:"اختياراتك", en:"Your choices"},
     "your_current_branch_is_in_another_city_it_stays_selected_until_yo": {ar:"اختيارك الحالي في مدينة أخرى؛ لن يتغير حتى تختار فرعًا بنفسك.", en:"Your current branch is in another city. It stays selected until you choose a branch."},
     "optional": {ar:"اختياري", en:"Optional"},
+    "required": {ar:"مطلوب", en:"Required"},
     "use_my_current_location": {ar:"استخدام موقعي الحالي", en:"Use my current location"},
     "car_pickup": {ar:"استلام بالسيارة", en:"Car pickup"},
     "branch_pickup": {ar:"استلام من الفرع", en:"Branch pickup"},
@@ -646,6 +648,9 @@
   state.legacyItemMappings={};
   state.entryEnabled=false;
   state.entryDraft={};
+  const entryBrowseKey=`kps-customer-browsing-v1:${requestedBrandId||'invalid'}`;
+  state.entryBrowsing=false;
+  try{state.entryBrowsing=sessionStorage.getItem(entryBrowseKey)==='1';}catch{}
   const locationDraftKey=`kps-delivery-location-v1:${requestedBrandId||'invalid'}`;
   const mapLink={revision:0,timer:null,controller:null,promise:null,url:'',appliedUrl:'',pending:false};
   const entryText=(ar,en)=>language==='en'?en:ar;
@@ -659,15 +664,16 @@
     if(!showEntry)return;
     const verified=entryVerified(),locationReady=state.service!=='delivery'||!!state.location;
     const branchReady=!!state.branchId&&(state.service!=='delivery'||!state.nearest.pending&&!state.nearest.error&&state.nearest.branches.some(b=>b.id===state.branchId));
-    const step=!verified?0:!locationReady?1:!branchReady?2:3;
+    const showIdentityForm=!verified&&!state.entryBrowsing;
+    const step=!locationReady||!branchReady?0:!state.cart.length?1:2;
     const steps=node('ol','entry-steps');
-    [entryText('الاسم والجوال','Name & mobile'),entryText('موقعك','Your location'),entryText('الفرع','Branch'),entryText('طلبك','Your order')].forEach((label,index)=>{const item=node('li',index<step?'done':'',label);if(index===step)item.setAttribute('aria-current','step');steps.append(item);});
+    [entryText('موقعك والفرع','Location & branch'),entryText('طلبك','Your order'),entryText('المراجعة والتأكيد','Review & confirm')].forEach((label,index)=>{const item=node('li',index<step?'done':'',label);if(index===step)item.setAttribute('aria-current','step');steps.append(item);});
     // Preserve the visitor's partially typed name and number during background updates.
-    if(!verified&&section.querySelector('#entry-form')&&section.dataset.lang===language){section.querySelector('.entry-steps')?.replaceWith(steps);}
+    if(showIdentityForm&&section.querySelector('#entry-form')&&section.dataset.lang===language){section.querySelector('.entry-steps')?.replaceWith(steps);}
     else{
       section.replaceChildren(steps);
-      const title=node('h2','',!verified?(state.brand?.id==='kps'?entryText('أهلًا بك في كبز 🧡','Welcome to KPS COFFEE 🧡'):entryText('أهلًا بك','Welcome')):!locationReady?entryText('وين نوصّل طلبك؟','Where should we deliver?'):!branchReady?entryText('اختر الفرع اللي يخدمك','Choose a branch serving you'):entryText('جاهز لطلبك','Ready for your order'));title.id='entry-title';section.append(title);
-      if(!verified){
+      const title=node('h2','',showIdentityForm?(state.brand?.id==='kps'?entryText('أهلًا بك في كبز 🧡','Welcome to KPS COFFEE 🧡'):entryText('أهلًا بك','Welcome')):!locationReady?entryText('وين نوصّل طلبك؟','Where should we deliver?'):!branchReady?entryText('اختر الفرع اللي يخدمك','Choose a branch serving you'):entryText('جاهز لطلبك','Ready for your order'));title.id='entry-title';section.append(title);
+      if(showIdentityForm){
         section.append(node('p','entry-description',state.offerActive?entryText('هديتك بانتظارك مع طلبك 🎁','Your gift awaits with your order 🎁'):entryText('سجل من البداية لتسهيل طلبك، أو تصفح المنيو بدون تسجيل.','Sign in now for easier ordering, or browse the menu without signing in.')));
         const form=node('form','entry-form');form.id='entry-form';
         const nameLabel=node('label','',entryText('الاسم','Name')),name=node('input');name.name='name';name.autocomplete='name';name.required=true;name.minLength=2;name.maxLength=100;name.value=$('customer-name').value;
@@ -677,10 +683,11 @@
         nameLabel.append(name);phoneLabel.append(phone);
         const submit=node('button','button',entryText('متابعة','Continue'));submit.type='submit';form.append(nameLabel,phoneLabel,submit);
         form.addEventListener('submit',async event=>{event.preventDefault();if(!form.reportValidity())return;$('customer-name').value=name.value.trim();$('customer-phone').value=phone.value.trim();state.identityIntent='login';renderAccount();$('otp-name').value=name.value.trim();$('phone').value=phone.value.trim();openDialog('account-dialog');if(state.session.user&&state.session.user.role!=='customer'||state.session.user&&state.session.user.brand_id!==requestedBrandId)return;await requestOTP({preventDefault(){}});});
-        const browse=node('button','button quiet',entryText('تصفّح كضيف','Browse as a guest'));browse.id='entry-browse';browse.type='button';browse.addEventListener('click',()=>{$('menu').scrollIntoView({behavior:'smooth'});$('search').focus({preventScroll:true});});form.append(browse);section.append(form);
+        const browse=node('button','button quiet',entryText('تصفّح كضيف','Browse as a guest'));browse.id='entry-browse';browse.type='button';browse.addEventListener('click',()=>{state.entryDraft={name:name.value,phone:phone.value};if(name.value.trim())$('customer-name').value=name.value.trim();if(phone.value.trim())$('customer-phone').value=phone.value.trim();state.entryBrowsing=true;try{sessionStorage.setItem(entryBrowseKey,'1');}catch{}renderCustomerEntry();queueQuote();$('menu').scrollIntoView({behavior:prefersLessMotion()?'auto':'smooth'});$('search').focus({preventScroll:true});});form.append(browse);section.append(form);
       }else{
-        const summary=node('div','entry-summary');summary.append(node('p','entry-description',step===3?entryText('اختر أصنافك، ثم راجع السلة وأكد طلبك.','Choose your items, review your basket, then confirm.'):entryText('نظهر لك الفروع المؤهلة لخدمة موقعك، والاختيار لك.','We show branches eligible to serve your location. You choose the branch.')));
-        const account=node('button','button quiet',entryText('حسابي','My account'));account.type='button';account.addEventListener('click',()=>{renderAccount();openDialog('account-dialog');});summary.append(account);section.append(summary);
+        const summary=node('div','entry-summary');summary.append(node('p','entry-description',step===2?entryText('راجع السلة والمبلغ، ثم أكد طلبك.','Review your basket and total, then confirm your order.'):step===1?entryText('اختر أصنافك وأضفها للسلة.','Choose your items and add them to your basket.'):entryText('حدد موقعك، ثم اختر الفرع الذي يخدمك.','Set your location, then choose a branch serving you.')));
+        if(!verified)summary.append(node('p','entry-description',entryText('تصفح واختر طلبك الآن؛ نتحقق من جوالك عند إتمام الطلب.','Browse and choose your order now; we verify your mobile at checkout.')));
+        const account=node('button','button quiet',verified?entryText('حسابي','My account'):entryText('تسجيل الدخول','Sign in'));account.type='button';account.addEventListener('click',()=>{renderAccount();openDialog('account-dialog');});summary.append(account);section.append(summary);
       }
     }
     section.dataset.lang=language;
@@ -757,6 +764,12 @@
   function openDialog(id) { const dialog = $(id); if (dialog.open) return; focusHistory.set(dialog, document.activeElement); dialog.showModal(); syncCustomerNavigation(); }
   function clearConfirmation() { const pending=state.confirmation; state.confirmation=null; if(pending?.cancel)pending.cancel(); }
   function closeDialog(dialog) { if (typeof dialog === 'string') dialog = $(dialog); if (dialog.open) { if(dialog.id==='confirm-dialog')clearConfirmation(); dialog.close(); } }
+  function minimumOrderMessage(detail) {
+    const minimum=detail?.minimum_order_halalas,subtotal=detail?.subtotal_halalas,remaining=detail?.remaining_halalas;
+    if(detail?.currency!=='SAR'||![minimum,subtotal,remaining].every(Number.isSafeInteger)||
+        minimum<=0||subtotal<0||remaining<=0||remaining!==minimum-subtotal)return null;
+    return t('delivery_minimum_remaining',{minimum:()=>money(minimum),remaining:()=>money(remaining)});
+  }
   async function api(path, {method='GET', data, idempotency, signal} = {}) {
     const principal=state.session.user?.id;
     const headers = {'Accept': 'application/json', 'X-KPS-Context':'customer'};
@@ -771,7 +784,7 @@
       const detail = body.error || body.detail || body;
       const code=detail?.code||body.code||String(response.status);
       const fallback=response.status===401?'your_session_expired_start_a_new_guest_session_or_sign_in_with_yo':response.status===429?'too_many_attempts_wait_a_little_and_try_again':'unable_to_complete_this_action_check_your_details_and_try_again';
-      const localized=language==='ar'&&typeof detail?.message==='string'?knownMessage(detail.message):uiStrings['error_'+code]?t('error_'+code):t(fallback);
+      const localized=(code==='MINIMUM_ORDER_NOT_MET'&&minimumOrderMessage(detail))||(language==='ar'&&typeof detail?.message==='string'?knownMessage(detail.message):uiStrings['error_'+code]?t('error_'+code):t(fallback));
       const error = new Error(String(localized));
       error.localizedMessage=localized;
       error.code = code; error.status = response.status; error.details = detail;
@@ -973,8 +986,8 @@
   }
   text('branch-summary',selected?`${selected.branch_no} · ${sourceText(selected)}`:t("choose_a_branch_to_check_availability"));
   $('location-fields').hidden=state.service!=='delivery';
-  $('neighborhood').required=false;
-  $('neighborhood').setAttribute('aria-required','false');
+  $('neighborhood').required=state.service==='delivery';
+  $('neighborhood').setAttribute('aria-required',String(state.service==='delivery'));
   $('car-fields').hidden=state.service!=='car';
   const directions=directionsLink(selected);
   $('branch-directions').hidden=!directions;
@@ -1029,7 +1042,7 @@
   function updateQuantity(id,delta) { const row=state.cart.find((line)=>line.rowId===id); if(!row) return; if(row.quantity+delta<1) state.cart=state.cart.filter((line)=>line.rowId!==id); else row.quantity=Math.min(30,row.quantity+delta); cartChanged(); }
   function cartChanged() { state.quote=null; persistDraft(); renderCart(); queueQuote(); queueNearestBranches(); }
   function orderBody(cart=state.cart,branchId=state.branchId) { const customer={name:$('customer-name').value.trim() || state.session.user?.display_name || ''};const contactPhone=$('customer-phone').value.trim()||state.session.user?.phone;if(contactPhone)customer.phone=contactPhone; if(state.service==='delivery') {if(state.location) customer.location=state.location; customer.address=$('address').value.trim();customer.neighborhood=$('neighborhood').value.trim();} if(state.service==='car') customer.car={model:$('car-model').value.trim(),color:$('car-color').value.trim(),plate:$('car-plate').value.trim()}; return {brand_id:state.brand.id||'kps',branch_id:branchId,service:state.service,payment_method:document.querySelector('input[name=payment]:checked')?.value||'cash',items:cart.map((line)=>({product_id:line.productId,quantity:line.quantity,...((groups(productFor(line)||{}).length||Object.keys(line.options||{}).length)?{units:Array.from({length:line.quantity},()=>({options:line.options}))}:{}),note:line.note||''})),customer,notes:$('order-notes').value.trim()}; }
-  function queueQuote() { persistLocationDraft(); clearTimeout(queueQuote.timer); state.quote=null; state.quoteError=''; state.quotePending=false; state.quoteRevision++; renderQuote(); if(!state.cart.length) return; if(!$('customer-name').value.trim()&&!state.session.user?.display_name) {state.quoteError=t("enter_the_recipient_s_name_to_review_your_order");renderQuote();return;} if(!state.branchId) {state.quoteError=t("choose_a_branch_to_check_your_order");renderQuote();return;} if(state.service==='delivery'&&!state.location) {state.quoteError=mapLink.pending?entryText("جارٍ تحديد موقعك من الرابط…","Finding your location from the link…"):t("set_your_delivery_location_to_check_coverage_and_fees");renderQuote();return;} if(state.service==='car'&&(!$('car-plate').value.trim()||!$('car-color').value.trim())){state.quoteError=t("enter_your_car_color_and_plate_number");renderQuote();return;} queueQuote.timer=setTimeout(()=>refreshQuote(),350); }
+  function queueQuote() { persistLocationDraft(); clearTimeout(queueQuote.timer); state.quote=null; state.quoteError=''; state.quotePending=false; state.quoteRevision++; renderQuote(); if(!state.cart.length) return; if(!$('customer-name').value.trim()&&!state.session.user?.display_name) {state.quoteError=t("enter_the_recipient_s_name_to_review_your_order");renderQuote();return;} if(!state.branchId) {state.quoteError=t("choose_a_branch_to_check_your_order");renderQuote();return;} if(state.service==='delivery'&&!state.location) {state.quoteError=mapLink.pending?entryText("جارٍ تحديد موقعك من الرابط…","Finding your location from the link…"):t("set_your_delivery_location_to_check_coverage_and_fees");renderQuote();return;} if(state.service==='delivery'&&!$('neighborhood').value.trim()){state.quoteError=t("enter_a_clear_delivery_neighborhood_name");renderQuote();return;} if(state.service==='car'&&(!$('car-plate').value.trim()||!$('car-color').value.trim())){state.quoteError=t("enter_your_car_color_and_plate_number");renderQuote();return;} queueQuote.timer=setTimeout(()=>refreshQuote(),350); }
   async function refreshQuote() { const revision=++state.quoteRevision; state.quotePending=true; state.quoteError=''; renderQuote(); try {const payload=orderBody();delete payload.notes;const result=await api(entryVerified()?'/api/gifts/quote':'/api/quote',{method:'POST',data:payload}); if(revision!==state.quoteRevision) return; state.quote=result.quote; if(!state.quote || !Number.isInteger(state.quote.total_halalas)) throw new Error(t("unable_to_verify_the_final_amount_try_again"));} catch(error) {if(revision!==state.quoteRevision)return;state.quote=null;state.quoteError=errorMessage(error);} finally {if(revision===state.quoteRevision){state.quotePending=false;renderQuote();}} }
   function openProduct(product, preserveSelection=false) {
     state.product=product;
@@ -1311,7 +1324,8 @@
       const user=state.session.user;
       if(user&&(user.role!=='customer'||user.brand_id!==requestedBrandId))return;
       sessionStorage.setItem(locationDraftKey,JSON.stringify({location:state.location,owner:user?.id||null,
-        branchId:state.branchId,service:state.service,url:mapLink.appliedUrl,savedAt:Date.now()}));
+        branchId:state.branchId,service:state.service,url:mapLink.appliedUrl,
+        neighborhood:$('neighborhood').value.slice(0,120),address:$('address').value.slice(0,500),savedAt:Date.now()}));
     } catch {}
   }
   function forgetLocationDraft() {
@@ -1332,6 +1346,8 @@
       if(['delivery','pickup','car'].includes(draft.service))state.service=draft.service;
       if(state.branches.some(b=>b.id===draft.branchId))state.branchId=draft.branchId;
       renderBranches();renderService();
+      if(typeof draft.neighborhood==='string'&&draft.neighborhood.length<=120)$('neighborhood').value=draft.neighborhood;
+      if(typeof draft.address==='string'&&draft.address.length<=500)$('address').value=draft.address;
       saveLocation(point.lat,point.lng,typeof draft.url==='string'?draft.url:'');
       if(state.branchId)loadBranchCatalog();
       return true;
