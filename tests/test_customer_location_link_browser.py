@@ -1,6 +1,7 @@
 """Customer map-link acceptance against real assets and synthetic APIs only."""
 import json
 import os
+from pathlib import Path
 import pytest
 from test_experience_entry_browser import static_customer
 
@@ -50,7 +51,14 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
             route.fulfill(status=200,content_type='application/json',body=json.dumps(data))
         page.route('**/api/**',api)
         page.goto(static_customer+'/',wait_until='networkidle')
-        page.locator('#manual-location-button').click()
+        def open_link():
+            page.evaluate('document.fonts.ready')
+            control=page.locator('#manual-location-button')
+            control.evaluate("el=>el.scrollIntoView({block:'center',behavior:'instant'})")
+            output=Path('test-results');output.mkdir(exist_ok=True)
+            page.screenshot(path=str(output/f'map-link-{lang}-before-open.png'))
+            control.click()
+        open_link()
         page.locator('#map-url').fill('موقعي: \u200f'+link)
         expect(page.locator('#map-link-status')).to_contain_text('✓')
         expect(page.locator('#nearest-branches .nearest-branch-card')).to_have_count(1)
@@ -71,7 +79,7 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
         page.keyboard.press('Escape');page.reload(wait_until='networkidle')
         expect(page.locator('#clear-location')).to_be_visible()
         expect(page.locator('#checkout-button')).to_be_enabled()
-        page.locator('#manual-location-button').click();expect(page.locator('#map-url')).to_have_value(link)
+        open_link();expect(page.locator('#map-url')).to_have_value(link)
         page.locator('#map-url').fill('https://maps.app.goo.gl/INVALID-SYNTHETIC')
         expect(page.locator('#map-link-status')).to_have_class('notice error')
         expect(page.locator('#checkout-button')).to_be_disabled()
