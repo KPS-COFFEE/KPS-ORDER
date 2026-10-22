@@ -33,3 +33,17 @@
 .ac-manager-card td:last-child{min-width:210px}
 .ac-manager-card td button,.ac-manager-card td a{display:inline-block;margin:4px}
 .ac-day-report{display:flex;align-items:center;flex-wrap:wrap;gap:16px;padding-block:12px}
+.ac-manager-card{border:1px solid #e5ddd5;border-radius:18px;background:white;padding:20px;box-shadow:0 4px 18px #30241e06}
+.ac-manager-card>summary{padding:16px;background:#faf7f3;border-radius:12px}
+.ac-manager-card summary progress{flex-basis:100%;width:100%;height:9px;accent-color:#397764}
+.ac-completion{font-size:1.3rem;font-weight:750;color:#397764;font-variant-numeric:tabular-nums}
+.ac-card-metrics{display:flex;gap:10px;flex-wrap:wrap;padding-block:14px}
+.ac-card-metrics span{background:#f6f3ef;border:1px solid #eee6df;padding:8px 12px;border-radius:9px;font-size:.83rem}
+.ac-manager-card td{padding:14px 10px;vertical-align:top}
+.ac-manager-card td small{display:block;font-size:.76rem;line-height:1.8;white-space:normal}
+.ac-manager-card td:first-child{min-width:180px}
+.ac-manager-card .ac-secondary{background:#f8f4ef;color:#675246;border:1px solid #dfd4c8}
+.ac-manager-card td:last-child{white-space:normal;max-width:300px}
+.ac-manager-card td button{font-size:.8rem;border-radius:8px}
+.ac-driver-deadline{margin-block:6px;color:#766b63}
+@media(max-width:760px){.ac-manager-card{padding:12px}.ac-manager-card table,.ac-manager-card tbody,.ac-manager-card tr,.ac-manager-card td{display:block;width:auto;min-width:0!important}.ac-manager-card thead{display:none}.ac-manager-card tr{border:1px solid #e8ded5;border-radius:12px;padding:10px;margin-block:12px}.ac-manager-card td{padding:6px;border:0;white-space:normal}.ac-manager-card td:before{display:inline-block;min-width:110px;color:#766b63;font-size:.8rem;content:attr(data-label)}.ac-manager-card td:first-child:before,.ac-manager-card td:last-child:before{display:none}.ac-manager-card .ac-table{overflow:visible}.ac-manager-card td button{min-height:42px}}
