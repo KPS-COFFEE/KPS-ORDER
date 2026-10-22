@@ -69,6 +69,7 @@ def test_three_voids_reverse_6950_once_preserve_originals_and_exclude_reports(op
         assert c.execute("SELECT count(*) n FROM audit_events WHERE action='order.test_void'").fetchone()['n']==3
         assert c.execute('SELECT * FROM driver_tasks ORDER BY id').fetchall()==original_tasks
         from app.reporting import create_snapshot
+        c.execute("UPDATE shifts SET status='closed',closed_at=now(),submission=%s WHERE id=%s",(db.json(dict(expected_halalas=0,counted_halalas=0,handover_halalas=0,retained_halalas=0,difference_halalas=0)),shift['id']))
         report_id=create_snapshot(c,shift['id'],'ops-owner')
         report=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(report_id,)).fetchone()['snapshot']
         assert report['summary']['completed_orders']==0
