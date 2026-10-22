@@ -2,11 +2,15 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync('public/customer.js','utf8');
 const helpers=source.slice(source.indexOf('  function persistLocationDraft()'),source.indexOf('  function applyTheme('));
 const verify=source.split('\n').find(line=>line.includes('async function verifyOTP(event)'));
+const gpsStart=source.indexOf("$('locate-button').addEventListener('click',()=>{");
+const gpsBinding=source.slice(gpsStart,source.indexOf("$('chat-form').addEventListener",gpsStart));
+assert.ok(gpsStart>=0&&gpsBinding.includes('getCurrentPosition'));
 function storage(initial={}){return {data:{...initial},getItem(k){return this.data[k]??null;},setItem(k,v){this.data[k]=String(v);},removeItem(k){delete this.data[k];}};}
 function setup(lang='ar',saved={},user=null){
   const elements=new Map(),timers=new Map();let nextTimer=0;
-  const element=id=>{if(!elements.has(id))elements.set(id,{id,value:'',hidden:false,disabled:false,textContent:'',listeners:{},setAttribute(k,v){this[k]=v;},removeAttribute(k){delete this[k];},after(child){elements.set(child.id,child);},addEventListener(name,cb){this.listeners[name]=cb;}});return elements.get(id);};
-  const ctx={console,AbortController,Date,Number,JSON,Math,Promise,requestedBrandId:'kps',locationDraftKey:'draft:kps',
+  const element=id=>{if(!elements.has(id))elements.set(id,{id,value:'',hidden:false,disabled:false,textContent:'',listeners:{},setAttribute(k,v){this[k]=v;},removeAttribute(k){delete this[k];},focus(){},after(child){elements.set(child.id,child);},addEventListener(name,cb){this.listeners[name]=cb;}});return elements.get(id);};
+  const gps=[];
+  const ctx={console,AbortController,Date,Number,JSON,Math,Promise,navigator:{geolocation:{getCurrentPosition(success,error,options){gps.push({success,error,options});}}},requestedBrandId:'kps',locationDraftKey:'draft:kps',
     state:{session:{user,csrf_token:user?'synthetic':null},location:null,branchId:'',service:'delivery',branches:[{id:'b1'}],entryEnabled:true,locationDraftRestored:true},
     mapLink:{revision:0,pending:false,url:'',appliedUrl:'',timer:null,controller:null,promise:null},sessionStorage:storage(saved),localStorage:storage(),
     $:element,node:(tag,cls)=>({tag,className:cls,setAttribute(k,v){this[k]=v;}}),entryText:(a,b)=>lang==='ar'?a:b,
@@ -14,7 +18,7 @@ function setup(lang='ar',saved={},user=null){
     queueQuote:()=>ctx.persistLocationDraft(),queueNearestBranches:()=>{},renderBranches:()=>{},renderService:()=>{},loadBranchCatalog:()=>{},
     setTimeout:fn=>{timers.set(++nextTimer,fn);return nextTimer;},clearTimeout:id=>timers.delete(id),window:{addEventListener(){}},
     renderAccount:()=>{},closeDialog:()=>{},showError:()=>{},busy:async(button,fn)=>fn(),errorMessage:e=>e.message};
-  vm.createContext(ctx);vm.runInContext(helpers+'\n'+verify,ctx);return {ctx,element,timers};
+  vm.createContext(ctx);vm.runInContext(helpers+'\n'+verify+'\n'+gpsBinding,ctx);return {ctx,element,timers,gps};
 }
 const link='https://maps.app.goo.gl/SYNTHETIC?g_st=iw',pin={lat:28.4,lng:45.9};
 async function main(){for(const lang of ['ar','en']){
@@ -49,6 +53,35 @@ async function main(){for(const lang of ['ar','en']){
   second({location:{lat:28.6,lng:46.2}});await fresh;first({location:pin});await old;assert.equal(race.ctx.state.location.lat,28.6);
   const expired=setup(lang,{'draft:kps':JSON.stringify({location:pin,owner:null,savedAt:Date.now()-9*60*60*1000})});
   assert.equal(expired.ctx.restoreLocationDraft(),false);
+  // Run the shipped standalone GPS listener: a later location action wins even
+  // if the device delivers its old success or error callback afterwards.
+  const position={coords:{latitude:pin.lat,longitude:pin.lng}};
+  for(const lateResult of ['success','error'])for(const action of ['pin','link','clear','cancel']){
+    const pending=setup(lang),{ctx:g,element:ge,gps}=pending;g.bindLocationLink();
+    ge('locate-button').listeners.click();assert.equal(ge('locate-button').disabled,true);
+    assert.equal(gps.length,1);assert.equal(gps[0].options.enableHighAccuracy,true);
+    if(action==='pin')g.saveLocation(28.5,46.1);
+    if(action==='link'){ge('map-url').value=link;g.scheduleMapLink();}
+    if(action==='clear')ge('clear-location').listeners.click();
+    if(action==='cancel')g.cancelMapLink(); // shared invalidation used by logout
+    const location=JSON.stringify(g.state.location),status=ge('location-state').textContent;
+    gps[0][lateResult](position);
+    assert.equal(JSON.stringify(g.state.location),location,action+' must keep its location after late '+lateResult);
+    assert.equal(ge('location-state').textContent,status,action+' must keep its status after late '+lateResult);
+    assert.equal(ge('locate-button').disabled,false,'later action releases the GPS button');
+  }
+  const gpsAfterLink=setup(lang);let finishOldLink;
+  gpsAfterLink.element('map-url').value=link;
+  gpsAfterLink.ctx.api=()=>new Promise(resolve=>{finishOldLink=resolve;});
+  const earlierLink=gpsAfterLink.ctx.resolveMapLink();
+  gpsAfterLink.element('locate-button').listeners.click();
+  gpsAfterLink.gps[0].success({coords:{latitude:28.7,longitude:46.3}});
+  finishOldLink({location:pin});await earlierLink;
+  assert.equal(gpsAfterLink.ctx.state.location.lat,28.7,'new GPS selection supersedes a pending earlier link');
+  const ordinary=setup(lang);ordinary.element('locate-button').listeners.click();ordinary.gps[0].success(position);
+  assert.equal(ordinary.ctx.state.location.lat,pin.lat);assert.equal(ordinary.element('locate-button').disabled,false);
+  const denied=setup(lang);denied.element('locate-button').listeners.click();denied.gps[0].error({code:1});
+  assert.equal(denied.ctx.state.location,null);assert.equal(denied.element('locate-button').disabled,false);
 }
-console.log('PASS: AR/EN automatic paste, shared-text links, deduplication, refresh, OTP ownership, clearing, expiry, invalid coordinates and stale-request protection.');}
+console.log('PASS: AR/EN automatic paste, shared-text links, deduplication, refresh, OTP ownership, clearing, expiry, invalid coordinates, stale-request protection and stale GPS success/error callbacks.');}
 main().catch(error=>{console.error(error);process.exitCode=1;});
