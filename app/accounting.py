@@ -86,7 +86,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     # Fetch qualifying orders once. Lateral task selection prevents split payment,
     # transfers, refunds or multiple tasks from multiplying order/item counts.
     q="""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
-      o.total_halalas,o.snapshot,o.payment_status,t.driver_id,u.display_name driver_name
+      o.total_halalas,o.snapshot,o.test_void,o.payment_status,t.driver_id,u.display_name driver_name
       FROM orders o LEFT JOIN LATERAL (SELECT driver_id FROM driver_tasks WHERE order_id=o.id
       ORDER BY (status='delivered') DESC,created_at DESC,id DESC LIMIT 1) t ON true
       LEFT JOIN users u ON u.id=t.driver_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
