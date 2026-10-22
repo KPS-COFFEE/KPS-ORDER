@@ -66,6 +66,16 @@ def test_branch_closure_blocks_new_orders_independently_of_delivery_window():
     assert catalog.branch_service(branch,'car',local('2026-10-09T12:30:00'))[0]
 
 
+@pytest.mark.parametrize('time,expected', [
+    ('2026-10-23T05:29:59', True), ('2026-10-23T05:30:00', False),
+    ('2026-10-23T12:29:59', False), ('2026-10-23T12:30:00', True),
+])
+def test_enabled_hafar_morning_respects_exact_friday_branch_closure(time, expected):
+    branch = configured_branch()
+    settings = {'morning_delivery': {'enabled': True}}
+    assert catalog.branch_service(branch, 'delivery', local(time), brand_settings=settings)[0] is expected
+
+
 @pytest.mark.postgres
 def test_current_branches_have_hours_without_activation_and_owner_override_survives(client):
     with db.tx() as conn:
