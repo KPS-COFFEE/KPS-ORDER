@@ -21,7 +21,8 @@ def test_multi_stop_is_deterministic_and_does_not_mutate_input():
 
 
 @pytest.fixture
-def services(gps_data):
+def services(gps_data,monkeypatch):
+    monkeypatch.setenv('CUSTOMER_DELIVERY_TRACKING_ENABLED','true')
     _,user=gps_data
     app=FastAPI();app.include_router(dispatch_map.router);app.include_router(map_services.router);app.include_router(delivery_tracking.router)
     app.dependency_overrides[auth.current_user]=lambda:user
@@ -190,3 +191,20 @@ def test_proximity_is_not_delivery_and_is_idempotent(services):
         assert c.execute("SELECT status FROM driver_tasks WHERE id='map-task-1'").fetchone()['status']=='picked_up'
     owner(user)
     assert any(a['kind']=='near_customer' for a in client.get('/api/operations/map-services/alerts').json()['alerts'])
+
+
+@pytest.mark.parametrize('setting',[None,'false','1','yes'])
+def test_customer_tracking_disabled_without_explicit_opt_in(monkeypatch,setting):
+    if setting is None:
+        monkeypatch.delenv('CUSTOMER_DELIVERY_TRACKING_ENABLED',raising=False)
+    else:
+        monkeypatch.setenv('CUSTOMER_DELIVERY_TRACKING_ENABLED',setting)
+    app=FastAPI();app.include_router(delivery_tracking.router)
+    app.dependency_overrides[auth.current_user]=lambda:{'id':'owner','role':'owner','brand_id':'kps'}
+    def forbidden_db():
+        raise AssertionError('Disabled tracking must not access location or token storage')
+    monkeypatch.setattr(db,'tx',forbidden_db)
+    with TestClient(app) as client:
+        assert client.post('/api/operations/orders/example/tracking-link',json={}).status_code==404
+        assert client.post('/api/delivery-tracking/view',json={'token':'a'*43,'route':True}).status_code==404
+        assert client.get('/delivery-track').status_code==404

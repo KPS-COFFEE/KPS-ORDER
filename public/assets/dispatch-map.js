@@ -28,6 +28,7 @@
   async function mount(host,options){
     if(!host)return null;
     let data={orders:options.orders||[],drivers:options.drivers||[],branches:options.branches||[],lang:options.lang||'ar'};
+    let customerTrackingEnabled=false;
     let map=null,library=null,destroyed=false,ready=false,fitted=false;const markers=new Map(),trackingLinks=new Map();
     const tr=(ar,en)=>data.lang==='en'?en:ar;
     const state=document.createElement('div');state.className='dispatch-map-state';
@@ -172,7 +173,7 @@
           detail.textContent=tr(pin.stale?'آخر موقع قديم · ':'آخر تحديث · ',pin.stale?'Stale last location · ':'Last update · ')+new Date(pin.updated_at).toLocaleTimeString(data.lang==='en'?'en-GB':'ar-SA')+tr(' · الدقة ',' · Accuracy ')+Math.round(pin.accuracy_m||0)+tr(' متر',' m');item.popupRoot.append(detail);
         }
         if(pin.kind==='order'&&options.onSelectOrder){const button=document.createElement('button');button.type='button';button.textContent=tr('فتح الطلب','Open order');button.addEventListener('click',()=>options.onSelectOrder(pin.id));item.popupRoot.append(button);}
-        if(pin.kind==='order'&&!['delivered','cancelled'].includes(pin.status)){
+        if(customerTrackingEnabled&&pin.kind==='order'&&!['delivered','cancelled'].includes(pin.status)){
           const share=document.createElement('button');share.type='button';share.textContent=tr('إنشاء رابط تتبع للعميل','Create customer tracking link');
           share.addEventListener('click',async()=>{share.disabled=true;try{const result=await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'POST',body:{}});if(destroyed)return;if(!/^\/delivery-track#[A-Za-z0-9_-]{43}$/.test(result.path))throw new Error('invalid link');trackingLinks.set(pin.id,{path:result.path,expires:Date.now()+4*3600000});refresh();}catch{item.popupRoot.append(serviceText(tr('تعذر إنشاء رابط؛ تحقق من حالة الطلب وصلاحياتك.','Link unavailable; check order status and permission.')));}finally{share.disabled=false;}});item.popupRoot.append(share);trackingControls(pin,item);
         }
@@ -187,6 +188,7 @@
       const config=await options.api('/api/operations/map-config');
       if(destroyed||!host.isConnected)return controller;
       if(!config.enabled||config.provider!=='mapbox'||!/^pk\./.test(config.public_token)){stateKind='missing';labels();return controller;}
+      customerTrackingEnabled=config.customer_tracking_enabled===true;
       publicToken=config.public_token;
       library=await sdk();if(destroyed||!host.isConnected)return controller;
       if(library.supported&&!library.supported())throw new Error('webgl');

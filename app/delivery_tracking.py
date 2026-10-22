@@ -12,10 +12,16 @@ from .map_services import quality, require, STAFF
 router=APIRouter(tags=['delivery-tracking'])
 
 
+def require_enabled():
+    if not dispatch_map.customer_tracking_enabled():
+        raise HTTPException(404,'تتبع العميل غير مفعل.')
+
+
 @router.post('/api/operations/orders/{order_id}/tracking-link')
 def create_link(order_id:str,user=Depends(auth.require_roles(*STAFF))):
     require(user,'orders_view')
     require(user,'drivers_view')
+    require_enabled()
     with db.tx() as c:
         order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(order_id,)).fetchone()
         order_access(c,user,order)
@@ -52,6 +58,7 @@ class TrackingToken(BaseModel):
 
 @router.post('/api/delivery-tracking/view')
 def view(body:TrackingToken,request:Request):
+    require_enabled()
     digest=hashlib.sha256(body.token.encode()).hexdigest()
     ip=request.client.host if request.client else 'unknown'
     with db.tx() as c:
@@ -100,5 +107,6 @@ def view(body:TrackingToken,request:Request):
 
 @router.get('/delivery-track')
 def page():
+    require_enabled()
     return FileResponse(Path(__file__).resolve().parents[1]/'public/delivery-track.html',
                         headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})

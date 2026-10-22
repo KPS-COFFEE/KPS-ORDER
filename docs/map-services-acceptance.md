@@ -15,3 +15,7 @@ This change belongs to KPS-ORDER. It does not alter Tilqa or require a new APK t
 Location health stores minute counts, accuracy and maximum gap between accepted GPS samples. It stores no coordinate history and does not reconstruct previous shifts. No historical GPS claim is made for Ibrahim's first pilot. Existing GPS publication requires the authenticated driver's own open shift; samples stop being accepted after shift closure.
 
 Dedicated PostgreSQL 18.6 and Chromium acceptance workflow: `.github/workflows/map-services.yml`. No real provider requests or messages are made by tests. Physical all-shift Android reliability, offline recovery and Play Protect distribution approval remain separate acceptance items.
+
+## Customer tracking defaults off
+
+Owner decision: customer-facing driver tracking is disabled by default. Only an explicit `CUSTOMER_DELIVERY_TRACKING_ENABLED=true` enables it. Staff map configuration omits tracking controls unless enabled; create, public view (including previously issued links) and tracking page return 404 while off. Revocation remains available to authorized staff. Customer address selection, staff maps, driver GPS and internal reports remain independent. This switch does not resolve cross-border processing or licensing compliance for remaining map services.
