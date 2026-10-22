@@ -1171,6 +1171,23 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             return {'collection_id':ids[0],'collection_ids':ids,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
         return mutate(c,user,request,'order.collect:'+oid,body.model_dump(),perform)
 
+class TestVoid(OperationBody):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    order_reference:str=Field(min_length=1,max_length=100)
+    expected_version:StrictInt=Field(ge=1)
+    expected_total_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
+    reason:str=Field(min_length=10,max_length=1800)
+    confirmed_no_cash_received:StrictBool
+
+@router.post('/orders/{oid}/test-void')
+def test_void_order(oid:str,body:TestVoid,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner')
+    with db.tx() as c:
+        from .owner_test_void import perform
+        # Recheck brand/order scope even for an idempotency replay.
+        order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone())
+        return mutate(c,user,request,'order.test_void:'+oid,body.model_dump(),lambda:perform(c,user,oid,body))
+
 class Refund(OperationBody):
     amount_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
     method:str
