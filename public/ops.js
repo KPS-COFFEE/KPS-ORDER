@@ -792,7 +792,21 @@
     form.addEventListener('submit',event=>{event.preventDefault();clearTimeout(timer);search();});
     form.elements.phone.addEventListener('input',schedule);form.elements.branch_id.addEventListener('change',schedule);
   }
-  async function customerOrder(complimentary=false){await loadBranches();await window.KPSCustomerOrder.open({api,mutation,tr,esc,money,modal,closeModal,user:state.user,branches:state.branches,complimentary,onCreated:async id=>{await loadPage();await orderDetail(id);}});}
+  async function customerOrder(complimentary=false){
+    const origin={page:state.page,userId:state.user?.id,x:window.scrollX,y:window.scrollY};
+    await loadBranches();
+    await window.KPSCustomerOrder.open({api,mutation,tr,esc,money,modal,closeModal,user:state.user,branches:state.branches,complimentary,onCreated:async id=>{
+      if(state.user?.id!==origin.userId)return;
+      await loadPage(true);
+      if(state.user?.id!==origin.userId)return;
+      setStatus(tr('تم تأكيد الطلب: ','Order confirmed: ')+id);
+      if(state.page!==origin.page)return;
+      await new Promise(resolve=>window.requestAnimationFrame(resolve));
+      if(state.user?.id!==origin.userId||state.page!==origin.page)return;
+      ($('#customer-order')||$('[data-action=customer-order]'))?.focus({preventScroll:true});
+      window.scrollTo({left:origin.x,top:origin.y,behavior:'instant'});
+    }});
+  }
   async function channelSettlement(id){
     const d=await api(`/api/channel-settlements/orders/${encodeURIComponent(id)}`),c=d.commercial;
     const beneficiary=c.settlement_beneficiary==='sami'?tr('مؤسسة سامي فهاد لافي الحربي لتقديم الوجبات','Sami Fahad Lafi Al-Harbi Meal Services Establishment'):tr('مؤسسة ريم فهاد لافي الحربي لتقديم الوجبات','Reem Fahad Lafi Al-Harbi Meal Services Establishment');
