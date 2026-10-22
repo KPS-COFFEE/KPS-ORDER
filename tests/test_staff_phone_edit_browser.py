@@ -18,7 +18,7 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
         browser = getattr(p, engine).launch()
         page = browser.new_page(viewport={'width': 390, 'height': 844})
         page.route('**/phone-edit-test', lambda route: route.fulfill(
-            content_type='text/html', body='<html><body><main id="modal"></main></body></html>'))
+            content_type='text/html; charset=utf-8', body='<html><head><meta charset="utf-8"></head><body><main id="modal"></main></body></html>'))
         page.goto(static_customer + '/phone-edit-test')
         page.add_script_tag(url=static_customer + '/assets/customer-order.js')
         page.evaluate('''async ({morning, lang}) => {
