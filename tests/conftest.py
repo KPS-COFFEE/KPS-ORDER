@@ -29,6 +29,7 @@ _PROVIDER_SECRETS = (
 _TEST_DEFAULTS = {
     'MAPBOX_ENABLED': 'false',
     'MAPBOX_CUSTOMER_ENABLED': 'false',
+    'GOOGLE_MAPS_CUSTOMER_ENABLED': 'false',
     'APP_ENV': 'testing',
     'DISPATCH_OFFER_ACCEPT_ENABLED': 'false',
     'DISPATCH_AUTO_ASSIGN_ENABLED': 'false',
@@ -51,7 +52,7 @@ def pytest_configure(config):
     for key in _PROVIDER_SECRETS:
         os.environ.pop(key, None)
     for key in list(os.environ):
-        if key.startswith(('KPS_PAYMENTS_', 'MAPBOX_PUBLIC_TOKEN_')):
+        if key.startswith(('KPS_PAYMENTS_', 'MAPBOX_PUBLIC_TOKEN_', 'GOOGLE_MAPS_BROWSER_KEY_', 'CUSTOMER_MAP_PROVIDER_')):
             os.environ.pop(key, None)
     os.environ.update(_TEST_DEFAULTS)
     config.addinivalue_line('markers', 'postgres: requires an explicit isolated TEST_DATABASE_URL')
@@ -64,7 +65,7 @@ def safe_test_environment(monkeypatch):
     for key in _PROVIDER_SECRETS:
         monkeypatch.delenv(key, raising=False)
     for key in list(os.environ):
-        if key.startswith(('KPS_PAYMENTS_', 'MAPBOX_PUBLIC_TOKEN_')):
+        if key.startswith(('KPS_PAYMENTS_', 'MAPBOX_PUBLIC_TOKEN_', 'GOOGLE_MAPS_BROWSER_KEY_', 'CUSTOMER_MAP_PROVIDER_')):
             monkeypatch.delenv(key, raising=False)
     # A test that needs the database must request database/client. Otherwise an
     # accidental app call fails closed instead of reaching a runtime resource.
