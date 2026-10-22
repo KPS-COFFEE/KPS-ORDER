@@ -125,8 +125,8 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     deadline_extensions=c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action='accounting.deadline.extended' AND a.entity_id=ANY(%s) ORDER BY a.created_at",([r['id'] for r in rows],)).fetchall()
     by_report={r['id']:r for r in rows}
     for event in deadline_extensions:
-        row=by_report[event['entity_id']];details=event['details']
-        daily[row['user_id'],row['day']]['adjustments']+=f"{event['actor_name']} · +48h · {details['original_due_at']} → {details['due_at']} · {details['reason']}\n"
+        row=by_report[event['entity_id']];extension_details=event['details']
+        daily[row['user_id'],row['day']]['adjustments']+=f"{event['actor_name']} · +48h · {extension_details['original_due_at']} → {extension_details['due_at']} · {extension_details['reason']}\n"
     for e in audit:
         before='before' if en else 'قبل';after='after' if en else 'بعد'
         daily[e['driver_id'],e['day']]['adjustments']+=f"{e['actor']} · {e['at'].astimezone(TZ).strftime('%Y/%m/%d %H:%M')} · {e['reason']}\n" + \

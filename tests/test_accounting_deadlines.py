@@ -44,3 +44,8 @@ def test_external_extension_once_scoped_and_audited(ops):
         'expected_revision':0,'bank_halalas':5000,'cash_due_halalas':10000,'note':'TEST reviewed'})
     card=actor('accountant').get('/api/accounting/manager-cards').json()['cards'][0]
     assert card['completion_percent']==50 and card['balance_completed']==1 and card['cash_completed']==0
+    day=card['day']
+    report=actor('accountant').get(f'/api/accounting/reports?group=driver_statement&start={day}&end={day}').json()
+    assert isinstance(report['settlements'],list) and len(report['settlements'])==1
+    assert report['deadline_extensions'][0]['details']['reason']=='TEST cash transfer delayed'
+    assert 'TEST cash transfer delayed' in report['rows'][0]['adjustments']
