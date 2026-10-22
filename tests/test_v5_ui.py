@@ -95,13 +95,14 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
         page.locator('#latitude').fill('28.4002')
         page.locator('#longitude').fill('45.9002')
         page.locator('#save-location').click()
-        expect(page.locator('#basket-error')).to_be_hidden()
-        expect(page.locator('#checkout-button')).to_be_enabled()
+        expect(page.locator('#basket-error')).to_be_visible()
+        expect(page.locator('#checkout-button')).to_be_disabled()
         expect(page.locator('#address')).to_have_value('')
+        expect(page.locator('#neighborhood')).to_have_attribute('required','')
         expect(page.locator('#neighborhood')).to_have_value('')
         page.locator('#neighborhood').fill('حي اختبار فقط')
         expect(page.locator('#checkout-button')).to_be_enabled()
-        _capture(page, 'TEST_ONLY_v5-delivery-basket-optional-neighborhood')
+        _capture(page, 'TEST_ONLY_v5-delivery-basket-required-neighborhood-optional-description')
         # Changing orientation and a shorter viewport keep key controls reachable.
         for viewport in ({'width': 844, 'height': 390}, {'width': 390, 'height': 620}):
             page.set_viewport_size(viewport)

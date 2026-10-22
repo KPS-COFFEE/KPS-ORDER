@@ -171,6 +171,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
             if delivery_center:delivery_center_scope(conn,user,body.branch_id)
             quote = catalog.quote_order(conn, body, for_update=True, **({'complimentary':True} if complimentary_order else {}))
+            if not delivery_center:
+                catalog.require_customer_delivery_neighborhood(body)
             if complimentary_order:
                 from . import complimentary
                 quote=complimentary.prepare(quote,body.kind,body.reason,user['id'])

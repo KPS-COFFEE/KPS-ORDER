@@ -740,7 +740,10 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False)
     minimum = max((b['settings'].get('minimum_order_halalas') for b in minimum_branches
                    if type(b['settings'].get('minimum_order_halalas')) is int), default=0)
     if not complimentary and body.service == 'delivery' and isinstance(minimum, int) and subtotal < minimum:
-        raise db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
+        error = db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
+        error.detail.update(minimum_order_halalas=minimum, subtotal_halalas=subtotal,
+                            remaining_halalas=minimum-subtotal, currency='SAR')
+        raise error
     fee = selected_branch['settings']['delivery_fee_halalas'] if body.service == 'delivery' else 0
     if subtotal + fee > 10000000:
         raise db.error(422, 'ORDER_VALUE_LIMIT', 'قيمة الطلب أعلى من الحد المسموح للموقع.')
@@ -761,10 +764,21 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False)
 
 
 
+def require_customer_delivery_neighborhood(body: QuoteBody):
+    # Checkout-only policy: shared staff quoting/address models stay compatible.
+    if body.service == 'delivery' and not body.customer.neighborhood.strip():
+        raise db.error(422, 'DELIVERY_NEIGHBORHOOD_REQUIRED', 'أدخل اسم حي التوصيل بصورة واضحة.')
+
+
 @router.post('/quote')
 def quote(body: QuoteBody, request: Request = None):
     with db.tx(pipeline=True) as conn:
-        result = {'quote': customer_quote_view(quote_order(conn, body))}
+        priced = quote_order(conn, body)
+        # This header requests storefront feedback; it grants no authorization.
+        # Customer creation/gift routes independently enforce the same policy.
+        if request is not None and request.headers.get('x-kps-context') == 'customer':
+            require_customer_delivery_neighborhood(body)
+        result = {'quote': customer_quote_view(priced)}
     return DatabaseJSONResponse(result) if request is not None else result
 
 
