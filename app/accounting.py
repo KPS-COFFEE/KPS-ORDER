@@ -663,6 +663,15 @@ def accounting_manager_cards(user=Depends(access)):
         return manager_cards(c,user,[b['id'] for b in branches(c,user)])
 
 
+@router.post('/driver-settlements/{report_id}/extend-deadline')
+def extend_accounting_deadline(report_id:str,body:Note,request:Request,user=Depends(access)):
+    if not auth.has_permission(user,REVIEW):fail('ACCOUNTING_FORBIDDEN','صلاحية الاعتماد غير متاحة.',403)
+    from .accounting_statements import extend_deadline
+    with db.tx() as c:
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.deadline:'+report_id,
+            body.model_dump(),lambda:extend_deadline(c,user,report_id,body.note))
+
+
 @router.post('/manager-cards/{manager_shift_id}/approve-day')
 def approve_accounting_day(manager_shift_id:str,body:Note,request:Request,user=Depends(access)):
     if not auth.has_permission(user,REVIEW):fail('ACCOUNTING_FORBIDDEN','صلاحية الاعتماد غير متاحة.',403)

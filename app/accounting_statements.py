@@ -1,12 +1,13 @@
 """Driver-owned accounting statements and immutable manager-day approvals."""
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 
 from . import db
 
 
 def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
-    q="""SELECT r.*,s.manager_shift_id,s.submission,mu.display_name manager_name,
+    q="""SELECT r.*,s.manager_shift_id,s.submission,s.scheduled_end_at,s.delivery_window_snapshot,
+      s.closed_at shift_closed_at,mu.display_name manager_name,
       u.display_name driver_name,
       coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) AS "day"
       FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=r.user_id
@@ -121,6 +122,11 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
         incidents.append(dict(day=r['occurred_on'],driver_id=r['subject_id'],driver=r['driver_name'],
             kind=kind,amount=amount,reason=r['description'],responsibility=responsibility,action=r['action']))
     audit=settlement_audit(c,user,rows,changes)
+    deadline_extensions=c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action='accounting.deadline.extended' AND a.entity_id=ANY(%s) ORDER BY a.created_at",([r['id'] for r in rows],)).fetchall()
+    by_report={r['id']:r for r in rows}
+    for event in deadline_extensions:
+        row=by_report[event['entity_id']];details=event['details']
+        daily[row['user_id'],row['day']]['adjustments']+=f"{event['actor_name']} · +48h · {details['original_due_at']} → {details['due_at']} · {details['reason']}\n"
     for e in audit:
         before='before' if en else 'قبل';after='after' if en else 'بعد'
         daily[e['driver_id'],e['day']]['adjustments']+=f"{e['actor']} · {e['at'].astimezone(TZ).strftime('%Y/%m/%d %H:%M')} · {e['reason']}\n" + \
@@ -136,10 +142,31 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     for identifier,name in names.items():
         entries=[r for r in output if r['driver_id']==identifier]
         summaries.append(dict(driver_id=identifier,driver=name,**{k:sum(r[k] for r in entries) for k in money}))
-    return safe(dict(group='driver_statement',rows=output,drivers=summaries,settlements=details,adjustment_history=audit,
+    return safe(dict(group='driver_statement',rows=output,drivers=summaries,settlements=details,adjustment_history=audit,deadline_extensions=deadline_extensions,
         incidents=incidents,branches=bs,period={'start':ds,'end':de,'timezone':'Asia/Riyadh'},generated_at=datetime.now(TZ),
         definitions=('Each delivered order counts once. Balance papers and physical cash are approved independently. Waiting cash is not a shortage. Shortages and surpluses remain separate per driver and channel against the system ledger. Incident values show recorded amounts and responsibility, without payroll deductions.' if en else
         'كل طلب مسلّم يُعد مرة واحدة. اعتماد ورقة الموازنة مستقل عن استلام الكاش. النقد المنتظر ليس عجزًا. العجز والفائض منفصلان لكل سائق ولكل وسيلة مقابل رصيد النظام. قيم المخالفات مبالغ مسجلة مع حالة المسؤولية ولا تنشئ خصمًا من الراتب.')))
+
+
+def closure_deadline(row, local, extension=None):
+    """Use the frozen shift window, never the date a paper reaches accounting."""
+    from .accounting import TZ
+    window=row.get('delivery_window_snapshot') or {}
+    morning=window.get('period')=='morning'
+    ends=[datetime.fromisoformat(w['window_end']) for bid,w in window.get('branches',{}).items()
+          if bid in row['branch_ids'] and w.get('window_end')]
+    end=max(ends) if ends else row.get('scheduled_end_at')
+    if end is None:
+        end=row.get('shift_closed_at') if morning else datetime.combine(row['day']+timedelta(days=1),time(4),TZ)
+    if end is None:
+        raise ValueError('Morning closure has no recorded shift end')
+    inside=bool(set(row['branch_ids'])&local)
+    policy='morning_24h' if morning else 'local_16h' if inside else 'external_72h'
+    due=(end+timedelta(hours=24) if morning else
+         datetime.combine(row['day']+timedelta(days=1),time(16),TZ) if inside else end+timedelta(hours=72))
+    original=due
+    if extension:due=datetime.fromisoformat(extension['details']['due_at'])
+    return dict(shift_end_at=end,deadline_policy=policy,original_due_at=original,due_at=due,extension=extension)
 
 
 def manager_cards(c,user,bids):
@@ -150,18 +177,45 @@ def manager_cards(c,user,bids):
     changes=histories(c,user,rows);groups={}
     local={b['id'] for b in c.execute('SELECT id,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall() if normalize_city(b['city'])=='حفر الباطن'}
     approved={r['manager_shift_id']:r for r in c.execute('SELECT id,manager_shift_id,created_at FROM accounting_daily_closures WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
+    extensions={r['entity_id']:r for r in c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action='accounting.deadline.extended' AND a.entity_id=ANY(%s)",([r['id'] for r in rows],)).fetchall()}
     for r in rows:
         history=changes[r['id']];v=driver_settlement_values(r['snapshot'],history[-1] if history else None)
-        due=r['day']+timedelta(days=1) if set(r['branch_ids'])&local else None
+        deadline=closure_deadline(r,local,extensions.get(r['id']))
+        finished=history[-1]['created_at'] if v['stage']=='cash_received' else None
+        deadline['overdue']=bool((finished or datetime.now(TZ))>=deadline['due_at'])
+        deadline['can_extend']=deadline['deadline_policy']=='external_72h' and not deadline['extension'] and not finished
         group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id']),due_on=None))
-        if due and (not group['due_on'] or due<group['due_on']):group['due_on']=due
-        group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,**v))
+        group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,**v,**deadline))
     for group in groups.values():
         group['completed']=sum(r['stage']=='cash_received' for r in group['drivers'])
         group['total']=len(group['drivers'])
         group['ready']=group['completed']==group['total']
-        group['overdue']=bool(group['due_on'] and datetime.now(TZ).date()>group['due_on'] and not group['ready'])
+        group['balance_completed']=sum(r['balance_approved'] for r in group['drivers'])
+        group['cash_completed']=sum(r['cash_recorded'] for r in group['drivers'])
+        group['completion_percent']=int(100*(group['balance_completed']+group['cash_completed'])/(2*group['total']))
+        pending=[r for r in group['drivers'] if r['stage']!='cash_received']
+        group['due_at']=min(r['due_at'] for r in (pending or group['drivers']))
+        group['due_on']=group['due_at'].date()
+        group['overdue_count']=sum(r['overdue'] for r in pending)
+        group['overdue']=bool(group['overdue_count'])
     return safe({'cards':sorted(groups.values(),key=lambda g:(bool(g['approved_day']),-g['day'].toordinal(),g['manager_name']))})
+
+
+def extend_deadline(c,user,report_id,note):
+    from .accounting import branches,fail
+    allowed=[b['id'] for b in branches(c,user)]
+    # The report lock serializes extension against another extension/settlement.
+    c.execute('SELECT id FROM closure_reports WHERE id=%s FOR UPDATE',(report_id,))
+    row=next((r for r in source_rows(c,user,allowed) if r['id']==report_id),None)
+    if not row:fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
+    if row['user_id']==user['id']:fail('SELF_SETTLEMENT','التمديد من حساب محاسب مستقل.',403)
+    card=next(g for g in manager_cards(c,user,allowed)['cards'] if g['id']==row['manager_shift_id'])
+    driver=next(r for r in card['drivers'] if r['id']==report_id)
+    if card['approved_day'] or not driver['can_extend']:fail('EXTENSION_NOT_ALLOWED','التمديد مرة واحدة للفروع الخارجية غير المكتملة فقط.',409)
+    due=datetime.fromisoformat(driver['due_at'])+timedelta(hours=48)
+    details=dict(reason=note,brand_id=user['brand_id'],hours=48,original_due_at=driver['due_at'],due_at=due.isoformat())
+    db.audit(c,user['id'],'accounting.deadline.extended','report',report_id,details)
+    return details
 
 
 def approve_day(c,user,manager_shift_id,note):
