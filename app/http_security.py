@@ -76,7 +76,7 @@ class SecurityMiddleware:
                 headers = MutableHeaders(scope=message)
                 headers['X-Request-ID'] = trace
                 headers['X-Content-Type-Options'] = 'nosniff'
-                headers['Referrer-Policy'] = 'same-origin'
+                headers['Referrer-Policy'] = 'no-referrer' if path == '/delivery-track' else 'same-origin'
                 headers['X-Frame-Options'] = 'DENY'
                 headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
                 headers['Content-Security-Policy'] = (
@@ -86,9 +86,9 @@ class SecurityMiddleware:
                 # Keep staff and customer map switches independent.
                 from .customer_map import enabled as customer_map_enabled
                 from .dispatch_map import enabled as dispatch_map_enabled
-                if ((path in ('/ops', '/ops.html') and dispatch_map_enabled())
+                if ((path in ('/ops', '/ops.html', '/delivery-track') and dispatch_map_enabled())
                         or (path in ('/', '/index.html') and customer_map_enabled())):
-                    headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+                    headers['Referrer-Policy'] = 'no-referrer' if path == '/delivery-track' else 'strict-origin-when-cross-origin'
                     headers['Content-Security-Policy'] = (
                         "default-src 'self'; script-src 'self' https://api.mapbox.com/mapbox-gl-js/v3.33.0/; "
                         "style-src 'self' 'unsafe-inline' https://api.mapbox.com/mapbox-gl-js/v3.33.0/; "

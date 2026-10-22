@@ -7,6 +7,11 @@ from . import auth
 router = APIRouter(prefix='/api/operations', tags=['operations'])
 
 
+def customer_tracking_enabled():
+    # Explicit owner opt-in; never enabled by MAPBOX_ENABLED alone.
+    return os.getenv('CUSTOMER_DELIVERY_TRACKING_ENABLED', '').lower() == 'true'
+
+
 def enabled():
     return os.getenv('MAPBOX_ENABLED', '').lower() == 'true'
 
@@ -21,7 +26,8 @@ def map_config(user=Depends(auth.require_roles('owner', 'delivery_manager', 'del
     if not enabled() or not re.fullmatch(r'pk\.[A-Za-z0-9_.-]{20,2048}', token):
         return {'enabled': False}
     return {'enabled': True, 'provider': 'mapbox', 'public_token': token,
-            'style': 'mapbox://styles/mapbox/streets-v12'}
+            'style': 'mapbox://styles/mapbox/streets-v12',
+            'customer_tracking_enabled': customer_tracking_enabled()}
 
 
 # One last observation per driver, never a route history. All clocks are server
@@ -61,6 +67,8 @@ def update_driver_location(body: DriverLocation, user=Depends(auth.require_roles
                         'brand_id=EXCLUDED.brand_id,shift_id=EXCLUDED.shift_id,lat=EXCLUDED.lat,lng=EXCLUDED.lng,'
                         'accuracy_m=EXCLUDED.accuracy_m,updated_at=now() RETURNING updated_at',
                         (user['id'], user['brand_id'], shift['id'], body.lat, body.lng, body.accuracy_m)).fetchone()
+        from .map_services import record_sample
+        record_sample(c, user, shift, body, previous, row['updated_at'])
         return safe({'updated_at': row['updated_at'], 'shift_id': shift['id'], 'throttled': False})
 
 
@@ -145,7 +153,7 @@ def route_context(c, user, driver_id):
                     "FROM users u JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
                     "JOIN driver_latest_locations g ON g.driver_id=u.id AND g.shift_id=s.id AND g.brand_id=u.brand_id "
                     "WHERE u.id=%s AND u.brand_id=%s AND u.role='driver' AND u.active "
-                    "AND s.kind='driver' AND s.status='open' AND g.updated_at>=now()-interval '120 seconds'",
+                    "AND s.kind='driver' AND s.status='open' AND g.updated_at>=now()-interval '120 seconds' AND g.accuracy_m<=100",
                     (driver_id, user['brand_id'])).fetchone()
     if not row:
         raise HTTPException(409, 'يلزم موقع حديث للسائق وشفت مفتوح.')
