@@ -39,7 +39,9 @@
         if(!fd.get('lat').trim()||!fd.get('lng').trim())throw new Error(tr('أدخل رابط دبوس العميل أو إحداثياته.','Enter the customer pin link or coordinates.'));
         location={lat:Number(fd.get('lat')),lng:Number(fd.get('lng'))};
       }
-      const body={brand_id:user.brand_id,branch_id:fd.get('branch_id'),service:'delivery',payment_method:fd.get('payment_method'),customer:{name:fd.get('name').trim()||'عميل',phone:fd.get('phone'),neighborhood:fd.get('neighborhood'),address:fd.get('address'),location},notes:fd.get('notes'),items:cart.map(({label,...item})=>item)};
+      const phone=normalizedPhone(fd.get('phone'));
+      if(!phone)throw new Error(tr('أدخل رقم جوال سعودي كاملًا.','Enter a complete Saudi mobile number.'));
+      const body={brand_id:user.brand_id,branch_id:fd.get('branch_id'),service:'delivery',payment_method:fd.get('payment_method'),customer:{name:fd.get('name').trim()||'عميل',phone,neighborhood:fd.get('neighborhood'),address:fd.get('address'),location},notes:fd.get('notes'),items:cart.map(({label,...item})=>item)};
       if(complimentary){body.kind=fd.get('kind');body.reason=String(fd.get('notes')||'').trim();body.payment_method='cash';if(!body.reason)throw new Error(tr('اكتب السبب باختصار.','Enter a short reason.'));}
       const key=JSON.stringify(body);
       if(!review||review.key!==key){
@@ -70,7 +72,28 @@
     form.addEventListener('input',invalidate);form.addEventListener('change',invalidate);
     const lookupBox=form.querySelector('#staff-customer-lookup');
     if(morning)lookupBox.textContent=tr('أدخل بيانات العميل من محادثة الواتساب. سجل العملاء السابق غير متاح بهذه الصلاحية.','Enter customer details from the WhatsApp conversation. Previous customer history is not available with this access.');
-    function normalizedPhone(value){const digits=String(value).replace(/[٠-٩]/g,d=>String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[۰-۹]/g,d=>String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[^0-9]/g,'');return /^05[0-9]{8}$/.test(digits)?'+966'+digits.slice(1):/^9665[0-9]{8}$/.test(digits)?'+'+digits:/^009665[0-9]{8}$/.test(digits)?'+'+digits.slice(2):null;}
+    function compactPhone(value){return String(value).replace(/[٠-٩]/g,d=>String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[۰-۹]/g,d=>String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[\s()\-\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g,'');}
+    function normalizedPhone(value){const phone=compactPhone(value);return /^0?5[0-9]{8}$/.test(phone)?'+966'+phone.replace(/^0/,''):/^\+?9665[0-9]{8}$/.test(phone)?'+'+phone.replace(/^\+/,''):/^009665[0-9]{8}$/.test(phone)?'+'+phone.slice(2):null;}
+    const phoneInput=form.elements.phone;
+    // Remove presentation characters without rewriting the country code while
+    // the user edits, or moving the selection to the end of the field.
+    phoneInput.addEventListener('input',()=>{
+      const value=phoneInput.value,clean=compactPhone(value);
+      if(value===clean)return;
+      const start=compactPhone(value.slice(0,phoneInput.selectionStart)).length;
+      const end=compactPhone(value.slice(0,phoneInput.selectionEnd)).length;
+      const direction=phoneInput.selectionDirection;
+      phoneInput.value=clean;phoneInput.setSelectionRange(start,end,direction);
+    });
+    // Clean before maxlength is applied, including WhatsApp's invisible markers.
+    phoneInput.addEventListener('paste',event=>{
+      if(!event.clipboardData)return;
+      const text=compactPhone(event.clipboardData.getData('text'));
+      const start=phoneInput.selectionStart,end=phoneInput.selectionEnd;
+      if(phoneInput.value.length-(end-start)+text.length>phoneInput.maxLength)return;
+      event.preventDefault();phoneInput.setRangeText(text,start,end,'end');
+      phoneInput.dispatchEvent(new Event('input',{bubbles:true}));
+    });
     async function lookupCustomer(){const seq=++lookupSequence,phone=normalizedPhone(form.elements.phone.value);if(!phone){lookupBox.textContent=tr('أدخل رقم جوال سعودي كاملًا.','Enter a complete Saudi mobile number.');return;}lookupBox.textContent=tr('جارٍ البحث…','Searching…');try{const data=await api('/api/orders/customer-lookup?'+new URLSearchParams({phone,branch_id:form.elements.branch_id.value}));if(seq!==lookupSequence||!form.isConnected)return;const contacts=data.contacts||[];lookupBox.innerHTML=`<p>${esc(contacts.length?data.ambiguous?tr('توجد بيانات متعددة؛ اختر البيانات المناسبة بعد تأكيدها مع العميل. لا يتم دمج الحسابات.','Multiple records found. Confirm with the customer and choose the appropriate details. Accounts are not merged.'):tr('بيانات مسجلة — اختر العنوان بعد تأكيده مع العميل.','Saved details — confirm the address with the customer before selecting.'):tr('رقم جديد؛ تحفظ بيانات العميل عند تأكيد أول طلب.','New number. Customer details are saved when the first order is confirmed.'))}</p><p class="small-text">${esc(tr('الجوال غير موثق بهذه العملية.','This operation does not verify mobile ownership.'))}</p>`;contacts.forEach(contact=>{const addresses=contact.addresses?.length?contact.addresses:[contact];addresses.forEach(address=>{const item={...contact,...address};const button=document.createElement('button');button.type='button';button.className='quiet customer-address-choice';button.textContent=[item.name,item.phone,item.neighborhood,item.address,item.location?`${item.location.lat}, ${item.location.lng}`:''].filter(Boolean).join(' · ');button.addEventListener('click',()=>{if(normalizedPhone(form.elements.phone.value)!==phone)return;selectedContactPhone=phone;for(const key of ['name','address','neighborhood'])form.elements[key].value=item[key]||'';form.elements.lat.value=item.location?.lat??'';form.elements.lng.value=item.location?.lng??'';form.elements.map_url.value='';invalidate();lookupBox.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));});lookupBox.append(button);});});}catch(e){if(seq===lookupSequence)lookupBox.textContent=e.message;}}
     function clearSelectedContact(){if(!selectedContactPhone)return;selectedContactPhone=null;for(const key of ['name','address','neighborhood','lat','lng','map_url'])form.elements[key].value='';invalidate();}
     if(!morning){
