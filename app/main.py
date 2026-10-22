@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import psycopg
+from anyio import to_thread
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
@@ -20,11 +21,19 @@ from .host_policy import OfficialHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
+# Each release process owns four database connections. Forty simultaneous
+# sync workers per process only multiply GIL/pool contention under bursts.
+# Waiting HTTP requests remain queued on the event loop with the same
+# authorization, transaction, timeout and response behavior.
+HTTP_THREAD_TOKENS = 8
 
 
 @asynccontextmanager
 async def lifespan(app):
     background_tasks = []
+    thread_limiter = to_thread.current_default_thread_limiter()
+    previous_thread_tokens = thread_limiter.total_tokens
+    thread_limiter.total_tokens = HTTP_THREAD_TOKENS
     try:
         app.state.database_configured = bool(os.getenv('DATABASE_URL'))
         if app.state.database_configured:
@@ -53,7 +62,10 @@ async def lifespan(app):
                 with suppress(asyncio.CancelledError):
                     await task
         finally:
-            db.close_pools()
+            try:
+                db.close_pools()
+            finally:
+                thread_limiter.total_tokens = previous_thread_tokens
 
 
 app = FastAPI(title='KPS Independent Orders', version='5.0.0', lifespan=lifespan,
