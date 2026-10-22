@@ -261,7 +261,7 @@ def configuration(user=Depends(auth.require_configuration())):
     with db.tx() as conn:
         result = {'brand': conn.execute('SELECT * FROM brands WHERE id=%s',(user['brand_id'],)).fetchone(),
                   'branches': conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no',(user['brand_id'],)).fetchall(),
-                  'products': conn.execute('SELECT * FROM products WHERE brand_id=%s ORDER BY category,name',(user['brand_id'],)).fetchall(),
+                  'products': catalog.menu_display_order(conn.execute('SELECT * FROM products WHERE brand_id=%s ORDER BY category,name',(user['brand_id'],)).fetchall(), user['brand_id']),
                   'users': conn.execute('SELECT id,username,display_name,role,brand_id,branch_ids,phone,active FROM users WHERE brand_id=%s ORDER BY role,display_name',(user['brand_id'],)).fetchall(),
                   'banners': conn.execute('SELECT * FROM banners WHERE brand_id=%s ORDER BY sort_order,created_at',(user['brand_id'],)).fetchall(),
                   'settings': conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(user['brand_id'],)).fetchone()['settings']}

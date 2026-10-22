@@ -33,6 +33,14 @@ FINAL_MENU_MANIFEST_SHA256 = '57d67963b0ac752a179ffe60ce25f81fe06ab1b6c19a161769
 KHALIYA_SOURCES = {'classic': 'kps-34', 'pecan': 'kps-33'}
 
 
+def menu_display_order(products, brand_id):
+    """Keep Enbishan beverages last, preserving every other relative position."""
+    if brand_id != 'enbishan':
+        return products
+    beverages = {'المشروبات', 'مشروبات', 'beverages', 'beverage', 'drinks', 'المشروبات - beverage'}
+    return sorted(products, key=lambda product: str(product.get('category') or '').strip().casefold() in beverages)
+
+
 def is_khaliya(product):
     return product['brand_id'] == 'kps' and product['id'] in KHALIYA_SOURCES.values()
 
@@ -412,7 +420,7 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
         branch = branch_query.fetchone() if branch_query else None
         if branch_id and not branch:
             raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود.')
-        products = products_query.fetchall()
+        products = menu_display_order(products_query.fetchall(), brand_id)
         preferences = preferences_query.fetchone()
         target = khaliya_branch(conn) if branch and brand_id == 'kps' and service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن' else None
         classic = classic_query.fetchone() if classic_query else None

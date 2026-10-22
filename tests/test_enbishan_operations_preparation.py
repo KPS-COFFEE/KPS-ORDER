@@ -21,6 +21,20 @@ def target(number=1):
     return {'id': f'enbishan-{number}', 'brand_id': 'enbishan', 'branch_no': number, 'settings': {}}
 
 
+def test_beverages_last_preserves_food_combo_order_prices_and_kps_order():
+    products = [{'id':'pepsi','category':'المشروبات','price_halalas':250},
+                {'id':'leaves','category':'محاشي','price_halalas':1200},
+                {'id':'mojito-combo','category':'أصناف أخرى','price_halalas':1950},
+                {'id':'water','category':'المشروبات','price_halalas':100},
+                {'id':'kibbeh','category':'مقليات','price_halalas':1400}]
+    before = deepcopy(products)
+    ordered = catalog.menu_display_order(products, 'enbishan')
+    assert [p['id'] for p in ordered] == ['leaves','mojito-combo','kibbeh','pepsi','water']
+    assert products == before
+    assert {p['id']:p['price_halalas'] for p in ordered} == {p['id']:p['price_halalas'] for p in products}
+    assert catalog.menu_display_order(products,'kps') is products
+
+
 def test_independent_snapshot_preserves_owner_edits_and_never_copies_sensitive_settings():
     origin, destination = source(), target()
     first = prepare_branch_patches([origin], [destination])[0]

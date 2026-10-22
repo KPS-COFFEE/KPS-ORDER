@@ -132,6 +132,8 @@
   },
   "sms_activation": {"sender": "ENBISHAN", "provider": "tawked", "provider_approval": "pending", "real_sms_enabled": false},
   "customer_layout": {
+    "beverages_last": true,
+    "beverages_last_surfaces": ["customer_catalog", "delivery_manager_catalog", "owner_catalog"],
     "reference_brand": "kps",
     "same_card_and_category_ordering_controls": true,
     "identity": "Enbishan original logo and colors"
