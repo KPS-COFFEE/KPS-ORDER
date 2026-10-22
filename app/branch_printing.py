@@ -537,7 +537,13 @@ def resolve_print_alert(identifier: str, body: AlertAction, user=Depends(operato
 def jobs(user=Depends(printer_admin)):
     with db.tx() as conn:
         rows=conn.execute('SELECT id,branch_id,device_id,order_id,kind,status,created_at,claimed_at,finished_at,reprint_reason FROM branch_print_jobs WHERE brand_id=%s ORDER BY created_at DESC LIMIT 100',(user['brand_id'],)).fetchall()
-        return {'jobs':[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]}
+        rows=[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import order_allowed
+            duty=conn.execute('SELECT opened_at FROM shifts WHERE id=%s',(user['_morning_manager_context']['shift_id'],)).fetchone()
+            rows=[r for r in rows if (order_allowed(user,conn.execute('SELECT * FROM orders WHERE id=%s',(r['order_id'],)).fetchone(),conn)
+                                     if r.get('order_id') else r['created_at']>=duty['opened_at'])]
+        return {'jobs':rows}
 
 
 @router.post('/bridge/next')

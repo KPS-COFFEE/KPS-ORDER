@@ -96,6 +96,9 @@ def driver_locations(user=Depends(auth.require_roles('owner', 'delivery_manager'
                          "WHERE g.brand_id=%s AND u.active AND u.role='driver' AND s.kind='driver' AND s.status='open' "
                          "AND g.updated_at > now()-interval '24 hours' ORDER BY u.display_name,u.id",
                          (user['brand_id'],)).fetchall()
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import shift_allowed
+            rows=[r for r in rows if shift_allowed(user,c.execute('SELECT * FROM shifts WHERE id=%s',(r['shift_id'],)).fetchone())]
         destinations = driver_destination.metadata(c, user, rows)
         visible = []
         for row in rows:
@@ -157,6 +160,8 @@ def route_context(c, user, driver_id):
                     (driver_id, user['brand_id'])).fetchone()
     if not row:
         raise HTTPException(409, 'يلزم موقع حديث للسائق وشفت مفتوح.')
+    if user.get('_morning_manager_context'):
+        shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone())
     branches = [b for b in row['branch_ids'] if b in row['shift_branches'] and
                 (user['role'] == 'owner' or b in user.get('branch_ids', []))]
     if not branches:

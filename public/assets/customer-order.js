@@ -4,7 +4,6 @@
   window.KPSCustomerOrder={open:async function(ctx){
     const {api,mutation,tr,esc,money,modal,closeModal,user,branches,onCreated,complimentary=false}=ctx;
     const morning=Boolean(user.delivery_context);
-    if(morning&&complimentary)throw new Error(tr('الضيافة والتعويض غير متاحين في صلاحيات الصباح.','Hospitality and compensation are not available in morning access.'));
     const current=await api('/api/shifts/current');
     const covered=new Set((current.shifts||[]).filter(s=>s.user_id===user.id&&s.kind==='manager'&&s.status==='open').flatMap(s=>s.branch_ids||[]));
     const allowed=branches.filter(b=>covered.has(b.id)&&(!morning||user.delivery_context.branch_ids.includes(b.id)));

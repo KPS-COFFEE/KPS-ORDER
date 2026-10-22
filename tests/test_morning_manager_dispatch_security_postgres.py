@@ -120,7 +120,7 @@ def test_manager_preparation_intervention_requires_actual_driver_acceptance_and_
         replay = post(client, path, body, key)
         assert replay.status_code == 200 and replay.json() == result.json(), replay.text
         forbidden = post(client, path, body | {'status': 'cancelled'}, key)
-        assert forbidden.status_code == 403, forbidden.text
+        assert forbidden.status_code == 409, forbidden.text
     with db.tx() as c:
         task = c.execute('SELECT * FROM driver_tasks WHERE id=%s', (tid,)).fetchone()
         assert task['status'] == 'accepted' and task['picked_up_at'] is None
