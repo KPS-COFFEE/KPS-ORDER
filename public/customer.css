@@ -101,3 +101,8 @@ html[dir="rtl"] .account-action::after{transform:rotate(-45deg)}
 .customer-progress-steps li.current{border-color:var(--accent);font-weight:700;box-shadow:inset 0 -3px var(--accent)}
 .customer-progress-steps li.complete{color:var(--success)}
 @media(max-width:480px){.customer-progress{padding:.8rem}.customer-progress-steps li{flex-basis:calc(50% - .65rem)}}
+
+/* Small HTTPS indicator below the header, independent of ordering and sign-in. */
+.secure-connection{display:flex;align-items:center;justify-content:center;gap:5px;margin:0;padding:6px 12px;color:#386337;font-size:12px;line-height:1.5}
+.secure-connection[hidden]{display:none!important}
+.secure-connection svg{width:14px;height:14px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}

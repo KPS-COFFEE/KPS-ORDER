@@ -6,6 +6,7 @@
   let language='ar';
   try{if(localStorage.getItem(languageStorageKey)==='en')language='en';}catch{}
   const uiStrings={
+    "secure_connection":{"ar":"اتصال آمن","en":"Secure connection"},
     "footer_privacy":{"ar": "الخصوصية", "en": "Privacy"},
     "error_GIFT_CHANGED":{"ar":"تغير استحقاق الهدية أو توفرها. راجع السلة قبل التأكيد.","en":"Gift eligibility or availability changed. Review your basket before confirming."},
     "error_POLICY_CHANGED":{"ar":"تغيرت الإعدادات من جلسة أخرى. افتحها مجددًا.","en":"Settings changed in another session. Open them again."},
@@ -638,6 +639,11 @@
     toggle.setAttribute('aria-label',language==='ar'?'Switch to English':'التبديل إلى العربية');
   }
   const brandParameters=new URLSearchParams(location.search);
+  // Only describe the connection as secure when this page uses HTTPS.
+  const secureConnection=$('secure-connection');
+  if(secureConnection)secureConnection.hidden=location.protocol!=='https:';
+
+
   const brandValue=brandParameters.has('brand_id')?brandParameters.get('brand_id'):'kps';
   const requestedBrandId=brandParameters.getAll('brand_id').length<=1&&/^[a-z][a-z0-9_-]{1,59}$/.test(brandValue||'')?brandValue:null;
   const basketStorageKey=`kps-unconfirmed-basket-v2:${requestedBrandId||'invalid'}`;
