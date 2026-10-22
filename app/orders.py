@@ -181,7 +181,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 from .morning_manager_context import order_allowed
                 candidate = {'brand_id': body.brand_id, 'branch_id': execution_branch_id,
                              'service': body.service, 'snapshot': quote}
-                if (not delivery_center or complimentary_order
+                if (not delivery_center
                         or not order_allowed(user, candidate)
                         or quote['branch_no'] != 2
                         or catalog.normalize_city(quote['branch_city']) != 'حفر الباطن'):
@@ -537,6 +537,8 @@ def customer_search(phone: str=Query(min_length=1,max_length=30),branch_id: str|
         if not db.rate_limit(conn,'customer-search:'+user['id'],30,60):
             raise db.error(429,'CUSTOMER_LOOKUP_RATE_LIMIT','محاولات بحث كثيرة. انتظر قليلًا.')
         clauses=['o.brand_id=%s'];args=[user['brand_id']]
+        from .morning_manager_context import order_filter
+        morning_clause,morning_args=order_filter(user);clauses.append(morning_clause);args.extend(morning_args)
         if branch_id:clauses.append('o.branch_id=%s');args.append(branch_id)
         elif user['role']!='owner':clauses.append('o.branch_id=ANY(%s)');args.append(user.get('branch_ids') or [])
         if user['role'] in {'delivery_manager','delivery_staff'}:clauses.append("o.service='delivery'")
@@ -568,9 +570,11 @@ def customer_lookup(phone: str=Query(min_length=8,max_length=30),branch_id: str=
             raise db.error(429,'CUSTOMER_LOOKUP_RATE_LIMIT','محاولات بحث كثيرة. انتظر قليلًا.')
         # Existing authorized order snapshots are the branch-scoped address book.
         # Do not expose all addresses of an account shared with another branch.
-        rows=conn.execute("SELECT customer_id,customer FROM orders WHERE brand_id=%s AND branch_id=%s AND normalized_identity_phone(customer->>'phone')=%s"+
-            (" AND service='delivery'" if user['role'] in {'delivery_manager','delivery_staff'} else '')+
-            ' ORDER BY created_at DESC,id DESC LIMIT 50',(user['brand_id'],branch_id,normalized)).fetchall()
+        from .morning_manager_context import order_filter
+        morning_clause,morning_args=order_filter(user)
+        rows=conn.execute("SELECT customer_id,customer FROM orders o WHERE o.brand_id=%s AND o.branch_id=%s AND normalized_identity_phone(o.customer->>'phone')=%s"+
+            (" AND o.service='delivery'" if user['role'] in {'delivery_manager','delivery_staff'} else '')+
+            ' AND '+morning_clause+' ORDER BY o.created_at DESC,o.id DESC LIMIT 50',tuple([user['brand_id'],branch_id,normalized,*morning_args])).fetchall()
         contacts=[];seen=set();principals=set()
         for row in rows:
             principal=row['customer_id'];principals.add(principal)
@@ -779,7 +783,8 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
             # Assignment/closure already use this lock order. Acquire the lane
             # before locking the order, including acceptance→auto-assignment.
             morning_dispatch.lock_operations(conn)
-        morning_fallback = bool(user.get('_morning_manager_context') and morning_dispatch.launch_order(conn,visible))
+        morning_fallback = bool(user.get('_morning_manager_context') and morning_dispatch.launch_order(conn,visible)
+                                and body.status in {'preparing','ready'})
         if morning_fallback and (body.status not in {'preparing','ready'}
                 or not 3 <= len(body.reason.strip()) <= 500 or '\x00' in body.reason):
             raise db.error(403,'MORNING_PREPARATION_INTERVENTION','تدخل مدير الصباح للتجهيز فقط مع توضيح السبب.')

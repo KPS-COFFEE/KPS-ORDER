@@ -26,10 +26,9 @@
       <label>${esc(tr('بداية عداد الإسناد','Assignment clock starts'))}<select name="assignment_start"><option value="manager_accepted" ${draft.assignment_start==='manager_accepted'?'selected':''}>${esc(tr('من قبول المدير','From manager acceptance'))}</option><option value="created" ${draft.assignment_start==='created'?'selected':''}>${esc(tr('من إنشاء الطلب','From order creation'))}</option></select></label>
       <fieldset><legend>${esc(tr('اختبار المسودة قبل الحفظ','Test draft before saving'))}</legend><div class="form-columns"><select name="test_stage">${Object.entries(labels).map(([k,l])=>`<option value="${k}">${esc(tr(l[0],l[1]))}</option>`).join('')}</select><label>${esc(tr('الوقت المنقضي بالدقائق','Elapsed minutes'))}<input type="number" name="test_minutes" value="1.5" min="0" step="0.1"></label></div><output id="experience-test" aria-live="polite"></output></fieldset>
       <label>${esc(tr('سبب التغيير','Reason for change'))}<textarea name="reason" required minlength="3" maxlength="500"></textarea></label><p class="form-error" role="alert"></p><button type="submit">${esc(tr('حفظ واعتماد من المالك','Save and approve as owner'))}</button>
-      ${!user.employee_sms_email_retired?`<label>${esc(tr('كلمة مرور المالك لتأكيد الاعتماد','Owner password to confirm approval'))}<input name="step_up_password" type="password" autocomplete="current-password" required></label>`:''}
     </form>`,async(fd)=>{
       const next=read(fd);
-      await ctx.authorize(fd.get('step_up_password')||undefined);
+      await ctx.authorize();
       await api('/api/experience/policy',{method:'PUT',body:{policy:next,expected_version:policy.version,reason:fd.get('reason')}});
       closeModal();await ctx.onSaved();
     });

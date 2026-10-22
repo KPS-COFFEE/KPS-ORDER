@@ -43,7 +43,7 @@ def update_alert_policy(body: dict, user=Depends(auth.require_roles('owner')),
             second + 2 * body['second_ring_seconds'] + .3 > continuous):
         raise db.error(422, 'ALERT_POLICY_INVALID', 'رتب أوقات التنبيه دون تداخل؛ مدة الدقة من ثانية إلى عشر ثوانٍ.')
     with db.tx() as conn:
-        auth.require_owner_step_up(conn, user)
+        # Operational bell settings use owner confirmation, without a new OTP.
         def perform():
             row = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR UPDATE', (user['brand_id'],)).fetchone()
             settings = row['settings'] | {'alert_policy': body}

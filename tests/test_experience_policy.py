@@ -118,7 +118,8 @@ def test_owner_api_rejects_other_roles(role):
     assert client.put('/api/experience/policy',json={'policy':p,'expected_version':0,'reason':'اختبار'}).status_code == 403
 
 
-def test_owner_save_is_brand_scoped_versioned_and_audited(monkeypatch):
+@pytest.mark.parametrize('brand', ['kps', 'enbishan'])
+def test_owner_save_without_extra_otp_is_brand_scoped_versioned_and_audited(monkeypatch, brand):
     records = {'kps': {}, 'enbishan': {}}
     seen = []
     class Result:
@@ -136,19 +137,19 @@ def test_owner_save_is_brand_scoped_versioned_and_audited(monkeypatch):
     monkeypatch.setattr(experience.db,'tx',tx)
     monkeypatch.setattr(experience.db,'idempotent',lambda c,u,k,op,body,perform:perform())
     monkeypatch.setattr(experience.db,'audit',lambda *args:seen.append(('audit',args[4])))
-    monkeypatch.setattr(auth,'require_owner_step_up',lambda c,u:seen.append(('step_up',u['id'])))
+    monkeypatch.setattr(auth,'require_owner_step_up',lambda c,u:pytest.fail('Operational owner save must not request an extra OTP'))
     app=FastAPI();app.include_router(experience.router)
-    app.dependency_overrides[auth.current_user]=lambda:{'id':'owner','role':'owner','brand_id':'kps'}
+    app.dependency_overrides[auth.current_user]=lambda:{'id':'owner','role':'owner','brand_id':brand}
     client=TestClient(app)
     p=experience.defaults();p.pop('version');p['timing_enabled']=True
     body={'policy':p,'expected_version':0,'reason':'اعتماد المالك'}
     result=client.put('/api/experience/policy',json=body)
     assert result.status_code==200, result.text
     assert result.json()['policy']['version']==1
-    assert records['enbishan']=={}
-    assert ('step_up','owner') in seen and ('audit','kps') in seen
+    assert records['enbishan' if brand == 'kps' else 'kps']=={}
+    assert ('audit',brand) in seen
     assert client.put('/api/experience/policy',json=body).status_code==409
-    body['brand_id']='enbishan'
+    body['brand_id']='enbishan' if brand == 'kps' else 'kps'
     assert client.put('/api/experience/policy',json=body).status_code==422
 
 

@@ -22,8 +22,11 @@ def test_context_capabilities_are_ephemeral_and_exact():
     scoped=scoped_user()
     assert employee_permissions.effective(scoped) == set(context.CAPABILITIES)
     assert auth.has_permission(scoped,'orders_create_customer')
-    assert not auth.has_permission(scoped,'reports_view')
-    assert not auth.has_permission(scoped,'custody_transfer')
+    assert context.CAPABILITIES == employee_permissions.eligible('delivery_manager') | {'orders_prepare'}
+    for capability in ('reports_view','custody_transfer','shifts_close','shifts_delegate_close','shifts_approve','chat_view','chat_reply'):
+        assert auth.has_permission(scoped,capability)
+    for capability in ('accounting_review','accounting_reports','branches_manage','drivers_manage','refunds_manage'):
+        assert not auth.has_permission(scoped,capability)
     assert not auth.has_permission(base,'orders_view')
     assert base==before
 
@@ -71,6 +74,13 @@ def test_normal_context_retains_existing_permission_and_scope_behavior():
     assert context.apply(None,principal,req) is principal
     assert principal==before
     assert context.order_allowed(principal,{'brand_id':'another'})
+
+
+def test_morning_manager_cannot_impersonate_driver_task_events():
+    req=Request({'type':'http','headers':[(b'x-delivery-period',b'morning')],
+        'endpoint':SimpleNamespace(__module__='app.operations',__name__='task_transition')})
+    with pytest.raises(HTTPException) as e:context.apply(None,user(),req)
+    assert e.value.status_code==403
 
 
 def test_unknown_header_and_unlisted_endpoint_are_rejected_before_db_reads():

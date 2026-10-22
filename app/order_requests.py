@@ -42,7 +42,7 @@ def rows(c, oid):
 def pending_inbox(c, user):
     if not auth.has_permission(user, 'orders_view'):
         return []
-    return c.execute("""SELECT o.id,o.order_no,o.snapshot->>'order_reference' order_reference,o.service,e.id request_id,
+    result = c.execute("""SELECT o.id,o.order_no,o.snapshot->>'order_reference' order_reference,o.service,e.id request_id,
         e.details->>'kind' request_kind,'requested' status
         FROM orders o JOIN order_events e ON e.order_id=o.id
         WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))
@@ -54,6 +54,10 @@ def pending_inbox(c, user):
         ORDER BY e.created_at LIMIT 100""",
         (user['brand_id'], user['role']=='owner', user.get('branch_ids', []),
          user['role'], user['role'], user['role'])).fetchall()
+    if user.get('_morning_manager_context'):
+        from .morning_manager_context import order_allowed
+        result=[r for r in result if order_allowed(user,c.execute('SELECT * FROM orders WHERE id=%s',(r['id'],)).fetchone(),c)]
+    return result
 
 
 @router.post('/orders/{oid}')

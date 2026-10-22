@@ -151,8 +151,8 @@ def test_manual_customer_creation_cannot_escape_to_evening_or_another_branch(mor
     monkeypatch.setattr(service_hours, 'now_riyadh', lambda: at('18:00:00'))
     result = post(client, '/api/orders/delivery-center', body)
     assert result.status_code == 403 and result.json()['detail']['code'] == 'MORNING_CUSTOMER_ORDER_SCOPE', result.text
-    # No added customer-history search or financial concessions in this context.
-    assert client.get('/api/orders/customer-lookup', params={'branch_id': B2, 'phone': '+966512345678'}).status_code == 403
+    # Scoped lookup is available; new orders still cannot escape the morning window.
+    assert client.get('/api/orders/customer-lookup', params={'branch_id': B2, 'phone': '+966512345678'}).status_code == 200
     assert post(client, '/api/orders/complimentary', body | {'kind': 'hospitality', 'reason': 'test'}).status_code == 403
 
 

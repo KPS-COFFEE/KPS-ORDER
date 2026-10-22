@@ -23,6 +23,9 @@ def scope(c,user,driver_id,manager_id,shift_id=None):
     driver=c.execute("SELECT * FROM users WHERE id=%s AND brand_id=%s AND role='driver' AND active",(driver_id,user['brand_id'])).fetchone()
     manager=c.execute('SELECT * FROM shifts WHERE id=%s',(manager_id,)).fetchone()
     if not driver or not manager or manager['brand_id']!=user['brand_id'] or manager['kind']!='manager':raise db.error(404,'FUEL_SCOPE','الطلب غير متاح / Request unavailable')
+    if user.get('_morning_manager_context'):
+        from .morning_manager_context import require_shift
+        require_shift(user,manager)
     if user['role']=='driver':
         if user['id']!=driver_id:raise db.error(403,'FUEL_SCOPE','غير مصرح / Forbidden')
     elif user['role']!='delivery_manager' or manager['user_id']!=user['id']:raise db.error(403,'FUEL_SCOPE','مدير التوصيل المسؤول فقط / Responsible delivery manager only')

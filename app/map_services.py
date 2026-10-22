@@ -71,6 +71,7 @@ def recommendations(order_id: str = Query(min_length=1, max_length=200), user=De
         choices = []
         for row in rows:
             try:
+                if user.get('_morning_manager_context'):shift_access(c,user,row)
                 # Canonical checks preserve morning duty, parent manager and revocation rules.
                 smart_dispatch.candidate(c,user,order,row,policy)
                 from . import morning_delivery
@@ -135,6 +136,9 @@ def alerts(user=Depends(auth.require_roles(*STAFF))):
           AND g.updated_at>now()-interval '120 seconds' AND (%s OR o.branch_id=ANY(%s))''',
           (user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
         result.extend({**r,'kind':'near_customer','confirmed_delivery':False} for r in near)
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import shift_allowed
+            result=[r for r in result if shift_allowed(user,c.execute('SELECT * FROM shifts WHERE id=%s',(r['shift_id'],)).fetchone())]
         return safe({'alerts':result})
 
 

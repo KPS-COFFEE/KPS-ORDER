@@ -140,6 +140,9 @@ def inbox(user=Depends(auth.require_roles('owner','delivery_manager','branch_man
         # Apply operational routing on the server, including expired requests:
         # opening a request or its conversation cannot remove it from this inbox.
         rows=[r for r in rows if reviewer(r,user)]
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import order_allowed
+            rows=[r for r in rows if order_allowed(user,c.execute('SELECT * FROM orders WHERE id=%s',(r['id'],)).fetchone(),c)]
         from .order_requests import pending_inbox
         return {'orders':rows, 'requests':pending_inbox(c,user)}
 

@@ -40,7 +40,16 @@ def customer_conversation_view(conn, row):
     return result
 
 
-def allowed(user,row):
+def allowed(user,row,conn=None):
+    if user.get('_morning_manager_context'):
+        if conn is None:
+            return False
+        from .morning_manager_context import order_allowed
+        if row.get('order_id'):
+            if not order_allowed(user,conn.execute('SELECT * FROM orders WHERE id=%s',(row['order_id'],)).fetchone(),conn):return False
+        else:
+            duty=conn.execute('SELECT opened_at FROM shifts WHERE id=%s',(user['_morning_manager_context']['shift_id'],)).fetchone()
+            if not duty or row.get('context_service')!='delivery' or not row.get('created_at') or row['created_at']<duty['opened_at']:return False
     if user['role']=='owner':return user['brand_id']==row['brand_id']
     if user['role']=='customer':return row['customer_id'] in auth.customer_ids(user) and row['brand_id']==user['brand_id']
     if row['route'] in ('privacy','review'):return False
@@ -51,10 +60,10 @@ def allowed(user,row):
 def conversation(c,user,cid,lock=False):
     if lock:
         initial=c.execute('SELECT * FROM conversations WHERE id=%s',(cid,)).fetchone()
-        if not initial or not allowed(user,initial):fail(404,'المحادثة غير موجودة')
+        if not initial or not allowed(user,initial,c):fail(404,'المحادثة غير موجودة')
         if initial['order_id']:c.execute('SELECT id FROM orders WHERE id=%s FOR UPDATE',(initial['order_id'],)).fetchone()
     row=c.execute('SELECT * FROM conversations WHERE id=%s'+(' FOR UPDATE' if lock else ''),(cid,)).fetchone()
-    if not row or not allowed(user,row):fail(404,'المحادثة غير موجودة')
+    if not row or not allowed(user,row,c):fail(404,'المحادثة غير موجودة')
     if row['order_id']:
         order=c.execute('SELECT order_no,snapshot->>\'order_reference\' order_reference FROM orders WHERE id=%s AND brand_id=%s',(row['order_id'],row['brand_id'])).fetchone()
         row['order_no']=order['order_no'] if order else None
@@ -95,12 +104,13 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 existing=c.execute("SELECT * FROM conversations WHERE order_id IS NULL AND customer_id=%s AND branch_id IS NOT DISTINCT FROM %s AND context_service=%s AND category=%s AND status<>'resolved' ORDER BY created_at DESC LIMIT 1 FOR UPDATE",(customer_id,branch_id,service,body.category)).fetchone()
             if body.details.strip() or 'category' in body.model_fields_set:existing=None
             if existing:
-                if not allowed(user,existing):fail(404,'المحادثة غير متاحة')
+                if not allowed(user,existing,c):fail(404,'المحادثة غير متاحة')
                 return {'conversation':existing}
             if not db.rate_limit(c,'contact-create:'+user['id'],10,600):raise db.error(429,'CONTACT_RATE_LIMIT','رسائل كثيرة. حاول بعد قليل.')
             route=route_for(body.category,service,body.details)
-            row={'customer_id':customer_id,'brand_id':brand_id,'branch_id':branch_id,'route':route}
-            if not allowed(user,row):fail(403,'المحادثة مخصصة لفريق المتابعة المختص')
+            row={'customer_id':customer_id,'brand_id':brand_id,'branch_id':branch_id,'route':route,'order_id':order_id,
+                 'context_service':service,'created_at':c.execute('SELECT now() AS n').fetchone()['n']}
+            if not allowed(user,row,c):fail(403,'المحادثة مخصصة لفريق المتابعة المختص')
             cid=uid();c.execute('INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service,category) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(cid,order_id,brand_id,branch_id,customer_id,route,service,body.category))
             if body.details.strip():
                 c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text) VALUES(%s,%s,%s,%s)',(uid(),cid,user['id'],body.details.strip()))
@@ -119,6 +129,9 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
         if user['role']=='owner':scope='v.brand_id=%s';p=[user['brand_id']]
         elif user['role']=='customer':scope='v.customer_id=ANY(%s) AND v.brand_id=%s';p=[auth.customer_ids(user),user['brand_id']]
         else:scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s';p=[user['brand_id'],user.get('branch_ids',[]),'branch' if user['role']=='branch_manager' else 'delivery']
+        from .morning_manager_context import conversation_filter
+        morning_clause,morning_args=conversation_filter(user)
+        scope+=' AND '+morning_clause;p.extend(morning_args)
         if status:
             if status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             scope+=' AND v.status=%s';p.append(status)
@@ -138,6 +151,9 @@ def reply_alerts(user=Depends(auth.current_user)):
         params=[user['brand_id'],user.get('branch_ids',[]),
                 'branch' if user['role']=='branch_manager' else 'delivery']
     with db.tx() as c:
+        from .morning_manager_context import conversation_filter
+        morning_clause,morning_args=conversation_filter(user)
+        scope+=' AND '+morning_clause;params.extend(morning_args)
         rows=c.execute('''SELECT v.id,v.order_id,v.branch_id,last.seq,o.order_no,
             o.snapshot->>'order_reference' order_reference,b.name branch_name,
             u.display_name sender_name,u.role sender_role,last.text last_message,
@@ -269,7 +285,7 @@ def claim(cid:str,request:Request,user=Depends(auth.current_user)):
             v=conversation(c,user,cid,True)
             if v['assignee_id'] and v['assignee_id']!=user['id']:
                 previous=c.execute('SELECT * FROM users WHERE id=%s',(v['assignee_id'],)).fetchone()
-                if previous and previous['active'] and allowed(previous,v) and user['role']!='owner':fail(409,'المحادثة لدى موظف آخر؛ يراجع المدير نقل المسؤولية')
+                if previous and previous['active'] and allowed(previous,v,c) and user['role']!='owner':fail(409,'المحادثة لدى موظف آخر؛ يراجع المدير نقل المسؤولية')
             c.execute("UPDATE conversations SET assignee_id=%s,status='in_progress' WHERE id=%s",(user['id'],cid))
             db.audit(c,user['id'],'chat.claim','conversation',cid)
             return {'assignee_id':user['id'],'status':'in_progress'}

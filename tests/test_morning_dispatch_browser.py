@@ -34,7 +34,7 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
         def api(route):
             nonlocal opened,task
             request=route.request;path=urlparse(request.url).path;payload={}
-            assert path not in {'/api/operations/people','/api/operations/drivers','/api/custody','/api/accounting'}
+            assert path not in {'/api/identity/staff','/api/admin/export'}
             assert request.headers.get('x-delivery-period')=='morning'
             if request.method=='GET':reads.append(path)
             else:writes.append((path,request.post_data_json))
@@ -113,7 +113,8 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
         assert task['driver_id']=='busy-driver' and task['shift_id']=='busy-shift'
         assert page.locator('#modal [data-action=assign],#modal [data-action=handover-task]').count()==0
         assert [path for path,_ in writes]==['/api/shifts','/api/orders/order/assign','/api/orders/order/preparation','/api/orders/order/preparation','/api/tasks/task/handover']
-        assert not page.locator('#navigation [data-page=admin],#navigation [data-page=custody],#navigation [data-page=reports]').count()
+        assert not page.locator('#navigation [data-page=admin]').count()
+        expect(page.locator('#navigation [data-page=shifts]')).to_be_visible()
         assert not errors
         browser.close()
 
