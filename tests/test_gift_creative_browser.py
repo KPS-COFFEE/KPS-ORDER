@@ -33,16 +33,35 @@ def test_exact_logo_left_phrase_only_shimmer_and_reduced_motion(static_customer,
         assert logo['x'] < ad['x'] + ad['width'] / 2
         assert page.evaluate('document.documentElement.scrollWidth') <= width
         assert page.locator('.kps-gift-phrase > em').inner_text() == 'هدية'
-        assert page.locator('.kps-gift-glint').get_attribute('aria-hidden') == 'true'
+        assert page.locator('.kps-gift-phrase > .kps-gift-glint').get_attribute('aria-hidden') == 'true'
         animated = page.locator('.kps-gift-ad').evaluate('(ad)=>[ad,...ad.querySelectorAll("*")].filter(e=>getComputedStyle(e).animationName!=="none").map(e=>e.className)')
-        assert animated == ['kps-gift-glint']
-        assert page.locator('.kps-gift-glint').evaluate('(e)=>getComputedStyle(e).animationDuration') == '2.5s'
-        frames = page.locator('.kps-gift-glint').evaluate('(e)=>e.getAnimations()[0].effect.getKeyframes().map(f=>({offset:f.offset,position:f.maskPosition||f.webkitMaskPosition,opacity:f.opacity}))')
+        assert animated == ['kps-gift-glint', 'kps-gift-glint kps-gift-product-glint']
+        phrase_glint = page.locator('.kps-gift-phrase > .kps-gift-glint')
+        product_glint = page.locator('.kps-gift-product-glint')
+        products = page.locator('.kps-gift-products')
+        assert products.evaluate('(e)=>e.childNodes[0].textContent+e.childNodes[1].textContent+e.childNodes[2].textContent') == 'قهوة اليوم بارد + كوكيز'
+        assert products.evaluate('(e)=>getComputedStyle(e).whiteSpace') == 'nowrap'
+        assert products.evaluate('(e)=>parseFloat(getComputedStyle(e).fontSize)') > page.locator('.kps-gift-caption').evaluate('(e)=>parseFloat(getComputedStyle(e).fontSize)')
+        assert products.bounding_box()['y'] >= page.locator('.kps-gift-phrase').bounding_box()['y'] + page.locator('.kps-gift-phrase').bounding_box()['height']
+        assert products.evaluate('(e)=>e.scrollWidth<=e.clientWidth')
+        assert phrase_glint.evaluate('(e)=>getComputedStyle(e).animationDuration') == '2.5s'
+        assert product_glint.evaluate('(e)=>getComputedStyle(e).animationDuration') == '2s'
+        assert product_glint.get_attribute('aria-hidden') == 'true'
+        for ms in (0, 250, 500, 1999):
+            product_glint.evaluate('(e,ms)=>{const a=e.getAnimations()[0];a.pause();a.currentTime=ms}', ms)
+            assert products.evaluate('(e)=>getComputedStyle(e).opacity') == '1'
+            if ms >= 500:
+                assert product_glint.evaluate('(e)=>getComputedStyle(e).opacity') == '0'
+            elif ms == 250:
+                assert float(product_glint.evaluate('(e)=>getComputedStyle(e).opacity')) > 0
+        frames = phrase_glint.evaluate('(e)=>e.getAnimations()[0].effect.getKeyframes().map(f=>({offset:f.offset,position:f.maskPosition||f.webkitMaskPosition,opacity:f.opacity}))')
         assert any(frame['offset'] == .2 and frame['opacity'] == '0' for frame in frames)
         assert page.locator('.kps-gift-phrase').evaluate('(e)=>getComputedStyle(e).opacity') == '1'
         page.emulate_media(reduced_motion='reduce')
-        assert page.locator('.kps-gift-glint').evaluate('(e)=>getComputedStyle(e).animationName') == 'none'
-        assert page.locator('.kps-gift-glint').evaluate('(e)=>getComputedStyle(e).opacity') == '0'
+        for glint in (phrase_glint, product_glint):
+            assert glint.evaluate('(e)=>getComputedStyle(e).animationName') == 'none'
+            assert glint.evaluate('(e)=>getComputedStyle(e).opacity') == '0'
+        assert products.evaluate('(e)=>getComputedStyle(e).opacity') == '1'
         assert page.locator('.kps-gift-phrase').evaluate('(e)=>getComputedStyle(e).opacity') == '1'
         path = Path('test-results') / f'gift-creative-{width}.png'
         path.parent.mkdir(exist_ok=True)
