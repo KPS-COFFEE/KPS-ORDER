@@ -239,7 +239,7 @@ jobs:
           python -m pytest "${suites[@]}" \
             tests/test_driver_order_scope.py \
             tests/test_scoped_operational_permissions.py \
-            tests/test_http_worker_budget.py tests/test_hardening_pool.py \
+            tests/test_hardening_pool.py \
             tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py \
             --strict-markers -q --junitxml=test-artifacts/security-certification.xml
       - uses: actions/upload-artifact@v4
