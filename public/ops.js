@@ -10,15 +10,15 @@
   const num = v => new Intl.NumberFormat(state.lang === 'en' ? 'en' : 'ar').format(Number(v || 0));
   const datetime = v => v ? new Intl.DateTimeFormat(state.lang === 'en' ? 'en-GB' : 'ar-SA-u-ca-gregory', { timeZone: 'Asia/Riyadh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(v)) : '—';
   const moneyInput = v => (Number(v || 0) / 100).toFixed(2);
-  let alertAudio=null,alertBusy=false;
+  let alertAudio=null,alertBusy=false,operationalAlertScope='';
   let alertPolicy={first_after_seconds:0,second_after_seconds:30,continuous_after_seconds:60,first_ring_seconds:1,second_ring_seconds:1};
   let alertPolicyUser=null,alertPolicyAt=0,alertPolicyBusy=false,soundActivationBusy=false;
   async function refreshAlertPolicy(){
-    if(trialMode||state.user?.delivery_context||alertPolicyBusy||!state.user||!['owner','admin','delivery_manager','delivery_staff','branch_manager','driver'].includes(state.user.role))return;
+    if(trialMode||state.user?.delivery_context?.bootstrap||alertPolicyBusy||!state.user||!['owner','admin','delivery_manager','delivery_staff','branch_manager','driver'].includes(state.user.role))return;
     const user=state.user.id;
     if(alertPolicyUser===user&&Date.now()-alertPolicyAt<60000)return;
     alertPolicyBusy=true;
-    try{const result=await api('/api/operations/alert-policy');if(state.user?.id===user){alertPolicy=result.policy;alertPolicyUser=user;alertPolicyAt=Date.now();}}
+    try{const result=await api('/api/operations/alert-policy');if(state.user?.id===user&&result.policy&&Object.keys(alertPolicy).every(key=>Number.isFinite(result.policy[key]))){alertPolicy=result.policy;alertPolicyUser=user;alertPolicyAt=Date.now();}}
     catch{/* Keep mandatory defaults/last verified policy; never mute after a failed read. */}
     finally{alertPolicyBusy=false;}
   }
@@ -120,12 +120,21 @@
   async function handlePrintAlert(id){
     modal(tr('معالجة تنبيه الطباعة','Handle printing alert'),`<form><p>${esc(tr('تحقق من الفرع قبل التأكيد أو إعادة الطباعة. هذا الإجراء لا يغير حالة الطلب.','Check with the branch before confirming or reprinting. This does not change order status.'))}</p><label>${esc(tr('الإجراء','Action'))}<select name="action"><option value="confirmed">${esc(tr('تم التحقق من الطباعة','Paper output verified'))}</option><option value="reprint">${esc(tr('إعادة الطباعة — لم تخرج الورقة','Reprint — paper did not print'))}</option><option value="escalated">${esc(tr('تعذّر الحل — تصعيد للإدارة','Unresolved — escalate to management'))}</option></select></label>${textarea(tr('سبب الإجراء ونتيجة التحقق','Reason and verification result'),'reason','',true)}<label><input type="checkbox" name="paper_checked">${esc(tr('تحققت من خروج الورقة أو عدم خروجها لدى الفرع','I checked whether paper printed at the branch'))}</label>${formEnd(tr('تنفيذ الإجراء','Apply action'))}</form>`,async fd=>{await mutation('/api/printing/jobs/'+encodeURIComponent(id)+'/resolve-alert',{action:fd.get('action'),reason:fd.get('reason'),paper_checked:fd.get('paper_checked')==='on'});closeModal();await refreshOperationalAlerts();});
   }
+  function currentAlertScope(){return JSON.stringify([state.user?.id,state.user?.delivery_context?.period,state.user?.delivery_context?.shift_id,!!state.user?.delivery_context?.bootstrap,trialMode]);}
   async function refreshOperationalAlerts(){
-    if(trialMode||state.user?.delivery_context){const host=$('#operational-alerts');if(host)host.innerHTML='';return;}
+    const scope=currentAlertScope();
+    if(operationalAlertScope!==scope){for(const channel of alertChannels.values()){stopAlertChannel(channel);channel.items.clear();}operationalAlertScope=scope;}
+    if(trialMode){const host=$('#operational-alerts');if(host)host.innerHTML='';return;}
     if(state.user&&!alertAudio)void ensureMandatoryAlertSound();
     await refreshAlertPolicy();
     let host=$('#operational-alerts');
     if(!host){host=document.createElement('section');host.id='operational-alerts';$('#page-heading').after(host);}
+    if(state.user?.delivery_context){
+      if(state.user.delivery_context.bootstrap){host.innerHTML='';syncAlertChannel('morning-orders',[]);return;}
+      if(alertBusy)return;alertBusy=true;
+      try{await refreshMorningOrderAlerts(host);}finally{alertBusy=false;}
+      return;
+    }
     if(state.user?.role==='driver'){await refreshDriverAlerts(host);return;}
     if(!state.user||!['owner','delivery_manager','delivery_staff','branch_manager'].includes(state.user.role)){host.hidden=true;return;}
     if(alertBusy)return;alertBusy=true;const userId=state.user.id;
@@ -146,8 +155,53 @@
       // Operational notices remain visible; only orders and conversations ring.
       syncAlertChannel('operations',[]);
       syncAlertChannel('messages',awaiting.map(c=>c.id));
+      if(state.user.role==='branch_manager'&&can('orders_view')&&can('orders_prepare'))await refreshMorningOrderAlerts(host);
       concealAlertControls(host);
     }catch(e){host.hidden=false;host.textContent=tr('تعذر تحديث التنبيهات؛ راجع الطلبات والطباعة يدويًا.','Alerts could not refresh; check orders and printing manually.');}finally{alertBusy=false;}
+  }
+  // A narrow order read is sufficient: Ahmed's context and the cashier do not
+  // need the broad operational_alerts permission. No read acknowledges work.
+  function morningOrderAlert(o,branchIds,manager){
+    if(o.brand_id!=='kps'||!branchIds.includes(o.branch_id)||o.service!=='delivery'||o.snapshot?.delivery_period!=='morning'||o.simulated||o.morning_trial_id||o.snapshot?.morning_trial_id)return null;
+    if(o.completed_at||['completed','cancelled','rejected','handed_over'].includes(o.preparation_status)||['delivered','cancelled'].includes(o.delivery_status))return null;
+    if(['new','pending'].includes(o.preparation_status))return {key:'accept',label:tr('بانتظار قبول الفرع','Awaiting branch acceptance')};
+    if(manager&&['accepted','preparing','ready'].includes(o.preparation_status)&&o.delivery_status==='pending')return {key:'assign',label:tr('يلزم إسناد سائق — الإسناد التلقائي لم يكتمل','Driver assignment needed — automatic assignment is pending')};
+    if(manager&&o.morning_task_status==='problem')return {key:'problem',label:tr('بلاغ السائق يحتاج تدخل المدير','Driver problem needs manager intervention')};
+    if(o.morning_driver_accepted===true&&o.preparation_status==='accepted')return {key:'prepare',label:tr('قبل السائق — ابدأ تحضير الطلب','Driver accepted — start preparation')};
+    if(o.morning_driver_accepted===true&&o.preparation_status==='preparing')return {key:'ready',label:tr('بانتظار إتمام تجهيز الطلب','Awaiting preparation completion')};
+    return null;
+  }
+  async function refreshMorningOrderAlerts(host){
+    const userId=state.user?.id,manager=!!state.user?.delivery_context,alertScope=currentAlertScope();
+    let section=$('#morning-order-alerts',host);
+    if(!section){section=document.createElement('section');section.id='morning-order-alerts';host.append(section);}
+    try{
+      await loadBranches();
+      const branchIds=state.branches.filter(b=>b.brand_id==='kps'&&Number(b.branch_no)===2&&String(b.city||'').replace(/\s/g,'')==='حفرالباطن'&&state.user.branch_ids.includes(b.id)).map(b=>b.id);
+      const pending=[];
+      for(const branchId of branchIds){
+        let offset=0;
+        do{
+          const q=new URLSearchParams({branch_id:branchId,service:'delivery',status:'active',sort:'active_oldest',limit:'100',offset:String(offset)});
+          const data=await api('/api/orders?'+q);
+          if(state.user?.id!==userId||currentAlertScope()!==alertScope)return;
+          for(const order of data.orders||[]){const alert=morningOrderAlert(order,branchIds,manager);if(alert)pending.push({order,...alert});}
+          const next=data.next_offset;
+          if(next==null||Number(next)<=offset)break;
+          offset=Number(next);
+        }while(offset<=100000);
+      }
+      if(state.user?.id!==userId||currentAlertScope()!==alertScope)return;
+      host.hidden=false;
+      const html=`<div class="notice ${pending.length?'warn':''}" role="status"><strong>${esc(tr('جرس الطلبات الصباحية الإلزامي — فرع 2','Mandatory morning order bell — Branch 2'))} (${num(pending.length)})</strong>${pending.map(({order,label})=>`<p><button class="quiet" data-action="order-review" data-id="${esc(order.id)}">${esc(orderLabel(order))}</button> — ${esc(label)}</p>`).join('')}<p class="small-text">${esc(tr('لا يوجد كتم للموظف. فتح الطلب لا يوقف الجرس؛ يتوقف عند تنفيذ الإجراء. أبقِ الصفحة مفتوحة والجهاز مستيقظًا والصوت مسموعًا.','No employee mute. Opening an order does not stop the bell; completing the action does. Keep this page open, device awake and volume audible.'))}</p></div>`;
+      if(section.dataset.rendered!==html){section.innerHTML=html;section.dataset.rendered=html;}
+      syncAlertChannel('morning-orders',pending.map(({order,key})=>order.id+':'+key));
+      concealAlertControls(host);
+    }catch{
+      if(state.user?.id!==userId||currentAlertScope()!==alertScope)return;
+      host.hidden=false;section.textContent=tr('تعذر تحديث جرس الصباح؛ راجع الطلبات يدويًا. التنبيهات السابقة لا تعتبر معالجة.','Morning alerts could not refresh; check orders manually. Previous alerts are not acknowledged.');
+      concealAlertControls(host);
+    }
   }
   let driverAlertSignature='',driverAlertAt=0;
   async function refreshDriverAlerts(host){

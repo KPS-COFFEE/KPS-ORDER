@@ -12,6 +12,7 @@ CAPABILITIES = frozenset({'orders_view', 'orders_create_customer', 'delivery_ass
 BOOTSTRAP_CAPABILITIES = frozenset({'shifts_view', 'shifts_open'})
 ENDPOINTS = {
     'auth': {'logout'},
+    'admin': {'read_alert_policy'},
     'orders': {'list_orders', 'get_order', 'manager_accept', 'create_delivery_center_order', 'preparation'},
     'operations': {'shifts', 'open_shift', 'assign', 'tasks', 'task_handover'},
 }
