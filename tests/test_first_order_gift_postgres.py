@@ -125,6 +125,45 @@ def test_failed_order_rolls_back_claim_and_delivery_fee_never_meets_minimum(gift
     assert response.status_code==409 and response.json()['detail']['code']=='MINIMUM_ORDER_NOT_MET'
 
 
+def test_expired_offer_rejects_stale_gift_confirmation_without_consuming_claim(gift_setup):
+    client, user, body, p = gift_setup
+    p['ends_at'] = (datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+    with db.tx() as conn:
+        conn.execute("UPDATE app_settings SET settings=jsonb_set(settings,'{first_order_gift}',%s::jsonb) WHERE brand_id='ops-brand'", (db.json(p),))
+    quote = client().post('/api/gifts/quote', json=body)
+    assert quote.status_code == 200, quote.text
+    assert quote.json()['quote']['first_order_gift']['status'] == 'expired'
+    assert not any(item.get('is_gift') for item in quote.json()['quote']['items'])
+    body.update(expected_gift=True, expected_gift_version=1)
+    stale = client().post('/api/orders', json=body, headers={'Idempotency-Key': uuid4().hex})
+    assert stale.status_code == 409 and stale.json()['detail']['code'] == 'GIFT_CHANGED'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM first_order_gift_claims').fetchone()['n'] == 0
+        assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n'] == 0
+
+
+def test_older_owner_form_cannot_silently_clear_expiry_and_owner_can_stop_early(gift_setup, monkeypatch):
+    customer_client, user, _, p = gift_setup
+    p['ends_at'] = (datetime.now(timezone.utc)+timedelta(days=7)).isoformat()
+    with db.tx() as conn:
+        conn.execute("UPDATE app_settings SET settings=jsonb_set(settings,'{first_order_gift}',%s::jsonb) WHERE brand_id='ops-brand'", (db.json(p),))
+    client = customer_client()
+    client.app.dependency_overrides[auth.current_user] = lambda: user | {'role': 'owner'}
+    monkeypatch.setattr(auth, 'require_owner_step_up', lambda *_: None)
+    payload = {'policy': {key: p[key] for key in ('enabled', 'starts_at', 'items')},
+               'expected_version': 1, 'reason': 'إيقاف مبكر مع حفظ الموعد'}
+    payload['policy']['enabled'] = False
+    stopped = client.put('/api/gifts/policy', json=payload, headers={'Idempotency-Key': uuid4().hex})
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json()['policy']['enabled'] is False
+    assert datetime.fromisoformat(stopped.json()['policy']['ends_at']) == datetime.fromisoformat(p['ends_at'])
+    payload['expected_version'] = 2
+    payload['policy']['ends_at'] = None
+    explicit = client.put('/api/gifts/policy', json=payload, headers={'Idempotency-Key': uuid4().hex})
+    assert explicit.status_code == 200, explicit.text
+    assert explicit.json()['policy']['ends_at'] is None
+
+
 def test_unverified_contact_and_other_brand_cannot_get_a_gift(gift_setup):
     client,user,body,_=gift_setup
     user['customer_verified_at']=None

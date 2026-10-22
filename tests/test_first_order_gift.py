@@ -25,6 +25,20 @@ def test_restarting_campaign_never_resets_a_previous_phone_claim():
     assert gift.eligibility(p,verified=True,claimed=False,now=NOW)=='inactive'
 
 
+@pytest.mark.parametrize('offset,status', [(-1, 'expired'), (0, 'expired'), (1, 'eligible')])
+def test_automatic_end_exact_boundary(offset, status):
+    p = gift.defaults() | {'enabled': True, 'starts_at': (NOW-timedelta(days=7)).isoformat(),
+                          'ends_at': (NOW+timedelta(seconds=offset)).isoformat()}
+    assert gift.eligibility(p, verified=True, claimed=False, now=NOW) == status
+    assert gift.eligibility(p, verified=False, claimed=False, now=NOW) == ('verification_required' if offset > 0 else 'expired')
+
+
+@pytest.mark.parametrize('ends', ['2026-10-20T13:00:00', '2026-10-20T13:00:00+00:00', '2026-10-19T13:00:00+00:00'])
+def test_end_requires_timezone_and_follows_start(ends):
+    with pytest.raises(ValidationError):
+        gift.GiftPolicy(starts_at=NOW, ends_at=ends)
+
+
 @pytest.mark.parametrize('value',[
     {'enabled':True},
     {'enabled':True,'starts_at':'2026-10-20T16:00:00','items':[{'product_id':'coffee'},{'product_id':'cookie'}]},

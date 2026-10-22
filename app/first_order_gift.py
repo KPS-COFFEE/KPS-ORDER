@@ -6,7 +6,7 @@ gift; order creation serializes the phone and inserts the claim atomically.
 from copy import deepcopy
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError, model_validator
 from . import auth, catalog, db
 
 router = APIRouter(prefix='/api/gifts', tags=['first-order-gift'])
@@ -22,12 +22,18 @@ class GiftPolicy(BaseModel):
     model_config = ConfigDict(extra='forbid')
     enabled: StrictBool = False
     starts_at: datetime | None = None
+    ends_at: datetime | None = None
     items: list[GiftItem] = Field(default_factory=list, max_length=2)
 
     @model_validator(mode='after')
     def complete_when_enabled(self):
         if self.starts_at is not None and self.starts_at.tzinfo is None:
             raise ValueError('Choose a start time with an explicit time zone.')
+        if self.ends_at is not None:
+            if self.ends_at.tzinfo is None:
+                raise ValueError('Choose an end time with an explicit time zone.')
+            if not self.starts_at or self.ends_at <= self.starts_at:
+                raise ValueError('The end time must follow the start time.')
         if self.enabled and (not self.starts_at or len(self.items) != 2):
             raise ValueError('An active gift requires a start time and two approved items.')
         if len({item.product_id for item in self.items}) != len(self.items):
@@ -43,7 +49,7 @@ class PolicyChange(BaseModel):
 
 
 def defaults():
-    return {'version': 0, 'enabled': False, 'starts_at': None, 'items': []}
+    return {'version': 0, 'enabled': False, 'starts_at': None, 'ends_at': None, 'items': []}
 
 
 def configured(settings):
@@ -99,6 +105,14 @@ def save_policy(body: PolicyChange, user=Depends(auth.require_roles('owner')),
             previous = configured(row['settings'])
             if previous['version'] != body.expected_version:
                 raise db.error(409, 'POLICY_CHANGED', 'تغير إعداد العرض من جلسة أخرى؛ افتحه مجددًا.')
+            # Already-open older owner forms must not silently remove the
+            # expiry. Explicit null from the current form can clear it.
+            if 'ends_at' not in body.policy.model_fields_set:
+                candidate['ends_at'] = previous.get('ends_at')
+                try:
+                    candidate = GiftPolicy.model_validate(candidate).model_dump(mode='json')
+                except ValidationError as error:
+                    raise db.error(422, 'GIFT_POLICY_INVALID', 'أعد فتح إعدادات الهدية وحدد موعد انتهاء بعد البداية.') from error
             saved = candidate | {'version': previous['version'] + 1}
             conn.execute('UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id=%s',
                          (db.json(row['settings'] | {'first_order_gift': saved}), user['brand_id']))
@@ -114,6 +128,8 @@ def eligibility(p, *, verified, claimed, now=None):
         return 'inactive'
     if not p.get('starts_at') or datetime.fromisoformat(p['starts_at'].replace('Z','+00:00')) > now:
         return 'scheduled'
+    if p.get('ends_at') and datetime.fromisoformat(p['ends_at'].replace('Z','+00:00')) <= now:
+        return 'expired'
     if not verified:
         return 'verification_required'
     return 'claimed' if claimed else 'eligible'
@@ -172,7 +188,7 @@ def prepare(conn, body, quote, user, settings, *, for_order=False):
     if for_order and body.expected_gift is True and (status != 'eligible' or body.expected_gift_version != p['version']):
         raise db.error(409, 'GIFT_CHANGED', 'تغير استحقاق الهدية أو توفرها. راجع السلة قبل تأكيد الطلب.')
     quote['first_order_gift'] = {'status': status, 'version': p['version'], 'starts_at': p['starts_at'],
-                                'once_per_verified_mobile': True, 'items': deepcopy(gift_items)}
+                                'ends_at': p.get('ends_at'), 'once_per_verified_mobile': True, 'items': deepcopy(gift_items)}
     if gift_items:
         quote['items'].extend(gift_items)
     return phone if status == 'eligible' and gift_items else None
