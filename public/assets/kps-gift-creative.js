@@ -29,7 +29,14 @@
     const glint = make('span', 'kps-gift-glint');
     glint.setAttribute('aria-hidden', 'true');
     appendPhrase(glint); phrase.append(glint);
-    copy.append(opening, phrase); ad.append(scene, logo, copy);
+    const caption = make('small', 'kps-gift-caption', 'لطلبات التوصيل عبر موقعنا');
+    Object.assign(caption.style, {
+      position: 'absolute', bottom: '1.5%', left: '5%', right: '5%',
+      display: 'block', textAlign: 'center', fontSize: '3.2cqw',
+      lineHeight: '1.6', padding: '0.3em 0.6em', borderRadius: '0.5em',
+      color: '#fff', background: '#141210cc', textShadow: '0 1px 3px #000'
+    });
+    copy.append(opening, phrase); ad.append(scene, logo, copy, caption);
     container.className = 'kps-gift-host';
     container.replaceChildren(ad);
     return true;
