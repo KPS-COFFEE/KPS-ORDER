@@ -9,7 +9,7 @@
 .kps-gift-phrase em{font-size:1.15em;font-style:normal;color:#ff7841}
 .kps-gift-glint{position:absolute;inset:0;pointer-events:none;color:white;mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);-webkit-mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);mask-size:300% 100%;-webkit-mask-size:300% 100%;mask-position:0% 0;-webkit-mask-position:0% 0;animation:kps-gift-shimmer 2.5s linear infinite;opacity:0}
 .kps-gift-glint em{color:white}
-.kps-gift-products{position:absolute;top:33.6%;left:5%;right:5%;text-align:right;white-space:nowrap;font-size:4.35cqw;line-height:1.3;color:#ff7841;opacity:1}
+.kps-gift-products{position:absolute;top:34.6%;left:5%;right:5%;text-align:right;white-space:nowrap;font-size:4.35cqw;line-height:1.3;color:#ff7841;opacity:1}
 .kps-gift-plus{font-family:Arial,sans-serif;font-size:.8em}
 .kps-gift-product-glint{animation:kps-gift-product-shimmer 2s linear infinite;text-shadow:0 0 .3em #ff6500}
 @keyframes kps-gift-product-shimmer{0%{mask-position:0% 0;-webkit-mask-position:0% 0;opacity:0}2%,23%{opacity:.7}25%,100%{mask-position:100% 0;-webkit-mask-position:100% 0;opacity:0}}
