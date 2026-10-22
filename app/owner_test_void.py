@@ -55,7 +55,8 @@ def perform(c,user,oid,body):
         amount_halalas=amount,no_cash_disbursed=True,no_cash_received=True,original_collection_id=col['id'],
         original_shift_id=shift['id'],original_delivery_status=order['delivery_status'],original_payment_status=order['payment_status'])
     c.execute("UPDATE orders SET test_void=%s,preparation_status='cancelled',delivery_status='cancelled',payment_status='refunded',version=version+1 WHERE id=%s",(db.json(marker),oid))
-    c.execute("UPDATE driver_tasks SET status='cancelled',reason=%s WHERE id=%s",(reason,task['id']))
+    # Delivered task evidence is immutable; cancellation belongs to the order
+    # and its additive reversal ledger, not a rewrite of the delivery history.
     c.execute("INSERT INTO order_events(id,order_id,actor_id,event_type,details) VALUES(%s,%s,%s,'owner_test_void',%s)",(uid(),oid,user['id'],db.json(marker)))
     db.audit(c,user['id'],'order.test_void','order',oid,{'before':{'payment_status':order['payment_status'],'delivery_status':order['delivery_status'],'task_status':task['status']},**marker})
     return {'order_id':oid,'order_reference':body.order_reference,'reversal_id':rid,'record_kind':'test_void',

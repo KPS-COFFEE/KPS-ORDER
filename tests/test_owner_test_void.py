@@ -8,6 +8,7 @@ from app.operations import balance,TestVoid as OwnerTestVoid
 from pydantic import ValidationError
 from test_operations import ops
 from test_accounting import accountant
+from test_backup import independent_restore_database
 
 
 def test_confirmation_and_identity_fields_are_explicit():
@@ -45,6 +46,7 @@ def test_three_voids_reverse_6950_once_preserve_originals_and_exclude_reports(op
     with db.tx() as c:
         before=c.execute('SELECT * FROM collections ORDER BY id').fetchall()
         originals=c.execute('SELECT id,snapshot,customer,total_halalas FROM orders ORDER BY id').fetchall()
+        original_tasks=c.execute('SELECT * FROM driver_tasks ORDER BY id').fetchall()
         shift=c.execute("SELECT * FROM shifts WHERE id='test-void-driver'").fetchone()
         assert balance(c,shift)==6950
     for oid,body in orders:
@@ -62,7 +64,14 @@ def test_three_voids_reverse_6950_once_preserve_originals_and_exclude_reports(op
         assert len(reversals)==3 and sum(r['amount_halalas'] for r in reversals)==6950
         assert all(not r['line_quantities'] for r in reversals)
         assert c.execute("SELECT count(*) n FROM audit_events WHERE action='order.test_void'").fetchone()['n']==3
-        assert c.execute("SELECT count(*) n FROM driver_tasks WHERE status='delivered'").fetchone()['n']==0
+        assert c.execute('SELECT * FROM driver_tasks ORDER BY id').fetchall()==original_tasks
+        from app.reporting import create_snapshot
+        report_id=create_snapshot(c,shift['id'],'ops-owner')
+        report=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(report_id,)).fetchone()['snapshot']
+        assert report['summary']['completed_orders']==0
+        assert report['summary']['test_void_halalas']==6950
+        assert report['summary']['cash_refunded_halalas']==0
+        assert report['summary']['net_collections_halalas']==0
         from app.driver_incentives import source_rows
         user=c.execute("SELECT * FROM users WHERE id='ops-owner'").fetchone()
         assert source_rows(c,user,shift_id=shift['id'])==[]
@@ -95,6 +104,29 @@ def test_permissions_confirmation_staleness_and_closed_shift_block_without_side_
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM refunds").fetchone()['n']==0
         assert c.execute('SELECT payment_status FROM orders WHERE id=%s',(oid,)).fetchone()['payment_status']=='paid'
+
+
+@pytest.mark.postgres
+def test_backup_restores_test_correction_and_ordinary_nullable_marker(ops,independent_restore_database):
+    import psycopg
+    from psycopg.rows import dict_row
+    from app.exports import build_archive,restore_archive
+    _,post,make_order,_=ops
+    [(oid,body)]=seed(ops,(2050,));ordinary=make_order()
+    post('owner',f'/api/orders/{oid}/test-void',body)
+    with db.tx() as c:
+        source=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        tasks=c.execute('SELECT * FROM driver_tasks WHERE order_id=%s',(oid,)).fetchall()
+        contents,_=build_archive(c,full=True)
+    schema='kps_restore_'+uuid4().hex
+    assert restore_archive(contents,target_url=independent_restore_database,target_schema=schema)['verified']
+    with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
+        from psycopg import sql
+        c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+        assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==source
+        assert c.execute('SELECT * FROM driver_tasks WHERE order_id=%s',(oid,)).fetchall()==tasks
+        assert c.execute('SELECT test_void IS NULL missing FROM orders WHERE id=%s',(ordinary,)).fetchone()['missing']
+        assert c.execute("SELECT record_kind FROM refunds WHERE order_id=%s",(oid,)).fetchone()['record_kind']=='test_void'
 
 
 @pytest.mark.postgres

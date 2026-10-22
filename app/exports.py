@@ -303,9 +303,11 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             conn.execute('ALTER TABLE shifts DISABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users DISABLE TRIGGER register_fleet_vehicle')
             for table in manifest['table_order']:
-                columns = {row['column_name']: row['udt_name'] for row in conn.execute(
-                    'SELECT column_name,udt_name FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
-                    (target_schema, table)).fetchall()}
+                column_info = conn.execute(
+                    'SELECT column_name,udt_name,is_nullable FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
+                    (target_schema, table)).fetchall()
+                columns = {row['column_name']: row['udt_name'] for row in column_info}
+                nullable = {row['column_name'] for row in column_info if row['is_nullable']=='YES'}
                 for row in json.loads(archive.read(f'data/{table}.json')):
                     if set(row) != set(columns):
                         raise ValueError('Backup columns do not match target.')
@@ -319,7 +321,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                                 raise ValueError('Attachment checksum mismatch.')
                             values.append(payload)
                         elif columns[column] in {'json', 'jsonb'}:
-                            values.append(db.json(value))
+                            values.append(None if value is None and column in nullable else db.json(value))
                         elif isinstance(value, dict) and '$decimal' in value:
                             values.append(Decimal(value['$decimal']))
                         else:

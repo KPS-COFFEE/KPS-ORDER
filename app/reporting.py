@@ -61,7 +61,7 @@ def create_snapshot(c,sid,approved_by):
         order['snapshot']=safe(order['snapshot']);order['snapshot'].pop('notes',None);order['snapshot'].pop('note',None)
         for item in order['snapshot'].get('items',[]):item.pop('note',None)
     fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and t.get('delivered_at')}
-    for o in orders:o['fulfilled_in_report']=o.get('fulfilled_in_report',o['id'] in fulfilled)
+    for o in orders:o['fulfilled_in_report']=not o.get('test_void') and o.get('fulfilled_in_report',o['id'] in fulfilled)
     cash=sum(r['amount_halalas'] for r in collections if r['method']=='cash')
     card=sum(r['amount_halalas'] for r in collections if r['method']=='card')
     completed=[o for o in orders if o['fulfilled_in_report']]
