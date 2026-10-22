@@ -13,7 +13,11 @@ The limited view exposes morning orders, the manager's duty status and scoped
 manual driver assignment. It also permits a proposed handover within that same
 morning duty; the receiving driver must accept before responsibility moves.
 An approved manager with no current morning duty can open their own Branch 2
-morning duty with zero opening custody during the existing morning window.
+morning duty with zero opening custody from 03:45 Riyadh on ordinary days,
+or 12:15 noon on Friday. This 15-minute manager preparation window precedes
+04:00 service (12:30 Friday); drivers do not inherit early opening and customer
+admission still respects branch opening hours. The page can be entered before
+opening a duty, with only the existing restricted bootstrap capabilities.
 The bootstrap grants no order/task actions until that actual duty exists.
 It never grants vehicle, closure, custody or accounting authority.
 It permits the approved morning manager to accept a new morning Branch 2
@@ -46,8 +50,8 @@ Owner staffing decision: Ahmed Abdelnasser, verified registered phone ending 959
 is the intended permanent morning manager; Mohammed was for the initial trial only. These are operational
 instructions, not hardcoded identities or automatically created employee accounts.
 The owner's existing employee account and approved policy must be verified before
-any assignment. The current policy still uses its standard 04:00–16:00 Riyadh
-window; passing isolated tests does not activate a live nighttime trial or prove
+any assignment. Morning staffing ends at 16:00 Riyadh; passing isolated tests
+does not activate a live nighttime trial or prove
 physical paper output.
 
 Automatic assignment starts after acceptance of real morning delivery orders executed
