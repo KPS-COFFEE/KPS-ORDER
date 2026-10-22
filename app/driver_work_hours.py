@@ -140,7 +140,7 @@ def report_completed_orders(c, user, driver_id, shift_ids, allowed, lo, hi, now)
           ORDER BY a.created_at,a.id LIMIT 1
         ) d ON true
         WHERE t.shift_id=ANY(%s) AND t.driver_id=%s AND o.brand_id=%s AND o.branch_id=ANY(%s)
-          AND t.status='delivered' AND t.delivered_at>=%s AND t.delivered_at<%s
+          AND o.test_void IS NULL AND t.status='delivered' AND t.delivered_at>=%s AND t.delivered_at<%s
         ORDER BY t.delivered_at,t.id
     """, (now,list(allowed),shift_ids,driver_id,user['brand_id'],list(allowed),lo,hi)).fetchall()
     return completed_order_evidence(rows,lo,hi,now)

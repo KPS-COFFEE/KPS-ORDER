@@ -588,7 +588,7 @@ def save_external_enbishan(sid:str, body:ExternalEnbishan, request:Request, user
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s,capability='shifts_view')
-        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
+        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
         return safe(blind_closure.driver_view(user,{'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
@@ -1538,7 +1538,7 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         if service:
             if service not in ('delivery','pickup','car'):fail(422,'نوع طلب غير صالح')
             clauses.append('o.service=%s');params.append(service)
-        where=' AND '.join(clauses)
+        where=' AND '.join(clauses)+" AND o.test_void IS NULL"
         summary=c.execute("SELECT count(*) orders,count(*) FILTER(WHERE preparation_status='new') new,count(*) FILTER(WHERE completed_at IS NULL AND preparation_status NOT IN ('cancelled','rejected','new')) active,count(*) FILTER(WHERE completed_at IS NOT NULL) completed,count(*) FILTER(WHERE preparation_status IN ('cancelled','rejected')) cancelled,coalesce(sum(total_halalas) FILTER(WHERE completed_at IS NOT NULL),0) gross_completed_halalas,coalesce(sum(delivery_fee_halalas) FILTER(WHERE completed_at IS NOT NULL),0) delivery_fee_halalas FROM orders o WHERE "+where,params).fetchone()
         refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE r.amendment_id IS NULL AND o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
         late=config.get('late_after_minutes',60)

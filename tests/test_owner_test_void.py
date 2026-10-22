@@ -55,6 +55,9 @@ def test_three_voids_reverse_6950_once_preserve_originals_and_exclude_reports(op
         assert result['no_cash_disbursed'] and result['amount_halalas']==body['expected_total_halalas']
         assert post('owner',url,body,key='test-void-'+oid)==result
         post('owner',url,body,status=409)
+    shift_view=actor('owner').get('/api/shifts/test-void-driver')
+    assert shift_view.status_code==200
+    assert all(t['test_void'] for t in shift_view.json()['tasks'])
     with db.tx() as c:
         assert balance(c,shift)==0
         assert c.execute('SELECT * FROM collections ORDER BY id').fetchall()==before
@@ -70,6 +73,7 @@ def test_three_voids_reverse_6950_once_preserve_originals_and_exclude_reports(op
         report=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(report_id,)).fetchone()['snapshot']
         assert report['summary']['completed_orders']==0
         assert report['summary']['test_void_halalas']==6950
+        assert report['summary']['cash_collected_halalas']==0
         assert report['summary']['cash_refunded_halalas']==0
         assert report['summary']['net_collections_halalas']==0
         from app.driver_incentives import source_rows
