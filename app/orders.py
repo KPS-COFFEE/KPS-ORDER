@@ -487,7 +487,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
 def search_phone(value):
     """Only a complete contact number is searchable; never a prefix oracle."""
     import re
-    compact=re.sub(r'[\s()-]','',value.translate(auth.IDENTITY_DIGITS))
+    compact=auth.compact_phone(value)
     # Staff lookup keeps its explicit full-number boundary even though customer
     # registration also accepts the nine-digit local mobile shorthand.
     if len(compact)==9 and compact.startswith('5'):return None
@@ -523,7 +523,7 @@ def customer_search(phone: str=Query(min_length=1,max_length=30),branch_id: str|
                     user=Depends(auth.require_roles('owner','delivery_manager','delivery_staff','branch_manager'))):
     """Bounded staff-only discovery; never implies identity or account ownership."""
     import re
-    digits=phone.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹','01234567890123456789'))
+    digits=auth.compact_phone(phone)
     if re.search(r'[^0-9+\s()-]',digits):raise db.error(422,'PHONE_INVALID','أدخل أرقام الجوال فقط.')
     digits=re.sub(r'\D','',digits)
     normalized=search_phone(phone)

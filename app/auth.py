@@ -381,9 +381,14 @@ def logout(request: Request, response: Response, user=Depends(current_user)):
     return {'ok': True}
 
 
-def normalize_phone(value: str) -> str:
+def compact_phone(value: str) -> str:
+    """Remove phone presentation characters, never arbitrary text or digits."""
     value = value.translate(IDENTITY_DIGITS)
-    value = re.sub(r'[\s()-]', '', value)
+    return re.sub(r'[\s()\-\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]', '', value)
+
+
+def normalize_phone(value: str) -> str:
+    value = compact_phone(value)
     if re.fullmatch(r'05[0-9]{8}', value):
         value = '+966' + value[1:]
     elif re.fullmatch(r'5[0-9]{8}', value):

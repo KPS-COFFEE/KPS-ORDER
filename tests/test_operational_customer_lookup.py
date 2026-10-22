@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 import pytest
 from fastapi import HTTPException
-from app import orders, db
+from app import auth, orders, db
 
 OWNER={'id':'owner','role':'owner','brand_id':'kps','branch_ids':[]}
 MANAGER={'id':'manager','role':'delivery_manager','brand_id':'kps','branch_ids':['b']}
@@ -16,6 +16,25 @@ class Result:
 @pytest.mark.parametrize('value',['0501234567','+966501234567','00966501234567','966501234567','٠٥٠١٢٣٤٥٦٧','(050) 123-4567'])
 def test_full_saudi_phone_normalization(value):
     assert orders.search_phone(value)=='+966501234567'
+
+
+@pytest.mark.parametrize('value', [
+    '+966 53 104 1449', '\u200e+966 53 104 1449\u200e',
+    '\u202a+966\u00a053\u202f104\u00a01449\u202c',
+    '\u2066+966 53 104 1449\u2069', '\u061c٠٥٣ ١٠٤ ١٤٤٩',
+    '۰۵۳ ۱۰۴ ۱۴۴۹', '00966 (53) 104-1449',
+])
+def test_whatsapp_contact_format_is_one_canonical_number(value):
+    assert auth.normalize_phone(value) == '+966531041449'
+    assert orders.search_phone(value) == '+966531041449'
+
+
+@pytest.mark.parametrize('value', [
+    'Ahmed +966531041449', '+966531041449 ext 2', '++966531041449',
+    '+966531041449/+966501234567', '+9665310414499', '053104144',
+])
+def test_paste_cleanup_never_extracts_digits_from_invalid_text(value):
+    assert orders.search_phone(value) is None
 
 @pytest.mark.parametrize('value',['0501','501234567','%50123%','+12025550123','05012345678','not a phone'])
 def test_partial_or_non_saudi_number_is_not_a_lookup_key(value):
