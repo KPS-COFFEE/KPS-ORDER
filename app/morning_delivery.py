@@ -4,12 +4,30 @@ The customer branch remains the commercial/coverage boundary. Execution routing
 never expands employee branch access or changes existing operational-day rules.
 """
 from copy import deepcopy
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 from . import auth, db, service_hours
 
 router = APIRouter(prefix='/api/morning-delivery', tags=['morning-delivery'])
 HOURS = [{'days': list(range(7)), 'start': '04:00', 'end': '16:00'}]
+# Staffing preparation is independent from customer admission/branch hours.
+SHIFT_HOURS = [
+    {'days': [0, 1, 2, 3, 5, 6], 'start': '04:00', 'end': '16:00'},
+    {'days': [4], 'start': '12:30', 'end': '16:00'},
+]
+
+
+def shift_status(now=None, *, preparation=False):
+    local = service_hours.local_time(now)
+    status = service_hours.hours_status(SHIFT_HOURS, local)
+    if preparation and not status['open'] and status['next_open_at']:
+        opening = datetime.fromisoformat(status['next_open_at'])
+        start = opening - timedelta(minutes=15)
+        if start <= local < opening:
+            status = service_hours.hours_status(SHIFT_HOURS, opening)
+            status.update(preparation=True, preparation_start=start.isoformat())
+    return status
 
 
 def defaults():

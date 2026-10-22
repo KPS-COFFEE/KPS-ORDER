@@ -29,6 +29,30 @@ def test_morning_boundaries(clock, expected):
     assert morning.active(branch(), settings(), at(clock)) is expected
 
 
+@pytest.mark.parametrize('day,clock,manager,driver', [
+    ('2026-10-22','03:44:59',False,False),
+    ('2026-10-22','03:45:00',True,False),
+    ('2026-10-22','04:00:00',True,True),
+    ('2026-10-23','03:45:00',False,False),
+    ('2026-10-23','12:14:59',False,False),
+    ('2026-10-23','12:15:00',True,False),
+    ('2026-10-23','12:30:00',True,True),
+    ('2026-10-23','16:00:00',False,False),
+    ('2026-10-24','03:45:00',True,False),
+])
+def test_morning_staffing_preparation(day, clock, manager, driver):
+    now = datetime.fromisoformat(day+'T'+clock).replace(tzinfo=service_hours.RIYADH)
+    state = morning.shift_status(now, preparation=True)
+    assert state['open'] is manager
+    assert morning.shift_status(now)['open'] is driver
+    # Preparation never extends customer admission before 04:00.
+    if clock == '03:45:00':
+        assert not morning.active(branch(), settings(), now)
+    if manager and not driver:
+        assert state['preparation']
+        assert datetime.fromisoformat(state['current_window_start']).date() == now.date()
+
+
 def test_disabled_other_brand_and_other_city():
     assert not morning.active(branch(), {}, at('08:00:00'))
     assert not morning.active(branch() | {'brand_id': 'other'}, settings(), at('08:00:00'))
