@@ -5,6 +5,7 @@ on:
       - public/ops.js
       - public/assets/customer-order.js
       - tests/test_manager_order_return*
+      - tests/test_morning_manager_browser.py
       - .github/workflows/manager-order-return.yml
 permissions:
   contents: read
@@ -28,7 +29,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: node --test tests/test_manager_order_return.cjs
       - run: python -m playwright install --with-deps chromium webkit
-      - run: python -m pytest -q tests/test_manager_order_return_browser.py tests/test_staff_phone_edit_browser.py --junitxml=test-results/manager-order-return.xml
+      - run: python -m pytest -q tests/test_manager_order_return_browser.py tests/test_staff_phone_edit_browser.py tests/test_morning_manager_browser.py --junitxml=test-results/manager-order-return.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

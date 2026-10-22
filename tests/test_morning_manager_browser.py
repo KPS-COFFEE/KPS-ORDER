@@ -112,7 +112,7 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
             elif path=='/api/shifts/current':payload={'shifts':[manager]}
             elif path=='/api/operations/people':payload={'users':[],'authorized_receivers':[],'available_manager_shifts':[manager]}
             elif path=='/api/operations/people':payload={'users':[],'authorized_receivers':[],'available_manager_shifts':[manager]}
-            elif path=='/api/orders':payload={'orders':[],'next_offset':None}
+            elif path=='/api/orders':payload={'orders':[created] if any(path=='/api/orders/delivery-center' for path,_ in writes) else [],'next_offset':None}
             elif path=='/api/quote':
                 writes.append((path,request.post_data_json))
                 payload={'quote':{'subtotal_halalas':1000,'delivery_fee_halalas':0,'total_halalas':1000}}
@@ -123,6 +123,7 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
             route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
         page.route('**/api/**',api)
         page.goto(static_customer+'/ops.html?delivery_period=morning')
+        origin_heading=page.locator('#page-heading h1').inner_text()
         page.locator('#page-heading [data-action=customer-order]').click()
         form=page.locator('#staff-order-form')
         expect(form).to_contain_text('كطلب جديد بانتظار القبول' if lang=='ar' else 'new order awaiting acceptance')
@@ -139,6 +140,13 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
         form.locator('[type=submit]').click()
         expect(form.locator('[type=submit]')).to_have_text('تأكيد وإنشاء الطلب' if lang=='ar' else 'Confirm and create order')
         form.locator('[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        expect(page.locator('#page-heading h1')).to_have_text(origin_heading)
+        expect(page.locator('#status')).to_contain_text('manual-order')
+        assert '/api/orders/manual-order' not in requests
+        created_button=page.locator('#content [data-action=order-detail][data-id=manual-order]')
+        expect(created_button).to_be_visible()
+        created_button.click()
         expect(page.locator('#modal [data-action=manager-accept]')).to_be_visible()
         assert [path for path,_ in writes]==['/api/quote','/api/orders/delivery-center']
         assert created['preparation_status']=='new' and created['delivery_status']=='pending'
