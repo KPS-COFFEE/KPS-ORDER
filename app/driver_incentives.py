@@ -27,7 +27,7 @@ SOURCE="""SELECT o.id order_id,coalesce(o.snapshot->>'order_reference',o.order_n
  JOIN shifts s ON s.id=t.shift_id AND s.brand_id=o.brand_id
  JOIN users u ON u.id=t.driver_id
  LEFT JOIN driver_incentive_decisions d ON d.order_id=o.id
- WHERE o.brand_id=%s"""
+ WHERE o.brand_id=%s AND o.test_void IS NULL"""
 
 def read_access(user=Depends(auth.current_user)):
     permitted=user['role'] in ('owner','driver','delivery_manager') or auth.has_permission(user,'accounting_reports') or (user['role']=='admin' and auth.has_permission(user,'shifts_view'))

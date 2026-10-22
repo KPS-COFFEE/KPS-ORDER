@@ -20,13 +20,16 @@ def channel_order(c, oid, user, lock=False):
 
 def view(c, oid, commercial):
     rows = c.execute('SELECT * FROM channel_settlement_allocations WHERE order_id=%s ORDER BY created_at,id', (oid,)).fetchall()
-    refunds = c.execute('SELECT id,amount_halalas FROM refunds WHERE order_id=%s ORDER BY created_at,id', (oid,)).fetchall()
+    all_reversals = c.execute('SELECT id,amount_halalas,record_kind FROM refunds WHERE order_id=%s ORDER BY created_at,id', (oid,)).fetchall()
+    test_void=any(r['record_kind']=='test_void' for r in all_reversals)
+    refunds=[r for r in all_reversals if r['record_kind']!='test_void']
     allocated = sum(r['amount_halalas'] for r in rows if r['kind']=='refund')
     return {'commercial': commercial, 'allocations': rows, 'refunds': refunds,
         'unallocated_refund_halalas': sum(r['amount_halalas'] for r in refunds)-allocated,
-        'branch_settlement_halalas': commercial['settlement_amount_halalas']-sum(r['amount_halalas'] for r in rows if r['cause']=='branch'),
+        'branch_settlement_halalas': 0 if test_void else commercial['settlement_amount_halalas']-sum(r['amount_halalas'] for r in rows if r['cause']=='branch'),
         'delivery_channel_effect_halalas': -sum(r['amount_halalas'] for r in rows if r['cause']=='delivery_channel'),
-        'payout_enabled': False, 'status': 'accounting_review_required'}
+        'payout_enabled': False, 'test_void_no_cash_disbursed':test_void,
+        'status': 'test_void_no_cash_disbursed' if test_void else 'accounting_review_required'}
 
 
 @router.get('/orders/{oid}')
@@ -54,6 +57,8 @@ def allocate(oid: str, body: Allocation, user=Depends(owner), idem: str | None=H
         def perform():
             order, commercial = channel_order(c, oid, user, lock=True)
             current = view(c, oid, commercial)
+            if current['test_void_no_cash_disbursed']:
+                raise db.error(409,'TEST_VOID_SETTLEMENT','الفاتورة ملغاة تجريبيًا ولا تنشئ استحقاقًا أو صرفًا.')
             if body.kind=='refund':
                 refund = next((r for r in current['refunds'] if r['id']==body.refund_id), None)
                 used = sum(r['amount_halalas'] for r in current['allocations'] if r['refund_id']==body.refund_id)

@@ -588,7 +588,7 @@ def save_external_enbishan(sid:str, body:ExternalEnbishan, request:Request, user
 def shift_detail(sid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s,capability='shifts_view')
-        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
+        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
         return safe(blind_closure.driver_view(user,{'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
@@ -874,7 +874,7 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
         if user['role']=='driver':rows=[blind_closure.driver_view(user,r,shift_money=True) if r['status'] in TERMINAL or r['driver_id']!=user['id'] else r for r in rows]
         counts=None
         if user['role']=='driver':
-            counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
+            counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.test_void IS NULL AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
         return safe({'tasks':rows, 'counts':counts})
 
 class TaskTransition(OperationBody):
@@ -1170,6 +1170,23 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             db.audit(c,user['id'],'order.collect','order',oid,{'collection_ids':ids,'amount_halalas':body.amount_halalas,'method':body.method,'cash_halalas':cash,'card_halalas':body.amount_halalas-cash,'change_halalas':change})
             return {'collection_id':ids[0],'collection_ids':ids,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
         return mutate(c,user,request,'order.collect:'+oid,body.model_dump(),perform)
+
+class TestVoid(OperationBody):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    order_reference:str=Field(min_length=1,max_length=100)
+    expected_version:StrictInt=Field(ge=1)
+    expected_total_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
+    reason:str=Field(min_length=10,max_length=1800)
+    confirmed_no_cash_received:StrictBool
+
+@router.post('/orders/{oid}/test-void')
+def test_void_order(oid:str,body:TestVoid,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner')
+    with db.tx() as c:
+        from .owner_test_void import perform
+        # Recheck brand/order scope even for an idempotency replay.
+        order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone())
+        return mutate(c,user,request,'order.test_void:'+oid,body.model_dump(),lambda:perform(c,user,oid,body))
 
 class Refund(OperationBody):
     amount_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
@@ -1521,7 +1538,7 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         if service:
             if service not in ('delivery','pickup','car'):fail(422,'نوع طلب غير صالح')
             clauses.append('o.service=%s');params.append(service)
-        where=' AND '.join(clauses)
+        where=' AND '.join(clauses)+" AND o.test_void IS NULL"
         summary=c.execute("SELECT count(*) orders,count(*) FILTER(WHERE preparation_status='new') new,count(*) FILTER(WHERE completed_at IS NULL AND preparation_status NOT IN ('cancelled','rejected','new')) active,count(*) FILTER(WHERE completed_at IS NOT NULL) completed,count(*) FILTER(WHERE preparation_status IN ('cancelled','rejected')) cancelled,coalesce(sum(total_halalas) FILTER(WHERE completed_at IS NOT NULL),0) gross_completed_halalas,coalesce(sum(delivery_fee_halalas) FILTER(WHERE completed_at IS NOT NULL),0) delivery_fee_halalas FROM orders o WHERE "+where,params).fetchone()
         refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE r.amendment_id IS NULL AND o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
         late=config.get('late_after_minutes',60)

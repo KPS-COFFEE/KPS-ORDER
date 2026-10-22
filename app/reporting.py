@@ -31,7 +31,7 @@ def create_snapshot(c,sid,approved_by):
         children=c.execute('SELECT r.id,r.shift_id,r.version,r.snapshot FROM closure_reports r JOIN shifts s ON s.id=r.shift_id WHERE s.manager_shift_id=%s ORDER BY r.created_at',(sid,)).fetchall()
         shift_ids += [r['shift_id'] for r in children]
     manager_user_id=s['user_id'] if s['kind']=='manager' else c.execute('SELECT user_id FROM shifts WHERE id=%s',(s['manager_shift_id'],)).fetchone()['user_id']
-    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.created_at,o.completed_at FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
+    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.test_void,o.created_at,o.completed_at FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
     tasks=c.execute('SELECT * FROM driver_tasks WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     collections=c.execute('SELECT * FROM collections WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     refunds=c.execute('SELECT * FROM refunds WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
@@ -61,8 +61,8 @@ def create_snapshot(c,sid,approved_by):
         order['snapshot']=safe(order['snapshot']);order['snapshot'].pop('notes',None);order['snapshot'].pop('note',None)
         for item in order['snapshot'].get('items',[]):item.pop('note',None)
     fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and t.get('delivered_at')}
-    for o in orders:o['fulfilled_in_report']=o.get('fulfilled_in_report',o['id'] in fulfilled)
-    cash=sum(r['amount_halalas'] for r in collections if r['method']=='cash')
+    for o in orders:o['fulfilled_in_report']=not o.get('test_void') and o.get('fulfilled_in_report',o['id'] in fulfilled)
+    cash=sum(r['amount_halalas'] for r in collections if r['method']=='cash')-sum(r['amount_halalas'] for r in refunds if r.get('record_kind')=='test_void')
     card=sum(r['amount_halalas'] for r in collections if r['method']=='card')
     completed=[o for o in orders if o['fulfilled_in_report']]
     brand=c.execute('SELECT name,settings FROM brands WHERE id=%s',(s['brand_id'],)).fetchone()
@@ -71,7 +71,7 @@ def create_snapshot(c,sid,approved_by):
     cfg={**cfg,**(settings['settings'] if settings else {})};minutes,configured=day_start(cfg)
     if s.get('delivery_operational_date'):
         configured=True
-    snap=safe({'schema_version':1,'brand_name':brand['name'],'reference':sid,'kind':s['kind'],'timezone':'Asia/Riyadh','operational_day_configured':configured,'operational_date':(s['opened_at'].astimezone(ZoneInfo('Asia/Riyadh'))-timedelta(minutes=minutes)).date().isoformat(),'shift':s,'manager_user_id':manager_user_id,'prepared_by':s['user_id'],'approved_by':approved_by,'orders':orders,'tasks':tasks,'collections':collections,'refunds':refunds,'custody_events':events,'transfers':transfers,'linked_corrections':c.execute('SELECT * FROM report_corrections WHERE shift_id=ANY(%s)',(shift_ids,)).fetchall(),'manager_handovers':c.execute('SELECT * FROM manager_handovers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s)',(shift_ids,shift_ids)).fetchall(),'retained_carryovers':c.execute('SELECT * FROM retained_carryovers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s)',(shift_ids,shift_ids)).fetchall(),'driver_reports':[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'closure':r['snapshot']['shift']['submission']} for r in children], 'summary':{'unique_orders':len(orders),'completed_orders':len(completed),'cash_collected_halalas':cash,'card_collected_halalas':card,'cash_refunded_halalas':sum(r['amount_halalas'] for r in refunds if r['method']=='cash'),'card_refunded_halalas':sum(r['amount_halalas'] for r in refunds if r['method']=='card'),'gross_completed_halalas':sum(o['total_halalas'] for o in completed),'delivery_fees_halalas':sum(o['delivery_fee_halalas'] for o in completed),'net_collections_halalas':cash+card-sum(r['amount_halalas'] for r in refunds),'submission':s['submission']}})
+    snap=safe({'schema_version':1,'brand_name':brand['name'],'reference':sid,'kind':s['kind'],'timezone':'Asia/Riyadh','operational_day_configured':configured,'operational_date':(s['opened_at'].astimezone(ZoneInfo('Asia/Riyadh'))-timedelta(minutes=minutes)).date().isoformat(),'shift':s,'manager_user_id':manager_user_id,'prepared_by':s['user_id'],'approved_by':approved_by,'orders':orders,'tasks':tasks,'collections':collections,'refunds':refunds,'custody_events':events,'transfers':transfers,'linked_corrections':c.execute('SELECT * FROM report_corrections WHERE shift_id=ANY(%s)',(shift_ids,)).fetchall(),'manager_handovers':c.execute('SELECT * FROM manager_handovers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s)',(shift_ids,shift_ids)).fetchall(),'retained_carryovers':c.execute('SELECT * FROM retained_carryovers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s)',(shift_ids,shift_ids)).fetchall(),'driver_reports':[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'closure':r['snapshot']['shift']['submission']} for r in children], 'summary':{'test_void_halalas':sum(r['amount_halalas'] for r in refunds if r.get('record_kind')=='test_void'),'unique_orders':len(orders),'completed_orders':len(completed),'cash_collected_halalas':cash,'card_collected_halalas':card,'cash_refunded_halalas':sum(r['amount_halalas'] for r in refunds if r['method']=='cash' and r.get('record_kind')!='test_void'),'card_refunded_halalas':sum(r['amount_halalas'] for r in refunds if r['method']=='card' and r.get('record_kind')!='test_void'),'gross_completed_halalas':sum(o['total_halalas'] for o in completed),'delivery_fees_halalas':sum(o['delivery_fee_halalas'] for o in completed),'net_collections_halalas':cash+card-sum(r['amount_halalas'] for r in refunds if r.get('record_kind')!='test_void'),'submission':s['submission']}})
     if s.get('delivery_operational_date'):
         snap['operational_date']=s['delivery_operational_date'].isoformat()
         snap['delivery_window']=s.get('delivery_window_snapshot')
@@ -114,7 +114,7 @@ def make_csv(snap):
     out=io.StringIO();writer=csv.writer(out);writer.writerow(['نوع السجل','المرجع','الحالة/الطريقة','المبلغ بالهللات','الفرع/الشفت','الوقت'])
     for o in snap['orders']:writer.writerow([cell(v) for v in ['order_completed' if o.get('fulfilled_in_report') else 'order_history_only',o['id'],o['delivery_status'],o['total_halalas'],o['branch_id'],o['created_at']]])
     for name in ('collections','refunds'):
-        for r in snap[name]:writer.writerow([cell(v) for v in [name,r['id'],r['method'],r['amount_halalas'],r['shift_id'],r['created_at']]])
+        for r in snap[name]:writer.writerow([cell(v) for v in ['test_void_no_cash_disbursed' if r.get('record_kind')=='test_void' else name,r['id'],r['method'],r['amount_halalas'],r['shift_id'],r['created_at']]])
     for r in snap['custody_events']:writer.writerow([cell(v) for v in ['custody',r['id'],r['kind'],r['amount_halalas'],r['shift_id'],r['created_at']]])
     for key,v in snap['summary']['submission'].items():writer.writerow(['closure',cell(key),'',cell(v),snap['shift']['id'],''])
     if snap.get('external_enbishan'):
@@ -242,7 +242,7 @@ def make_print_html(snap):
     refund_records=[]
     for r in snap.get('refunds',[]):
         returned=''.join('<div class="unit">'+fields([('مرجع المنتج',ref(product)),('الكمية المعادة',ref(quantity))])+'</div>' for product,quantity in (r.get('line_quantities') or {}).items())
-        refund_records.append(record('استرداد '+str(len(refund_records)+1),[
+        refund_records.append(record(('إلغاء تجريبي — لا صرف نقدي ' if r.get('record_kind')=='test_void' else 'استرداد ')+str(len(refund_records)+1),[
             ('مرجع الاسترداد',ref(r.get('id'))),('مرجع التحصيل الأصلي',ref(r.get('collection_id'))),('مرجع الطلب',ref(r.get('order_id'))),('شفت الاسترداد',ref(r.get('shift_id'))),
             ('وسيلة الاسترداد',named(r.get('method'))),('مبلغ الاسترداد',money(r.get('amount_halalas'))),('سبب الاسترداد',text(r.get('reason'))),('المخول بالاسترداد',ref(r.get('authorized_by'))),('وقت الاسترداد',stamp(r.get('created_at'))),
         ],'<h4>الكميات المعادة</h4>'+ (returned or '<p class="empty">لم تسجل كميات أصناف معادة لهذا الاسترداد.</p>')))
@@ -745,7 +745,8 @@ def v5_tables(snap,view='compact'):
     table('collections','التحصيلات ومراجع الشبكة - صافي الكاش بعد الباقي',['التحصيل / الطلب','الطريقة','المبلغ','الباقي','مرجع الدفع','وقت التحصيل'],[[
         str(r.get('id'))+' / '+order_name(r.get('order_id')),label(r.get('method')),v5_money(r.get('amount_halalas')),v5_money(r.get('change_halalas',0)),r.get('reference') or '—',v5_stamp(r.get('created_at'))] for r in snap.get('collections',[])])
     table('refunds','الإلغاءات والاستردادات المعتمدة',['الرد / الطلب','الطريقة','المبلغ','السبب','المخول','الوقت'],[[
-        str(r.get('id'))+' / '+order_name(r.get('order_id')),label(r.get('method')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',name(r.get('authorized_by')),v5_stamp(r.get('created_at'))] for r in refunds])
+        str(r.get('id'))+' / '+order_name(r.get('order_id')),label(r.get('method')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',name(r.get('authorized_by')),v5_stamp(r.get('created_at'))] for r in refunds if r.get('record_kind')!='test_void'])
+    table('test-voids','إلغاء تجريبي بأمر المالك — لا صرف نقدي',['مرجع التصحيح / الطلب','المبلغ المسجل المعكوس','السبب','المالك','الوقت'],[[str(r.get('id'))+' / '+order_name(r.get('order_id')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',name(r.get('authorized_by')),v5_stamp(r.get('created_at'))] for r in refunds if r.get('record_kind')=='test_void'])
     table('custody','حركات العهدة - ليست مبيعات جديدة',['الحركة / الشفت','النوع','المبلغ بإشارته','السبب','المرجع'],[[
         str(r.get('id'))+' / '+shift_name(r.get('shift_id')),label(r.get('kind')),v5_money(r.get('amount_halalas')),r.get('reason') or '—',r.get('reference_id') or '—'] for r in snap.get('custody_events',[])])
     table('transfers','التسليمات والمستلمون',['المرجع','المبلغ','المستلم','الحالة','مرجع الاستلام'],[[
