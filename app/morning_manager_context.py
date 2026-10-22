@@ -32,6 +32,8 @@ for _module in ('operations', 'orders', 'reporting', 'chat', 'order_support',
         _permissions = {_permission} if isinstance(_permission, str) else set(_permission or ())
         if _permissions & CAPABILITIES:
             ENDPOINTS.setdefault(_module, set()).add(_name)
+# Driver acceptance, pickup and delivery events remain driver-authored.
+ENDPOINTS['operations'].discard('task_transition')
 ENDPOINTS['orders'].update({'customer_lookup', 'customer_search', 'change_delivery_location'})
 ENDPOINTS['order_requests'] = {'decide'}
 ENDPOINTS['map_services'] = {'recommendations', 'health', 'alerts', 'zones', 'plan', 'trips'}

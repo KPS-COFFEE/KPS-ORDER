@@ -574,7 +574,7 @@ def customer_lookup(phone: str=Query(min_length=8,max_length=30),branch_id: str=
         morning_clause,morning_args=order_filter(user)
         rows=conn.execute("SELECT customer_id,customer FROM orders o WHERE o.brand_id=%s AND o.branch_id=%s AND normalized_identity_phone(o.customer->>'phone')=%s"+
             (" AND o.service='delivery'" if user['role'] in {'delivery_manager','delivery_staff'} else '')+
-            ' AND '+morning_clause+' ORDER BY o.created_at DESC,o.id DESC LIMIT 50',[user['brand_id'],branch_id,normalized,*morning_args]).fetchall()
+            ' AND '+morning_clause+' ORDER BY o.created_at DESC,o.id DESC LIMIT 50',tuple([user['brand_id'],branch_id,normalized,*morning_args])).fetchall()
         contacts=[];seen=set();principals=set()
         for row in rows:
             principal=row['customer_id'];principals.add(principal)

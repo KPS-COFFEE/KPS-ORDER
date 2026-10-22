@@ -76,6 +76,13 @@ def test_normal_context_retains_existing_permission_and_scope_behavior():
     assert context.order_allowed(principal,{'brand_id':'another'})
 
 
+def test_morning_manager_cannot_impersonate_driver_task_events():
+    req=Request({'type':'http','headers':[(b'x-delivery-period',b'morning')],
+        'endpoint':SimpleNamespace(__module__='app.operations',__name__='task_transition')})
+    with pytest.raises(HTTPException) as e:context.apply(None,user(),req)
+    assert e.value.status_code==403
+
+
 def test_unknown_header_and_unlisted_endpoint_are_rejected_before_db_reads():
     for value in ('evening','Morning','morning,evening',''):
         req=Request({'type':'http','headers':[(b'x-delivery-period',value.encode())]})

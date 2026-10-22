@@ -71,7 +71,8 @@ def test_scoped_manager_accepts_with_dispatch_and_shared_manager_controls(static
         expect(page.locator('#modal [data-action=assign]')).to_be_visible()
         assert page.locator('[data-action=prepare]:visible').count()==0
         expect(page.locator('#modal [data-action=approve-shift]')).to_have_count(0)
-        assert page.locator('[data-action=fiscal-documents]:visible').count()==0
+        # The shared manager permission includes reading the order's fiscal documents.
+        expect(page.locator('[data-action=fiscal-documents]:visible')).to_have_count(1)
         assert writes==[('/api/orders/morning-order/manager-accept',{'version':1})]
         expect(page.locator('#navigation [data-page=shifts]')).to_be_visible()
         expect(page.locator('#navigation [data-page=admin]')).to_have_count(0)

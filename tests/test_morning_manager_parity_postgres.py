@@ -3,6 +3,7 @@ from uuid import uuid4
 import pytest
 from app import db, employee_permissions
 from test_morning_manager_context_postgres import morning_manager, post, B2
+from test_operations import ops
 
 pytestmark = [pytest.mark.postgres, pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)]
 
