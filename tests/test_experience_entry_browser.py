@@ -153,7 +153,7 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
 def test_guest_browsing_hides_optional_form_preserves_details_and_requires_otp(static_customer,lang,browser_name):
     from playwright.sync_api import sync_playwright,expect
     branch={'id':'demo-branch','brand_id':'kps','branch_no':1,'name':'فرع المروج','city':'حفر الباطن',
-            'location':{'lat':28.4,'lng':45.9},'location_verified':True,'available':True,
+            'location':{'lat':28.4,'lng':45.9},'location_verified':True,'available':True,'direct_distance_meters':500,
             'payment_methods':['cash','card'],'services':{'delivery':{'available':True},'pickup':{'available':False},'car':{'available':False}}}
     product={'id':'demo-paid','name':'قهوة','category':'قهوة','price_halalas':1000,'available':True,'source_verified':True,'option_groups':[]}
     requests=[]
