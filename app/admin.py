@@ -138,10 +138,17 @@ def hours(value):
     if not isinstance(value, list) or not value or len(value) > 28:
         raise db.error(422, 'HOURS_INVALID', 'أدخل ساعات العمل الفعلية.')
     for row in value:
-        if not isinstance(row, dict) or set(row) != {'days', 'start', 'end'}:
+        if (not isinstance(row, dict) or not {'days', 'start', 'end'} <= set(row)
+                or set(row) - {'days', 'start', 'end', 'enabled'}):
             raise db.error(422, 'HOURS_INVALID', 'صيغة ساعات العمل غير صحيحة.')
+        if 'enabled' in row and type(row['enabled']) is not bool:
+            raise db.error(422, 'HOURS_INVALID', 'تفعيل الفترة يجب أن يكون صحيحًا أو خطأ.')
         if not isinstance(row['days'], list) or not row['days'] or any(type(d) is not int or not 0 <= d <= 6 for d in row['days']):
             raise db.error(422, 'HOURS_INVALID', 'الأيام من الاثنين 0 إلى الأحد 6.')
+        # An explicitly disabled future period may be prepared without invented
+        # times. It cannot admit orders or shifts until valid times are supplied.
+        if row.get('enabled') is False and row['start'] in (None, '') and row['end'] in (None, ''):
+            continue
         for field in ('start', 'end'):
             if not isinstance(row[field], str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', row[field]):
                 raise db.error(422, 'HOURS_INVALID', 'الوقت بصيغة HH:MM وتوقيت الرياض.')

@@ -4,6 +4,9 @@ import pytest
 
 from app import admin, catalog
 from app.enbishan_operations_preparation import prepare_branch_patches, apply_isolated
+from app.enbishan_operations_preparation import prepared_hours
+from app import service_hours
+from datetime import datetime
 
 
 def source(identifier='kps-1', fee=500):
@@ -26,7 +29,7 @@ def test_independent_snapshot_preserves_owner_edits_and_never_copies_sensitive_s
     assert not settings['delivery_enabled'] and not settings['pickup_enabled'] and not settings['car_enabled']
     assert 'coverage' not in settings and 'online_payment_seller' not in settings
     origin['settings']['delivery_hours'][0]['start'] = '12:00'
-    assert settings['delivery_hours'][0]['start'] == '16:00'
+    assert settings['delivery_hours'][0]['start'] == '15:00'
     destination['settings'] = deepcopy(settings)
     destination['settings']['delivery_fee_halalas'] = 700
     destination['settings']['delivery_hours'][0]['start'] = '17:00'
@@ -39,6 +42,82 @@ def test_differing_kps_fees_require_explicit_source_selection():
         prepare_branch_patches([source(), source('kps-2', 900)], [target()])
     patch = prepare_branch_patches([source(), source('kps-2', 900)], [target()], source_by_branch={'enbishan-1': 'kps-2'})[0]
     assert patch['body']['settings']['delivery_fee_halalas'] == 900
+
+
+@pytest.mark.parametrize('clock,expected', [('2026-10-22T14:59:59', False),
+    ('2026-10-22T15:00:00', True), ('2026-10-23T02:59:59', True),
+    ('2026-10-23T03:00:00', False), ('2026-10-23T09:00:00', False)])
+def test_owner_evening_hours_and_dormant_morning_slot(clock, expected):
+    intervals = prepared_hours()
+    admin.hours(intervals)
+    assert service_hours.hours_open(intervals, datetime.fromisoformat(clock)) is expected
+    assert intervals[1]['enabled'] is False and intervals[1]['start'] is None
+    # Enbishan preparation never changes the shared KPS defaults.
+    assert service_hours.DEFAULT_DELIVERY_HOURS == [
+        {'days': list(range(7)), 'start': '16:00', 'end': '04:00'}]
+
+
+def test_owner_can_prepare_and_enable_morning_without_changing_evening():
+    intervals = prepared_hours()
+    intervals[1].update(start='08:00', end='12:00')
+    admin.hours(intervals)
+    now = datetime.fromisoformat('2026-10-23T09:00:00')
+    assert not service_hours.hours_open(intervals, now)
+    intervals[1]['enabled'] = True
+    admin.hours(intervals)
+    assert service_hours.hours_open(intervals, now)
+    assert service_hours.hours_open(intervals, datetime.fromisoformat('2026-10-23T22:00:00'))
+    assert not service_hours.hours_open(intervals, datetime.fromisoformat('2026-10-23T13:00:00'))
+
+
+@pytest.mark.parametrize('period', [
+    {'days':[0], 'start':None, 'end':None, 'enabled':True},
+    {'days':[0], 'start':'08:00', 'end':None, 'enabled':False},
+    {'days':[0], 'start':'08:00', 'end':'12:00', 'enabled':'false'},
+    {'days':[], 'start':None, 'end':None, 'enabled':False},
+    {'days':[True], 'start':None, 'end':None, 'enabled':False},
+])
+def test_invalid_prepared_period_cannot_be_saved(period):
+    with pytest.raises(Exception) as error:
+        admin.hours([period])
+    assert error.value.status_code == 422
+
+
+def test_same_city_coverage_and_fees_are_independent_owner_editable_snapshots():
+    hfr, qsm = source('kps-hfr', 500), source('kps-qsm', 700)
+    hfr['city'], qsm['city'] = 'حفر الباطن', 'القيصومة'
+    polygon = {'type':'polygon', 'coordinates':[[45.8,28.3],[46.0,28.3],[45.9,28.5]]}
+    radius = {'type':'radius', 'center':{'lat':28.3,'lng':46.1}, 'radius_meters':3000}
+    hfr['settings']['coverage'], qsm['settings']['coverage'] = polygon, radius
+    destinations = [target(), target(4)]
+    destinations[0]['city'], destinations[1]['city'] = 'حفرالباطن', 'القيصومة'
+    before = deepcopy([hfr,qsm])
+    patches = prepare_branch_patches([hfr,qsm], destinations, copy_city_coverage=True)
+    assert patches[0]['body']['settings']['coverage'] == polygon
+    assert patches[1]['body']['settings']['coverage'] == radius
+    assert patches[1]['body']['settings']['delivery_fee_halalas'] == 700
+    assert all(p['body']['settings']['delivery_enabled'] is False for p in patches)
+    patches[0]['body']['settings']['coverage']['coordinates'][0][0] = 45.7
+    assert [hfr,qsm] == before
+    destinations[0]['settings'] = deepcopy(patches[0]['body']['settings'])
+    rerun = prepare_branch_patches([hfr,qsm], destinations[:1], copy_city_coverage=True)[0]
+    assert 'coverage' not in rerun['body']['settings'] and 'delivery_hours' not in rerun['body']['settings']
+
+
+def test_coverage_never_uses_a_different_city_or_guesses_between_conflicting_polygons():
+    first, second = source('kps-hfr'), source('kps-other')
+    first['city'], second['city'] = 'حفر الباطن', 'القيصومة'
+    first['settings']['coverage'] = {'type':'radius','center':{'lat':28.4,'lng':45.9},'radius_meters':1000}
+    second['settings']['coverage'] = {'type':'radius','center':{'lat':28.3,'lng':46.1},'radius_meters':2000}
+    destination = target();destination['city'] = 'حفرالباطن'
+    with pytest.raises(ValueError, match='same-city'):
+        prepare_branch_patches([second], [destination], copy_city_coverage=True)
+    second['city'] = 'حفرالباطن'
+    with pytest.raises(ValueError, match='coverage differs'):
+        prepare_branch_patches([first,second], [destination], copy_city_coverage=True)
+    selected = prepare_branch_patches([first,second], [destination],
+        source_by_branch={destination['id']:first['id']}, copy_city_coverage=True)[0]
+    assert selected['body']['settings']['coverage'] == first['settings']['coverage']
 
 
 @pytest.mark.parametrize('mutation', ['wrong_source_brand', 'wrong_target_brand', 'unapproved_branch', 'live_branch', 'duplicate_target'])

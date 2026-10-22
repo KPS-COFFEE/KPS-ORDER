@@ -10,6 +10,54 @@ from app.enbishan_catalog_import import prepare_rows
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize(('language','width'), [('ar',390),('en',1280)])
+def test_owner_saves_dormant_morning_period_without_opening_it(dual_http, language, width):
+    from app import auth, service_hours
+    from app.enbishan_operations_preparation import prepared_hours
+    from datetime import datetime
+    base, (_, actor, _, _, _) = dual_http
+    client = actor('owner', 'enbishan')
+    with db.tx() as conn:
+        original = conn.execute("SELECT settings FROM branches WHERE id='kps-branch-1'").fetchone()['settings']
+        branch = conn.execute("SELECT settings FROM branches WHERE id='enbishan-test-1'").fetchone()['settings']
+        branch.update(opening_hours=prepared_hours(), delivery_hours=prepared_hours(),
+                      delivery_enabled=False, pickup_enabled=False, car_enabled=False)
+        conn.execute("UPDATE branches SET settings=%s WHERE id='enbishan-test-1'", (db.json(branch),))
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'), args=['--no-sandbox'])
+        try:
+            context = browser.new_context(viewport={'width':width,'height':900})
+            context.add_cookies([{'name':name,'value':client.cookies.get(name),'url':base}
+                                for name in [auth.COOKIE,auth.CSRF_COOKIE]])
+            page = context.new_page();errors=[]
+            page.on('pageerror', lambda e:errors.append(str(e)))
+            page.goto(base+'/ops?operations_brand=enbishan')
+            if language=='en':
+                page.locator('#language').click()
+            page.locator('[data-page=admin]').click()
+            page.locator('[data-action=admin-tab][data-tab=branches]').click()
+            page.locator('[data-action=edit-branch][data-id=enbishan-test-1]').click()
+            periods = page.locator('#delivery_hours-rows .hours-row')
+            expect(periods).to_have_count(2)
+            expect(periods.nth(0).locator('input[type=time]').first).to_have_value('15:00')
+            expect(periods.nth(1).locator('input[type=checkbox][data-action=toggle-hours]')).not_to_be_checked()
+            periods.nth(1).locator('input[type=time]').nth(0).fill('08:00')
+            periods.nth(1).locator('input[type=time]').nth(1).fill('12:00')
+            page.locator('#modal-body button[type=submit]').click()
+            expect(page.locator('#modal')).not_to_have_attribute('open','')
+            with db.tx() as conn:
+                saved = conn.execute("SELECT settings FROM branches WHERE id='enbishan-test-1'").fetchone()['settings']
+                assert saved['delivery_hours'][1] == {'days':list(range(7)),'start':'08:00','end':'12:00','enabled':False}
+                assert saved['delivery_enabled'] is False
+                assert not service_hours.hours_open(saved['delivery_hours'], datetime(2026,10,23,9))
+                assert conn.execute("SELECT settings FROM branches WHERE id='kps-branch-1'").fetchone()['settings'] == original
+            assert not errors,errors
+            context.close()
+        finally:
+            browser.close()
+
+
+@pytest.mark.postgres
 @pytest.mark.parametrize('language',['ar','en'])
 @pytest.mark.parametrize('width',[390,1280])
 def test_enbishan_size_flavour_before_after_prices_and_missing_combination(dual_http,language,width):

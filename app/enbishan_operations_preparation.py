@@ -6,8 +6,16 @@ This is intentionally not called at application startup or by migrations.
 """
 from copy import deepcopy
 
-COPY_FIELDS = ('delivery_fee_halalas', 'minimum_order_halalas', 'opening_hours', 'delivery_hours')
+COPY_FIELDS = ('delivery_fee_halalas', 'minimum_order_halalas')
 APPROVED_BRANCH_NUMBERS = frozenset({1, 2, 3, 4})
+OWNER_HOURS_DECISION = 'enbishan-owner-hours-20261022'
+APPROVED_KPS_COVERAGE_CITIES = frozenset({'حفرالباطن', 'القيصومة'})
+
+
+def prepared_hours():
+    """Independent evening hours and an OFF morning slot, never live defaults."""
+    return [{'days': list(range(7)), 'start': '15:00', 'end': '03:00', 'enabled': True},
+            {'days': list(range(7)), 'start': None, 'end': None, 'enabled': False}]
 
 
 def _validate_snapshot(settings):
@@ -17,29 +25,31 @@ def _validate_snapshot(settings):
     for field in COPY_FIELDS[:2]:
         if type(settings[field]) is not int or not 0 <= settings[field] <= 100_000_000:
             raise ValueError(f'Invalid KPS {field}')
-    # Use the same validation as owner edits, including malformed day/time rows.
-    from .admin import hours
-    for field in COPY_FIELDS[2:]:
-        hours(settings[field])
 
 
-def prepare_branch_patches(kps_branches, enbishan_branches, *, source_by_branch=None):
+def prepare_branch_patches(kps_branches, enbishan_branches, *, source_by_branch=None,
+                           copy_city_coverage=False):
     """Return independent, default-OFF owner API patches for existing branches.
 
     Where KPS branches differ, require an explicit source branch ID per target.
     Never guess a fee by geographic proximity. Where all KPS snapshots agree,
     the common values can initialize any approved branch. Existing Enbishan
     values always win, so rerunning preparation cannot undo owner changes.
-    No customer, payment seller, coverage polygon, staff or financial data is
-    copied. Coverage belongs to the destination branch and needs own review.
+    No customer, payment seller, staff or financial data is copied. Owner-approved
+    coverage copying is explicit and restricted to matching Hafar/Qaisumah cities.
+    Evening/morning hours are independent of KPS and preserve existing edits.
     """
     source_by_branch = source_by_branch or {}
+    if type(copy_city_coverage) is not bool:
+        raise ValueError('Coverage snapshot selection must be boolean')
     sources = {}
+    source_rows = {}
     for row in kps_branches:
         if row.get('brand_id') != 'kps' or not row.get('id') or row['id'] in sources:
             raise ValueError('Expected unique KPS source branches')
         _validate_snapshot(row.get('settings', {}))
         sources[row['id']] = {key: deepcopy(row['settings'][key]) for key in COPY_FIELDS}
+        source_rows[row['id']] = row
     if not sources:
         raise ValueError('A reviewed KPS branch snapshot is required')
     common = next(iter(sources.values()))
@@ -60,13 +70,43 @@ def prepare_branch_patches(kps_branches, enbishan_branches, *, source_by_branch=
         if source_id is not None and source_id not in sources:
             raise ValueError('Selected source is not a supplied KPS branch')
         snapshot = sources[source_id] if source_id else common
+        if snapshot is None and copy_city_coverage and not source_id:
+            from . import catalog
+            city = catalog.normalize_city(row.get('city', '')).replace(' ', '')
+            same_city = [sources[s['id']] for s in source_rows.values()
+                         if catalog.normalize_city(s.get('city', '')).replace(' ', '') == city]
+            if city in APPROVED_KPS_COVERAGE_CITIES and same_city and all(s == same_city[0] for s in same_city):
+                snapshot = same_city[0]
         if snapshot is None:
             raise ValueError(f'KPS settings differ; select source for {identifier}')
         changes = {key: deepcopy(value) for key, value in snapshot.items()
                    if current.get(key) is None}
+        for field in ('opening_hours', 'delivery_hours'):
+            if current.get(field) is None:
+                changes[field] = prepared_hours()
+        coverage_source = None
+        if copy_city_coverage and current.get('coverage') is None:
+            from . import admin, catalog
+            city = catalog.normalize_city(row.get('city', ''))
+            normalized_city = city.replace(' ', '')
+            if normalized_city in APPROVED_KPS_COVERAGE_CITIES:
+                candidates = [s for s in source_rows.values()
+                              if catalog.normalize_city(s.get('city', '')).replace(' ', '') == normalized_city]
+                if source_id:
+                    candidates = [s for s in candidates if s['id'] == source_id]
+                if not candidates or any(not s['settings'].get('coverage') for s in candidates):
+                    raise ValueError(f'Reviewed same-city KPS coverage is required for {identifier}')
+                coverage = candidates[0]['settings']['coverage']
+                if any(s['settings']['coverage'] != coverage for s in candidates):
+                    raise ValueError(f'KPS coverage differs; select source for {identifier}')
+                admin.validate_branch_settings({'coverage': coverage}, row['city'], brand_id='enbishan', branch_no=number)
+                changes['coverage'] = deepcopy(coverage)
+                coverage_source = [s['id'] for s in candidates]
         changes.update(pickup_enabled=False, car_enabled=False, delivery_enabled=False)
         patches.append({'id': identifier, 'brand_id': 'enbishan',
                         'source_branch_id': source_id, 'source_mode': 'explicit' if source_id else 'common_snapshot',
+                        'coverage_source_branch_ids': coverage_source,
+                        'hours_decision': OWNER_HOURS_DECISION,
                         'desired_services_after_activation': {'delivery': True, 'pickup': False, 'car_pickup': False},
                         'body': {'settings': changes,
                                  'reason': 'Owner-approved independent KPS defaults for Enbishan; prepared, not live'}})
@@ -75,7 +115,8 @@ def prepare_branch_patches(kps_branches, enbishan_branches, *, source_by_branch=
     return patches
 
 
-def apply_isolated(conn, actor_id, source_ids, target_ids, *, source_by_branch=None):
+def apply_isolated(conn, actor_id, source_ids, target_ids, *, source_by_branch=None,
+                   copy_city_coverage=False):
     """Explicit local test application; production/staging are rejected outright.
 
     Caller owns the transaction. Reuses existing branch records and permissions;
@@ -103,7 +144,8 @@ def apply_isolated(conn, actor_id, source_ids, target_ids, *, source_by_branch=N
         principal = multibrand.project(conn, user, brand)
         if (principal.get('home_brand_id') or principal.get('branch_ids')) and not {row['id'] for row in rows} <= set(principal.get('branch_ids') or []):
             raise PermissionError('Selected branches exceed the owner brand grant')
-    patches = prepare_branch_patches(sources, targets, source_by_branch=source_by_branch)
+    patches = prepare_branch_patches(sources, targets, source_by_branch=source_by_branch,
+                                     copy_city_coverage=copy_city_coverage)
     by_id = {row['id']: row for row in targets}
     brand_row = conn.execute("SELECT settings FROM app_settings WHERE brand_id='enbishan' FOR UPDATE").fetchone()
     if not brand_row:
@@ -116,7 +158,9 @@ def apply_isolated(conn, actor_id, source_ids, target_ids, *, source_by_branch=N
         settings = row['settings'] | changes
         conn.execute("UPDATE branches SET settings=%s,updated_at=now() WHERE id=%s AND brand_id='enbishan'", (db.json(settings), row['id']))
         db.audit(conn, actor_id, 'enbishan.operations.prepared', 'branch', row['id'],
-                 {'source_branch_id': patch['source_branch_id'], 'fields': list(changes), 'live': False})
+                 {'source_branch_id': patch['source_branch_id'],
+                  'coverage_source_branch_ids': patch['coverage_source_branch_ids'],
+                  'hours_decision': OWNER_HOURS_DECISION, 'fields': list(changes), 'live': False})
     conn.execute("UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id='enbishan'",
                  (db.json(brand_row['settings'] | {'invoice_profiles': profiles}),))
     db.audit(conn, actor_id, 'enbishan.invoice_profiles.prepared', 'brand', 'enbishan',

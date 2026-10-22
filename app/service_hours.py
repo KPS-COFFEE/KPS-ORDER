@@ -47,6 +47,8 @@ def _rows(hours):
     for row in hours if isinstance(hours, list) else []:
         if not isinstance(row, dict) or not isinstance(row.get('days'), list):
             continue
+        if 'enabled' in row and row['enabled'] is not True:
+            continue
         try:
             start, end = _minute(row['start']), _minute(row['end'])
         except (KeyError, TypeError, ValueError):

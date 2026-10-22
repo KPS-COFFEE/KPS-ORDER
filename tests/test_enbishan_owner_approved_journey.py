@@ -3,7 +3,8 @@ from copy import deepcopy
 
 import pytest
 
-from app import db
+from app import db, service_hours
+from datetime import datetime
 from app.enbishan_operations_preparation import apply_isolated
 from tests.test_core import _branch
 from tests.test_enbishan_dual_brand import dual
@@ -12,7 +13,8 @@ from tools.enbishan_workbook import reference_menu
 
 
 @pytest.mark.postgres
-def test_approved_menu_and_four_branch_owner_journey(dual):
+def test_approved_menu_and_four_branch_owner_journey(dual, monkeypatch):
+    monkeypatch.setattr(service_hours, 'now_riyadh', lambda: datetime(2026,10,22,18,tzinfo=service_hours.RIYADH))
     client, actor, post, _, _ = dual
     branch_ids = [f'enbishan-test-{number}' for number in range(1, 5)]
     # Explicit synthetic source values. No operational database or real provider.
@@ -40,6 +42,10 @@ def test_approved_menu_and_four_branch_owner_journey(dual):
                    and row['settings']['minimum_order_halalas'] == 1000
                    and row['settings']['delivery_enabled'] is False
                    and row['settings']['pickup_enabled'] is False for row in prepared)
+        assert all(row['settings']['delivery_hours'][0]['start'] == '15:00'
+                   and row['settings']['delivery_hours'][0]['end'] == '03:00'
+                   and row['settings']['delivery_hours'][1]['enabled'] is False
+                   and row['settings']['delivery_hours'][1]['start'] is None for row in prepared)
         assert conn.execute("SELECT settings FROM branches WHERE id='kps-branch-1'").fetchone()['settings'] == source_settings
 
     # Existing shared owner API operates on the explicitly selected brand only.
@@ -49,6 +55,22 @@ def test_approved_menu_and_four_branch_owner_journey(dual):
     post('owner', '/api/admin/branches/kps-branch-1',
          {'settings': {'delivery_fee_halalas': 1}, 'reason': 'SYNTHETIC cross-brand rejection'},
          brand='enbishan', method='patch', status=404)
+
+    # A prepared morning slot survives owner edits without opening the service.
+    from app.enbishan_operations_preparation import prepared_hours
+    periods = prepared_hours()
+    periods[1].update(start='08:00', end='12:00')
+    post('owner', '/api/admin/branches/enbishan-test-1',
+         {'settings':{'opening_hours':periods,'delivery_hours':periods},
+          'reason':'SYNTHETIC future morning preparation only'}, brand='enbishan', method='patch')
+    with db.tx() as conn:
+        actual = conn.execute("SELECT settings FROM branches WHERE id='enbishan-test-1'").fetchone()['settings']
+        assert actual['delivery_hours'] == periods
+        assert not service_hours.hours_open(actual['delivery_hours'], datetime(2026,10,23,9))
+    invalid = deepcopy(periods);invalid[1].update(enabled=True,start=None,end=None)
+    post('owner', '/api/admin/branches/enbishan-test-1',
+         {'settings':{'delivery_hours':invalid},'reason':'SYNTHETIC invalid activation'},
+         brand='enbishan',method='patch',status=422)
 
     approved = reference_menu(reviewed(), owner_approved=True)
     body = {'source_sha256': approved['source_sha256'], 'rows': approved['rows']}

@@ -1,6 +1,7 @@
 {
   "brand_id": "enbishan",
   "owner_decision_at": "2026-10-20T10:29:27+03:00",
+  "latest_operating_decision_date": "2026-10-22",
   "status": "approved_configuration_not_applied_to_production",
   "live_activation": false,
   "service_defaults": {
@@ -104,9 +105,7 @@
     "reference_brand": "kps",
     "fields": [
       "delivery_fee_halalas",
-      "minimum_order_halalas",
-      "opening_hours",
-      "delivery_hours"
+      "minimum_order_halalas"
     ],
     "copy_mode": "initial_independent_snapshot_preserve_owner_edits",
     "owner_editable_per_branch": true,
@@ -114,6 +113,24 @@
     "apply_via": "existing brand-scoped owner branch administration",
     "no_live_cross_brand_link": true
   },
+  "delivery_schedule": {
+    "timezone": "Asia/Riyadh",
+    "evening": {"start": "15:00", "end": "03:00", "days": [0,1,2,3,4,5,6], "enabled_after_authorized_activation": true},
+    "morning": {"start": null, "end": null, "enabled": false, "owner_times_required_before_enabling": true},
+    "same_independent_rows_for_opening_and_delivery_hours": true,
+    "preserve_existing_owner_edits": true,
+    "kps_hours_unchanged": true
+  },
+  "coverage_snapshot": {
+    "reference_brand": "kps",
+    "approved_cities": ["حفر الباطن", "القيصومة"],
+    "copy_city_coverage": true,
+    "matching_city_required": true,
+    "different_source_values_require_explicit_selection": true,
+    "independent_owner_editable_copy": true,
+    "does_not_enable_any_branch": true
+  },
+  "sms_activation": {"sender": "ENBISHAN", "provider": "tawked", "provider_approval": "pending", "real_sms_enabled": false},
   "customer_layout": {
     "reference_brand": "kps",
     "same_card_and_category_ordering_controls": true,
