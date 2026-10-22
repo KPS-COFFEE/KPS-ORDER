@@ -170,5 +170,29 @@
   "https://ibb.co/r2Fg6kdJ": {
     "path": "/assets/enbishan-menu/clean-67b2e8e24e1d8217.png",
     "sha256": "de0c8869308b04c73710fa9da2d0bc5623e7e140a9d3202a2b5d4d952cfd80ed"
+  },
+  "owner-beverage:enb-2e070f45d5bf744d690a5471": {
+    "path": "/assets/enbishan-menu/beverages/pepsi-240ml.webp",
+    "sha256": "ed2b6191c0512b4e7a39777e64a0c0cd9ef5bb181b7ee6e7489666f707c44824"
+  },
+  "owner-beverage:enb-d1dbec7c9b6807c2ac279729": {
+    "path": "/assets/enbishan-menu/beverages/pepsi-diet-240ml.webp",
+    "sha256": "85a0cf40546f17c90c74d4a0e67aadd88327c9cc07587c5686b7d8fabab0758c"
+  },
+  "owner-beverage:enb-e280cf67030a17429d29363f": {
+    "path": "/assets/enbishan-menu/beverages/7up-240ml.png",
+    "sha256": "6d82559f8ecafc0efcc0003b01165e4653854239ac51e7adae22cd32a950781c"
+  },
+  "owner-beverage:enb-b668a68a8f8104f89fdc8567": {
+    "path": "/assets/enbishan-menu/beverages/7up-diet.jpg",
+    "sha256": "652d576ea89411ceaa7a389383abddb7070572393d143ffcf4f78c0ed2661ce1"
+  },
+  "owner-beverage:enb-3e3bfca2b787a5a48ff26488": {
+    "path": "/assets/enbishan-menu/beverages/water-kps.jpg",
+    "sha256": "362d6590ff737195c12aed05376cfd8e2344dbba97c43bdbf052fe23eee08084"
+  },
+  "owner-beverage:enb-078a4053bf0eef33bfe3557f": {
+    "path": "/assets/enbishan-menu/beverages/mirinda-orange-240ml.webp",
+    "sha256": "dfcfbf910a0f307ef9ed358e06c099526fcbdbaf868359096fa5c81dd0b921cf"
   }
 }
