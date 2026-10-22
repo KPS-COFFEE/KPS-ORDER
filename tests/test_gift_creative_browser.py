@@ -36,7 +36,9 @@ def test_exact_logo_left_phrase_only_shimmer_and_reduced_motion(static_customer,
         assert page.locator('.kps-gift-glint').get_attribute('aria-hidden') == 'true'
         animated = page.locator('.kps-gift-ad').evaluate('(ad)=>[ad,...ad.querySelectorAll("*")].filter(e=>getComputedStyle(e).animationName!=="none").map(e=>e.className)')
         assert animated == ['kps-gift-glint']
-        assert page.locator('.kps-gift-glint').evaluate('(e)=>getComputedStyle(e).animationDuration') == '5s'
+        assert page.locator('.kps-gift-glint').evaluate('(e)=>getComputedStyle(e).animationDuration') == '2.5s'
+        frames = page.locator('.kps-gift-glint').evaluate('(e)=>e.getAnimations()[0].effect.getKeyframes().map(f=>({offset:f.offset,position:f.maskPosition||f.webkitMaskPosition,opacity:f.opacity}))')
+        assert any(frame['offset'] == .2 and frame['opacity'] == '0' for frame in frames)
         assert page.locator('.kps-gift-phrase').evaluate('(e)=>getComputedStyle(e).opacity') == '1'
         page.emulate_media(reduced_motion='reduce')
         assert page.locator('.kps-gift-glint').evaluate('(e)=>getComputedStyle(e).animationName') == 'none'

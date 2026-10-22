@@ -7,7 +7,7 @@
 .kps-gift-opening{font-size:6.5cqw;line-height:1.35}
 .kps-gift-phrase{position:relative;display:inline-block;white-space:nowrap;font-size:7cqw;line-height:1.6;isolation:isolate}
 .kps-gift-phrase em{font-size:1.15em;font-style:normal;color:#ff7841}
-.kps-gift-glint{position:absolute;inset:0;pointer-events:none;color:white;mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);-webkit-mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);mask-size:300% 100%;-webkit-mask-size:300% 100%;mask-position:0% 0;-webkit-mask-position:0% 0;animation:kps-gift-shimmer 5s linear infinite;opacity:0}
+.kps-gift-glint{position:absolute;inset:0;pointer-events:none;color:white;mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);-webkit-mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);mask-size:300% 100%;-webkit-mask-size:300% 100%;mask-position:0% 0;-webkit-mask-position:0% 0;animation:kps-gift-shimmer 2.5s linear infinite;opacity:0}
 .kps-gift-glint em{color:white}
-@keyframes kps-gift-shimmer{0%{mask-position:0% 0;-webkit-mask-position:0% 0;opacity:0}1%,9%{opacity:.7}10%,100%{mask-position:100% 0;-webkit-mask-position:100% 0;opacity:0}}
+@keyframes kps-gift-shimmer{0%{mask-position:0% 0;-webkit-mask-position:0% 0;opacity:0}2%,18%{opacity:.7}20%,100%{mask-position:100% 0;-webkit-mask-position:100% 0;opacity:0}}
 @media(prefers-reduced-motion:reduce){.kps-gift-glint{animation:none!important;opacity:0!important}}
