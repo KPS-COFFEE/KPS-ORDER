@@ -43,6 +43,14 @@ def test_enbishan_reuses_all_canonical_policy_sections_and_operator(kind,lang):
 
 def test_original_logo_and_cleaned_menu_assets_are_bundled():
     assert (ROOT/'public/assets/enbishan-original.jpeg').is_file()
-    images=list((ROOT/'public/assets/enbishan-menu').iterdir())
-    assert len(images)==43
+    artwork_root = ROOT/'public/assets/enbishan-menu'
+    images=[p for p in artwork_root.rglob('*') if p.is_file()]
+    assert len(images)==49
+    assert len([p for p in images if p.parent == artwork_root])==43
+    assert len([p for p in images if p.parent == artwork_root/'beverages'])==6
     assert len([p for p in images if p.name.startswith('clean-')])==11
+    from app.enbishan_menu_assets import MANIFEST, valid_bundled
+    bundled_paths={entry['path'] for entry in MANIFEST.values()}
+    actual_paths={'/' + p.relative_to(ROOT/'public').as_posix() for p in images}
+    assert actual_paths == bundled_paths
+    assert all(valid_bundled(path) for path in actual_paths)
