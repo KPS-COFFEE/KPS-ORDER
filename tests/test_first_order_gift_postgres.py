@@ -82,6 +82,37 @@ def test_two_simultaneous_orders_receive_one_gift(gift_setup):
         assert c.execute('SELECT count(*) n FROM first_order_gift_claims').fetchone()['n']==1
 
 
+@pytest.mark.parametrize('phone', ['0512345678', '512345678', '966512345678',
+    '00966512345678', '+966 51 234 5678', '٠٥١٢٣٤٥٦٧٨', '۰۵۱۲۳۴۵۶۷۸'])
+def test_phone_variants_new_session_and_recreated_identity_cannot_reclaim(gift_setup, phone):
+    client, user, body, _ = gift_setup
+    first = client().post('/api/orders', json=body, headers={'Idempotency-Key': uuid4().hex})
+    assert first.status_code == 200, first.text
+    # A new identity/session with the same verified phone must still hit the
+    # permanent brand+phone claim, not a user-id, cookie, or policy-version flag.
+    replacement = 'replacement-' + uuid4().hex
+    with db.tx() as conn:
+        # Simulate the old account relinquishing its phone, without deleting
+        # its order or permanent redemption ledger. Normal identity uniqueness
+        # remains enabled throughout this test.
+        conn.execute("UPDATE users SET phone=NULL,phone_verified_at=NULL,phone_sms_verified_at=NULL,active=false WHERE id=%s",
+                     (user['id'],))
+        conn.execute("INSERT INTO users(id,brand_id,role,display_name,phone,phone_verified_at,phone_sms_verified_at) "
+                     "VALUES(%s,'ops-brand','customer','اختبار',%s,now(),now())",
+                     (replacement, auth.normalize_phone(phone)))
+    user.update(id=replacement, phone=auth.normalize_phone(phone))
+    body['customer']['phone'] = phone
+    response = client().post('/api/gifts/quote', json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()['quote']['first_order_gift']['status'] == 'claimed'
+    assert not any(item.get('is_gift') for item in response.json()['quote']['items'])
+    second = client().post('/api/orders', json=body, headers={'Idempotency-Key': uuid4().hex})
+    assert second.status_code == 200, second.text
+    assert not any(item.get('is_gift') for item in second.json()['order']['snapshot']['items'])
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM first_order_gift_claims').fetchone()['n'] == 1
+
+
 def test_failed_order_rolls_back_claim_and_delivery_fee_never_meets_minimum(gift_setup):
     client,user,body,_=gift_setup
     body.update(expected_gift=True,expected_gift_version=1,expected_total_halalas=1)
@@ -92,6 +123,45 @@ def test_failed_order_rolls_back_claim_and_delivery_fee_never_meets_minimum(gift
     body.pop('expected_total_halalas')
     response=client().post('/api/gifts/quote',json=body)
     assert response.status_code==409 and response.json()['detail']['code']=='MINIMUM_ORDER_NOT_MET'
+
+
+def test_expired_offer_rejects_stale_gift_confirmation_without_consuming_claim(gift_setup):
+    client, user, body, p = gift_setup
+    p['ends_at'] = (datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+    with db.tx() as conn:
+        conn.execute("UPDATE app_settings SET settings=jsonb_set(settings,'{first_order_gift}',%s::jsonb) WHERE brand_id='ops-brand'", (db.json(p),))
+    quote = client().post('/api/gifts/quote', json=body)
+    assert quote.status_code == 200, quote.text
+    assert quote.json()['quote']['first_order_gift']['status'] == 'expired'
+    assert not any(item.get('is_gift') for item in quote.json()['quote']['items'])
+    body.update(expected_gift=True, expected_gift_version=1)
+    stale = client().post('/api/orders', json=body, headers={'Idempotency-Key': uuid4().hex})
+    assert stale.status_code == 409 and stale.json()['detail']['code'] == 'GIFT_CHANGED'
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM first_order_gift_claims').fetchone()['n'] == 0
+        assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n'] == 0
+
+
+def test_older_owner_form_cannot_silently_clear_expiry_and_owner_can_stop_early(gift_setup, monkeypatch):
+    customer_client, user, _, p = gift_setup
+    p['ends_at'] = (datetime.now(timezone.utc)+timedelta(days=7)).isoformat()
+    with db.tx() as conn:
+        conn.execute("UPDATE app_settings SET settings=jsonb_set(settings,'{first_order_gift}',%s::jsonb) WHERE brand_id='ops-brand'", (db.json(p),))
+    client = customer_client()
+    client.app.dependency_overrides[auth.current_user] = lambda: user | {'role': 'owner'}
+    monkeypatch.setattr(auth, 'require_owner_step_up', lambda *_: None)
+    payload = {'policy': {key: p[key] for key in ('enabled', 'starts_at', 'items')},
+               'expected_version': 1, 'reason': 'إيقاف مبكر مع حفظ الموعد'}
+    payload['policy']['enabled'] = False
+    stopped = client.put('/api/gifts/policy', json=payload, headers={'Idempotency-Key': uuid4().hex})
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json()['policy']['enabled'] is False
+    assert datetime.fromisoformat(stopped.json()['policy']['ends_at']) == datetime.fromisoformat(p['ends_at'])
+    payload['expected_version'] = 2
+    payload['policy']['ends_at'] = None
+    explicit = client.put('/api/gifts/policy', json=payload, headers={'Idempotency-Key': uuid4().hex})
+    assert explicit.status_code == 200, explicit.text
+    assert explicit.json()['policy']['ends_at'] is None
 
 
 def test_unverified_contact_and_other_brand_cannot_get_a_gift(gift_setup):

@@ -7,10 +7,13 @@
     const [{policy},config]=await Promise.all([api('/api/gifts/policy'),api('/api/admin/config')]);
     const products=config.products||[];
     const localStart=policy.starts_at?new Date(new Date(policy.starts_at).getTime()+10800000).toISOString().slice(0,16):'';
+    const localEnd=policy.ends_at?new Date(new Date(policy.ends_at).getTime()+10800000).toISOString().slice(0,16):'';
     modal(tr('هدية أول طلب مؤهل','First qualifying order gift'),`<form id="first-gift-owner" class="stack">
       <p>${esc(tr('متاحة للعملاء القدامى والجدد، مرة واحدة فقط لكل جوال موثق في هذا البراند. الحد الأدنى المعتمد للفرع يُحسب من الأصناف المدفوعة دون رسوم التوصيل أو الهدية.','Available to existing and new customers once per verified mobile in this brand. The approved branch minimum counts paid items only, excluding delivery and the gift.'))}</p>
       <label><input type="checkbox" name="enabled" ${policy.enabled?'checked':''}>${esc(tr('تفعيل العرض','Enable offer'))}</label>
       <label>${esc(tr('موعد البداية — توقيت الرياض','Start date and time — Riyadh'))}<input type="datetime-local" name="starts_at" value="${esc(localStart)}"></label>
+      <label>${esc(tr('موعد الانتهاء التلقائي — توقيت الرياض','Automatic end date and time — Riyadh'))}<input type="datetime-local" name="ends_at" value="${esc(localEnd)}"></label>
+      <p>${esc(tr('يمكنك إيقاف العرض مبكرًا بإلغاء التفعيل؛ لا يعود الاستحقاق لمن سبق أن استفاد.','You can stop the offer early by disabling it; previous claims never reset.'))}</p>
       ${[0,1].map(i=>`<fieldset><legend>${esc(i===0?tr('القهوة المجانية','Free coffee'):tr('الكوكيز المجاني','Free cookie'))}</legend><label>${esc(tr('الصنف المعتمد','Approved item'))}<select name="product_${i}" data-gift-slot="${i}"><option value="">${esc(tr('اختر الصنف','Choose item'))}</option>${products.map(p=>`<option value="${esc(p.id)}" ${policy.items[i]?.product_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><div id="gift-options-${i}"></div></fieldset>`).join('')}
       <section class="notice" id="gift-owner-preview" aria-live="polite"></section>
       <p>${esc(tr('تشغيل العرض أو إيقافه لا يغير الإعلان. إعادة تشغيله أو تغيير موعده لا يعيد الاستحقاق لمن سبق أن استفاد.','Enabling or pausing this offer does not change the advertisement. Restarting or rescheduling never resets previous claims.'))}</p>
@@ -18,11 +21,12 @@
       ${!user.employee_sms_email_retired?`<label>${esc(tr('كلمة مرور المالك','Owner password'))}<input name="step_up_password" type="password" autocomplete="current-password" required></label>`:''}
       <p class="form-error" role="alert"></p><button type="submit">${esc(tr('اعتماد إعدادات الهدية','Approve gift settings'))}</button>
     </form>`,async(fd)=>{
-      const enabled=fd.has('enabled'),starts=String(fd.get('starts_at')||'');
+      const enabled=fd.has('enabled'),starts=String(fd.get('starts_at')||''),ends=String(fd.get('ends_at')||'');
       const items=selections();
       if(enabled&&(!starts||items.length!==2))throw new Error(tr('حدد الموعد والصنفين قبل التفعيل','Choose the start time and both items before enabling'));
+      if(ends&&(!starts||ends<=starts))throw new Error(tr('الانتهاء يجب أن يكون بعد البداية','The end must follow the start'));
       await ctx.authorize(fd.get('step_up_password')||undefined);
-      await api('/api/gifts/policy',{method:'PUT',body:{policy:{enabled,starts_at:starts?`${starts}:00+03:00`:null,items},expected_version:policy.version,reason:fd.get('reason')}});
+      await api('/api/gifts/policy',{method:'PUT',body:{policy:{enabled,starts_at:starts?`${starts}:00+03:00`:null,ends_at:ends?`${ends}:00+03:00`:null,items},expected_version:policy.version,reason:fd.get('reason')}});
       closeModal();await ctx.onSaved();
     });
     const form=document.querySelector('#first-gift-owner');

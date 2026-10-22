@@ -1009,7 +1009,7 @@
       for(const item of gift.items||[])card.append(node('p','',sourceText(item)+' · '+entryText('مجانًا','Free')));
       card.append(node('small','',entryText('مرة واحدة لكل جوال موثق، مع استيفاء الحد الأدنى.','Once per verified mobile, with the approved minimum.')));
     }else{
-      const copy={claimed:['سبق لك الاستفادة من هدية أول طلب.','You have already received your first-order gift.'],scheduled:['العرض لم يبدأ بعد.','The offer has not started yet.'],verification_required:['تحقق من جوالك لمعرفة استحقاق الهدية.','Verify your mobile to check gift eligibility.'],unavailable:['الهدية غير متاحة في هذا الفرع حاليًا.','The gift is currently unavailable at this branch.'],minimum_unconfigured:['العرض غير متاح لهذا الفرع حاليًا.','The offer is currently unavailable at this branch.'],minimum_not_met:['أكمل الحد الأدنى من الأصناف المدفوعة لاستحقاق الهدية.','Reach the paid-item minimum to qualify for the gift.']}[gift.status];
+      const copy={expired:['انتهى العرض.','This offer has ended.'],claimed:['سبق لك الاستفادة من هدية أول طلب.','You have already received your first-order gift.'],scheduled:['العرض لم يبدأ بعد.','The offer has not started yet.'],verification_required:['تحقق من جوالك لمعرفة استحقاق الهدية.','Verify your mobile to check gift eligibility.'],unavailable:['الهدية غير متاحة في هذا الفرع حاليًا.','The gift is currently unavailable at this branch.'],minimum_unconfigured:['العرض غير متاح لهذا الفرع حاليًا.','The offer is currently unavailable at this branch.'],minimum_not_met:['أكمل الحد الأدنى من الأصناف المدفوعة لاستحقاق الهدية.','Reach the paid-item minimum to qualify for the gift.']}[gift.status];
       if(!copy)return;card.append(node('p','',entryText(...copy)));
     }
     container.append(card);
@@ -1243,6 +1243,7 @@
       container.append(content);
       return;
     }
+    if(window.KPSGiftCreative?.render(container,{brandId:state.brand.id,banner}))return;
     container.className='campaign-banner';
     const image=safeImage(banner.desktop_image_url||banner.image_url);
     const mobileImage=safeImage(banner.mobile_image_url||image);
