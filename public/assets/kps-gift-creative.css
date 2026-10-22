@@ -1,0 +1,13 @@
+@font-face{font-family:KpsGiftArabic;src:url('/assets/kps-gift-arabic-bold.ttf') format('truetype');font-weight:700;font-display:swap}
+.kps-gift-host{max-width:600px;margin-inline:auto;overflow:hidden;border-radius:18px;background:#141210}
+.kps-gift-ad{container-type:inline-size;position:relative;isolation:isolate;width:100%;aspect-ratio:4/5;overflow:hidden;background:#141210;color:#fff;font-family:KpsGiftArabic,Tahoma,Arial,sans-serif;font-weight:700}
+.kps-gift-ad .kps-gift-scene{position:absolute;inset:0;width:100%;height:100%;max-height:none;object-fit:cover;z-index:-1}
+.kps-gift-ad .kps-gift-logo{position:absolute;top:2.5%;left:5%;width:21%;height:auto;max-height:none;aspect-ratio:1;object-fit:contain}
+.kps-gift-copy{position:absolute;top:17%;left:5%;right:5%;text-align:right}
+.kps-gift-opening{font-size:6.5cqw;line-height:1.35}
+.kps-gift-phrase{position:relative;display:inline-block;white-space:nowrap;font-size:7cqw;line-height:1.6;isolation:isolate}
+.kps-gift-phrase em{font-size:1.15em;font-style:normal;color:#ff7841}
+.kps-gift-glint{position:absolute;inset:0;pointer-events:none;color:white;mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);-webkit-mask-image:linear-gradient(105deg,transparent 40%,#0009 48%,#000 50%,#0009 52%,transparent 60%);mask-size:300% 100%;-webkit-mask-size:300% 100%;mask-position:0% 0;-webkit-mask-position:0% 0;animation:kps-gift-shimmer 5s linear infinite;opacity:0}
+.kps-gift-glint em{color:white}
+@keyframes kps-gift-shimmer{0%{mask-position:0% 0;-webkit-mask-position:0% 0;opacity:0}1%,9%{opacity:.7}10%,100%{mask-position:100% 0;-webkit-mask-position:100% 0;opacity:0}}
+@media(prefers-reduced-motion:reduce){.kps-gift-glint{animation:none!important;opacity:0!important}}

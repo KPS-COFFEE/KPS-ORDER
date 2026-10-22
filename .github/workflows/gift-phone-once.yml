@@ -48,3 +48,25 @@ jobs:
           name: gift-phone-once-evidence
           path: test-results/gift-phone-once.xml
           retention-days: 14
+  creative-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TEST_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: node --check public/assets/kps-gift-creative.js && node --check public/customer.js
+      - run: python -m pytest -q tests/test_gift_creative_browser.py tests/test_experience_entry_browser.py --junitxml=test-results/gift-creative.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gift-creative-browser-evidence
+          path: test-results/
+          retention-days: 14

@@ -1243,6 +1243,7 @@
       container.append(content);
       return;
     }
+    if(window.KPSGiftCreative?.render(container,{brandId:state.brand.id,banner}))return;
     container.className='campaign-banner';
     const image=safeImage(banner.desktop_image_url||banner.image_url);
     const mobileImage=safeImage(banner.mobile_image_url||image);
