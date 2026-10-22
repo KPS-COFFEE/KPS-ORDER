@@ -1,8 +1,9 @@
 """Scoped dispatch suggestions and connection evidence; never auto-assigns a task."""
 from datetime import datetime, timezone
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query
 from . import auth, db, catalog, dispatch_map
-from .operations import order_access, safe, eligible_driver_shift, shift_access
+from .operations import order_access, safe, shift_access
 
 router = APIRouter(prefix='/api/operations/map-services', tags=['operations'])
 STAFF = ('owner', 'delivery_manager', 'delivery_staff')
@@ -46,7 +47,7 @@ def record_sample(c, user, shift, body, previous, stamp):
                 c.execute("""INSERT INTO order_events(id,order_id,actor_id,event_type,details)
                   SELECT %s,%s,%s,'order.gps_near_customer',%s WHERE NOT EXISTS
                   (SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.gps_near_customer' AND details->>'task_id'=%s)""",
-                  (__import__('uuid').uuid4().hex,task['order_id'],user['id'],db.json({'task_id':task['id'],'distance_m':round(distance),'accuracy_m':body.accuracy_m,'confirmed_delivery':False}),task['order_id'],task['id']))
+                  (uuid4().hex,task['order_id'],user['id'],db.json({'task_id':task['id'],'distance_m':round(distance),'accuracy_m':body.accuracy_m,'confirmed_delivery':False}),task['order_id'],task['id']))
 
 
 @router.get('/recommendations')
@@ -71,11 +72,7 @@ def recommendations(order_id: str = Query(min_length=1, max_length=200), user=De
         for row in rows:
             try:
                 # Canonical checks preserve morning duty, parent manager and revocation rules.
-                manager = eligible_driver_shift(c, row, order)
-                if user['role']=='delivery_manager' and manager['user_id']!=user['id']:
-                    continue
-                if row['active_tasks'] >= policy.max_active_tasks:
-                    continue
+                smart_dispatch.candidate(c,user,order,row,policy)
                 from . import morning_delivery
                 morning_delivery.authorize_order(c,user,order)
             except HTTPException:

@@ -31,7 +31,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/ops.js && node --check public/assets/dispatch-map.js && node --check public/assets/delivery-track.js
-      - run: python -m pytest -q tests/test_map_services.py tests/test_driver_locations.py tests/test_driver_routes.py tests/test_driver_gps_browser.py tests/test_dispatch_map_browser.py tests/test_order_tracking_browser.py tests/test_smart_dispatch.py tests/test_backup.py --junitxml=test-results/map-services.xml
+      - run: python -m pytest -q tests/test_map_services.py tests/test_delivery_tracking_browser.py tests/test_driver_locations.py tests/test_driver_routes.py tests/test_driver_gps_browser.py tests/test_dispatch_map_browser.py tests/test_order_tracking_browser.py tests/test_smart_dispatch.py tests/test_backup.py --junitxml=test-results/map-services.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

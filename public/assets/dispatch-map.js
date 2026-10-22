@@ -28,7 +28,7 @@
   async function mount(host,options){
     if(!host)return null;
     let data={orders:options.orders||[],drivers:options.drivers||[],branches:options.branches||[],lang:options.lang||'ar'};
-    let map=null,library=null,destroyed=false,ready=false,fitted=false;const markers=new Map();
+    let map=null,library=null,destroyed=false,ready=false,fitted=false;const markers=new Map(),trackingLinks=new Map();
     const tr=(ar,en)=>data.lang==='en'?en:ar;
     const state=document.createElement('div');state.className='dispatch-map-state';
     const canvas=document.createElement('div');canvas.className='dispatch-map-canvas';canvas.hidden=true;
@@ -66,7 +66,7 @@
       try{
         const context=await options.api('/api/operations/driver-route-context?driver_id='+encodeURIComponent(driverId));
         if(destroyed||generation!==routeGeneration)return;
-        routeChoices=[...((context.tasks||[]).length>=2&&(context.tasks||[]).length<=8?[{value:'plan',plan:true,label:tr('ترتيب جميع التوصيلات المستلمة','Plan all picked-up deliveries')}]:[]),...(context.tasks||[]).map(t=>({value:'task:'+t.id,task_id:t.id,label:tr('توصيل الطلب ','Deliver order ')+(t.order_no||t.order_id)})),...(context.return_branches||[]).map(b=>({value:'branch:'+b.id,return_branch_id:b.id,label:tr('رجوع مباشر إلى ','Direct return to ')+b.name}))];
+        routeChoices=[...((context.tasks||[]).length>=2&&(context.tasks||[]).length<=8?[{value:'plan',plan:true,label:tr('ترتيب التوصيلات المستلمة الظاهرة','Plan visible picked-up deliveries')}]:[]),...(context.tasks||[]).map(t=>({value:'task:'+t.id,task_id:t.id,label:tr('توصيل الطلب ','Deliver order ')+(t.order_no||t.order_id)})),...(context.return_branches||[]).map(b=>({value:'branch:'+b.id,return_branch_id:b.id,label:tr('رجوع مباشر إلى ','Direct return to ')+b.name}))];
         for(const choice of routeChoices){const option=document.createElement('option');option.value=choice.value;option.textContent=choice.label;destinationSelect.append(option);}
         routeStatus.textContent=routeChoices.length?tr('اختر طلبًا مستلمًا أو فرع رجوع. وقت الرجوع المباشر لا يشمل تسليم الطلبات المعلقة.','Choose a picked-up order or return branch. Direct return ETA excludes pending deliveries.'):tr('لا توجد وجهة متاحة لهذا السائق.','No available destination for this driver.');
       }catch{if(!destroyed&&generation===routeGeneration)routeStatus.textContent=tr('تعذر تحميل الوجهات. تحقق من حداثة موقع السائق وصلاحياتك.','Could not load destinations. Check driver location freshness and permissions.');}
@@ -117,6 +117,12 @@
     }
     function drawZones(zones){if(!ready||!map)return;const features=[];for(const zone of zones){const c=zone.coverage;let ring;if(c.type==='polygon'){ring=c.coordinates.map(p=>[p[0],p[1]]);}else{const center=point(c.center);if(!center)continue;const lat=center.lat*Math.PI/180,lon=center.lng*Math.PI/180,d=c.radius_meters/6371000;ring=Array.from({length:65},(_,i)=>{const angle=2*Math.PI*i/64,a=Math.asin(Math.sin(lat)*Math.cos(d)+Math.cos(lat)*Math.sin(d)*Math.cos(angle)),b=lon+Math.atan2(Math.sin(angle)*Math.sin(d)*Math.cos(lat),Math.cos(d)-Math.sin(lat)*Math.sin(a));return [b*180/Math.PI,a*180/Math.PI];});}if(ring.length<3)continue;if(ring[0][0]!==ring.at(-1)[0]||ring[0][1]!==ring.at(-1)[1])ring.push(ring[0]);features.push({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[ring]}});}const geo={type:'FeatureCollection',features};if(map.getSource('dispatch-zones'))map.getSource('dispatch-zones').setData(geo);else{map.addSource('dispatch-zones',{type:'geojson',data:geo});map.addLayer({id:'dispatch-zones',type:'fill',source:'dispatch-zones',paint:{'fill-color':'#d9792b','fill-opacity':0.12}});}}
     services.addEventListener('toggle',()=>{if(services.open){lastServices=0;void refreshServices();}});
+    function trackingControls(pin,item){
+      const cached=trackingLinks.get(pin.id);if(!cached||cached.expires<Date.now())return;
+      const link=document.createElement('a');link.href=cached.path;link.target='_blank';link.rel='noopener noreferrer';link.textContent=tr('فتح رابط تتبع العميل','Open customer tracking link');item.popupRoot.append(link);
+      const copy=document.createElement('button');copy.type='button';copy.textContent=tr('نسخ رابط التتبع','Copy tracking link');copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(new URL(cached.path,location.origin).href);copy.textContent=tr('تم النسخ','Copied');}catch{copy.textContent=tr('افتح الرابط وانسخه من المتصفح','Open the link and copy it from the browser');}});item.popupRoot.append(copy);
+      const revoke=document.createElement('button');revoke.type='button';revoke.textContent=tr('إلغاء رابط التتبع','Revoke tracking link');revoke.addEventListener('click',async()=>{revoke.disabled=true;try{await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'DELETE'});trackingLinks.delete(pin.id);refresh();}catch{revoke.disabled=false;}});item.popupRoot.append(revoke);
+    }
     const brandLegend=document.createElement('div');brandLegend.className='dispatch-map-brand-legend';host.append(brandLegend);
     let stateKind='loading';
     function labels(){
@@ -165,17 +171,18 @@
           const detail=document.createElement('p');
           detail.textContent=tr(pin.stale?'آخر موقع قديم · ':'آخر تحديث · ',pin.stale?'Stale last location · ':'Last update · ')+new Date(pin.updated_at).toLocaleTimeString(data.lang==='en'?'en-GB':'ar-SA')+tr(' · الدقة ',' · Accuracy ')+Math.round(pin.accuracy_m||0)+tr(' متر',' m');item.popupRoot.append(detail);
         }
+        if(pin.kind==='order'&&options.onSelectOrder){const button=document.createElement('button');button.type='button';button.textContent=tr('فتح الطلب','Open order');button.addEventListener('click',()=>options.onSelectOrder(pin.id));item.popupRoot.append(button);}
         if(pin.kind==='order'&&!['delivered','cancelled'].includes(pin.status)){
           const share=document.createElement('button');share.type='button';share.textContent=tr('إنشاء رابط تتبع للعميل','Create customer tracking link');
-          share.addEventListener('click',async()=>{share.disabled=true;try{const result=await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'POST',body:{}});if(destroyed)return;const link=document.createElement('a');link.href=result.path;link.target='_blank';link.rel='noopener noreferrer';link.textContent=tr('فتح رابط التتبع — صالح 4 ساعات','Open tracking link — valid for 4 hours');item.popupRoot.append(link);const revoke=document.createElement('button');revoke.type='button';revoke.textContent=tr('إلغاء رابط التتبع','Revoke tracking link');revoke.addEventListener('click',async()=>{revoke.disabled=true;try{await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'DELETE'});link.remove();revoke.remove();}catch{revoke.disabled=false;}});item.popupRoot.append(revoke);}catch{item.popupRoot.append(serviceText(tr('تعذر إنشاء رابط؛ تحقق من حالة الطلب وصلاحياتك.','Link unavailable; check order status and permission.')));}finally{share.disabled=false;}});item.popupRoot.append(share);
+          share.addEventListener('click',async()=>{share.disabled=true;try{const result=await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'POST',body:{}});if(destroyed)return;if(!/^\/delivery-track#[A-Za-z0-9_-]{43}$/.test(result.path))throw new Error('invalid link');trackingLinks.set(pin.id,{path:result.path,expires:Date.now()+4*3600000});refresh();}catch{item.popupRoot.append(serviceText(tr('تعذر إنشاء رابط؛ تحقق من حالة الطلب وصلاحياتك.','Link unavailable; check order status and permission.')));}finally{share.disabled=false;}});item.popupRoot.append(share);trackingControls(pin,item);
         }
-        if(pin.kind==='order'&&options.onSelectOrder){const button=document.createElement('button');button.type='button';button.textContent=tr('فتح الطلب','Open order');button.addEventListener('click',()=>options.onSelectOrder(pin.id));item.popupRoot.append(button);}
+
       }
       if(!fitted)fitAll();
     }
     fit.addEventListener('click',fitAll);labels();void refreshServices();
     const freshnessTimer=setInterval(()=>{if(!destroyed&&!document.hidden){refresh();void refreshServices();}},15000);
-    const controller={update(next){data={...data,...next};refresh();},resize(){map?.resize();},fit:fitAll,destroy(){destroyed=true;clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();map?.remove();map=null;}};
+    const controller={update(next){data={...data,...next};refresh();},resize(){map?.resize();},fit:fitAll,destroy(){destroyed=true;clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();trackingLinks.clear();map?.remove();map=null;}};
     try{
       const config=await options.api('/api/operations/map-config');
       if(destroyed||!host.isConnected)return controller;

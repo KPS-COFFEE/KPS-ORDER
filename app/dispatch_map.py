@@ -147,7 +147,7 @@ def route_context(c, user, driver_id):
                     "FROM users u JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
                     "JOIN driver_latest_locations g ON g.driver_id=u.id AND g.shift_id=s.id AND g.brand_id=u.brand_id "
                     "WHERE u.id=%s AND u.brand_id=%s AND u.role='driver' AND u.active "
-                    "AND s.kind='driver' AND s.status='open' AND g.updated_at>=now()-interval '120 seconds'",
+                    "AND s.kind='driver' AND s.status='open' AND g.updated_at>=now()-interval '120 seconds' AND g.accuracy_m<=100",
                     (driver_id, user['brand_id'])).fetchone()
     if not row:
         raise HTTPException(409, 'يلزم موقع حديث للسائق وشفت مفتوح.')

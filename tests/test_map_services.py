@@ -155,3 +155,38 @@ def test_zone_and_trip_report_scopes(services):
     user.update(role='delivery_staff',branch_ids=['wrong'])
     assert client.get('/api/operations/map-services/zones').json()['zones']==[]
     assert client.get('/api/operations/map-services/trips?shift_id=gps-shift').status_code==403
+
+
+@pytest.mark.postgres
+def test_public_eta_uses_global_budget_and_requires_precise_fix(services,monkeypatch):
+    client,user=services
+    client.post('/api/operations/driver-location',json={'lat':28.4,'lng':45.9,'accuracy_m':10})
+    owner(user)
+    monkeypatch.setenv('MAPBOX_ENABLED','true');monkeypatch.setenv('MAPBOX_PUBLIC_TOKEN_KPS','pk.'+'a'*30)
+    with db.tx() as c:pickup(c)
+    token=client.post('/api/operations/orders/map-order-1/tracking-link').json()['path'].split('#')[1]
+    first=client.post('/api/delivery-tracking/view',json={'token':token,'route':True})
+    assert first.status_code==200,first.text
+    assert first.json()['route_destination']=={'lat':28.42,'lng':45.91}
+    second=client.post('/api/delivery-tracking/view',json={'token':token,'route':True})
+    assert second.status_code==200 and second.json()['route_unavailable']
+    assert second.json()['location'] is not None
+    with db.tx() as c:c.execute('UPDATE driver_latest_locations SET accuracy_m=300')
+    approximate=client.post('/api/delivery-tracking/view',json={'token':token,'route':True}).json()
+    assert approximate['gps']['state']=='approximate' and 'route_destination' not in approximate
+
+
+@pytest.mark.postgres
+def test_proximity_is_not_delivery_and_is_idempotent(services):
+    client,user=services
+    with db.tx() as c:pickup(c)
+    point={'lat':28.42,'lng':45.91,'accuracy_m':10}
+    assert client.post('/api/operations/driver-location',json=point).status_code==200
+    with db.tx() as c:
+        c.execute("UPDATE driver_latest_locations SET updated_at=now()-interval '11 seconds'")
+    assert client.post('/api/operations/driver-location',json=point).status_code==200
+    with db.tx() as c:
+        assert c.execute("SELECT count(*) n FROM order_events WHERE event_type='order.gps_near_customer'").fetchone()['n']==1
+        assert c.execute("SELECT status FROM driver_tasks WHERE id='map-task-1'").fetchone()['status']=='picked_up'
+    owner(user)
+    assert any(a['kind']=='near_customer' for a in client.get('/api/operations/map-services/alerts').json()['alerts'])

@@ -15,6 +15,7 @@ router=APIRouter(tags=['delivery-tracking'])
 @router.post('/api/operations/orders/{order_id}/tracking-link')
 def create_link(order_id:str,user=Depends(auth.require_roles(*STAFF))):
     require(user,'orders_view')
+    require(user,'drivers_view')
     with db.tx() as c:
         order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(order_id,)).fetchone()
         order_access(c,user,order)
@@ -34,6 +35,7 @@ def create_link(order_id:str,user=Depends(auth.require_roles(*STAFF))):
 @router.delete('/api/operations/orders/{order_id}/tracking-link')
 def revoke_link(order_id:str,user=Depends(auth.require_roles(*STAFF))):
     require(user,'orders_view')
+    require(user,'drivers_view')
     with db.tx() as c:
         order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(order_id,)).fetchone()
         order_access(c,user,order)
@@ -45,6 +47,7 @@ def revoke_link(order_id:str,user=Depends(auth.require_roles(*STAFF))):
 class TrackingToken(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     token:str=Field(pattern=r'^[A-Za-z0-9_-]{43}$')
+    route:bool=False
 
 
 @router.post('/api/delivery-tracking/view')
@@ -81,6 +84,17 @@ def view(body:TrackingToken,request:Request):
         # Use an already configured public map key, never a secret or a separate backend.
         config=dispatch_map.map_config({'brand_id':order['brand_id']})
         result['map']=config if config.get('enabled') else {'enabled':False}
+        if body.route and rows and result['gps']['state']=='live' and result['location'] and config.get('enabled'):
+            destination=dispatch_map.route_point((order['customer'] or {}).get('location'))
+            if destination:
+                # Share the existing global monthly and per-driver route permit budget.
+                try:
+                    dispatch_map.consume_route_budget(c,rows[0]['driver_id'],'tracking:'+digest)
+                    result['route_destination']=destination
+                except HTTPException as exc:
+                    if exc.status_code not in (429,503):
+                        raise
+                    result['route_unavailable']=True
         return safe(result)
 
 
