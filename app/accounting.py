@@ -97,7 +97,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
     q+=" AND NOT (o.snapshot ? 'complimentary')"
-    if group!='actions':q+=" AND NOT (o.snapshot ? 'test_void')"
+    if group!='actions':q+=" AND o.test_void IS NULL"
     orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders]
     cols=c.execute('SELECT * FROM collections WHERE order_id=ANY(%s) AND created_at<%s ORDER BY created_at,id',(ids,hi)).fetchall()
     refs=c.execute('SELECT r.*,u.display_name actor_name FROM refunds r JOIN users u ON u.id=r.authorized_by WHERE order_id=ANY(%s) AND r.created_at<%s ORDER BY r.created_at,r.id',(ids,hi)).fetchall()
@@ -164,7 +164,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
             o=om[r['order_id']];test_void=r.get('record_kind')=='test_void'
             actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(r['created_at']),'kind':'إلغاء تجريبي / Test void' if test_void else 'مرتجع / Refund','amount':r['amount_halalas'],'method':r['method'],'reason':r['reason'],'actor':r['actor_name'],'action':'عكس تسجيل تجريبي — لا صرف نقدي / Test correction — no cash disbursed' if test_void else 'تم تسجيل رد المبلغ / Refund recorded','order_id':o['id']})
     for o in orders:
-        if not o['snapshot'].get('test_void') and o['preparation_status'] in ('cancelled','rejected') and in_period(o['created_at'],lo,hi):
+        if not o.get('test_void') and o['preparation_status'] in ('cancelled','rejected') and in_period(o['created_at'],lo,hi):
             ev=[e for e in events if e['order_id']==o['id']]
             relevant=[e for e in ev if any(w in str(e['details'])+e['event_type'] for w in ('cancel','reject'))]
             last=(relevant or ev or [{}])[-1]

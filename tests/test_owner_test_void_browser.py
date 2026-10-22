@@ -23,7 +23,8 @@ def test_owner_test_void_confirmation_and_retained_history(live_app,chromium_bro
     try:
         page.set_viewport_size({'width':width,'height':1000});page.goto(live_app+'/ops')
         if lang=='en':page.get_by_role('button',name='English',exact=True).click()
-        page.locator('[data-action=order-detail][data-id="void-browser-order"]').first.click()
+        page.locator('[data-action=dispatch-filter][data-scope=all][data-stage=""]').click()
+        page.locator('[data-action=dispatch-inspect][data-id="void-browser-order"]').first.click()
         page.locator('[data-action=test-void-order]').click()
         expect(page.locator('#modal')).to_be_visible()
         expect(page.locator('#modal-body')).to_contain_text('لا يصرف أموالًا' if lang=='ar' else 'does not disburse cash')
@@ -33,8 +34,8 @@ def test_owner_test_void_confirmation_and_retained_history(live_app,chromium_bro
             assert c.execute("SELECT sum(amount_halalas) n FROM custody_events WHERE shift_id='void-browser-driver'").fetchone()['n']==0
             assert c.execute("SELECT record_kind FROM refunds WHERE order_id='void-browser-order'").fetchone()['record_kind']=='test_void'
             assert c.execute("SELECT amount_halalas FROM collections WHERE id='void-browser-col'").fetchone()['amount_halalas']==2050
-        page.locator('[data-action=order-detail][data-id="void-browser-order"]').first.click()
-        expect(page.locator('#order-detail')).to_contain_text('ملغي تجريبيًا — لا صرف نقدي' if lang=='ar' else 'Test void — no cash disbursed')
+        page.locator('[data-action=dispatch-inspect][data-id="void-browser-order"]').first.click()
+        expect(page.locator('#dispatch-panel-details')).to_contain_text('ملغي تجريبيًا — لا صرف نقدي' if lang=='ar' else 'Test void — no cash disbursed')
         expect(page.locator('[data-action=test-void-order]')).to_have_count(0)
         _capture(page,f'owner-test-void-complete-{lang}')
         assert not errors

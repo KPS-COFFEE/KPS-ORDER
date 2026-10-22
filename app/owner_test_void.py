@@ -11,7 +11,7 @@ def perform(c,user,oid,body):
     from .operations import order_access,lock_shift,event,available_balance,uid,fail
     order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone()
     order_access(c,user,order)
-    if order['snapshot'].get('test_void'):fail(409,'الفاتورة ملغاة تجريبيًا مسبقًا.')
+    if order.get('test_void'):fail(409,'الفاتورة ملغاة تجريبيًا مسبقًا.')
     if not body.confirmed_no_cash_received:fail(422,'أكد أن المبلغ لم يُستلم ولم يُصرف فعليًا.')
     if (order['version']!=body.expected_version or order['total_halalas']!=body.expected_total_halalas
         or order['snapshot'].get('order_reference')!=body.order_reference):fail(409,'بيانات الفاتورة تغيرت؛ راجعها أولًا.')
@@ -22,6 +22,8 @@ def perform(c,user,oid,body):
     from .order_amendments import active
     if online_order(order) or active(c,oid) or c.execute('SELECT 1 FROM refunds WHERE order_id=%s',(oid,)).fetchone():
         fail(409,'الفاتورة عليها دفع إلكتروني أو تعديل أو استرداد سابق؛ يلزم مراجعتها.')
+    if c.execute('SELECT 1 FROM channel_settlement_allocations WHERE order_id=%s',(oid,)).fetchone():
+        fail(409,'اعتمدت تسوية داخلية لهذه الفاتورة؛ يلزم مراجعة المحاسب.')
     tasks=c.execute('SELECT * FROM driver_tasks WHERE order_id=%s ORDER BY created_at,id FOR UPDATE',(oid,)).fetchall()
     delivered=[t for t in tasks if t['status']=='delivered']
     if len(delivered)!=1:fail(409,'تعذر تحديد مهمة التحصيل الأصلية بشكل فريد.')
@@ -52,7 +54,7 @@ def perform(c,user,oid,body):
     marker=dict(id=rid,reason=body.reason,actor_id=user['id'],at=datetime.now(timezone.utc).isoformat(),
         amount_halalas=amount,no_cash_disbursed=True,no_cash_received=True,original_collection_id=col['id'],
         original_shift_id=shift['id'],original_delivery_status=order['delivery_status'],original_payment_status=order['payment_status'])
-    c.execute("UPDATE orders SET snapshot=jsonb_set(snapshot,'{test_void}',%s),preparation_status='cancelled',delivery_status='cancelled',payment_status='refunded',version=version+1 WHERE id=%s",(db.json(marker),oid))
+    c.execute("UPDATE orders SET test_void=%s,preparation_status='cancelled',delivery_status='cancelled',payment_status='refunded',version=version+1 WHERE id=%s",(db.json(marker),oid))
     c.execute("UPDATE driver_tasks SET status='cancelled',reason=%s WHERE id=%s",(reason,task['id']))
     c.execute("INSERT INTO order_events(id,order_id,actor_id,event_type,details) VALUES(%s,%s,%s,'owner_test_void',%s)",(uid(),oid,user['id'],db.json(marker)))
     db.audit(c,user['id'],'order.test_void','order',oid,{'before':{'payment_status':order['payment_status'],'delivery_status':order['delivery_status'],'task_status':task['status']},**marker})
