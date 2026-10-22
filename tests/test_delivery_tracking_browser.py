@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import pytest
+from test_experience_entry_browser import static_customer
 
 pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Chromium run')
 ROOT=Path(__file__).resolve().parents[1]
