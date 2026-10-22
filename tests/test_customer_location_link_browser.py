@@ -57,6 +57,9 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
             control.evaluate("el=>el.scrollIntoView({block:'center',behavior:'instant'})")
             output=Path('test-results');output.mkdir(exist_ok=True)
             page.screenshot(path=str(output/f'map-link-{lang}-before-open.png'))
+            print(page.evaluate("""()=>({width:innerWidth,client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,
+              visualWidth:visualViewport?.width,scale:visualViewport?.scale,button:document.querySelector('#manual-location-button').getBoundingClientRect().toJSON()})"""))
+            assert page.evaluate('document.documentElement.scrollWidth')<=391
             control.click()
         open_link()
         page.locator('#map-url').fill('موقعي: \u200f'+link)
