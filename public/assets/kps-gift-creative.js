@@ -32,7 +32,7 @@
     const caption = make('small', 'kps-gift-caption', 'لطلبات التوصيل عبر موقعنا');
     Object.assign(caption.style, {
       position: 'absolute', bottom: '1.5%', left: '5%', right: '5%',
-      display: 'block', textAlign: 'center', fontSize: '3.2cqw',
+      display: 'block', textAlign: 'right', fontSize: '2.5cqw',
       lineHeight: '1.6', padding: '0.3em 0.6em', borderRadius: '0.5em',
       color: '#fff', background: '#141210cc', textShadow: '0 1px 3px #000'
     });
