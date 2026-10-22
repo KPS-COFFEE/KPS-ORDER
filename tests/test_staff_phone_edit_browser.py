@@ -30,7 +30,13 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
             api:async path=>{
               calls.push({path});
               if(path==='/api/shifts/current')return {shifts:[{user_id:'m',kind:'manager',status:'open',branch_ids:['b']}]};
-              if(path.startsWith('/api/catalog'))return {products:[{id:'coffee',name:'Coffee',available:true,price_halalas:1000}]};
+              if(path.startsWith('/api/catalog'))return {products:[
+                {id:'coffee',name:'Coffee',available:true,price_halalas:1000,image_url:'/assets/kps-receipt-logo.png'},
+                {id:'variant',name:'Cup',available:true,price_halalas:2000,image_url:'/assets/kps-receipt-logo.png',option_groups:[
+                  {code:'color',name:'Color',required:true,min_select:1,max_select:1,values:[{code:'red',name:'Red'},{code:'blue',name:'Blue'},{code:'hidden',name:'Hidden',available:false}]},
+                  {code:'flavor',name:'Flavor',required:true,min_select:1,max_select:1,values:[{code:'vanilla',name:'Vanilla'},{code:'lemon',name:'Lemon'}]}
+                ]}
+              ]};
               return {contacts:[]};
             },
             mutation:async(path,body)=>{calls.push({path,body});return path==='/api/quote'?{quote:{subtotal_halalas:1000,delivery_fee_halalas:0,total_halalas:1000}}:{order:{id:'synthetic'}};},
@@ -42,6 +48,41 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
           });
         }''', {'morning': morning, 'lang': lang})
         phone = page.locator('input[name=phone]')
+
+        # Repeated real photo taps add units; required choices gate every addition.
+        coffee=page.locator('.staff-menu-photo[data-menu-add=coffee] img')
+        variant=page.locator('.staff-menu-photo[data-menu-add=variant] img')
+        coffee.click(click_count=3)
+        expect(page.locator('[data-product-count=coffee]')).to_have_text('3')
+        page.locator('[data-menu-minus=coffee]').click()
+        expect(page.locator('[data-product-count=coffee]')).to_have_text('2')
+        page.locator('.staff-menu-quantity [data-menu-add=coffee]').click()
+        expect(page.locator('[data-product-count=coffee]')).to_have_text('3')
+        variant.click()
+        expect(page.locator('[data-product-count=variant]')).to_have_text('0')
+        expect(page.locator('.form-error')).to_contain_text('Color')
+        expect(page.locator('#staff-options [value=hidden]')).to_have_count(0)
+        page.locator('#staff-options [value=red]').check()
+        variant.click()
+        expect(page.locator('[data-product-count=variant]')).to_have_text('0')
+        expect(page.locator('.form-error')).to_contain_text('Flavor')
+        page.locator('#staff-options [value=vanilla]').check()
+        variant.click(click_count=2)
+        expect(page.locator('[data-product-count=variant]')).to_have_text('2')
+        page.locator('#staff-options [value=red]').uncheck()
+        page.locator('#staff-options [value=blue]').check()
+        variant.click()
+        expect(page.locator('#staff-cart > div')).to_have_count(3)
+        # Cart plus uses the stored red/vanilla options, not the current blue choice.
+        page.locator('[data-cart-plus="1"]').click()
+        page.locator('[data-menu-minus=variant]').click()
+        expect(page.locator('[data-product-count=variant]')).to_have_text('3')
+        expect(page.locator('#staff-cart > div')).to_have_count(2)
+        coffee.click()
+        variant.click()
+        expect(page.locator('[data-product-count=variant]')).to_have_text('3')
+        expect(page.locator('#staff-options input:checked')).to_have_count(0)
+        page.locator('#staff-product').select_option('coffee')
 
         def paste(value, start=0, end=None):
             phone.evaluate('''(input,{value,start,end})=>{
@@ -89,6 +130,10 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
         page.wait_for_function("calls.some(c=>c.path==='/api/orders/delivery-center')")
         payloads=page.evaluate("calls.filter(c=>c.body).map(c=>c.body.customer.phone)")
         assert payloads == ['+966531041449', '+966531041449']
+        items=page.evaluate("calls.find(c=>c.path==='/api/quote').body.items")
+        item=next(item for item in items if item['product_id']=='variant')
+        assert item['quantity']==3 and len(item['units'])==3
+        assert all(unit['options']=={'color':['red'],'flavor':['vanilla']} for unit in item['units'])
         # Arbitrary text or two pasted numbers must never become a valid phone.
         for invalid in ['call 0531041449', '0531041449 / 0531041448', '++966531041449']:
             paste(invalid)
