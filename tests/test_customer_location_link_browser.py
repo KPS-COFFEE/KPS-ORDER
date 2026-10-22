@@ -68,6 +68,7 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
         assert requests.count('location/parse-map-url')==1
         page.locator('#nearest-branches button').click()
         page.locator('.product-add-button').first.click();page.locator('#product-add').click()
+        expect(page.locator('#cart-lines .cart-line')).to_have_count(1)
         page.reload(wait_until='networkidle')
         expect(page.locator('#clear-location')).to_be_visible()
         expect(page.locator('#branch-select')).to_have_value('demo-branch')
