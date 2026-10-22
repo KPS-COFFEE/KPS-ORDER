@@ -1,0 +1,54 @@
+name: Customer Google map provider acceptance
+on:
+  push:
+    branches: [agent/customer-google-picker-20261022]
+  pull_request:
+    paths:
+      - app/customer_map.py
+      - app/http_security.py
+      - public/assets/customer-google-map.js
+      - public/assets/customer-map.js
+      - public/assets/customer-map.css
+      - public/index.html
+      - tests/test_customer_google_map*
+      - tests/test_customer_map*
+      - .github/workflows/customer-google-map.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: customer-google-map-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+jobs:
+  google-customer-map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_BROWSER: '1'
+      MAPBOX_ENABLED: 'false'
+      MAPBOX_CUSTOMER_ENABLED: 'false'
+      GOOGLE_MAPS_CUSTOMER_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium webkit
+      - name: Configuration, CSP and actual provider state-machine tests
+        run: |
+          node --check public/assets/customer-google-map.js
+          node --check public/assets/customer-map.js
+          python -m pytest -q tests/test_customer_google_map.py tests/test_customer_map.py tests/test_dispatch_map_config.py tests/test_http_security.py -m 'not postgres' --junitxml=test-results/customer-google-config.xml
+      - name: Synthetic mobile Google and existing Mapbox acceptance (no live Google requests)
+        run: python -m pytest -q -x tests/test_customer_google_map_browser.py tests/test_customer_map_browser.py --junitxml=test-results/customer-google-browser.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-google-map-acceptance
+          path: test-results/

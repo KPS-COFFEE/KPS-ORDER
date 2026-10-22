@@ -33,3 +33,12 @@ Reference: https://docs.mapbox.com/mapbox-gl-js/guides/security-and-testing/
 Menu browsing and the map picker never require login. The optional early name/mobile form remains available; an active, started gift offer also shows it independently of the journey toggle. Visitors can explicitly choose to browse without signing in. Gift eligibility and order creation still require the existing verified-identity checks.
 
 Device location requests use high accuracy, a fresh reading, and a 15-second timeout. The map displays reported accuracy in metres and warns above 50 metres. The visitor confirms the entrance pin explicitly; late GPS callbacks cannot overwrite a manually moved pin. Accuracy depends on the device and surroundings and is not guaranteed by the map provider.
+
+## Optional Google customer provider (preparation only)
+
+Google Maps can be selected additively for a customer brand after its own account,
+restricted browser key and approved live rendering check are ready. Mapbox stays
+the default and staff maps are independent. See
+[customer-google-map-setup.md](customer-google-map-setup.md) for the exact switches,
+account prerequisites, behavior, CSP and synthetic test limits. Installing the
+adapter alone does not activate Google.

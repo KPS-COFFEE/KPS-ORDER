@@ -84,10 +84,14 @@ class SecurityMiddleware:
                     "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
                     "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
                 # Keep staff and customer map switches independent.
-                from .customer_map import enabled as customer_map_enabled
+                from .customer_map import enabled as customer_map_enabled, public_config as customer_map_config
                 from .dispatch_map import enabled as dispatch_map_enabled
+                customer_page = path in ('/', '/index.html')
+                customer_provider = (customer_map_config(request.query_params.get('brand_id') or
+                                     storefront_scope.current_brand.get() or 'kps').get('provider')
+                                     if customer_page else None)
                 if ((path in ('/ops', '/ops.html', '/delivery-track') and dispatch_map_enabled())
-                        or (path in ('/', '/index.html') and customer_map_enabled())):
+                        or (customer_page and customer_map_enabled() and customer_provider != 'google')):
                     headers['Referrer-Policy'] = 'no-referrer' if path == '/delivery-track' else 'strict-origin-when-cross-origin'
                     headers['Content-Security-Policy'] = (
                         "default-src 'self'; script-src 'self' https://api.mapbox.com/mapbox-gl-js/v3.33.0/; "
@@ -96,6 +100,19 @@ class SecurityMiddleware:
                         "connect-src 'self' https://api.mapbox.com/v4/ https://api.mapbox.com/styles/v1/mapbox/ "
                         "https://api.mapbox.com/directions/v5/mapbox/driving/ https://api.mapbox.com/fonts/v1/mapbox/ https://api.mapbox.com/map-sessions/v1 https://events.mapbox.com/; "
                         "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+                if customer_page and customer_provider == 'google':
+                    headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+                    # Google raster map only. Keep script execution on exact vendor hosts;
+                    # no unsafe-inline/unsafe-eval scripts, service-wide wildcards or staff changes.
+                    headers['Content-Security-Policy'] = (
+                        "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; "
+                        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                        "img-src 'self' data: blob: https://maps.googleapis.com https://mapsresources-pa.googleapis.com "
+                        "https://maps.gstatic.com; font-src 'self' https://fonts.gstatic.com; "
+                        "connect-src 'self' https://maps.googleapis.com https://mapsresources-pa.googleapis.com "
+                        "https://maps.gstatic.com https://csi.gstatic.com; "
+                        "frame-src https://www.google.com; object-src 'none'; frame-ancestors 'none'; "
+                        "base-uri 'self'; form-action 'self'")
                 if os.getenv('APP_ENV', 'production') == 'production':
                     headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
                 public_image = (path.startswith(('/api/product-assets/', '/api/banner-assets/'))

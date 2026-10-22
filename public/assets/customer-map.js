@@ -17,6 +17,7 @@
   async function mount({api,brandId,host,getLocation,onConfirm,tr,canOpen}){
     if(!host||!brandId)return;
     let config;try{config=await api('/api/customer-map/config?brand_id='+encodeURIComponent(brandId));}catch{return;}
+    if(config.enabled&&config.provider==='google'){return window.KPSCustomerGoogleMap?.mount({config,brandId,host,getLocation,onConfirm,tr,canOpen});}
     if(!config.enabled||config.provider!=='mapbox'||!/^pk\./.test(config.public_token))return;
     const button=document.createElement('button');button.type='button';button.className='button secondary';
     const dialog=document.createElement('dialog');dialog.className='customer-map-dialog';dialog.setAttribute('aria-labelledby','customer-map-title');
