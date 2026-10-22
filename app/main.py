@@ -115,6 +115,10 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
 
 from . import dispatch_map
 app.include_router(dispatch_map.router)
+from . import map_services
+app.include_router(map_services.router)
+from . import delivery_tracking
+app.include_router(delivery_tracking.router)
 
 from . import driver_checks
 app.include_router(driver_checks.router)

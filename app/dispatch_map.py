@@ -61,6 +61,8 @@ def update_driver_location(body: DriverLocation, user=Depends(auth.require_roles
                         'brand_id=EXCLUDED.brand_id,shift_id=EXCLUDED.shift_id,lat=EXCLUDED.lat,lng=EXCLUDED.lng,'
                         'accuracy_m=EXCLUDED.accuracy_m,updated_at=now() RETURNING updated_at',
                         (user['id'], user['brand_id'], shift['id'], body.lat, body.lng, body.accuracy_m)).fetchone()
+        from .map_services import record_sample
+        record_sample(c, user, shift, body, previous, row['updated_at'])
         return safe({'updated_at': row['updated_at'], 'shift_id': shift['id'], 'throttled': False})
 
 

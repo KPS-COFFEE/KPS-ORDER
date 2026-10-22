@@ -66,7 +66,7 @@
       try{
         const context=await options.api('/api/operations/driver-route-context?driver_id='+encodeURIComponent(driverId));
         if(destroyed||generation!==routeGeneration)return;
-        routeChoices=[...(context.tasks||[]).map(t=>({value:'task:'+t.id,task_id:t.id,label:tr('توصيل الطلب ','Deliver order ')+(t.order_no||t.order_id)})),...(context.return_branches||[]).map(b=>({value:'branch:'+b.id,return_branch_id:b.id,label:tr('رجوع مباشر إلى ','Direct return to ')+b.name}))];
+        routeChoices=[...((context.tasks||[]).length>=2&&(context.tasks||[]).length<=8?[{value:'plan',plan:true,label:tr('ترتيب جميع التوصيلات المستلمة','Plan all picked-up deliveries')}]:[]),...(context.tasks||[]).map(t=>({value:'task:'+t.id,task_id:t.id,label:tr('توصيل الطلب ','Deliver order ')+(t.order_no||t.order_id)})),...(context.return_branches||[]).map(b=>({value:'branch:'+b.id,return_branch_id:b.id,label:tr('رجوع مباشر إلى ','Direct return to ')+b.name}))];
         for(const choice of routeChoices){const option=document.createElement('option');option.value=choice.value;option.textContent=choice.label;destinationSelect.append(option);}
         routeStatus.textContent=routeChoices.length?tr('اختر طلبًا مستلمًا أو فرع رجوع. وقت الرجوع المباشر لا يشمل تسليم الطلبات المعلقة.','Choose a picked-up order or return branch. Direct return ETA excludes pending deliveries.'):tr('لا توجد وجهة متاحة لهذا السائق.','No available destination for this driver.');
       }catch{if(!destroyed&&generation===routeGeneration)routeStatus.textContent=tr('تعذر تحميل الوجهات. تحقق من حداثة موقع السائق وصلاحياتك.','Could not load destinations. Check driver location freshness and permissions.');}
@@ -79,12 +79,12 @@
       clearRoute();const generation=routeGeneration;routeBusy=true;routeButton.disabled=true;
       routeStatus.textContent=tr('جاري حساب المسار…','Calculating route…');
       try{
-        const permit=await options.api('/api/operations/driver-route-context',{method:'POST',key:'route:'+crypto.randomUUID(),body:{driver_id:driverId,...(choice.task_id?{task_id:choice.task_id}:{return_branch_id:choice.return_branch_id})}});
+        const permit=await options.api(choice.plan?'/api/operations/map-services/plan':'/api/operations/driver-route-context',{method:'POST',key:'route:'+crypto.randomUUID(),body:{driver_id:driverId,...(choice.plan?{}:choice.task_id?{task_id:choice.task_id}:{return_branch_id:choice.return_branch_id})}});
         if(destroyed||generation!==routeGeneration)return;
-        const origin=point(permit.origin),destination=point(permit.destination);
-        if(!origin||!destination)throw new Error('invalid route');
+        const origin=point(permit.origin),stops=choice.plan?permit.stops:[{location:permit.destination}];
+        if(!origin||!Array.isArray(stops)||!stops.length||stops.some(t=>!point(t.location)))throw new Error('invalid route');
         routeAbort=new AbortController();
-        const coordinates=`${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+        const coordinates=[origin,...stops.map(t=>t.location)].map(p=>`${p.lng},${p.lat}`).join(';');
         const response=await fetch('https://api.mapbox.com/directions/v5/mapbox/driving/'+coordinates+'?geometries=geojson&overview=full&steps=false&alternatives=false&access_token='+encodeURIComponent(publicToken),{signal:routeAbort.signal,credentials:'omit'});
         if(!response.ok)throw new Error('directions');
         const result=await response.json(),route=result.routes?.[0];
@@ -95,16 +95,34 @@
         map.addLayer({id:'dispatch-route',type:'line',source:'dispatch-route',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#176b9b','line-width':5,'line-opacity':0.85}});
         const bounds=new library.LngLatBounds();route.geometry.coordinates.forEach(p=>bounds.extend(p));map.fitBounds(bounds,{padding:48,maxZoom:15,duration:0});
         const minutes=Math.max(1,Math.ceil(route.duration/60));
-        routeStatus.textContent=(permit.kind==='customer'?tr('الوصول التقريبي للعميل: ','Estimated customer arrival: '):tr('الرجوع المباشر التقريبي للفرع: ','Estimated direct return to branch: '))+minutes+tr(' دقيقة. ',' minutes. ')+tr('حُسب الآن؛ لا يتحدث تلقائيًا. ','Calculated now; does not update automatically. ')+(permit.kind==='return_branch'?tr('لا يشمل تسليم الطلبات المعلقة.','Excludes pending deliveries.'):tr('لا يشمل التوقفات الأخرى.','Excludes other stops.'));
+        routeStatus.textContent=(choice.plan?tr('ترتيب مقترح حسب المسافة المباشرة: ','Suggested order by straight-line distance: ')+stops.map(t=>t.order_no||t.id).join(' ← ')+tr(' · إجمالي قيادة تقديري: ',' · Estimated driving total: '):permit.kind==='customer'?tr('الوصول التقريبي للعميل: ','Estimated customer arrival: '):tr('الرجوع المباشر التقريبي للفرع: ','Estimated direct return to branch: '))+minutes+tr(' دقيقة. ',' minutes. ')+tr('حُسب الآن؛ لا يتحدث تلقائيًا. ','Calculated now; does not update automatically. ')+(permit.kind==='return_branch'?tr('لا يشمل تسليم الطلبات المعلقة.','Excludes pending deliveries.'):tr('لا يشمل وقت الاستلام أو التسليم والتوقفات.','Excludes pickup, handoff and stops.'));
       }catch(error){if(!destroyed&&generation===routeGeneration)routeStatus.textContent=error.status===429?tr('انتظر دقيقة أو تحقق من حد المسارات الشهري.','Wait one minute or check the monthly route limit.'):tr('تعذر حساب المسار. يلزم موقع حديث ووجهة متاحة؛ لم تتم إعادة المحاولة تلقائيًا.','Could not calculate route. Fresh location and an available destination are required; no automatic retry was made.');}
       finally{routeBusy=false;if(!destroyed)routeDrivers();}
     });
+    // Optional service panel remains usable when base-map tiles fail.
+    const services=document.createElement('details'),servicesTitle=document.createElement('summary'),serviceRows=document.createElement('div');
+    servicesTitle.textContent=tr('متابعة الموقع والرحلات ونطاقات التوصيل','Location health, trips and delivery zones');services.append(servicesTitle,serviceRows);host.append(services);
+    let serviceBusy=false,lastServices=0;
+    const serviceText=text=>{const p=document.createElement('p');p.textContent=text;return p;};
+    async function refreshServices(){
+      if(destroyed||serviceBusy||Date.now()-lastServices<30000)return;serviceBusy=true;lastServices=Date.now();
+      try{
+        const result=await options.api('/api/operations/map-services/alerts');if(destroyed)return;servicesTitle.textContent=tr('متابعة الموقع والرحلات والنطاقات','Location, trips and zones')+' · '+(result.alerts||[]).length+tr(' تنبيه',' alerts');if(!services.open)return;serviceRows.replaceChildren();
+        const names={near_customer:tr('قريب من العميل — ليس إثبات تسليم','Near customer — not delivery confirmation'),location_missing:tr('لم يصل موقع أثناء التوصيل','No location received during delivery'),location_stale:tr('تحديث الموقع متأخر','Location update delayed'),location_approximate:tr('الموقع تقريبي','Approximate location')};
+        for(const item of result.alerts||[]){if(!(data.drivers||[]).some(d=>d.id===item.driver_id))continue;serviceRows.append(serviceText(item.display_name+' · '+(names[item.kind]||item.kind)+tr(' · السبب غير مؤكد',' · Cause unconfirmed')));}
+        if(!(result.alerts||[]).length)serviceRows.append(serviceText(tr('لا توجد تنبيهات موقع حاليًا للطلبات المستلمة.','No current location alerts for picked-up orders.')));
+        for(const driver of data.drivers||[]){const shiftId=driver.gps?.shift_id||driver.shift_id;if(!shiftId)continue;const button=document.createElement('button');button.type='button';button.textContent=tr('سجل الموقع والرحلات: ','Location and trips: ')+(driver.display_name||driver.name||driver.id);button.addEventListener('click',async()=>{button.disabled=true;try{const [health,trips]=await Promise.all([options.api('/api/operations/map-services/health?shift_id='+encodeURIComponent(shiftId)),options.api('/api/operations/map-services/trips?shift_id='+encodeURIComponent(shiftId))]);if(destroyed)return;const report=document.createElement('div');report.append(serviceText(tr('تحديثات مستلمة: ','Received updates: ')+health.received_count+tr(' · أكبر فجوة بين تحديثين: ',' · Largest gap between updates: ')+(health.largest_received_gap_seconds??'—')+tr(' ثانية. سبب الانقطاع غير معلوم؛ السجل يبدأ من تفعيل الميزة.',' seconds. Cause unknown; evidence starts when this feature is activated.')));for(const trip of trips.trips||[])report.append(serviceText(String(trip.order_no||trip.task_id)+' · '+(trip.delivery_seconds==null?tr('لم يكتمل توقيت الرحلة','Trip duration incomplete'):Math.round(trip.delivery_seconds/60)+tr(' دقيقة',' min'))+' · '+(trip.direct_distance_m==null?'—':trip.direct_distance_m+tr(' متر مسافة مباشرة وليست مسافة القيادة',' m straight-line, not driven distance'))));button.after(report);}catch{button.after(serviceText(tr('تعذر تحميل التقرير أو لا تملك صلاحيته.','Report unavailable or outside your permission.')));}finally{button.disabled=false;}});serviceRows.append(button);}
+        const zonesButton=document.createElement('button');zonesButton.type='button';zonesButton.textContent=tr('نطاقات التوصيل والرسوم المعتمدة','Approved delivery zones and fees');zonesButton.addEventListener('click',async()=>{zonesButton.disabled=true;try{const result=await options.api('/api/operations/map-services/zones');if(destroyed)return;const allowed=new Set((data.branches||[]).map(b=>b.id)),zones=(result.zones||[]).filter(z=>allowed.has(z.branch_id));for(const zone of zones){const coverage=zone.coverage,fee=zone.delivery_fee_halalas;serviceRows.append(serviceText(zone.name+' · '+(coverage.type==='radius'?tr('نطاق دائري: ','Radius: ')+coverage.radius_meters+tr(' متر',' m'):tr('نطاق مرسوم معتمد','Approved polygon'))+' · '+(Number.isInteger(fee)?(fee/100).toFixed(2)+tr(' ر.س',' SAR'):tr('رسوم غير مهيأة','Fee not configured'))));}drawZones(zones);}catch{serviceRows.append(serviceText(tr('تعذر تحميل النطاقات.','Zones unavailable.')));}finally{zonesButton.disabled=false;}});serviceRows.append(zonesButton);
+      }catch{if(!destroyed){servicesTitle.textContent=tr('متابعة الموقع — تعذر تحديث التنبيهات','Location — alerts could not refresh');serviceRows.replaceChildren(serviceText(tr('تعذر تحديث تنبيهات الموقع؛ لا تعتبر الحالة سليمة.','Location alerts could not refresh; status is unknown.')));}}finally{serviceBusy=false;}
+    }
+    function drawZones(zones){if(!ready||!map)return;const features=[];for(const zone of zones){const c=zone.coverage;let ring;if(c.type==='polygon'){ring=c.coordinates.map(p=>[p[0],p[1]]);}else{const center=point(c.center);if(!center)continue;const lat=center.lat*Math.PI/180,lon=center.lng*Math.PI/180,d=c.radius_meters/6371000;ring=Array.from({length:65},(_,i)=>{const angle=2*Math.PI*i/64,a=Math.asin(Math.sin(lat)*Math.cos(d)+Math.cos(lat)*Math.sin(d)*Math.cos(angle)),b=lon+Math.atan2(Math.sin(angle)*Math.sin(d)*Math.cos(lat),Math.cos(d)-Math.sin(lat)*Math.sin(a));return [b*180/Math.PI,a*180/Math.PI];});}if(ring.length<3)continue;if(ring[0][0]!==ring.at(-1)[0]||ring[0][1]!==ring.at(-1)[1])ring.push(ring[0]);features.push({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[ring]}});}const geo={type:'FeatureCollection',features};if(map.getSource('dispatch-zones'))map.getSource('dispatch-zones').setData(geo);else{map.addSource('dispatch-zones',{type:'geojson',data:geo});map.addLayer({id:'dispatch-zones',type:'fill',source:'dispatch-zones',paint:{'fill-color':'#d9792b','fill-opacity':0.12}});}}
+    services.addEventListener('toggle',()=>{if(services.open){lastServices=0;void refreshServices();}});
     const brandLegend=document.createElement('div');brandLegend.className='dispatch-map-brand-legend';host.append(brandLegend);
     let stateKind='loading';
     function labels(){
       const values=pins(data),orders=values.filter(p=>p.kind==='order').length,branches=values.filter(p=>p.kind==='branch').length,drivers=values.filter(p=>p.kind==='driver').length;
       count.textContent=tr(`${drivers} سائقين · ${orders} مواقع طلبات · ${branches} فروع`,`${drivers} drivers · ${orders} order locations · ${branches} branches`);
-      note.textContent=tr('مواقع السائقين تتحدث أثناء مشاركة الموقع والصفحة مفتوحة. العلامة الرمادية آخر موقع قديم وليست موقعًا مباشرًا.','Driver locations update while sharing with the page visible. Gray markers are stale last-known positions, not live locations.');
+      note.textContent=tr('مواقع السائقين تتحدث أثناء الشفت عند وصول تحديث من التطبيق. العلامة الرمادية آخر موقع قديم وليست موقعًا مباشرًا.','Driver locations update during a shift when the app sends a fix. Gray markers are stale last-known positions, not live locations.');
       fit.textContent=tr('عرض جميع المواقع','Show all locations');
       brandLegend.replaceChildren();
       for(const [brand,label] of [['kps','KPS'],['enbishan',tr('عنبيشان','Enbishan')],['mixed',tr('طلبات متعددة البراندات','Mixed brands')],['neutral',tr('بدون طلب نشط','No active order')],['stale',tr('موقع قديم','Stale location')]]){const entry=document.createElement('span'),swatch=document.createElement('i');swatch.className='dispatch-driver-swatch brand-'+brand;swatch.setAttribute('aria-hidden','true');entry.append(swatch,document.createTextNode(label));brandLegend.append(entry);}
@@ -147,12 +165,16 @@
           const detail=document.createElement('p');
           detail.textContent=tr(pin.stale?'آخر موقع قديم · ':'آخر تحديث · ',pin.stale?'Stale last location · ':'Last update · ')+new Date(pin.updated_at).toLocaleTimeString(data.lang==='en'?'en-GB':'ar-SA')+tr(' · الدقة ',' · Accuracy ')+Math.round(pin.accuracy_m||0)+tr(' متر',' m');item.popupRoot.append(detail);
         }
+        if(pin.kind==='order'&&!['delivered','cancelled'].includes(pin.status)){
+          const share=document.createElement('button');share.type='button';share.textContent=tr('إنشاء رابط تتبع للعميل','Create customer tracking link');
+          share.addEventListener('click',async()=>{share.disabled=true;try{const result=await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'POST',body:{}});if(destroyed)return;const link=document.createElement('a');link.href=result.path;link.target='_blank';link.rel='noopener noreferrer';link.textContent=tr('فتح رابط التتبع — صالح 4 ساعات','Open tracking link — valid for 4 hours');item.popupRoot.append(link);const revoke=document.createElement('button');revoke.type='button';revoke.textContent=tr('إلغاء رابط التتبع','Revoke tracking link');revoke.addEventListener('click',async()=>{revoke.disabled=true;try{await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'DELETE'});link.remove();revoke.remove();}catch{revoke.disabled=false;}});item.popupRoot.append(revoke);}catch{item.popupRoot.append(serviceText(tr('تعذر إنشاء رابط؛ تحقق من حالة الطلب وصلاحياتك.','Link unavailable; check order status and permission.')));}finally{share.disabled=false;}});item.popupRoot.append(share);
+        }
         if(pin.kind==='order'&&options.onSelectOrder){const button=document.createElement('button');button.type='button';button.textContent=tr('فتح الطلب','Open order');button.addEventListener('click',()=>options.onSelectOrder(pin.id));item.popupRoot.append(button);}
       }
       if(!fitted)fitAll();
     }
-    fit.addEventListener('click',fitAll);labels();
-    const freshnessTimer=setInterval(()=>{if(!destroyed&&!document.hidden)refresh();},15000);
+    fit.addEventListener('click',fitAll);labels();void refreshServices();
+    const freshnessTimer=setInterval(()=>{if(!destroyed&&!document.hidden){refresh();void refreshServices();}},15000);
     const controller={update(next){data={...data,...next};refresh();},resize(){map?.resize();},fit:fitAll,destroy(){destroyed=true;clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();map?.remove();map=null;}};
     try{
       const config=await options.api('/api/operations/map-config');
