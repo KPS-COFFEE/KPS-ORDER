@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   cpu_only:
-    if: github.event_name == 'push' || github.head_ref == 'agent/staff-operations-room-20261020'
+    if: github.event_name == 'push' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/security-certification-20261022'
     name: application-2cpu-current-db (${{ matrix.repetition }})
     runs-on: ubuntu-latest
     timeout-minutes: 35

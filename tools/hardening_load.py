@@ -43,17 +43,24 @@ from psycopg.rows import dict_row
 RELEASE_WORKERS = 2
 RELEASE_KEEPALIVE_SECONDS = 15
 CGROUP_ROOT = Path('/sys/fs/cgroup')
-RENDER_APP_CPU_MAX = '50000 100000'
-RENDER_APP_MEMORY_BYTES = 512 * 1024 ** 2
-RENDER_DB_MEMORY_BYTES = 256 * 1024 ** 2
+# Read-only Render verification on 2026-10-22: service 1c-2g and
+# PostgreSQL 0.5c-1g. These are existing resources, not an upgrade request.
+RENDER_APP_CPU_MAX = '100000 100000'
+RENDER_APP_MEMORY_BYTES = 2 * 1024 ** 3
+RENDER_DB_MEMORY_BYTES = 1024 ** 3
 
 
 def resource_budget():
     """Explicit CI budgets. A proposal never certifies the current paid plan."""
     name = os.getenv('KPS_LOAD_RESOURCE_PROFILE', 'current')
     if name == 'current':
-        return {'name': name, 'app_cpu_tenths': 5, 'app_memory': RENDER_APP_MEMORY_BYTES,
-                'db_cpu_tenths': 1, 'db_memory': RENDER_DB_MEMORY_BYTES}
+        return {'name': name, 'app_cpu_tenths': 10, 'app_memory': RENDER_APP_MEMORY_BYTES,
+                'db_cpu_tenths': 5, 'db_memory': RENDER_DB_MEMORY_BYTES}
+    if name == 'legacy_small':
+        # Retain the historical budget for explicit diagnosis. It must never
+        # be labelled as certification of the currently deployed plans.
+        return {'name': name, 'app_cpu_tenths': 5, 'app_memory': 512 * 1024 ** 2,
+                'db_cpu_tenths': 1, 'db_memory': 256 * 1024 ** 2}
     if name == 'proposed':
         return {'name': name, 'app_cpu_tenths': 20, 'app_memory': 4 * 1024 ** 3,
                 'db_cpu_tenths': 10, 'db_memory': 2 * 1024 ** 3}
@@ -1245,7 +1252,7 @@ def main():
             'memory_limit_bytes': Path('/sys/fs/cgroup/memory.max').read_text().strip() if Path('/sys/fs/cgroup/memory.max').exists() else 'unavailable'},
         'comparability_limits': [
             'Two workers match Docker CMD; one is an explicit diagnostic comparison. Local CPU/RAM and DB/network differ from deployed Render resources.',
-            'Repository Blueprint specifies 0.5 CPU / 512 MiB; these measurements do not certify its production 500-user capacity.',
+            'Unconstrained measurements do not certify the deployed 1 CPU / 2 GiB app and 0.5 CPU / 1 GiB PostgreSQL plans.',
             'DB connection/lock metrics sample every 250 ms; transient peaks below the interval may be missed.',
             'App CPU/RSS aggregate the owned process tree; summed RSS counts shared pages in each process and is not unique physical memory.',
             'Load generator, app and PostgreSQL share the CI runner; this is not a remote-client benchmark or production hardware certification.',
