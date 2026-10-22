@@ -123,6 +123,7 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
             route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
         page.route('**/api/**',api)
         page.goto(static_customer+'/ops.html?delivery_period=morning')
+        expect(page.locator('#page-heading [data-action=customer-order]')).to_be_visible()
         origin_heading=page.locator('#page-heading h1').inner_text()
         page.locator('#page-heading [data-action=customer-order]').click()
         form=page.locator('#staff-order-form')

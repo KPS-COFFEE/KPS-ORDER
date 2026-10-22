@@ -81,12 +81,14 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
                 page.locator('.dispatch-nav-toggle').click()
             page.locator('#navigation [data-page=orders]').click()
             expect(page.locator('body')).not_to_have_class(re.compile(r'\bdelivery-room\b'))
+        customer_order = page.locator('#page-heading [data-action=customer-order]')
+        expect(customer_order).to_be_visible()
         heading = page.locator('#page-heading h1').inner_text()
         # Give both real views enough document height to check restored position.
         page.add_style_tag(content='body::after{content:"";display:block;height:1800px}' )
         page.evaluate('window.scrollTo(0, 280)')
         page.wait_for_function('Math.abs(window.scrollY-280)<=1')
-        page.locator('[data-action=customer-order]').evaluate('(button)=>button.click()')
+        customer_order.evaluate('(button)=>button.click()')
         form = page.locator('#staff-order-form')
         expect(form).to_be_visible()
         form.locator('input[name=phone]').fill('0531041449')
@@ -110,8 +112,10 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
         expect(page.locator('#modal')).not_to_be_visible()
         expect(page.locator('#status')).to_contain_text('saved-synthetic-order')
         expect(page.locator('#page-heading h1')).to_have_text(heading)
+        # Refresh restores focus on its next animation frame; an already-restored
+        # scroll position must not turn this into a synchronous focus check.
+        expect(customer_order).to_be_focused()
         page.wait_for_function('Math.abs(window.scrollY-280)<=1')
-        assert page.evaluate("document.activeElement.matches('[data-action=customer-order]')")
         saved = [item for item in writes if item[0] == '/api/orders/delivery-center']
         assert len(saved) == 2 and saved[0][1] == saved[1][1]
         assert saved[0][2] and saved[0][2] == saved[1][2]
