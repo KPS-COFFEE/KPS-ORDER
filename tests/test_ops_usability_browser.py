@@ -95,7 +95,7 @@ def test_mandatory_bell_controls_hidden_for_staff(live_app,chromium_browser):
     finally:context.close()
 
 
-def test_owner_bell_policy_saved_only_after_sms(live_app,chromium_browser):
+def test_owner_bell_policy_saved_only_after_confirmation(live_app,chromium_browser):
     from playwright.sync_api import expect
     user=_staff();context,page,errors=_context(chromium_browser,live_app)
     try:
@@ -105,10 +105,13 @@ def test_owner_bell_policy_saved_only_after_sms(live_app,chromium_browser):
         form=page.locator('#modal form')
         form.locator('[name=first_after_seconds]').fill('5')
         form.locator('[name=first_ring_seconds]').fill('2')
+        page.once('dialog',lambda dialog:dialog.dismiss())
         form.locator('button[type=submit]').click()
+        expect(form.locator('[name=first_after_seconds]')).to_have_value('5')
         with db.tx() as c:
             assert 'alert_policy' not in c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
-        complete_owner_sms_dialog(page,user)
+        page.once('dialog',lambda dialog:dialog.accept())
+        form.locator('button[type=submit]').click()
         expect(page.locator('#modal')).not_to_be_visible()
         with db.tx() as c:
             policy=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']['alert_policy']

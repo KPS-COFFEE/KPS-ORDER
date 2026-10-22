@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   dependency-security:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-role-guide-20261022')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022')"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -9,9 +9,8 @@
       <label><input name="advertising_enabled" type="checkbox" ${policy.advertising_enabled?'checked':''}> ${esc(tr('السماح بظهور الإعلانات للعملاء','Allow customer-facing advertising'))}</label>
       <p>${esc(tr('هذا الخيار مستقل عن عرض الهدية؛ إيقاف الإعلان لا يغيّر استحقاق الهدايا.','This setting is independent of gifts; disabling ads does not change gift eligibility.'))}</p>
       <label>${esc(tr('سبب التعديل','Reason for change'))}<textarea name="reason" required minlength="3" maxlength="500"></textarea></label>
-      ${!user.employee_sms_email_retired?`<label>${esc(tr('كلمة مرور المالك للتأكيد','Owner password to confirm'))}<input name="step_up_password" type="password" autocomplete="current-password" required></label>`:''}
       <p class="form-error" role="alert"></p><button type="submit">${esc(tr('حفظ قرار المالك','Save owner decision'))}</button></form>`,async fd=>{
-        await ctx.authorize(fd.get('step_up_password')||undefined);
+        await ctx.authorize();
         await api('/api/advertising/policy',{method:'PUT',body:{advertising_enabled:fd.has('advertising_enabled'),expected_version:policy.version,reason:fd.get('reason')}});
         closeModal();await ctx.onSaved();
       });

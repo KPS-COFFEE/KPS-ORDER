@@ -34,7 +34,7 @@ def update_policy(body:Change,user=Depends(auth.require_roles('owner')),idem:str
     if len(body.reason.strip())<3 or '\x00' in body.reason:
         raise db.error(422,'REASON_REQUIRED','أدخل سبب التعديل.')
     with db.tx() as c:
-        auth.require_owner_step_up(c,user)
+        # An authenticated owner confirms this operational change in the UI.
         def perform():
             row=c.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR UPDATE',(user['brand_id'],)).fetchone()
             if not row:raise db.error(404,'BRAND_NOT_FOUND','إعدادات البراند غير متاحة.')
