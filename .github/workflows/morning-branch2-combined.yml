@@ -1,7 +1,7 @@
 name: Combined Branch 2 morning release acceptance
 on:
   push:
-    branches: [agent/morning-branch2-combined-live-20261021, agent/morning-manager-ahmed-trial-20261021, agent/morning-night-trial-20261021, agent/morning-auto-dispatch-20261022, agent/morning-live-bells-20261022]
+    branches: [agent/morning-branch2-combined-live-20261021, agent/morning-manager-ahmed-trial-20261021, agent/morning-night-trial-20261021, agent/morning-auto-dispatch-20261022, agent/morning-live-bells-20261022, agent/morning-manager-preparation-20261022]
   workflow_dispatch:
 permissions:
   contents: read
@@ -42,6 +42,7 @@ jobs:
           tests/test_morning_manager_context.py tests/test_morning_manager_context_postgres.py
           tests/test_morning_manager_fallback_postgres.py
           tests/test_morning_delivery.py tests/test_morning_delivery_postgres.py tests/test_morning_customer_postgres.py
+          tests/test_morning_preparation.py
           tests/test_alert_policy.py tests/test_operational_alerts.py tests/test_morning_policy_identity_postgres.py
           tests/test_branch_printing.py tests/test_employee_permissions.py tests/test_driver_configuration_lock.py
           tests/test_driver_closure_authorization.py tests/test_driver_order_scope.py
