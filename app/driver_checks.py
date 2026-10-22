@@ -71,6 +71,17 @@ def row(c,user,rid):
         raise db.error(404,'CHECK_SCOPE','فروع الطلب خارج النطاق / Request branches outside scope')
     return r
 
+@router.post('/vehicle-notices/{nid}/read')
+def read_vehicle_notice(nid:str,body:Body,request:Request,user=Depends(auth.require_roles('driver'))):
+    from . import fleet_notices
+    with db.tx() as c:
+        # Recheck the recipient even before a stored idempotent response.
+        fleet_notices.require_notice(c,user,nid)
+        c.execute('SELECT id FROM users WHERE id=%s FOR UPDATE',(user['id'],)).fetchone()
+        return mutate(c,user,request,'fleet.notice.read:'+nid,body.model_dump(),
+                      lambda:fleet_notices.acknowledge(c,user,nid))
+
+
 @router.get('')
 def listing(user=Depends(auth.current_user)):
     if user['role']!='driver':manager(user)
@@ -104,7 +115,9 @@ def listing(user=Depends(auth.current_user)):
                     else:raise
             if user['role']=='driver' and r['ui_status']!='pending':continue
             visible.append(r)
-        return safe({'requests':visible,'drivers':drivers,'server_time':now})
+        from .fleet_notices import unread
+        return safe({'requests':visible,'drivers':drivers,'server_time':now,
+                     'vehicle_notices':unread(c,user) if user['role']=='driver' else []})
 
 @router.post('')
 def send(body:Send,request:Request,user=Depends(auth.current_user)):

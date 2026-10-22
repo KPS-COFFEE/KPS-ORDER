@@ -1,0 +1,54 @@
+name: Fleet active swap and driver notice acceptance
+on:
+  push:
+    branches: [agent/fleet-active-swap-20261022]
+  pull_request:
+    paths:
+      - app/fleet_management.py
+      - app/fleet_notices.py
+      - tests/test_fleet_active_swap.py
+      - tests/test_fleet_active_swap_browser.py
+      - .github/workflows/fleet-active-swap.yml
+permissions:
+  contents: read
+jobs:
+  transaction-and-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_fleet_active_swap
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d test_fleet_active_swap" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-test-only@127.0.0.1:5432/test_fleet_active_swap
+      TEST_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Check fleet transactions before installing browser dependencies
+        run: python -m pytest -q tests/test_fleet_active_swap.py tests/test_fleet_self_service.py tests/test_driver_checks.py tests/test_fleet.py tests/test_fleet_math.py tests/test_shift_vehicle.py tests/test_employee_permissions.py tests/test_owner_extra_permissions.py --junitxml=test-results/fleet-swap-postgres.xml
+      - run: python -m playwright install --with-deps chromium
+      - name: Check syntax and actual bilingual browser assets
+        run: |
+          node --check public/ops.js
+          node --check public/assets/fleet.js
+          node --check public/assets/driver-checks.js
+          python -m pytest -q tests/test_fleet_active_swap_browser.py tests/test_fleet_browser.py tests/test_driver_checks_browser.py --junitxml=test-results/fleet-swap-browser.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-swap-evidence
+          path: |
+            test-results/
+            test-artifacts/
+          retention-days: 7

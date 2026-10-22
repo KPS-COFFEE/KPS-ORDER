@@ -6,7 +6,7 @@ The route table uses resolved endpoint identities, not caller-supplied URLs.
 """
 
 ADMIN = {'branches_manage', 'products_manage', 'banners_manage', 'appearance_manage',
-         'brand_services_manage', 'vehicle_maintenance_manage', 'branch_printers_manage',
+         'brand_services_manage', 'vehicle_maintenance_manage', 'fleet_active_swap', 'branch_printers_manage',
          'accounting_reports', 'accounting_review', 'accounting_cases_followup'}
 MANAGER = {'delivery_manager'}
 DELIVERY = MANAGER | {'delivery_staff'}
@@ -55,6 +55,7 @@ DEFINITIONS = [
     ('vehicle_register', 'تسجيل مركبتك أول مرة', 'Register your vehicle for the first time', 'vehicles', set()),
     ('vehicle_faults_report', 'رفع بلاغ عطل المركبة ومتابعته', 'Report and view your vehicle faults', 'vehicles', {'driver'}),
     ('vehicle_maintenance_manage', 'إدارة السيارات وسجل التشغيل والأعطال والصيانة', 'Manage vehicles, operating logs and maintenance', 'vehicles', {'admin'}),
+    ('fleet_active_swap', 'اعتماد تبديل سيارتي سائقين أثناء الشفت', 'Approve two-driver vehicle swaps during active shifts', 'vehicles', {'admin'}),
     ('branch_printers_manage', 'إدارة الطابعات', 'Manage printers', 'configuration', {'admin', 'delivery_manager'}),
     ('orders_print', 'طباعة وإعادة طباعة الطلبات', 'Print and reprint orders', 'orders', MANAGER),
     ('accounting_reports', 'تقارير المحاسبة والتصدير', 'Accounting reports and exports', 'reports', {'admin'}),
