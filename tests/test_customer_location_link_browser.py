@@ -10,7 +10,7 @@ pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Ch
 @pytest.mark.parametrize('lang',['ar','en'])
 def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang):
     from playwright.sync_api import sync_playwright,expect
-    point={'lat':28.383083,'lng':46.000244}
+    point={'lat':28.4,'lng':45.9}
     link='https://maps.app.goo.gl/SYNTHETIC?g_st=iw'
     branch={'id':'demo-branch','brand_id':'kps','branch_no':1,'name':'فرع المروج','city':'حفر الباطن',
             'location':point,'location_verified':True,'available':True,'direct_distance_meters':500,

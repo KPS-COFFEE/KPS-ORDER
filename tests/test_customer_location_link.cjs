@@ -16,7 +16,7 @@ function setup(lang='ar',saved={},user=null){
     renderAccount:()=>{},closeDialog:()=>{},showError:()=>{},busy:async(button,fn)=>fn(),errorMessage:e=>e.message};
   vm.createContext(ctx);vm.runInContext(helpers+'\n'+verify,ctx);return {ctx,element,timers};
 }
-const link='https://maps.app.goo.gl/SYNTHETIC?g_st=iw',pin={lat:28.383083,lng:46.000244};
+const link='https://maps.app.goo.gl/SYNTHETIC?g_st=iw',pin={lat:28.4,lng:45.9};
 async function main(){for(const lang of ['ar','en']){
   const {ctx:c,element:e,timers}=setup(lang);let requests=0;
   c.api=async(path,options)=>{requests++;assert.equal(path,'/api/location/parse-map-url');assert.equal(options.data.url,link);return {location:pin};};
