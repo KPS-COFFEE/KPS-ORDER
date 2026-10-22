@@ -663,7 +663,7 @@
     if(!verified&&section.querySelector('#entry-form')&&section.dataset.lang===language){section.querySelector('.entry-steps')?.replaceWith(steps);}
     else{
       section.replaceChildren(steps);
-      const title=node('h2','',!verified?entryText('أهلًا بك، نبدأ باسمك وجوالك','Welcome, let’s start with your name and mobile'):!locationReady?entryText('وين نوصّل طلبك؟','Where should we deliver?'):!branchReady?entryText('اختر الفرع اللي يخدمك','Choose a branch serving you'):entryText('جاهز لطلبك','Ready for your order'));title.id='entry-title';section.append(title);
+      const title=node('h2','',!verified?(state.brand?.id==='kps'?entryText('أهلًا بك في كبز','Welcome to KPS COFFEE'):entryText('أهلًا بك','Welcome')):!locationReady?entryText('وين نوصّل طلبك؟','Where should we deliver?'):!branchReady?entryText('اختر الفرع اللي يخدمك','Choose a branch serving you'):entryText('جاهز لطلبك','Ready for your order'));title.id='entry-title';section.append(title);
       if(!verified){
         section.append(node('p','entry-description',state.offerActive?entryText('سجل اسمك وجوالك من البداية للتحقق من استحقاق الهدية مع طلب مؤهل. أو تصفح المنيو بدون تسجيل.','Enter your name and mobile now to check your gift eligibility with a qualifying order. Or browse the menu without signing in.'):entryText('سجل من البداية لتسهيل طلبك، أو تصفح المنيو بدون تسجيل.','Sign in now for easier ordering, or browse the menu without signing in.')));
         const form=node('form','entry-form');form.id='entry-form';
