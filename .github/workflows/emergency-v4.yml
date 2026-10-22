@@ -169,10 +169,15 @@ jobs:
           # Keep Ubuntu suites, components and signing keys unchanged. Only the
           # slow Azure mirror host is replaced with the official Ubuntu archive.
           configured=false
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+          processed=0
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
             if [ -f "$source" ]; then
               sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              # A local mirrorlist can select Azure even when the sources file
+              # itself has no Azure URL. Verify every observed configuration path.
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
               configured=true
+              processed=$((processed+1))
             fi
           done
           if [ "$configured" != true ]; then
@@ -184,6 +189,7 @@ jobs:
           Acquire::http::Timeout "30";
           Acquire::https::Timeout "30";
           APT
+          printf 'Ubuntu APT source files verified: %s\n' "$processed"
       - name: Install Chromium and required system libraries
         run: python -m playwright install --with-deps chromium webkit
       - name: Check Python and browser script syntax
