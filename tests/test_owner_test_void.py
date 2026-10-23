@@ -159,7 +159,7 @@ def test_issued_invoice_is_preserved_and_credit_must_succeed_atomically(ops,cred
             assert balance(c,{'id':'test-void-driver','opening_halalas':0})==2050
 
 
-def seed_unpaid_cancelled(ops):
+def seed_unpaid_cancelled(ops,task_status="cancelled"):
     _,_,_,_=ops
     oid='unpaid-test-'+uuid4().hex
     with db.tx() as c:
@@ -168,7 +168,7 @@ def seed_unpaid_cancelled(ops):
             c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,manager_shift_id,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,'{\"period\":\"morning\"}')",(sid,kind,person,user['brand_id'],db.json(user['branch_ids']),status,parent))
         snap={'delivery_period':'morning','order_reference':'UNPAID-TEST','items':[]}
         c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,'ops-customer','delivery','cancelled','cancelled','unpaid','cash',2050,0,2050,%s,'{}')",(oid,user['brand_id'],user['branch_ids'][0],db.json(snap)))
-        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,reason) VALUES(%s,%s,'ops-driver','unpaid-driver','cancelled','ops-manager','TEST cancelled by owner')",('task-'+oid,oid))
+        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,reason) VALUES(%s,%s,'ops-driver','unpaid-driver',%s,'ops-manager','TEST cancelled by owner')",('task-'+oid,oid,task_status))
         order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
     return oid,dict(order_reference='UNPAID-TEST',expected_version=order['version'],expected_total_halalas=2050,reason='TEST unpaid cancellation by owner; no actual cash',confirmed_no_cash_received=True)
 
@@ -205,13 +205,12 @@ def test_unpaid_cancelled_test_removes_entitlement_block_without_financial_mutat
 @pytest.mark.postgres
 @pytest.mark.parametrize('case',['driver_closed','manager_closed','driver_evening','manager_evening','live_task','collection','reference','confirmation'])
 def test_unpaid_test_rejects_unsafe_or_stale_classification(ops,case):
-    _,post,_,_=ops;oid,body=seed_unpaid_cancelled(ops)
+    _,post,_,_=ops;oid,body=seed_unpaid_cancelled(ops,task_status='accepted' if case=='live_task' else 'cancelled')
     with db.tx() as c:
         if case in ('driver_closed','manager_closed'):
             c.execute("UPDATE shifts SET status='closed',closed_at=now() WHERE id=%s",('unpaid-driver' if case=='driver_closed' else 'unpaid-manager',))
         if case in ('driver_evening','manager_evening'):
             c.execute("UPDATE shifts SET delivery_window_snapshot='{\"period\":\"evening\"}' WHERE id=%s",('unpaid-driver' if case=='driver_evening' else 'unpaid-manager',))
-        if case=='live_task':c.execute("UPDATE driver_tasks SET status='accepted' WHERE order_id=%s",(oid,))
         if case=='collection':c.execute("INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas) VALUES('unsafe-col',%s,'unpaid-driver','ops-driver','cash',2050)",(oid,))
     if case=='reference':body['order_reference']='ANOTHER-ORDER'
     if case=='confirmation':body['confirmed_no_cash_received']=False

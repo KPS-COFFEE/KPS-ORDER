@@ -16,16 +16,14 @@ def test_owner_test_void_confirmation_and_retained_history(live_app,chromium_bro
         for sid,kind,person,parent in [('void-browser-manager','manager',manager['id'],None),('void-browser-driver','driver',driver['id'],'void-browser-manager')]:
             c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,manager_shift_id,delivery_window_snapshot) VALUES(%s,%s,%s,'kps','[\"kps-branch-1\"]','open',%s,'{\"period\":\"morning\"}')",(sid,kind,person,parent))
         snap={'delivery_period':'morning','order_reference':'TEST-MORNING-VOID','items':[{'product_id':'test-product','name':'اختبار فقط','quantity':1,'unit_price_halalas':2050,'line_total_halalas':2050,'units':[]}]}
-        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,completed_at) VALUES('void-browser-order','kps','kps-branch-1',%s,'delivery','ready','delivered','paid','cash',2050,0,2050,%s,'{\"name\":\"اختبار فقط\"}',now())",(owner['id'],db.json(snap)))
-        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,delivered_at) VALUES('void-browser-task','void-browser-order',%s,'void-browser-driver','delivered',%s,now())",(driver['id'],manager['id']))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,completed_at) VALUES('void-browser-order','kps','kps-branch-1',%s,'delivery',%s,%s,%s,'cash',2050,0,2050,%s,'{\"name\":\"اختبار فقط\"}',CASE WHEN %s THEN NULL ELSE now() END)",(owner['id'],'cancelled' if unpaid_cancelled else 'ready','cancelled' if unpaid_cancelled else 'delivered','unpaid' if unpaid_cancelled else 'paid',db.json(snap),unpaid_cancelled))
+        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,delivered_at) VALUES('void-browser-task','void-browser-order',%s,'void-browser-driver',%s,%s,CASE WHEN %s THEN NULL ELSE now() END)",(driver['id'],'cancelled' if unpaid_cancelled else 'delivered',manager['id'],unpaid_cancelled))
         if not unpaid_cancelled:
             c.execute("INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas) VALUES('void-browser-col','void-browser-order','void-browser-driver',%s,'cash',2050)",(driver['id'],))
             c.execute("INSERT INTO custody_events(id,shift_id,amount_halalas,kind,reference_id,actor_id,reason) VALUES('void-browser-event','void-browser-driver',2050,'collection','void-browser-col',%s,'TEST fictitious cash')",(driver['id'],))
     if unpaid_cancelled:
         # Separate fixture path contains no fictitious collection to reverse.
         with db.tx() as c:
-            c.execute("UPDATE orders SET preparation_status='cancelled',delivery_status='cancelled',payment_status='unpaid',completed_at=NULL WHERE id='void-browser-order'")
-            c.execute("UPDATE driver_tasks SET status='cancelled',delivered_at=NULL WHERE id='void-browser-task'")
             c.execute("UPDATE shifts SET status='submitted' WHERE id='void-browser-driver'")
             c.execute("UPDATE shifts SET status='closing' WHERE id='void-browser-manager'")
     context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,owner)
