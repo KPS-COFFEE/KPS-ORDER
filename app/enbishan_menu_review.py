@@ -22,6 +22,17 @@ MIX_SIZES = {
     'v-b804a3f4814cc6028d7ef9da': ('٢٤ حبة (١٦ ورق عنب + ٨ ملفوف)', '24 pieces (16 grape leaves + 8 cabbage)'),
 }
 CRISPY_SMALL_SIZE = 'v-774fa9ee015940670c61c84c'
+MOJITO_PICKUP_ONLY_SOURCES = frozenset({
+    'enb-88282747bcacc9e36651a920',
+    'enb-b54c043c94afde2a0947da54',
+    'enb-45c335eea6e9a027a0a25d80',
+})
+
+
+def pickup_only(product):
+    """Owner decision 2026-10-23, scoped to original Enbishan mojito cards."""
+    return (product.get('brand_id') == 'enbishan'
+            and product.get('settings', {}).get('source_id') in MOJITO_PICKUP_ONLY_SOURCES)
 
 
 def apply(prepared, *, source_sha256, rows):

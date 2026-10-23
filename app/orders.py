@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations, invoice_profiles
 
+from .complimentary import operational_view
+
 router = APIRouter(prefix='/api/orders')
 
 
@@ -36,7 +38,7 @@ def scoped_order(conn, order_id, user, lock=False):
 def customer_order_view(row):
     result=dict(row)
     result.pop('performance_snapshot',None)
-    result['snapshot'] = catalog.customer_quote_view(row['snapshot'])
+    result['snapshot'] = operational_view(catalog.customer_quote_view(row['snapshot']))
     if row['snapshot'].get('internal_routing'):
         result['branch_id'] = result['snapshot']['branch_id']
         if 'branch_name' in result:
@@ -112,7 +114,7 @@ def quote_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles(
         from . import complimentary
         quote=catalog.quote_order(conn,body,complimentary=True)
         delivery_center_scope(conn,user,quote['branch_id'])
-        return {'quote':complimentary.prepare(quote,body.kind,body.reason,user['id'])}
+        return {'quote':operational_view(complimentary.prepare(quote,body.kind,body.reason,user['id']))}
 
 
 @router.post('/complimentary')
@@ -321,6 +323,10 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             with db.tx() as conn:
                 persisted=scoped_order(conn,saved['order']['id'],user)
                 delivery_center_scope(conn,user,persisted['branch_id'])
+    if isinstance(result,str) and '"complimentary"' in result:
+        result=json.dumps(operational_view(json.loads(result)),ensure_ascii=False,default=str)
+    elif isinstance(result,dict):
+        result=operational_view(result)
     return Response(result,media_type='application/json') if request is not None else result
 
 
@@ -493,7 +499,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             from .customer_progress import enrich_orders as enrich_customer_progress
             enrich_customer_progress(conn, rows[:limit])
             rows=[customer_order_view(row) for row in rows]
-    return {'sort':sort, 'orders': rows[:limit], 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info, **({'workspace_counts':dispatch_counts,'workspace_scope':dispatch_scope} if dispatch_workspace else {})}
+    return {'sort':sort, 'orders': operational_view(rows[:limit]), 'next_offset': offset + limit if len(rows) > limit else None, 'period': period_info, **({'workspace_counts':dispatch_counts,'workspace_scope':dispatch_scope} if dispatch_workspace else {})}
 
 
 def search_phone(value):
@@ -705,7 +711,7 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
             for event in events:
                 event['details'] = {key: value for key, value in (event.get('details') or {}).items()
                                     if key not in {'actor_name', 'actor_id', 'actor_role'}}
-    result = {'order': row, 'events': events}
+    result = operational_view({'order': row, 'events': events})
     return DatabaseJSONResponse(result) if request is not None else result
 
 
@@ -872,7 +878,7 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                     result['order'] = conn.execute('SELECT * FROM orders WHERE id=%s', (order_id,)).fetchone()
                 morning_dispatch.enrich(conn,[result['order']])
             return result
-        return db.idempotent(conn, user['id'], idempotency_key, 'order.preparation:' + order_id, body.model_dump(), perform)
+        return operational_view(db.idempotent(conn, user['id'], idempotency_key, 'order.preparation:' + order_id, body.model_dump(), perform))
 
 
 class ArrivalBody(BaseModel):

@@ -30,19 +30,26 @@ LABELS={
  'returned_quantity':('كمية مرتجعة محددة','Specified returned quantity'),
  'driver':('السائق','Driver'),'shortage':('العجز','Shortage'),'surplus':('الفائض','Surplus'),
  'approved_shortage':('العجز المعتمد محاسبيًا','Accounting-reviewed shortage'),
+ 'pending_shortage':('عجز بانتظار تأكيد المحاسب','Shortage pending accountant confirmation'),
+ 'pending_surplus':('فائض بانتظار تأكيد المحاسب','Surplus pending accountant confirmation'),
  'review':('مراجعة المحاسبة','Accounting review'),'cumulative':('العدد التراكمي للفترة','Cumulative count in period'),
  'kind':('النوع','Type'),'amount':('المبلغ','Amount'),'method':('وسيلة الدفع','Payment method'),
  'reason':('السبب','Reason'),'actor':('منفذ / معتمد الإجراء','Actor / authorizer'),'action':('الإجراء المتخذ','Action taken'),
+ 'delivery_value':('قيمة التوصيل المرجعية','Reference delivery value'),'payable':('الصافي المطلوب','Net payable'),
+ 'treatment':('التحمل المالي','Financial responsibility'),
+ 'gift_quantity':('كمية الهدايا','Gift quantity'),'hospitality_quantity':('كمية الضيافة','Hospitality quantity'),
+ 'advertising_quantity':('كمية الإعلان','Advertising quantity'),'compensation_quantity':('كمية التعويض','Compensation quantity'),
+ 'zero_value_quantity':('كمية صفرية أخرى','Other zero-value quantity'),
  'weekday':('اليوم','Day'),'period':('الفترة بتوقيت الرياض','Period, Riyadh')}
-MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','approved_shortage','amount'}
+MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','pending_shortage','pending_surplus','approved_shortage','amount','delivery_value','payable'}
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
 COLUMNS={
- 'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
- 'complimentary':['day','label','kind','branch','driver','amount','reason','actor','action','notes'],
+ 'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
+ 'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','treatment','reason','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
  'driver_daily':['label','correct','processed','cumulative','cash','card','refunds','total'],
- 'items':['label','quantity','returned_quantity','gross','correct','processed'],
+ 'items':['label','quantity','returned_quantity','gross','gift_quantity','hospitality_quantity','advertising_quantity','compensation_quantity','zero_value_quantity','correct','processed'],
  'deficits':['day','driver','label','orders','cash','card','total','shortage','surplus','approved_shortage','review','notes'],
  'actions':['day','label','kind','amount','method','reason','actor','action'],
  'cases':['day','label','branch','driver','vehicle','kind','amount','review','responsibility','reason','action']}
@@ -52,28 +59,48 @@ def presentation(data,lang='ar'):
     keys=COLUMNS[data['group']];rows=[]
     for source in data['rows']:
         r=dict(source)
+        if data['group']=='complimentary':
+            # Frozen reports predate these fields; do not manufacture amounts.
+            for key in ('delivery_value','payable'):
+                r.setdefault(key,('غير موثقة','Not recorded')[lang=='en'])
+        if data['group']=='items':
+            for key in ('gift_quantity','hospitality_quantity','advertising_quantity','compensation_quantity','zero_value_quantity'):
+                r.setdefault(key,('غير موثقة','Not recorded')[lang=='en'])
         if data['group']=='daily':
             d=date.fromisoformat(r['day']);r['weekday']=(['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'] if lang=='ar' else ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'])[d.weekday()]
             r['period']='16:00 → 16:00 (+1)'
         rows.append(r)
-    totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k in ('completed_orders','eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
+    totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k.endswith('_quantity') or k in ('completed_orders','eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
     # Item counts overlap between items; financial action amounts overlap across
     # cancellation/refund records. Neither may be presented as a grand sales sum.
-    if data['group']=='items':totals.pop('correct',None);totals.pop('processed',None)
+    if data['group']=='items':
+        totals.pop('correct',None);totals.pop('processed',None)
+        # Older frozen rows do not contain the new free-quantity breakdown.
+        # Their missing history must not become a misleading zero total.
+        for key in ('gift_quantity','hospitality_quantity','advertising_quantity','compensation_quantity','zero_value_quantity'):
+            if any(type(row.get(key)) is not int for row in rows):
+                totals[key]=('غير موثقة','Not recorded')[lang=='en']
     if data['group'] in ('actions','cases','complimentary'):totals={}
     return keys,rows,totals
 
 def contract(data,lang):
     keys,rows,totals=presentation(data,lang)
-    return {**data,'rows':rows,'totals':totals,'columns':[{'key':k,'label':LABELS[k][lang=='en'],'money':k in MONEY} for k in keys]}
+    return {**data,'rows':rows,'totals':totals,'columns':[{'key':k,'label':column_label(data,k,lang),'money':k in MONEY} for k in keys]}
+
+def column_label(data,key,lang):
+    if data['group']=='complimentary' and key=='amount':
+        return ('قيمة الأصناف المرجعية','Reference item value')[lang=='en']
+    if data['group']=='complimentary' and key=='branch':
+        return ('الفرع المنفذ','Fulfilment branch')[lang=='en']
+    return LABELS[key][lang=='en']
 
 def render(data,format,lang):
     keys,rows,totals=presentation(data,lang)
     titles={'driver_incentives':('استحقاق السائقين اليومي والشهري','Daily and monthly driver entitlement'),'driver_incentive_details':('تفاصيل وأسباب استحقاق السائقين','Driver entitlement decisions and reasons'),'daily':('إجمالي يوم التشغيل','Operational day totals'),'branch':('مبيعات الفروع','Branch sales'),'items':('مبيعات الأصناف','Item sales'),'driver':('مبيعات السائقين','Driver sales'),'driver_daily':('عداد السائق اليومي','Daily driver counter'),'deficits':('العجز والزيادة','Shortages and surpluses'),'actions':('المرتجعات والإلغاءات والمعالجات','Refunds, cancellations and treatments'),'cases':('ملاحظات المركبات والطلبات','Vehicle and order incidents')}
-    titles['complimentary']=('الضيافة والتعويض والإلغاء وإعادة الطباعة','Hospitality, compensation, cancellations and reprints')
+    titles['complimentary']=('الطلبات الصفرية والضيافة والتعويض والإلغاء وإعادة الطباعة','Zero-value orders, hospitality, compensation, cancellations and reprints')
     titles['driver_statement']=('كشف السائق اليومي والشهري','Daily and monthly driver statement')
     title=('المحاسبة - ' if lang=='ar' else 'Accounting - ')+titles[data['group']][lang=='en']
-    headers=[LABELS[k][lang=='en'] for k in keys]
+    headers=[column_label(data,k,lang) for k in keys]
     summary={keys[0]:'الإجمالي / Total',**totals}
     values=[[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k), (int,float)) else r.get(k,'') for k in keys] for r in [*rows,summary]]
     units="" if data['group'].startswith('driver_incentive') else "SAR | "
@@ -85,7 +112,7 @@ def render(data,format,lang):
         sections=[]
         for driver in dict.fromkeys(r['driver_id'] for r in rows):
             entries=[r for r in rows if r['driver_id']==driver]
-            for section_keys in (['day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','status'],
+            for section_keys in (['day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status'],
                                  ['day','notes','incident_notes','violations','traffic_notes','traffic'],['day','adjustments']):
                 section_rows=[[LABELS[k][lang=='en'] for k in section_keys]]
                 section_rows += [[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k),(int,float)) else r.get(k,'') for k in section_keys] for r in entries]
@@ -169,7 +196,7 @@ def pdf(rows,keys,title,meta,definitions,lang,sections=None,compact=False):
         cells=[[text(f'{v:,.2f}' if isinstance(v,float) else v) for v in row] for row in section_rows]
         keys=list(section_keys)
         if lang=='ar':cells=[list(reversed(r)) for r in cells];keys=list(reversed(keys))
-        weights=[7 if k=='adjustments' else 2.8 if k in ('notes','incident_notes','traffic_notes','reason','action','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
+        weights=[7 if k=='adjustments' else 2.8 if k in ('notes','incident_notes','traffic_notes','reason','action','treatment','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
         widths=[available*w/sum(weights) for w in weights]
         table=LongTable(cells,colWidths=widths,repeatRows=1,splitByRow=1,splitInRow=1)
         commands=[('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eeeeee')),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#cccccc')),('VALIGN',(0,0),(-1,-1),'TOP')]

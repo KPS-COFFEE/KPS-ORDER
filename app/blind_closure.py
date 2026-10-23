@@ -6,12 +6,18 @@ HIDDEN = frozenset({
 })
 
 def driver_view(user, value, shift_money=False):
+    from .complimentary import contains_complimentary, operational_view
+    visible = operational_view(value) if contains_complimentary(value) else value
+    return _driver_view(user, visible, shift_money)
+
+
+def _driver_view(user, value, shift_money=False):
     if user.get('role') != 'driver':
         return value
     if isinstance(value, dict):
-        return {key: driver_view(user, item, shift_money) for key, item in value.items() if key not in HIDDEN and not (shift_money and key.endswith("_halalas"))}
+        return {key: _driver_view(user, item, shift_money) for key, item in value.items() if key not in HIDDEN and not (shift_money and key.endswith("_halalas"))}
     if isinstance(value, list):
-        return [driver_view(user, item, shift_money) for item in value]
+        return [_driver_view(user, item, shift_money) for item in value]
     return value
 
 def card_reconciliation(c, sid, actual, external_card=0):

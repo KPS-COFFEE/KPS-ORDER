@@ -43,9 +43,8 @@ def test_approved_menu_and_four_branch_owner_journey(dual, monkeypatch):
                    and row['settings']['delivery_enabled'] is False
                    and row['settings']['pickup_enabled'] is False for row in prepared)
         assert all(row['settings']['delivery_hours'][0]['start'] == '15:00'
-                   and row['settings']['delivery_hours'][0]['end'] == '03:00'
-                   and row['settings']['delivery_hours'][1]['enabled'] is False
-                   and row['settings']['delivery_hours'][1]['start'] is None for row in prepared)
+                   and row['settings']['delivery_hours'][0]['end'] == '03:00' for row in prepared)
+        assert sum(row['settings']['delivery_hours'][1]['enabled'] is True for row in prepared) == 1
         assert conn.execute("SELECT settings FROM branches WHERE id='kps-branch-1'").fetchone()['settings'] == source_settings
 
     # Existing shared owner API operates on the explicitly selected brand only.

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from app import db, enbishan_catalog_import as importer, enbishan_menu_review as review
+from app import db, catalog, enbishan_catalog_import as importer, enbishan_menu_review as review
 from app.menu_variants import selected_price
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +21,25 @@ def prepared():
     data = source()
     return importer.prepare(importer.MenuInput(source_sha256=data['source_sha256'],
         rows=data['rows'], owner_review=review.DECISION))
+
+
+def test_all_approved_mojito_combos_are_pickup_only_without_restricting_kps_or_food():
+    products = prepared()['products']
+    mojitos = [p for p in products if p['name'].startswith('موهيتو')]
+    assert len(mojitos) == 3
+    for original in mojitos:
+        product = deepcopy(original)
+        product['settings'].update(enabled=True, lifecycle='active')
+        before = deepcopy(product)
+        assert catalog.product_availability(product, None, service='pickup')[0]
+        for service in ('delivery', 'car'):
+            allowed, reason = catalog.product_availability(product, None, service=service)
+            assert allowed is False and 'استلام' in reason
+        assert catalog.product_availability({**product, 'brand_id': 'kps'}, None, service='delivery')[0]
+        assert product == before
+    food = deepcopy(next(p for p in products if p['name'] == 'ورق عنب'))
+    food['settings'].update(enabled=True, lifecycle='active')
+    assert catalog.product_availability(food, None, service='delivery')[0]
 
 
 def test_final_review_retains_31_source_records_hides_only_three_and_never_activates():

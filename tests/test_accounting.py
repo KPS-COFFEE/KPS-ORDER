@@ -26,6 +26,41 @@ def accountant():
     with db.tx() as c:
         c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions) VALUES('ops-accountant','TEST ACCOUNTANT','admin','ops-brand',%s,%s)",(db.json(['ops-branch']),db.json(['accounting_reports','accounting_review'])))
 
+
+@pytest.mark.postgres
+def test_complete_item_catalog_and_zero_value_orders_stay_scoped(ops):
+    actor,post,order,_=ops
+    accountant()
+    with db.tx() as c:
+        c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-requested',2,'requested-source','ops-brand','Customer selected branch','حفر الباطن','{}')")
+        c.execute("INSERT INTO products(id,brand_id,name,category,price_halalas) VALUES('ops-product','ops-brand','Coffee','Test',9000),('ops-unsold','ops-brand','Unsold','Test',500),('ops-foreign','ops-other','Foreign secret','Test',500)")
+    routing={'selected_branch':{'branch_id':'ops-requested','branch_name':'Customer selected branch'}}
+    sold=order('pickup',internal_routing=routing,items=[{'product_id':'ops-product','name':'Historical coffee','quantity':1,'line_total_halalas':1000},
+                              {'product_id':'ops-gift','name':'Gift','quantity':2,'line_total_halalas':0,'is_gift':True}])
+    zero=order('pickup',total=0,internal_routing=routing)
+    with db.tx() as c:
+        c.execute("UPDATE orders SET completed_at=now(),preparation_status='completed' WHERE id=ANY(%s)",([sold,zero],))
+    report=actor('accountant').get('/api/accounting/reports?group=items')
+    assert report.status_code==200,report.text
+    rows={r['product_id']:r for r in report.json()['rows']}
+    assert rows['ops-product']['quantity']==1 and rows['ops-product']['gross']==1000
+    assert rows['ops-product']['zero_value_quantity']==1
+    assert rows['ops-unsold']['quantity']==0 and rows['ops-unsold']['gross']==0
+    assert rows['ops-gift']['gift_quantity']==2 and rows['ops-gift']['quantity']==0
+    assert 'ops-foreign' not in rows
+    filtered=actor('accountant').get('/api/accounting/reports?group=items&product_id=ops-product&branch_ids=ops-branch').json()
+    assert len(filtered['rows'])==1 and filtered['rows'][0]['gross']==1000
+    assert filtered['branch_basis']=='execution'
+    requested=actor('owner').get('/api/accounting/reports?group=items&product_id=ops-product&branch_ids=ops-requested').json()
+    assert requested['rows'][0]['quantity']==0 and requested['rows'][0]['gross']==0
+    assert actor('accountant').get('/api/accounting/reports?group=items&branch_ids=ops-branch-other').status_code==403
+    assert actor('accountant').get('/api/accounting/reports?group=items&product_id=ops-foreign').status_code==404
+    free=actor('accountant').get('/api/accounting/reports?group=complimentary').json()
+    assert len(free['rows'])==1 and free['rows'][0]['payable']==0
+    assert 'يحتاج مراجعة' in free['rows'][0]['reason']
+    options=actor('accountant').get('/api/accounting/options').json()
+    assert options['branches'][0]['city']=='حفر الباطن'
+
 @pytest.mark.postgres
 def test_reports_split_payments_refund_and_scope(ops):
     actor,post,order,shifts=ops;accountant();oid=order('pickup')

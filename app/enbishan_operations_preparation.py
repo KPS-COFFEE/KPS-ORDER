@@ -8,12 +8,15 @@ from copy import deepcopy
 
 COPY_FIELDS = ('delivery_fee_halalas', 'minimum_order_halalas')
 APPROVED_BRANCH_NUMBERS = frozenset({1, 2, 3, 4})
-OWNER_HOURS_DECISION = 'enbishan-owner-hours-20261022'
+OWNER_HOURS_DECISION = 'enbishan-owner-hours-20261023'
 APPROVED_KPS_COVERAGE_CITIES = frozenset({'حفرالباطن', 'القيصومة'})
 
 
-def prepared_hours():
-    """Independent evening hours and an OFF morning slot, never live defaults."""
+def prepared_hours(branch_no=None):
+    """Independent hours; only branch 1 has the approved non-Friday morning."""
+    if branch_no == 1:
+        return [{'days': list(range(7)), 'start': '15:00', 'end': '03:00', 'enabled': True},
+                {'days': [0, 1, 2, 3, 5, 6], 'start': '09:00', 'end': '12:00', 'enabled': True}]
     return [{'days': list(range(7)), 'start': '15:00', 'end': '03:00', 'enabled': True},
             {'days': list(range(7)), 'start': None, 'end': None, 'enabled': False}]
 
@@ -83,7 +86,7 @@ def prepare_branch_patches(kps_branches, enbishan_branches, *, source_by_branch=
                    if current.get(key) is None}
         for field in ('opening_hours', 'delivery_hours'):
             if current.get(field) is None:
-                changes[field] = prepared_hours()
+                changes[field] = prepared_hours(number)
         coverage_source = None
         if copy_city_coverage and current.get('coverage') is None:
             from . import admin, catalog

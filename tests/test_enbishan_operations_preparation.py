@@ -84,6 +84,24 @@ def test_owner_can_prepare_and_enable_morning_without_changing_evening():
     assert not service_hours.hours_open(intervals, datetime.fromisoformat('2026-10-23T13:00:00'))
 
 
+@pytest.mark.parametrize('clock,expected', [
+    ('2026-10-22T08:59:59', False), ('2026-10-22T09:00:00', True),
+    ('2026-10-22T11:59:59', True), ('2026-10-22T12:00:00', False),
+    ('2026-10-23T10:00:00', False), ('2026-10-24T10:00:00', True),
+    ('2026-10-23T22:00:00', True),
+])
+def test_branch_one_approved_morning_excludes_friday_and_keeps_evening(clock, expected):
+    patches = prepare_branch_patches([source()], [target(1), target(2)])
+    branch_one = patches[0]['body']['settings']
+    branch_two = patches[1]['body']['settings']
+    for field in ('opening_hours', 'delivery_hours'):
+        admin.hours(branch_one[field])
+        assert service_hours.hours_open(branch_one[field], datetime.fromisoformat(clock)) is expected
+        assert branch_two[field] == prepared_hours()
+    assert branch_one['delivery_enabled'] is False
+    assert branch_one['opening_hours'] is not branch_one['delivery_hours']
+
+
 @pytest.mark.parametrize('period', [
     {'days':[0], 'start':None, 'end':None, 'enabled':True},
     {'days':[0], 'start':'08:00', 'end':None, 'enabled':False},

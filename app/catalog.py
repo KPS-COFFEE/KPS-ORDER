@@ -309,6 +309,9 @@ def covered(coverage: dict, location: dict) -> bool:
 
 def product_availability(product: dict, branch: dict | None, *, as_variant=False, service=None) -> tuple[bool, str | None]:
     settings = product['settings']
+    from .enbishan_menu_review import pickup_only
+    if service is not None and service != 'pickup' and pickup_only(product):
+        return False, 'الموهيتو متاح للاستلام من الفرع فقط.'
     if settings.get('purchasable') is False and not as_variant:
         return False, 'هذا الصنف أصبح ضمن الخلية. اختر النوع من البطاقة الموحدة.'
     if settings.get('lifecycle') in {'draft', 'paused'} or settings.get('enabled', True) is not True:

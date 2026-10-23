@@ -1,7 +1,7 @@
 {
   "brand_id": "enbishan",
   "owner_decision_at": "2026-10-20T10:29:27+03:00",
-  "latest_operating_decision_date": "2026-10-22",
+  "latest_operating_decision_date": "2026-10-23",
   "status": "approved_configuration_not_applied_to_production",
   "live_activation": false,
   "service_defaults": {
@@ -115,27 +115,93 @@
   },
   "delivery_schedule": {
     "timezone": "Asia/Riyadh",
-    "evening": {"start": "15:00", "end": "03:00", "days": [0,1,2,3,4,5,6], "enabled_after_authorized_activation": true},
-    "morning": {"start": null, "end": null, "enabled": false, "owner_times_required_before_enabling": true},
+    "evening": {
+      "start": "15:00",
+      "end": "03:00",
+      "days": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "enabled_after_authorized_activation": true
+    },
+    "morning": {
+      "start": null,
+      "end": null,
+      "enabled": false,
+      "owner_times_required_before_enabling": true
+    },
     "same_independent_rows_for_opening_and_delivery_hours": true,
     "preserve_existing_owner_edits": true,
-    "kps_hours_unchanged": true
+    "kps_hours_unchanged": true,
+    "morning_by_branch": {
+      "1": {
+        "start": "09:00",
+        "end": "12:00",
+        "days": [
+          0,
+          1,
+          2,
+          3,
+          5,
+          6
+        ],
+        "day_convention": "Monday=0; Friday=4",
+        "timezone": "Asia/Riyadh",
+        "owner_approved": true,
+        "live_applied": false
+      }
+    }
   },
   "coverage_snapshot": {
     "reference_brand": "kps",
-    "approved_cities": ["حفر الباطن", "القيصومة"],
+    "approved_cities": [
+      "حفر الباطن",
+      "القيصومة"
+    ],
     "copy_city_coverage": true,
     "matching_city_required": true,
     "different_source_values_require_explicit_selection": true,
     "independent_owner_editable_copy": true,
     "does_not_enable_any_branch": true
   },
-  "sms_activation": {"sender": "ENBISHAN", "provider": "tawked", "provider_approval": "pending", "real_sms_enabled": false},
+  "sms_activation": {
+    "sender": "ENBISHAN",
+    "provider": "tawked",
+    "provider_approval": "pending",
+    "real_sms_enabled": false
+  },
   "customer_layout": {
     "beverages_last": true,
-    "beverages_last_surfaces": ["customer_catalog", "delivery_manager_catalog", "owner_catalog"],
+    "beverages_last_surfaces": [
+      "customer_catalog",
+      "delivery_manager_catalog",
+      "owner_catalog"
+    ],
     "reference_brand": "kps",
     "same_card_and_category_ordering_controls": true,
     "identity": "Enbishan original logo and colors"
+  },
+  "product_service_restrictions": {
+    "mojito": {
+      "services": [
+        "pickup"
+      ],
+      "includes_mojito_combos": true,
+      "owner_decision_date": "2026-10-23",
+      "live_applied": false
+    }
+  },
+  "initial_launch_scope": {
+    "delivery_manager": true,
+    "limited_customer_group": true,
+    "public_campaign": false,
+    "temporary_render_hostname": true,
+    "real_orders": true,
+    "production_safety_gates_required": true
   }
 }

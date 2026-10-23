@@ -913,7 +913,8 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
         counts=None
         if user['role']=='driver':
             counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.test_void IS NULL AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
-        return safe({'tasks':rows, 'counts':counts})
+        from .complimentary import operational_view
+        return safe(operational_view({'tasks':rows, 'counts':counts}))
 
 class TaskTransition(OperationBody):
     photo_id:str|None=None
@@ -1095,7 +1096,8 @@ def operational_alerts(user=Depends(auth.current_user)):
             rows=[r for r in rows if visible(r['id'])]
             problems=[r for r in problems if visible(r['id'])]
             printing=[r for r in printing if r.get('order_id') and visible(r['order_id'])]
-        return safe({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions})
+        from .complimentary import operational_view
+        return safe(operational_view({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions}))
 
 class TaskHandover(OperationBody): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
 
@@ -1175,7 +1177,7 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
         def perform():
             o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             if o['snapshot'].get('complimentary'):
-                raise db.error(409,'NO_COLLECTION_REQUIRED','طلب ضيافة أو تعويض؛ بدون تحصيل.')
+                raise db.error(409,'NO_COLLECTION_REQUIRED','هذا الطلب مصنف ضيافة أو تعويض.')
             from .branch_payments import online_order
             if online_order(o):
                 raise db.error(409,'ONLINE_PAYMENT_ONLY','هذا الطلب يتطلب دفعًا إلكترونيًا موثقًا؛ التحصيل اليدوي غير متاح.')
