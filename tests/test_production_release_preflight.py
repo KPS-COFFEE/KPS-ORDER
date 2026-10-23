@@ -59,6 +59,20 @@ class ProductionReleasePreflightSafety(unittest.TestCase):
         self.assertFalse(preflight.staff_projection(dict(row, role='driver'))['source_active_swap_role_and_capability'])
         self.assertFalse(preflight.staff_projection(dict(row, active=False))['source_active_swap_role_and_capability'])
 
+    def test_reviewed_historical_sql_is_verified_but_never_scheduled_for_startup(self):
+        catalog = preflight.migration_catalog()
+        name = '030_menu_preview.sql'
+        record = catalog[name]
+        self.assertEqual(record['kind'], 'historical_applied')
+        self.assertEqual(record['source_revision'], 'e109108bf97270dbfbfabf71b142c03338e4089f')
+        self.assertNotIn(name, {row['version'] for row in preflight.compare_registry([], catalog)['pending']})
+        row = {'version': name, 'sha256': record['sha256'], 'applied_at': 'retained'}
+        report = preflight.compare_registry([row], catalog)
+        self.assertTrue(report['compatible_applied_checksums'])
+        self.assertEqual(report['historical_applied'], [{'version': name, **record}])
+        self.assertFalse(preflight.compare_registry([dict(row, sha256='changed')], catalog)['compatible_applied_checksums'])
+        self.assertFalse(preflight.compare_registry([dict(row, version='unreviewed.sql')], catalog)['compatible_applied_checksums'])
+
     def test_evidence_file_is_private_and_refuses_overwrite_or_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'evidence.json'

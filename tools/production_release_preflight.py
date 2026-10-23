@@ -23,6 +23,16 @@ DATABASE_SCHEMA = 'public'
 HOSTS = {DATABASE_ID, DATABASE_ID + '.frankfurt-postgres.render.com'}
 CAPABILITIES = {'vehicle_maintenance_manage', 'fleet_active_swap', 'branch_printers_manage',
                 'drivers_manage', 'drivers_view', 'delivery_assign'}
+# Applied on the retained database, but absent from the current startup branch.
+# Independently matched to the original Git object; this SQL must not be rerun
+# or silently treated as an unverified unknown migration.
+HISTORICAL_APPLIED = {
+    '030_menu_preview.sql': {
+        'sha256': '34a7e4f5c08094a32faf2f2d09b10a79530b352ecc1ff78a88c9ab60fc04ce2e',
+        'kind': 'historical_applied',
+        'source_revision': 'e109108bf97270dbfbfabf71b142c03338e4089f',
+    },
+}
 
 
 def validate_target(value):
@@ -56,6 +66,9 @@ def migration_catalog(root=ROOT):
             result[path.name] = {'sha256': hashlib.sha256(path.read_text().encode()).hexdigest(), 'kind': kind}
     if not result:
         raise ValueError('The complete candidate migration source is required.')
+    if result.keys() & HISTORICAL_APPLIED.keys():
+        raise ValueError('A historical migration must not become pending startup SQL.')
+    result.update({name: dict(record) for name, record in HISTORICAL_APPLIED.items()})
     return result
 
 
@@ -63,10 +76,13 @@ def compare_registry(rows, catalog):
     applied = {row['version']: row['sha256'] for row in rows}
     unknown = sorted(set(applied) - set(catalog))
     changed = sorted(name for name in set(applied) & set(catalog) if applied[name] != catalog[name]['sha256'])
-    pending = [{'version': name, **catalog[name]} for name in sorted(set(catalog) - set(applied))]
+    pending = [{'version': name, **catalog[name]} for name in sorted(set(catalog) - set(applied))
+               if catalog[name]['kind'] != 'historical_applied']
     return {'compatible_applied_checksums': not unknown and not changed,
             'unknown_applied_versions': unknown, 'changed_applied_versions': changed,
             'applied': [{'version': row['version'], 'sha256': row['sha256'], 'applied_at': row['applied_at']} for row in rows],
+            'historical_applied': [{'version': name, **catalog[name]} for name in sorted(set(applied) & set(catalog))
+                                   if catalog[name]['kind'] == 'historical_applied'],
             'pending': pending,
             'note': 'Matching registry checksums do not certify lock duration, recovery or permission to migrate.'}
 
