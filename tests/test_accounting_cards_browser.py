@@ -80,6 +80,10 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
         page.add_style_tag(content='*{box-sizing:border-box}body{margin:0;padding:20px;background:#faf8f5;font-family:Arial}button,input,select,textarea{font:inherit;padding:10px;border:1px solid #ddd;border-radius:8px}button{cursor:pointer;background:#a64116;color:white}main{max-width:1280px;margin:auto}')
         page.add_style_tag(path=str(ROOT/'public/assets/accounting.css'))
         page.add_script_tag(path=str(ROOT/'public/assets/accounting.js'))
+        page.evaluate('''()=>{
+          document.body.insertAdjacentHTML('beforeend','<dialog id="history-modal"><h2></h2><div class="history-body"></div></dialog>');
+        }''')
+        page.add_style_tag(content='#history-modal{box-sizing:border-box;width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 32px);overflow:auto;border:1px solid #ddd;border-radius:16px;padding:18px}#history-modal h2{font-size:18px;margin:0 0 14px}#history-modal .history-body{min-width:0;max-width:100%}')
         page.evaluate('''async ({lang,profile})=>{
           const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
           const money=v=>new Intl.NumberFormat(lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(Number(v||0)/100);
@@ -98,10 +102,19 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
             r.net_difference_halalas=r.cash_recorded?(r.id==='variance'?-100:100):null;
             if(r.variance_confirmation){r.variance_confirmation.actor_name=lang==='ar'?'محاسب تجريبي':'Test accountant';r.variance_confirmation.details.action_taken=lang==='ar'?'توثيق ومتابعة الفائض':'Document and follow up surplus';}
           });
+          const confirmed=rows.find(r=>r.id==='confirmed');
+          confirmed.original_bank_halalas=25350;confirmed.original_cash_halalas=19250;
+          const eventBase={actor_name:lang==='ar'?'محاسب اختبار — اسم طويل لمراجعة سجل الإجراءات':'Synthetic accountant — long action-history display name',bank_halalas:23100,cash_due_halalas:21500,cash_received_halalas:null,stage:'balance_approved',balance_approved:true,note:lang==='ar'?'اعتماد':'Approved',received_on:null,receipt_reference:null};
+          confirmed.history=[
+            {...eventBase,id:'h1',action_type:'correction',created_at:'2026-10-23T13:36:57Z'},
+            {...eventBase,id:'h2',action_type:'approval',created_at:'2026-10-23T15:32:43Z'},
+            {...eventBase,id:'h3',action_type:'cash_receipt',stage:'cash_received',cash_received_halalas:21600,created_at:'2026-10-23T15:53:04Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8)},
+            {...eventBase,id:'h4',action_type:'approval',stage:'cash_received',cash_received_halalas:21600,created_at:'2026-10-23T15:57:48Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8),note:lang==='ar'?'تعديل':'Correction'}
+          ];
           rows.forEach(r=>{r.system_total_halalas=profile==='realistic'?44600:111111111000;r.actual_total_halalas=r.reconciliation_complete?r.bank_halalas+r.cash_received_halalas:null;});
           window.layoutExpected=rows.map(r=>({id:r.id,name:r.driver_name,total:money(r.bank_halalas+(r.reconciliation_complete?r.cash_received_halalas:r.cash_due_halalas)),money:[r.bank_halalas,r.cash_due_halalas,r.cash_received_halalas,r.shortage_halalas,r.surplus_halalas].map((v,index)=>index>=2&&!r.cash_recorded?'—':money(v))}));
           window.layoutMutations=0;
-          await KPSAccounting.open({lang,user:{id:'accountant',role:'owner'},tr:(ar,en)=>lang==='ar'?ar:en,esc,money,cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:()=>{},closeModal:()=>{},mutation:async()=>{window.layoutMutations++;throw Error('Layout acceptance must never post financial data');},api:async url=>{
+          await KPSAccounting.open({lang,user:{id:'accountant',role:'owner'},tr:(ar,en)=>lang==='ar'?ar:en,esc,money,cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:(title,html)=>{const dialog=document.querySelector('#history-modal');dialog.querySelector('h2').textContent=title;dialog.querySelector('.history-body').innerHTML=html;dialog.showModal();},closeModal:()=>document.querySelector('#history-modal').close(),mutation:async()=>{window.layoutMutations++;throw Error('Layout acceptance must never post financial data');},api:async url=>{
             if(url.includes('/options'))return {today:'2026-10-23',can_report:true,can_review:true,branches:[{id:'branch',name:'TEST Branch',city:'حفر الباطن'}],people:[],products:[],categories:{},states:{},responsibilities:{}};
             if(url.includes('/manager-cards'))return {cards:[{id:'manager',manager_name:lang==='ar'?'مدير توصيل تجريبي — شفت مسائي حفر الباطن':'Synthetic delivery manager — Hafar evening shift',day:'2026-10-23',drivers:rows,total:3,completed:1,balance_completed:3,cash_completed:2,overdue_count:0,completion_percent:71,ready:false,due_on:'2026-10-24',due_at:'2026-10-24T16:00:00+03:00'}]};
             if(url.includes('/driver-settlements'))return {settlements:rows};
@@ -159,4 +172,26 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
         assert page.evaluate('window.layoutMutations')==0 and not errors
         output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
         page.screenshot(path=str(output/f'accounting-manager-cards-{lang}-{width}{"-realistic" if profile=="realistic" else ""}.png'),full_page=True)
+        if profile=='realistic':
+            page.locator('[data-driver-history=confirmed]').click()
+            history=page.locator('.ac-settlement-history')
+            expect(history).to_be_visible()
+            events=history.locator('.ac-history-event')
+            expect(events).to_have_count(4)
+            assert events.evaluate_all('(es)=>es.map(e=>e.dataset.actionKind)')==['correction','approval','receipt','approval']
+            expect(events.nth(3).locator('h3')).to_have_text('اعتماد المبالغ دون تعديل' if lang=='ar' else 'Amounts approved unchanged')
+            expect(events.nth(3).locator('.ac-history-note p')).to_have_text('تعديل' if lang=='ar' else 'Correction')
+            assert events.nth(0).locator('[data-changed=true]').count()==2
+            assert events.nth(1).locator('[data-changed=true]').count()==0
+            expect(events.nth(0).locator('tbody tr').nth(0).locator('td').nth(0)).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(253.5)"))
+            expect(events.nth(2).locator('.ac-history-received dd')).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(216)"))
+            expect(events.nth(2).locator('time')).to_contain_text('٢٠٢٦' if lang=='ar' else '2026')
+            expect(history).not_to_contain_text('NaN')
+            assert history.evaluate('''root=>{
+              const fits=e=>e.scrollWidth<=e.clientWidth+1;
+              const dialog=root.closest('dialog');
+              return fits(dialog)&&fits(root)&&[...root.querySelectorAll('article,table,th,td,dd,h3,time')].every(fits)&&document.documentElement.scrollWidth<=innerWidth+1;
+            }'''), 'History and full amounts must fit without horizontal scrolling'
+            assert page.evaluate('window.layoutMutations')==0 and not errors
+            page.screenshot(path=str(output/f'accounting-manager-cards-history-{lang}-{width}.png'),full_page=True)
         browser.close()
