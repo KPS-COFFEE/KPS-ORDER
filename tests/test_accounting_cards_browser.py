@@ -81,7 +81,7 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
         page.add_style_tag(path=str(ROOT/'public/assets/accounting.css'))
         page.add_script_tag(path=str(ROOT/'public/assets/accounting.js'))
         page.evaluate('''()=>{
-          document.body.insertAdjacentHTML('beforeend','<dialog id="history-modal"><h2></h2><div class="history-body"></div></dialog>');
+          document.body.insertAdjacentHTML('beforeend','<dialog id="history-modal"><h2></h2><div id="modal-body" class="history-body"></div></dialog>');
         }''')
         page.add_style_tag(content='#history-modal{box-sizing:border-box;width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 32px);overflow:auto;border:1px solid #ddd;border-radius:16px;padding:18px}#history-modal h2{font-size:18px;margin:0 0 14px}#history-modal .history-body{min-width:0;max-width:100%}')
         page.evaluate('''async ({lang,profile})=>{
@@ -91,7 +91,7 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
           const base={day:'2026-10-23',bank_halalas:98765432100,cash_due_halalas:12345678900,cash_received_halalas:null,shortage_halalas:0,surplus_halalas:0,balance_approved:true,cash_recorded:false,reconciliation_complete:false,net_difference_halalas:null,stage:'balance_approved',due_at:'2026-10-24T16:00:00+03:00',can_extend:true,overdue:false,history:[],revision:1};
           const rows=[
             {...base,id:'pending',user_id:'driver-pending',driver_name:longName+' 1'},
-            {...base,id:'variance',user_id:'driver-variance',driver_name:longName+' 2',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345666350,shortage_halalas:12550,net_difference_halalas:-12550,variance_pending:true,revision:2,can_extend:false},
+            {...base,id:'variance',user_id:'driver-variance',driver_name:longName+' 2',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345666350,shortage_halalas:12550,net_difference_halalas:-12550,variance_pending:true,revision:2,can_extend:false,can_correct_cash_receipt:true},
             {...base,id:'confirmed',user_id:'driver-confirmed',driver_name:longName+' 3',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345777665,surplus_halalas:98765,net_difference_halalas:98765,variance_pending:false,revision:2,can_extend:false,variance_confirmation:{id:'confirmation',actor_name:lang==='ar'?'محاسب تجريبي باسم طويل لتوثيق المراجعة':'Synthetic accountant with a long reviewer name',created_at:'2026-10-23T12:00:00Z',details:{action_taken:lang==='ar'?'توثيق الفائض للمراجعة والمتابعة دون أي خصم آلي من راتب السائق':'Documented surplus for review and follow-up without any automatic payroll deduction'}}}
           ];
           if(profile==='realistic')rows.forEach((r,index)=>{
@@ -108,8 +108,9 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
           confirmed.history=[
             {...eventBase,id:'h1',action_type:'correction',created_at:'2026-10-23T13:36:57Z'},
             {...eventBase,id:'h2',action_type:'approval',created_at:'2026-10-23T15:32:43Z'},
-            {...eventBase,id:'h3',action_type:'cash_receipt',stage:'cash_received',cash_received_halalas:21600,created_at:'2026-10-23T15:53:04Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8)},
-            {...eventBase,id:'h4',action_type:'approval',stage:'cash_received',cash_received_halalas:21600,created_at:'2026-10-23T15:57:48Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8),note:lang==='ar'?'تعديل':'Correction'}
+            {...eventBase,id:'h3',action_type:'cash_receipt',stage:'cash_received',cash_received_halalas:23100,created_at:'2026-10-23T15:53:04Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8)},
+            {...eventBase,id:'h4',action_type:'approval',stage:'cash_received',cash_received_halalas:23100,created_at:'2026-10-23T15:57:48Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8),note:lang==='ar'?'تعديل':'Correction'},
+            {...eventBase,id:'h5',action_type:'cash_receipt_correction',actor_name:lang==='ar'?'مالك تجريبي':'Test owner',stage:'cash_received',cash_received_halalas:21600,created_at:'2026-10-23T16:10:00Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8),note:lang==='ar'?'تصحيح تسجيل النقد بعد المراجعة':'Correct receipt entry after review'}
           ];
           rows.forEach(r=>{r.system_total_halalas=profile==='realistic'?44600:111111111000;r.actual_total_halalas=r.reconciliation_complete?r.bank_halalas+r.cash_received_halalas:null;});
           window.layoutExpected=rows.map(r=>({id:r.id,name:r.driver_name,total:money(r.bank_halalas+(r.reconciliation_complete?r.cash_received_halalas:r.cash_due_halalas)),money:[r.bank_halalas,r.cash_due_halalas,r.cash_received_halalas,r.shortage_halalas,r.surplus_halalas].map((v,index)=>index>=2&&!r.cash_recorded?'—':money(v))}));
@@ -173,18 +174,29 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
         output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
         page.screenshot(path=str(output/f'accounting-manager-cards-{lang}-{width}{"-realistic" if profile=="realistic" else ""}.png'),full_page=True)
         if profile=='realistic':
+            page.locator('[data-driver-cash-correction=variance]').click()
+            correction=page.locator('#history-modal')
+            correction.locator('[name=corrected_cash]').fill('215.00')
+            expect(correction.locator('#cash-correction-preview')).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(446)"))
+            expect(correction.locator('[name=confirmed]')).not_to_be_checked()
+            assert page.evaluate('window.layoutMutations')==0
+            page.screenshot(path=str(output/f'accounting-manager-cards-cash-correction-{lang}-{width}.png'),full_page=True)
+            page.keyboard.press('Escape')
             page.locator('[data-driver-history=confirmed]').click()
             history=page.locator('.ac-settlement-history')
             expect(history).to_be_visible()
             events=history.locator('.ac-history-event')
-            expect(events).to_have_count(4)
-            assert events.evaluate_all('(es)=>es.map(e=>e.dataset.actionKind)')==['correction','approval','receipt','approval']
+            expect(events).to_have_count(5)
+            assert events.evaluate_all('(es)=>es.map(e=>e.dataset.actionKind)')==['correction','approval','receipt','approval','correction']
             expect(events.nth(3).locator('h3')).to_have_text('اعتماد المبالغ دون تعديل' if lang=='ar' else 'Amounts approved unchanged')
             expect(events.nth(3).locator('.ac-history-note p')).to_have_text('تعديل' if lang=='ar' else 'Correction')
             assert events.nth(0).locator('[data-changed=true]').count()==2
             assert events.nth(1).locator('[data-changed=true]').count()==0
             expect(events.nth(0).locator('tbody tr').nth(0).locator('td').nth(0)).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(253.5)"))
-            expect(events.nth(2).locator('.ac-history-received dd')).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(216)"))
+            expect(events.nth(2).locator('.ac-history-received dd')).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(231)"))
+            expect(events.nth(4).locator('h3')).to_have_text('تصحيح الكاش المستلم — المالك' if lang=='ar' else 'Cash receipt corrected — owner')
+            expect(events.nth(4).locator('tbody tr')).to_have_count(3)
+            expect(events.nth(4).locator('.ac-history-received dd')).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(216)"))
             expect(events.nth(2).locator('time')).to_contain_text('٢٠٢٦' if lang=='ar' else '2026')
             expect(history).not_to_contain_text('NaN')
             assert history.evaluate('''root=>{

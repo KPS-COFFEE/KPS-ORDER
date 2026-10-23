@@ -135,7 +135,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
         daily[row['user_id'],row['day']]['adjustments']+=f"{event['actor_name']} · +48h · {extension_details['original_due_at']} → {extension_details['due_at']} · {extension_details['reason']}\n"
     for e in audit:
         before='before' if en else 'قبل';after='after' if en else 'بعد'
-        action={'cash_receipt':('استلام نقد فعلي','Actual cash receipt'),'correction':('تعديل المبالغ واعتمادها','Amounts corrected and approved'),'approval':('اعتماد دون تعديل','Approved unchanged'),'manager_correction':('تصحيح مدير التوصيل','Delivery manager correction')}.get(e['action'],('مراجعة','Review'))[en]
+        action={'cash_receipt':('استلام نقد فعلي','Actual cash receipt'),'cash_receipt_correction':('تصحيح الكاش المستلم — المالك','Cash receipt corrected — owner'),'correction':('تعديل المبالغ واعتمادها','Amounts corrected and approved'),'approval':('اعتماد دون تعديل','Approved unchanged'),'manager_correction':('تصحيح مدير التوصيل','Delivery manager correction')}.get(e['action'],('مراجعة','Review'))[en]
         daily[e['driver_id'],e['day']]['adjustments']+=f"{action} · {e['actor']} · {e['at'].astimezone(TZ).strftime('%Y/%m/%d %H:%M')} · {e['reason']}\n" + \
             f"{'Card' if en else 'الشبكة'}: {before} {e['before_bank']/100:.2f} / {after} {e['after_bank']/100:.2f}; " + \
             f"{'Cash due' if en else 'الكاش المطلوب'}: {before} {e['before_cash']/100:.2f} / {after} {e['after_cash']/100:.2f}; " + \
@@ -194,7 +194,8 @@ def manager_cards(c,user,bids):
         deadline['overdue']=bool((finished or datetime.now(TZ))>=deadline['due_at'])
         deadline['can_extend']=deadline['deadline_policy']=='external_72h' and not deadline['extension'] and not finished
         group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id']),due_on=None))
-        group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,**v,**deadline))
+        can_correct_cash_receipt=bool(user['role']=='owner' and r['user_id']!=user['id'] and variance_pending and not group['approved_day'])
+        group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,can_correct_cash_receipt=can_correct_cash_receipt,**v,**deadline))
     for group in groups.values():
         group['completed']=sum(r['stage']=='cash_received' and not r['variance_pending'] for r in group['drivers'])
         group['total']=len(group['drivers'])
