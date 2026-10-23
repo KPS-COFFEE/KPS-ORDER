@@ -113,6 +113,14 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
         expect(rows).to_have_count(3)
         expected=page.evaluate('window.layoutExpected')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), 'Settlement page must fit the viewport'
+        workspace=page.locator('.ac-manager-card').evaluate('''card=>{
+          const area=card.parentElement.getBoundingClientRect(),box=card.getBoundingClientRect();
+          const table=card.querySelector('.ac-table').getBoundingClientRect(),row=card.querySelector('[data-driver-row]').getBoundingClientRect();
+          return {availableWidth:area.width,cardWidth:box.width,leftGap:box.left-area.left,rightGap:area.right-box.right,tableWidth:table.width,rowWidth:row.width};
+        }''')
+        assert abs(workspace['cardWidth']-workspace['availableWidth'])<=2, workspace
+        assert workspace['leftGap']<=2 and workspace['rightGap']<=2, workspace
+        assert abs(workspace['rowWidth']-workspace['tableWidth'])<=2, workspace
         for item in expected:
             row=page.locator(f'[data-driver-row="{item["id"]}"]')
             cells=row.locator('td')
@@ -141,7 +149,7 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
                 assert geometry['headerVerticalGap']<=12, geometry
                 if width>=1280:
                     assert geometry['headerSameLine'] and geometry['headerGap']<=24, geometry
-                    assert geometry['rowWidth']<=1050 and geometry['rowHeight']<=400, geometry
+                    assert geometry['rowHeight']<=400, geometry
             expect(row.locator('[data-driver-history]')).to_be_visible()
             expect(row.locator(f'a[href="/api/accounting/driver-settlements/{item["id"]}/print"]')).to_be_visible()
         expect(page.locator('[data-variance-confirm=variance]')).to_be_visible()
