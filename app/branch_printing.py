@@ -204,7 +204,7 @@ def test_printer(identifier:str,user=Depends(printer_admin),idem:str|None=Header
                 'Arabic / English — check logo and margins',
                 'ليست فاتورة طلب / NOT AN ORDER',job_id)]
             conn.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,kind,payload,requested_by) VALUES(%s,%s,%s,%s,'test',%s,%s)",
-                         (job_id,user['brand_id'],device['branch_id'],identifier,db.json({'language':'ar','kind':'test','lines':lines}),user['id']))
+                         (job_id,user['brand_id'],device['branch_id'],identifier,db.json({'language':'ar','kind':'test','lines':lines,'brand_id':device['brand_id']}),user['id']))
             conn.execute('UPDATE branch_print_devices SET acceptance_job_id=%s,approved_at=NULL,approved_by=NULL,approved_api_host=NULL WHERE id=%s',(job_id,identifier))
             db.audit(conn,user['id'],'printer.test.queued','printer',identifier,{'job_id':job_id})
             return {'id':job_id,'status':'queued'}
@@ -319,7 +319,7 @@ def receipt(order, branch, kind, language, translations=None):
             else:
                 qr=invoice_profiles.ordinary_qr(order)
             lines.append({'role':'qr','text':'','matrix':qr['matrix']})
-    return {'language':language,'kind':kind,'lines':lines,'occasion_style':occasion_style}
+    return {'language':language,'kind':kind,'lines':lines,'occasion_style':occasion_style,'brand_id':order.get('brand_id','kps')}
 
 
 class JobBody(BaseModel):
@@ -548,8 +548,17 @@ def jobs(user=Depends(printer_admin)):
         return {'jobs':rows}
 
 
+def require_brand_logo_capability(device, request):
+    # KPS and legacy KPS jobs keep their existing protocol. Enbishan must never
+    # reach an older executable that would print the KPS logo unconditionally.
+    capabilities = (request.headers.get('X-KPS-Print-Capabilities', '') if request else '').split(',')
+    if device.get('brand_id') == 'enbishan' and 'brand-logo-v1' not in {c.strip() for c in capabilities}:
+        raise db.error(409, 'PRINT_BRIDGE_UPDATE_REQUIRED', 'حدّث برنامج الطباعة من إعداد الفرع لطباعة شعار عنبيشن الصحيح.')
+
+
 @router.post('/bridge/next')
 def claim(request: Request = None, device=Depends(bridge)):
+    require_brand_logo_capability(device, request)
     with db.tx() as conn:
         live=conn.execute('SELECT id,approved_at FROM branch_print_devices WHERE id=%s AND revoked_at IS NULL FOR UPDATE',(device['id'],)).fetchone()
         if not live:raise db.error(401,'PRINT_DEVICE_AUTH','ألغي ربط الجهاز.')
@@ -558,7 +567,7 @@ def claim(request: Request = None, device=Depends(bridge)):
         row=conn.execute("SELECT * FROM branch_print_jobs WHERE device_id=%s AND status='queued' AND (kind='test' OR %s) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",(device['id'],bool(live['approved_at']))).fetchone()
         if not row:return {'job':None}
         conn.execute("UPDATE branch_print_jobs SET status='claimed',claimed_at=now() WHERE id=%s",(row['id'],))
-        return {'job':{'id':row['id'],'payload':row['payload'],'paper_mm':device['paper_mm']}}
+        return {'job':{'id':row['id'],'payload':{**row['payload'],'brand_id':row['brand_id']},'paper_mm':device['paper_mm']}}
 
 
 class AckBody(BaseModel):
@@ -636,6 +645,7 @@ def bridge_bundle(setup=None):
         for name in ('KpsPrintBridge.cs','Start.cmd','README.txt'):
             bundle.write(db.ROOT/'tools'/'windows-print-bridge'/name,name)
         bundle.write(db.ROOT/'public'/'assets'/'kps-receipt-logo.png','logo.png')
+        bundle.write(db.ROOT/'public'/'assets'/'enbishan-original.jpeg','enbishan-logo.jpeg')
         bundle.writestr('endpoint.json',json.dumps({'origin':bridge_origin()},ensure_ascii=False))
         if setup:
             bundle.writestr('setup.json',json.dumps(setup,ensure_ascii=False))

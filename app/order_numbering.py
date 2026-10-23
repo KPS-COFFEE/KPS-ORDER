@@ -14,8 +14,9 @@ NEXT_NUMBER_SQL = ('INSERT INTO order_branch_counters(branch_id,last_number) VAL
 
 def reference_prefix(branch, moment=None):
     day = service_hours.delivery_operational_date(moment)
-    brand_prefix = 'ENB-' if branch.get('brand_id') == 'enbishan' else ''
-    return brand_prefix + CITY_CODES.get(branch['city'], 'BR') + str(branch['branch_no']) + f'-{day:%y%m%d}-'
+    # Brand identity is explicit order metadata, never a different number format.
+    # This only allocates future references; saved historical strings stay immutable.
+    return CITY_CODES.get(branch['city'], 'BR') + str(branch['branch_no']) + f'-{day:%y%m%d}-'
 
 
 def allocate(conn, branch_id, moment=None):

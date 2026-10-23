@@ -16,7 +16,7 @@ using System.Windows.Forms;
 
 class KpsPrintBridge {
     const string DefaultOrigin = "https://order.kps.sa";
-    const string BridgeVersion = "20261018.1";
+    const string BridgeVersion = "20261023.1";
     static string Origin = DefaultOrigin;
     static bool RePair;
     static string SecureOrigin(string value) {
@@ -36,7 +36,7 @@ class KpsPrintBridge {
     static Dictionary<string,object> Api(string path,object body) {
         var request=(HttpWebRequest)WebRequest.Create(Origin+"/api/printing/"+path);
         request.Method="POST"; request.ContentType="application/json; charset=utf-8";
-        request.Headers["Origin"]=Origin; request.Headers["X-KPS-Bridge-Version"]=BridgeVersion; request.AllowAutoRedirect=false;
+        request.Headers["X-KPS-Print-Capabilities"]="brand-logo-v1"; request.Headers["Origin"]=Origin; request.Headers["X-KPS-Bridge-Version"]=BridgeVersion; request.AllowAutoRedirect=false;
         request.Timeout=20000; request.ReadWriteTimeout=20000;
         if (!String.IsNullOrEmpty(Token)) request.Headers["Authorization"]="Bearer "+Token;
         byte[] bytes=Encoding.UTF8.GetBytes(Json.Serialize(body));request.ContentLength=bytes.Length;
@@ -143,8 +143,30 @@ class KpsPrintBridge {
         foreach(object line in (object[])payload["lines"])result.Add(Obj(line));
         return result;
     }
-    static Image Logo() {
-        string path=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"logo.png");
+    // Brand comes from the server's canonical print job, never a logo URL/path.
+    static string LogoFile(Dictionary<string,object> payload) {
+        string brand=Str(payload,"brand_id");
+        if(brand=="" || brand=="kps")return "logo.png"; // Legacy KPS payloads.
+        if(brand=="enbishan")return "enbishan-logo.jpeg";
+        throw new Exception("Unsupported receipt brand. Update the bridge before printing.");
+    }
+    static Image Logo(Dictionary<string,object> payload) {
+        string filename=LogoFile(payload);
+        string path=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,filename);
+        if(filename=="enbishan-logo.jpeg") {
+            // Render the approved opaque source as thermal foreground on white.
+            // The asset stays byte-for-byte unchanged in the package.
+            using(var original=new Bitmap(path)) {
+                var bitmap=new Bitmap(original.Width,original.Height);
+                Color background=original.GetPixel(0,0);
+                for(int y=0;y<original.Height;y++)for(int x=0;x<original.Width;x++) {
+                    Color pixel=original.GetPixel(x,y);
+                    int red=pixel.R-background.R,green=pixel.G-background.G,blue=pixel.B-background.B;
+                    bitmap.SetPixel(x,y,red*red+green*green+blue*blue>6400?Color.Black:Color.White);
+                }
+                return bitmap;
+            }
+        }
         using(var original=Image.FromFile(path)) {
             var bitmap=new Bitmap(original.Width,original.Height);
             using(var g=Graphics.FromImage(bitmap)) using(var attributes=new ImageAttributes()) {
@@ -235,7 +257,7 @@ class KpsPrintBridge {
     static void Print(Dictionary<string,object> job) {
         var payload=Obj(job["payload"]);var lines=Lines(payload);bool ar=Str(payload,"language")=="ar";
         int width=Convert.ToInt32(job["paper_mm"])==58?228:315;
-        using(var document=new PrintDocument()) using(var regular=new Font("Arial",11)) using(var bold=new Font("Arial",12,FontStyle.Bold)) using(var caption=new Font("Arial",9)) using(var heading=new Font("Arial",13,FontStyle.Bold)) using(var occasion=OccasionFont(payload)) using(var logo=Logo()) {
+        using(var document=new PrintDocument()) using(var regular=new Font("Arial",11)) using(var bold=new Font("Arial",12,FontStyle.Bold)) using(var caption=new Font("Arial",9)) using(var heading=new Font("Arial",13,FontStyle.Bold)) using(var occasion=OccasionFont(payload)) using(var logo=Logo(payload)) {
             document.PrinterSettings.PrinterName=Printer;document.PrinterSettings.Copies=1;
             document.PrintController=new StandardPrintController();document.DocumentName="KPS "+Str(job,"id");
             document.OriginAtMargins=false;
@@ -284,7 +306,15 @@ class KpsPrintBridge {
             if(Math.Abs(area.Left-8)>0.01 || Math.Abs(area.Right-276)>0.01 || area.Bottom>790)return 2;
             var narrow=ContentBounds(new RectangleF(0,0,228,600),new RectangleF(10,4,208,590),10,4);
             if(narrow.Width!=192 || narrow.Left<0 || narrow.Right>208)return 3;
-            using(var logo=Logo()) {if(logo.Width<1)return 1;}
+            using(var logo=Logo(new Dictionary<string,object>())) {if(logo.Width<1)return 1;}
+            if(LogoFile(new Dictionary<string,object>{{"brand_id","kps"},{"logo","../../bad"}})!="logo.png")return 13;
+            if(LogoFile(new Dictionary<string,object>{{"brand_id","enbishan"},{"logo","https://evil/logo"}})!="enbishan-logo.jpeg")return 14;
+            bool unknownBrandRejected=false;
+            try {LogoFile(new Dictionary<string,object>{{"brand_id","../../logo"}});}catch(Exception){unknownBrandRejected=true;}
+            if(!unknownBrandRejected)return 15;
+            using(var logo=(Bitmap)Logo(new Dictionary<string,object>{{"brand_id","enbishan"}})) {
+                if(logo.GetPixel(0,0).R!=255 || logo.GetPixel(400,500).R!=0)return 16;
+            }
             var matrix=new ArrayList();
             for(int y=0;y<29;y++)matrix.Add(y==14?new string('0',14)+"1"+new string('0',14):new string('0',29));
             var qrLine=new Dictionary<string,object>{{"role","qr"},{"matrix",matrix}};
