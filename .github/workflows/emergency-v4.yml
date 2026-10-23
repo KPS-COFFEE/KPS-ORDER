@@ -213,13 +213,16 @@ jobs:
         if: matrix.shard == 0
         run: node --test tests/test_owner_operational_confirmation.cjs
       - name: Verify fiscal issuance, refunds and actual thermal QR decoding
-        if: matrix.shard == 0
+        # Full mode runs every pytest node once in the disjoint shards below.
+        # Preserve focused preflights without spending the full worker's budget
+        # repeating 319 cases before its mandatory complete coverage run.
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
         run: python -m pytest tests/test_fiscal.py tests/test_fiscal_browser.py tests/test_fiscal_issuance_browser.py -q
       - name: Verify current mandatory SMS checkout and bilingual mobile privacy
-        if: matrix.shard == 0
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
         run: python -m pytest -q --strict-markers tests/test_customer_experience.py tests/test_customer_experience_browser.py tests/test_customer_final_account.py tests/test_customer_final_account_browser.py --junitxml=test-results/customer-experience.xml
       - name: Run financial, retry, printing and recovery hardening acceptance
-        if: matrix.shard == 0
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_hardening_operations.py tests/test_hardening_orders.py
