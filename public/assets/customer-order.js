@@ -60,8 +60,8 @@
         const {quote}=await mutation(complimentary?'/api/orders/complimentary/quote':'/api/quote',body);
         review={key,total:quote.total_halalas};
         form.querySelector('#staff-review').innerHTML=`<div class="notice"><p>${esc(tr('الأصناف','Subtotal'))}: <b>${esc(money(quote.subtotal_halalas))}</b></p><p>${esc(tr('التوصيل','Delivery'))}: <b>${esc(money(quote.delivery_fee_halalas))}</b></p><p>${esc(tr('الإجمالي','Total'))}: <b>${esc(money(quote.total_halalas))}</b></p><p>${esc(tr('راجع البيانات مع العميل ثم أكد الطلب.','Review with the customer, then confirm.'))}</p></div>`;
-        if(complimentary){const p=document.createElement('p');p.textContent=tr('بدون تحصيل — القيمة المرجعية للأصناف: ','No collection — reference item value: ')+money(quote.complimentary.catalog_value_halalas);form.querySelector('#staff-review').append(p);}
-        form.querySelector('[type=submit]').textContent=complimentary?tr('إرسال للفرع بدون تحصيل','Send to branch — no collection'):tr('تأكيد وإنشاء الطلب','Confirm and create order');return;
+        if(complimentary){const kind=form.querySelector('[name=kind]');form.querySelector('#staff-review').textContent=kind.options[kind.selectedIndex].textContent;}
+        form.querySelector('[type=submit]').textContent=complimentary?tr('إرسال للفرع','Send to branch'):tr('تأكيد وإنشاء الطلب','Confirm and create order');return;
       }
       const result=await mutation(complimentary?'/api/orders/complimentary':'/api/orders/delivery-center',{...body,expected_total_halalas:review.total});
       closeModal();await onCreated(result.order.id);
@@ -73,10 +73,10 @@
       form.addEventListener('formdata',event=>event.formData.set('branch_id',allowed[0].id));
     }
     if(complimentary){
-      form.querySelector('p.notice').textContent=tr('توصيل ضيافة أو تعويض بدون تحصيل. اختر الأصناف وأدخل المستلم وموقعه والسبب.','Hospitality or compensation delivery with no collection. Select items, recipient, location and reason.');
+      form.querySelector('p.notice').textContent=tr('توصيل ضيافة أو تعويض. اختر الأصناف وأدخل المستلم وموقعه والسبب.','Hospitality or compensation delivery. Select items, recipient, location and reason.');
       const payment=form.elements.payment_method;payment.value='cash';payment.closest('label').hidden=true;
       const label=document.createElement('label');label.textContent=tr('النوع','Type');const kinds=document.createElement('select');kinds.name='kind';
-      for(const [value,ar,en] of [['hospitality','ضيافة','Hospitality'],['advertising','ضيافة إعلانية','Advertising hospitality'],['compensation','تعويض','Compensation']]){const option=document.createElement('option');option.value=value;option.textContent=tr(ar,en);kinds.append(option);}label.append(kinds);payment.closest('label').after(label);
+      for(const [value,ar,en] of [['hospitality','ضيافة','Hospitality'],['advertising','إعلان','Advertising'],['compensation','تعويض','Compensation']]){const option=document.createElement('option');option.value=value;option.textContent=tr(ar,en);kinds.append(option);}label.append(kinds);payment.closest('label').after(label);
       form.elements.notes.required=true;form.elements.notes.placeholder=tr('السبب، مثل منتج تالف أو خطأ بالطلب','Reason, e.g. damaged product or order error');
     }
     const fail=e=>{form.querySelector('.form-error').textContent=e.message;};

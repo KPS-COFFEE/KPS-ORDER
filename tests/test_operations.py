@@ -118,11 +118,13 @@ def ops(client, request):
         with db.tx() as c:u=c.execute('SELECT * FROM users WHERE id=%s',('ops-'+name,)).fetchone()
         client.app.dependency_overrides[auth.current_user]=lambda:u
         return client
-    def order(service='delivery',total=1000,name=None,items=None,notes='',*,source=None,branch=None):
+    def order(service='delivery',total=1000,name=None,items=None,notes='',*,source=None,branch=None,internal_routing=None):
         oid=name or 'ops-order-'+uuid4().hex
         snap={'items':items if items is not None else [{'product_id':'ops-product','name':'قهوة تجربة','quantity':1,'unit_price_halalas':total,'line_total_halalas':total,'units':[],'note':''}],'branch_name':'فرع اختبار','notes':notes}
         if source:
             snap.update(order_source=source,created_by_staff_id='ops-manager')
+        if internal_routing is not None:
+            snap['internal_routing']=internal_routing
         with db.tx() as c:c.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,%s)',(oid,brand_id,branch or branch_id,'ops-customer',service,'ready','pending' if service=='delivery' else 'not_applicable','cash',total,total,db.json(snap),db.json({'name':'اختبار'})))
         return oid
     def post(who,path,body=None,key=None,status=200):
