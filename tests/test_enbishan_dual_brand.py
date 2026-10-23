@@ -106,6 +106,44 @@ def test_isolation_blocks_remote_and_runtime_database(monkeypatch):
 
 
 @pytest.mark.postgres
+def test_shared_owner_printer_pairing_rechecks_brand_and_branch_grant(dual):
+    client, actor, post, _, _ = dual
+    def pending(brand, branch):
+        return post('owner', '/api/printing/devices',
+                    {'branch_id': branch, 'label': 'SYNTHETIC scoped printer',
+                     'reason': 'Isolated pairing acceptance'}, brand=brand)
+    def redeem(pair):
+        return actor('enbishan-customer').post('/api/printing/bridge/pair', json={
+            'pairing_code': pair['pairing_code'], 'printer_name': 'SYNTHETIC printer'})
+    first = pending('enbishan', 'enbishan-test-1')
+    paired = redeem(first)
+    assert paired.status_code == 200, paired.text
+    with db.tx() as conn:
+        row = conn.execute('SELECT brand_id,branch_id,token_hash FROM branch_print_devices WHERE id=%s',
+                           (first['id'],)).fetchone()
+        assert row['brand_id'] == 'enbishan' and row['branch_id'] == 'enbishan-test-1'
+        assert row['token_hash'] == auth.token_hash(paired.json()['token'])
+    second = pending('enbishan', 'enbishan-test-1')
+    with db.tx() as conn:
+        conn.execute("UPDATE staff_brand_memberships SET branch_ids=%s WHERE user_id='dual-owner' AND brand_id='enbishan'",
+                     (db.json(['enbishan-test-2']),))
+    scoped = actor('owner', 'enbishan')
+    listed = scoped.get('/api/printing/devices')
+    assert listed.status_code == 200, listed.text
+    assert listed.json()['devices'] == []
+    migration = scoped.get('/api/printing/migration-status')
+    assert migration.status_code == 200, migration.text
+    assert {b['id'] for b in migration.json()['branches']} == {'enbishan-test-2'}
+    assert redeem(second).status_code == 404
+    with db.tx() as conn:
+        conn.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-owner' AND brand_id='enbishan'")
+    rejected = redeem(second)
+    assert rejected.status_code == 403, rejected.text
+    assert rejected.json()['detail']['code'] == 'PRINT_PAIR_REVOKED'
+    assert redeem(pending('kps', 'kps-branch-1')).status_code == 200
+
+
+@pytest.mark.postgres
 def test_real_session_context_and_immediate_revocation(dual):
     client, actor, post, _, _ = dual
     assert {b['id'] for b in actor('manager').get('/api/multibrand/context').json()['brands']} == {'kps','enbishan'}

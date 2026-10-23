@@ -30,10 +30,17 @@ def printer_admin(user=Depends(auth.current_user)):
 
 
 
+def can_access_branch(user, branch_id):
+    # Home-brand owners retain their existing full scope. A projected owner
+    # has only the branches in the current explicit additional-brand grant.
+    return ((user['role'] == 'owner' and not user.get('home_brand_id'))
+            or branch_id in user.get('branch_ids', []))
+
+
 def scope(conn, user, branch_id):
     branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',
                           (branch_id, user['brand_id'])).fetchone()
-    if not branch or (user['role'] != 'owner' and branch_id not in user.get('branch_ids', [])):
+    if not branch or not can_access_branch(user, branch_id):
         raise db.error(404, 'PRINT_BRANCH_SCOPE', 'الفرع غير متاح ضمن صلاحياتك.')
     return branch
 
@@ -78,6 +85,9 @@ def redeem(body: RedeemBody, request: Request):
         if not device:
             raise db.error(401,'PRINT_PAIR_INVALID','رمز الربط غير صالح أو مستخدم أو منتهي.')
         creator = conn.execute('SELECT * FROM users WHERE id=%s AND active',(device['created_by'],)).fetchone()
+        if creator and creator['brand_id'] != device['brand_id']:
+            from . import multibrand
+            creator = multibrand.project(conn, creator, device['brand_id'])
         if not creator or not can_manage_printers(creator):
             raise db.error(403,'PRINT_PAIR_REVOKED','صلاحية منشئ الربط غير سارية.')
         scope(conn,creator,device['branch_id'])
@@ -116,7 +126,7 @@ def devices(user=Depends(printer_admin), order_id: str | None = None):
             if not order:raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود.')
             source=scope(conn,user,order['branch_id'])
         rows = conn.execute('SELECT id,branch_id,label,printer_name,paper_mm,last_seen_at,revoked_at,approved_at,acceptance_job_id FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',(user['brand_id'],)).fetchall()
-        visible=[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]
+        visible=[r for r in rows if can_access_branch(user, r['branch_id'])]
         if source:
             branches={b['id']:b for b in conn.execute('SELECT id,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
             visible=[r for r in visible if same_print_city(source,branches.get(r['branch_id'],{}))]
@@ -139,7 +149,7 @@ def operational_devices(order_id: str, user=Depends(operators)):
                           'AND d.token_hash IS NOT NULL ORDER BY d.created_at DESC',
                           (user['brand_id'],)).fetchall()
         visible=[{k:v for k,v in row.items() if k!='city'} for row in rows
-                 if (user['role']=='owner' or row['branch_id'] in user.get('branch_ids',[]))
+                 if can_access_branch(user, row['branch_id'])
                  and same_print_city(source,row)]
         return {'devices':visible}
 
@@ -538,7 +548,7 @@ def resolve_print_alert(identifier: str, body: AlertAction, user=Depends(operato
 def jobs(user=Depends(printer_admin)):
     with db.tx() as conn:
         rows=conn.execute('SELECT id,branch_id,device_id,order_id,kind,status,created_at,claimed_at,finished_at,reprint_reason FROM branch_print_jobs WHERE brand_id=%s ORDER BY created_at DESC LIMIT 100',(user['brand_id'],)).fetchall()
-        rows=[r for r in rows if user['role']=='owner' or r['branch_id'] in user.get('branch_ids',[])]
+        rows=[r for r in rows if can_access_branch(user, r['branch_id'])]
         if user.get('_morning_manager_context'):
             from .morning_manager_context import order_allowed
             duty=conn.execute('SELECT opened_at FROM shifts WHERE id=%s',(user['_morning_manager_context']['shift_id'],)).fetchone()
@@ -618,7 +628,7 @@ def migration_status(user=Depends(printer_admin)):
         rows=conn.execute('SELECT id,branch_id,label,printer_name,last_seen_at,revoked_at,approved_at,approved_api_host,last_api_host,bridge_version '
                           'FROM branch_print_devices WHERE brand_id=%s ORDER BY created_at DESC',
                           (user['brand_id'],)).fetchall()
-    branches=[b for b in branches if user['role']=='owner' or b['id'] in user.get('branch_ids',[])]
+    branches=[b for b in branches if can_access_branch(user, b['id'])]
     result=[]
     for branch in branches:
         active=[r for r in rows if r['branch_id']==branch['id'] and not r['revoked_at']]
