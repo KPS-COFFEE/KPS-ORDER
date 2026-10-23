@@ -15,6 +15,9 @@ def perform(c,user,oid,body):
     if not body.confirmed_no_cash_received:fail(422,'أكد أن المبلغ لم يُستلم ولم يُصرف فعليًا.')
     if (order['version']!=body.expected_version or order['total_halalas']!=body.expected_total_halalas
         or order['snapshot'].get('order_reference')!=body.order_reference):fail(409,'بيانات الفاتورة تغيرت؛ راجعها أولًا.')
+    if (order['preparation_status']=='cancelled' and order['delivery_status']=='cancelled'
+        and order['payment_status']=='unpaid'):
+        return mark_unpaid_cancelled_test(c,user,order,body)
     if (order['service']!='delivery' or order['snapshot'].get('delivery_period')!='morning'
         or order['payment_method']!='cash' or order['payment_status']!='paid'
         or order['delivery_status']!='delivered'):fail(409,'الإجراء لتجربة صباحية مكتملة ومسجلة كاش فقط.')
@@ -61,3 +64,52 @@ def perform(c,user,oid,body):
     db.audit(c,user['id'],'order.test_void','order',oid,{'before':{'payment_status':order['payment_status'],'delivery_status':order['delivery_status'],'task_status':task['status']},**marker})
     return {'order_id':oid,'order_reference':body.order_reference,'reversal_id':rid,'record_kind':'test_void',
         'amount_halalas':amount,'no_cash_disbursed':True,'credit_note':credit['number'] if credit else None,'shift_id':shift['id']}
+
+
+def mark_unpaid_cancelled_test(c,user,order,body):
+    """Exclude an unpaid cancelled test without inventing a refund or receipt.
+
+    A submitted driver shift may still be corrected before its approval. Closed
+    shifts and issued reports remain immutable. Original task/cancellation
+    evidence, all monetary ledgers and the unpaid payment status are retained.
+    """
+    from .operations import lock_shift,uid,fail
+    from .branch_payments import online_order
+    from .order_amendments import active
+    oid=order['id']
+    if (user['role']!='owner' or order['service']!='delivery'
+        or order['snapshot'].get('delivery_period')!='morning'
+        or order['payment_method']!='cash'):
+        fail(409,'التصنيف لتجربة توصيل صباحية ملغاة وغير محصلة فقط.')
+    if (online_order(order) or active(c,oid)
+        or c.execute('SELECT 1 FROM collections WHERE order_id=%s',(oid,)).fetchone()
+        or c.execute('SELECT 1 FROM refunds WHERE order_id=%s',(oid,)).fetchone()
+        or c.execute('SELECT 1 FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()
+        or c.execute('SELECT 1 FROM channel_settlement_allocations WHERE order_id=%s',(oid,)).fetchone()):
+        fail(409,'الطلب مرتبط بتحصيل أو مستند أو تعديل؛ يلزم مراجعته دون تغيير مالي.')
+    tasks=c.execute('SELECT * FROM driver_tasks WHERE order_id=%s ORDER BY created_at,id FOR UPDATE',(oid,)).fetchall()
+    if not tasks or any(t['status'] not in {'cancelled','transferred','reassigned'} for t in tasks):
+        fail(409,'أنهِ مهام الطلب قبل تصنيف التجربة.')
+    # Lock every historical task shift as well: the marker affects entitlement
+    # projections for the whole order, so no closed report may be rewritten.
+    for sid in sorted({t['shift_id'] for t in tasks}):
+        shift=lock_shift(c,sid)
+        manager=lock_shift(c,shift['manager_shift_id']) if shift and shift.get('manager_shift_id') else None
+        if (not shift or not manager or shift['kind']!='driver' or manager['kind']!='manager'
+            or shift['status'] not in {'open','closing','submitted'}
+            or manager['status'] not in {'open','closing'}
+            or shift['brand_id']!=order['brand_id'] or manager['brand_id']!=order['brand_id']
+            or order['branch_id'] not in shift['branch_ids'] or order['branch_id'] not in manager['branch_ids']
+            or (shift.get('delivery_window_snapshot') or {}).get('period')!='morning'
+            or (manager.get('delivery_window_snapshot') or {}).get('period')!='morning'
+            or c.execute('SELECT 1 FROM closure_reports WHERE shift_id=ANY(%s)',([sid,manager['id']],)).fetchone()):
+            fail(409,'لا تصنف التجربة بعد اعتماد الشفت أو خارج مناوبتها الأصلية.')
+    marker=dict(id=uid(),kind='unpaid_cancelled_test',reason=body.reason,actor_id=user['id'],
+                at=datetime.now(timezone.utc).isoformat(),amount_halalas=0,
+                no_cash_disbursed=True,no_cash_received=True,
+                original_delivery_status=order['delivery_status'],original_payment_status=order['payment_status'])
+    c.execute('UPDATE orders SET test_void=%s,version=version+1 WHERE id=%s',(db.json(marker),oid))
+    c.execute("INSERT INTO order_events(id,order_id,actor_id,event_type,details) VALUES(%s,%s,%s,'owner_test_void',%s)",(uid(),oid,user['id'],db.json(marker)))
+    db.audit(c,user['id'],'order.test_void','order',oid,marker)
+    return {'order_id':oid,'order_reference':body.order_reference,'record_kind':'test_void',
+            'amount_halalas':0,'no_cash_disbursed':True,'no_cash_received':True,'credit_note':None}

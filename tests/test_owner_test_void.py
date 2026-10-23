@@ -157,3 +157,64 @@ def test_issued_invoice_is_preserved_and_credit_must_succeed_atomically(ops,cred
         else:
             assert not c.execute('SELECT 1 FROM refunds WHERE order_id=%s',(oid,)).fetchone()
             assert balance(c,{'id':'test-void-driver','opening_halalas':0})==2050
+
+
+def seed_unpaid_cancelled(ops,task_status="cancelled"):
+    _,_,_,_=ops
+    oid='unpaid-test-'+uuid4().hex
+    with db.tx() as c:
+        user=c.execute("SELECT brand_id,branch_ids FROM users WHERE id='ops-driver'").fetchone()
+        for sid,kind,person,parent,status in [('unpaid-manager','manager','ops-manager',None,'closing'),('unpaid-driver','driver','ops-driver','unpaid-manager','submitted')]:
+            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,manager_shift_id,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,'{\"period\":\"morning\"}')",(sid,kind,person,user['brand_id'],db.json(user['branch_ids']),status,parent))
+        snap={'delivery_period':'morning','order_reference':'UNPAID-TEST','items':[]}
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,'ops-customer','delivery','cancelled','cancelled','unpaid','cash',2050,0,2050,%s,'{}')",(oid,user['brand_id'],user['branch_ids'][0],db.json(snap)))
+        c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,reason) VALUES(%s,%s,'ops-driver','unpaid-driver',%s,'ops-manager','TEST cancelled by owner')",('task-'+oid,oid,task_status))
+        order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+    return oid,dict(order_reference='UNPAID-TEST',expected_version=order['version'],expected_total_halalas=2050,reason='TEST unpaid cancellation by owner; no actual cash',confirmed_no_cash_received=True)
+
+
+@pytest.mark.postgres
+def test_unpaid_cancelled_test_removes_entitlement_block_without_financial_mutations(ops):
+    actor,post,_,_=ops;oid,body=seed_unpaid_cancelled(ops);url=f'/api/orders/{oid}/test-void'
+    with db.tx() as c:
+        original=c.execute('SELECT * FROM driver_tasks WHERE order_id=%s',(oid,)).fetchall()
+        ledgers={table:c.execute(f'SELECT * FROM {table} ORDER BY id').fetchall() for table in ('collections','refunds','custody_events','custody_transfers')}
+        owner=c.execute("SELECT * FROM users WHERE id='ops-owner'").fetchone()
+        from app.driver_incentives import source_rows,classify
+        assert classify(source_rows(c,owner,order_id=oid)[0])['state']=='pending_review'
+    result=post('owner',url,body,key='unpaid-test-once')
+    assert result['amount_halalas']==0 and result['no_cash_received'] and result['no_cash_disbursed']
+    assert result['credit_note'] is None
+    assert post('owner',url,body,key='unpaid-test-once')==result
+    post('owner',url,body,status=409)
+    with db.tx() as c:
+        row=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        assert row['payment_status']=='unpaid' and row['delivery_status']=='cancelled'
+        assert row['test_void']['kind']=='unpaid_cancelled_test'
+        assert row['test_void']['actor_id']=='ops-owner'
+        assert row['total_halalas']==2050 and row['version']==body['expected_version']+1
+        assert source_rows(c,owner,order_id=oid)==[]
+        assert c.execute('SELECT * FROM driver_tasks WHERE order_id=%s',(oid,)).fetchall()==original
+        for table,rows in ledgers.items():assert c.execute(f'SELECT * FROM {table} ORDER BY id').fetchall()==rows
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE entity_id=%s AND action='order.test_void'",(oid,)).fetchone()['n']==1
+        assert c.execute("SELECT status FROM shifts WHERE id='unpaid-driver'").fetchone()['status']=='submitted'
+    for who in ('manager','driver','branch','customer'):post(who,url,body,status=403)
+    post('other',url,body,status=404)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('case',['driver_closed','manager_closed','driver_evening','manager_evening','live_task','collection','reference','confirmation'])
+def test_unpaid_test_rejects_unsafe_or_stale_classification(ops,case):
+    _,post,_,_=ops;oid,body=seed_unpaid_cancelled(ops,task_status='accepted' if case=='live_task' else 'cancelled')
+    with db.tx() as c:
+        if case in ('driver_closed','manager_closed'):
+            c.execute("UPDATE shifts SET status='closed',closed_at=now() WHERE id=%s",('unpaid-driver' if case=='driver_closed' else 'unpaid-manager',))
+        if case in ('driver_evening','manager_evening'):
+            c.execute("UPDATE shifts SET delivery_window_snapshot='{\"period\":\"evening\"}' WHERE id=%s",('unpaid-driver' if case=='driver_evening' else 'unpaid-manager',))
+        if case=='collection':c.execute("INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas) VALUES('unsafe-col',%s,'unpaid-driver','ops-driver','cash',2050)",(oid,))
+    if case=='reference':body['order_reference']='ANOTHER-ORDER'
+    if case=='confirmation':body['confirmed_no_cash_received']=False
+    post('owner',f'/api/orders/{oid}/test-void',body,status=422 if case=='confirmation' else 409)
+    with db.tx() as c:
+        assert c.execute('SELECT test_void FROM orders WHERE id=%s',(oid,)).fetchone()['test_void'] is None
+        assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==0
