@@ -28,6 +28,17 @@ class ItemSalesTests(unittest.TestCase):
         self.assertEqual((data['totals']['quantity'],data['totals']['gross'],data['totals']['gift_quantity']),(1,1000,3))
         self.assertNotIn('correct',data['totals'])
 
+    def test_saved_history_without_free_breakdown_does_not_claim_zero_gifts(self):
+        historical={'group':'items','rows':[{'label':'Old coffee','quantity':5,'gross':5000}]}
+        for lang,unknown in [('ar','غير موثقة'),('en','Not recorded')]:
+            report=contract(historical,lang)
+            self.assertEqual(report['totals']['quantity'],5)
+            self.assertEqual(report['totals']['gross'],5000)
+            for key in ('gift_quantity','hospitality_quantity','advertising_quantity','compensation_quantity','zero_value_quantity'):
+                self.assertEqual(report['rows'][0][key],unknown)
+                self.assertEqual(report['totals'][key],unknown)
+        self.assertNotIn('gift_quantity',historical['rows'][0])
+
 
 if __name__=='__main__':
     unittest.main()

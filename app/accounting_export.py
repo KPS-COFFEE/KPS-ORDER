@@ -70,7 +70,13 @@ def presentation(data,lang='ar'):
     totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k.endswith('_quantity') or k in ('completed_orders','eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
     # Item counts overlap between items; financial action amounts overlap across
     # cancellation/refund records. Neither may be presented as a grand sales sum.
-    if data['group']=='items':totals.pop('correct',None);totals.pop('processed',None)
+    if data['group']=='items':
+        totals.pop('correct',None);totals.pop('processed',None)
+        # Older frozen rows do not contain the new free-quantity breakdown.
+        # Their missing history must not become a misleading zero total.
+        for key in ('gift_quantity','hospitality_quantity','advertising_quantity','compensation_quantity','zero_value_quantity'):
+            if any(type(row.get(key)) is not int for row in rows):
+                totals[key]=('غير موثقة','Not recorded')[lang=='en']
     if data['group'] in ('actions','cases','complimentary'):totals={}
     return keys,rows,totals
 
