@@ -12,8 +12,9 @@ for(const lang of ['ar','en'])for(const preparation of [false,true]){
  const enb=context.render({...order,brand_id:'enbishan'},preparation,lang);
  assert.match(enb,/src="https:\/\/example.test\/assets\/enbishan-original.jpeg"/);
  assert.ok(!enb.includes('/assets/kps-receipt-logo.png'));
+ assert.match(enb,/<img class="receipt-logo" style="filter:none"/,'Opaque approved JPEG must retain visible foreground rather than brightness(0) black square');
  assert.ok(enb.includes(lang==='ar'?'عنبيشن':'ENBISHAN'));
- const normalized=enb.replaceAll('/assets/enbishan-original.jpeg','/assets/kps-receipt-logo.png').replaceAll('عنبيشن','كبز قهوة مختصة').replaceAll('ENBISHAN','KPS COFFEE');
+ const normalized=enb.replace(' style="filter:none"','').replaceAll('/assets/enbishan-original.jpeg','/assets/kps-receipt-logo.png').replaceAll('عنبيشن','كبز قهوة مختصة').replaceAll('ENBISHAN','KPS COFFEE');
  assert.equal(normalized,kps,'Enbishan reuses exactly the KPS receipt layout');
 }
 console.log('PASS: unchanged KPS AR/EN order/preparation HTML; Enbishan identical layout with its original logo and identity.');

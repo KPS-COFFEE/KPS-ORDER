@@ -47,18 +47,23 @@ jobs:
         with:
           node-version: '22'
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
       - name: Exact KPS output and Enbishan layout preservation
         run: |
           node tests/test_brand_receipt_layout.cjs
           node --check public/ops.js
           node --check public/assets/customer-order.js
       - name: Real PostgreSQL identity, scoped uniqueness, old references and printing
-        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_brand_receipt_logos.py tests/test_branch_printing.py tests/test_dispatch_numbering.py
+        env:
+          TEST_BROWSER: '1'
+        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_brand_receipt_logos.py tests/test_branch_printing.py tests/test_dispatch_numbering.py tests/test_brand_receipt_visual_browser.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: invoice-parity-${{ github.event.pull_request.head.sha || github.sha }}
-          path: test-results/enbishan/
+          path: |
+            test-results/enbishan/
+            test-artifacts/brand-receipt-*.png
           retention-days: 14
   multibrand-postgres:
     if: github.head_ref == 'agent/multibrand-safe-release-20261023'
