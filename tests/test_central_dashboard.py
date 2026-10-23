@@ -78,7 +78,33 @@ def test_central_dashboard_counts_one_physical_manager_workday(central):
 
 
 @pytest.mark.postgres
-def test_disabled_and_customer_central_dashboard_remain_unavailable(dual):
+@pytest.mark.parametrize('context_cookies,expected_status',[('true',401),('false',404)])
+def test_disabled_and_customer_central_dashboard_remain_unavailable(dual,monkeypatch,context_cookies,expected_status):
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED',context_cookies)
     _, actor, _, _, _ = dual
     assert actor('manager').get('/api/central-operations/dashboard').status_code == 404
-    assert actor('enbishan-customer').get('/api/central-operations/dashboard').status_code == 404
+    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','true')
+    assert actor('enbishan-customer').get('/api/central-operations/dashboard').status_code == expected_status
+
+
+@pytest.mark.postgres
+def test_foreign_owner_amendment_and_customer_request_inboxes_obey_explicit_branches(central):
+    _, actor, _, _, order = central
+    oid = order('enbishan')
+    with db.tx() as c:
+        # An outstanding revised-order receipt enters the amendment inbox;
+        # cancellation requests independently enter its requests array.
+        c.execute('UPDATE orders SET amendment_revision=1 WHERE id=%s', (oid,))
+        c.execute("INSERT INTO order_events(id,order_id,event_type,actor_id,details) "
+                  "VALUES('central-inbox-request',%s,'customer_request.opened','dual-enbishan-customer',%s)",
+                  (oid, db.json({'kind': 'cancel', 'note': 'SYNTHETIC request'})))
+    response = actor('owner', 'enbishan').get('/api/order-amendments/inbox')
+    assert response.status_code == 200, response.text
+    assert [row['id'] for row in response.json()['orders']] == [oid]
+    assert [row['id'] for row in response.json()['requests']] == [oid]
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids='[\"enbishan-test-2\"]' "
+                  "WHERE user_id='dual-owner' AND brand_id='enbishan'")
+    response = actor('owner', 'enbishan').get('/api/order-amendments/inbox')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'orders': [], 'requests': []}

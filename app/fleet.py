@@ -195,7 +195,12 @@ def export(format:Literal['pdf','xlsx'],lang:Literal['ar','en']='ar',start:date|
     with db.tx() as c:
         lo,hi,rows=query_rows(c,user,start=start,end=end,vehicle_id=vehicle_id,driver_id=driver_id,branch_id=branch_id,fuel_status=fuel_status,faults_only=faults_only,exceptions_only=exceptions_only,metric=metric)
         db.audit(c,user['id'],'fleet.export','fleet',user['brand_id'],{'format':format,'start':str(lo),'end':str(hi),'rows':len(rows)})
-    keys=[k for k,_,_ in COLUMNS];headers=[e if lang=='en' else a for _,a,e in COLUMNS]
+    return render_export(rows,lo,hi,format,lang)
+
+
+def render_export(rows,lo,hi,format,lang,*,central=False):
+    columns=([('brand_id','البراند','Brand')] if central else [])+COLUMNS
+    keys=[k for k,_,_ in columns];headers=[e if lang=='en' else a for _,a,e in columns]
     from datetime import datetime
     def value(v):
         if v is None:return '—'
@@ -216,7 +221,8 @@ def export(format:Literal['pdf','xlsx'],lang:Literal['ar','en']='ar',start:date|
     else:
         # Split 23 columns into readable landscape pages, retain row identity
         # in both sections using matching row numbers. All fields remain in the PDF.
-        payload=make_pdf(rows,lang,title,meta,definitions)
+        pdf_rows=[dict(r,plate=str(r.get('plate',''))+' | '+str(r.get('brand_id',''))) for r in rows] if central else rows
+        payload=make_pdf(pdf_rows,lang,title,meta,definitions)
     return Response(payload,media_type='application/pdf' if format=='pdf' else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="fleet-{lo}-{hi}.{format}"','Cache-Control':'no-store'})
 
 def make_pdf(rows,lang,title,meta,definitions):

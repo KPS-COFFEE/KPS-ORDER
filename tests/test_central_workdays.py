@@ -276,7 +276,7 @@ def test_accountant_manager_close_uses_manager_capability_without_role_change(ce
     _,_,post,_,_=central
     day=post('manager','/api/central-operations/workdays',{'kind':'manager'})
     with db.tx() as c:
-        c.execute("UPDATE users SET permissions=%s WHERE id='dual-accountant'",(db.json(['shifts_close']),))
+        c.execute("UPDATE users SET extra_permissions=%s WHERE id='dual-accountant'",(db.json(['shifts_close']),))
     path='/api/central-operations/workdays/'+day['shift']['id']
     post('accountant',path+'/closing',{})
     body={'legs':[{'shift_id':s['id'],'counted_halalas':0,'handover_halalas':0} for s in day['shifts']],
@@ -299,7 +299,8 @@ def test_canonical_manager_handover_cannot_split_a_shared_workday(central):
 
 
 @pytest.mark.postgres
-def test_same_physical_plate_cannot_be_received_from_other_brand_ledger(central):
+@pytest.mark.parametrize('flag_enabled',[True,False])
+def test_same_physical_plate_cannot_be_received_from_other_brand_ledger(central,monkeypatch,flag_enabled):
     _,_,post,_,_=central
     with db.tx() as c:
         c.execute("UPDATE users SET vehicle=%s WHERE id='dual-driver'",(db.json({'plate':'SYNTHETIC 123','type':'car'}),))
@@ -308,8 +309,14 @@ def test_same_physical_plate_cannot_be_received_from_other_brand_ledger(central)
         c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,vehicle) VALUES('opposite-home-driver','SYNTHETIC opposite home','driver','enbishan',%s,%s)",
                   (db.json(['enbishan-test-1','enbishan-test-2']),db.json({'plate':'SYNTHETIC123','type':'car'})))
         c.execute("INSERT INTO staff_brand_memberships(user_id,brand_id,branch_ids,granted_by) VALUES('opposite-home-driver','kps',%s,'dual-owner')",(db.json(['kps-branch-1']),))
-    post('owner','/api/central-operations/workdays',{'kind':'driver','user_id':'opposite-home-driver',
-         'manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection()},status=409)
+    if flag_enabled:
+        post('owner','/api/central-operations/workdays',{'kind':'driver','user_id':'opposite-home-driver',
+             'manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection()},status=409)
+    else:
+        monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','false')
+        parent=next(s for s in manager['shifts'] if s['brand_id']=='enbishan')
+        post('owner','/api/shifts',{'kind':'driver','user_id':'opposite-home-driver',
+             'manager_shift_id':parent['id'],'vehicle_inspection':inspection()},brand='enbishan',status=409)
     with db.tx() as c:
         assert not c.execute("SELECT 1 FROM shifts WHERE user_id='opposite-home-driver'").fetchone()
 
@@ -331,3 +338,23 @@ def test_flag_off_drains_existing_group_without_component_bypass(central,monkeyp
         'legs':[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'terminal_total_halalas':0} for s in driver['shifts']],
         'confirmed':True,'exception_reason':'Synthetic flag rollback drain','vehicle_inspection':inspection(1010)})
     assert {s['status'] for s in done['shifts']}=={'closed'}
+
+
+@pytest.mark.postgres
+def test_foreign_owner_canonical_lists_and_history_keep_current_branch_scope(central):
+    _,actor,post,_,order=central
+    day=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    foreign=next(s for s in day['shifts'] if s['brand_id']=='enbishan')
+    hidden=order('enbishan')
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids=%s WHERE user_id='dual-owner' AND brand_id='enbishan'",(db.json(['enbishan-test-2']),))
+    client=actor('owner','enbishan')
+    for path in ['/api/shifts','/api/shifts?owner_view=current']:
+        response=client.get(path)
+        assert response.status_code==200,response.text
+        assert foreign['id'] not in {r['id'] for r in response.json()['shifts']}
+        if 'total' in response.json():assert response.json()['total']==0
+    assert client.get('/api/shifts/'+foreign['id']).status_code==403
+    response=client.get('/api/operations/alerts')
+    assert response.status_code==200,response.text
+    assert hidden not in {r['id'] for r in response.json()['unassigned']}

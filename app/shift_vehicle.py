@@ -48,7 +48,10 @@ def start(c,user,target,inspection):
     plate=re.sub(r'\s+', '', str(vehicle.get('plate','')).upper())
     if plate:
         from .central_operations import enabled as central_enabled
-        if central_enabled():
+        from . import multibrand
+        active_group = multibrand.enabled() and c.execute(
+            "SELECT 1 FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id WHERE s.status<>'closed' LIMIT 1").fetchone()
+        if central_enabled() or active_group:
             # Brand asset ledgers remain separate, but a plate is one physical car.
             # Serialize receipts across both ledgers before testing occupancy.
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('physical-vehicle:'+plate,))

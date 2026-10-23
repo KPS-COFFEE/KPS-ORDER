@@ -8,7 +8,8 @@ from test_enbishan_dual_brand import dual
 def setup_handover(central):
     _, _, post, _, _ = central
     source, driver = open_days(central)
-    target = post('owner', '/api/central-operations/workdays', {'kind':'manager'})
+    target = post('owner', '/api/central-operations/workdays',
+                  {'kind':'manager','branch_ids':['kps-branch-1','enbishan-test-1','enbishan-test-2']})
     body={'target_manager_shift_id':target['shift']['id'], 'reason':'Synthetic atomic manager succession'}
     path='/api/central-operations/workdays/'+source['shift']['id']+'/handover-manager'
     return source, driver, target, path, body
@@ -178,3 +179,18 @@ def test_existing_handover_can_drain_when_central_rollout_is_disabled(central,mo
     accepted=post('owner','/api/central-operations/manager-handovers/'+pending['id']+'/accept',{})
     assert accepted['status']=='accepted'
     assert set(parents().values())=={s['id'] for s in target['shifts']}
+
+
+@pytest.mark.postgres
+def test_successor_can_cover_more_branches_than_requesting_manager(central):
+    _, _, post, _, _ = central
+    source=post('manager','/api/central-operations/workdays',{'kind':'manager','branch_ids':['kps-branch-1','enbishan-test-1']})
+    target=post('owner','/api/central-operations/workdays',
+                {'kind':'manager','branch_ids':['kps-branch-1','enbishan-test-1','enbishan-test-2']})
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids=%s WHERE user_id='dual-manager' AND brand_id='enbishan'",
+                  (db.json(['enbishan-test-1']),))
+    pending=post('manager','/api/central-operations/workdays/'+source['shift']['id']+'/handover-manager',
+                 {'target_manager_shift_id':target['shift']['id'],'reason':'Successor has broader approved coverage'})
+    accepted=post('owner','/api/central-operations/manager-handovers/'+pending['id']+'/accept',{})
+    assert accepted['status']=='accepted'

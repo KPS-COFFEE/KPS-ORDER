@@ -8,7 +8,7 @@
     ['/api/printing/migration-status',['branches']], ['/api/support-tickets',['tickets']],
     ['/api/vehicle-maintenance/reports',['reports']], ['/api/dispatch/offers',['offers']],
     ['/api/fuel-exceptions',['requests']], ['/api/driver-breaks',['breaks']],
-    ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/tasks',['tasks']],
+    ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/order-amendments/inbox',['orders','requests']], ['/api/tasks',['tasks']],
     ['/api/conversations',['conversations']], ['/api/conversations/alerts',['awaiting_reply']],
     ['/api/shifts',['shifts','available_manager_shifts']],
     ['/api/shifts/current',['shifts','available_manager_shifts']],
@@ -90,9 +90,16 @@
     async function request(path,options,raw,user,page){
       const context=user?.central_operations;
       if(options.brand||!path.startsWith('/api/')||user?.delivery_context)return raw(path,options);
-      const current=user?.id+':'+JSON.stringify(context);
+      const current=user?.id+':'+JSON.stringify([context,user?.central_workday_drain]);
       if(current!==signature){records.clear();workdays.clear();workdayLegs.clear();staffScopes.clear();signature=current;}
       const url=new URL(path,'https://central.invalid'),method=options.method||'GET';
+      for(const day of user?.central_workday_drain||[]){
+        const anchor=day.anchor_shift_id;
+        if(!anchor)continue;
+        workdays.set(anchor,anchor);
+        if(!workdayLegs.has(anchor))workdayLegs.set(anchor,new Map());
+        for(const leg of day.legs||[]){workdays.set(leg.shift_id,anchor);workdayLegs.get(anchor).set(leg.brand_id,leg.shift_id);records.set(key('shift',leg.shift_id),leg.brand_id);}
+      }
       if(!context){
         // Turning off the rollout stops new unified workdays, while canonical
         // authorized shift reads still discover existing groups for closure.
@@ -108,6 +115,8 @@
       if(url.pathname==='/api/manager-handovers'||/^\/api\/manager-handovers\/[^/]+\/accept$/.test(url.pathname))return raw(url.pathname.replace('/api/manager-handovers','/api/central-operations/manager-handovers')+url.search,options);
       if(url.pathname==='/api/operations/driver-destination')return raw('/api/central-operations/driver-destination'+url.search,options);
       if(url.pathname==='/api/driver-incentives'&&method==='GET')return raw('/api/central-operations/driver-incentives'+url.search,options);
+      if(['/api/shifts','/api/shifts/current'].includes(url.pathname)&&method==='GET'&&url.searchParams.has('owner_view'))return remember(await raw('/api/central-operations/shifts'+url.search,options),user.brand_id);
+      if(['/api/fleet/options','/api/fleet/report','/api/fleet/export'].includes(url.pathname)&&method==='GET')return raw(url.pathname.replace('/api/fleet/','/api/central-operations/fleet/')+url.search,options);
       if(url.pathname==='/api/fleet/vehicles'&&method==='GET')return remember(await raw('/api/central-operations/fleet/vehicles'+url.search,options),user.brand_id);
       if(url.pathname==='/api/dashboard'&&method==='GET')return raw('/api/central-operations/dashboard'+url.search,options);
       if(url.pathname==='/api/operations/driver-locations'&&method==='GET')return raw('/api/central-operations/driver-locations',options);

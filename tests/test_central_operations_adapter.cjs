@@ -227,3 +227,31 @@ test('flag-off cold detail drains only after canonical authorized metadata',asyn
   },{...user,central_operations:null});
   assert.deepEqual(calls,['/api/shifts/enb-leg','/api/central-operations/workdays/root']);
 });
+
+
+test('session drain metadata routes cold group actions while rollout is off',async()=>{
+  const calls=[],disabled={...user,central_operations:null,central_workday_drain:[{id:'day',anchor_shift_id:'root',kind:'driver',legs:[{brand_id:'kps',shift_id:'root',branch_ids:['kps-1']},{brand_id:'enbishan',shift_id:'enb-leg',branch_ids:['enb-1']}]}]};
+  await create().request('/api/shifts/enb-leg/submit',{method:'POST',body:{legs:[]}},async(path,options)=>{calls.push({path,options});return {};},disabled);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].path,'/api/central-operations/workdays/root/submit');
+});
+
+test('owner history uses physical workday server pagination and total',async()=>{
+  const calls=[];
+  const result=await create().request('/api/shifts?owner_view=history&offset=50&search=driver',{},async(path,options)=>{calls.push(path);return {shifts:[{id:'root',central_workday_id:'day',central_anchor_id:'root'}],total:51,offset:50,next_offset:null};},{...user,role:'owner'});
+  assert.deepEqual(calls,['/api/central-operations/shifts?owner_view=history&offset=50&search=driver']);
+  assert.equal(result.total,51);assert.equal(result.offset,50);assert.equal(result.shifts.length,1);
+});
+
+test('amendment inbox retains both order and request arrays across brands',async()=>{
+  const result=await create().request('/api/order-amendments/inbox',{},async(path,options)=>({orders:[{id:options.brand+'-order'}],requests:[{id:options.brand+'-request'}]}),user);
+  assert.equal(result.orders.length,2);assert.equal(result.requests.length,2);
+  assert.deepEqual(result.requests.map(r=>r.brand_id),['kps','enbishan']);
+});
+
+test('fleet options and reports use central physical readings contracts',async()=>{
+  const calls=[],adapter=create(),raw=async(path,options)=>{calls.push(path);return {};};
+  await adapter.request('/api/fleet/options',{},raw,user);
+  await adapter.request('/api/fleet/report?start=2026-10-01&offset=50',{},raw,user);
+  assert.deepEqual(calls,['/api/central-operations/fleet/options','/api/central-operations/fleet/report?start=2026-10-01&offset=50']);
+});

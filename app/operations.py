@@ -49,6 +49,9 @@ def fail(status, message): raise HTTPException(status, message)
 def roles(user, *allowed):
     if user['role'] not in allowed: fail(403, 'الصلاحية غير كافية')
 
+def unrestricted_owner(user):
+    return user['role']=='owner' and not user.get('home_brand_id')
+
 def same_scope(user, row):
     return user.get('brand_id') == row['brand_id']
 
@@ -218,7 +221,7 @@ def authorize_replay(c,user,operation,body,result):
     if cid:
         if operation.startswith('chat.transfer:'):
             completed=c.execute('SELECT t.actor_id,v.brand_id,v.branch_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE t.id=%s AND t.conversation_id=%s',(result.get('transfer_id'),cid)).fetchone()
-            if not completed or completed['actor_id']!=user['id'] or completed['brand_id']!=user['brand_id'] or (user['role']!='owner' and completed['branch_id'] not in user.get('branch_ids',[])):fail(404,'التحويل خارج الصلاحية الحالية')
+            if not completed or completed['actor_id']!=user['id'] or completed['brand_id']!=user['brand_id'] or (not unrestricted_owner(user) and completed['branch_id'] not in user.get('branch_ids',[])):fail(404,'التحويل خارج الصلاحية الحالية')
         else:
             from .chat import conversation
             conversation(c,user,cid)
@@ -229,7 +232,7 @@ def authorize_replay(c,user,operation,body,result):
         source=c.execute('SELECT * FROM shifts WHERE id=%s',(row['from_shift_id'],)).fetchone()
         if row['recipient_user_id']==user['id']:
             permitted=(row.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(source['branch_ids'])<=set(user.get('branch_ids',[])))
-            if not same_scope(user,source) or (user['role']!='owner' and not permitted):fail(403,'تم سحب صلاحية التسليم')
+            if not same_scope(user,source) or (not unrestricted_owner(user) and not permitted):fail(403,'تم سحب صلاحية التسليم')
         else:shift_access(c,user,source)
     if result.get('report_id') and not (operation.startswith('shift.approve:') and delegated_shift(user,'shifts_approve')):
         from .reporting import report
@@ -239,7 +242,7 @@ def authorize_replay(c,user,operation,body,result):
         if row and operation.startswith('manager.handover:') and delegated_shift(user,'shifts_handover'):
             for key in ('from_shift_id','to_shift_id'):
                 shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(row[key],)).fetchone(),capability='shifts_handover')
-        elif not row or not same_scope(user,row) or (user['role']!='owner' and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
+        elif not row or not same_scope(user,row) or (not unrestricted_owner(user) and (user['id'] not in (row['source_user'],row['target_user']) or not set(row['branch_ids'])<=set(user.get('branch_ids',[])))):fail(403,'تسليم المناوبة خارج الصلاحية')
 
 class ShiftOpen(OperationBody):
     delivery_period: Literal['morning','evening']|None=None
@@ -271,7 +274,7 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
     if morning:
         approved = morning_delivery.policy(brand_settings)
         if (not principal or not principal.get('active') or principal.get('brand_id') != brand
-                or (principal['role'] != 'owner' and
+                or (not unrestricted_owner(principal) and
                     (principal['role'] != 'delivery_manager' or principal['id'] not in approved['manager_user_ids']))):
             fail(403, 'مدير الفترة الصباحية غير معتمد.')
         # Only manager preparation evaluates the existing policy at its upcoming
@@ -358,7 +361,7 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None):
     branch_rows=[]
     for bid in bids:
         b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
-        if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
+        if not b or (not unrestricted_owner(target) and bid not in target.get('branch_ids',[])) or (not unrestricted_owner(user) and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
         branch_rows.append(b)
     if body.opening_halalas:
         roles(user,'owner')
@@ -371,7 +374,7 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None):
             raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي جميع فروعك. مدير التوصيل هو من يعدّل نطاق التغطية.')
         manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
         if multibrand.enabled():manager_user=multibrand.project(c,manager_user,brand)
-        if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (manager_user['role']!='owner' and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
+        if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (not unrestricted_owner(manager_user) and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
         if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
     elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
     period = body.delivery_period
@@ -506,7 +509,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             # behind hundreds of newer historical records. Never change state.
             statuses={'current':['open'],'review':['closing','submitted'],'history':['closed']}[owner_view]
             where=['s.brand_id=%s','s.status=ANY(%s)'];params=[user['brand_id'],statuses]
-            if user['role']!='owner':
+            if not unrestricted_owner(user):
                 where.extend(["s.branch_ids <> '[]'::jsonb", 's.branch_ids <@ %s::jsonb'])
                 params.append(db.json(user.get('branch_ids',[])))
             if search.strip():
@@ -519,12 +522,12 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             total=c.execute('SELECT count(*) AS n'+source,params).fetchone()['n']
             rows=c.execute('SELECT s.*,u.display_name'+source+' ORDER BY s.opened_at DESC,s.id LIMIT 50 OFFSET %s',params+[offset]).fetchall()
             page_meta={'total':total,'offset':offset,'next_offset':offset+50 if offset+50<total else None}
-        elif user['role']=='owner': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
-        elif user['role']=='admin': rows=c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.branch_ids <> '[]'::jsonb AND s.branch_ids <@ %s::jsonb ORDER BY opened_at DESC LIMIT 200",(user['brand_id'],db.json(user.get('branch_ids',[])))).fetchall()
+        elif unrestricted_owner(user): rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s ORDER BY opened_at DESC LIMIT 200',(user['brand_id'],)).fetchall()
+        elif user['role'] in ('admin','owner'): rows=c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.branch_ids <> '[]'::jsonb AND s.branch_ids <@ %s::jsonb ORDER BY opened_at DESC LIMIT 200",(user['brand_id'],db.json(user.get('branch_ids',[])))).fetchall()
         elif user['role']=='delivery_manager': rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s OR s.manager_shift_id IN (SELECT id FROM shifts WHERE user_id=%s) ORDER BY opened_at DESC LIMIT 200',(user['id'],user['id'])).fetchall()
         elif user['role']=='delivery_staff': rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.branch_ids,s.status,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.status='open' AND s.branch_ids ?| %s ORDER BY s.opened_at DESC LIMIT 100",(user['brand_id'],user.get('branch_ids',[]))).fetchall()
         else: rows=c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.user_id=%s ORDER BY opened_at DESC LIMIT 100',(user['id'],)).fetchall()
-        rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
+        rows=[r for r in rows if r.get('brand_id',user['brand_id'])==user['brand_id'] and (unrestricted_owner(user) or set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
         if user.get('_morning_manager_context'):
             from .morning_manager_context import shift_allowed
             rows = [r for r in rows if shift_allowed(user, r)]
@@ -569,9 +572,11 @@ def people_data(c,user):
         known={u['id'] for u in users}
         shared=c.execute("SELECT u.* FROM users u JOIN staff_brand_memberships m ON m.user_id=u.id WHERE m.brand_id=%s AND m.active AND u.active AND u.role IN ('owner','delivery_manager','driver')",(user['brand_id'],)).fetchall()
         users += [multibrand.project(c,u,user['brand_id']) for u in shared if u['id'] not in known]
-    users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
+    users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if unrestricted_owner(user) or set(u['branch_ids'])&set(user.get('branch_ids',[])) or (u['role']=='owner' and not user.get('home_brand_id'))]
+    if user.get('home_brand_id') and user['role']=='owner':
+        users=[dict(u,branch_ids=[b for b in u['branch_ids'] if b in user['branch_ids']]) for u in users]
     managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
-    managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
+    managers=[s for s in managers if unrestricted_owner(user) or (set(s['branch_ids'])<=set(user.get('branch_ids',[])) if user.get('home_brand_id') and user['role']=='owner' else set(s['branch_ids'])&set(user.get('branch_ids',[])))]
     if user['role']=='driver':
         managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])
                   or (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
@@ -871,7 +876,7 @@ def eligible_driver_shift(c,s,order):
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
     principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
     if multibrand.enabled():principal=multibrand.project(c,principal,order['brand_id'])
-    if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (principal['role']!='owner' and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
+    if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (not unrestricted_owner(principal) and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
     if order.get('snapshot', {}).get('delivery_period') == 'morning':
         from . import morning_delivery
         morning_delivery.authorize_order(c, principal, order)
@@ -957,7 +962,7 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
         elif user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
         else:
             rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))'+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500',
-                           [user['brand_id'],user['role']=='owner',user.get('branch_ids',[])]+([order_id] if order_id else [])).fetchall()
+                           [user['brand_id'],unrestricted_owner(user),user.get('branch_ids',[])]+([order_id] if order_id else [])).fetchall()
         if user.get('_morning_manager_context'):
             from .morning_manager_context import order_allowed
             context = user['_morning_manager_context']
@@ -1143,7 +1148,7 @@ def operational_alerts(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff')
     with db.tx() as c:
         scope="o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))"
-        params=(user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))
+        params=(user['brand_id'],unrestricted_owner(user),user.get('branch_ids',[]))
         rows=c.execute("SELECT o.id,o.order_no,o.snapshot->>'order_reference' AS order_reference,o.branch_id,o.created_at FROM orders o WHERE "+scope+" AND o.service='delivery' AND o.preparation_status NOT IN ('cancelled','rejected','completed') AND o.delivery_status NOT IN ('delivered','cancelled') AND NOT EXISTS (SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id AND t.status NOT IN ('cancelled','transferred','reassigned')) ORDER BY o.created_at LIMIT 100",params).fetchall()
         problems=c.execute("SELECT o.id,o.order_no,o.snapshot->>'order_reference' AS order_reference,t.id AS task_id,t.reason FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE "+scope+" AND t.status='problem' ORDER BY t.created_at LIMIT 100",params).fetchall()
         printing=[]
@@ -1370,7 +1375,7 @@ def terminal_driver(c,user,driver_id):
     if not row or row['brand_id']!=user['brand_id']:fail(404,'السائق غير موجود')
     if user['role']=='driver':
         if row['id']!=user['id']:fail(404,'السائق غير موجود')
-    elif user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'السائق خارج نطاق المدير')
+    elif not unrestricted_owner(user) and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'السائق خارج نطاق المدير')
     return row
 
 
@@ -1416,12 +1421,14 @@ def create_custody(c,user,body,capability=None):
     from . import multibrand
     if multibrand.enabled():target=multibrand.project(c,target,src['brand_id'])
     if not target or target['id']==src['user_id'] or target['role'] not in ('owner','delivery_manager','driver','branch_manager') or not same_scope(user,target):fail(422,'يلزم مستلم مخول مستقل يؤكد فعليا')
+    if target.get('home_brand_id') and target['role']=='owner' and not set(src['branch_ids'])<=set(target.get('branch_ids',[])):
+        fail(403,'المستلم غير مخول لجميع فروع التسليم')
     if src['kind']=='driver' and driver_cash_policy(c,src['brand_id'])=='delivery_manager':
         if body.receiving_branch_id or not to or to['kind']!='manager' or to['id']!=src['manager_shift_id'] or target['role'] not in ('delivery_manager','owner'):
             fail(403,'نقد السائق يسلم لمدير التوصيل المسؤول عن شفته في جميع المدن')
         if body.recipient_user_id and body.recipient_user_id!=to['user_id']:
             fail(422,'المستلم لا يطابق مدير شفت السائق')
-        if target['role']!='owner' and not set(src['branch_ids'])<=set(target.get('branch_ids',[])):
+        if not unrestricted_owner(target) and not set(src['branch_ids'])<=set(target.get('branch_ids',[])):
             fail(403,'مدير التوصيل غير مخول لجميع فروع الشفت')
     elif src['kind']=='driver':
         from .catalog import normalize_city
@@ -1459,7 +1466,7 @@ def custody_list(user=Depends(auth.current_user)):
     roles(user,'owner','driver','delivery_manager','branch_manager')
     with db.tx() as c:
         rows=c.execute('SELECT t.*,s.brand_id,s.branch_ids FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id WHERE s.brand_id=%s AND (t.recipient_user_id=%s OR s.user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['brand_id'],user['id'],user['id'])).fetchall()
-        rows=[r for r in rows if user['role']=='owner' or (r.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
+        rows=[r for r in rows if unrestricted_owner(user) or (r.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
         if user.get('_morning_manager_context'):
             from .morning_manager_context import shift_allowed
             rows=[r for r in rows if all(shift_allowed(user,c.execute('SELECT * FROM shifts WHERE id=%s',(r[key],)).fetchone())
@@ -1476,7 +1483,7 @@ def confirm_custody_in_tx(c,user,cid):
         from .morning_manager_context import require_shift
         require_shift(user,source)
     scope_ok=(t.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(source['branch_ids'])<=set(user.get('branch_ids',[])))
-    if not same_scope(user,source) or (user['role']!='owner' and not scope_ok):fail(403,'تم سحب صلاحية فروع التسليم')
+    if not same_scope(user,source) or (not unrestricted_owner(user) and not scope_ok):fail(403,'تم سحب صلاحية فروع التسليم')
     if t['to_shift_id']:shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(t['to_shift_id'],)).fetchone())
     ids=sorted(set([t['from_shift_id']]+([t['to_shift_id']] if t['to_shift_id'] else [])))
     ss={i:lock_shift(c,i) for i in ids}
@@ -1656,9 +1663,9 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         except ValueError:fail(422,'تاريخ غير صالح')
         if hi<=lo or hi-lo>timedelta(days=93):fail(422,'الفترة يجب أن تكون بين يوم و93 يوما')
         clauses=['o.brand_id=%s','o.created_at>=%s','o.created_at<%s'];params=[brand,lo,hi]
-        if user['role']!='owner':clauses.append('o.branch_id=ANY(%s)');params.append(user.get('branch_ids',[]))
+        if not unrestricted_owner(user):clauses.append('o.branch_id=ANY(%s)');params.append(user.get('branch_ids',[]))
         if branch_id:
-            if user['role']!='owner' and branch_id not in user.get('branch_ids',[]):fail(403,'فرع غير مخول')
+            if not unrestricted_owner(user) and branch_id not in user.get('branch_ids',[]):fail(403,'فرع غير مخول')
             clauses.append('o.branch_id=%s');params.append(branch_id)
         if service:
             if service not in ('delivery','pickup','car'):fail(422,'نوع طلب غير صالح')
@@ -1690,7 +1697,7 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         if user.get('_morning_manager_context'):
             shift_clause=" AND delivery_window_snapshot->>'period'='morning' AND (id=%s OR manager_shift_id=%s)"
             shift_params=[user['_morning_manager_context']['shift_id']]*2
-        shift_rows=c.execute("SELECT status,count(*) count,coalesce(sum((submission->>'difference_halalas')::bigint),0) difference_halalas FROM shifts WHERE brand_id=%s AND opened_at<%s AND coalesce(closed_at,%s)>=%s AND (%s OR branch_ids ?| %s)"+shift_clause+" GROUP BY status",[brand,hi,hi,lo,user['role']=='owner',[branch_id] if branch_id else user.get('branch_ids',[]),*shift_params]).fetchall()
+        shift_rows=c.execute("SELECT status,count(*) count,coalesce(sum((submission->>'difference_halalas')::bigint),0) difference_halalas FROM shifts WHERE brand_id=%s AND opened_at<%s AND coalesce(closed_at,%s)>=%s AND (%s OR branch_ids ?| %s)"+shift_clause+" GROUP BY status",[brand,hi,hi,lo,unrestricted_owner(user),[branch_id] if branch_id else user.get('branch_ids',[]),*shift_params]).fetchall()
         return safe({'period':{'start':lo,'end':hi,'timezone':'Asia/Riyadh','operational_day_start_minutes':minutes,'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ الفترة الحالية يوم تقويمي بتوقيت الرياض'},'summary':summary,'top_items':items,'top_branches':branch_top,'delivery_time':timing,'delivery_performance':frozen_performance,'collections':collected,'shifts':shift_rows,'definitions_url':'/docs/metrics'})
 
 class ManagerHandover(OperationBody):
@@ -1738,7 +1745,7 @@ def manager_handover(sid:str,body:ManagerHandover,request:Request,user=Depends(a
 def manager_handover_list(user=Depends(auth.current_user)):
     shift_roles(user,'shifts_view','owner','delivery_manager')
     with db.tx() as c:
-        rows=c.execute('SELECT h.* FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE s.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) ORDER BY h.created_at DESC LIMIT 100',(user['brand_id'],user['id'],user['id'],user['role']=='owner' or delegated_shift(user,'shifts_view'))).fetchall();rows=[r for r in rows if user['role']=='owner' or set(r['branch_ids'])<=set(user.get('branch_ids',[]))];return safe({'handovers':rows})
+        rows=c.execute('SELECT h.* FROM manager_handovers h JOIN shifts s ON s.id=h.from_shift_id JOIN shifts t ON t.id=h.to_shift_id WHERE s.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) ORDER BY h.created_at DESC LIMIT 100',(user['brand_id'],user['id'],user['id'],user['role']=='owner' or delegated_shift(user,'shifts_view'))).fetchall();rows=[r for r in rows if unrestricted_owner(user) or set(r['branch_ids'])<=set(user.get('branch_ids',[]))];return safe({'handovers':rows})
 
 def accept_manager_handover_in_tx(c,user,hid):
     h=c.execute('SELECT * FROM manager_handovers WHERE id=%s FOR UPDATE',(hid,)).fetchone()
@@ -1778,7 +1785,7 @@ def driver_roster(user=Depends(auth.current_user)):
                        "WHERE u.brand_id=%s AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
         visible=[]
         for row in rows:
-            if user['role']!='owner':
+            if not unrestricted_owner(user):
                 row['branch_ids']=[bid for bid in row['branch_ids'] if bid in user['branch_ids']]
                 if not row['branch_ids']:continue
             context = user.get('_morning_manager_context')

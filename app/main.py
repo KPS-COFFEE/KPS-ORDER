@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -30,6 +31,10 @@ async def lifespan(app):
         if app.state.database_configured:
             # A bad configured migration/database blocks startup; no storage substitute is created.
             db.migrate()
+            from .central_activation_preflight import run as central_preflight
+            evidence = await asyncio.to_thread(central_preflight, enabled=os.getenv('KPS_CENTRAL_ACTIVATION_PREFLIGHT') == 'true')
+            if evidence is not None:
+                print(json.dumps(evidence, sort_keys=True), flush=True)
             from . import recovery
             if recovery.configuration()['poll_configured']:
                 background_tasks.append(asyncio.create_task(recovery.poll_loop(), name='backup-status-monitor'))

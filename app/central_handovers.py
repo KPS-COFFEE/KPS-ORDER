@@ -79,7 +79,6 @@ def load(c, hid, user):
         if h['brand_id'] not in targets or h['from_shift_id'] != sources[h['brand_id']]['id'] or h['to_shift_id'] != targets[h['brand_id']]['id']:
             integrity()
         p = principal(c, user, sources[h['brand_id']])
-        principal(c, user, targets[h['brand_id']])
         if user['id'] not in {source_day['user_id'], target_day['user_id']} and p['role'] != 'owner' and not ops.delegated_shift(p, 'shifts_view'):
             unavailable()
     if len({h['status'] for h in records}) != 1:
@@ -106,7 +105,6 @@ def request_handover(sid: str, body: ops.ManagerHandover, request: Request, user
             integrity()
         for brand, shift in sources.items():
             ops.shift_access(c, principal(c, user, shift), shift, capability='shifts_handover')
-            principal(c, user, targets[brand])
         def perform():
             children(c, sources)
             hid = ops.uid()

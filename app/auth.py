@@ -105,6 +105,8 @@ def public_user(user: dict, conn=None) -> dict:
         output['operations_brands'] = user['operations_brands']
     if user.get('central_operations') and not user.get('_morning_manager_context'):
         output['central_operations'] = user['central_operations']
+    if user.get('central_workday_drain') and not user.get('_morning_manager_context'):
+        output['central_workday_drain'] = user['central_workday_drain']
     return output
 
 
@@ -192,6 +194,8 @@ def _find_session(conn, request: Request):
             user['operations_brands'] = multibrand.available(conn, user)
             from .central_operations import context as central_context
             user['central_operations'] = central_context(conn, user)
+            from .central_workdays import drain_metadata
+            user['central_workday_drain'] = drain_metadata(conn,user)
     return user
 
 
@@ -281,6 +285,8 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
         user = dict(user, operations_brands=multibrand.available(conn, user))
         from .central_operations import context as central_context
         user['central_operations'] = central_context(conn, user)
+        from .central_workdays import drain_metadata
+        user['central_workday_drain'] = drain_metadata(conn,user)
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a

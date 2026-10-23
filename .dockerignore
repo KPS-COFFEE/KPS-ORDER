@@ -39,3 +39,7 @@
 # Build-only rootfs packager; not copied into the runtime.
 !tools/security_runtime_root.py
 !tools/container_entrypoint.py
+
+# Private metadata-only activation diagnostics; no production evidence is copied.
+!tools/central_activation_preflight.py
+!tools/production_release_preflight.py

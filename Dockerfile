@@ -20,6 +20,7 @@ COPY --chown=kpsorder:kpsorder public/ ./public/
 RUN python -m app.image_previews
 COPY --chown=kpsorder:kpsorder docs/metrics.md ./docs/metrics.md
 COPY --chown=kpsorder:kpsorder tools/portable_backup.py ./tools/portable_backup.py
+COPY --chown=kpsorder:kpsorder tools/central_activation_preflight.py tools/production_release_preflight.py ./tools/
 COPY --chown=kpsorder:kpsorder tools/enbishan_workbook.py ./tools/enbishan_workbook.py
 COPY --chown=kpsorder:kpsorder tools/windows-print-bridge/ ./tools/windows-print-bridge/
 

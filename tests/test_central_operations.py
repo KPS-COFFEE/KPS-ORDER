@@ -57,14 +57,18 @@ def test_unassigned_driver_cannot_resolve_customer_orders(central):
 
 
 @pytest.mark.postgres
-def test_customers_do_not_receive_or_resolve_staff_context(central):
+@pytest.mark.parametrize('context_cookies,expected_status',[('true',401),('false',404)])
+def test_customers_do_not_receive_or_resolve_staff_context(central,monkeypatch,context_cookies,expected_status):
+    # Work routes reject customer credentials before endpoint authorization when
+    # cookie isolation is enabled; legacy mode still exercises the 404 guard.
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED',context_cookies)
     _, actor, _, _, order = central
     identifier = order('enbishan')
     session = actor('enbishan-customer').get('/api/session').json()['user']
     assert 'central_operations' not in session
     assert actor('enbishan-customer').get('/api/central-operations/resource-context', params={
         'kind': 'order', 'resource_id': identifier,
-    }).status_code == 404
+    }).status_code == expected_status
 
 
 @pytest.mark.postgres
@@ -201,3 +205,79 @@ def test_fleet_handover_never_bypasses_revoked_group_authority():
         with pytest.raises(HTTPException) as denied:
             fleet_management.physical_driver_shift(Connection(),{'id':'owner'},'driver')
     assert denied.value.status_code==404
+
+
+@pytest.mark.postgres
+def test_session_flag_off_exposes_only_authorized_existing_workday_drain(central,monkeypatch):
+    from test_central_workdays import open_days
+    _,actor,_,_,_=central
+    manager,driver=open_days(central)
+    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','false')
+    response=actor('driver').get('/api/session')
+    assert response.status_code==200,response.text
+    user=response.json()['user']
+    assert 'central_operations' not in user
+    assert len(user['central_workday_drain'])==1
+    day=user['central_workday_drain'][0]
+    assert day['anchor_shift_id']==driver['shift']['id']
+    assert {leg['brand_id'] for leg in day['legs']}=={'kps','enbishan'}
+    manager_user=actor('manager').get('/api/session').json()['user']
+    assert {day['anchor_shift_id'] for day in manager_user['central_workday_drain']}=={manager['shift']['id'],driver['shift']['id']}
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-driver' AND brand_id='enbishan'")
+    user=actor('driver').get('/api/session').json()['user']
+    assert not user.get('central_workday_drain')
+    assert 'central_workday_drain' not in actor('enbishan-customer').get('/api/session').json()['user']
+
+
+@pytest.mark.postgres
+def test_central_fleet_weighted_summary_filters_paging_and_export(central,monkeypatch):
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED','true')
+    from test_fleet import seed
+    import io,zipfile
+    _,actor,_,_,_=central
+    with db.tx() as c:
+        seed(c,'central-fleet-kps','CENTRAL KPS',10,driver='dual-driver',brand='kps',bids=['kps-branch-1'],km=100,liters=10)
+        seed(c,'central-fleet-enb','CENTRAL ENB',10,driver='dual-driver',brand='enbishan',bids=['enbishan-test-1'],km=300,liters=20)
+        seed(c,'central-fleet-hidden','CENTRAL HIDDEN',10,driver='dual-driver',brand='enbishan',bids=['enbishan-test-2'],km=700,liters=10)
+    path='/api/central-operations/fleet/report'
+    query={'start':'2026-10-10','end':'2026-10-10','limit':1}
+    result=actor('owner').get(path,params=query)
+    assert result.status_code==200,result.text
+    assert result.json()['total']==3 and len(result.json()['rows'])==1
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids=%s WHERE user_id='dual-owner' AND brand_id='enbishan'",(db.json(['enbishan-test-1']),))
+    result=actor('owner').get(path,params=query)
+    assert result.status_code==200,result.text
+    first=result.json()
+    second=actor('owner').get(path,params={**query,'offset':1}).json()
+    assert first['total']==2 and len(first['rows'])==1
+    assert first['summary']['actual_distance']==400
+    assert first['summary']['liters']==30
+    assert first['summary']['efficiency']==13.333
+    assert {first['rows'][0]['brand_id'],second['rows'][0]['brand_id']}=={'kps','enbishan'}
+    assert first['summary']==second['summary']
+    filtered=actor('owner').get(path,params={**query,'branch_id':'enbishan-test-1'}).json()
+    assert filtered['total']==1 and filtered['rows'][0]['plate']=='CENTRAL ENB'
+    options=actor('owner').get('/api/central-operations/fleet/options').json()
+    assert 'enbishan-test-2' not in {b['id'] for b in options['branches']}
+    assert len([d for d in options['drivers'] if d['id']=='dual-driver'])==1
+    output=actor('owner').get('/api/central-operations/fleet/export',params={**query,'format':'xlsx','lang':'en'})
+    assert output.status_code==200,output.text
+    sheet=zipfile.ZipFile(io.BytesIO(output.content)).read('xl/worksheets/sheet1.xml').decode()
+    assert 'CENTRAL KPS' in sheet and 'CENTRAL ENB' in sheet and 'CENTRAL HIDDEN' not in sheet
+    assert 'Brand' in sheet and 'enbishan' in sheet
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-owner' AND brand_id='enbishan'")
+    result=actor('owner').get(path,params=query).json()
+    assert result['total']==1 and result['summary']['efficiency']==10
+    assert actor('enbishan-customer').get(path,params=query).status_code==401
+
+
+@pytest.mark.parametrize('hint',[None,'work','customer'])
+def test_central_routes_choose_work_credentials_even_with_customer_hint(hint):
+    from fastapi import Request
+    from app import auth
+    request=Request({'type':'http','method':'GET','path':'/api/central-operations/resource-context',
+                     'query_string':b'','headers':[(b'x-kps-context',hint.encode())] if hint else []})
+    assert auth.session_context(request)=='work'

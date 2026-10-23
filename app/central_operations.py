@@ -162,6 +162,12 @@ router.include_router(dashboard_router)
 from .central_driver_overview import router as driver_overview_router
 router.include_router(driver_overview_router)
 
+from .central_fleet import router as fleet_router
+router.include_router(fleet_router)
+
+from .central_shift_history import router as history_router
+router.include_router(history_router)
+
 from .central_staff import router as staff_router
 router.include_router(staff_router)
 

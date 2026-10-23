@@ -115,6 +115,9 @@ def test_driver_shared_closure_has_one_inspection_and_both_ledger_inputs(central
         for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
         for field in ['counted','terminal']:
             for control in form.locator('[name^="'+field+':"]').all():control.fill('0')
+        page.once('dialog',lambda dialog:dialog.dismiss())
+        page.locator('#modal-close').click()
+        expect(form).to_be_visible()
         form.locator('[name=confirmed]').check()
         form.locator('button[type=submit]').click()
         expect(page.locator('#modal')).not_to_be_visible()

@@ -2,6 +2,7 @@
 import pytest
 from app import db
 from test_central_workdays import central, open_days
+from test_enbishan_dual_brand import dual
 
 
 @pytest.mark.postgres
