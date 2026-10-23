@@ -38,7 +38,16 @@ def test_early_closure_request_and_operations_only_roster(live_app,chromium_brow
         form.locator('[name=reason]').fill('Synthetic renewed emergency reason')
         form.locator('button[type=submit]').click()
         expect(page.locator('#modal')).to_contain_text('Awaiting' if language=='en' else 'بانتظار')
-        mpage.locator('#navigation [data-page=drivers]').click()
+        # The delivery manager's compact workspace keeps navigation collapsed
+        # on phones; open its real menu before choosing the driver roster.
+        navigation=mpage.locator('.dispatch-nav-toggle')
+        expect(navigation).to_be_visible()
+        if navigation.get_attribute('aria-expanded')!='true':
+            navigation.click()
+        expect(navigation).to_have_attribute('aria-expanded','true')
+        drivers=mpage.locator('#navigation [data-page=drivers]')
+        expect(drivers).to_be_visible()
+        drivers.click()
         expect(mpage.locator('[data-action=fuel-inbox]')).to_have_count(1)
         expect(mpage.locator('#content [data-action=invite-staff]')).to_have_count(0)
         expect(mpage.locator('#content [data-action=edit-staff]')).to_have_count(0)

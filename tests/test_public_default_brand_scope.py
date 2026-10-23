@@ -58,6 +58,18 @@ def test_verified_work_public_route_still_rejects_unknown_virtual_host(monkeypat
     assert error.value.status_code == 404
 
 
+def test_home_brand_staff_login_remains_independent_of_operations_projection(monkeypatch):
+    mapped_runtime(monkeypatch)
+    request = Request({'type':'http', 'scheme':'https', 'method':'POST',
+                       'path':'/api/identity/staff/code/request', 'query_string':b'',
+                       'headers':[(b'host',b'order.kps.sa'), (b'x-kps-context',b'work'),
+                                  (b'x-operations-brand',b'enbishan')]})
+    request.state.verified_work_storefront = 'enbishan'
+    # Identifying the employee happens on the home brand; projection applies
+    # only after the real home-brand proof and current membership checks.
+    assert storefront_scope.bound_brand(request) is None
+
+
 @pytest.mark.postgres
 def test_actual_public_defaults_and_post_bodies_never_read_or_create_kps(dual, monkeypatch):
     client, _, _, _, _ = dual
@@ -130,4 +142,6 @@ def test_verified_work_public_reads_require_current_projected_brand(dual, monkey
     forged.headers['X-KPS-Context'] = 'work'
     response = forged.get('/api/catalog?brand_id=enbishan')
     assert response.status_code == 403
-    assert forged.get('/api/session').status_code in {401, 403}
+    anonymous = forged.get('/api/session')
+    assert anonymous.status_code == 200
+    assert anonymous.json() == {'user': None, 'csrf_token': None}

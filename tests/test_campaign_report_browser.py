@@ -51,10 +51,13 @@ def test_scoped_report_filters_masked_beneficiaries_and_pagination(static_custom
         expect(page.locator('#report-next')).to_be_disabled()
         last=[c for c in calls if c[0].endswith('/beneficiaries')][-1]
         assert last[1]['offset']==['50'] and last[1]['policy_version']==['1'] and last[1]['branch_id']==['enb-2']
-        page.locator('#report-language').click()
-        assert page.locator('html').get_attribute('lang')==('en' if lang=='ar' else 'ar')
         out=Path('test-results')/f'campaign-report-{lang}-{width}.png';out.parent.mkdir(exist_ok=True)
-        page.screenshot(path=str(out),full_page=True);browser.close()
+        page.screenshot(path=str(out),full_page=True)
+        page.locator('#report-language').click()
+        actual='en' if lang=='ar' else 'ar'
+        assert page.locator('html').get_attribute('lang')==actual
+        page.screenshot(path=str(out.with_name(f'campaign-report-{actual}-{width}.png')),full_page=True)
+        browser.close()
 
 
 def test_forged_brand_and_withdrawn_report_access_show_no_report(static_customer):

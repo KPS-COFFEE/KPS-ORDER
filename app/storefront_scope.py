@@ -78,14 +78,15 @@ def bound_brand(request):
     return 'kps' if configured in KPS_HOSTS or request.url.hostname in KPS_HOSTS else None
 
 
-# Only routes that actually accept a public brand default. No query-string
+# Only customer storefront reads/writes accept this binding. Staff sign-in
+# identifies the home-brand account before operations-brand projection; it keeps
+# its endpoint-owned work boundary and canonical proof checks. No query-string
 # mutation is performed for private APIs, assets or unrelated application routes.
 _PUBLIC_BRAND_ROUTES = frozenset({
     '/api/catalog', '/api/branches', '/api/banners', '/api/identity/channels',
     '/api/customer-map/config', '/api/customer/legal', '/api/experience/public',
     '/api/identity/staff/login-policy', '/privacy', '/terms', '/refunds',
     '/api/auth/otp/request', '/api/identity/guest', '/api/identity/email/request',
-    '/api/identity/staff/code/request', '/api/identity/staff/sms/request',
     '/api/quote', '/api/orders', '/api/branches/nearest',
 })
 

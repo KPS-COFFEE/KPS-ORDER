@@ -131,3 +131,15 @@ def test_transport_never_returns_provider_details_on_malformed_response(monkeypa
         adapter.verify('+966500000000', '123456', brand_id='enbishan')
     assert result.value.detail['code'] == 'OTP_PROVIDER_FAILURE'
     assert 'SECRET' not in str(result.value.detail)
+
+
+@pytest.mark.parametrize('credential', ['AUTHENTICA_API_KEY', 'AUTHENTICA_ENBISHAN_API_KEY'])
+def test_isolated_development_rejects_inherited_authentica_credentials(monkeypatch, credential):
+    from app import multibrand
+    monkeypatch.setenv('APP_ENV', 'testing')
+    monkeypatch.setenv('ENBISHAN_ISOLATED_ENABLED', 'true')
+    monkeypatch.delenv('KPS_MULTIBRAND_ENABLED', raising=False)
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://synthetic@127.0.0.1/test_enbishan_provider_guard')
+    monkeypatch.setenv(credential, 'synthetic_never_sent')
+    with pytest.raises(RuntimeError, match='Provider credentials are prohibited'):
+        multibrand.isolation_guard()

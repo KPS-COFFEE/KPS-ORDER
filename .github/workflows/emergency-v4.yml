@@ -49,20 +49,20 @@ jobs:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_DB: test_kps_order
+          POSTGRES_DB: test_enbishan_kps_regression
           POSTGRES_USER: kps_test
           POSTGRES_PASSWORD: isolated-ci-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-cmd "pg_isready -U kps_test -d test_enbishan_kps_regression"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     env:
       # Synthetic, ephemeral CI credentials only. No Render/production secrets.
-      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
-      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
       APP_ENV: testing
       PUBLIC_BASE_URL: http://testserver
       APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
@@ -359,19 +359,19 @@ jobs:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_DB: test_kps_order
+          POSTGRES_DB: test_enbishan_kps_regression
           POSTGRES_USER: kps_test
           POSTGRES_PASSWORD: isolated-ci-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-cmd "pg_isready -U kps_test -d test_enbishan_kps_regression"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     env:
-      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
-      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
       APP_ENV: testing
       PUBLIC_BASE_URL: http://testserver
       APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1

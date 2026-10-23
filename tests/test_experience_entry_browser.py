@@ -203,11 +203,16 @@ def test_guest_browsing_hides_optional_form_preserves_details_and_requires_otp(s
         page.locator('#latitude').fill('28.4');page.locator('#longitude').fill('45.9');page.locator('#save-location').click()
         expect(page.locator('#nearest-branches button')).to_have_count(1);page.locator('#nearest-branches button').click()
         page.locator('.product-add-button').first.click();page.locator('#product-add').click()
+        # The availability request completes asynchronously. Wait until the
+        # modal closes before editing delivery fields that were inert behind it.
+        expect(page.locator('#product-dialog')).not_to_be_visible()
+        expect(page.locator('#cart-lines .cart-line')).to_have_count(1)
         expect(page.locator('#entry-form')).to_have_count(0)
         expect(page.locator('#customer-name')).to_have_value('علي');expect(page.locator('#customer-phone')).to_have_value('512345678')
         expect(page.locator('#neighborhood')).to_have_attribute('required','')
         expect(page.locator('#checkout-button')).to_be_disabled()
         page.locator('#neighborhood').fill('حي اختبار')
+        expect(page.locator('#neighborhood')).to_have_value('حي اختبار')
         expect(page.locator('#address')).to_have_value('')
         expect(page.locator('#checkout-button')).to_be_enabled()
         assert 'auth/otp/request' not in requests

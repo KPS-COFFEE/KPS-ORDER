@@ -25,7 +25,9 @@ def replay_operation(conn, user_id, operation):
     isolation_guard()
     row = conn.execute('SELECT brand_id FROM users WHERE id=%s', (user_id,)).fetchone()
     brand = operation_brand.get() or (row['brand_id'] if row else None)
-    if brand:
+    # KPS operation names already have committed durable replay rows. Keep
+    # them readable when enabling multi-brand; only new brands add a namespace.
+    if brand and brand != 'kps':
         return 'brand:' + brand + ':' + operation
     return operation
 
@@ -64,7 +66,7 @@ def isolation_guard():
             or not name.startswith('test_enbishan_')):
         raise RuntimeError('Enbishan development requires its own local test_enbishan_* database.')
     # Credentials must never be inherited by the isolated application.
-    if any(os.getenv(key) for key in ('TAWKED_API_KEY', 'ENBISHAN_TAWKED_API_KEY', 'TWILIO_AUTH_TOKEN', 'RESEND_API_KEY', 'RENDER_API_KEY')):
+    if any(os.getenv(key) for key in ('TAWKED_API_KEY', 'ENBISHAN_TAWKED_API_KEY', 'TWILIO_AUTH_TOKEN', 'RESEND_API_KEY', 'RENDER_API_KEY', 'AUTHENTICA_API_KEY', 'AUTHENTICA_ENBISHAN_API_KEY')):
         raise RuntimeError('Provider credentials are prohibited in isolated Enbishan development.')
     if any(key.startswith('KPS_PAYMENTS_') and value for key, value in os.environ.items()):
         raise RuntimeError('Live payment configuration is prohibited in isolated Enbishan development.')

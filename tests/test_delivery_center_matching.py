@@ -110,12 +110,20 @@ def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owne
 
 
 def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(monkeypatch):
-    inserted=[]
+    import hashlib
+    inserted=[];contact_locks=[]
+    expected_id='customer_contact_'+hashlib.sha256('brand\0+966501234567'.encode()).hexdigest()
+    expected_lock='operational-contact:brand:'+expected_id
     class Conn:
         def execute(self,sql,args):
+            if sql=='SELECT pg_advisory_xact_lock(hashtextextended(%s,0))':
+                assert args==(expected_lock,)
+                assert not inserted, 'Serialize the opaque contact before inserting it'
+                contact_locks.append(args[0]);return Result()
             if sql.startswith('SELECT settings'):return Result({'settings':{}})
             if sql.startswith('SELECT id FROM shifts'):return Result({'id':'manager-shift'})
             if sql.startswith('INSERT INTO users'):
+                assert contact_locks==[expected_lock] and args[0]==expected_id
                 inserted.append(args);return Result({'id':args[0],'active':True,'identity_kind':'guest','brand_id':args[3]})
             raise AssertionError(sql)
     @contextmanager
@@ -143,3 +151,4 @@ def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(m
     body.expected_total_halalas=1
     with pytest.raises(HTTPException) as e:orders.create_delivery_center_order(body,None,actor,'other-key')
     assert e.value.status_code==409 and len(inserted)==1
+    assert contact_locks==[expected_lock], 'A rejected server price must not enter contact creation'

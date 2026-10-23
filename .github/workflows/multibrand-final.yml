@@ -38,6 +38,18 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Prepare genuine current production source for the isolated upgrade witness
+        run: |
+          mkdir -p /tmp/kps-startup-baseline
+          git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C /tmp/kps-startup-baseline
+          python - <<'PY'
+          import json, pathlib, subprocess
+          revision = '4e4d781b4fa82b7459410694ff5c4ac06842e6e7'
+          tree = subprocess.check_output(['git', 'rev-parse', revision + '^{tree}'], text=True).strip()
+          pathlib.Path('/tmp/kps-startup-baseline/baseline-source-identity.json').write_text(json.dumps({'revision': revision, 'tree': tree}))
+          PY
+          echo 'PENDING_MIGRATION_BASELINE_DIR=/tmp/kps-startup-baseline' >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -65,11 +77,11 @@ jobs:
       - name: ENBISHAN menu source, approval, scope and shared financial invariants
         run: >-
           python -m pytest -q
-          tests/test_customer_engagement_closure.py tests/test_customer_engagement_restore.py
+          tests/test_pending_startup_upgrade.py tests/test_customer_engagement_closure.py tests/test_customer_engagement_restore.py
           tests/test_enbishan_menu_readiness.py tests/test_enbishan_owner_menu_decisions.py
           tests/test_enbishan_operations_preparation.py tests/test_enbishan_owner_approved_journey.py
           tests/test_enbishan_storefront_identity.py tests/test_enbishan_menu_assets.py tests/test_enbishan_final_menu_review.py
-          tests/test_enbishan_customer_scope_constraints.py tests/test_enbishan_shared_terminal.py
+          tests/test_enbishan_customer_scope_constraints.py tests/test_enbishan_financial_ownership_constraints.py tests/test_enbishan_shared_terminal.py
           tests/test_enbishan_shared_float.py tests/test_enbishan_sms_boundary.py
           tests/test_enbishan_dual_brand.py tests/test_storefront_scope.py
           tests/test_multibrand_final_boundary.py tests/test_public_default_brand_scope.py
@@ -78,7 +90,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: >-
           python -m pytest -q
-          tests/test_operational_customer_lookup.py tests/test_customer_card_quantity.py tests/test_customer_gift_pricing_identity.py tests/test_customer_neighborhood_policy.py
+          tests/test_ops_retry_compatibility.py tests/test_operational_customer_lookup.py tests/test_customer_card_quantity.py tests/test_customer_gift_pricing_identity.py tests/test_customer_neighborhood_policy.py
           tests/test_minimum_order_feedback.py tests/test_optional_customer_address.py
           tests/test_customer_hotpath.py tests/test_customer_language.py
           tests/test_campaign_reporting.py tests/test_campaign_reporting_postgres.py
