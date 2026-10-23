@@ -39,3 +39,8 @@
 # Build-only rootfs packager; not copied into the runtime.
 !tools/security_runtime_root.py
 !tools/container_entrypoint.py
+
+# Disposable recovery worker source; contains no credentials or data.
+!Dockerfile.recovery-check
+!tools/render_private_probe.py
+!tools/production_release_preflight.py
