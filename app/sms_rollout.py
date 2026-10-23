@@ -139,7 +139,9 @@ def activate(request: Request, user=Depends(auth.require_roles('owner'))):
 
 
 @router.get('/api/identity/staff/login-policy')
-def login_policy(brand_id: str='kps'):
+def login_policy(brand_id: str|None=None):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     # Pilot identity and its enrollment are never exposed publicly.
     required = work_sms_required(brand_id)
     active = required or _read_policy(brand_id).get('mode') == 'active'

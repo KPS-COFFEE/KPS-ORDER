@@ -1,4 +1,6 @@
 name: Distinct application rollback compatibility and image
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 permissions:
   contents: read
 concurrency:
@@ -13,7 +15,7 @@ on:
     branches: [agent/kps-order-security-closure-20261018, agent/print-alert-actions-20261019, agent/enbishan-manual-closure-20261019, agent/ops-actionable-alerts-20261020, agent/staff-operations-room-20261020, agent/customer-journey-stage-policy-20261020, agent/customer-open-menu-map-20261021, agent/dispatch-personal-layout-20261021, agent/owner-accountant-shift-permissions-20261021, agent/optional-customer-address-20261021]
 jobs:
   prior-application:
-    if: github.event_name != 'pull_request' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023'
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -38,10 +40,11 @@ jobs:
       RECOVERY_POLL_ENABLED: 'false'
       DISPATCH_AUTO_ASSIGN_ENABLED: 'false'
       DISPATCH_OFFER_ACCEPT_ENABLED: 'false'
-      RUNTIME_REVISION: ${{ github.sha }}
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -71,10 +74,10 @@ jobs:
           mkdir "$baseline"
           git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$baseline"
           docker buildx build --target runtime --platform linux/amd64 --load --provenance=false \
-            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.revision=$CANDIDATE_SHA" \
             --label "sa.kps.rollback.baseline=80a1d727f6695c4ce3685e726ab5b34674e1cfa0" \
-            --metadata-file evidence/build-metadata.json --tag "kps-application-rollback:$GITHUB_SHA" "$context" > evidence/image-build.log 2>&1
-          image_id=$(docker image inspect --format '{{.Id}}' "kps-application-rollback:$GITHUB_SHA")
+            --metadata-file evidence/build-metadata.json --tag "kps-application-rollback:$CANDIDATE_SHA" "$context" > evidence/image-build.log 2>&1
+          image_id=$(docker image inspect --format '{{.Id}}' "kps-application-rollback:$CANDIDATE_SHA")
           printf '%s\n' "$image_id" > evidence/image-id.txt
           printf 'ROLLBACK_COMPAT_IMAGE=%s\nROLLBACK_BASELINE_DIR=%s\nROLLBACK_COMPAT_DIR=%s\n' "$image_id" "$baseline" "$context" >> "$GITHUB_ENV"
           docker image inspect "$image_id" > evidence/image-inspect.json
@@ -130,7 +133,7 @@ jobs:
             --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false \
             --env RECOVERY_POLL_ENABLED=false --env DISPATCH_AUTO_ASSIGN_ENABLED=false \
             --env DISPATCH_OFFER_ACCEPT_ENABLED=false --env APP_ALLOWED_HOSTS=localhost,127.0.0.1 \
-            --env PORT=18081 --env RUNTIME_REVISION="$GITHUB_SHA" "$ROLLBACK_COMPAT_IMAGE"
+            --env PORT=18081 --env RUNTIME_REVISION="$CANDIDATE_SHA" "$ROLLBACK_COMPAT_IMAGE"
           python - <<'PY' | tee evidence/runtime-smoke.json
           import json,os,time,urllib.request
           for attempt in range(90):
@@ -140,7 +143,7 @@ jobs:
                       with urllib.request.urlopen('http://127.0.0.1:18081/'+endpoint,timeout=2) as r:
                           assert r.status==200
                           results[endpoint]=json.load(r)
-                          assert results[endpoint]['revision']==os.environ['GITHUB_SHA']
+                          assert results[endpoint]['revision']==os.environ['CANDIDATE_SHA']
                   print(json.dumps(results,indent=2));break
               except Exception:
                   if attempt==89:raise
@@ -175,14 +178,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: prior-application-certification-${{ github.sha }}
+          name: prior-application-certification-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: prior-application-image-${{ github.sha }}
+          name: prior-application-image-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/prior-application-image.tar
           if-no-files-found: error
           compression-level: 1

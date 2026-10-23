@@ -13,6 +13,16 @@ from . import auth, db, fiscal
 router = APIRouter(prefix='/api/fiscal')
 
 
+def supported_brand(brand_id):
+    if brand_id == 'kps':
+        return True
+    from . import multibrand
+    if brand_id == 'enbishan' and multibrand.enabled():
+        multibrand.isolation_guard()
+        return True
+    return False
+
+
 def policy(conn, brand_id):
     row = conn.execute('SELECT id,decision FROM fiscal_policy_decisions WHERE brand_id=%s ORDER BY created_at DESC,id DESC LIMIT 1', (brand_id,)).fetchone()
     return row or {'id': None, 'decision': {'enabled': False, 'phase': 'unconfirmed'}}
@@ -23,7 +33,7 @@ def status(conn, brand_id):
     d = p['decision']
     verified = d.get('phase') == 'phase1' and bool(d.get('evidence_reference'))
     owner_requested = d.get('issuance_mode') == 'owner_requested' and d.get('phase') == 'unconfirmed'
-    enabled = brand_id == 'kps' and d.get('enabled') is True and (verified or owner_requested)
+    enabled = supported_brand(brand_id) and d.get('enabled') is True and (verified or owner_requested)
     return {'issuance_enabled': enabled, 'official_issuance_enabled': enabled and verified, 'phase': d.get('phase', 'unconfirmed'),
             'policy_id': p['id'], 'phase2_supported': False,
             'remaining_requirements': ([] if verified else ['phase_applicability_unconfirmed']) + ([] if enabled else ['owner_activation']),
@@ -49,7 +59,7 @@ def read_policy(user=Depends(fiscal.owner)):
 
 @router.post('/policy')
 def configure(body: PolicyDecision, user=Depends(fiscal.owner), idem: str | None=Header(None, alias='Idempotency-Key')):
-    if user['brand_id'] != 'kps':
+    if not supported_brand(user['brand_id']):
         raise db.error(403, 'FISCAL_SELLER_SCOPE', 'هذه الهوية الضريبية خاصة بكبز.')
     if not body.reason.strip():
         raise db.error(422,'FISCAL_POLICY_REASON','يلزم سبب واضح للقرار.')
@@ -83,7 +93,7 @@ def issue_sale(conn, order_id, actor, *, required=False):
         return None
     existing = original(conn, order_id)
     if existing: return existing
-    if order['brand_id'] != 'kps' or order['service'] != 'delivery':
+    if not supported_brand(order['brand_id']) or order['service'] != 'delivery':
         if required: raise db.error(409,'FISCAL_SALE_SCOPE','هذا الإصدار مخصص لمبيعات توصيل كبز.')
         return None
     conn.execute('SELECT id FROM brands WHERE id=%s FOR SHARE', (order['brand_id'],))
@@ -104,7 +114,9 @@ def issue_sale(conn, order_id, actor, *, required=False):
     from . import print_translations
     order['print_labels_en'] = print_translations.for_order(conn,order)
     try:
-        doc = fiscal.build(order,order['snapshot'].get('order_reference') or 'KPS-'+str(n),datetime.now(timezone.utc))
+        number_prefix = 'ENB-' if order['brand_id'] == 'enbishan' else 'KPS-'
+        doc = fiscal.build(order,order['snapshot'].get('order_reference') or number_prefix+str(n),datetime.now(timezone.utc),
+                           seller=order['snapshot'].get('receipt_profile') if order['brand_id']=='enbishan' else None)
     except ValueError as exc:
         raise db.error(409,'FISCAL_TOTAL_MISMATCH','مبالغ الطلب غير متطابقة؛ لم يتم الإصدار.') from exc
     doc.update(status='issued', uuid=str(uuid4()), policy_id=p['id'], supply_at=str(order.get('completed_at') or doc['issued_at']),
@@ -131,7 +143,7 @@ def credit_before_refund(conn, order, actor, refund_id, amount, reason, *, amend
         raise db.error(409,'FISCAL_CREDIT_DISABLED','تعذر إصدار الإشعار الدائن؛ لم يسجل الاسترداد.')
     prior = conn.execute("SELECT coalesce(sum((document->>'total_halalas')::bigint),0)::bigint n FROM fiscal_documents WHERE original_number=%s", (source['number'],)).fetchone()['n']
     n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
-    try: doc = fiscal.credit(source,amount,prior,'KPS-CN-'+str(n),datetime.now(timezone.utc),refund_id,reason)
+    try: doc = fiscal.credit(source,amount,prior,('ENB-CN-' if order['brand_id']=='enbishan' else 'KPS-CN-')+str(n),datetime.now(timezone.utc),refund_id,reason)
     except ValueError as exc:
         raise db.error(409,'FISCAL_CREDIT_EXCEEDS_ORIGINAL','مبلغ المرتجع يتجاوز المتبقي من الفاتورة.') from exc
     doc.update(uuid=str(uuid4()), original_uuid=source['uuid'])
@@ -160,7 +172,7 @@ def print_invoice(order_id: str, user=Depends(auth.require_roles('owner','admin'
             existing = original(conn,order_id)
             if existing:
                 return {'number':existing['number']}
-            if order['brand_id']=='kps' and order['service']=='delivery' and status(conn,'kps')['issuance_enabled']:
+            if supported_brand(order['brand_id']) and order['service']=='delivery' and status(conn,order['brand_id'])['issuance_enabled']:
                 doc = issue_sale(conn,order_id,user,required=True)
                 return {'number':doc['number']}
             return {'number':None}
@@ -183,7 +195,7 @@ def credit_on_cancellation(conn, order, actor, reason):
     amount = source['total_halalas']-prior
     if amount <= 0: return
     n = conn.execute("SELECT nextval('fiscal_document_number_seq') n").fetchone()['n']
-    doc = fiscal.credit(source,amount,prior,'KPS-CN-'+str(n),datetime.now(timezone.utc),None,reason)
+    doc = fiscal.credit(source,amount,prior,('ENB-CN-' if order['brand_id']=='enbishan' else 'KPS-CN-')+str(n),datetime.now(timezone.utc),None,reason)
     doc.update(uuid=str(uuid4()),original_uuid=source['uuid'],credit_reason='order_cancelled',payment_status='unpaid')
     conn.execute("INSERT INTO fiscal_documents(number,order_id,kind,original_number,policy_id,document) VALUES(%s,%s,'credit_note',%s,%s,%s)",(doc['number'],order['id'],source['number'],source['policy_id'],db.json(doc)))
     db.audit(conn,actor['id'],'fiscal.cancellation_credit_issued','order',order['id'],{'number':doc['number'],'original_number':source['number']})

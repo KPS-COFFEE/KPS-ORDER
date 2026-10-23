@@ -1,6 +1,8 @@
 """Revocable PostgreSQL sessions and independently verified customer identities."""
 from __future__ import annotations
 
+from .storefront_scope import default_brand
+
 import base64
 import getpass
 import hashlib
@@ -92,13 +94,15 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 def public_user(user: dict, conn=None) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials', 'extra_permissions')}
-    output['employee_sms_email_retired'] = staff_email_retired(user.get('brand_id','kps'), conn=conn)
+    output['employee_sms_email_retired'] = staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     if user.get('_morning_manager_context'):
         output['delivery_context'] = user['_morning_manager_context']
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')) | employee_permissions.grantable(user.get('role')))
     output['base_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
     output['grantable_permissions'] = sorted(employee_permissions.grantable(user.get('role')))
+    if 'operations_brands' in user:
+        output['operations_brands'] = user['operations_brands']
     return output
 
 
@@ -138,12 +142,12 @@ def session_context(request):
         raise db.error(400,'SESSION_CONTEXT_INVALID','اختر سياق الدخول الصحيح. / Invalid session context.')
     if path.startswith('/api/fiscal/orders/') and path.endswith('/documents'):
         return context
-    if (path.startswith(('/api/auth/otp/','/api/customer/profile','/api/customer/addresses')) or path in {'/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
+    if (path.startswith(('/api/auth/otp/','/api/customer/')) or path in {'/api/quote','/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
         return 'customer'
     if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
-            '/api/reports','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
+            '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
             or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
         return 'work'
@@ -173,10 +177,15 @@ def _find_session(conn, request: Request):
             return None
         user['_session_cookie_name']=cookie_name
         user['_csrf_cookie_name']=csrf_name
+        from .multibrand import request_user
+        user = request_user(conn, request, user)
         from .portals import enforce_role
         enforce_role(request, user)
         from .storefront_scope import require_brand
         require_brand(user["brand_id"])
+        from . import multibrand
+        if multibrand.enabled() and user['role'] != 'customer':
+            user['operations_brands'] = multibrand.available(conn, user)
     return user
 
 
@@ -256,6 +265,14 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
             raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
         # An ordinary work login must never double as sensitive owner proof.
         owner_step_up = False
+    from . import multibrand
+    if multibrand.enabled() and user.get('role') != 'customer':
+        selected = multibrand.operation_brand.get()
+        if selected:
+            user = multibrand.project(conn, user, selected)
+            if not user:
+                raise db.error(403, 'OPERATIONS_BRAND_FORBIDDEN', 'البراند غير مخول لحسابك.')
+        user = dict(user, operations_brands=multibrand.available(conn, user))
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a
@@ -451,6 +468,19 @@ def _provider_ready(name):
         raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد.')
 
 
+def _customer_provider_ready(provider, brand):
+    if brand == 'enbishan':
+        if provider == 'authentica':
+            from .authentica_challenges import ready
+            ready(brand)
+            return
+        if provider != 'tawked':
+            raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود عنبيشن غير معتمد.')
+        sms_verification.brand_ready(brand)
+    else:
+        _provider_ready(provider)
+
+
 def _otp_test_access(conn, brand, channel, request):
     # Dedicated work routes let an owner certify delivery without borrowing a
     # customer credential or ever enabling an active customer login flow.
@@ -467,7 +497,7 @@ def _otp_test_access(conn, brand, channel, request):
 class OTPRequestBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     phone: str = Field(min_length=8, max_length=30)
-    brand_id: str = Field(default='kps', min_length=1, max_length=80)
+    brand_id: str = Field(default_factory=default_brand, min_length=1, max_length=80)
     lang: Literal['ar', 'en'] = 'ar'
     purpose: Literal['login','change_phone']='login'
 
@@ -506,20 +536,23 @@ def request_otp(body: OTPRequestBody, request: Request):
             guest=current_user(request)
         else:guest=None
         provider = _sms_provider(conn, body.brand_id)
-        _provider_ready(provider)
+        _customer_provider_ready(provider, body.brand_id)
         _otp_channel_ready(conn, body.brand_id, channel)
         _otp_test_access(conn, body.brand_id, channel, request)
-        if provider == 'tawked' and channel != 'sms':
+        if provider in {'tawked', 'authentica'} and channel != 'sms':
             raise db.error(503, 'OTP_CHANNEL_UNAVAILABLE', 'توكيد مخصص للتحقق برسائل SMS.')
         allowed = db.rate_limit(conn, 'otp-request-phone:' + phone, 3, 600)
         allowed = db.rate_limit(conn, 'otp-request-ip:' + ip, 10, 600) and allowed
     if not allowed:
         raise db.error(429, 'OTP_RATE_LIMIT', 'طلبات تحقق كثيرة. انتظر قبل المحاولة مجددًا.')
+    if provider == 'authentica':
+        from .authentica_challenges import start
+        return start(body, request, phone, source_user=source_user, guest=guest)
     owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
     challenge_id = db.new_id('owner_probe_' if owner_probe else 'otp_')
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     if provider == 'tawked':
-        reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
+        reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang, **({'brand': body.brand_id} if body.brand_id == 'enbishan' else {}))
         expires_at = min(expires_at, provider_expiry)
     else:
         result = _provider_post('Verifications', {'To': phone, 'Channel': channel})
@@ -544,9 +577,15 @@ class OTPVerifyBody(BaseModel):
     display_name: str = Field(default='', max_length=100)
 
 
+class CustomerOTPVerifyBody(OTPVerifyBody):
+    # The HTTP envelope supports the approved per-application length. The
+    # stored provider below enforces KPS's unchanged four-digit contract.
+    code: str = Field(pattern=r'^[0-9]{4,10}$')
+
+
 @router.post('/identity/owner/sms-channel-test/verify')
 @router.post('/auth/otp/verify')
-def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
+def verify_otp(body: CustomerOTPVerifyBody, request: Request, response: Response):
     check_origin(request)
     # Employee SMS and customer SMS share storage, never proof purpose. Reject
     # before attempts/provider calls, independent of host or rollout settings.
@@ -555,6 +594,13 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
     owner_probe = request.url.path.startswith('/api/identity/owner/sms-channel-test/')
     if body.challenge_id.startswith('owner_probe_') != owner_probe:
         raise db.error(400,'OTP_PURPOSE_MISMATCH','طلب التحقق لا يخص هذا المسار.')
+    with db.tx() as conn:
+        selected = conn.execute('SELECT provider_name FROM otp_challenges WHERE id=%s', (body.challenge_id,)).fetchone()
+    if selected and selected['provider_name'] == 'authentica':
+        from .authentica_challenges import check
+        return check(body, request, response)
+    if not re.fullmatch(r'[0-9]{4}', body.code):
+        raise db.error(422, 'OTP_INVALID', 'أدخل رمز تحقق من أربعة أرقام. / Enter the four-digit verification code.')
     ip = request.client.host if request.client else 'unknown'
     with db.tx() as conn:
         allowed = db.rate_limit(conn, 'otp-verify-ip:' + ip, 20, 600)
@@ -576,64 +622,70 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
         provider = challenge['provider_name']
         if _sms_provider(conn, challenge['brand_id']) != provider:
             raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
-        _provider_ready(provider)
+        _customer_provider_ready(provider, challenge['brand_id'])
     # Check the stored provider reference, never a client supplied phone/reference.
     if provider == 'tawked':
-        approved = channel == 'sms' and sms_verification.check(challenge['provider_reference'], body.code)
+        approved = channel == 'sms' and sms_verification.check(challenge['provider_reference'], body.code, **({'brand': challenge['brand_id']} if challenge['brand_id'] == 'enbishan' else {}))
     else:
         result = _provider_post('VerificationCheck', {'VerificationSid': challenge['provider_reference'], 'Code': body.code})
         approved = result.get('status') == 'approved' and result.get('to') == challenge['phone'] and result.get('channel', channel) == channel
     if not approved:
         raise db.error(400, 'OTP_INVALID', 'رمز التحقق غير صحيح.')
     with db.tx() as conn:
-        conn.execute('SELECT channel FROM identity_channels WHERE brand_id=%s AND channel=%s FOR UPDATE',(challenge['brand_id'],channel)).fetchone()
-        _otp_channel_ready(conn, challenge['brand_id'], channel)
-        _otp_test_access(conn, challenge['brand_id'], channel, request)
-        if _sms_provider(conn, challenge['brand_id']) != provider:
-            raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
-        claimed = conn.execute('UPDATE otp_challenges SET verified_at=now() WHERE id=%s AND verified_at IS NULL AND expires_at>now() RETURNING id',
-                               (body.challenge_id,)).fetchone()
-        if not claimed:
-            raise db.error(409, 'OTP_ALREADY_USED', 'تم استخدام طلب التحقق بالفعل.')
-        if _channel(conn, challenge['brand_id'], channel)['state'] == 'testing':
-            # Owner smoke test proves delivery without creating/logging in a customer.
-            owner = _optional_identity(request, conn)
-            conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s', (challenge['brand_id'], channel))
-            db.audit(conn, owner['id'], 'identity.sms.test_verified', 'brand', challenge['brand_id'], {'provider': provider})
-            return {'verified': True, 'test_only': True}
-        proof_column = 'phone_whatsapp_verified_at' if channel == 'whatsapp' else 'phone_sms_verified_at'
-        conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(challenge['brand_id']+':customer-phone:'+challenge['phone'],))
-        if challenge.get('source_user_id'):
-            source=current_user(request)
-            if source['id']!=challenge['source_user_id']:raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','أعد التحقق من الجوال.')
-            conflict=conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND phone=%s AND phone_verified_at IS NOT NULL AND role='customer' AND id<>%s",(challenge['brand_id'],challenge['phone'],source['id'])).fetchone()
-            if conflict:raise db.error(409,'PHONE_CHANGE_UNAVAILABLE','لا يمكن تغيير الجوال إلى هذا الرقم.')
-            user=conn.execute("UPDATE users SET phone=%s,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL WHERE id=%s AND active RETURNING *",(challenge['phone'],source['id'])).fetchone()
-            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(source['id'],))
-            db.audit(conn,source['id'],'customer.phone.changed','user',source['id'])
-        else:
-            conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone,identity_kind,phone_verified_at," + proof_column + ") VALUES(%s,%s,'customer',%s,%s,%s,now(),now()) ON CONFLICT(brand_id,phone) WHERE role='customer' AND phone_verified_at IS NOT NULL DO NOTHING",
-                         (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone'], 'phone_'+channel+'_verified'))
-            user = conn.execute("SELECT * FROM users WHERE brand_id=%s AND phone=%s AND role='customer' AND phone_verified_at IS NOT NULL AND active", (challenge['brand_id'], challenge['phone'])).fetchone()
-        if user:
-            user = conn.execute("UPDATE users SET "+proof_column+"=now(),phone_verified_at=now(),display_name=CASE WHEN %s<>'' THEN %s ELSE display_name END,updated_at=now() WHERE id=%s RETURNING *",(body.display_name.strip(),body.display_name.strip(),user['id'])).fetchone()
-            conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s',(challenge['brand_id'],channel))
-        if not user:
-            raise db.error(403, 'CUSTOMER_DISABLED', 'هذا الحساب موقوف. تواصل مع الإدارة.')
-        if customer_phone_required(conn,challenge['brand_id']) and not user['display_name'].strip():
-            raise db.error(422, 'CUSTOMER_NAME_REQUIRED', 'أدخل اسمك لإكمال التحقق.')
-        if challenge.get('source_guest_id'):
-            owned=current_user(request)
-            if owned['id']!=challenge['source_guest_id'] or owned['brand_id']!=user['brand_id']:
-                raise db.error(403,'GUEST_LINK_FORBIDDEN','أعد التحقق من نفس جلسة التواصل.')
-            conn.execute('SELECT id FROM users WHERE id=%s FOR UPDATE',(owned['id'],)).fetchone()
-            if not _find_session(conn,request):raise db.error(403,'GUEST_LINK_FORBIDDEN','أعد التحقق من نفس جلسة التواصل.')
-            conn.execute('INSERT INTO customer_identity_links(source_id,customer_id,brand_id) VALUES(%s,%s,%s)',(owned['id'],user['id'],user['brand_id']))
-            conn.execute('UPDATE conversations SET customer_id=%s WHERE customer_id=%s AND brand_id=%s',(user['id'],owned['id'],user['brand_id']))
-            conn.execute('UPDATE customer_addresses SET customer_id=%s WHERE customer_id=%s AND brand_id=%s',(user['id'],owned['id'],user['brand_id']))
-            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(owned['id'],))
-            db.audit(conn,user['id'],'customer.owned_guest_linked','user',user['id'],{'source_user_id':owned['id']})
-        return establish_session(conn, user, response, customer_verified=True)
+        return _complete_customer_otp(conn, challenge, body, request, response, provider)
+
+
+def _complete_customer_otp(conn, challenge, body, request, response, provider):
+    """Canonical atomic claim, identity linking and session creation for customer OTP."""
+    channel = challenge['delivery_channel']
+    conn.execute('SELECT channel FROM identity_channels WHERE brand_id=%s AND channel=%s FOR UPDATE',(challenge['brand_id'],channel)).fetchone()
+    _otp_channel_ready(conn, challenge['brand_id'], channel)
+    _otp_test_access(conn, challenge['brand_id'], channel, request)
+    if _sms_provider(conn, challenge['brand_id']) != provider:
+        raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
+    claimed = conn.execute('UPDATE otp_challenges SET verified_at=now() WHERE id=%s AND verified_at IS NULL AND expires_at>clock_timestamp() RETURNING id',
+                           (body.challenge_id,)).fetchone()
+    if not claimed:
+        raise db.error(409, 'OTP_ALREADY_USED', 'تم استخدام طلب التحقق بالفعل.')
+    if _channel(conn, challenge['brand_id'], channel)['state'] == 'testing':
+        # Owner smoke test proves delivery without creating/logging in a customer.
+        owner = _optional_identity(request, conn)
+        conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s', (challenge['brand_id'], channel))
+        db.audit(conn, owner['id'], 'identity.sms.test_verified', 'brand', challenge['brand_id'], {'provider': provider})
+        return {'verified': True, 'test_only': True}
+    proof_column = 'phone_whatsapp_verified_at' if channel == 'whatsapp' else 'phone_sms_verified_at'
+    conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(challenge['brand_id']+':customer-phone:'+challenge['phone'],))
+    if challenge.get('source_user_id'):
+        source=current_user(request)
+        if source['id']!=challenge['source_user_id']:raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','أعد التحقق من الجوال.')
+        conflict=conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND phone=%s AND phone_verified_at IS NOT NULL AND role='customer' AND id<>%s",(challenge['brand_id'],challenge['phone'],source['id'])).fetchone()
+        if conflict:raise db.error(409,'PHONE_CHANGE_UNAVAILABLE','لا يمكن تغيير الجوال إلى هذا الرقم.')
+        user=conn.execute("UPDATE users SET phone=%s,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL WHERE id=%s AND active RETURNING *",(challenge['phone'],source['id'])).fetchone()
+        conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(source['id'],))
+        db.audit(conn,source['id'],'customer.phone.changed','user',source['id'])
+    else:
+        conn.execute("INSERT INTO users(id,display_name,role,brand_id,phone,identity_kind,phone_verified_at," + proof_column + ") VALUES(%s,%s,'customer',%s,%s,%s,now(),now()) ON CONFLICT(brand_id,phone) WHERE role='customer' AND phone_verified_at IS NOT NULL DO NOTHING",
+                     (db.new_id('customer_'), body.display_name, challenge['brand_id'], challenge['phone'], 'phone_'+channel+'_verified'))
+        user = conn.execute("SELECT * FROM users WHERE brand_id=%s AND phone=%s AND role='customer' AND phone_verified_at IS NOT NULL AND active", (challenge['brand_id'], challenge['phone'])).fetchone()
+    if user:
+        user = conn.execute("UPDATE users SET "+proof_column+"=now(),phone_verified_at=now(),display_name=CASE WHEN %s<>'' THEN %s ELSE display_name END,updated_at=now() WHERE id=%s RETURNING *",(body.display_name.strip(),body.display_name.strip(),user['id'])).fetchone()
+        conn.execute('UPDATE identity_channels SET delivery_proven_at=now(),updated_at=now() WHERE brand_id=%s AND channel=%s',(challenge['brand_id'],channel))
+    if not user:
+        raise db.error(403, 'CUSTOMER_DISABLED', 'هذا الحساب موقوف. تواصل مع الإدارة.')
+    if customer_phone_required(conn,challenge['brand_id']) and not user['display_name'].strip():
+        raise db.error(422, 'CUSTOMER_NAME_REQUIRED', 'أدخل اسمك لإكمال التحقق.')
+    if challenge.get('source_guest_id'):
+        owned=current_user(request)
+        if owned['id']!=challenge['source_guest_id'] or owned['brand_id']!=user['brand_id']:
+            raise db.error(403,'GUEST_LINK_FORBIDDEN','أعد التحقق من نفس جلسة التواصل.')
+        conn.execute('SELECT id FROM users WHERE id=%s FOR UPDATE',(owned['id'],)).fetchone()
+        if not _find_session(conn,request):raise db.error(403,'GUEST_LINK_FORBIDDEN','أعد التحقق من نفس جلسة التواصل.')
+        conn.execute('INSERT INTO customer_identity_links(source_id,customer_id,brand_id) VALUES(%s,%s,%s)',(owned['id'],user['id'],user['brand_id']))
+        conn.execute('UPDATE conversations SET customer_id=%s WHERE customer_id=%s AND brand_id=%s',(user['id'],owned['id'],user['brand_id']))
+        conn.execute('UPDATE customer_addresses SET customer_id=%s WHERE customer_id=%s AND brand_id=%s',(user['id'],owned['id'],user['brand_id']))
+        conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(owned['id'],))
+        db.audit(conn,user['id'],'customer.owned_guest_linked','user',user['id'],{'source_user_id':owned['id']})
+    return establish_session(conn, user, response, customer_verified=True)
 
 
 def bootstrap_owner(username: str, password: str, brand_id: str = 'kps', display_name: str = 'الإدارة'):
@@ -705,8 +757,8 @@ def channel_readiness(conn, brand):
         if channel in {'sms','whatsapp'}:
             try:
                 provider = _selected_sms_provider(channels.get('sms') or {})
-                _provider_ready(provider)
-                configured = os.getenv('OTP_CHANNEL','sms') == channel and (provider != 'tawked' or channel == 'sms')
+                _customer_provider_ready(provider, brand)
+                configured = os.getenv('OTP_CHANNEL','sms') == channel and (provider not in {'tawked', 'authentica'} or channel == 'sms')
             except Exception:
                 configured = False
         available = bool(row['enabled'] and row['state']=='active' and configured)
@@ -743,7 +795,9 @@ def assert_customer_order_eligible(conn, user, *, phone_required=None):
 
 
 @router.get('/identity/channels')
-def public_channels(brand_id: str='kps'):
+def public_channels(brand_id: str|None=None):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(brand_id,)).fetchone():
             raise db.error(404,'BRAND_NOT_FOUND','البراند غير متاح.')
@@ -755,7 +809,7 @@ class GuestBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     display_name: str = Field(min_length=1,max_length=100)
     phone: str = Field(min_length=8,max_length=30)
-    brand_id: str = Field(default='kps',min_length=1,max_length=80)
+    brand_id: str = Field(default_factory=default_brand,min_length=1,max_length=80)
     email: str | None = Field(default=None,max_length=254)
 
     @field_validator('*')
@@ -970,7 +1024,7 @@ def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,
 class EmailRequestBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     email:str=Field(min_length=3,max_length=254)
-    brand_id:str=Field(default='kps',min_length=1,max_length=80)
+    brand_id:str=Field(default_factory=default_brand,min_length=1,max_length=80)
     purpose:Literal['customer_link','email_login','staff_login','owner_link','recovery']='email_login'
 
 
@@ -1029,7 +1083,7 @@ class EmailVerifyBody(BaseModel):
 class StaffCodeRequestBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     phone:str=Field(min_length=8,max_length=30)
-    brand_id:str=Field(default='kps',min_length=1,max_length=80)
+    brand_id:str=Field(default_factory=default_brand,min_length=1,max_length=80)
 
 
 @router.post('/identity/staff/code/request')
@@ -1197,7 +1251,7 @@ def require_owner_sms_step_up(conn,user):
 
 
 def require_owner_step_up(conn,user):
-    if staff_email_retired(user.get('brand_id','kps'), conn=conn):
+    if staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn):
         # A timestamp created by a pre-cutover password/email proof is not SMS.
         # Proof must be bound to this owner, this exact live session and the
         # current registered mobile, with a distinct sensitive challenge.
@@ -1765,9 +1819,21 @@ def identity_settings(user=Depends(require_roles('owner'))):
         return {'channels':rows,'readiness':channel_readiness(conn,user['brand_id']),
                 'email_provider':email_delivery.configuration(),
                 'sms_provider':_sms_provider(conn,user['brand_id']),
-                'sms_providers':['disabled','tawked','twilio_verify'],
+                'sms_providers':_available_sms_providers(user['brand_id']),
                 'required_secret_settings':['TAWKED_API_KEY','EMAIL_PROVIDER','EMAIL_FROM','MAIL_OUTBOX_KEY','RESEND_API_KEY or SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD'],
                 'email_security':'لا تستخدم كلمة مرور Gmail في المحادثة. استخدم مزودًا مخولًا أو بيانات SMTP مخصصة في إعدادات الخادم السرية.'}
+
+
+def _available_sms_providers(brand):
+    providers = ['disabled', 'tawked', 'twilio_verify']
+    if brand == 'enbishan':
+        try:
+            _customer_provider_ready('authentica', brand)
+        except HTTPException:
+            pass
+        else:
+            providers.append('authentica')
+    return providers
 
 
 class ChannelUpdateBody(BaseModel):
@@ -1775,7 +1841,7 @@ class ChannelUpdateBody(BaseModel):
     channel:Literal['guest','email','sms','whatsapp']
     state:Literal['unconfigured','testing','active','paused','fault']
     enabled:bool=False
-    sms_provider:Literal['disabled','tawked','twilio_verify'] | None = None
+    sms_provider:Literal['disabled','tawked','twilio_verify','authentica'] | None = None
 
 
 @router.patch('/identity/settings')
@@ -1783,6 +1849,10 @@ def update_identity_settings(body:ChannelUpdateBody,user=Depends(require_roles('
     with db.tx() as conn:
         conn.execute('SELECT channel FROM identity_channels WHERE brand_id=%s AND channel=%s FOR UPDATE',(user['brand_id'],body.channel)).fetchone()
         row=_channel(conn,user['brand_id'],body.channel)
+        if body.sms_provider == 'authentica':
+            # Merely choosing a provider, an API key or a database allowlist is
+            # never authorization to enable the unapproved application.
+            _customer_provider_ready('authentica', user['brand_id'])
         if body.sms_provider is not None:
             if body.channel != 'sms':
                 raise db.error(422,'SMS_PROVIDER_CHANNEL','اختر قناة SMS لتغيير المزود.')

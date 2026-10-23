@@ -20,7 +20,10 @@ class Decision(BaseModel):
     decision:Literal['approved','rejected']
 
 def scope(c,user,driver_id,manager_id,shift_id=None):
-    driver=c.execute("SELECT * FROM users WHERE id=%s AND brand_id=%s AND role='driver' AND active",(driver_id,user['brand_id'])).fetchone()
+    driver=c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active",(driver_id,)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():driver=multibrand.project(c,driver,user['brand_id'])
+    elif driver and driver['brand_id']!=user['brand_id']:driver=None
     manager=c.execute('SELECT * FROM shifts WHERE id=%s',(manager_id,)).fetchone()
     if not driver or not manager or manager['brand_id']!=user['brand_id'] or manager['kind']!='manager':raise db.error(404,'FUEL_SCOPE','الطلب غير متاح / Request unavailable')
     if user.get('_morning_manager_context'):
@@ -115,6 +118,8 @@ def consume(c,user,shift,inspection,phase,vehicle):
     if not r or r['status']!='approved' or r['brand_id']!=shift['brand_id'] or r['driver_id']!=shift['user_id'] or r['manager_shift_id']!=shift['manager_shift_id'] or r['phase']!=phase or (phase!='start' and r['shift_id']!=shift['id']) or r['vehicle']!=vehicle or r['fuel_percent']!=inspection.fuel_percent or r['odometer_km']!=inspection.odometer_km:
         raise db.error(409,'FUEL_APPROVAL_REQUIRED','الخزان غير ممتلئ؛ اطلب موافقة مدير التوصيل / Tank not full; delivery manager approval required')
     approver=c.execute('SELECT * FROM users WHERE id=%s',(r['decided_by'],)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():approver=multibrand.project(c,approver,shift['brand_id'])
     if not approver or not approver['active'] or approver['role']!='delivery_manager' or not auth.has_permission(approver,'shifts_approve'):raise db.error(403,'FUEL_APPROVER_REVOKED','صلاحية الاعتماد غير سارية / Approval no longer authorized')
     scope(c,approver,r['driver_id'],r['manager_shift_id'],r['shift_id'])
     c.execute("UPDATE fuel_exceptions SET status='consumed',consumed_shift_id=%s,consumed_at=now() WHERE id=%s",(shift['id'],r['id']))

@@ -115,6 +115,26 @@ def error(status: int, code: str, message: str) -> HTTPException:
 
 
 @contextmanager
+def pooled_connection():
+    """Own an autocommit connection across explicit, short transactions.
+
+    For protocols requiring durable state before an external call. Callers must
+    explicitly release their session locks; the existing pool reset additionally
+    clears session state and advisory locks before reuse. Prefer tx() normally.
+    """
+    url = os.environ.get('DATABASE_URL', '')
+    if not url.startswith(('postgres://', 'postgresql://')):
+        raise RuntimeError('A PostgreSQL DATABASE_URL is required; no temporary storage fallback exists.')
+    pool = _pool_for_url(url)
+    try:
+        with pool.connection(timeout=POOL_CHECKOUT_SECONDS) as conn:
+            conn.execute("SET statement_timeout = '15000ms'")
+            yield conn
+    except (PoolClosed, PoolTimeout, TooManyRequests) as exc:
+        raise psycopg.OperationalError('Database connection capacity is unavailable.') from exc
+
+
+@contextmanager
 def tx(*, pipeline: bool = False):
     url = os.environ.get('DATABASE_URL', '')
     if not url.startswith(('postgres://', 'postgresql://')):
@@ -222,6 +242,8 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
                encoded_response: bool = False) -> dict | str | DeferredAtomicResponse:
     if not key or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', key):
         raise error(400, 'IDEMPOTENCY_KEY_REQUIRED', 'أرسل مفتاح منع تكرار صحيحًا للعملية.')
+    from .multibrand import replay_operation
+    operation = replay_operation(conn, user_id, operation)
     lock_key = hashlib.sha256(f'{user_id}:{operation}:{key}'.encode()).digest()[:8]
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (int.from_bytes(lock_key, 'big', signed=True),))
     # An opted-in HTTP caller can send the database's already-authorized JSON
@@ -283,6 +305,10 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
 
 
 def migrate():
+    from . import multibrand
+    if multibrand.enabled():
+        # Reject a bad test DSN before opening a connection or acquiring locks.
+        multibrand.isolation_guard()
     with tx() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
         baseline = preservation_snapshot(conn)
@@ -296,15 +322,17 @@ def migrate():
                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
 
 
-PRESERVED_TABLES = ('first_order_gift_claims', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
-                    'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
+PRESERVED_TABLES = ('promotion_report_closures', 'first_order_gift_claims', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
+                    'orders', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
                     'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
                     'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures', 'report_corrections', 'report_renderings', 'report_notifications',
                     'closure_drafts', 'conversations', 'chat_messages', 'chat_attachments',
                     'conversation_reads', 'conversation_transfers',
                     'recovery_events', 'recovery_state', 'recovery_alerts',
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
-                    'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings')
+                    'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
+                    'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+                    'customer_wallets','benefit_order_states','customer_wallet_entries')
 
 
 def preservation_snapshot(conn, baseline=None):
@@ -349,6 +377,8 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
         conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (file.name, checksum))
     if seed:
         seed_initial(conn)
+    from . import multibrand
+    multibrand.migrate(conn)
     # Explicit one-time owner decisions apply to the intended imported identities.
     # Existing seeds stay immutable; subsequent boots never reset admin edits.
     if owner_decisions:

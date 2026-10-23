@@ -21,7 +21,9 @@ def public_config(brand_id):
 
 
 @router.get('/config')
-def config(brand_id: str = Query(default='kps', pattern=r'^[a-z][a-z0-9_-]{1,59}$')):
+def config(brand_id: str | None = Query(default=None, pattern=r'^[a-z][a-z0-9_-]{1,59}$')):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     storefront_scope.require_brand(brand_id)
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (brand_id,)).fetchone():

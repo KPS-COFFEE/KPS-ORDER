@@ -225,7 +225,8 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         customer.locator('#latitude').fill('28.4002')
         customer.locator('#longitude').fill('45.9002')
         customer.locator('#save-location').click()
-        customer.get_by_role('button', name='تفاصيل ' + product['name'], exact=True).first.click()
+        # Product photos add plain items directly; titles retain the details flow.
+        customer.locator(f'.product-card[data-product-id="{product["id"]}"] .product-content h3 button').click()
         cart_before = customer.locator('#header-count').inner_text()
         if customer.locator('#product-image-zoom').is_visible():
             customer.locator('#product-image-zoom').click()

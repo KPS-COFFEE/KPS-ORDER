@@ -55,7 +55,9 @@ def validate(value):
 
 
 @router.get('/public')
-def public_policy(brand_id: str = Query(default='kps', max_length=80)):
+def public_policy(brand_id: str | None = Query(default=None, max_length=80)):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     from .storefront_scope import require_brand
     require_brand(brand_id)
     with db.tx() as conn:

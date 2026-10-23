@@ -164,7 +164,8 @@ def mutate(c,user,request,operation,body,perform):
     # and task/collection changes in a consistent order across endpoints.
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('operations:'+user['brand_id'],))
     key=request.headers.get('Idempotency-Key','')
-    replay=c.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND operation=%s AND key=%s',(user['id'],operation,key)).fetchone()
+    from .multibrand import replay_operation
+    replay=c.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND operation=%s AND key=%s',(user['id'],replay_operation(c,user['id'],operation),key)).fetchone()
     if replay:authorize_replay(c,user,operation,body,replay['response'])
     return blind_closure.driver_view(user,db.idempotent(c,user['id'],key,operation,safe(body),lambda: safe(perform())),shift_money=operation.startswith('shift.') and not operation.startswith('shift.draft:'))
 
@@ -328,6 +329,9 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','راجع اعتماد العهدة السابقة قبل فتح مناوبة الصباح المحدودة.')
         def perform():
             target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
+            from . import multibrand
+            if multibrand.enabled():
+                target=multibrand.project(c,target,user['brand_id'])
             if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')
             if user['role']=='admin' and target['role'] not in ('driver','delivery_manager'):
                 fail(403,'افتح الشفت لموظف تشغيل مخول فقط')
@@ -337,7 +341,13 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
             if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
             if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
-            if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(target['id'],)).fetchone():
+            active_sql="SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'"
+            active_params=(target['id'],)
+            if multibrand.enabled():
+                multibrand.isolation_guard()
+                active_sql+=' AND brand_id=%s'
+                active_params+=(target['brand_id'],)
+            if c.execute(active_sql,active_params).fetchone():
                 raise db.error(409,'SHIFT_ALREADY_OPEN','لديك شفت مفتوح بالفعل. انتقل إلى مهام التوصيل أو الشفتات بدل فتح شفت جديد.')
             brand=target.get('brand_id') or user.get('brand_id')
             bids=body.branch_ids or target.get('branch_ids',[])
@@ -367,6 +377,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']):
                     raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي جميع فروعك. مدير التوصيل هو من يعدّل نطاق التغطية.')
                 manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
+                if multibrand.enabled():manager_user=multibrand.project(c,manager_user,brand)
                 if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (manager_user['role']!='owner' and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
                 if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
             elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
@@ -383,7 +394,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 c, brand, branch_rows, manager_preparation=body.kind == 'manager',
                 delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
             sid=uid()
-            carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL FOR UPDATE',(target['id'],)).fetchall()
+            carryovers=c.execute('SELECT r.* FROM retained_carryovers r JOIN shifts s ON s.id=r.from_shift_id WHERE r.user_id=%s AND s.brand_id=%s AND r.to_shift_id IS NULL AND r.archived_test_at IS NULL FOR UPDATE OF r',(target['id'],brand)).fetchall()
             if context and body.kind == 'manager' and carryovers:
                 raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','هذه المناوبة لا تنقل عهدًا مالية سابقة.')
             carried=sum(x['amount_halalas'] for x in carryovers)
@@ -519,6 +530,11 @@ def driver_cash_policy(c,brand_id):
 
 def people_data(c,user):
     users=c.execute("SELECT id,display_name,role,brand_id,branch_ids FROM users WHERE active AND brand_id=%s AND role IN ('owner','delivery_manager','driver','branch_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
+    from . import multibrand
+    if multibrand.enabled():
+        known={u['id'] for u in users}
+        shared=c.execute("SELECT u.* FROM users u JOIN staff_brand_memberships m ON m.user_id=u.id WHERE m.brand_id=%s AND m.active AND u.active AND u.role IN ('owner','delivery_manager','driver')",(user['brand_id'],)).fetchall()
+        users += [multibrand.project(c,u,user['brand_id']) for u in shared if u['id'] not in known]
     users=[{'id':u['id'],'display_name':u['display_name'],'role':u['role'],'branch_ids':u['branch_ids']} for u in users if u['role']=='owner' or user['role']=='owner' or set(u['branch_ids'])&set(user.get('branch_ids',[]))]
     managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if user['role']=='owner' or set(s['branch_ids'])&set(user.get('branch_ids',[]))]
@@ -784,10 +800,15 @@ def eligible_driver_shift(c,s,order):
     if s:break_guard(c,s['id'])
     if not s or s['kind']!='driver' or s['status']!='open' or not s.get('available',True) or s['brand_id']!=order['brand_id'] or order['branch_id'] not in s['branch_ids']:fail(409,'شفت السائق غير مؤهل')
     driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():
+        driver=multibrand.project(c,driver,order['brand_id'])
+        multibrand.dedication_guard(c,s['user_id'],order['brand_id'])
     if not driver or not driver['active'] or driver['role']!='driver' or driver['brand_id']!=order['brand_id'] or order['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
     manager=lock_shift(c,s['manager_shift_id'])
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
     principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
+    if multibrand.enabled():principal=multibrand.project(c,principal,order['brand_id'])
     if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (principal['role']!='owner' and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
     if order.get('snapshot', {}).get('delivery_period') == 'morning':
         from . import morning_delivery
@@ -825,6 +846,8 @@ def assign_in_transaction(c,user,oid,body):
         shift_access(c, user, s)
     if not s or s['kind']!='driver' or s['status']!='open' or s['brand_id']!=o['brand_id'] or o['branch_id'] not in s['branch_ids']:fail(409,'السائق غير مؤهل أو شفته غير مفتوح')
     driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():driver=multibrand.project(c,driver,o['brand_id'])
     if not driver or not driver['active'] or driver['role']!='driver' or o['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
     manager=lock_shift(c,s['manager_shift_id'])
     if not manager or manager['status']!='open':fail(409,'شفت المدير غير مفتوح')
@@ -1279,8 +1302,10 @@ class PaymentTerminal(OperationBody):
 
 
 def terminal_driver(c,user,driver_id):
-    row=c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND brand_id=%s",(driver_id,user['brand_id'])).fetchone()
-    if not row:fail(404,'السائق غير موجود')
+    row=c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active",(driver_id,)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():row=multibrand.project(c,row,user['brand_id'])
+    if not row or row['brand_id']!=user['brand_id']:fail(404,'السائق غير موجود')
     if user['role']=='driver':
         if row['id']!=user['id']:fail(404,'السائق غير موجود')
     elif user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'السائق خارج نطاق المدير')
@@ -1326,6 +1351,8 @@ def create_custody(c,user,body,capability=None):
     if src['status']=='closed' or (to and (to['status'] not in ('open','closing') or to['brand_id']!=src['brand_id'])):fail(409,'شفت عهدة غير متاح')
     recipient=(to['user_id'] if to else body.recipient_user_id)
     target=c.execute('SELECT * FROM users WHERE id=%s AND active',(recipient,)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():target=multibrand.project(c,target,src['brand_id'])
     if not target or target['id']==src['user_id'] or target['role'] not in ('owner','delivery_manager','driver','branch_manager') or not same_scope(user,target):fail(422,'يلزم مستلم مخول مستقل يؤكد فعليا')
     if src['kind']=='driver' and driver_cash_policy(c,src['brand_id'])=='delivery_manager':
         if body.receiving_branch_id or not to or to['kind']!='manager' or to['id']!=src['manager_shift_id'] or target['role'] not in ('delivery_manager','owner'):

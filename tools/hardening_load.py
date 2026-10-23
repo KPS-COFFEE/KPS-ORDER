@@ -941,6 +941,12 @@ def hosting_report_checks(db_url, origin, workloads):
     from app.main import app
     from tests.sms_policy_helpers import sms_login
 
+    parts=conninfo_to_dict(db_url)
+    if (parts.get('host') not in {'127.0.0.1','localhost','::1'}
+            or not parts.get('dbname','').startswith('test_')
+            or not re.fullmatch(r'-csearch_path=kps_(?:load|test)_[0-9a-f]{32}',parts.get('options',''))
+            or os.getenv('DATABASE_URL')!=db_url):
+        raise ValueError('Report fixtures require the exact run-owned local test schema.')
     expected_count = sum(w.concurrency * w.rounds for w in workloads)
     expected_total = sum(order['total'] for w in workloads for order in w.confirmed)
     with db.tx() as conn:

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 
 from fastapi import HTTPException, Request
 from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import auth, monitoring, storefront_scope
 
@@ -96,13 +98,21 @@ class SecurityMiddleware:
                         "connect-src 'self' https://api.mapbox.com/v4/ https://api.mapbox.com/styles/v1/mapbox/ "
                         "https://api.mapbox.com/directions/v5/mapbox/driving/ https://api.mapbox.com/fonts/v1/mapbox/ https://api.mapbox.com/map-sessions/v1 https://events.mapbox.com/; "
                         "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+                if path in {'/branch-payment','/payment-return'} and os.getenv('KPS_BRANCH_PAYMENT_CHECKOUT_ENABLED') == 'true':
+                    headers['Content-Security-Policy'] = (
+                        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/moyasar-payment-form@2.3.0/dist/moyasar.umd.min.js; "
+                        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/moyasar-payment-form@2.3.0/dist/moyasar.css; "
+                        "img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.moyasar.com; "
+                        "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://api.moyasar.com")
+                    directives = {item.strip().split('=', 1)[0].lower()
+                                  for item in headers.get('Cache-Control', '').split(',')}
+                    headers['Cache-Control'] = 'private, no-store' if 'private' in directives else 'no-store'
+                    headers['Referrer-Policy'] = 'no-referrer'
                 if os.getenv('APP_ENV', 'production') == 'production':
                     headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
                 public_image = (path.startswith(('/api/product-assets/', '/api/banner-assets/'))
                                 and method in ('GET', 'HEAD') and status == 200)
                 if path.startswith(('/api/', '/ops')) and not public_image:
-                    # Retain a route's explicit private classification while
-                    # enforcing no-store and dropping cacheable directives.
                     directives = {item.strip().split('=', 1)[0].lower()
                                   for item in headers.get('Cache-Control', '').split(',')}
                     headers['Cache-Control'] = 'private, no-store' if 'private' in directives else 'no-store'
@@ -114,8 +124,18 @@ class SecurityMiddleware:
             # disconnect handling and server extensions without relay tasks.
             await send(message)
 
-        brand_token = storefront_scope.current_brand.set(storefront_scope.bound_brand(request))
+        from .multibrand import operation_brand
+        operations_token = operation_brand.set(request.headers.get('x-operations-brand'))
+        brand_token = storefront_scope.current_brand.set(None)
         try:
+            from .multibrand import enabled as multibrand_enabled
+            if (multibrand_enabled() and path not in {'/','/index.html'}
+                    and auth.session_context(request)=='work' and (not storefront_scope.forced_work_context(request)
+                         or storefront_scope.is_public_brand_route(path))
+                    and any(re.fullmatch(r'[A-Za-z0-9_-]{40,100}',request.cookies.get(name,''))
+                            for name in (auth.COOKIE,'kps_work_session'))):
+                request.state.verified_work_storefront=await run_in_threadpool(storefront_scope.verify_work_override,request)
+            storefront_scope.current_brand.set(storefront_scope.bound_brand(request))
             if path.startswith('/api/') and method not in {'GET', 'HEAD', 'OPTIONS'}:
                 auth.check_origin(request)
             length = request.headers.get('content-length')
@@ -152,3 +172,4 @@ class SecurityMiddleware:
 
         finally:
             storefront_scope.current_brand.reset(brand_token)
+            operation_brand.reset(operations_token)

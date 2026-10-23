@@ -296,7 +296,7 @@ def migrate():
                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
 
 
-PRESERVED_TABLES = ('driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
+PRESERVED_TABLES = ('promotion_report_closures', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
                     'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
                     'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
                     'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures', 'report_corrections', 'report_renderings', 'report_notifications',
@@ -304,7 +304,8 @@ PRESERVED_TABLES = ('driver_work_trips', 'driver_work_trip_orders', 'driver_work
                     'conversation_reads', 'conversation_transfers',
                     'recovery_events', 'recovery_state', 'recovery_alerts',
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
-                    'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings')
+                    'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
+                    'first_order_gift_claims', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries', 'staff_brand_memberships', 'driver_brand_dedications')
 
 
 def preservation_snapshot(conn, baseline=None):

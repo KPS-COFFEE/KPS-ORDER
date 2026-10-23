@@ -466,7 +466,7 @@ class TestV5Identity:
         assert result.status_code==200,result.text
 
     @pytest.mark.parametrize('neighborhood',['','   ','...','\u200b\u200f','  حي الحزم  '])
-    def test_delivery_keeps_optional_trimmed_neighborhood_in_durable_order(self,client,neighborhood):
+    def test_delivery_requires_neighborhood_and_preserves_trimmed_snapshot(self,client,neighborhood):
         _prepare_catalog()
         manager=_make_user('delivery_manager',branches=['kps-branch-1'])
         with db.tx() as conn:
@@ -475,6 +475,14 @@ class TestV5Identity:
         body=_body('delivery')
         body['customer']['neighborhood']=neighborhood
         result=_create(client,body,key='district-snapshot')
+        if not neighborhood.strip():
+            # The approved customer policy now requires this field. Shared
+            # staff models and saved addresses remain optional elsewhere.
+            assert result.status_code==422,result.text
+            assert result.json()['detail']['code']=='DELIVERY_NEIGHBORHOOD_REQUIRED'
+            with db.tx() as conn:
+                assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n']==0
+            return
         assert result.status_code==200,result.text
         order=result.json()['order']
         assert order['customer']['neighborhood']==neighborhood.strip()

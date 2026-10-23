@@ -19,6 +19,16 @@ function load(saved=null,blocked=false){
     append(...children){this.children.push(...children);}
     replaceChildren(...children){this.copy='';this.children=children;}
     addEventListener(){}
+    querySelectorAll(selector){
+      assert.match(selector,/^\.[a-z-]+$/,'fixture only supports the shipped class selectors');
+      const name=selector.slice(1),matches=[];
+      for(const child of this.children){
+        if(String(child.className||'').split(/\s+/).includes(name))matches.push(child);
+        matches.push(...child.querySelectorAll(selector));
+      }
+      return matches;
+    }
+    querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
     get childElementCount(){return this.children.length;}
   }
   const elements=new Map();
@@ -27,7 +37,7 @@ function load(saved=null,blocked=false){
     return elements.get(id);
   };
   const storage={getItem(){if(blocked)throw Error('Storage blocked');return saved;}};
-  const state={products:structuredClone(catalog.products),category:'',brand:{id:'kps'}};
+  const state={products:structuredClone(catalog.products),category:'',brand:{id:'kps'},cart:[]};
   const context={Intl,URL,state,requestedBrandId:'kps',location:{origin:'https://fixture.invalid'},
     eligibleForProduct:()=>({ok:true}),branch:()=>null,city:value=>value,
     localStorage:storage,queueMicrotask:fn=>fn(),
@@ -119,6 +129,10 @@ test('shipped menu rendering keeps source identities and images while translatin
     zoom:card.children[1].children.at(-1).textContent,
   }));}
   const ar=render('ar'),en=render('en');
+  for(const card of element('products').children){
+    assert.equal(card.querySelector('.product-card-quantity').textContent,'0');
+    assert.equal(card.querySelector('.product-minus-button').disabled,true);
+  }
   assert.equal(en.length,catalog.products.length);
   assert.deepEqual(en.map(({id,image})=>({id,image})),ar.map(({id,image})=>({id,image})));
   assert.equal(en[0].title,'Cold Brew');
@@ -128,5 +142,13 @@ test('shipped menu rendering keeps source identities and images while translatin
   assert.equal(element('products').children[0].dataset.productId,'kps-11');
   p.lang('ar');p.renderProducts();assert.equal(element('products').children[0].dataset.productId,'kps-11');
   element('search').value='';assert.deepEqual(render('ar'),ar);
+  state.cart=[{productId:catalog.products[0].id,quantity:3,options:{},note:''}];
+  for(const lang of ['ar','en']){
+    render(lang);
+    const card=element('products').children[0];
+    assert.equal(card.querySelector('.product-card-quantity').textContent,
+      new Intl.NumberFormat(lang==='ar'?'ar-SA':'en-SA').format(3));
+    assert.equal(card.querySelector('.product-minus-button').disabled,false);
+  }
   assert.equal(JSON.stringify(state.products),before);
 });

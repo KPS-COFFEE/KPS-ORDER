@@ -57,7 +57,7 @@ def test_menu_preview_and_original_zoom(live_app,chromium_browser):
         images=page.locator('.product-card img');expect(images.first).to_be_visible()
         assert '/media/previews/' in images.first.get_attribute('src')
         assert images.first.get_attribute('loading')=='eager'
-        page.locator('.product-image-button').first.click()
+        page.locator('.product-content h3 button').first.click()
         expect(page.locator('#product-dialog')).to_be_visible()
         src=page.locator('#product-image').get_attribute('src')
         assert '/media/previews/' not in src and '?preview=true' not in src

@@ -93,7 +93,7 @@ SECTIONS = {
 }
 
 
-def render(kind, lang):
+def render(kind, lang, brand='kps'):
     en = lang == 'en'
     title = {'privacy':('سياسة الخصوصية','Privacy policy'), 'terms':('الشروط والأحكام','Terms and conditions'), 'refunds':('سياسة الاسترجاع والاسترداد','Returns and refunds')}[kind][en]
     sections = ''.join(f'<section><h2>{escape(s[en])}</h2><p>{escape(s[2+en])}</p></section>' for s in SECTIONS[kind])
@@ -105,4 +105,9 @@ def render(kind, lang):
     contact = 'Contact us' if en else 'تواصل معنا'
     date = 'Effective / last updated' if en else 'تاريخ النفاذ / آخر تحديث'
     update = 'Updates will be published here with their effective date and do not remove mandatory rights relating to previous orders.' if en else 'تُنشر التحديثات هنا مع تاريخ نفاذها، ولا تُسقط الحقوق الإلزامية المتعلقة بالطلبات السابقة.'
-    return HTMLResponse(f'''<!doctype html><html lang="{lang}" dir="{'ltr' if en else 'rtl'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} | KPS COFFEE</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/customer.css"></head><body><main class="page-shell"><article class="panel legal-page"><nav aria-label="{'Policy navigation' if en else 'تصفح السياسات'}"><a href="/?brand_id=kps">{menu}</a> · <a href="/{kind}?lang={'ar' if en else 'en'}&amp;brand_id=kps">{'العربية' if en else 'English'}</a> · <a href="/?brand_id=kps#contact">{contact}</a></nav><p class="policy-brand"><b>KPS COFFEE</b><br><span lang="ar">كبز قهوة مختصة</span></p><h1>{title}</h1>{sections}{controller}<p class="small">{update}</p><p class="small muted">{date}: <time datetime="{UPDATED}">{DISPLAY_DATE}</time></p></article></main></body></html>''', headers={'Cache-Control':'no-store'})
+    html = f'''<!doctype html><html lang="{lang}" dir="{'ltr' if en else 'rtl'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} | KPS COFFEE</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/customer.css"></head><body><main class="page-shell"><article class="panel legal-page"><nav aria-label="{'Policy navigation' if en else 'تصفح السياسات'}"><a href="/?brand_id=kps">{menu}</a> · <a href="/{kind}?lang={'ar' if en else 'en'}&amp;brand_id=kps">{'العربية' if en else 'English'}</a> · <a href="/?brand_id=kps#contact">{contact}</a></nav><p class="policy-brand"><b>KPS COFFEE</b><br><span lang="ar">كبز قهوة مختصة</span></p><h1>{title}</h1>{sections}{controller}<p class="small">{update}</p><p class="small muted">{date}: <time datetime="{UPDATED}">{DISPLAY_DATE}</time></p></article></main></body></html>'''
+    if brand == 'enbishan':
+        for old, new in [('KPS COFFEE', 'Enbishan'), ('كبز قهوة مختصة', 'عنبيشن'), ('0550472662', '0509895855'), ('brand_id=kps', 'brand_id=enbishan')]:
+            html = html.replace(old, new)
+        html = html.replace('<html ', '<html data-storefront-brand="enbishan" ', 1).replace('</head>', '<link rel="stylesheet" href="/assets/enbishan.css?v=20261020"></head>')
+    return HTMLResponse(html, headers={'Cache-Control':'no-store'})

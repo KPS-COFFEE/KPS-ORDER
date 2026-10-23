@@ -183,17 +183,31 @@ def test_total_deadline_includes_all_redirects_and_never_reads_body(monkeypatch)
         async def __aiter__(self):
             pytest.fail('Resolver must not consume remote bodies')
             yield b''
+    clock = {'now': 0., 'start': 0.}
     async def handle(request):
         seen.append(str(request.url))
-        await asyncio.sleep(.06)
+        # Advance the resolver's real event-loop deadline cumulatively without
+        # making shared-runner CPU scheduling determine the number of hops.
+        clock['now'] += .06
+        # The first turn admits the due timeout callback; the second gives it
+        # the chance to cancel this transport before a response is returned.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
         return httpx.Response(302, headers={'location': SHORT + str(len(seen))}, stream=NoBody())
+    async def resolve_with_controlled_clock():
+        loop = asyncio.get_running_loop()
+        clock['now'] = clock['start'] = loop.time()
+        with monkeypatch.context() as controlled:
+            controlled.setattr(loop, 'time', lambda: clock['now'])
+            return await maps.resolve_short_map_url(SHORT)
     monkeypatch.setattr(maps, 'DEADLINE_SECONDS', .1)
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw))
     start = time.monotonic()
-    with pytest.raises(Exception) as error: asyncio.run(maps.resolve_short_map_url(SHORT))
+    with pytest.raises(Exception) as error: asyncio.run(resolve_with_controlled_clock())
     assert error.value.status_code == 422
     assert time.monotonic() - start < .3
-    assert len(seen) == 2
+    assert seen == [SHORT, SHORT + '1']
+    assert clock['now'] - clock['start'] == pytest.approx(.12)
 
 
 def test_route_cancellation_releases_distributed_lease(database, monkeypatch):

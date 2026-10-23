@@ -319,7 +319,6 @@ def test_dashboard_setting_midnight_refund_and_card_split(ops):
     assert actor('owner').get('/api/dashboard').json()['period']['operational_day_start_minutes']==135
     assert actor('other').get('/api/dashboard?brand_id=ops-brand').status_code==403
 
-
 @pytest.mark.postgres
 def test_cash_card_pickup_does_not_enter_delivery_custody(ops):
     actor,post,order,shifts=ops;manager,driver=shifts();oid=order('pickup')
@@ -396,7 +395,6 @@ def test_duplicate_product_lines_refund_subtracted_once(ops):
     post('owner','/api/orders/'+oid+'/refund',refund)
     item=actor('owner').get('/api/dashboard').json()['top_items'][0]
     assert item['quantity']==1 and item['net_halalas']==500
-
 
 @pytest.mark.postgres
 def test_task_transfer_across_manager_reports_does_not_duplicate_completed_sale(ops):

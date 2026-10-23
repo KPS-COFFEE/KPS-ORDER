@@ -1,0 +1,86 @@
+{
+  "read_only": true,
+  "not_an_origin_tls_certificate_for_503": true,
+  "checks": [
+    {
+      "requested_url": "https://order.kps.sa/",
+      "checked_at_utc": "2026-10-23T03:10:21.489348+00:00",
+      "method": "GET",
+      "tls_verification": "default Python HTTPS certificate verification; no override",
+      "status": 200,
+      "final_url": "https://order.kps.sa/",
+      "content_type": "text/html; charset=utf-8"
+    },
+    {
+      "requested_url": "https://order.kps.sa/ready",
+      "checked_at_utc": "2026-10-23T03:10:29.649616+00:00",
+      "method": "GET",
+      "tls_verification": "default Python HTTPS certificate verification; no override",
+      "status": 200,
+      "final_url": "https://order.kps.sa/ready",
+      "readiness": {
+        "status": "ready",
+        "revision": "4e4d781b4fa82b7459410694ff5c4ac06842e6e7",
+        "database": "connected",
+        "applied_migrations": 74,
+        "customer_otp_configured": true,
+        "verified_products": 34,
+        "verified_branches": 11,
+        "identity_channels": {
+          "guest": {
+            "state": "active",
+            "enabled": true,
+            "available": true,
+            "configured": true,
+            "delivery_proven": false
+          },
+          "email": {
+            "state": "testing",
+            "enabled": false,
+            "available": false,
+            "configured": true,
+            "delivery_proven": true
+          },
+          "sms": {
+            "state": "active",
+            "enabled": true,
+            "available": true,
+            "configured": true,
+            "delivery_proven": true
+          },
+          "whatsapp": {
+            "state": "unconfigured",
+            "enabled": false,
+            "available": false,
+            "configured": false,
+            "delivery_proven": false
+          }
+        },
+        "data_preservation": {
+          "verified": true,
+          "checked_tables": 68,
+          "revision": "4e4d781b4fa82b7459410694ff5c4ac06842e6e7"
+        },
+        "ordering_configured": true
+      }
+    },
+    {
+      "requested_url": "http://order.enbishan.com/",
+      "checked_at_utc": "2026-10-23T03:10:37.084810+00:00",
+      "method": "GET",
+      "tls_verification": "default Python HTTPS certificate verification; no override",
+      "status": 503,
+      "error": "HTTP Error 503: Service Unavailable",
+      "error_body": "upstream connect error or disconnect/reset before headers. reset reason: connection termination"
+    },
+    {
+      "requested_url": "https://order.enbishan.com/",
+      "checked_at_utc": "2026-10-23T03:10:43.806414+00:00",
+      "method": "GET",
+      "tls_verification": "default Python HTTPS certificate verification; no override",
+      "status": 503,
+      "error": "HTTP Error 503: Service Unavailable",
+      "error_body": "upstream connect error or disconnect/reset before headers. reset reason: remote connection failure"
+    }
+  ]
+}

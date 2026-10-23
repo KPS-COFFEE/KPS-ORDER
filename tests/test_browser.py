@@ -945,7 +945,7 @@ def test_real_created_brand_storefront_identity_empty_catalog_and_draft_isolatio
         # Save an actual source-product draft on the default KPS storefront.
         page.goto('/')
         expect(page.locator('.product-card')).to_have_count(34)
-        page.locator('.product-image-button').first.click()
+        page.locator('.product-content h3 button').first.click()
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
         expect(page.locator('.cart-line')).to_have_count(1)

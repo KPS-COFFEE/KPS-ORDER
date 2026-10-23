@@ -144,11 +144,12 @@ jobs:
         run: |
           Set-Location tools/windows-print-bridge
           Copy-Item ../../public/assets/kps-receipt-logo.png logo.png
+          Copy-Item ../../public/assets/enbishan-original.jpeg enbishan-logo.jpeg
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /out:KpsPrintBridge.exe /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll KpsPrintBridge.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./KpsPrintBridge.exe --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Compress-Archive -Path KpsPrintBridge.exe,KpsPrintBridge.cs,Start.cmd,README.txt,logo.png -DestinationPath KPS-Print-Bridge-Windows.zip
+          Compress-Archive -Path KpsPrintBridge.exe,KpsPrintBridge.cs,Start.cmd,README.txt,logo.png,enbishan-logo.jpeg -DestinationPath KPS-Print-Bridge-Windows.zip
       - uses: actions/upload-artifact@v4
         with:
           name: windows-print-bridge-${{ github.sha }}

@@ -58,7 +58,8 @@ def test_full_needs_no_exception_and_delegation_cannot_bypass(ops):
         assert c.execute('SELECT count(*) n FROM fuel_exceptions').fetchone()['n']==0
 
 import os
-from test_browser import _context, _owner_login, _staff, _capture, chromium_browser, live_app, synthetic_mail
+from test_browser import _context, _owner_login, _staff, _capture, chromium_browser, synthetic_mail
+from tests.browser_sms_helpers import sms_browser_app as live_app
 
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Real isolated Chromium only')

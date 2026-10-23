@@ -29,10 +29,22 @@ def test_owner_test_void_confirmation_and_retained_history(live_app,chromium_bro
     context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,owner)
     try:
         page.set_viewport_size({'width':width,'height':1000});page.goto(live_app+'/ops')
-        if lang=='en':page.get_by_role('button',name='English',exact=True).click()
-        page.locator('[data-action=dispatch-filter][data-scope=all][data-stage=""]').click()
+        # The global language button is visible before the initial workspace's
+        # asynchronous load finishes. Its click starts another full render.
+        # Act only on acknowledged UI states so a still-pending initialization
+        # cannot replace the detail panel after its order request completes.
+        expect(page.locator('#content')).to_have_attribute('aria-busy','false')
+        if lang=='en':
+            page.get_by_role('button',name='English',exact=True).click()
+            expect(page.locator('#content')).to_have_attribute('aria-busy','false')
+        all_orders=page.locator('[data-action=dispatch-filter][data-scope=all][data-stage=""]')
+        all_orders.click()
+        expect(all_orders).to_have_attribute('aria-pressed','true')
+        expect(page.locator('#content')).to_have_attribute('aria-busy','false')
         page.locator('[data-action=dispatch-inspect][data-id="void-browser-order"]').first.click()
-        page.locator('[data-action=test-void-order]').click()
+        action=page.locator('[data-action=test-void-order][data-id="void-browser-order"]')
+        expect(action).to_be_visible()
+        action.click()
         expect(page.locator('#modal')).to_be_visible()
         expect(page.locator('#modal-body')).to_contain_text(('دون تغيير التحصيل' if lang=='ar' else 'without assigning fault') if unpaid_cancelled else ('لا يصرف أموالًا' if lang=='ar' else 'does not disburse cash'))
         _capture(page,f'owner-test-void-confirm-{lang}-{unpaid_cancelled}')
@@ -45,6 +57,7 @@ def test_owner_test_void_confirmation_and_retained_history(live_app,chromium_bro
             else:
                 assert c.execute("SELECT record_kind FROM refunds WHERE order_id='void-browser-order'").fetchone()['record_kind']=='test_void'
                 assert c.execute("SELECT amount_halalas FROM collections WHERE id='void-browser-col'").fetchone()['amount_halalas']==2050
+        expect(page.locator('#content')).to_have_attribute('aria-busy','false')
         page.locator('[data-action=dispatch-inspect][data-id="void-browser-order"]').first.click()
         expect(page.locator('#dispatch-panel-details')).to_contain_text('ملغي تجريبيًا — لا صرف نقدي' if lang=='ar' else 'Test void — no cash disbursed')
         expect(page.locator('[data-action=test-void-order]')).to_have_count(0)

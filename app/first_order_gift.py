@@ -201,7 +201,8 @@ def gift_quote(body: catalog.QuoteBody, user=Depends(auth.require_roles('custome
     with db.tx() as conn:
         auth.assert_customer_order_eligible(conn, user, phone_required=True)
         settings = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (body.brand_id,)).fetchone()
-        quote = catalog.quote_order(conn, body)
+        quote = catalog.quote_order(conn, body, user=user)
+        catalog.require_customer_delivery_neighborhood(body)
         prepare(conn, body, quote, user, (settings or {}).get('settings'))
         return {'quote': catalog.customer_quote_view(quote)}
 

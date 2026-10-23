@@ -4,6 +4,7 @@ Shares existing canonical challenges and sessions. No SMS is sent unless the
 brand channel already has live proof. Reuses Tawked’s existing four-digit
 contract, or a separately configured four-digit Twilio employee service.
 """
+from .storefront_scope import default_brand
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,7 @@ from . import auth, db, portals, sms_verification, sms_rollout
 class EmployeeSMSRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     phone: str = Field(min_length=8, max_length=30)
-    brand_id: str = Field(default='kps', min_length=1, max_length=80)
+    brand_id: str = Field(default_factory=default_brand, min_length=1, max_length=80)
     lang: Literal['ar','en'] = 'ar'
 
 
@@ -245,7 +246,8 @@ class OwnerSMSVerify(BaseModel):
 
 
 def _owner_sms_enabled(user=None):
-    if not sms_rollout.employee_sms_enabled(user):
+    principal = dict(user, brand_id=user.get('home_brand_id', user['brand_id'])) if user else None
+    if not sms_rollout.employee_sms_enabled(principal):
         raise db.error(503, 'EMPLOYEE_SMS_NOT_CERTIFIED', 'رسائل الموظفين غير معتمدة بعد. / Employee SMS is not certified yet.')
 
 
@@ -262,6 +264,9 @@ def _current_owner(conn, request, expected):
     current = auth._find_session(conn, request)
     if not current or current['id'] != expected['id'] or current['session_id'] != expected['session_id'] or current['role'] != 'owner':
         raise db.error(403, 'OWNER_SMS_SESSION_REQUIRED', 'أعد التحقق من جلسة المالك. / Owner session required.')
+    # Brand selection narrows operational data, never changes the identity's
+    # home SMS provider or sensitive-proof policy. home_brand_id is server-owned.
+    current = dict(current, brand_id=current.get('home_brand_id', current['brand_id']))
     phone = auth.normalize_phone(current.get('phone') or '')
     eligible = _eligible(conn, current['brand_id'], phone, current['id'])
     if not eligible:
@@ -311,13 +316,13 @@ def verify_owner_sms(body: OwnerSMSVerify, request: Request, user=Depends(auth.r
         allowed = db.rate_limit(conn, 'owner-sms-verify-account:'+user['id'], 3, 600)
         allowed = db.rate_limit(conn, 'owner-sms-verify-phone:'+phone, 3, 600) and allowed
         allowed = db.rate_limit(conn, 'owner-sms-verify-ip:'+ip, 20, 600) and allowed
-        challenge = conn.execute("UPDATE otp_challenges SET attempts=attempts+1 WHERE id=%s AND source_user_id=%s AND source_session_id=%s AND brand_id=%s AND phone=%s AND delivery_channel='sms' AND verified_at IS NULL AND expires_at>now() AND attempts<3 RETURNING *", (body.challenge_id,user['id'],user['session_id'],user['brand_id'],phone)).fetchone() if allowed else None
+        challenge = conn.execute("UPDATE otp_challenges SET attempts=attempts+1 WHERE id=%s AND source_user_id=%s AND source_session_id=%s AND brand_id=%s AND phone=%s AND delivery_channel='sms' AND verified_at IS NULL AND expires_at>now() AND attempts<3 RETURNING *", (body.challenge_id,user['id'],user['session_id'],current['brand_id'],phone)).fetchone() if allowed else None
     if not allowed:
         raise db.error(429,'OTP_RATE_LIMIT','انتظر قبل المحاولة مجددًا. / Wait before trying again.')
     if not challenge:
         raise db.error(400,'OTP_EXPIRED','الرمز منتهي أو مستهلك. / Code expired or already used.')
     with db.tx() as conn:
-        if provider_ready(conn, user['brand_id']) != challenge['provider_name']:
+        if provider_ready(conn, current['brand_id']) != challenge['provider_name']:
             raise db.error(400,'OTP_INVALID','رمز غير صحيح. / Invalid code.')
     if challenge['provider_name'] == 'tawked':
         approved = sms_verification.check(challenge['provider_reference'], body.code)
@@ -328,7 +333,7 @@ def verify_owner_sms(body: OwnerSMSVerify, request: Request, user=Depends(auth.r
         raise db.error(400,'OTP_INVALID','رمز غير صحيح. / Invalid code.')
     with db.tx() as conn:
         fresh, fresh_phone = _current_owner(conn, request, user)
-        if fresh_phone != challenge['phone'] or provider_ready(conn,user['brand_id']) != challenge['provider_name'] or not _eligible(conn,user['brand_id'],fresh_phone,user['id'],challenge['created_at']):
+        if fresh_phone != challenge['phone'] or provider_ready(conn,fresh['brand_id']) != challenge['provider_name'] or not _eligible(conn,fresh['brand_id'],fresh_phone,user['id'],challenge['created_at']):
             raise db.error(403,'OWNER_SMS_SESSION_REQUIRED','أعد التحقق من جلسة المالك. / Owner session required.')
         claimed = conn.execute('UPDATE otp_challenges SET verified_at=now() WHERE id=%s AND source_session_id=%s AND verified_at IS NULL AND expires_at>now() RETURNING id',(body.challenge_id,user['session_id'])).fetchone()
         if not claimed:

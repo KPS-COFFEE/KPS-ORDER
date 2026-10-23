@@ -187,4 +187,3 @@ def test_new_owner_can_complete_sms_login_without_creating_another_account(clien
     assert calls==['+966501234567']
     with db.tx() as conn:
         assert conn.execute("SELECT count(*) n FROM users WHERE username='KPS'").fetchone()['n']==1
-

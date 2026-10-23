@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   windows-print-bridge:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/enbishan-invoice-parity-20261023')"
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -31,6 +31,7 @@ jobs:
         run: |
           Set-Location tools/windows-print-bridge
           Copy-Item ../../public/assets/kps-receipt-logo.png logo.png
+          Copy-Item ../../public/assets/enbishan-original.jpeg enbishan-logo.jpeg
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /out:KpsPrintBridge.exe /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.Security.dll KpsPrintBridge.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./KpsPrintBridge.exe --self-test
@@ -42,27 +43,27 @@ jobs:
         shard: [0, 1, 2]
     # pull_request branch filters target branches. This gate restricts execution
     # to the emergency source branch without changing legacy integrations.
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023')"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_DB: test_kps_order
+          POSTGRES_DB: test_enbishan_kps_regression
           POSTGRES_USER: kps_test
           POSTGRES_PASSWORD: isolated-ci-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-cmd "pg_isready -U kps_test -d test_enbishan_kps_regression"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     env:
       # Synthetic, ephemeral CI credentials only. No Render/production secrets.
-      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
-      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
       APP_ENV: testing
       PUBLIC_BASE_URL: http://testserver
       APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
@@ -76,6 +77,7 @@ jobs:
       TEST_BROWSER: "1"
       RELEASE_FULL_CI: "1"
       ROLLBACK_BASELINE_DIR: /tmp/kps-rollback-baseline
+      PENDING_MIGRATION_BASELINE_DIR: /tmp/kps-startup-baseline
       ROLLBACK_COMPAT_DIR: /tmp/kps-rollback-compat
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +164,14 @@ jobs:
           python tools/rollback_prepare_compat.py --repository "$PWD" --output "$ROLLBACK_COMPAT_DIR"
           mkdir "$ROLLBACK_BASELINE_DIR"
           git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$ROLLBACK_BASELINE_DIR"
+          mkdir "$PENDING_MIGRATION_BASELINE_DIR"
+          git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C "$PENDING_MIGRATION_BASELINE_DIR"
+          python - <<'PYBASELINE'
+          import json, os, pathlib, subprocess
+          revision = '4e4d781b4fa82b7459410694ff5c4ac06842e6e7'
+          tree = subprocess.check_output(['git', 'rev-parse', revision + '^{tree}'], text=True).strip()
+          (pathlib.Path(os.environ['PENDING_MIGRATION_BASELINE_DIR']) / 'baseline-source-identity.json').write_text(json.dumps({'revision': revision, 'tree': tree}))
+          PYBASELINE
       - name: Bound Ubuntu dependency downloads on the ephemeral runner
         shell: bash
         run: |
@@ -204,13 +214,16 @@ jobs:
         if: matrix.shard == 0
         run: node --test tests/test_owner_operational_confirmation.cjs
       - name: Verify fiscal issuance, refunds and actual thermal QR decoding
-        if: matrix.shard == 0
+        # Full mode runs every pytest node once in the disjoint shards below.
+        # Preserve focused preflights without spending the full worker's budget
+        # repeating 319 cases before its mandatory complete coverage run.
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
         run: python -m pytest tests/test_fiscal.py tests/test_fiscal_browser.py tests/test_fiscal_issuance_browser.py -q
       - name: Verify current mandatory SMS checkout and bilingual mobile privacy
-        if: matrix.shard == 0
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
         run: python -m pytest -q --strict-markers tests/test_customer_experience.py tests/test_customer_experience_browser.py tests/test_customer_final_account.py tests/test_customer_final_account_browser.py --junitxml=test-results/customer-experience.xml
       - name: Run financial, retry, printing and recovery hardening acceptance
-        if: matrix.shard == 0
+        if: matrix.shard == 0 && env.RELEASE_FULL_CI != '1'
         run: >-
           python -m pytest -q --strict-markers
           tests/test_hardening_operations.py tests/test_hardening_orders.py
@@ -352,26 +365,26 @@ jobs:
   focused-staff-journeys:
     # Additional early feedback only; all full shards and their aggregate gate
     # remain mandatory and retain their existing exact coverage manifests.
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023')"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_DB: test_kps_order
+          POSTGRES_DB: test_enbishan_kps_regression
           POSTGRES_USER: kps_test
           POSTGRES_PASSWORD: isolated-ci-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U kps_test -d test_kps_order"
+          --health-cmd "pg_isready -U kps_test -d test_enbishan_kps_regression"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     env:
-      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
-      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_kps_order
+      DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_kps_regression
       APP_ENV: testing
       PUBLIC_BASE_URL: http://testserver
       APP_ALLOWED_HOSTS: testserver,localhost,127.0.0.1
@@ -448,7 +461,7 @@ jobs:
   complete-release-regression:
     name: independent-postgres-regression
     needs: independent-postgres-regression
-    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023')
+    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

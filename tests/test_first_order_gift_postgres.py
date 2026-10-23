@@ -123,6 +123,9 @@ def test_failed_order_rolls_back_claim_and_delivery_fee_never_meets_minimum(gift
     body.pop('expected_total_halalas')
     response=client().post('/api/gifts/quote',json=body)
     assert response.status_code==409 and response.json()['detail']['code']=='MINIMUM_ORDER_NOT_MET'
+    detail=response.json()['detail']
+    assert {key:detail[key] for key in ('minimum_order_halalas','subtotal_halalas','remaining_halalas','currency')}=={
+        'minimum_order_halalas':1200,'subtotal_halalas':1000,'remaining_halalas':200,'currency':'SAR'}
 
 
 def test_expired_offer_rejects_stale_gift_confirmation_without_consuming_claim(gift_setup):

@@ -12,6 +12,38 @@ BASE=Path(os.environ.get('ROLLBACK_BASELINE_DIR', ROOT/'test-artifacts/rollback-
 COMPAT=Path(os.environ.get('ROLLBACK_COMPAT_DIR', ROOT/'test-artifacts/rollback-compat-source'))
 SPECIAL=('driver_work_trips','driver_work_trip_orders','driver_work_trip_events','branch_print_devices','branch_print_jobs','driver_accounting_settlements')
 
+
+def assert_candidate_source_identity(identity):
+ # PR events retain the synthetic merge SHA in GITHUB_SHA even when the job
+ # explicitly checks out the reviewed head. Bind evidence to actual git inputs.
+ checked_sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+ checked_tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=ROOT,text=True).strip()
+ assert re.fullmatch(r'[0-9a-f]{40}',checked_sha)
+ assert identity['candidate_sha']==checked_sha
+ assert identity['candidate_tree']==checked_tree
+ if os.environ.get('RUNTIME_REVISION'):
+  assert os.environ['RUNTIME_REVISION']==checked_sha
+
+
+def test_candidate_identity_uses_checked_out_head_not_event_merge(monkeypatch):
+ sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+ tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=ROOT,text=True).strip()
+ monkeypatch.setenv('GITHUB_SHA','f'*40 if sha!='f'*40 else 'e'*40)
+ monkeypatch.setenv('RUNTIME_REVISION',sha)
+ assert_candidate_source_identity({'candidate_sha':sha,'candidate_tree':tree})
+
+
+@pytest.mark.parametrize('field',['candidate_sha','candidate_tree','runtime'])
+def test_candidate_identity_rejects_stale_source_tree_or_runtime(monkeypatch,field):
+ sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+ tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=ROOT,text=True).strip()
+ identity={'candidate_sha':sha,'candidate_tree':tree}
+ monkeypatch.setenv('RUNTIME_REVISION',sha)
+ if field=='runtime':monkeypatch.setenv('RUNTIME_REVISION','0'*40)
+ else:identity[field]='0'*40
+ with pytest.raises(AssertionError):assert_candidate_source_identity(identity)
+
+
 def probe(path,mode,spec):
  image=os.environ.get('ROLLBACK_COMPAT_IMAGE') if mode=='compat' else None
  if image:
@@ -67,8 +99,7 @@ def test_prior_application_failure_and_compatibility_rollback_without_database_r
  if os.environ.get('ROLLBACK_COMPAT_IMAGE'):
   assert result['source_identity']['baseline_sha']==manifest['baseline_sha']
   assert result['source_identity']['overlay_manifest_sha256']==hashlib.sha256((ROOT/'tools/rollback_application_overlay/manifest.json').read_bytes()).hexdigest()
-  if os.environ.get('GITHUB_SHA'):
-   assert result['source_identity']['candidate_sha']==os.environ['GITHUB_SHA']
+  assert_candidate_source_identity(result['source_identity'])
  assert result['health']==result['ready']==200
  assert result['pending_close']=={'status':409,'code':'TRIP_RETURN_REQUIRED'}
  assert result['return_confirmed'] and result['trip_events']==2

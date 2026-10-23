@@ -70,3 +70,8 @@ review and explicit retirement. This software does not authorize shutting Render
 The Windows bridge must be restarted after updating its source; close the prior
 window, extract in a permanent folder, and run Start.cmd. Real Windows compilation,
 printer-driver behavior and physical 58mm/80mm paper require branch acceptance.
+
+Brand logos are selected only from the canonical server print job. Keep both
+logo.png (legacy KPS) and enbishan-logo.jpeg (approved Enbishan original) beside
+the executable. Enbishan uses the same receipt layout and thermal logo size.
+Do not replace a logo file with another brand; download an updated package.
