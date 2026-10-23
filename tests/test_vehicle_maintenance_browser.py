@@ -59,7 +59,8 @@ def test_driver_fault_form_and_restricted_admin_maintenance_journey(live_app, ch
         expect(page.get_by_role('heading', name='أعطال المركبات والصيانة', exact=True)).to_be_visible()
         if language == 'en':
             page.get_by_role('button', name='English', exact=True).click()
-        expect(page.locator('#navigation button')).to_have_count(2)
+        expect(page.locator('#navigation button')).to_have_count(3)
+        assert set(page.locator('#navigation button').evaluate_all('(buttons)=>buttons.map(b=>b.dataset.page)'))=={'fleet','maintenance','employeeTickets'}
         expect(page.locator('#navigation [data-page=fleet]')).to_be_visible()
         for key in ('orders', 'shifts', 'custody', 'drivers', 'admin', 'reports'):
             expect(page.locator(f'#navigation [data-page="{key}"]')).to_have_count(0)
