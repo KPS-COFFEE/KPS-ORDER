@@ -12,13 +12,16 @@ from test_operations import ops
 TZ=ZoneInfo('Asia/Riyadh')
 
 
-def test_variances_preserve_both_channels_without_netting_or_pending_shortage():
+def test_variances_preserve_channels_and_only_finalize_combined_total():
     snap={'shift':{'submission':{'expected_halalas':12000,'retained_halalas':2000,'handover_halalas':10000,'expected_card_halalas':5000,'terminal_total_halalas':5000}}}
     pending=driver_settlement_values(snap,dict(stage='balance_approved',balance_approved=True,revision=1,bank_halalas=5200,cash_due_halalas=9900,cash_received_halalas=None))
-    assert pending['shortage_halalas']==0 and pending['surplus_halalas']==200
+    assert pending['shortage_halalas']==pending['surplus_halalas']==0
+    assert pending['net_difference_halalas'] is None and pending['bank_difference_halalas']==200
     assert pending['cash_variance_halalas'] is None
     final=driver_settlement_values(snap,dict(stage='cash_received',balance_approved=True,revision=2,bank_halalas=5200,cash_due_halalas=9900,cash_received_halalas=9800))
-    assert final['shortage_halalas']==200 and final['surplus_halalas']==200
+    assert final['shortage_halalas']==final['surplus_halalas']==0
+    assert final['net_difference_halalas']==0
+    assert final['cash_variance_halalas']==-200 and final['bank_difference_halalas']==200
     assert final['cash_difference_halalas']==-100
 
 
@@ -57,7 +60,8 @@ def test_manager_card_independent_driver_receipts_day_snapshot_and_audit(ops):
     balance(post,'statement-report2')
     cards=actor('accountant').get(path).json()['cards'];assert cards[0]['completed']==0
     row=next(r for r in cards[0]['drivers'] if r['id']=='settlement-report')
-    assert row['stage']=='cash_pending_balance' and row['shortage_halalas']==100
+    assert row['stage']=='cash_pending_balance' and row['shortage_halalas']==0
+    assert not row['reconciliation_complete'] and row['net_difference_halalas'] is None
     balance(post,revision=1,bank=5100)
     cards=actor('accountant').get(path).json()['cards'];assert cards[0]['completed']==1
     post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST second driver pending'},status=409)
@@ -73,16 +77,33 @@ def test_manager_card_independent_driver_receipts_day_snapshot_and_audit(ops):
     url=f'/api/accounting/reports?group=driver_statement&start={day}&end={day}'
     data=actor('accountant').get(url).json()
     first=next(r for r in data['rows'] if r['driver_id']=='ops-driver')
-    assert first['completed_orders']==1 and first['shortage']==100 and first['surplus']==100
+    assert first['completed_orders']==1 and first['shortage']==first['surplus']==0
+    assert first['pending_shortage']==first['pending_surplus']==0
+    second=next(r for r in data['rows'] if r['driver_id']=='statement-driver2')
+    assert second['shortage']==second['surplus']==0 and second['pending_surplus']==200
+    assert 'بانتظار تأكيد المحاسب' in second['status']
     assert first['violations']==2500 and first['traffic']==15000
     assert 'TEST manager recount' in first['adjustments'] and 'TEST ACCOUNTANT' in first['adjustments']
     assert len(data['adjustment_history'])==5
     assert all(e['actor'] and e['reason'] and 'before_cash' in e for e in data['adjustment_history'])
+    cards=actor('accountant').get(path).json()['cards']
+    assert cards[0]['completed']==1 and not cards[0]['ready']
+    post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST unconfirmed difference cannot close day'},status=409)
+    post('accountant','/api/accounting/driver-settlements/statement-report2/confirm-variance',
+        {'expected_revision':2,'confirmed':True,'note':'TEST genuine surplus confirmed',
+         'action_taken':'TEST documented surplus for follow-up'})
+    confirmed_data=actor('accountant').get(url).json()
+    confirmed_second=next(r for r in confirmed_data['rows'] if r['driver_id']=='statement-driver2')
+    assert confirmed_second['surplus']==200 and confirmed_second['pending_surplus']==0
+    assert 'TEST documented surplus for follow-up' in confirmed_second['adjustments']
+    cards=actor('accountant').get(path).json()['cards']
+    assert cards[0]['completed']==2 and cards[0]['ready']
     approved=post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST reviewed all drivers'},key='day-final')
     assert post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST reviewed all drivers'},key='day-final')==approved
     saved=actor('accountant').get('/api/accounting/days/'+approved['id']).json()
     assert saved['frozen'] and saved['totals']['completed_orders']==1
-    assert saved['totals']['shortage']==100 and saved['totals']['surplus']==300
+    assert saved['totals']['shortage']==0 and saved['totals']['surplus']==200
+    assert saved['totals']['pending_shortage']==saved['totals']['pending_surplus']==0
     assert actor('other').get('/api/accounting/days/'+approved['id']).status_code==404
     # Subsequent case updates cannot rewrite the saved daily approval.
     post('accountant','/api/accounting/cases',{**case,'note':'TEST later incident'})
@@ -108,7 +129,16 @@ def test_month_statement_lists_every_day_and_keeps_driver_ownership(ops):
     report=actor('accountant').get(url).json()
     assert len(report['rows'])==end.day
     assert {r['driver_id'] for r in report['rows']}=={'ops-driver'}
-    assert report['drivers'][0]['shortage']==200
+    assert report['drivers'][0]['shortage']==0 and report['drivers'][0]['pending_shortage']==200
+    before=next(r for r in report['rows'] if r['day']==opened.date().isoformat())
+    assert 'بانتظار تأكيد المحاسب' in before['status']
+    post('accountant','/api/accounting/driver-settlements/settlement-report/confirm-variance',
+        {'expected_revision':2,'confirmed':True,'note':'TEST genuine monthly shortage confirmed',
+         'action_taken':'TEST record shortage without salary deduction'})
+    report=actor('accountant').get(url).json()
+    assert report['drivers'][0]['shortage']==200 and report['drivers'][0]['pending_shortage']==0
+    after=next(r for r in report['rows'] if r['day']==opened.date().isoformat())
+    assert 'TEST record shortage without salary deduction' in after['adjustments']
     assert report['totals']['pending_cash']==0
     assert actor('other').get(url).status_code==404
     assert actor('accountant').get(url+'&branch_ids=ops-branch-other').status_code==403
