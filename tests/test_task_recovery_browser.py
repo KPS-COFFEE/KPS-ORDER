@@ -13,8 +13,13 @@ ROOT=Path(__file__).resolve().parents[1]
 def test_diagnosis_explicit_review_failed_retry_and_actor_history(chromium_browser,brand,language,width):
     context=chromium_browser.new_context(viewport={'width':width,'height':900})
     page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-    page.set_content(f'<html lang="{language}" dir="{"rtl" if language=="ar" else "ltr"}"><body><main id="content"></main></body></html>')
+    label='معالجة الطلبات المتعثرة' if language=='ar' else 'Order intervention desk'
+    page.set_content(f'<html lang="{language}" dir="{"rtl" if language=="ar" else "ltr"}"><body><nav id="navigation"><button data-page="recovery">{label}</button></nav><main id="content"></main></body></html>')
     page.add_style_tag(path=str(ROOT/'public/ops.css'))
+    for room in ('','delivery-room'):
+        for selected in ('','active'):
+            page.evaluate('''({room,selected})=>{document.body.className=room;document.querySelector('[data-page=recovery]').className=selected;}''',{'room':room,'selected':selected})
+            assert page.locator('[data-page=recovery]').evaluate('(e)=>getComputedStyle(e).color')=='rgb(180, 35, 24)'
     page.add_script_tag(path=str(ROOT/'public/assets/task-recovery.js'))
     page.evaluate('''async({brand,language})=>{
       const ar=language==='ar',tr=(a,b)=>ar?a:b;
