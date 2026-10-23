@@ -1,6 +1,6 @@
 """Audited, scoped vehicle allocation; operating history is never reassigned."""
 import re
-from . import db, vehicle_profile, shift_vehicle
+from . import auth, db, vehicle_profile, shift_vehicle
 
 
 def plate(v):
@@ -20,6 +20,99 @@ def car_scope(c,user,car,drivers):
     return bool(scopes) and all(bool(scope) and set(scope)<=set(user.get('branch_ids') or []) for scope in scopes)
 
 
+def require_active_swap(user):
+    if user['role'] not in ('owner','admin') or not auth.has_permission(user,'fleet_active_swap'):
+        raise db.error(403,'ACTIVE_SWAP_FORBIDDEN','يلزم اعتماد صلاحية استثناء التبديل أثناء الشفت.')
+
+
+def recheck_swap_scope(c,user,drivers,body):
+    # These references remain authorized before idempotent replay, too.
+    expected=body.expected_driver_ids or []
+    selected=[d for d in drivers if d['id'] in expected]
+    other=c.execute('SELECT * FROM fleet_vehicles WHERE id=%s AND brand_id=%s',
+                    (body.counterpart_vehicle_id,user['brand_id'])).fetchone()
+    if len(expected)!=2 or len(set(expected))!=2 or len(selected)!=2 or not all(driver_scope(user,d) for d in selected):
+        raise db.error(404,'DRIVER_NOT_FOUND','السائقان خارج نطاقك أو تغيرا.')
+    if not other or not car_scope(c,user,other,drivers):
+        raise db.error(404,'VEHICLE_NOT_FOUND','السيارة الأخرى خارج نطاقك.')
+
+
+def driver_notice(c,user,driver,vehicle,action,reason):
+    # One durable, recipient-specific notice in the same transaction as the change.
+    db.audit(c,user['id'],'fleet.driver_notice','user',driver['id'],{
+        'brand_id':user['brand_id'],'action':action,'reason':reason,
+        'old_plate':(driver.get('vehicle') or {}).get('plate'),
+        'new_plate':vehicle['plate'] if vehicle else None,
+        'entered_by':user['id'],'approved_by':user['id'],
+        'actor_name':user.get('display_name') or ''})
+
+
+def active_swap(c,user,car,other,first,second,body):
+    """End both vehicle intervals, then start both replacements atomically.
+
+    Shift owners, tasks, money, breaks and availability are not reassigned.
+    The two real readings describe the same cars at release and receipt.
+    """
+    require_active_swap(user)
+    if not body.confirmed or not body.outgoing or not body.incoming or len(body.reason.strip())<3:
+        raise db.error(422,'ACTIVE_SWAP_CONFIRMATION','أكد التبديل وأكمل فحص وقراءات السيارتين.')
+    if body.counterpart_vehicle_id!=other['id'] or body.counterpart_revision is None or body.counterpart_revision!=int(other['details'].get('management_revision',0)):
+        raise db.error(409,'VEHICLE_CHANGED','تغيرت السيارة الأخرى؛ حدّث الإسناد قبل التأكيد.')
+    if sorted(body.expected_driver_ids or [])!=sorted([first['id'],second['id']]):
+        raise db.error(409,'VEHICLE_CHANGED','تغير السائقان؛ راجع الطرفين قبل اعتماد التبديل.')
+    if not all(driver_scope(user,d) for d in (first,second)):
+        raise db.error(404,'DRIVER_NOT_FOUND','السائق خارج نطاقك.')
+    if body.incoming.fuel_exception_id or body.outgoing.fuel_exception_id:
+        raise db.error(422,'HANDOVER_EXCEPTION_INVALID','أدخل القراءات الفعلية للسيارتين.')
+    lanes=[]
+    for driver,old,new,reading in ((first,car,other,body.incoming),(second,other,car,body.outgoing)):
+        rows=c.execute("SELECT * FROM shifts WHERE user_id=%s AND kind='driver' AND status IN ('open','closing') FOR UPDATE",(driver['id'],)).fetchall()
+        if len(rows)!=1 or rows[0]['status']!='open':
+            raise db.error(409,'ACTIVE_SWAP_OPEN_SHIFTS','التبديل يحتاج شفتين مفتوحين غير قيد التقفيلة.')
+        shift=rows[0]
+        if shift['brand_id']!=user['brand_id'] or not shift['branch_ids'] or (user['role']!='owner' and not set(shift['branch_ids'])<=set(user['branch_ids'])):
+            raise db.error(404,'DRIVER_NOT_FOUND','شفت السائق خارج نطاقك.')
+        log=dict(shift.get('vehicle_log') or {})
+        if plate(log.get('vehicle'))!=old['plate_key'] or log.get('end'):
+            raise db.error(409,'VEHICLE_CHANGED','السيارة المستلمة تغيرت؛ حدّث القراءات.')
+        if reading.odometer_km<shift_vehicle.odometer_floor(log):
+            raise db.error(422,'ODOMETER_DECREASE','عداد تسليم السيارة أقل من آخر قراءة لها.')
+        log['end']=shift_vehicle.stamp(c,user,reading)
+        log['handover']={'reason':body.reason,'actor_id':user['id'],'approved_by':user['id'],
+                         'action':'active_swap','next_vehicle_id':new['id']}
+        lanes.append((driver,shift,old,new,reading,log))
+    occupied=c.execute("SELECT shift_id,vehicle_id FROM fleet_operating_segments WHERE vehicle_id=ANY(%s) AND returned_at IS NULL",([car['id'],other['id']],)).fetchall()
+    expected={(lane[1]['id'],lane[2]['id']) for lane in lanes}
+    if len(occupied)!=2 or {(r['shift_id'],r['vehicle_id']) for r in occupied}!=expected:
+        raise db.error(409,'VEHICLE_IN_USE','راجع استلام السيارتين؛ يوجد تعارض في سجل التشغيل.')
+    # The transaction rolls back both interval endings if either receipt fails.
+    for driver,shift,old,new,reading,log in lanes:
+        c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(log),shift['id']))
+    after=[]
+    for driver,shift,old,new,reading,log in lanes:
+        receiving=body.outgoing if new['id']==other['id'] else body.incoming
+        profile={k:v for k,v in new['details'].items() if k in vehicle_profile.FIELDS}
+        profile['plate']=new['plate']
+        newlog=shift_vehicle.start(c,user,{**driver,'vehicle':profile},receiving)
+        past=log.pop('previous_segments',[])
+        newlog['previous_segments']=[*past,log]
+        newlog['awaiting_refuel']=receiving.fuel_percent<100
+        c.execute('UPDATE users SET vehicle=%s,updated_at=now() WHERE id=%s',(db.json(profile),driver['id']))
+        c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(newlog),shift['id']))
+        after.append({'driver_id':driver['id'],'driver_name':driver['display_name'],'plate':new['plate'],'shift_id':shift['id']})
+        driver_notice(c,user,driver,new,'active_swap',body.reason)
+    before=[{'driver_id':driver['id'],'driver_name':driver['display_name'],'vehicle':log['vehicle']} for driver,shift,old,new,reading,log in lanes]
+    for vehicle,reading in ((car,body.incoming),(other,body.outgoing)):
+        patch={'management_revision':int(vehicle['details'].get('management_revision',0))+1,
+               'odometer_km':max(vehicle['details'].get('odometer_km',0) or 0,reading.odometer_km),
+               'management_branch_ids':sorted(set(vehicle['details'].get('management_branch_ids',[]))|set(first['branch_ids'])|set(second['branch_ids']))}
+        c.execute('UPDATE fleet_vehicles SET details=details||%s WHERE id=%s',(db.json(patch),vehicle['id']))
+        db.audit(c,user['id'],'fleet.manage','vehicle',vehicle['id'],{'action':'active_swap','reason':body.reason,
+            'entered_by':user['id'],'approved_by':user['id'],'before':before,'after':after})
+    return {'vehicle_id':car['id'],'action':'active_swap','revision':body.revision+1,
+            'entered_by':user['id'],'approved_by':user['id'],'drivers':after}
+
+
 def perform(c,user,vid,body):
     # Consistent user-before-vehicle lock order matches staff edits/shift opening.
     drivers=c.execute("SELECT * FROM users WHERE brand_id=%s AND role='driver' ORDER BY id FOR UPDATE",(user['brand_id'],)).fetchall()
@@ -30,7 +123,7 @@ def perform(c,user,vid,body):
     if int(car['details'].get('management_revision',0))!=body.revision:raise db.error(409,'VEHICLE_CHANGED','حدث بطاقات السيارات قبل التنفيذ.')
     assigned=[d for d in drivers if plate(d['vehicle'])==car['plate_key']]
     affected=[car];changes=[]
-    if body.action in ('assign','transfer','swap','handover'):
+    if body.action in ('assign','transfer','swap','handover','active_swap'):
         if car['details'].get('operating_status')=='paused':raise db.error(409,'VEHICLE_PAUSED','السيارة موقوفة؛ أعد تشغيلها أولًا.')
         target=next((d for d in drivers if d['id']==body.driver_id and d['active'] and driver_scope(user,d)),None)
         if not target:raise db.error(404,'DRIVER_NOT_FOUND','السائق غير موجود أو غير مفعل ضمن نطاقك.')
@@ -43,7 +136,7 @@ def perform(c,user,vid,body):
                 raise db.error(409,'VEHICLE_CHANGED','تغير إسناد السيارة؛ حدّث القائمة وأكد النقل مجددًا.')
             if any(not driver_scope(user,d) for d in assigned):raise db.error(404,'DRIVER_NOT_FOUND','السائق خارج نطاقك.')
             changes=[(d,None) for d in assigned]+[(target,car)]
-        elif body.action=='swap':
+        elif body.action in ('swap','active_swap'):
             if len(assigned)!=1 or not old or old['details'].get('operating_status')=='paused':raise db.error(409,'VEHICLE_SWAP_INVALID','التبديل يحتاج سيارتين عاملتين، لكل منهما سائق واحد.')
             if len([d for d in drivers if plate(d['vehicle'])==old['plate_key']])!=1:raise db.error(409,'VEHICLE_ASSIGNMENT_CONFLICT','راجع الإسناد المتكرر للسيارة أولًا.')
             changes=[(assigned[0],old),(target,car)]
@@ -52,6 +145,8 @@ def perform(c,user,vid,body):
             changes=[(target,car)]
     elif body.action=='release':
         changes=[(d,None) for d in assigned]
+    if body.action=='active_swap':
+        return active_swap(c,user,car,old,assigned[0],target,body)
     if body.action=='handover':
         return handover(c,user,car,old,target,body)
     users={d['id'] for d in assigned}|{d['id'] for d,_ in changes}
@@ -80,6 +175,8 @@ def perform(c,user,vid,body):
         if v['id']==vid and body.action in ('pause','resume'):patch['operating_status']='paused' if body.action=='pause' else 'active'
         c.execute('UPDATE fleet_vehicles SET details=details||%s WHERE id=%s',(db.json(patch),v['id']))
         db.audit(c,user['id'],'fleet.manage','vehicle',v['id'],{'action':body.action,'reason':body.reason,'before':before,'after':after,'status_before':v['details'].get('operating_status','active'),'status_after':patch.get('operating_status',v['details'].get('operating_status','active'))})
+    for driver,vehicle in changes:
+        driver_notice(c,user,driver,vehicle,body.action,body.reason)
     return {'vehicle_id':vid,'action':body.action,'revision':body.revision+1}
 
 
@@ -113,4 +210,5 @@ def handover(c,user,car,old,target,body):
         patch={'odometer_km':max(details.get('odometer_km',0) or 0,km),'management_branch_ids':scope,'management_revision':int(details.get('management_revision',0))+1}
         c.execute('UPDATE fleet_vehicles SET details=details||%s WHERE id=%s',(db.json(patch),vehicle['id']))
         db.audit(c,user['id'],'fleet.manage','vehicle',vehicle['id'],{'action':'handover','shift_id':shift['id'],'reason':body.reason,'before':[{'driver_id':target['id'],'vehicle':log['vehicle']}],'after':[{'driver_id':target['id'],'driver_name':target['display_name'],'plate':car['plate']}],'outgoing':log['end'],'incoming':newlog['start']})
+    driver_notice(c,user,target,car,'handover',body.reason)
     return {'vehicle_id':car['id'],'shift_id':shift['id'],'action':'handover','revision':body.revision+1}

@@ -259,37 +259,43 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
     if brand_settings.get('services', {}).get('delivery', True) is not True:
         fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
     morning = delivery_period == 'morning'
+    morning_status = morning_delivery.manager_shift_status(now) if morning and manager_preparation else None
     if morning:
         approved = morning_delivery.policy(brand_settings)
         if (not principal or not principal.get('active') or principal.get('brand_id') != brand
                 or (principal['role'] != 'owner' and
                     (principal['role'] != 'delivery_manager' or principal['id'] not in approved['manager_user_ids']))):
             fail(403, 'مدير الفترة الصباحية غير معتمد.')
-        if not branches or any(not morning_delivery.active(b, brand_settings, now)
+        # Only manager preparation evaluates the existing policy at its upcoming
+        # duty opening. Customer intake and driver hours retain their own clock.
+        admission_clock = datetime.fromisoformat(morning_status['current_window_start']) if morning_status and morning_status['open'] else now
+        if not branches or any(not morning_delivery.active(b, brand_settings, admission_clock)
                                or b['id'] not in approved['execution_branch_ids'] for b in branches):
             fail(409, 'الفترة الصباحية مغلقة أو الفرع غير معتمد للتنفيذ.')
     for branch in branches:
         settings = branch['settings']
-        hours = morning_delivery.HOURS if morning else settings.get('delivery_hours')
+        hours = (morning_delivery.MANAGER_SHIFT_HOURS if manager_preparation else morning_delivery.HOURS) if morning else settings.get('delivery_hours')
         if not hours:
             continue
         if catalog.normalize_city(branch['city']) not in catalog.DELIVERY_CITIES:
             fail(409, 'هذا الفرع غير مؤهل لشفتات التوصيل.')
         if settings.get('active', True) is not True or settings.get('delivery_enabled') is not True:
             fail(409, 'التوصيل موقوف لهذا الفرع؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
-        status = (service_hours.manager_shift_status(hours, now) if manager_preparation and not morning
-                  else service_hours.hours_status(hours, now))
+        status = (morning_status if morning_status is not None else
+                  service_hours.manager_shift_status(hours, now) if manager_preparation else
+                  service_hours.hours_status(hours, now))
         if not status['configured']:
             fail(503, 'ساعات التوصيل لهذا الفرع غير صحيحة.')
         if not status['open']:
             if manager_preparation:
-                raise db.error(409, 'MANAGER_SHIFT_HOURS',
+                raise db.error(409, 'MORNING_MANAGER_SHIFT_HOURS' if morning else 'MANAGER_SHIFT_HOURS',
+                               'يتاح تجهيز مدير الصباح من 03:45 صباحًا في الأيام العادية، والجمعة من 12:15 ظهرًا بتوقيت السعودية.' if morning else
                                'شفت المدير مغلق الآن. لفترة التوصيل التي تبدأ 16:00، يتاح التجهيز من 15:45 بتوقيت السعودية؛ استقبال العملاء يبدأ 16:00.')
             fail(409, service_hours.closed_delivery_message(hours, now))
         windows[branch['id']] = {'hours': hours, 'window_start': status['current_window_start'],
                                   'window_end': status['current_window_end']}
         if status.get('preparation'):
-            preparation_date = datetime.fromisoformat(status['current_window_start']).date()
+            preparation_date = service_hours.delivery_operational_date(datetime.fromisoformat(status['current_window_start']))
             windows[branch['id']]['preparation_start'] = status['preparation_start']
     if not windows:
         return None, None
@@ -301,17 +307,24 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
 @router.post('/shifts')
 def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
     context = user.get('_morning_manager_context')
-    if context and (not context.get('bootstrap') or context.get('shift_id') is not None
+    if context and context.get('bootstrap') and (context.get('shift_id') is not None
             or body.kind != 'manager' or body.user_id not in (None, user['id'])
             or body.manager_shift_id is not None or body.delivery_period != 'morning'
             or body.branch_ids and set(body.branch_ids) != set(user['branch_ids'])
             or body.opening_halalas != 0 or body.receipt_trial or body.vehicle_inspection is not None):
         raise db.error(403, 'MORNING_SHIFT_SCOPE', 'افتح مناوبتك الصباحية فقط دون عهدة أو شفت موظف آخر.')
+    if context and not context.get('bootstrap') and (body.kind != 'driver'
+            or not body.user_id or body.user_id == user['id']
+            or body.manager_shift_id != context['shift_id']
+            or body.delivery_period not in (None, 'morning')
+            or body.branch_ids and set(body.branch_ids) != set(user['branch_ids'])
+            or body.opening_halalas != 0 or body.receipt_trial):
+        raise db.error(403, 'MORNING_SHIFT_SCOPE', 'افتح شفت سائق تابع لمناوبتك الصباحية فقط.')
     shift_roles(user,'shifts_open','owner','delivery_manager','driver')
     if user['role']=='driver' and body.branch_ids and set(body.branch_ids)!=set(user.get('branch_ids',[])):
         fail(403,'فروع السائق يحددها مدير التوصيل؛ لا يمكن تغيير نطاق الشفت')
     with db.tx() as c:
-        if context and c.execute("SELECT 1 FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL LIMIT 1",(user['id'],)).fetchone():
+        if context and context.get('bootstrap') and c.execute("SELECT 1 FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL LIMIT 1",(user['id'],)).fetchone():
             raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','راجع اعتماد العهدة السابقة قبل فتح مناوبة الصباح المحدودة.')
         def perform():
             target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
@@ -371,7 +384,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
                 delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
             sid=uid()
             carryovers=c.execute('SELECT * FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL FOR UPDATE',(target['id'],)).fetchall()
-            if context and carryovers:
+            if context and body.kind == 'manager' and carryovers:
                 raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','هذه المناوبة لا تنقل عهدًا مالية سابقة.')
             carried=sum(x['amount_halalas'] for x in carryovers)
             permanent_float=None
@@ -440,13 +453,11 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
                     row['assignment_eligible']=True
                     eligible.append(row)
                 return safe({'shifts':eligible})
-            rows=c.execute("SELECT s.id,s.shift_no,s.kind,s.user_id,s.brand_id,s.branch_ids,s.status,s.opened_at,s.delivery_window_snapshot,u.display_name "
-                           "FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.id=%s AND s.user_id=%s "
-                           "AND s.delivery_window_snapshot->>'period'='morning' AND s.branch_ids <@ %s::jsonb",
-                           (user['brand_id'],context['shift_id'],user['id'],db.json(user['branch_ids']))).fetchall()
-            # This read exists only for the manual-order form. No receivers,
-            # driver roster, balances or closure contents belong to this role.
-            return safe({'shifts': rows})
+            rows=c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id "
+                           "WHERE s.brand_id=%s AND (s.id=%s OR s.manager_shift_id=%s) "
+                           "AND s.delivery_window_snapshot->>'period'='morning' AND s.branch_ids <@ %s::jsonb "
+                           "ORDER BY s.opened_at DESC,s.id LIMIT 200",
+                           (user['brand_id'],context['shift_id'],context['shift_id'],db.json(user['branch_ids']))).fetchall()
         elif owner_view:
             # Filter before pagination so old unclosed shifts cannot disappear
             # behind hundreds of newer historical records. Never change state.
@@ -520,8 +531,12 @@ def people_data(c,user):
         from .morning_manager_context import shift_allowed
         child_ids = {r['user_id'] for r in c.execute("SELECT user_id FROM shifts WHERE manager_shift_id=%s AND brand_id=%s AND delivery_window_snapshot->>'period'='morning'", (context['shift_id'], user['brand_id'])).fetchall()}
         users = [dict(u, branch_ids=[b for b in u['branch_ids'] if b in user['branch_ids']])
-                 for u in users if u['id'] == user['id'] or u['role'] == 'driver' and (u['id'] in child_ids or set(u['branch_ids']) & set(user['branch_ids']))]
-        managers = [s for s in managers if s['id'] == context['shift_id']]
+                 for u in users if u['role']=='owner' or u['id'] == user['id'] or u['role'] == 'driver' and (u['id'] in child_ids or set(u['branch_ids']) & set(user['branch_ids']))]
+        from .morning_delivery import policy
+        approved=policy((c.execute('SELECT settings FROM brands WHERE id=%s',(user['brand_id'],)).fetchone() or {}).get('settings'))['manager_user_ids']
+        managers = [s for s in managers if (s['id'] == context['shift_id'] or s['user_id'] in approved)
+                    and (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
+                    and set(s['branch_ids'])==set(user['branch_ids'])]
     return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
 
 @router.get('/operations/people')
@@ -1051,6 +1066,12 @@ def operational_alerts(user=Depends(auth.current_user)):
         exceptions=[]
         if user['role']=='owner':
             exceptions=c.execute("SELECT n.id,n.report_id FROM report_notifications n JOIN closure_reports r ON r.id=n.report_id WHERE n.recipient_user_id=%s AND n.brand_id=%s AND n.read_at IS NULL AND r.snapshot->'shift'->'submission'->'closure_exception' IS NOT NULL ORDER BY n.created_at DESC LIMIT 50",(user['id'],user['brand_id'])).fetchall()
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import order_allowed
+            def visible(oid):return order_allowed(user,c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone(),c)
+            rows=[r for r in rows if visible(r['id'])]
+            problems=[r for r in problems if visible(r['id'])]
+            printing=[r for r in printing if r.get('order_id') and visible(r['order_id'])]
         return safe({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions})
 
 class TaskHandover(OperationBody): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
@@ -1348,6 +1369,10 @@ def custody_list(user=Depends(auth.current_user)):
     with db.tx() as c:
         rows=c.execute('SELECT t.*,s.brand_id,s.branch_ids FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id WHERE s.brand_id=%s AND (t.recipient_user_id=%s OR s.user_id=%s) ORDER BY t.created_at DESC LIMIT 200',(user['brand_id'],user['id'],user['id'])).fetchall()
         rows=[r for r in rows if user['role']=='owner' or (r.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(r['branch_ids'])<=set(user.get('branch_ids',[])))]
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import shift_allowed
+            rows=[r for r in rows if all(shift_allowed(user,c.execute('SELECT * FROM shifts WHERE id=%s',(r[key],)).fetchone())
+                                        for key in ('from_shift_id','to_shift_id') if r.get(key))]
         if user['role']=='driver':rows=[r for r in rows if r['status']=='pending' and r['recipient_user_id']==user['id']]
         return safe({'transfers':rows})
 
@@ -1356,6 +1381,9 @@ def confirm_custody_in_tx(c,user,cid):
     if not t or t['recipient_user_id']!=user['id']:fail(404,'التسليم غير موجود أو أنت لست المستلم')
     if t['status']!='pending':fail(409,'التسليم غير معلق')
     source=c.execute('SELECT * FROM shifts WHERE id=%s',(t['from_shift_id'],)).fetchone()
+    if user.get('_morning_manager_context'):
+        from .morning_manager_context import require_shift
+        require_shift(user,source)
     scope_ok=(t.get('receiving_branch_id') in user.get('branch_ids',[]) if user['role']=='branch_manager' else set(source['branch_ids'])<=set(user.get('branch_ids',[])))
     if not same_scope(user,source) or (user['role']!='owner' and not scope_ok):fail(403,'تم سحب صلاحية فروع التسليم')
     if t['to_shift_id']:shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(t['to_shift_id'],)).fetchone())
@@ -1538,6 +1566,9 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         if service:
             if service not in ('delivery','pickup','car'):fail(422,'نوع طلب غير صالح')
             clauses.append('o.service=%s');params.append(service)
+        from .morning_manager_context import order_filter
+        morning_clause,morning_params=order_filter(user)
+        clauses.append(morning_clause);params.extend(morning_params)
         where=' AND '.join(clauses)+" AND o.test_void IS NULL"
         summary=c.execute("SELECT count(*) orders,count(*) FILTER(WHERE preparation_status='new') new,count(*) FILTER(WHERE completed_at IS NULL AND preparation_status NOT IN ('cancelled','rejected','new')) active,count(*) FILTER(WHERE completed_at IS NOT NULL) completed,count(*) FILTER(WHERE preparation_status IN ('cancelled','rejected')) cancelled,coalesce(sum(total_halalas) FILTER(WHERE completed_at IS NOT NULL),0) gross_completed_halalas,coalesce(sum(delivery_fee_halalas) FILTER(WHERE completed_at IS NOT NULL),0) delivery_fee_halalas FROM orders o WHERE "+where,params).fetchone()
         refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE r.amendment_id IS NULL AND o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
@@ -1558,7 +1589,11 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         # Collection events use their own timestamps, independently of order cohorts and custody transfers.
         cash_where=where.replace('o.created_at>=','p.created_at>=').replace('o.created_at<','p.created_at<')
         collected=c.execute('SELECT p.method,coalesce(sum(p.amount_halalas),0) amount_halalas FROM collections p JOIN orders o ON o.id=p.order_id WHERE '+cash_where+' GROUP BY p.method',params).fetchall()
-        shift_rows=c.execute("SELECT status,count(*) count,coalesce(sum((submission->>'difference_halalas')::bigint),0) difference_halalas FROM shifts WHERE brand_id=%s AND opened_at<%s AND coalesce(closed_at,%s)>=%s AND (%s OR branch_ids ?| %s) GROUP BY status",(brand,hi,hi,lo,user['role']=='owner',[branch_id] if branch_id else user.get('branch_ids',[]))).fetchall()
+        shift_clause='';shift_params=[]
+        if user.get('_morning_manager_context'):
+            shift_clause=" AND delivery_window_snapshot->>'period'='morning' AND (id=%s OR manager_shift_id=%s)"
+            shift_params=[user['_morning_manager_context']['shift_id']]*2
+        shift_rows=c.execute("SELECT status,count(*) count,coalesce(sum((submission->>'difference_halalas')::bigint),0) difference_halalas FROM shifts WHERE brand_id=%s AND opened_at<%s AND coalesce(closed_at,%s)>=%s AND (%s OR branch_ids ?| %s)"+shift_clause+" GROUP BY status",[brand,hi,hi,lo,user['role']=='owner',[branch_id] if branch_id else user.get('branch_ids',[]),*shift_params]).fetchall()
         return safe({'period':{'start':lo,'end':hi,'timezone':'Asia/Riyadh','operational_day_start_minutes':minutes,'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ الفترة الحالية يوم تقويمي بتوقيت الرياض'},'summary':summary,'top_items':items,'top_branches':branch_top,'delivery_time':timing,'delivery_performance':frozen_performance,'collections':collected,'shifts':shift_rows,'definitions_url':'/docs/metrics'})
 
 class ManagerHandover(OperationBody):

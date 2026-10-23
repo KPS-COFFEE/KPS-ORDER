@@ -107,7 +107,11 @@ def test_manager_preparation_intervention_requires_actual_driver_acceptance_and_
             version = c.execute('SELECT version FROM orders WHERE id=%s', (oid,)).fetchone()['version']
         for invalid in ('cancelled', 'completed', 'handed_over', 'accepted'):
             denied = post(client, path, {'status': invalid, 'version': version, 'reason': 'Forbidden intervention'})
-            assert denied.status_code == 403, denied.text
+            if invalid == 'cancelled':
+                # Same manager cancellation guard: an active task blocks cancellation.
+                assert denied.status_code == 409 and denied.json()['detail']['code'] == 'DELIVERY_TASK_ACTIVE', denied.text
+            else:
+                assert denied.status_code == 403, denied.text
         missing = post(client, path, {'status': state, 'version': version})
         assert missing.status_code in (403, 422), missing.text
         for reason in ('x', 'xx', '   ', 'x'*501, 'reason\x00invalid'):
@@ -120,7 +124,7 @@ def test_manager_preparation_intervention_requires_actual_driver_acceptance_and_
         replay = post(client, path, body, key)
         assert replay.status_code == 200 and replay.json() == result.json(), replay.text
         forbidden = post(client, path, body | {'status': 'cancelled'}, key)
-        assert forbidden.status_code == 403, forbidden.text
+        assert forbidden.status_code == 409, forbidden.text
     with db.tx() as c:
         task = c.execute('SELECT * FROM driver_tasks WHERE id=%s', (tid,)).fetchone()
         assert task['status'] == 'accepted' and task['picked_up_at'] is None
@@ -287,7 +291,10 @@ def test_bootstrap_does_not_consume_existing_financial_carryover(morning_manager
 def test_bootstrap_body_cannot_grant_other_shift_or_financial_authority(morning_manager, tamper):
     client, _, _ = morning_manager; remove_duty()
     response = post(client, '/api/shifts', opening() | tamper)
-    assert response.status_code in (403, 409, 422), response.text
+    if 'manager_shift_id' in tamper:
+        assert response.status_code == 404 and response.json()['detail']['code'] == 'MORNING_SHIFT_NOT_FOUND', response.text
+    else:
+        assert response.status_code in (403, 409, 422), response.text
     with db.tx() as c:
         assert not c.execute("SELECT 1 FROM shifts WHERE user_id='ops-manager' AND status='open'").fetchone()
 

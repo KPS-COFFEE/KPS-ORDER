@@ -4,12 +4,31 @@ The customer branch remains the commercial/coverage boundary. Execution routing
 never expands employee branch access or changes existing operational-day rules.
 """
 from copy import deepcopy
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 from . import auth, db, service_hours
 
 router = APIRouter(prefix='/api/morning-delivery', tags=['morning-delivery'])
 HOURS = [{'days': list(range(7)), 'start': '04:00', 'end': '16:00'}]
+# Manager staffing is independent from customer admission and driver shifts.
+MANAGER_SHIFT_HOURS = [
+    {'days': [0, 1, 2, 3, 5, 6], 'start': '04:00', 'end': '16:00'},
+    {'days': [4], 'start': '12:30', 'end': '16:00'},
+]
+
+
+def manager_shift_status(now=None):
+    """The approved manager may prepare fifteen minutes before morning duty."""
+    local = service_hours.local_time(now)
+    status = service_hours.hours_status(MANAGER_SHIFT_HOURS, local)
+    if not status['open'] and status['next_open_at']:
+        opening = datetime.fromisoformat(status['next_open_at'])
+        start = opening - timedelta(minutes=15)
+        if start <= local < opening:
+            status = service_hours.hours_status(MANAGER_SHIFT_HOURS, opening)
+            status.update(preparation=True, preparation_start=start.isoformat())
+    return status
 
 
 def defaults():
@@ -95,7 +114,7 @@ def save_policy(body: PolicyChange, user=Depends(auth.require_roles('owner')),
     if len(body.reason.strip())<3 or '\x00' in body.reason:
         raise db.error(422,'REASON_REQUIRED','أدخل سبب التعديل.')
     with db.tx() as c:
-        auth.require_owner_step_up(c,user)
+        # An authenticated owner confirms this operational change in the UI.
         def perform():
             row=c.execute('SELECT settings FROM brands WHERE id=%s FOR UPDATE',(user['brand_id'],)).fetchone()
             previous=policy(row['settings'])

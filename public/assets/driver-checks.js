@@ -27,6 +27,13 @@ window.KPSDriverChecks={init(ctx){
   if(busy||document.hidden||!navigator.onLine)return;busy=true;
   try{
    const data=await api('/api/driver-checks');if(identity!==key||ctx.getUser()?.id!==user.id)return;
+   const notices=data.vehicle_notices||[],noticeIds=new Set(notices.map(n=>n.id));
+   host.querySelectorAll('[data-vehicle-notice]').forEach(el=>{if(!noticeIds.has(el.dataset.vehicleNotice))el.remove();});
+   for(const n of notices){
+    if([...host.querySelectorAll('[data-vehicle-notice]')].some(el=>el.dataset.vehicleNotice===n.id))continue;
+    const d=n.details;
+    host.insertAdjacentHTML('afterbegin',`<section class="panel notice" data-vehicle-notice="${esc(n.id)}" role="status"><h3>${esc(tr('تحديث سيارة السائق','Driver vehicle updated'))}</h3><p>${esc(d.old_plate||'—')} → ${esc(d.new_plate||tr('بدون سيارة','No vehicle'))}</p><p>${esc(tr('المنفّذ والمعتمد: ','Entered and approved by: '))}${esc(d.actor_name||'—')} · ${esc(when(n.created_at))}</p><p>${esc(d.reason)}</p><p class="small-text">${esc(tr('هذا إشعار بالتعديل المعتمد؛ الاطّلاع لا يُعد توقيع استلام.','This is a notice of an approved change; reading it is not a receipt signature.'))}</p><button type="button" data-vehicle-notice-read="${esc(n.id)}">${esc(tr('اطّلعت','Read'))}</button><p class="form-error" role="alert"></p></section>`);
+   }
    offset=Date.parse(data.server_time)-Date.now();const ids=new Set(data.requests.map(r=>r.id));
    host.querySelectorAll('[data-check-request]').forEach(el=>{if(!ids.has(el.dataset.checkRequest))el.remove();});
    for(const r of data.requests){
@@ -68,7 +75,11 @@ window.KPSDriverChecks={init(ctx){
    }catch(x){ctx.error(x.message);}finally{if(b.isConnected)b.disabled=false;}
   };
  }
- host.addEventListener('click',e=>{if(e.target.closest('[data-check-open]'))manage().catch(e=>ctx.error(e.message));});
+ host.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-vehicle-notice-read]');
+  if(b){const card=b.closest('[data-vehicle-notice]');try{await mutation('/api/driver-checks/vehicle-notices/'+encodeURIComponent(b.dataset.vehicleNoticeRead)+'/read',{},b);card.remove();}catch(x){card.querySelector('.form-error').textContent=x.message;}return;}
+  if(e.target.closest('[data-check-open]'))manage().catch(e=>ctx.error(e.message));
+ });
  setInterval(()=>{tick();if(!ctx.getUser())host.replaceChildren();},1000);
  setInterval(refresh,10000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
  return {refresh};

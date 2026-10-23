@@ -31,6 +31,34 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep Ubuntu suites, components and signing keys unchanged. Only the
+          # slow Azure mirror host is replaced with the official Ubuntu archive.
+          configured=false
+          processed=0
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              # A local mirrorlist can select Azure even when the sources file
+              # itself has no Azure URL. Verify every observed configuration path.
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+              processed=$((processed+1))
+            fi
+          done
+          if [ "$configured" != true ]; then
+            echo 'Expected Ubuntu APT sources were not found.' >&2
+            exit 1
+          fi
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+          printf 'Ubuntu APT source files verified: %s\n' "$processed"
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/assets/dispatch-layout.js && node --check public/ops.js
       - run: python -m pytest -q tests/test_delivery_workspace_browser.py tests/test_dispatch_workspace_counts.py tests/test_order_amendments.py tests/test_delivery_center_matching.py tests/test_dispatch_order_sort.py tests/test_delivery_manager_operations_only.py tests/test_dispatch_map_browser.py --junitxml=test-results/dispatch-layout.xml

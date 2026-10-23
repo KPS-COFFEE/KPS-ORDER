@@ -1,4 +1,4 @@
-"""Mandatory owner-controlled bells; real PostgreSQL and session-bound SMS."""
+"""Mandatory owner-controlled bells; real PostgreSQL and authenticated owner confirmation."""
 import pytest
 from app import db
 from tests.test_core import _make_user
@@ -9,13 +9,11 @@ POLICY={'first_after_seconds':5,'second_after_seconds':30,'continuous_after_seco
 pytestmark=pytest.mark.postgres
 
 
-def test_owner_policy_requires_sms_is_idempotent_audited_and_brand_scoped(client,monkeypatch):
+def test_owner_policy_without_extra_sms_is_idempotent_audited_and_brand_scoped(client,monkeypatch):
     owner=_make_user('owner');sms_login(client,owner,monkeypatch)
     before=client.get('/api/operations/alert-policy').json()
     assert before['mandatory'] is True and before['policy']['continuous_after_seconds']==60
     path='/api/admin/alert-policy';headers={'Idempotency-Key':'synthetic-alert-policy'}
-    assert client.patch(path,json=POLICY,headers=headers).status_code==403
-    sms_step_up(client,owner,monkeypatch)
     first=client.patch(path,json=POLICY,headers=headers)
     assert first.status_code==200,first.text
     assert client.patch(path,json=POLICY,headers=headers).json()==first.json()

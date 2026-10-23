@@ -27,6 +27,8 @@ def next_cleanup(now=None):
 
 def ticket_rows(c,user,oid=None):
     query='o.brand_id=%s';args=[user['brand_id']]
+    from .morning_manager_context import order_filter
+    morning_clause,morning_args=order_filter(user);query+=' AND '+morning_clause;args.extend(morning_args)
     if user['role']=='customer':query+=' AND o.customer_id=ANY(%s)';args.append(auth.customer_ids(user))
     elif user['role']!='owner':query+=' AND o.branch_id=ANY(%s)';args.append(user.get('branch_ids',[]))
     if oid:query+=' AND t.order_id=%s';args.append(oid)
@@ -224,6 +226,9 @@ def daily(day:str|None=None,user=Depends(auth.current_user)):
     lo=datetime.combine(d,time(16),ZoneInfo('Asia/Riyadh'));hi=lo+timedelta(days=1)
     with db.tx() as c:
         rows=report_tickets(c,user['brand_id'],None if user['role']=='owner' else user.get('branch_ids',[]),lo,hi)
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import order_allowed
+            rows=[r for r in rows if order_allowed(user,c.execute('SELECT * FROM orders WHERE id=%s',(r['order_id'],)).fetchone(),c)]
         return safe({'day':d,'tickets':rows,'categories':CATEGORIES,'states':STATES,'summary':{
             'created':sum(lo<=r['created_at']<hi for r in rows),
             'closed':sum(bool(r['closed_at'] and lo<=r['closed_at']<hi) for r in rows),

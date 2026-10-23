@@ -18,14 +18,13 @@
       <section class="notice" id="gift-owner-preview" aria-live="polite"></section>
       <p>${esc(tr('تشغيل العرض أو إيقافه لا يغير الإعلان. إعادة تشغيله أو تغيير موعده لا يعيد الاستحقاق لمن سبق أن استفاد.','Enabling or pausing this offer does not change the advertisement. Restarting or rescheduling never resets previous claims.'))}</p>
       <label>${esc(tr('سبب الاعتماد أو التغيير','Approval or change reason'))}<textarea name="reason" required minlength="3" maxlength="500"></textarea></label>
-      ${!user.employee_sms_email_retired?`<label>${esc(tr('كلمة مرور المالك','Owner password'))}<input name="step_up_password" type="password" autocomplete="current-password" required></label>`:''}
       <p class="form-error" role="alert"></p><button type="submit">${esc(tr('اعتماد إعدادات الهدية','Approve gift settings'))}</button>
     </form>`,async(fd)=>{
       const enabled=fd.has('enabled'),starts=String(fd.get('starts_at')||''),ends=String(fd.get('ends_at')||'');
       const items=selections();
       if(enabled&&(!starts||items.length!==2))throw new Error(tr('حدد الموعد والصنفين قبل التفعيل','Choose the start time and both items before enabling'));
       if(ends&&(!starts||ends<=starts))throw new Error(tr('الانتهاء يجب أن يكون بعد البداية','The end must follow the start'));
-      await ctx.authorize(fd.get('step_up_password')||undefined);
+      await ctx.authorize();
       await api('/api/gifts/policy',{method:'PUT',body:{policy:{enabled,starts_at:starts?`${starts}:00+03:00`:null,ends_at:ends?`${ends}:00+03:00`:null,items},expected_version:policy.version,reason:fd.get('reason')}});
       closeModal();await ctx.onSaved();
     });

@@ -12,6 +12,9 @@ from .operations import uid,safe,fail,roles,mutate,day_start
 router=APIRouter(prefix='/api/reports',tags=['reports'])
 
 def can_read(user,row):
+    if user.get('_morning_manager_context'):
+        from .morning_manager_context import shift_allowed
+        if not shift_allowed(user,(row.get('snapshot') or {}).get('shift')):return False
     if user['role']=='driver':return False
     if user['role']=='owner':return user['brand_id']==row['brand_id']
     if user['brand_id']!=row['brand_id'] or not set(row['branch_ids'])<=set(user.get('branch_ids',[])):return False
@@ -495,6 +498,9 @@ def report_list(offset:int=0,user=Depends(auth.current_user)):
     with db.tx() as c:
         clause='brand_id=%s' if user['role']=='owner' else "brand_id=%s AND (user_id=%s OR snapshot->>'manager_user_id'=%s)"
         p=[user['brand_id']] if user['role']=='owner' else [user['brand_id'],user['id'],user['id'] if user['role']=='delivery_manager' else '']
+        if user.get('_morning_manager_context'):
+            clause+=" AND snapshot->'shift'->'delivery_window_snapshot'->>'period'='morning' AND (shift_id=%s OR snapshot->'shift'->>'manager_shift_id'=%s)"
+            p.extend([user['_morning_manager_context']['shift_id']]*2)
         rows=c.execute("SELECT id,shift_id,kind,brand_id,branch_ids,user_id,version,pdf_status,pdf_error,created_at,snapshot->'display_users'->>(snapshot->'shift'->>'user_id') driver_name,coalesce(snapshot->'shift'->>'delivery_operational_date',snapshot->>'operational_date') operational_date,(SELECT shift_no FROM shifts WHERE shifts.id=closure_reports.shift_id) shift_no FROM closure_reports WHERE "+clause+' ORDER BY created_at DESC LIMIT 50 OFFSET %s',[*p,offset]).fetchall()
         if user['role']!='owner':rows=[r for r in rows if set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
         return safe({'reports':rows,'offset':offset,'limit':50})

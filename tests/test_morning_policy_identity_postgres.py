@@ -48,7 +48,7 @@ def test_real_morning_manager_can_only_read_own_brand_bell_cadence(morning_manag
     denied = client.patch('/api/admin/alert-policy', json=cadence,
                           headers={'Idempotency-Key': 'morning-no-bell-write'})
     assert denied.status_code == 403, denied.text
-    assert client.get('/api/operations/alerts').status_code == 403
+    assert client.get('/api/operations/alerts').status_code == 200
     assert client.get('/api/admin/config').status_code == 403
     with db.tx() as c:
         c.execute("UPDATE shifts SET status='closed' WHERE id='ctx-duty'")

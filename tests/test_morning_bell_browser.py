@@ -95,6 +95,6 @@ window.testBeeps=0;window.testStopped=0;window.AudioContext=class{constructor(){
         order['preparation_status']='ready';page.clock.run_for(16000)
         expect(alerts).not_to_contain_text('MORNING-TEST')
         assert not writes
-        assert '/api/operations/alerts' not in requests
+        assert ('/api/operations/alerts' in requests) is manager
         assert not errors
         browser.close()

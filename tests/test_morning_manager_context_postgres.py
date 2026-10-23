@@ -59,7 +59,7 @@ def test_context_view_and_unchanged_base_permissions(morning_manager):
     session=client.get('/api/session');assert session.status_code==200,session.text
     user=session.json()['user']
     assert user['branch_ids']==[B2] and user['delivery_context']['shift_id']=='ctx-duty'
-    assert 'orders_view' in user['effective_permissions'] and 'orders_print' not in user['effective_permissions']
+    assert 'orders_view' in user['effective_permissions'] and 'orders_print' in user['effective_permissions']
     rows=client.get('/api/orders');assert rows.status_code==200,rows.text
     assert {r['id'] for r in rows.json()['orders']}=={ids['morning']}
     with db.tx() as c:
@@ -100,20 +100,22 @@ def test_assignment_and_tasks_are_scoped_to_own_morning_duty(morning_manager):
 def test_shift_lists_details_and_closure_idor_are_scoped(morning_manager):
     client,ids,_=morning_manager
     r=client.get('/api/shifts');assert r.status_code==200,r.text
-    assert {s['id'] for s in r.json()['shifts']}=={'ctx-duty'}
+    assert {s['id'] for s in r.json()['shifts']}=={'ctx-duty','ctx-driver'}
     own=r.json()['shifts'][0]
-    assert not {'opening_halalas','submission','vehicle_log','permanent_float'} & set(own)
-    assert 'authorized_receivers' not in r.json() and 'available_manager_shifts' not in r.json()
+    assert {'opening_halalas','submission','vehicle_log','permanent_float'} <= set(own)
+    assert 'authorized_receivers' in r.json() and 'available_manager_shifts' in r.json()
     for sid in ('ctx-evening','ctx-evening-driver','ctx-other-duty','ctx-other-driver','ctx-other-branch'):
-        assert client.get('/api/shifts/'+sid).status_code==403
+        assert client.get('/api/shifts/'+sid).status_code in (403,404)
         for action in ('closing','submit','approve','driver-close'):
             r=post(client,f'/api/shifts/{sid}/{action}',{'received_halalas':0,'confirmed':True})
-            assert r.status_code==403,r.text
-    assert client.get('/api/shifts/ctx-driver').status_code==403
-    for path in ('/api/identity/staff','/api/reports','/api/custody','/api/admin/export','/api/manager-handovers'):
+            assert r.status_code in (403,404),r.text
+    assert client.get('/api/shifts/ctx-driver').status_code==200
+    for path in ('/api/identity/staff','/api/admin/export'):
         assert client.get(path).status_code==403
+    for path in ('/api/reports','/api/custody','/api/manager-handovers'):
+        assert client.get(path).status_code==200
     for path in ('/api/orders/'+ids['morning']+'/collect','/api/printing/orders/'+ids['morning']):
-        assert post(client,path,{}).status_code==403
+        assert post(client,path,{}).status_code==422
 
 
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
@@ -154,7 +156,7 @@ def test_foreign_role_header_and_owner_header_are_not_privilege_shortcuts(mornin
 
 @pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
 @pytest.mark.parametrize('paused',[False,True])
-def test_minimal_role_cannot_close_driver_or_create_vehicle_shift(morning_manager,paused):
+def test_authorized_manager_closes_own_driver_but_never_invents_receipt(morning_manager,paused):
     client,_,_=morning_manager
     with db.tx() as c:
         c.execute("UPDATE shifts SET status='submitted',submission=%s WHERE id='ctx-driver'",(db.json({'counted_halalas':0,'handover_halalas':0,'retained_halalas':0,'expected_halalas':0,'difference_halalas':0,'terminal_total_halalas':0}),))
@@ -163,13 +165,13 @@ def test_minimal_role_cannot_close_driver_or_create_vehicle_shift(morning_manage
             c.execute("UPDATE brands SET settings=jsonb_set(settings,'{morning_delivery,enabled}','false') WHERE id='kps'")
             c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('ctx-new-driver','new','driver','kps',%s)",(db.json([B2]),))
         denied_new=post(client,'/api/shifts',{'kind':'driver','user_id':'ctx-new-driver','branch_ids':[B2],'manager_shift_id':'ctx-duty'})
-        assert denied_new.status_code==403,denied_new.text
+        assert denied_new.status_code in (403,409,422),denied_new.text
     body={'received_halalas':0,'confirmed':True};key=uuid4().hex
     denied=post(client,'/api/shifts/ctx-driver/driver-close',body|{'confirmed':False})
-    assert denied.status_code==403,denied.text
-    r=post(client,'/api/shifts/ctx-driver/driver-close',body,key);assert r.status_code==403,r.text
-    assert post(client,'/api/shifts/ctx-driver/driver-close',body,key).status_code==403
+    assert denied.status_code==422,denied.text
+    r=post(client,'/api/shifts/ctx-driver/driver-close',body,key);assert r.status_code==200,r.text
+    assert post(client,'/api/shifts/ctx-driver/driver-close',body,key).json()==r.json()
     with db.tx() as c:
-        assert c.execute("SELECT status FROM shifts WHERE id='ctx-driver'").fetchone()['status']=='submitted'
-        assert c.execute("SELECT count(*) n FROM custody_transfers WHERE from_shift_id='ctx-driver' AND status='confirmed'").fetchone()['n']==0
-        assert c.execute("SELECT count(*) n FROM closure_reports WHERE shift_id='ctx-driver'").fetchone()['n']==0
+        assert c.execute("SELECT status FROM shifts WHERE id='ctx-driver'").fetchone()['status']=='closed'
+        assert c.execute("SELECT count(*) n FROM custody_transfers WHERE from_shift_id='ctx-driver' AND status='confirmed'").fetchone()['n']==1
+        assert c.execute("SELECT count(*) n FROM closure_reports WHERE shift_id='ctx-driver'").fetchone()['n']==1

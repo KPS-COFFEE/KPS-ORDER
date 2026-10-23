@@ -1,5 +1,41 @@
 # Morning manager operational context
 
+## Owner-directed permission parity — 2026-10-22
+
+The owner explicitly requested normal delivery-manager capabilities in the
+approved morning view after a driver could not be closed. The earlier minimal
+capability exclusions described below are superseded by this section.
+
+An approved, active morning duty now receives the delivery-manager role's
+standard capability set plus the existing reasoned branch-preparation fallback.
+No stored employee role, branches, denials or extra grants are rewritten. The
+bootstrap remains limited to viewing/opening one's own morning duty. Owner-only
+configuration, accounting approval, refunds and employee permission management
+are not added. The morning launch remains KPS Branch 2, Hafar, with the existing
+period/customer-admission rules and real duty ownership.
+
+The operations UI exposes the normal manager pages and closure actions. Driver
+closure still requires the actual manager recipient, explicit receipt
+confirmation, the existing counted/card reconciliation, unresolved-task and
+handover checks, and an exception reason where required. Receipt, closure and
+immutable report creation use the existing atomic/idempotent transaction.
+Pausing new morning orders does not prevent finishing an existing approved duty.
+
+Orders, conversations, reports, driver shifts and location/trip reads are scoped
+to the approved morning duty before access; compound body/path references are
+rechecked before stored mutation responses. Shared branch printer configuration
+and permitted branch follow-up retain their existing role/resource contracts.
+Other periods, duties, branches and brands cannot be substituted into a closure.
+
+Validation: local Python/JavaScript compilation, workflow YAML validation and
+62 focused non-database cases pass. The local runtime cannot start an isolated
+PostgreSQL server; database and actual browser evidence are required from the
+existing PostgreSQL 18.6 combined workflow and exact-candidate release checks.
+No production deployment or real employee permission update has been performed.
+
+The historical minimal-view description below is retained for context; its
+exclusion of cash, closure, reports and chat is no longer the requested policy.
+
 This release adds an explicit same-site view at `/ops?delivery_period=morning`.
 The normal `/ops` page and stored employee permission/branch assignments are unchanged.
 

@@ -269,6 +269,9 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
         ss=c.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='driver' AND opened_at<%s AND COALESCE(submitted_at,closed_at,%s)>%s ORDER BY opened_at",(p['id'],user['brand_id'],hi,now,lo)).fetchall()
         # Multi-branch shifts cannot be divided into invented per-branch hours.
         ss=[s for s in ss if (user['role']=='owner' or report_scope_contains(s['branch_ids'],allowed)) and (not branch_id or branch_id in s['branch_ids'])]
+        if user.get('_morning_manager_context'):
+            from .morning_manager_context import shift_allowed
+            ss=[s for s in ss if shift_allowed(user,s)]
         if not ss:continue
         sids=[s['id'] for s in ss]
         bs=c.execute('SELECT started_at,ended_at FROM driver_breaks WHERE shift_id=ANY(%s) AND started_at IS NOT NULL',(sids,)).fetchall()

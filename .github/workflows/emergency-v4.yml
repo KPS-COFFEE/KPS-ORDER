@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   windows-print-bridge:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022')"
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -42,7 +42,7 @@ jobs:
         shard: [0, 1, 2]
     # pull_request branch filters target branches. This gate restricts execution
     # to the emergency source branch without changing legacy integrations.
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022')"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -162,6 +162,34 @@ jobs:
           python tools/rollback_prepare_compat.py --repository "$PWD" --output "$ROLLBACK_COMPAT_DIR"
           mkdir "$ROLLBACK_BASELINE_DIR"
           git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$ROLLBACK_BASELINE_DIR"
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep Ubuntu suites, components and signing keys unchanged. Only the
+          # slow Azure mirror host is replaced with the official Ubuntu archive.
+          configured=false
+          processed=0
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              # A local mirrorlist can select Azure even when the sources file
+              # itself has no Azure URL. Verify every observed configuration path.
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+              processed=$((processed+1))
+            fi
+          done
+          if [ "$configured" != true ]; then
+            echo 'Expected Ubuntu APT sources were not found.' >&2
+            exit 1
+          fi
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+          printf 'Ubuntu APT source files verified: %s\n' "$processed"
       - name: Install Chromium and required system libraries
         run: python -m playwright install --with-deps chromium webkit
       - name: Check Python and browser script syntax
@@ -172,6 +200,9 @@ jobs:
             node --check "$script"
           done
           git diff --check
+      - name: Verify owner confirmation and cancellation in both brands and languages
+        if: matrix.shard == 0
+        run: node --test tests/test_owner_operational_confirmation.cjs
       - name: Verify fiscal issuance, refunds and actual thermal QR decoding
         if: matrix.shard == 0
         run: python -m pytest tests/test_fiscal.py tests/test_fiscal_browser.py tests/test_fiscal_issuance_browser.py -q
@@ -321,7 +352,7 @@ jobs:
   focused-staff-journeys:
     # Additional early feedback only; all full shards and their aggregate gate
     # remain mandatory and retain their existing exact coverage manifests.
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022')"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -364,6 +395,34 @@ jobs:
             requirements-dev.txt
       - name: Install pinned application and test requirements
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep Ubuntu suites, components and signing keys unchanged. Only the
+          # slow Azure mirror host is replaced with the official Ubuntu archive.
+          configured=false
+          processed=0
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              # A local mirrorlist can select Azure even when the sources file
+              # itself has no Azure URL. Verify every observed configuration path.
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+              processed=$((processed+1))
+            fi
+          done
+          if [ "$configured" != true ]; then
+            echo 'Expected Ubuntu APT sources were not found.' >&2
+            exit 1
+          fi
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+          printf 'Ubuntu APT source files verified: %s\n' "$processed"
       - name: Install real Chromium and required system libraries
         run: python -m playwright install --with-deps chromium
       - name: Verify staff invitation and complete V5 journey early
@@ -389,7 +448,7 @@ jobs:
   complete-release-regression:
     name: independent-postgres-regression
     needs: independent-postgres-regression
-    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022')
+    if: always() && !cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

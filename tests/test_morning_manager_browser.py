@@ -9,7 +9,7 @@ pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Ch
 
 
 @pytest.mark.parametrize('lang,width',[('ar',390),('en',390),('ar',1366),('en',1366)])
-def test_scoped_manager_accepts_with_dispatch_but_without_financial_controls(static_customer,lang,width):
+def test_scoped_manager_accepts_with_dispatch_and_shared_manager_controls(static_customer,lang,width):
     from playwright.sync_api import sync_playwright, expect
     from app.morning_manager_context import CAPABILITIES
     user={'id':'manager','brand_id':'kps','role':'delivery_manager','display_name':'محمد تجريبي',
@@ -32,13 +32,14 @@ def test_scoped_manager_accepts_with_dispatch_but_without_financial_controls(sta
         page.on('pageerror',lambda error:errors.append(str(error)))
         def api(route):
             request=route.request;path=urlparse(request.url).path;payload={}
-            assert path not in {'/api/operations/people','/api/operations/drivers','/api/shifts'}
+            assert path not in {'/api/identity/staff','/api/admin/export'}
             assert not path.startswith('/api/shifts/morning-duty')
             headers.append(request.headers.get('x-delivery-period'))
             if path=='/api/session':payload={'user':user,'csrf_token':'synthetic'}
             elif path=='/api/catalog':payload={'brand':{'id':'kps','name':'KPS COFFEE','theme':{}}}
             elif path=='/api/branches':payload={'branches':[{'id':'branch2','brand_id':'kps','branch_no':2,'name':'الخالدية','city':'حفر الباطن'}]}
             elif path=='/api/shifts/current':payload={'shifts':[manager]}
+            elif path=='/api/operations/people':payload={'users':[],'authorized_receivers':[],'available_manager_shifts':[manager]}
             elif path=='/api/orders':payload={'orders':[order],'next_offset':None}
             elif path=='/api/orders/morning-order':payload={'order':order,'events':[]}
             elif path=='/api/tasks':
@@ -52,7 +53,7 @@ def test_scoped_manager_accepts_with_dispatch_but_without_financial_controls(sta
         page.route('**/api/**',api)
         page.goto(static_customer+'/ops.html?delivery_period=morning')
         expect(page.locator('#navigation [data-page=orders]')).to_have_count(1)
-        assert set(page.locator('#navigation [data-page]').evaluate_all('(nodes)=>nodes.map(node=>node.dataset.page)'))=={'orders'}
+        assert {'orders','shifts','custody','chat','reports'}<=set(page.locator('#navigation [data-page]').evaluate_all('(nodes)=>nodes.map(node=>node.dataset.page)'))
         expect(page.locator('#session-label')).to_contain_text('صباحي حفر الباطن' if lang=='ar' else 'Hafar morning')
         page.locator('[data-action=order-detail][data-id=morning-order]').click()
         accept=page.locator('#modal [data-action=manager-accept]')
@@ -69,10 +70,12 @@ def test_scoped_manager_accepts_with_dispatch_but_without_financial_controls(sta
         page.locator('[data-action=order-detail][data-id=morning-order]').click()
         expect(page.locator('#modal [data-action=assign]')).to_be_visible()
         assert page.locator('[data-action=prepare]:visible').count()==0
-        assert page.locator('[data-action=shift-detail]:visible,[data-action=open-shift]:visible,[data-action=approve-shift]:visible').count()==0
-        assert page.locator('[data-action=print-order]:visible,[data-action=fiscal-documents]:visible,[data-action=confirm-print-output]:visible').count()==0
+        expect(page.locator('#modal [data-action=approve-shift]')).to_have_count(0)
+        # The shared manager permission includes reading the order's fiscal documents.
+        expect(page.locator('[data-action=fiscal-documents]:visible')).to_have_count(1)
         assert writes==[('/api/orders/morning-order/manager-accept',{'version':1})]
-        assert not page.locator('#navigation [data-page=tasks],#navigation [data-page=shifts],#navigation [data-page=admin],#navigation [data-page=custody],#navigation [data-page=reports]').count()
+        expect(page.locator('#navigation [data-page=shifts]')).to_be_visible()
+        expect(page.locator('#navigation [data-page=admin]')).to_have_count(0)
         assert headers and all(header=='morning' for header in headers)
         assert not errors
         browser.close()
@@ -100,15 +103,16 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
         page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
         def api(route):
             request=route.request;path=urlparse(request.url).path;requests.append(path)
-            assert 'customer-lookup' not in path and 'customer-search' not in path
+            assert '/api/admin/' not in path
             payload={}
             if path=='/api/session':payload={'user':user,'csrf_token':'synthetic'}
             elif path=='/api/catalog':payload={'brand':{'id':'kps','name':'KPS COFFEE','theme':{}},
                     'products':[{'id':'product','name':'قهوة تجريبية','available':True,'price_halalas':1000}]}
             elif path=='/api/branches':payload={'branches':branches}
             elif path=='/api/shifts/current':payload={'shifts':[manager]}
-            elif path=='/api/operations/people':raise AssertionError('Morning role must not fetch employee or driver data')
-            elif path=='/api/orders':payload={'orders':[],'next_offset':None}
+            elif path=='/api/operations/people':payload={'users':[],'authorized_receivers':[],'available_manager_shifts':[manager]}
+            elif path=='/api/operations/people':payload={'users':[],'authorized_receivers':[],'available_manager_shifts':[manager]}
+            elif path=='/api/orders':payload={'orders':[created] if any(path=='/api/orders/delivery-center' for path,_ in writes) else [],'next_offset':None}
             elif path=='/api/quote':
                 writes.append((path,request.post_data_json))
                 payload={'quote':{'subtotal_halalas':1000,'delivery_fee_halalas':0,'total_halalas':1000}}
@@ -119,13 +123,15 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
             route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
         page.route('**/api/**',api)
         page.goto(static_customer+'/ops.html?delivery_period=morning')
+        expect(page.locator('#page-heading [data-action=customer-order]')).to_be_visible()
+        origin_heading=page.locator('#page-heading h1').inner_text()
         page.locator('#page-heading [data-action=customer-order]').click()
         form=page.locator('#staff-order-form')
         expect(form).to_contain_text('كطلب جديد بانتظار القبول' if lang=='ar' else 'new order awaiting acceptance')
         expect(form.locator('[name=branch_id]')).to_be_disabled()
         expect(form.locator('[name=branch_id] option')).to_have_count(1)
         expect(form.locator('[name=branch_id]')).to_have_value('branch2')
-        assert page.locator('#complimentary-order').count()==0
+        expect(page.locator('#complimentary-order')).to_be_visible()
         form.locator('[name=name]').fill('عميل تجريبي')
         form.locator('[name=phone]').fill('0500000099')
         form.locator('[name=neighborhood]').fill('حي تجريبي')
@@ -135,6 +141,13 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
         form.locator('[type=submit]').click()
         expect(form.locator('[type=submit]')).to_have_text('تأكيد وإنشاء الطلب' if lang=='ar' else 'Confirm and create order')
         form.locator('[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        expect(page.locator('#page-heading h1')).to_have_text(origin_heading)
+        expect(page.locator('#status')).to_contain_text('manual-order')
+        assert '/api/orders/manual-order' not in requests
+        created_button=page.locator('#content [data-action=order-detail][data-id=manual-order]')
+        expect(created_button).to_be_visible()
+        created_button.click()
         expect(page.locator('#modal [data-action=manager-accept]')).to_be_visible()
         assert [path for path,_ in writes]==['/api/quote','/api/orders/delivery-center']
         assert created['preparation_status']=='new' and created['delivery_status']=='pending'
