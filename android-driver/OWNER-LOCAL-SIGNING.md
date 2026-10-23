@@ -1,7 +1,8 @@
 # Owner-local KPS Driver signing
 
 The owner chose to keep the permanent signing key on their own computer.
-No key is created by CI, in chat, in a build artifact, or on an agent host.
+No permanent production key is created by CI, in chat, in a build artifact,
+or on an agent host. Automated tests use disposable test-only keys and delete them.
 The helper below creates it only when the owner runs the explicit interactive
 `create` command on that computer. It never replaces an existing key.
 
