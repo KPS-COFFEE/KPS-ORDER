@@ -278,6 +278,20 @@ def acknowledge(oid: str, body: Receipt, user=Depends(auth.require_roles('branch
         return db.idempotent(c,user['id'],idempotency_key,'amendment.receipt:'+oid,body.model_dump(),perform)
 
 
+def driver_reviewed(c, o, driver_id):
+    rev = o.get('amendment_revision', 0)
+    if not rev:
+        return True
+    if c.execute("SELECT 1 FROM order_revision_receipts WHERE order_id=%s AND revision=%s AND kind='driver' AND actor_id=%s", (o['id'], rev, driver_id)).fetchone():
+        return True
+    # A manager's verified intervention is a separate event, never a receipt
+    # attributed to the driver. It applies only to this revision and driver.
+    return bool(c.execute("""SELECT 1 FROM order_events WHERE order_id=%s
+        AND event_type='amendment.administrative_review'
+        AND details->>'revision'=%s AND details->>'driver_id'=%s
+        AND details->>'confirmed'='true' LIMIT 1""", (o['id'], str(rev), driver_id)).fetchone())
+
+
 def guard(c, o, *, driver_id=None, require_branch=True):
     """Called with the order lock, before preparation/collection/driver transitions."""
     if active(c,o['id']): raise db.error(409,'AMENDMENT_PENDING','يوجد تعديل قيد المراجعة؛ وافق عليه أو ارفضه أو اسحبه قبل متابعة التنفيذ.')
@@ -285,5 +299,5 @@ def guard(c, o, *, driver_id=None, require_branch=True):
     if not rev:return
     if require_branch and not c.execute("SELECT 1 FROM order_revision_receipts WHERE order_id=%s AND revision=%s AND kind='branch'",(o['id'],rev)).fetchone():
         raise db.error(409,'AMENDMENT_BRANCH_RECEIPT','على الفرع مراجعة النسخة المعدلة وإلغاء العمل بالنسخة القديمة ثم تأكيد الاستلام.')
-    if driver_id and not c.execute("SELECT 1 FROM order_revision_receipts WHERE order_id=%s AND revision=%s AND kind='driver' AND actor_id=%s",(o['id'],rev,driver_id)).fetchone():
+    if driver_id and not driver_reviewed(c, o, driver_id):
         raise db.error(409,'AMENDMENT_DRIVER_RECEIPT','راجع النسخة المعدلة وعنوانها وأكد استلامها قبل متابعة المهمة.')

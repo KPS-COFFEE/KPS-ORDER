@@ -126,6 +126,8 @@ from . import delegated_operations, driver_work_hours, driver_hours_reports
 app.include_router(delegated_operations.router)
 app.include_router(driver_work_hours.router)
 app.include_router(driver_hours_reports.router)
+from . import task_recovery
+app.include_router(task_recovery.router)
 
 
 def revision():

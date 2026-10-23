@@ -41,6 +41,7 @@ ENDPOINTS['driver_closure'] = {'listing', 'schedule', 'decide'}
 ENDPOINTS['dispatch_map'] = {'map_config', 'driver_locations', 'discover_driver_routes', 'permit_driver_route'}
 ENDPOINTS['driver_work_hours'] = {'report'}
 ENDPOINTS['driver_hours_reports'] = {'dashboard', 'export_xlsx', 'export_pdf'}
+ENDPOINTS['task_recovery'] = {'listing', 'detail', 'review_revision'}
 
 
 def enabled(user):
@@ -119,7 +120,7 @@ def apply(conn, user, request, *, session=False):
         from .operations import shift_access
         shift_access(conn, scoped, conn.execute('SELECT * FROM shifts WHERE id=%s', (sid,)).fetchone())
     oid = params.get('oid') or params.get('order_id') or request.query_params.get('order_id')
-    task_id = (params.get('tid') if module == 'operations' else None) or request.query_params.get('task_id')
+    task_id = (params.get('tid') if module in ('operations', 'task_recovery') else None) or request.query_params.get('task_id')
     if task_id:
         task = conn.execute('SELECT * FROM driver_tasks WHERE id=%s', (task_id,)).fetchone()
         if not task:
