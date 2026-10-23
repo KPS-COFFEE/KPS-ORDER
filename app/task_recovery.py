@@ -33,7 +33,7 @@ def listing(user=Depends(auth.current_user), search: str = Query('', max_length=
         clause, args = morning_manager_context.order_filter(user, 'o')
         pattern = '%' + search.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
         rows = c.execute("""SELECT t.id,t.order_id,t.status,t.created_at,t.driver_id,
-            o.order_no,o.branch_id,o.amendment_revision,u.display_name AS driver_name
+            o.order_no,o.snapshot->>'order_reference' AS order_reference,o.branch_id,o.amendment_revision,u.display_name AS driver_name
             FROM driver_tasks t JOIN orders o ON o.id=t.order_id
             JOIN users u ON u.id=t.driver_id JOIN shifts s ON s.id=t.shift_id
             WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s)) AND o.test_void IS NULL
@@ -41,10 +41,10 @@ def listing(user=Depends(auth.current_user), search: str = Query('', max_length=
             AND (%s OR s.branch_ids <@ %s::jsonb)
             AND t.status IN ('assigned','accepted','picked_up','problem')
             AND (%s OR EXISTS(SELECT 1 FROM shifts m WHERE m.id=s.manager_shift_id AND m.user_id=%s))
-            AND (o.order_no ILIKE %s OR u.display_name ILIKE %s OR o.id=%s)
+            AND (o.order_no::text ILIKE %s OR (o.snapshot->>'order_reference') ILIKE %s OR u.display_name ILIKE %s OR o.id=%s)
             AND """ + clause + " ORDER BY t.created_at,t.id LIMIT %s OFFSET %s",
             [user['brand_id'], user['role']=='owner', user.get('branch_ids', []), user['role']=='owner', db.json(user.get('branch_ids', [])), user['role']=='owner',
-             user['id'], pattern, pattern, search, *args, limit+1, offset]).fetchall()
+             user['id'], pattern, pattern, pattern, search, *args, limit+1, offset]).fetchall()
         return operations.safe({'tasks': rows[:limit], 'next_offset': offset+limit if len(rows)>limit else None})
 
 
@@ -72,7 +72,7 @@ def detail(tid: str, user=Depends(auth.current_user)):
             FROM order_events e LEFT JOIN users u ON u.id=e.actor_id
             WHERE e.order_id=%s AND e.event_type='amendment.administrative_review'
             ORDER BY e.created_at DESC,e.id DESC LIMIT 20""", (order['id'],)).fetchall()
-        return operations.safe({'task': task, 'order': {'id': order['id'], 'order_no': order['order_no'],
+        return operations.safe({'task': task, 'order': {'id': order['id'], 'order_no': order['order_no'], 'order_reference': order['snapshot'].get('order_reference'),
             'version': order['version'], 'revision': revision, 'customer': order['customer'],
             'snapshot': order['snapshot'], 'payment_status': order['payment_status'],
             'total_halalas': order['total_halalas'], 'preparation_status': order['preparation_status']},

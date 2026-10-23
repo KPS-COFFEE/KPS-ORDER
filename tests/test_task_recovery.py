@@ -111,6 +111,8 @@ def test_recovery_listing_search_pagination_brand_and_shift_scope(ops,amendment_
     assert actor('other').get('/api/task-recovery').json()['tasks']==[]
     rows=actor('manager').get('/api/task-recovery?search=driver&limit=1').json()
     assert rows['tasks'][0]['id']==tid and rows['next_offset'] is None
+    reference=str(rows['tasks'][0]['order_no'])
+    assert actor('manager').get('/api/task-recovery?search='+reference).json()['tasks'][0]['id']==tid
     assert actor('manager').get('/api/task-recovery?search=%25').json()['tasks']==[]
     assert actor('manager').get('/api/task-recovery?search=not-present').json()['tasks']==[]
     with db.tx() as c:
