@@ -6,6 +6,9 @@ on:
       - app/central_operations.py
       - app/central_workdays.py
       - app/central_staff.py
+      - app/central_handovers.py
+      - app/central_dashboard.py
+      - app/central_driver_overview.py
       - app/auth.py
       - app/exports.py
       - app/driver_closure.py
@@ -14,6 +17,9 @@ on:
       - app/shift_vehicle.py
       - app/multibrand_migrations/**
       - tests/test_central_workdays.py
+      - tests/test_central_handovers.py
+      - tests/test_central_dashboard.py
+      - tests/test_central_driver_overview.py
       - tests/test_central_workdays_browser.py
       - public/assets/central-operations.js
       - tests/test_central_operations*
@@ -54,7 +60,7 @@ jobs:
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: node --test tests/test_central_operations_adapter.cjs
       - run: node --check public/ops.js
-      - run: python tools/enbishan_test.py tests/test_central_operations.py tests/test_central_workdays.py tests/test_enbishan_dual_brand.py tests/test_multibrand_final_boundary.py
+      - run: python tools/enbishan_test.py tests/test_central_operations.py tests/test_central_workdays.py tests/test_central_handovers.py tests/test_central_dashboard.py tests/test_central_driver_overview.py tests/test_enbishan_dual_brand.py tests/test_multibrand_final_boundary.py
 
       - name: Bound Ubuntu dependency downloads on the ephemeral runner
         shell: bash

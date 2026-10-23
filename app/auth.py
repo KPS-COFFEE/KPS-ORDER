@@ -148,7 +148,7 @@ def session_context(request):
         return 'customer'
     if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
-            '/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
+            '/api/central-operations','/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
             '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
             or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
@@ -241,7 +241,7 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
         return False
     role = user['role']
     if role == 'owner':
-        return True
+        return not user.get('home_brand_id') or order['branch_id'] in user.get('branch_ids',[])
     if role == 'customer':
         return order['customer_id'] in customer_ids(user)
     if role == 'branch_manager':

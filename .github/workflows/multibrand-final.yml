@@ -66,7 +66,7 @@ jobs:
             test-artifacts/brand-receipt-*.png
           retention-days: 14
   multibrand-postgres:
-    if: github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023'
+    if: github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -196,7 +196,7 @@ jobs:
           if-no-files-found: error
 
   multibrand-browser:
-    if: github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023'
+    if: github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:

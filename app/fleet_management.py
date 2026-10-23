@@ -8,12 +8,12 @@ def plate(v):
 
 
 def driver_scope(user, driver):
-    return driver['brand_id']==user['brand_id'] and (user['role']=='owner' or bool(driver['branch_ids']) and set(driver['branch_ids'])<=set(user.get('branch_ids') or []))
+    return driver['brand_id']==user['brand_id'] and ((user['role']=='owner' and not user.get('home_brand_id')) or bool(driver['branch_ids']) and set(driver['branch_ids'])<=set(user.get('branch_ids') or []))
 
 
 def car_scope(c,user,car,drivers):
     if car['brand_id']!=user['brand_id']:return False
-    if user['role']=='owner':return True
+    if (user['role']=='owner' and not user.get('home_brand_id')):return True
     scopes=[d['branch_ids'] for d in drivers if plate(d['vehicle'])==car['plate_key']]
     scopes += [r['branch_ids'] for r in c.execute('SELECT s.branch_ids FROM fleet_operating_segments l JOIN shifts s ON s.id=l.shift_id WHERE l.vehicle_id=%s',(car['id'],)).fetchall()]
     if car['details'].get('management_branch_ids'):scopes.append(car['details']['management_branch_ids'])
@@ -47,6 +47,23 @@ def driver_notice(c,user,driver,vehicle,action,reason):
         'actor_name':user.get('display_name') or ''})
 
 
+
+def physical_driver_shift(c,user,driver_id):
+    rows=c.execute("SELECT * FROM shifts WHERE user_id=%s AND kind='driver' AND status IN ('open','closing') ORDER BY id FOR UPDATE",(driver_id,)).fetchall()
+    if not rows or any(s['status']!='open' for s in rows):
+        raise db.error(409,'HANDOVER_SHIFT_REQUIRED','التبديل يحتاج وردية مفتوحة غير قيد التقفيلة.')
+    if len(rows)==1:return rows[0]
+    from .central_workdays import association,authorized
+    day=association(c,rows[0]['id'])
+    if not day or any((association(c,s['id']) or {}).get('id')!=day['id'] for s in rows):
+        raise db.error(409,'ACTIVE_SWAP_OPEN_SHIFTS','راجع الورديات المفتوحة قبل تبديل المركبة.')
+    # Changing the one physical car requires live authority over every ledger leg.
+    _,legs=authorized(c,user,day['anchor_shift_id'])
+    if {s['id'] for _,s in legs}!={s['id'] for s in rows}:
+        raise db.error(409,'CENTRAL_WORKDAY_INTEGRITY','تحتاج سجلات الوردية مراجعة المالك.')
+    return next(s for s in rows if s['id']==day['anchor_shift_id'])
+
+
 def active_swap(c,user,car,other,first,second,body):
     """End both vehicle intervals, then start both replacements atomically.
 
@@ -66,11 +83,8 @@ def active_swap(c,user,car,other,first,second,body):
         raise db.error(422,'HANDOVER_EXCEPTION_INVALID','أدخل القراءات الفعلية للسيارتين.')
     lanes=[]
     for driver,old,new,reading in ((first,car,other,body.incoming),(second,other,car,body.outgoing)):
-        rows=c.execute("SELECT * FROM shifts WHERE user_id=%s AND kind='driver' AND status IN ('open','closing') FOR UPDATE",(driver['id'],)).fetchall()
-        if len(rows)!=1 or rows[0]['status']!='open':
-            raise db.error(409,'ACTIVE_SWAP_OPEN_SHIFTS','التبديل يحتاج شفتين مفتوحين غير قيد التقفيلة.')
-        shift=rows[0]
-        if shift['brand_id']!=user['brand_id'] or not shift['branch_ids'] or (user['role']!='owner' and not set(shift['branch_ids'])<=set(user['branch_ids'])):
+        shift=physical_driver_shift(c,user,driver['id'])
+        if shift['brand_id']!=user['brand_id'] or not shift['branch_ids'] or ((user['role']!='owner' or user.get('home_brand_id')) and not set(shift['branch_ids'])<=set(user['branch_ids'])):
             raise db.error(404,'DRIVER_NOT_FOUND','شفت السائق خارج نطاقك.')
         log=dict(shift.get('vehicle_log') or {})
         if plate(log.get('vehicle'))!=old['plate_key'] or log.get('end'):
@@ -185,9 +199,9 @@ def handover(c,user,car,old,target,body):
         raise db.error(422,'HANDOVER_READINGS_REQUIRED','أكمل فحص وعداد وبنزين المركبة المسلّمة والمستلمة.')
     if body.outgoing.fuel_exception_id or body.incoming.fuel_exception_id:
         raise db.error(422,'HANDOVER_EXCEPTION_INVALID','سجّل القراءة الفعلية؛ استثناء البنزين يطلب بعد الاستلام.')
-    shift=c.execute("SELECT * FROM shifts WHERE user_id=%s AND kind='driver' AND status IN ('open','closing') FOR UPDATE",(target['id'],)).fetchone()
-    if not shift or shift['status']!='open':
-        raise db.error(409,'HANDOVER_SHIFT_REQUIRED','التبديل أثناء الدوام يحتاج شفتًا مفتوحًا غير قيد التقفيلة.')
+    shift=physical_driver_shift(c,user,target['id'])
+    if shift['brand_id']!=user['brand_id']:
+        raise db.error(404,'DRIVER_NOT_FOUND','المركبة الفعلية خارج نطاق البراند.')
     log=dict(shift.get('vehicle_log') or {})
     if plate(log.get('vehicle'))!=old['plate_key']:
         raise db.error(409,'VEHICLE_CHANGED','حدّث بيانات السائق؛ المركبة الحالية تغيرت.')

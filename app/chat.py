@@ -50,7 +50,7 @@ def allowed(user,row,conn=None):
         else:
             duty=conn.execute('SELECT opened_at FROM shifts WHERE id=%s',(user['_morning_manager_context']['shift_id'],)).fetchone()
             if not duty or row.get('context_service')!='delivery' or not row.get('created_at') or row['created_at']<duty['opened_at']:return False
-    if user['role']=='owner':return user['brand_id']==row['brand_id']
+    if user['role']=='owner':return user['brand_id']==row['brand_id'] and (not user.get('home_brand_id') or row['branch_id'] in user.get('branch_ids',[]))
     if user['role']=='customer':return row['customer_id'] in auth.customer_ids(user) and row['brand_id']==user['brand_id']
     if row['route'] in ('privacy','review'):return False
     if user['brand_id']!=row['brand_id'] or row['branch_id'] not in user.get('branch_ids',[]):return False
@@ -126,7 +126,10 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
     roles(user,'owner','customer','delivery_manager','delivery_staff','branch_manager')
     if offset<0 or offset>100000:fail(422,'صفحة غير صالحة')
     with db.tx() as c:
-        if user['role']=='owner':scope='v.brand_id=%s';p=[user['brand_id']]
+        if user['role']=='owner':
+            scope='v.brand_id=%s';p=[user['brand_id']]
+            if user.get('home_brand_id'):
+                scope+=' AND v.branch_id=ANY(%s)';p.append(user.get('branch_ids',[]))
         elif user['role']=='customer':scope='v.customer_id=ANY(%s) AND v.brand_id=%s';p=[auth.customer_ids(user),user['brand_id']]
         else:scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s';p=[user['brand_id'],user.get('branch_ids',[]),'branch' if user['role']=='branch_manager' else 'delivery']
         from .morning_manager_context import conversation_filter
@@ -146,6 +149,8 @@ def reply_alerts(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff','branch_manager')
     if user['role']=='owner':
         scope='v.brand_id=%s';params=[user['brand_id']]
+        if user.get('home_brand_id'):
+            scope+=' AND v.branch_id=ANY(%s)';params.append(user.get('branch_ids',[]))
     else:
         scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s'
         params=[user['brand_id'],user.get('branch_ids',[]),

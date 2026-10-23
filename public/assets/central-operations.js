@@ -17,7 +17,7 @@
     ['/api/operations/alerts',['unassigned','problems','printing','closure_exceptions']],
     ['/api/orders/customer-search',['contacts']], ['/api/task-recovery',['tasks']],
   ]);
-  const kinds={orders:'order',tasks:'task',conversations:'conversation',shifts:'shift',branches:'branch',devices:'printer',transfers:'custody',users:'staff',reports:'report'};
+  const kinds={orders:'order',tasks:'task',conversations:'conversation',shifts:'shift',branches:'branch',devices:'printer',transfers:'custody',users:'staff',reports:'report',vehicles:'vehicle'};
   function create(){
     const records=new Map(),workdays=new Map(),workdayLegs=new Map(),staffScopes=new Map();let signature='';
     const key=(kind,id)=>kind+':'+id;
@@ -44,7 +44,16 @@
           if(row.central_workday_id&&seen.has(identity)){
             const previous=seen.get(identity),anchor=row.id===row.central_anchor_id?{...row,brand_id:row.brand_id||brand.id}:previous;
             const order_counts={};for(const item of [previous.order_counts||{},row.order_counts||{}])for(const [k,v]of Object.entries(item))order_counts[k]=(order_counts[k]||0)+v;
-            seen.set(identity,{...anchor,order_counts,opening_halalas:Number(previous.opening_halalas||0)+Number(row.opening_halalas||0),permanent_float:{amount:Number(previous.permanent_float?.amount||0)+Number(row.permanent_float?.amount||0)},branch_ids:[...new Set([...(previous.branch_ids||[]),...(row.branch_ids||[])])],
+            // Only sum fields the server actually disclosed. Blind driver
+            // payloads must not acquire invented zero-value financial fields.
+            const financial={};
+            for(const k of new Set([...Object.keys(previous),...Object.keys(row)]))if(k.endsWith('_halalas')&&(typeof previous[k]==='number'||typeof row[k]==='number'))financial[k]=Number(previous[k]||0)+Number(row[k]||0);
+            for(const name of ['submission','closure'])if(previous[name]||row[name]){
+              financial[name]={...(anchor[name]||{})};
+              for(const k of new Set([...Object.keys(previous[name]||{}),...Object.keys(row[name]||{})]))if(k.endsWith('_halalas')&&(typeof previous[name]?.[k]==='number'||typeof row[name]?.[k]==='number'))financial[name][k]=Number(previous[name]?.[k]||0)+Number(row[name]?.[k]||0);
+            }
+            if(typeof previous.permanent_float?.amount==='number'||typeof row.permanent_float?.amount==='number')financial.permanent_float={amount:Number(previous.permanent_float?.amount||0)+Number(row.permanent_float?.amount||0)};
+            seen.set(identity,{...anchor,order_counts,...financial,branch_ids:[...new Set([...(previous.branch_ids||[]),...(row.branch_ids||[])])],
               central_legs:[...(previous.central_legs||[]),{id:row.id,brand_id:brand.id,branch_ids:row.branch_ids||[]}],
               operational_brands:[...new Set([...(previous.operational_brands||[]),brand.id])]});
             continue;
@@ -80,10 +89,27 @@
     }
     async function request(path,options,raw,user,page){
       const context=user?.central_operations;
-      if(!context||options.brand||!path.startsWith('/api/')||user.delivery_context)return raw(path,options);
-      const current=user.id+':'+JSON.stringify(context);
+      if(options.brand||!path.startsWith('/api/')||user?.delivery_context)return raw(path,options);
+      const current=user?.id+':'+JSON.stringify(context);
       if(current!==signature){records.clear();workdays.clear();workdayLegs.clear();staffScopes.clear();signature=current;}
       const url=new URL(path,'https://central.invalid'),method=options.method||'GET';
+      if(!context){
+        // Turning off the rollout stops new unified workdays, while canonical
+        // authorized shift reads still discover existing groups for closure.
+        const action=url.pathname.match(/^\/api\/(?:shifts|driver-closure)\/([^/]+)(?:\/([^/]+))?$/),anchor=action&&workdays.get(decodeURIComponent(action[1]));
+        if(anchor&&(!action[2]||['closing','approve','return','driver-close','submit','request','decision','schedule','withdraw'].includes(action[2])))return remember(await raw('/api/central-operations/workdays/'+encodeURIComponent(anchor)+(action[2]?'/'+action[2]:''),options),user.brand_id);
+        const data=await raw(path,options);
+        if(method==='GET'&&/^\/api\/shifts(?:\/[^/]+)?$/.test(url.pathname)){
+          remember(data,user?.brand_id);
+          if(data?.shift?.central_workday_id)return remember(await raw('/api/central-operations/workdays/'+encodeURIComponent(data.shift.central_anchor_id||data.shift.id),options),user.brand_id);
+        }
+        return data;
+      }
+      if(url.pathname==='/api/manager-handovers'||/^\/api\/manager-handovers\/[^/]+\/accept$/.test(url.pathname))return raw(url.pathname.replace('/api/manager-handovers','/api/central-operations/manager-handovers')+url.search,options);
+      if(url.pathname==='/api/operations/driver-destination')return raw('/api/central-operations/driver-destination'+url.search,options);
+      if(url.pathname==='/api/driver-incentives'&&method==='GET')return raw('/api/central-operations/driver-incentives'+url.search,options);
+      if(url.pathname==='/api/fleet/vehicles'&&method==='GET')return remember(await raw('/api/central-operations/fleet/vehicles'+url.search,options),user.brand_id);
+      if(url.pathname==='/api/dashboard'&&method==='GET')return raw('/api/central-operations/dashboard'+url.search,options);
       if(url.pathname==='/api/operations/driver-locations'&&method==='GET')return raw('/api/central-operations/driver-locations',options);
       if(url.pathname==='/api/operations/driver-route-context'&&method==='GET')return raw('/api/central-operations/driver-route-context'+url.search,options);
       if(url.pathname==='/api/identity/staff'&&method==='GET')return remember(await raw('/api/central-operations/staff',options),user.brand_id);
@@ -96,12 +122,12 @@
       const shiftAction=url.pathname.match(/^\/api\/(shifts|driver-closure)\/([^/]+)(?:\/([^/]+))?$/);
       if(shiftAction){
         const id=decodeURIComponent(shiftAction[2]),anchor=workdays.get(id),action=shiftAction[3];
-        if(anchor&&(!action||['closing','approve','return','driver-close','submit','request','decision','schedule','withdraw'].includes(action))){
+        if(anchor&&(!action||['closing','approve','return','driver-close','submit','request','decision','schedule','withdraw','handover-manager'].includes(action))){
           return remember(await raw('/api/central-operations/workdays/'+encodeURIComponent(anchor)+(action?'/'+action:''),options),user.brand_id);
         }
       }
       let resource=null;
-      const custom=[['/api/report-notifications/','notification'],['/api/fuel-exceptions/','fuel'],['/api/driver-breaks/','break'],['/api/dispatch/offers/','offer'],['/api/vehicle-maintenance/reports/','maintenance'],['/api/printing/jobs/','print_job'],['/api/support-tickets/','ticket'],['/api/driver-work-hours/','trip']].find(([prefix])=>url.pathname.startsWith(prefix));
+      const custom=[['/api/fleet/vehicles/','vehicle'],['/api/report-notifications/','notification'],['/api/fuel-exceptions/','fuel'],['/api/driver-breaks/','break'],['/api/dispatch/offers/','offer'],['/api/vehicle-maintenance/reports/','maintenance'],['/api/printing/jobs/','print_job'],['/api/support-tickets/','ticket'],['/api/driver-work-hours/','trip']].find(([prefix])=>url.pathname.startsWith(prefix));
       const reservedResources=new Set(['current','report','options','policy','photos','daily','shifts','depart','next-destination']);
       if(custom){const identifier=url.pathname.slice(custom[0].length).split('/')[0];if(identifier&&!reservedResources.has(identifier))resource={kind:custom[1],id:decodeURIComponent(identifier)};}
       const extra=url.pathname.match(/^\/api\/(?:printing\/devices|reports|custody|identity\/staff)\/([^/]+)/);
@@ -110,13 +136,26 @@
       const reserved=new Set(['current','alerts','customer-search','customer-lookup','delivery-center','complimentary','promotions']);
       if(shiftAction?.[1]==='driver-closure')resource={kind:'shift',id:decodeURIComponent(shiftAction[2])};
       if(match&&!reserved.has(match[2]))resource={kind:kinds[match[1]],id:decodeURIComponent(match[2])};
-      for(const [parameter,kind] of [['order_id','order'],['task_id','task'],['branch_id','branch'],['return_branch_id','branch']]){
+      for(const [parameter,kind] of [['order_id','order'],['task_id','task'],['branch_id','branch'],['return_branch_id','branch'],['shift_id','shift']]){
         const id=url.searchParams.get(parameter)||options.body?.[parameter];
         if(!resource&&id)resource={kind,id};
       }
       if(resource){
         let brand=records.get(key(resource.kind,resource.id));
-        if(!brand){const resolved=await raw('/api/central-operations/resource-context?'+new URLSearchParams({kind:resource.kind,resource_id:resource.id}),{});brand=resolved.brand_id;}
+        if(!brand){
+          const resolved=await raw('/api/central-operations/resource-context?'+new URLSearchParams({kind:resource.kind,resource_id:resource.id}),{});brand=resolved.brand_id;
+          records.set(key(resource.kind,resource.id),brand);
+          if(resource.kind==='shift'&&resolved.central_anchor_id)workdays.set(resource.id,resolved.central_anchor_id);
+        }
+        const anchor=resource.kind==='shift'?workdays.get(resource.id):null;
+        const action=shiftAction?.[3];
+        if(anchor&&shiftAction&&(!action||['closing','approve','return','driver-close','submit','request','decision','schedule','withdraw','handover-manager'].includes(action)))return remember(await raw('/api/central-operations/workdays/'+encodeURIComponent(anchor)+(action?'/'+action:''),options),user.brand_id);
+        // Physical vehicle state belongs to the shared anchor, even when
+        // opened through a side-brand task or a cold resource deep link.
+        if(anchor&&anchor!==resource.id&&(url.pathname==='/api/driver-breaks'||['refuel','availability'].includes(action)||url.pathname.startsWith('/api/driver-evidence/shifts/'))){
+          const nextPath=options.body?.shift_id?path:path.replace('/shifts/'+encodeURIComponent(resource.id),'/shifts/'+encodeURIComponent(anchor));
+          return request(nextPath,{...options,...(options.body?.shift_id?{body:{...options.body,shift_id:anchor}}:{})},raw,user,page);
+        }
         let body=options.body;
         if(resource.kind==='branch'&&body?.shift_id){const anchor=workdays.get(body.shift_id),leg=workdayLegs.get(anchor)?.get(brand);if(leg)body={...body,shift_id:leg};}
         return remember(await raw(path,{...options,body,brand}),brand);

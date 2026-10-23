@@ -7,6 +7,7 @@ import httpx
 import pytest
 import uvicorn
 from app import auth, db
+from app.shift_vehicle import CHECKS
 from test_enbishan_dual_brand import dual
 from test_central_workdays import open_days
 from test_browser import chromium_browser, _context
@@ -106,6 +107,70 @@ def test_driver_shared_closure_has_one_inspection_and_both_ledger_inputs(central
         expect(page.locator('#modal input[name^="counted:"]')).to_have_count(2)
         expect(page.locator('#modal input[name^="terminal:"]')).to_have_count(2)
         assert not errors,errors
+        # Submit actual values through the genuine driver form, then receive
+        # both canonical ledgers through the manager's single closure dialog.
+        form=page.locator('#central-closure-form')
+        form.locator('[name=inspection_odometer]').fill('1025')
+        form.locator('[name=fuel_full]').select_option('yes')
+        for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
+        for field in ['counted','terminal']:
+            for control in form.locator('[name^="'+field+':"]').all():control.fill('0')
+        form.locator('[name=confirmed]').check()
+        form.locator('button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
         with db.tx() as c:
-            assert {s['status'] for s in c.execute("SELECT status FROM shifts WHERE user_id='dual-driver'").fetchall()}=={'closing'}
+            assert {s['status'] for s in c.execute("SELECT status FROM shifts WHERE user_id='dual-driver'").fetchall()}=={'submitted'}
+        manager_ctx,manager_page,manager_errors=staff_page(central,chromium_browser,central_web,'manager',language)
+        try:
+            manager_page.goto(central_web+'/ops')
+            manager_page.locator('#navigation [data-page=shifts]').click()
+            manager_page.locator('[data-action=shift-detail][data-id="'+sid+'"]').first.click()
+            receipt=manager_page.locator('#central-closure-form')
+            expect(receipt.locator('[name=inspection_odometer]')).to_have_count(0)
+            expect(receipt.locator('[name^="received:"]')).to_have_count(2)
+            expect(receipt.locator('[data-action=return-shift]')).to_have_count(1)
+            for control in receipt.locator('[name^="received:"]').all():control.fill('0')
+            receipt.locator('[name=confirmed]').check()
+            receipt.locator('button[type=submit]').click()
+            expect(manager_page.locator('#modal')).not_to_be_visible(timeout=30000)
+            assert not manager_errors,manager_errors
+            with db.tx() as c:
+                rows=c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
+                assert {s['status'] for s in rows}=={'closed'}
+                assert sum('end' in s['vehicle_log'] for s in rows)==1
+                assert c.execute("SELECT count(*) n FROM audit_events WHERE action='shift.vehicle.end'").fetchone()['n']==1
+                assert c.execute("SELECT count(*) n FROM closure_reports WHERE shift_id=ANY(%s)",([s['id'] for s in rows],)).fetchone()['n']==2
+        finally:manager_ctx.close()
+        assert not errors,errors
     finally:ctx.close()
+
+
+@pytest.mark.parametrize('language',['ar','en'])
+def test_existing_open_shift_is_adopted_without_repeating_vehicle_receipt(central,central_web,chromium_browser,language):
+    from playwright.sync_api import expect
+    _,_,post,shifts,order=central
+    manager_id,driver_id=shifts('kps')
+    oid=order('kps')
+    task=post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':driver_id})['task']
+    with db.tx() as c:
+        before=c.execute('SELECT * FROM shifts WHERE id=%s',(driver_id,)).fetchone()
+    for name,identifier in [('manager',manager_id),('driver',driver_id)]:
+        ctx,page,errors=staff_page(central,chromium_browser,central_web,name,language)
+        try:
+            page.goto(central_web+'/ops')
+            page.locator('#navigation [data-page=shifts]').click()
+            expect(page.locator('.shift-card [data-action=shift-detail][data-id="'+identifier+'"]').first).to_be_visible()
+            expect(page.locator('#operations-brand-switch')).to_have_count(0)
+            assert not errors,errors
+            with db.tx() as c:
+                assert c.execute('SELECT 1 FROM central_workday_legs WHERE shift_id=%s',(identifier,)).fetchone()
+        finally:ctx.close()
+    with db.tx() as c:
+        after=c.execute('SELECT * FROM shifts WHERE id=%s',(driver_id,)).fetchone()
+        assert after['vehicle_log']==before['vehicle_log']
+        assert after['opening_halalas']==before['opening_halalas']
+        assert after['opened_at']==before['opened_at']
+        assert c.execute('SELECT shift_id FROM driver_tasks WHERE id=%s',(task['id'],)).fetchone()['shift_id']==driver_id
+        rows=c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
+        assert len(rows)==2
+        assert sum('start' in row['vehicle_log'] for row in rows)==1

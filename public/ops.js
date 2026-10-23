@@ -1037,8 +1037,10 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       const result=await api('/api/driver-work-hours/current');
       const trip=result.trip;
       if(!trip&&(!shift||shift.status!=='open')){host.remove();return;}
-      const scope=state.branches.filter(b=>(state.user.branch_ids||[]).includes(b.id)&&(shift?.branch_ids||[]).includes(b.id));
-      const picked=tasksList.filter(t=>t.driver_id===state.user.id&&t.shift_id===shift?.id&&t.status==='picked_up');
+      const granted=state.user.central_operations?.brands.flatMap(b=>b.branch_ids)||state.user.branch_ids||[];
+      const scope=state.branches.filter(b=>granted.includes(b.id)&&(shift?.branch_ids||[]).includes(b.id));
+      const shiftIds=new Set([shift?.id,...(shift?.central_legs||[]).map(leg=>leg.id)]);
+      const picked=tasksList.filter(t=>t.driver_id===state.user.id&&shiftIds.has(t.shift_id)&&t.status==='picked_up');
       const departureBranches=scope.filter(b=>picked.some(t=>t.branch_id===b.id));
       const branches=trip?scope:departureBranches;
       host.innerHTML=`<h2>${esc(trip?tr('بانتظار تأكيد العودة','Awaiting return confirmation'):tr('رحلة التوصيل','Delivery trip'))}</h2>${trip?`<p>${esc(branchLabel(trip.departure_branch_id))} · ${esc(datetime(trip.departed_at))}</p>${notice(tr('تستمر الرحلة حتى تؤكد العودة للفرع، حتى بعد تسليم آخر طلب.','The trip remains open until you confirm returning to a branch, including after the last delivery.'))}`:notice(tr('استلم الطلبات أولًا، ثم أكّد الخروج من الفرع. الطلبات في الرحلة الواحدة لا تضاعف الوقت.','Pick up orders first, then confirm leaving the branch. Multiple orders in one trip count time once.'))}${branches.length?`<form class="driver-trip-form"><label>${esc(trip?tr('فرع العودة الفعلي','Actual return branch'):tr('فرع الانطلاق','Departure branch'))}<select name="branch_id" required>${branches.map(b=>`<option value="${esc(b.id)}">${esc(branchLabel(b))}</option>`).join('')}</select></label>${trip?'':'<div class="driver-trip-orders"></div>'}<p class="form-error" role="alert"></p><button type="submit">${esc(trip?tr('عدت إلى الفرع','I returned to the branch'):tr('خرجت من الفرع بالطلبات','I left the branch with these orders'))}</button></form>`:notice(tr('لا توجد طلبات مستلمة مؤهلة لبدء رحلة.','No eligible picked-up orders are available to start a trip.'))}`;
@@ -1190,17 +1192,19 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   }
   async function centralCloseDialog(d,receipt=false){
     const s=d.shift,id=s.id,driver=s.kind==='driver',own=s.user_id===state.user.id;
-    const managerReceipt=driver&&!own&&state.user.role==='delivery_manager';
-    const submitted=s.status==='submitted',closing=s.status==='closing';
-    const canFill=managerReceipt&&['open','closing','submitted'].includes(s.status)||own&&closing;
+    const managerReceipt=driver&&!own&&state.user.role==='delivery_manager'&&can('shifts_delegate_close');
+    const submitted=s.status==='submitted',closing=['closing','returned'].includes(s.status);
+    const canFill=managerReceipt&&['open','closing','returned','submitted'].includes(s.status)||own&&closing&&can('shifts_close');
     const canApprove=!driver&&submitted&&can('shifts_approve')&&(own||state.user.role==='owner');
-    const ledgers=d.ledgers||[],details=ledgers.map(leg=>`<section class="panel"><h3>${esc(leg.brand_id==='kps'?tr('كبز','KPS'):tr('عنبيشن','Enbishan'))}</h3>${state.user.role==='driver'?'':`<p>${esc(tr('النقد المتوقع','Expected cash'))}: ${esc(money(leg.expected_halalas))}</p>`}${leg.submission?`<p>${esc(tr('النقد المعدود','Counted cash'))}: ${esc(money(leg.submission.counted_halalas))} · ${esc(tr('الشبكة','Card'))}: ${esc(money(leg.submission.terminal_total_halalas||0))}</p>`:''}${canFill&&!submitted?`${amountField(tr('النقد المعدود فعليًا','Actual counted cash'),'counted:'+leg.shift_id,null)}${driver?amountField(tr('موازنة الشبكة الفعلية','Actual card settlement'),'terminal:'+leg.shift_id,null):''}`:''}${canFill&&managerReceipt?amountField(tr('النقد المستلم فعليًا','Cash actually received'),'received:'+leg.shift_id,submitted?leg.submission?.handover_halalas:null):''}${canFill&&!driver?amountField(tr('النقد المسلّم فعليًا','Cash actually handed over'),'handover:'+leg.shift_id,null):''}</section>`).join('');
+    const ledgers=d.ledgers||[],details=ledgers.map(leg=>`<section class="panel"><h3>${esc(leg.brand_id==='kps'?tr('كبز','KPS'):tr('عنبيشن','Enbishan'))}</h3>${state.user.role==='driver'?'':`<p>${esc(tr('النقد المتوقع','Expected cash'))}: ${esc(money(leg.expected_halalas))}</p>`}${leg.submission?.counted_halalas!=null?`<p>${esc(tr('النقد المعدود','Counted cash'))}: ${esc(money(leg.submission.counted_halalas))} · ${esc(tr('الشبكة','Card'))}: ${esc(money(leg.submission.terminal_total_halalas||0))}</p>`:''}${canFill&&!submitted?`${amountField(tr('النقد المعدود فعليًا','Actual counted cash'),'counted:'+leg.shift_id,null)}${driver?amountField(tr('موازنة الشبكة الفعلية','Actual card settlement'),'terminal:'+leg.shift_id,null):''}`:''}${canFill&&managerReceipt?amountField(tr('النقد المستلم فعليًا','Cash actually received'),'received:'+leg.shift_id,submitted?leg.submission?.handover_halalas:null):''}${canFill&&!driver?amountField(tr('النقد المسلّم فعليًا','Cash actually handed over'),'handover:'+leg.shift_id,null):''}</section>`).join('');
     if(!canFill){
       modal(tr('الوردية المشتركة والتقفيلة','Shared workday and closure'),`<div class="stack">${vehicleShiftSummary(d)}${notice(statusName(s.status))}${details}${own&&s.status==='open'?`<button data-action="start-closing" data-id="${esc(id)}">${esc(tr('إنهاء الوردية','End workday'))}</button>`:''}${managerReceipt&&submitted?`<button data-action="simple-driver-close" data-id="${esc(id)}">${esc(tr('استلام وإقفال','Receive and close'))}</button>`:''}${canApprove?`<form>${textarea(tr('سبب فرق أو استثناء، عند وجوده','Discrepancy or exception reason, if any'),'exception_reason','')}${check(tr('راجعت التقفيلة للبراندين','I reviewed both brand ledgers'),'confirmed')}${formEnd(tr('اعتماد التقفيلة','Approve closure'))}</form>`:''}</div>`,canApprove?async fd=>{if(!fd.has('confirmed'))throw new Error(tr('أكد المراجعة','Confirm review'));await mutation('/api/central-operations/workdays/'+encodeURIComponent(id)+'/approve',{exception_reason:fd.get('exception_reason')||null});closeModal();await loadPage();}:null);
       return;
     }
     const physicalInspection=driver&&!submitted;
-    modal(managerReceipt?tr('استلام وإقفال الوردية المشتركة','Receive and close shared workday'):tr('إنهاء الوردية المشتركة','End shared workday'),`<form class="stack">${notice(tr('تقفيلة واحدة لجميع الفروع. تُحفظ المبالغ في سجل كل براند؛ فحص السيارة مرة واحدة.','One closure for all branches. Amounts remain in each brand ledger; inspect the vehicle once.'))}${physicalInspection?inspectionFields('end',currentOdometer(s.vehicle_log||{}),id,s.manager_shift_id):''}${details}${managerReceipt?textarea(tr('سبب الإقفال بالنيابة أو فرق المبالغ','Reason for delegated closure or discrepancy'),'exception_reason','',!submitted):''}${check(tr('أؤكد المبالغ الفعلية والتسليم للوردية كاملة','I confirm actual amounts and handover for the complete workday'),'confirmed')}${formEnd(managerReceipt?tr('استلام وإقفال','Receive and close'):tr('إرسال التقفيلة','Submit closure'))}</form>`,async fd=>{
+    const incentiveReview=managerReceipt?(await Promise.all(ledgers.map(leg=>incentiveReviewPanel(leg.shift_id)))).join(''):'';
+    const returnControl=(managerReceipt||canApprove)&&submitted&&can('shifts_approve')?`<button type="button" class="quiet" data-action="return-shift" data-id="${esc(id)}">${esc(tr('إرجاع للتصحيح','Return for correction'))}</button>`:'';
+    modal(managerReceipt?tr('استلام وإقفال الوردية المشتركة','Receive and close shared workday'):tr('إنهاء الوردية المشتركة','End shared workday'),`<form id="central-closure-form" class="stack">${incentiveReview}${returnControl}${notice(tr('تقفيلة واحدة لجميع الفروع. تُحفظ المبالغ في سجل كل براند؛ فحص السيارة مرة واحدة.','One closure for all branches. Amounts remain in each brand ledger; inspect the vehicle once.'))}${physicalInspection?inspectionFields('end',currentOdometer(s.vehicle_log||{}),id,s.manager_shift_id):''}${details}${managerReceipt?textarea(tr('سبب الإقفال بالنيابة أو فرق المبالغ','Reason for delegated closure or discrepancy'),'exception_reason','',!submitted):''}${check(tr('أؤكد المبالغ الفعلية والتسليم للوردية كاملة','I confirm actual amounts and handover for the complete workday'),'confirmed')}${formEnd(managerReceipt?tr('استلام وإقفال','Receive and close'):tr('إرسال التقفيلة','Submit closure'))}</form>`,async fd=>{
       if(!fd.has('confirmed'))throw new Error(tr('أكد المبالغ والتسليم','Confirm amounts and handover'));
       const body={vehicle_inspection:physicalInspection?inspectionValue(fd):undefined,exception_reason:fd.get('exception_reason')||''};
       body.legs=ledgers.map(leg=>{
@@ -1212,9 +1216,11 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       });
       if(managerReceipt)body.confirmed=true;
       await mutation('/api/central-operations/workdays/'+encodeURIComponent(id)+(managerReceipt?'/driver-close':'/submit'),body);
-      closeModal();await loadPage();setStatus(managerReceipt?tr('أُقفلت الوردية المشتركة','Shared workday closed'):tr('أرسلت التقفيلة المشتركة','Shared closure submitted'));
+      state.closureDirty=false;closeModal();await loadPage();setStatus(managerReceipt?tr('أُقفلت الوردية المشتركة','Shared workday closed'):tr('أرسلت التقفيلة المشتركة','Shared closure submitted'));
       if(!driver)await shiftDetail(id);
     });
+    $('#central-closure-form').addEventListener('input',()=>{state.closureDirty=true;});
+    $('#central-closure-form').addEventListener('change',()=>{state.closureDirty=true;});
     if(!submitted)for(const input of document.querySelectorAll('#modal input[name^="counted:"],#modal input[name^="terminal:"],#modal input[name^="received:"],#modal input[name^="handover:"]'))input.value='';
   }
   async function driverBlindClosure(d) {

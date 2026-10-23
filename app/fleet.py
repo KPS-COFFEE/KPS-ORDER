@@ -31,9 +31,13 @@ DEFINITIONS=('KM/L: full-to-full measured distance / filled liters. Grey: open o
 
 def access(user=Depends(auth.require_permission(PERMISSION))):return user
 
+def unrestricted_owner(user):
+    return user['role']=='owner' and not user.get('home_brand_id')
+
+
 def scoped(user):
     clauses=['s.brand_id=%s'];args=[user['brand_id']]
-    if user['role']!='owner':
+    if not unrestricted_owner(user):
         # A multi-branch record is visible only when ALL its branches are authorized.
         clauses.append('s.branch_ids <@ %s::jsonb AND jsonb_array_length(s.branch_ids)>0');args.append(db.json(user.get('branch_ids') or []))
     return clauses,args
@@ -118,25 +122,30 @@ def summary(rows):
 @router.get('/vehicles')
 def vehicles(user=Depends(access)):
     with db.tx() as c:
-        clauses,args=scoped(user)
-        current_scope='u.brand_id=%s AND u.role=\'driver\''
-        current_args=[user['brand_id']]
-        if user['role']!='owner':
-            current_scope+=' AND u.branch_ids <@ %s::jsonb AND jsonb_array_length(u.branch_ids)>0';current_args.append(db.json(user.get('branch_ids') or []))
-        rows=c.execute('SELECT DISTINCT v.id,v.plate,v.details'+BASE+' WHERE '+' AND '.join(clauses)+
-         ' UNION SELECT v.id,v.plate,v.details FROM fleet_vehicles v JOIN users u ON u.brand_id=v.brand_id AND v.plate_key=regexp_replace(upper(u.vehicle->>\'plate\'),\'[[:space:]]\',\'\',\'g\') WHERE '+current_scope+' ORDER BY plate,id',args+current_args).fetchall()
-        extra=c.execute('SELECT id,plate,details FROM fleet_vehicles WHERE brand_id=%s', (user['brand_id'],)).fetchall()
-        seen={r['id'] for r in rows}
-        for car in extra:
-            scope=car['details'].get('management_branch_ids') or []
-            if car['id'] not in seen and (user['role']=='owner' or scope and set(scope)<=set(user.get('branch_ids') or [])):rows.append(car)
-        rows.sort(key=lambda r:r['plate'])
-        assignments=c.execute("SELECT regexp_replace(upper(u.vehicle->>'plate'),'[[:space:]]','','g') plate_key,u.display_name FROM users u WHERE "+current_scope+' ORDER BY u.display_name',current_args).fetchall()
-        import re
-        for row in rows:
-            key=re.sub(r'\s+','',row['plate'].upper())
-            row['assigned_drivers']=[a['display_name'] for a in assignments if a['plate_key']==key]
-        return {'vehicles':rows}
+        return vehicles_in_tx(c,user)
+
+
+def vehicles_in_tx(c,user):
+    clauses,args=scoped(user)
+    current_scope='u.brand_id=%s AND u.role=\'driver\''
+    current_args=[user['brand_id']]
+    if not unrestricted_owner(user):
+        current_scope+=' AND u.branch_ids <@ %s::jsonb AND jsonb_array_length(u.branch_ids)>0';current_args.append(db.json(user.get('branch_ids') or []))
+    rows=c.execute('SELECT DISTINCT v.id,v.plate,v.details'+BASE+' WHERE '+' AND '.join(clauses)+
+     ' UNION SELECT v.id,v.plate,v.details FROM fleet_vehicles v JOIN users u ON u.brand_id=v.brand_id AND v.plate_key=regexp_replace(upper(u.vehicle->>\'plate\'),\'[[:space:]]\',\'\',\'g\') WHERE '+current_scope+' ORDER BY plate,id',args+current_args).fetchall()
+    extra=c.execute('SELECT id,plate,details FROM fleet_vehicles WHERE brand_id=%s', (user['brand_id'],)).fetchall()
+    seen={r['id'] for r in rows}
+    for car in extra:
+        scope=car['details'].get('management_branch_ids') or []
+        if car['id'] not in seen and (unrestricted_owner(user) or scope and set(scope)<=set(user.get('branch_ids') or [])):rows.append(car)
+    rows.sort(key=lambda r:r['plate'])
+    assignments=c.execute("SELECT regexp_replace(upper(u.vehicle->>'plate'),'[[:space:]]','','g') plate_key,u.display_name FROM users u WHERE "+current_scope+' ORDER BY u.display_name',current_args).fetchall()
+    import re
+    for row in rows:
+        key=re.sub(r'\s+','',row['plate'].upper())
+        row['assigned_drivers']=[a['display_name'] for a in assignments if a['plate_key']==key]
+    return {'vehicles':rows}
+
 
 @router.get('/options')
 def options(user=Depends(access)):
@@ -144,7 +153,7 @@ def options(user=Depends(access)):
         clauses,args=scoped(user)
         people=c.execute('SELECT DISTINCT u.id,u.display_name'+BASE+' WHERE '+' AND '.join(clauses)+' ORDER BY u.display_name,u.id',args).fetchall()
         branches=c.execute('SELECT id,name,branch_no FROM branches WHERE brand_id=%s ORDER BY branch_no',(user['brand_id'],)).fetchall()
-        return {'drivers':people,'branches':[b for b in branches if user['role']=='owner' or b['id'] in user.get('branch_ids',[])],
+        return {'drivers':people,'branches':[b for b in branches if unrestricted_owner(user) or b['id'] in user.get('branch_ids',[])],
                 'definitions':DEFINITIONS,'today':service_hours.delivery_operational_date(),'columns':[{'key':k,'ar':a,'en':e} for k,a,e in COLUMNS]}
 
 @router.get('/report')
@@ -167,10 +176,10 @@ def vehicle(vid:str,limit:int=Query(50,ge=1,le=200),offset:int=Query(0,ge=0,le=1
         if not card:
             candidate=c.execute('SELECT id,plate,details FROM fleet_vehicles WHERE id=%s AND brand_id=%s',(vid,user['brand_id'])).fetchone()
             scope=(candidate or {}).get('details',{}).get('management_branch_ids') or []
-            if candidate and (user['role']=='owner' or scope and set(scope)<=set(user.get('branch_ids') or [])):card=candidate
+            if candidate and (unrestricted_owner(user) or scope and set(scope)<=set(user.get('branch_ids') or [])):card=candidate
         if not card:
             current_clause="u.brand_id=%s AND u.role='driver' AND v.id=%s";current_args=[user['brand_id'],vid]
-            if user['role']!='owner':
+            if not unrestricted_owner(user):
                 current_clause+=' AND u.branch_ids <@ %s::jsonb AND jsonb_array_length(u.branch_ids)>0';current_args.append(db.json(user.get('branch_ids') or []))
             card=c.execute("SELECT DISTINCT v.id,v.plate,v.details FROM fleet_vehicles v JOIN users u ON u.brand_id=v.brand_id AND v.plate_key=regexp_replace(upper(u.vehicle->>'plate'),'[[:space:]]','','g') WHERE "+current_clause,current_args).fetchone()
             if not card:raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')
@@ -391,7 +400,7 @@ def create_vehicle(body:CreateVehicle,request:Request,user=Depends(access)):
     with db.tx() as c:
         def perform():
             branches=c.execute('SELECT id FROM branches WHERE brand_id=%s AND id=ANY(%s)',(user['brand_id'],body.branch_ids)).fetchall()
-            if set(body.branch_ids)!={b['id'] for b in branches} or (user['role']!='owner' and not set(body.branch_ids)<=set(user.get('branch_ids') or [])):
+            if set(body.branch_ids)!={b['id'] for b in branches} or (not unrestricted_owner(user) and not set(body.branch_ids)<=set(user.get('branch_ids') or [])):
                 raise db.error(403,'BRANCH_SCOPE','اختر فروعًا ضمن نطاق صلاحيتك.')
             vid='veh_'+hashlib.md5((user['brand_id']+':'+key).encode()).hexdigest()
             details={**profile,'management_branch_ids':sorted(set(body.branch_ids)),'management_revision':0}

@@ -246,3 +246,88 @@ def test_shared_location_uses_one_gps_point_and_revocable_both_brand_scopes(cent
         c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-driver' AND brand_id='enbishan'")
     rows=actor('manager').get('/api/central-operations/driver-locations').json()['drivers']
     assert rows[0]['branch_ids']==['kps-branch-1']
+
+
+@pytest.mark.postgres
+def test_grouped_day_cannot_gain_an_independent_brand_shift(central):
+    _,_,post,_,_=central
+    day=post('manager','/api/central-operations/workdays',{'kind':'manager','branch_ids':['kps-branch-1']})
+    assert len(day['shifts'])==1
+    post('manager','/api/shifts',{'kind':'manager'},brand='enbishan',status=409)
+    with db.tx() as c:
+        assert len(c.execute("SELECT id FROM shifts WHERE user_id='dual-manager'").fetchall())==1
+
+
+@pytest.mark.postgres
+def test_side_ledger_cannot_fork_physical_fuel_or_availability(central):
+    _,_,post,_,_=central
+    _,driver=open_days(central)
+    side=next(s for s in driver['shifts'] if s['id']!=driver['shift']['id'])
+    post('driver','/api/shifts/'+side['id']+'/refuel',{'liters':'1.00','odometer_km':1001},brand=side['brand_id'],status=409)
+    post('manager','/api/shifts/'+side['id']+'/availability',{'available':False},brand=side['brand_id'],status=409)
+    with db.tx() as c:
+        row=c.execute('SELECT * FROM shifts WHERE id=%s',(side['id'],)).fetchone()
+        assert row['vehicle_log']=={'central_vehicle_shift_id':driver['shift']['id']}
+        assert row['available']
+
+
+@pytest.mark.postgres
+def test_accountant_manager_close_uses_manager_capability_without_role_change(central):
+    _,_,post,_,_=central
+    day=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    with db.tx() as c:
+        c.execute("UPDATE users SET permissions=%s WHERE id='dual-accountant'",(db.json(['shifts_close']),))
+    path='/api/central-operations/workdays/'+day['shift']['id']
+    post('accountant',path+'/closing',{})
+    body={'legs':[{'shift_id':s['id'],'counted_halalas':0,'handover_halalas':0} for s in day['shifts']],
+          'exception_reason':'Synthetic delegated manager close'}
+    submitted=post('accountant',path+'/submit',body)
+    assert {s['status'] for s in submitted['shifts']}=={'submitted'}
+    with db.tx() as c:
+        assert c.execute("SELECT role FROM users WHERE id='dual-accountant'").fetchone()['role']=='admin'
+
+
+@pytest.mark.postgres
+def test_canonical_manager_handover_cannot_split_a_shared_workday(central):
+    _,_,post,_,_=central
+    day=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    post('manager','/api/shifts/'+day['shift']['id']+'/handover-manager',
+         {'target_manager_shift_id':day['shift']['id'],'reason':'Synthetic bypass attempt'},status=409)
+    with db.tx() as c:
+        assert not c.execute('SELECT 1 FROM manager_handovers').fetchone()
+        assert {s['status'] for s in c.execute("SELECT status FROM shifts WHERE user_id='dual-manager'").fetchall()}=={'open'}
+
+
+@pytest.mark.postgres
+def test_same_physical_plate_cannot_be_received_from_other_brand_ledger(central):
+    _,_,post,_,_=central
+    with db.tx() as c:
+        c.execute("UPDATE users SET vehicle=%s WHERE id='dual-driver'",(db.json({'plate':'SYNTHETIC 123','type':'car'}),))
+    manager,_=open_days(central)
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,vehicle) VALUES('opposite-home-driver','SYNTHETIC opposite home','driver','enbishan',%s,%s)",
+                  (db.json(['enbishan-test-1','enbishan-test-2']),db.json({'plate':'SYNTHETIC123','type':'car'})))
+        c.execute("INSERT INTO staff_brand_memberships(user_id,brand_id,branch_ids,granted_by) VALUES('opposite-home-driver','kps',%s,'dual-owner')",(db.json(['kps-branch-1']),))
+    post('owner','/api/central-operations/workdays',{'kind':'driver','user_id':'opposite-home-driver',
+         'manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection()},status=409)
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM shifts WHERE user_id='opposite-home-driver'").fetchone()
+
+
+@pytest.mark.postgres
+def test_flag_off_drains_existing_group_without_component_bypass(central,monkeypatch):
+    _,actor,post,_,_=central
+    from app import reporting
+    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
+    _,driver=open_days(central)
+    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','false')
+    post('manager','/api/central-operations/workdays',{'kind':'manager'},status=404)
+    post('driver','/api/central-operations/workdays/'+driver['shift']['id']+'/adopt',{},status=404)
+    for leg in driver['shifts']:
+        post('driver','/api/shifts/'+leg['id']+'/closing',{},brand=leg['brand_id'],status=409)
+    detail=actor('driver').get('/api/central-operations/workdays/'+driver['shift']['id'])
+    assert detail.status_code==200,detail.text
+    done=post('manager','/api/central-operations/workdays/'+driver['shift']['id']+'/driver-close',{
+        'legs':[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'terminal_total_halalas':0} for s in driver['shifts']],
+        'confirmed':True,'exception_reason':'Synthetic flag rollback drain','vehicle_inspection':inspection(1010)})
+    assert {s['status'] for s in done['shifts']}=={'closed'}

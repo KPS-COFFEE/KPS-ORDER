@@ -29,9 +29,15 @@ def require_action():
         raise db.error(409, 'CENTRAL_WORKDAY_REQUIRED', 'أكمل الإجراء من الوردية المشتركة.')
 
 
-def require_enabled(user, permission):
+def require_enabled(user, permission, *, existing_sid=None):
     from .central_operations import enabled
-    if not enabled() or user['role'] == 'customer' or user.get('_morning_manager_context'):
+    available = enabled()
+    if not available and existing_sid and multibrand.enabled():
+        # A rollout rollback stops new groups but must not strand an existing
+        # physical workday behind the canonical component protections.
+        with db.tx() as c:
+            available = association(c, existing_sid) is not None
+    if not available or user['role'] == 'customer' or user.get('_morning_manager_context'):
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة.')
     if not auth.has_permission(user, permission):
         raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية الإجراء غير متاحة لحسابك.')
@@ -62,14 +68,41 @@ def authorized(c, user, sid, *, manager=False, capability=None):
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة.')
     legs = c.execute('SELECT s.* FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id '
                      'WHERE l.workday_id=%s ORDER BY s.brand_id FOR UPDATE OF s', (day['id'],)).fetchall()
+    if (not legs or day['anchor_shift_id'] not in {s['id'] for s in legs}
+            or any(s['user_id'] != day['user_id'] or s['kind'] != day['kind'] for s in legs)):
+        raise db.error(409, 'CENTRAL_WORKDAY_INTEGRITY', 'تحتاج سجلات الوردية مراجعة المالك.')
     result = []
     for shift in legs:
         principal = multibrand.project(c, user, shift['brand_id'])
         if not principal:
             raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة ضمن صلاحياتك الحالية.')
-        ops.shift_access(c, principal, shift, manager=manager, capability=capability)
+        if (principal.get('home_brand_id') and principal['role']=='owner'
+                and not set(shift['branch_ids']) <= set(principal.get('branch_ids', []))):
+            raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة ضمن صلاحياتك الحالية.')
+        ops.shift_access(c, principal, shift, manager=manager, capability=capability(shift) if callable(capability) else capability)
         result.append((principal, shift))
     return day, result
+
+
+
+def drain_metadata(c, user):
+    """Expose active group identities for a safe rollout rollback, without cash."""
+    if not multibrand.enabled() or user['role']=='customer' or user.get('_morning_manager_context'):
+        return []
+    candidates = c.execute("SELECT DISTINCT w.id,w.anchor_shift_id,w.kind FROM central_workdays w "
+        "JOIN central_workday_legs l ON l.workday_id=w.id JOIN shifts s ON s.id=l.shift_id "
+        "LEFT JOIN shifts parent ON parent.id=s.manager_shift_id WHERE s.status<>'closed' "
+        "AND (s.user_id=%s OR parent.user_id=%s) ORDER BY w.id", (user['id'],user['id'])).fetchall()
+    from fastapi import HTTPException
+    output = []
+    for candidate in candidates:
+        try:
+            day, legs = authorized(c, user, candidate['anchor_shift_id'])
+        except HTTPException:
+            continue
+        output.append({'id':day['id'],'anchor_shift_id':day['anchor_shift_id'],'kind':day['kind'],
+            'legs':[{'brand_id':s['brand_id'],'shift_id':s['id'],'branch_ids':s['branch_ids']} for _,s in legs]})
+    return output
 
 
 def annotate(c, rows):
@@ -169,7 +202,10 @@ def physical_shift(c, shift):
     if not day or day['anchor_shift_id'] != anchor:
         raise db.error(409, 'CENTRAL_VEHICLE_SCOPE', 'مرجع السيارة غير مطابق للوردية.')
     physical = c.execute('SELECT * FROM shifts WHERE id=%s', (anchor,)).fetchone()
-    if not physical or physical['status'] != 'open':
+    if (not physical or physical['user_id'] != shift['user_id'] or physical['kind'] != 'driver'
+            or (physical.get('vehicle_log') or {}).get('central_vehicle_shift_id')):
+        raise db.error(409, 'CENTRAL_VEHICLE_SCOPE', 'مرجع السيارة غير مطابق للوردية.')
+    if physical['status'] != 'open':
         raise db.error(409, 'CENTRAL_WORKDAY_CLOSED', 'الوردية لا تستقبل مهام جديدة.')
     return physical
 
@@ -196,7 +232,7 @@ def result(c, day, legs):
 
 @router.get('/{sid}')
 def detail(sid: str, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_view')
+    require_enabled(user, 'shifts_view', existing_sid=sid)
     with db.tx() as c:
         day, legs = authorized(c, user, sid, capability='shifts_view')
         output = result(c, day, legs)
@@ -249,12 +285,12 @@ def change(c, user, sid, operation, body, request, perform, *, manager=False, ca
 
 @router.post('/{sid}/closing')
 def closing(sid: str, request: Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_close')
+    require_enabled(user, 'shifts_delegate_close' if user['role']=='admin' and auth.has_permission(user, 'shifts_delegate_close') else 'shifts_close', existing_sid=sid)
     with db.tx() as c:
         def perform(day, legs):
             for principal, shift in legs:
                 ops.request_close_in_tx(c, principal, shift['id'])
-        return change(c, user, sid, 'closing', {}, request, perform)
+        return change(c, user, sid, 'closing', {}, request, perform, capability=ops.close_capability)
 
 
 class LegSubmission(ops.OperationBody):
@@ -281,7 +317,7 @@ def exact_legs(legs, supplied):
 
 @router.post('/{sid}/submit')
 def submit(sid: str, body: Submission, request: Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_close' if user['role']=='driver' else 'shifts_delegate_close' if user['role']=='admin' else 'shifts_close')
+    require_enabled(user, 'shifts_delegate_close' if user['role']=='admin' and auth.has_permission(user, 'shifts_delegate_close') else 'shifts_close', existing_sid=sid)
     with db.tx() as c:
         def perform(day, legs):
             supplied = exact_legs(legs, body.legs)
@@ -290,12 +326,12 @@ def submit(sid: str, body: Submission, request: Request, user=Depends(auth.curre
                 ops.submit_close_in_tx(c, principal, shift['id'], ops.ClosureSubmit(
                     **value.model_dump(exclude={'shift_id'}), vehicle_inspection=body.vehicle_inspection,
                     exception_reason=body.exception_reason))
-        return change(c, user, sid, 'submit', body.model_dump(), request, perform)
+        return change(c, user, sid, 'submit', body.model_dump(), request, perform, capability=ops.close_capability)
 
 
 @router.post('/{sid}/approve')
 def approve(sid: str, body: ops.Review, request: Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_approve')
+    require_enabled(user, 'shifts_approve', existing_sid=sid)
     with db.tx() as c:
         def perform(day, legs):
             reports = []
@@ -325,7 +361,7 @@ class Receipt(ops.OperationBody):
 
 @router.post('/{sid}/driver-close')
 def driver_close(sid: str, body: Receipt, request: Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_delegate_close')
+    require_enabled(user, 'shifts_delegate_close', existing_sid=sid)
     ops.roles(user, 'delivery_manager')
     with db.tx() as c:
         def perform(day, legs):
@@ -367,35 +403,35 @@ def closure_change(c, user, sid, body, request, operation, helper, *, manager=Fa
 
 @router.post('/{sid}/request')
 def closure_request(sid:str, body:closure.Reason, request:Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_close')
+    require_enabled(user, 'shifts_close', existing_sid=sid)
     with db.tx() as c:
         return closure_change(c,user,sid,body,request,'request',closure.request_authorization_in_tx)
 
 
 @router.post('/{sid}/decision')
 def closure_decision(sid:str, body:closure.Decision, request:Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_approve')
+    require_enabled(user, 'shifts_approve', existing_sid=sid)
     with db.tx() as c:
         return closure_change(c,user,sid,body,request,'decision',closure.decide_in_tx,manager=True)
 
 
 @router.put('/{sid}/schedule')
 def closure_schedule(sid:str, body:closure.Schedule, request:Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_approve')
+    require_enabled(user, 'shifts_approve', existing_sid=sid)
     with db.tx() as c:
         return closure_change(c,user,sid,body,request,'schedule',closure.schedule_in_tx,manager=True)
 
 
 @router.post('/{sid}/withdraw')
 def closure_withdraw(sid:str, body:closure.Withdrawal, request:Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_close')
+    require_enabled(user, 'shifts_close', existing_sid=sid)
     with db.tx() as c:
         return closure_change(c,user,sid,body,request,'withdraw',closure.withdraw_in_tx)
 
 
 @router.post('/{sid}/return')
 def return_for_correction(sid:str, body:ops.Review, request:Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_approve')
+    require_enabled(user, 'shifts_approve', existing_sid=sid)
     ops.shift_roles(user, 'shifts_approve', 'owner', 'delivery_manager')
     with db.tx() as c:
         def perform(day, legs):
@@ -418,7 +454,7 @@ class WorkdayCustody(ops.OperationBody):
 
 @router.post('/{sid}/custody')
 def custody(sid:str,body:WorkdayCustody,request:Request,user=Depends(auth.current_user)):
-    require_enabled(user,'custody_transfer')
+    require_enabled(user,'custody_transfer', existing_sid=sid)
     ops.roles(user,'owner','delivery_manager','driver')
     with db.tx() as c:
         def perform(day,legs):

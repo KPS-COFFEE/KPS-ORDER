@@ -161,7 +161,7 @@ def route_context(c, user, driver_id):
         driver=c.execute("SELECT id,role,active,brand_id,branch_ids FROM users WHERE id=%s AND role='driver' AND active",(driver_id,)).fetchone()
         driver=multibrand.project(c,driver,user['brand_id']) if driver else None
         shift=c.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='driver' AND status='open'",(driver_id,user['brand_id'])).fetchone() if driver else None
-        gps=c.execute("SELECT g.* FROM driver_latest_locations g JOIN shifts s ON s.id=g.shift_id WHERE g.driver_id=%s AND s.user_id=%s AND s.status='open' AND g.updated_at>=now()-interval '120 seconds' AND g.accuracy_m<=100",(driver_id,driver_id)).fetchone() if shift else None
+        gps=c.execute("SELECT g.* FROM driver_latest_locations g JOIN shifts s ON s.id=g.shift_id AND s.brand_id=g.brand_id WHERE g.driver_id=%s AND s.user_id=%s AND s.status='open' AND g.updated_at>=now()-interval '120 seconds' AND g.accuracy_m<=100",(driver_id,driver_id)).fetchone() if shift else None
         row=None
         if gps:
             source,target=association(c,gps['shift_id']),association(c,shift['id'])

@@ -47,6 +47,20 @@ def start(c,user,target,inspection):
     vehicle=dict(target.get('vehicle') or {})
     plate=re.sub(r'\s+', '', str(vehicle.get('plate','')).upper())
     if plate:
+        from .central_operations import enabled as central_enabled
+        if central_enabled():
+            # Brand asset ledgers remain separate, but a plate is one physical car.
+            # Serialize receipts across both ledgers before testing occupancy.
+            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('physical-vehicle:'+plate,))
+            cards=c.execute('SELECT id,details FROM fleet_vehicles WHERE plate_key=%s ORDER BY id',(plate,)).fetchall()
+            if any(card['details'].get('operating_status')=='paused' for card in cards):
+                raise db.error(409,'VEHICLE_PAUSED','السيارة موقوفة عن التشغيل؛ راجع الإدارة.')
+            if c.execute("SELECT 1 FROM fleet_operating_segments l JOIN fleet_vehicles v ON v.id=l.vehicle_id JOIN shifts s ON s.id=l.shift_id WHERE v.plate_key=%s AND s.status IN ('open','closing') AND l.returned_at IS NULL",(plate,)).fetchone():
+                raise db.error(409,'VEHICLE_IN_USE','السيارة مستلمة في شفت آخر. سلّمها قبل استلامها من سائق آخر.')
+            last=c.execute("SELECT max((coalesce(x.after_metrics,l.metrics)->>'end_odometer')::numeric) km FROM fleet_operating_segments l JOIN fleet_vehicles v ON v.id=l.vehicle_id LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) x ON true WHERE v.plate_key=%s",(plate,)).fetchone()
+            physical_floor=max([int(last['km'] or 0),*[int(card['details'].get('odometer_km') or 0) for card in cards]])
+            if inspection.odometer_km<physical_floor:
+                raise db.error(422,'ODOMETER_DECREASE','قراءة العداد أقل من آخر قراءة للسيارة عبر سجلات التشغيل.')
         vid='veh_'+hashlib.md5((target['brand_id']+':'+plate).encode()).hexdigest()
         c.execute('INSERT INTO fleet_vehicles(id,brand_id,plate_key,plate,details) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',(vid,target['brand_id'],plate,vehicle['plate'],db.json(vehicle)))
         v=c.execute('SELECT id,details FROM fleet_vehicles WHERE brand_id=%s AND plate_key=%s FOR UPDATE',(target['brand_id'],plate)).fetchone()

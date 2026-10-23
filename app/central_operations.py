@@ -36,7 +36,7 @@ def context(conn, user):
 
 
 @router.get('/resource-context')
-def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'branch', 'printer', 'report', 'staff', 'custody', 'fuel', 'break', 'offer', 'maintenance', 'notification', 'print_job', 'ticket', 'trip'],
+def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'branch', 'printer', 'report', 'staff', 'custody', 'fuel', 'break', 'offer', 'maintenance', 'notification', 'print_job', 'ticket', 'trip', 'vehicle'],
                      resource_id: str = Query(min_length=1, max_length=200),
                      user=Depends(auth.current_user)):
     """Resolve a clicked record without asking staff to choose its brand.
@@ -54,6 +54,7 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
             'shift': 'SELECT * FROM shifts WHERE id=%s',
             'conversation': 'SELECT * FROM conversations WHERE id=%s',
             'branch': 'SELECT * FROM branches WHERE id=%s',
+            'vehicle': 'SELECT * FROM fleet_vehicles WHERE id=%s',
             'fuel': 'SELECT * FROM fuel_exceptions WHERE id=%s',
             'break': 'SELECT b.*,s.branch_ids FROM driver_breaks b JOIN shifts s ON s.id=b.shift_id WHERE b.id=%s',
             'offer': 'SELECT f.*,o.branch_id FROM dispatch_offers f JOIN orders o ON o.id=f.order_id WHERE f.id=%s',
@@ -118,6 +119,9 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
             elif kind == 'ticket':
                 order=conn.execute('SELECT * FROM orders WHERE id=%s',(row['order_id'],)).fetchone()
                 allowed=auth.has_permission(principal,'support_manage') and auth.can_access_order(principal,order,conn)
+            elif kind == 'vehicle':
+                from .fleet import vehicles_in_tx,PERMISSION
+                allowed=auth.has_permission(principal,PERMISSION) and any(v['id']==resource_id for v in vehicles_in_tx(conn,principal)['vehicles'])
             elif kind == 'printer':
                 from .branch_printing import can_access_branch
                 allowed = auth.has_permission(principal,'branch_printers_manage') and can_access_branch(principal,row['branch_id'])
@@ -129,15 +133,34 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
             elif kind == 'custody':
                 allowed = (row['recipient_user_id']==principal['id'] or row['user_id']==principal['id']) and (principal['role']=='owner' or set(row['branch_ids'])<=set(principal.get('branch_ids',[])))
             elif kind == 'branch':
-                allowed = principal['role'] == 'owner' or row['id'] in principal.get('branch_ids', [])
+                allowed = (principal['role'] == 'owner' and not principal.get('home_brand_id')) or row['id'] in principal.get('branch_ids', [])
+        if principal and principal['role']=='owner' and principal.get('home_brand_id'):
+            if row.get('branch_id') is not None:
+                allowed=allowed and row['branch_id'] in principal.get('branch_ids',[])
+            if row.get('branch_ids') is not None:
+                allowed=allowed and set(row['branch_ids'])<=set(principal.get('branch_ids',[]))
         if not allowed:
             raise db.error(404, 'CENTRAL_RECORD_UNAVAILABLE', 'السجل غير متاح.')
-        return {'brand_id': row['brand_id']}
+        result={'brand_id': row['brand_id']}
+        if kind=='shift':
+            from .central_workdays import annotate
+            annotate(conn,[row])
+            result.update({key:row[key] for key in ('central_workday_id','central_anchor_id') if key in row})
+        return result
 
 
 # Imported after context/enabled are defined to avoid initialization cycles.
 from .central_workdays import router as workdays_router
 router.include_router(workdays_router)
+
+from .central_handovers import router as handovers_router
+router.include_router(handovers_router)
+
+from .central_dashboard import router as dashboard_router
+router.include_router(dashboard_router)
+
+from .central_driver_overview import router as driver_overview_router
+router.include_router(driver_overview_router)
 
 from .central_staff import router as staff_router
 router.include_router(staff_router)
@@ -179,8 +202,10 @@ def project_read(conn, request, user):
         row=conn.execute('SELECT brand_id FROM assets WHERE id=%s',(params['record_id'],)).fetchone()
     elif module=='reporting' and params.get('rid'):
         row=conn.execute('SELECT brand_id FROM closure_reports WHERE id=%s',(params['rid'],)).fetchone()
-    elif module=='report_notifications' and params.get('identifier'):
-        row=conn.execute('SELECT brand_id FROM report_notifications WHERE id=%s',(params['identifier'],)).fetchone()
+    elif module=='report_notifications' and params.get('nid'):
+        row=conn.execute('SELECT brand_id FROM report_notifications WHERE id=%s',(params['nid'],)).fetchone()
+    elif module=='branch_printing' and params.get('order_id'):
+        row=conn.execute('SELECT brand_id FROM orders WHERE id=%s',(params['order_id'],)).fetchone()
     elif module=='branch_printing' and params.get('bid'):
         row=conn.execute('SELECT brand_id FROM branches WHERE id=%s',(params['bid'],)).fetchone()
     if row:
@@ -199,7 +224,7 @@ def driver_locations(user=Depends(auth.current_user)):
     with db.tx() as c:
         scopes={b['id']:b for b in context(c,user)['brands']}
         principals={brand:multibrand.project(c,user,brand) for brand in scopes}
-        points=c.execute("SELECT g.*,u.display_name FROM driver_latest_locations g JOIN users u ON u.id=g.driver_id JOIN shifts s ON s.id=g.shift_id AND s.user_id=u.id WHERE u.role='driver' AND u.active AND s.status='open' AND g.updated_at>now()-interval '24 hours'").fetchall()
+        points=c.execute("SELECT g.*,u.display_name FROM driver_latest_locations g JOIN users u ON u.id=g.driver_id JOIN shifts s ON s.id=g.shift_id AND s.user_id=u.id AND s.brand_id=g.brand_id WHERE u.role='driver' AND u.active AND s.status='open' AND g.updated_at>now()-interval '24 hours'").fetchall()
         output=[]
         for point in points:
             target=c.execute('SELECT id,role,active,brand_id,branch_ids FROM users WHERE id=%s',(point['driver_id'],)).fetchone()
@@ -211,7 +236,7 @@ def driver_locations(user=Depends(auth.current_user)):
                 driver=multibrand.project(c,target,brand) if scope and actor else None
                 permitted=[b for b in leg['branch_ids'] if driver and b in driver['branch_ids'] and b in scope['branch_ids']]
                 if not permitted:continue
-                row={'id':target['id'],'shift_id':leg['id'],'branch_ids':permitted,'shift_branches':permitted,'next_destination':leg.get('next_destination')}
+                row={'id':target['id'],'shift_id':leg['id'],'branch_ids':permitted,'shift_branches':leg['branch_ids'],'next_destination':leg.get('next_destination')}
                 states.append(driver_destination.metadata(c,actor,[row])[target['id']]);branches.extend(permitted)
             if not branches:continue
             active=[r for r in states if r['visible_active_task_count']]
@@ -241,9 +266,35 @@ def driver_route_context(driver_id:str=Query(min_length=1,max_length=100),user=D
     with db.tx() as c:
         values=[]
         for scope in context(c,user)['brands']:
-            if not c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND brand_id=%s AND status='open' AND kind='driver'",(driver_id,scope['id'])).fetchone():continue
+            shift=c.execute("SELECT branch_ids FROM shifts WHERE user_id=%s AND brand_id=%s AND status='open' AND kind='driver'",(driver_id,scope['id'])).fetchone()
+            if not shift or not set(shift['branch_ids'])&set(scope['branch_ids']):continue
             principal=multibrand.project(c,user,scope['id'])
-            if principal:values.append(dict(route_context(c,principal,driver_id),brand_id=scope['id']))
+            target=c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active",(driver_id,)).fetchone()
+            driver=multibrand.project(c,target,scope['id']) if target else None
+            if principal and driver and set(driver['branch_ids'])&set(shift['branch_ids'])&set(scope['branch_ids']):
+                values.append(dict(route_context(c,principal,driver_id),brand_id=scope['id']))
         if not values:raise db.error(404,'CENTRAL_RECORD_UNAVAILABLE','السائق غير متاح ضمن صلاحياتك.')
         return safe({**values[0],'tasks':[dict(row,brand_id=scope.get('brand_id')) for scope in values for row in scope['tasks']],
                      'return_branches':[row for value in values for row in value['return_branches']]})
+
+
+@router.get('/fleet/vehicles')
+def fleet_vehicles(user=Depends(auth.current_user)):
+    from .central_workdays import require_enabled
+    from .fleet import vehicles_in_tx,PERMISSION
+    require_enabled(user,PERMISSION)
+    with db.tx() as c:
+        output=[]
+        for scope in context(c,user)['brands']:
+            principal=multibrand.project(c,user,scope['id'])
+            if not principal or not scope['branch_ids']:continue
+            for vehicle in vehicles_in_tx(c,principal)['vehicles']:
+                item=dict(vehicle,brand_id=scope['id'])
+                physical=c.execute("SELECT s.id,s.branch_ids,w.id central_workday_id,w.anchor_shift_id central_anchor_id FROM fleet_operating_segments l JOIN shifts s ON s.id=l.shift_id LEFT JOIN central_workdays w ON w.anchor_shift_id=s.id WHERE l.vehicle_id=%s AND s.brand_id=%s AND s.status='open' AND l.returned_at IS NULL AND NOT (s.vehicle_log ? 'central_vehicle_shift_id')",(vehicle['id'],scope['id'])).fetchone()
+                if physical and set(physical['branch_ids'])<=set(scope['branch_ids']):
+                    item['active_shift_id']=physical['id']
+                    item.update({key:physical[key] for key in ('central_workday_id','central_anchor_id') if physical[key]})
+                output.append(item)
+        # A card belongs to its canonical brand ledger; only anchor shifts create
+        # physical operating segments, so shared workday legs add no duplicate.
+        return {'vehicles':sorted(output,key=lambda v:(v['plate'],v['brand_id'],v['id']))}

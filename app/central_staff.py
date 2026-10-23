@@ -12,7 +12,7 @@ def owner_scope(c, user, identifier):
         raise db.error(403,'ROLE_FORBIDDEN','إدارة صلاحيات الموظفين للمالك.')
     target=c.execute("SELECT * FROM users WHERE id=%s AND role<>'customer' FOR UPDATE",(identifier,)).fetchone()
     principal=multibrand.project(c,user,target['brand_id']) if target else None
-    if not principal:
+    if not principal or (principal.get('home_brand_id') and not set(target['branch_ids'])<=set(principal.get('branch_ids',[]))):
         raise db.error(404,'STAFF_NOT_FOUND','الموظف خارج صلاحياتك.')
     return target,principal
 
@@ -47,12 +47,24 @@ class StaffUpdate(auth.StaffUpdateBody):
     expected_branch_ids: list[str] | None = Field(None,max_length=500)
 
 
+def validate_branch_authority(c, user, rows):
+    """A foreign owner membership grants explicit branches, not the whole brand."""
+    for brand in {r['brand_id'] for r in rows}:
+        principal=multibrand.project(c,user,brand)
+        selected={r['id'] for r in rows if r['brand_id']==brand}
+        if not principal or (principal.get('home_brand_id') and not selected<=set(principal.get('branch_ids',[]))):
+            raise db.error(403,'BRANCH_SCOPE_FORBIDDEN','فرع خارج صلاحياتك.')
+
+
 def scope_body(c, user, target, branch_ids, allowed):
     if len(branch_ids)!=len(set(branch_ids)):
         raise db.error(422,'BRANCH_SCOPE_INVALID','أزل تكرار الفروع.')
     rows=c.execute('SELECT id,brand_id FROM branches WHERE id=ANY(%s)',(branch_ids,)).fetchall()
     if {r['id'] for r in rows}!=set(branch_ids) or any(r['brand_id'] not in allowed for r in rows):
         raise db.error(403,'BRANCH_SCOPE_FORBIDDEN','فرع خارج صلاحياتك.')
+    validate_branch_authority(c,user,rows)
+    old=grants(c,target,allowed)
+    validate_branch_authority(c,user,[{'id':bid,'brand_id':brand} for brand,ids in old.items() for bid in ids])
     scopes={brand:[] for brand in allowed}
     for row in rows:
         scopes[row['brand_id']].append(row['id'])
@@ -101,6 +113,8 @@ def invite(body:auth.StaffInvitationBody,user=Depends(auth.require_roles('owner'
         rows=c.execute('SELECT id,brand_id FROM branches WHERE id=ANY(%s)',(body.branch_ids,)).fetchall()
         if len(body.branch_ids)!=len(set(body.branch_ids)) or {r['id'] for r in rows}!=set(body.branch_ids) or any(r['brand_id'] not in allowed for r in rows):
             raise db.error(403,'BRANCH_SCOPE_FORBIDDEN','فرع خارج صلاحياتك.')
+        validate_branch_authority(c,user,rows)
+        auth.require_owner_step_up(c,user)
         scopes={brand:sorted(r['id'] for r in rows if r['brand_id']==brand) for brand in allowed}
         home=c.execute('SELECT brand_id FROM users WHERE id=%s',(user['id'],)).fetchone()['brand_id']
         if not scopes.get(home) and rows:home=rows[0]['brand_id']
