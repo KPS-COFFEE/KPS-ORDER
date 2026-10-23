@@ -61,4 +61,5 @@ jobs:
             test-results/accounting-settlements.xml
             test-artifacts/owner-test-void-*.png
             test-artifacts/accounting-cards-*.png
+            test-artifacts/accounting-manager-cards-*.png
             test-artifacts/accounting-driver-statement-*.png

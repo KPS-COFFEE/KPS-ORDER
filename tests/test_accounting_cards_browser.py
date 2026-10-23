@@ -63,3 +63,74 @@ def test_accounting_cards_and_filters_fit_and_work(width, lang):
         output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
         page.screenshot(path=str(output/f'accounting-cards-{lang}-{width}.png'),full_page=True)
         browser.close()
+
+
+@pytest.mark.parametrize('width', [360,390,768,1280,1440])
+@pytest.mark.parametrize('lang', ['ar','en'])
+def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,lang):
+    """Long real-size data stays readable without scrolling across a settlement."""
+    from playwright.sync_api import sync_playwright, expect
+    with sync_playwright() as runtime:
+        launch={'headless':True,'args':['--no-sandbox']}
+        if os.getenv('CHROMIUM_EXECUTABLE'):launch['executable_path']=os.environ['CHROMIUM_EXECUTABLE']
+        browser=runtime.chromium.launch(**launch)
+        page=browser.new_page(viewport={'width':width,'height':1100})
+        errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        page.set_content(f'<html lang="{lang}" dir="{"rtl" if lang=="ar" else "ltr"}"><body><h1 id="heading"></h1><main id="content"></main></body></html>')
+        page.add_style_tag(content='*{box-sizing:border-box}body{margin:0;padding:20px;background:#faf8f5;font-family:Arial}button,input,select,textarea{font:inherit;padding:10px;border:1px solid #ddd;border-radius:8px}button{cursor:pointer;background:#a64116;color:white}main{max-width:1280px;margin:auto}')
+        page.add_style_tag(path=str(ROOT/'public/assets/accounting.css'))
+        page.add_script_tag(path=str(ROOT/'public/assets/accounting.js'))
+        page.evaluate('''async lang=>{
+          const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+          const money=v=>new Intl.NumberFormat(lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(Number(v||0)/100);
+          const longName=lang==='ar'?'عبدالله عبدالرحمن الحربي — سائق تجريبي باسم طويل لاختبار وضوح بطاقة المحاسبة':'Abdullah Abdulrahman Alharbi — synthetic driver with a long accounting display name';
+          const base={day:'2026-10-23',bank_halalas:98765432100,cash_due_halalas:12345678900,cash_received_halalas:null,shortage_halalas:0,surplus_halalas:0,balance_approved:true,cash_recorded:false,reconciliation_complete:false,net_difference_halalas:null,stage:'balance_approved',due_at:'2026-10-24T16:00:00+03:00',can_extend:true,overdue:false,history:[],revision:1};
+          const rows=[
+            {...base,id:'pending',user_id:'driver-pending',driver_name:longName+' 1'},
+            {...base,id:'variance',user_id:'driver-variance',driver_name:longName+' 2',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345666350,shortage_halalas:12550,net_difference_halalas:-12550,variance_pending:true,revision:2,can_extend:false},
+            {...base,id:'confirmed',user_id:'driver-confirmed',driver_name:longName+' 3',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345777665,surplus_halalas:98765,net_difference_halalas:98765,variance_pending:false,revision:2,can_extend:false,variance_confirmation:{id:'confirmation',actor_name:lang==='ar'?'محاسب تجريبي باسم طويل لتوثيق المراجعة':'Synthetic accountant with a long reviewer name',created_at:'2026-10-23T12:00:00Z',details:{action_taken:lang==='ar'?'توثيق الفائض للمراجعة والمتابعة دون أي خصم آلي من راتب السائق':'Documented surplus for review and follow-up without any automatic payroll deduction'}}}
+          ];
+          rows.forEach(r=>{r.system_total_halalas=111111111000;r.actual_total_halalas=r.reconciliation_complete?r.bank_halalas+r.cash_received_halalas:null;});
+          window.layoutExpected=rows.map(r=>({id:r.id,name:r.driver_name,total:money(r.bank_halalas+(r.reconciliation_complete?r.cash_received_halalas:r.cash_due_halalas)),money:[r.bank_halalas,r.cash_due_halalas,r.cash_received_halalas,r.shortage_halalas,r.surplus_halalas].map((v,index)=>index>=2&&!r.cash_recorded?'—':money(v))}));
+          window.layoutMutations=0;
+          await KPSAccounting.open({lang,user:{id:'accountant',role:'owner'},tr:(ar,en)=>lang==='ar'?ar:en,esc,money,cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:()=>{},closeModal:()=>{},mutation:async()=>{window.layoutMutations++;throw Error('Layout acceptance must never post financial data');},api:async url=>{
+            if(url.includes('/options'))return {today:'2026-10-23',can_report:true,can_review:true,branches:[{id:'branch',name:'TEST Branch',city:'حفر الباطن'}],people:[],products:[],categories:{},states:{},responsibilities:{}};
+            if(url.includes('/manager-cards'))return {cards:[{id:'manager',manager_name:lang==='ar'?'مدير توصيل تجريبي — شفت مسائي حفر الباطن':'Synthetic delivery manager — Hafar evening shift',day:'2026-10-23',drivers:rows,total:3,completed:1,balance_completed:3,cash_completed:2,overdue_count:0,completion_percent:71,ready:false,due_on:'2026-10-24',due_at:'2026-10-24T16:00:00+03:00'}]};
+            if(url.includes('/driver-settlements'))return {settlements:rows};
+            return {rows:[],columns:[],totals:{},definitions:'SYNTHETIC LAYOUT ONLY'};
+          }});
+        }''',lang)
+        page.locator('[data-ac=settlements]').click()
+        rows=page.locator('[data-driver-row]')
+        expect(rows).to_have_count(3)
+        expected=page.evaluate('window.layoutExpected')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), 'Settlement page must fit the viewport'
+        for item in expected:
+            row=page.locator(f'[data-driver-row="{item["id"]}"]')
+            cells=row.locator('td')
+            expect(cells).to_have_count(7)
+            expect(cells.nth(0)).to_contain_text(item['name'])
+            expect(cells.nth(0).locator('.ac-driver-total')).to_contain_text(item['total'])
+            expect(row).not_to_contain_text('NaN')
+            for index,value in enumerate(item['money'],start=1):
+                expect(cells.nth(index)).to_contain_text(value)
+            geometry=row.evaluate('''row=>{
+              const bounds=row.getBoundingClientRect(),cells=[...row.querySelectorAll('td')];
+              const fits=element=>{const box=element.getBoundingClientRect(),range=document.createRange();range.selectNodeContents(element);return element.scrollWidth<=element.clientWidth+1&&[...range.getClientRects()].every(r=>r.left>=box.left-1&&r.right<=box.right+1);};
+              const boxes=cells.map(e=>e.getBoundingClientRect());
+              const controls=[...cells[6].querySelectorAll('button,a')];
+              return {rowFits:row.scrollWidth<=row.clientWidth+1,allCellTextFits:cells.every(fits),allActionTextFits:controls.every(fits),headerWidth:boxes[0].width,actionWidth:boxes[6].width,rowWidth:bounds.width,headerBottom:boxes[0].bottom,metricsTop:Math.min(...boxes.slice(1,6).map(b=>b.top)),metricsBottom:Math.max(...boxes.slice(1,6).map(b=>b.bottom)),actionsTop:boxes[6].top};
+            }''')
+            assert geometry['rowFits'] and geometry['allCellTextFits'] and geometry['allActionTextFits'], geometry
+            assert geometry['headerWidth']>=geometry['rowWidth']*.8 and geometry['actionWidth']>=geometry['rowWidth']*.8, geometry
+            assert geometry['headerBottom']<=geometry['metricsTop']+1 and geometry['metricsBottom']<=geometry['actionsTop']+1, geometry
+            expect(row.locator('[data-driver-history]')).to_be_visible()
+            expect(row.locator(f'a[href="/api/accounting/driver-settlements/{item["id"]}/print"]')).to_be_visible()
+        expect(page.locator('[data-variance-confirm=variance]')).to_be_visible()
+        expect(page.locator('[data-driver-balance=variance]')).to_be_visible()
+        expect(page.locator('[data-driver-receipt=pending]')).to_be_visible()
+        expect(page.locator('[data-driver-balance=confirmed]')).to_have_count(0)
+        assert page.evaluate('window.layoutMutations')==0 and not errors
+        output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
+        page.screenshot(path=str(output/f'accounting-manager-cards-{lang}-{width}.png'),full_page=True)
+        browser.close()
