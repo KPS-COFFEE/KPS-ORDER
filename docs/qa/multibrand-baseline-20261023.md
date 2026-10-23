@@ -79,3 +79,11 @@ menu/assets/configuration and domain/HTTPS are verified, operational/live accoun
 grant requirements are resolved, and the owner gives the requested final
 production activation approval. Preserve the configured OTP fallback and all
 KPS live orders. Do not alter GoDaddy MX/SPF/routing or any TILQA service.
+
+## Prior application export compatibility repair (113041e7 CI)
+
+The distinct prior image in run [39894858987](https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39894858987), job120222809766, passed packaging6, prior contracts118 and exact source identity, health, readiness and trip-return checks, then rejected its full archive. `build_archive` rejects `EXPORT_SCHEMA_UNSUPPORTED` when any schema table is absent from its reviewed table registry. The frozen prior overlay lacked the added payment, engagement and shared-membership tables.
+
+The narrow repair extends that explicit export registry, private credential exclusions and brand predicates, and adds the same records to the prior migration preservation digest inventory. Both edited overlay file hashes are updated in its manifest. Unknown future tables continue to reject archives. Prior orders, operations UI, accounting and all other overlay files retain their existing exact hashes. This permits private full archives and scoped business exports to retain new records; it does not add older-app mutation support for customer benefits, shared membership administration or new payment state. Restore these new records with matching current source; the historical restore implementation is not certified for new ledgers.
+
+Local source/packaging/identity verification:13 passed,2 PostgreSQL cases deselected. A new real PostgreSQL dual-brand test populates all eight engagement tables in both brands, verifies full archive values/checksums/private grant inclusion, proves ENBISHAN business exports exclude KPS rows and private capabilities, and compares preservation digests before/after export. PostgreSQL/image execution remains required before any production gate can pass.

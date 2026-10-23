@@ -185,10 +185,20 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
                 assert c.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n'] == 0
             audit = c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC LIMIT 1").fetchone()
             assert audit['details']['verified'] is True
-    # Newly installed deferred triggers must leave ordinary undiscounted cash
-    # operations usable, without creating rewards or rewriting old snapshots.
+    # Newly installed deferred triggers must leave a fresh ordinary cash sale
+    # usable. Keep the existing one-collection-per-order/revision/method rule:
+    # the retained legacy cash order already has its revision-zero collection.
     with db.tx() as c:
-        c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES('upgrade-followup-collection','upgrade-cash','upgrade-owner','cash',100)")
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES('upgrade-followup-order','upgrade-brand','upgrade-branch','upgrade-customer','pickup','new','not_applicable','cash',100,0,100,%s,'{}')", (db.json({'items': [], 'synthetic_upgrade': True}),))
+        c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES('upgrade-followup-collection','upgrade-followup-order','upgrade-owner','cash',100)")
     with db.tx() as c:
-        assert c.execute("SELECT total_halalas,discount_halalas FROM orders WHERE id='upgrade-cash'").fetchone() == {'total_halalas': 1500, 'discount_halalas': 0}
+        assert c.execute("SELECT total_halalas,discount_halalas FROM orders WHERE id='upgrade-followup-order'").fetchone() == {'total_halalas': 100, 'discount_halalas': 0}
+        assert c.execute("SELECT order_id,method,amount_halalas FROM collections WHERE id='upgrade-followup-collection'").fetchone() == {'order_id': 'upgrade-followup-order', 'method': 'cash', 'amount_halalas': 100}
         assert c.execute('SELECT count(*) AS n FROM customer_wallet_entries').fetchone()['n'] == 0
+        # Creating the new sale must not mutate any of the genuine baseline's
+        # earlier records; compare the same retained columns for each old ID.
+        for table, retained in before.items():
+            for row in retained:
+                statement = sql.SQL('SELECT {} FROM {} WHERE id=%s').format(
+                    sql.SQL(',').join(map(sql.Identifier, columns[table])), sql.Identifier(table))
+                assert c.execute(statement, (row['id'],)).fetchone() == row

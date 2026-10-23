@@ -18,7 +18,14 @@ def test_owner_selects_seller_without_activating_service(live_app, chromium_brow
     page.set_viewport_size({'width': 390, 'height': 900})
     try:
         page.goto('/ops')
-        page.locator('#navigation [data-page=admin]').click()
+        toggle=page.locator('.dispatch-nav-toggle')
+        expect(toggle).to_be_visible()
+        if toggle.get_attribute('aria-expanded') != 'true':
+            toggle.click()
+        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        admin_navigation=page.locator('#navigation [data-page=admin]')
+        expect(admin_navigation).to_be_visible()
+        admin_navigation.click()
         page.locator('[data-action=admin-tab][data-tab=settings]').click()
         page.locator('[data-action=online-payment-setup]').click()
         page.locator('[data-action=branch-payment-readiness]').click()

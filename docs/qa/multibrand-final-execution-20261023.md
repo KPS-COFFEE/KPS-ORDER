@@ -50,11 +50,16 @@ On intermediate source `e8b2e102c0303208f94c57a1b33aaf7712063625`, the isolated 
 
 The full V5 run also exposed an isolated-database name mismatch, optional-car display regression and mobile roster fixture navigation; these are corrected without relaxing the isolation guard or business assertions. New guarded financial ownership constraints and a genuine populated `4e4d781` upgrade witness are included in the next mandatory exact-head PostgreSQL run.
 
+On source `113041e7e716c13cf47d22c0f5bf3a6f2a8222f8`, [run 39894859054](https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/39894859054) passed all **131 Chromium/WebKit browser tests**. Its backend passed 244 first-group tests including all 22 new financial ownership witnesses, 143 customer/campaign, 200 OTP/identity and 256 KPS delivery/accounting tests. Four browser-only cases skipped in backend were executed in browser acceptance. The only backend failure occurred after the genuine populated upgrade and both preservation/repeated-startup loops passed: the final synthetic followup cash collection collided with the existing per-order/revision/method uniqueness constraint. The next source uses a fresh ordinary order without changing any application constraint. Counts overlap other suites and must not be summed as a unique total.
+
+A broad local source-only selection passed 1643 tests plus 197 subtests with 1697 database/browser cases deselected; its one outdated menu-render fixture failed, was corrected and passed its targeted rerun. This is not a PostgreSQL/browser release gate.
+
 Final exact-head CI links and results belong in PR #65 after the corrective source is published. Historical successful suites remain evidence for their own source only.
 
 ## Reviewable previews
 
 - [Approved ENBISHAN customer menu simulation](https://enbishan-customer-preview-ali.bushyangel64.chatgpt.site). Existing Site, version 10. Its ordering, fees, OTP and operating events are browser simulations; it is not the combined backend or production.
+- [New passing-browser KPS creative](multibrand-visuals/kps-approved-gift-390-113041e7.png) and [Arabic report with synthetic data](multibrand-visuals/campaign-report-ar-1366-113041e7.png) come from the 131-pass Chromium/WebKit job on 113041e7; [provenance](multibrand-visuals/provenance-113041e7.json).
 - [Actual approved KPS creative screenshot](multibrand-visuals/kps-approved-gift-390-initial-head.png) and [Arabic report screenshot with synthetic data](multibrand-visuals/campaign-report-ar-1366-initial-head.png) are initial-head visual evidence; see [provenance](multibrand-visuals/README.md).
 - Current approved KPS creative is in `public/assets/kps-gift-creative.js` and `.css`, with source and visual checks in `tests/test_gift_creative_browser.py`. The older KPS offer-choice demo is not presented as the final approved advertisement.
 - New operational report route: `/campaign-report`, available after deployment from the authorized operations menu. The current draft adds no live route.
