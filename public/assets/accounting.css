@@ -84,12 +84,12 @@
 @container(max-width:850px){.accounting .ac-manager-card [data-driver-row]{grid-template-columns:repeat(6,minmax(0,1fr))}.accounting .ac-manager-card [data-driver-row]>td{grid-column:span 2}.accounting .ac-manager-card [data-driver-row]>td:nth-child(5),.accounting .ac-manager-card [data-driver-row]>td:nth-child(6){grid-column:span 3}}
 @container(max-width:500px){.accounting .ac-manager-card [data-driver-row]{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px}.accounting .ac-manager-card [data-driver-row]>td{grid-column:auto;font-size:.88rem;padding:10px}.accounting .ac-manager-card [data-driver-row]>td:nth-child(2),.accounting .ac-manager-card [data-driver-row]>td:first-child,.accounting .ac-manager-card [data-driver-row]>td:last-child{grid-column:1/-1}.accounting .ac-manager-card [data-driver-row]>td:nth-child(5),.accounting .ac-manager-card [data-driver-row]>td:nth-child(6){grid-column:auto}.accounting .ac-manager-card .ac-settlement-actions>*,.accounting .ac-manager-card .ac-settlement-links>*{flex:1 1 120px}}
 
-/* Keep driver cards close to their content on wide accounting screens. */
-.accounting .ac-manager-card{padding:14px;max-width:1010px}
+/* Keep compact content while using the full accounting workspace width. */
+.accounting .ac-manager-card{padding:14px;max-width:none;width:100%;box-sizing:border-box}
 .accounting .ac-manager-card>summary{padding:10px 12px;gap:8px}
 .accounting .ac-manager-card .ac-card-metrics{padding-block:8px;gap:6px}
 .accounting .ac-manager-card .ac-card-metrics span{padding:5px 9px}
-.accounting .ac-manager-card [data-driver-row]{width:min(100%,980px);box-sizing:border-box;align-items:start;gap:7px;margin:0 0 10px;padding:10px;border-radius:12px}
+.accounting .ac-manager-card [data-driver-row]{width:100%;box-sizing:border-box;align-items:start;gap:7px;margin:0 0 10px;padding:10px;border-radius:12px}
 .accounting .ac-manager-card [data-driver-row]>td{padding:7px 9px;line-height:1.45;border-radius:8px}
 .accounting .ac-manager-card [data-driver-row]>td:before{margin-bottom:3px}
 .accounting .ac-manager-card [data-driver-row]>td:first-child{padding-bottom:6px}
