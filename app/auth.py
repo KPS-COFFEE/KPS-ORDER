@@ -103,6 +103,8 @@ def public_user(user: dict, conn=None) -> dict:
     output['grantable_permissions'] = sorted(employee_permissions.grantable(user.get('role')))
     if 'operations_brands' in user:
         output['operations_brands'] = user['operations_brands']
+    if user.get('central_operations') and not user.get('_morning_manager_context'):
+        output['central_operations'] = user['central_operations']
     return output
 
 
@@ -186,6 +188,8 @@ def _find_session(conn, request: Request):
         from . import multibrand
         if multibrand.enabled() and user['role'] != 'customer':
             user['operations_brands'] = multibrand.available(conn, user)
+            from .central_operations import context as central_context
+            user['central_operations'] = central_context(conn, user)
     return user
 
 
@@ -273,6 +277,8 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
             if not user:
                 raise db.error(403, 'OPERATIONS_BRAND_FORBIDDEN', 'البراند غير مخول لحسابك.')
         user = dict(user, operations_brands=multibrand.available(conn, user))
+        from .central_operations import context as central_context
+        user['central_operations'] = central_context(conn, user)
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a

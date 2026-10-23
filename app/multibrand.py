@@ -100,7 +100,7 @@ def project(conn, user, brand):
         user = dict(user, **original)
     if user['brand_id'] == brand:
         return user
-    if not enabled() or user['role'] not in {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'driver'}:
+    if not enabled() or user['role'] not in {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}:
         return None
     isolation_guard()
     grant = conn.execute('SELECT m.branch_ids FROM staff_brand_memberships m '
@@ -233,7 +233,7 @@ def membership(body: Membership, request: Request, user=Depends(auth.require_rol
         auth.require_owner_step_up(conn, user)
         authorized = {b['id'] for b in available(conn, user)}
         target = conn.execute('SELECT * FROM users WHERE id=%s AND active', (body.user_id,)).fetchone()
-        if (not target or target['role'] not in {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'driver'}
+        if (not target or target['role'] not in {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}
                 or body.brand_id not in authorized or target['brand_id'] not in authorized):
             raise db.error(403, 'MEMBERSHIP_FORBIDDEN', 'الموظف أو البراند خارج صلاحيتك.')
         branches = conn.execute('SELECT id FROM branches WHERE brand_id=%s AND id=ANY(%s)',
