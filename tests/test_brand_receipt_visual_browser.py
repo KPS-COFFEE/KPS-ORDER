@@ -16,7 +16,9 @@ def test_original_brand_logo_stays_visible_and_layout_matches(static_customer, l
     from playwright.sync_api import sync_playwright
 
     source = (Path(__file__).resolve().parents[1]/'public/ops.js').read_text()
-    helper = source[source.index('  function receiptHTML('):source.index('  function bindReceiptWindow(')]
+    complimentary_helper = next(line for line in source.splitlines()
+                                if line.startswith('  const complimentaryName='))
+    helper = complimentary_helper + '\n' + source[source.index('  function receiptHTML('):source.index('  function bindReceiptWindow(')]
     order = {'brand_id': 'kps', 'created_at': '2026-10-23T10:00:00Z',
              'snapshot': {'order_reference': 'HFR1-261023-0001'}, 'service': 'delivery',
              'preparation_status': 'ready', 'payment_method': 'cash', 'payment_status': 'unpaid',
