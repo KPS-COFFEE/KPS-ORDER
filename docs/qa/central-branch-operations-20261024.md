@@ -27,14 +27,17 @@ may select a brand locally. Public customer storefront URLs remain independent.
 - Node adapter suite: 11 passed.
 - Existing multibrand final boundary suite: 16 passed.
 - JavaScript syntax, Python compilation and `git diff --check`: passed.
-- PostgreSQL acceptance is configured in the focused GitHub workflow; no local
-  PostgreSQL success is claimed. This runtime maps only UID0, preventing an
+- PostgreSQL18 focused acceptance succeeded in GitHub Actions run 40024772086;
+  no local PostgreSQL success is claimed. This runtime maps only UID0, preventing an
   ordinary unprivileged PostgreSQL test server.
 
-## Release blockers — do not merge or enable yet
+## Central feature activation blockers
 
 `KPS_CENTRAL_OPERATIONS_ENABLED` defaults off. It has not been set on production.
 This is an implementation checkpoint, not a completed central-operations release.
+The owner subsequently instructed publishing this checkpoint. Ship the dormant
+foundation only after all release gates pass, and keep central operations off;
+that deployment does not make the central experience available.
 
 1. Shared operational workday for manager/driver, including assignment of both
    brands from one duty and immediate branch revocation. Existing shift rows are
