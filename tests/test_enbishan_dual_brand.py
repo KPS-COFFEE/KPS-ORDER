@@ -198,13 +198,47 @@ def test_enbishan_host_defaults_and_cross_brand_request_rejection(dual,monkeypat
 
 
 @pytest.mark.postgres
-def test_receipt_number_sequences_are_distinct_and_kps_format_preserved(dual):
+def test_receipt_number_format_matches_with_independent_branch_sequences(dual):
     from app.order_numbering import allocate
     with db.tx() as c:
         kps=allocate(c,'kps-branch-1')
         enb=allocate(c,'enbishan-test-1')
-        assert kps.startswith('HFR1-') and enb.startswith('ENB-HFR1-')
-        assert kps!=enb
+        assert kps.startswith('HFR1-') and enb.startswith('HFR1-')
+        assert kps.rsplit('-',1)[0]==enb.rsplit('-',1)[0]
+        kps_next=allocate(c,'kps-branch-1')
+        enb_next=allocate(c,'enbishan-test-1')
+        assert int(kps_next.rsplit('-',1)[1])==int(kps.rsplit('-',1)[1])+1
+        assert int(enb_next.rsplit('-',1)[1])==int(enb.rsplit('-',1)[1])+1
+
+
+@pytest.mark.postgres
+def test_matching_brand_references_stay_unique_scoped_and_historical_strings_unchanged(dual):
+    import psycopg
+    from app.order_numbering import allocate
+    client, actor, _, _, _ = dual
+    reference='HFR1-261023-88888888'
+    ids={brand:uuid4().hex for brand in ('kps','enbishan')}
+    def insert(conn,brand,identifier,ref):
+        branch='kps-branch-1' if brand=='kps' else 'enbishan-test-1'
+        conn.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,'delivery','ready','pending','cash',1000,0,1000,%s,%s)",
+            (identifier,brand,branch,'dual-'+brand+'-customer',db.json({'items':[],'order_reference':ref}),db.json({'name':'SYNTHETIC'})))
+    with db.tx() as conn:
+        for brand,identifier in ids.items():insert(conn,brand,identifier,reference)
+        historical_id=uuid4().hex
+        historical='ENB-HFR1-261017-0001'
+        insert(conn,'enbishan',historical_id,historical)
+        allocate(conn,'enbishan-test-1')
+        assert conn.execute("SELECT snapshot->>'order_reference' AS ref FROM orders WHERE id=%s",(historical_id,)).fetchone()['ref']==historical
+        assert len({r['order_no'] for r in conn.execute('SELECT order_no FROM orders WHERE id=ANY(%s)',(list(ids.values()),)).fetchall()})==2
+    # Matching display references across brands remain distinct canonical orders.
+    for brand in ids:
+        own=actor(brand+'-customer').get('/api/orders/'+ids[brand])
+        assert own.status_code==200 and own.json()['order']['brand_id']==brand
+        other='enbishan' if brand=='kps' else 'kps'
+        assert client.get('/api/orders/'+ids[other]).status_code==404
+    # Exact existing scoped uniqueness constraint still rejects a same-brand duplicate.
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with db.tx() as conn:insert(conn,'enbishan',uuid4().hex,reference)
 
 
 @pytest.mark.postgres
@@ -227,7 +261,7 @@ def test_current_verified_checkout_order_history_and_replay_for_both_brands(dual
         assert first.status_code==200,first.text
         assert client.post('/api/orders',json=body,headers={'Idempotency-Key':key}).json()==first.json()
         orders[brand]=first.json()['order']
-        assert orders[brand]['snapshot']['order_reference'].startswith('ENB-' if brand=='enbishan' else 'HFR1-')
+        assert orders[brand]['snapshot']['order_reference'].startswith('HFR1-')
         assert all(o['brand_id']==brand for o in client.get('/api/orders').json()['orders'])
         parallel.append((body,dict(client.cookies),dict(client.headers)))
     def create_concurrently(case):

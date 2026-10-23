@@ -1,7 +1,9 @@
 name: Multi-brand final acceptance
 'on':
   pull_request:
-    branches: [agent/kps-order-emergency-v4]
+    branches: [agent/kps-order-emergency-v4, agent/multibrand-safe-release-20261023]
+  push:
+    branches: [agent/enbishan-invoice-parity-20261023]
 permissions:
   contents: read
 concurrency:
@@ -10,6 +12,54 @@ concurrency:
 # This gate is additional acceptance; existing protected image, security,
 # rollback and complete-regression checks remain mandatory and unchanged.
 jobs:
+  invoice-parity:
+    if: github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_invoice_parity
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d test_enbishan_invoice_parity"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_invoice_parity
+      APP_ENV: testing
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      REPORT_WORKER_ENABLED: 'false'
+      EMAIL_WORKER_ENABLED: 'false'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Exact KPS output and Enbishan layout preservation
+        run: |
+          node tests/test_brand_receipt_layout.cjs
+          node --check public/ops.js
+          node --check public/assets/customer-order.js
+      - name: Real PostgreSQL identity, scoped uniqueness, old references and printing
+        run: python tools/enbishan_test.py tests/test_enbishan_dual_brand.py tests/test_brand_receipt_logos.py tests/test_branch_printing.py tests/test_dispatch_numbering.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: invoice-parity-${{ github.event.pull_request.head.sha || github.sha }}
+          path: test-results/enbishan/
+          retention-days: 14
   multibrand-postgres:
     if: github.head_ref == 'agent/multibrand-safe-release-20261023'
     runs-on: ubuntu-24.04
@@ -83,7 +133,7 @@ jobs:
           tests/test_enbishan_storefront_identity.py tests/test_enbishan_menu_assets.py tests/test_enbishan_final_menu_review.py
           tests/test_enbishan_customer_scope_constraints.py tests/test_enbishan_financial_ownership_constraints.py tests/test_enbishan_shared_terminal.py
           tests/test_enbishan_shared_float.py tests/test_enbishan_sms_boundary.py
-          tests/test_enbishan_dual_brand.py tests/test_storefront_scope.py
+          tests/test_enbishan_dual_brand.py tests/test_brand_receipt_logos.py tests/test_storefront_scope.py
           tests/test_multibrand_final_boundary.py tests/test_public_default_brand_scope.py
           tests/test_production_release_preflight.py tests/test_production_release_preflight_postgres.py
           --junitxml=test-results/multibrand/brand-menu.xml
@@ -125,6 +175,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           node --test tests/test_campaign_report_ui.cjs
+          node tests/test_brand_receipt_layout.cjs
           node tests/test_driver_simple_ui.cjs
           node tests/test_blind_driver_closure_ui.cjs
           node tests/test_driver_alerts_ui.cjs
