@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow">
   <title>تقارير الطلبات والعروض</title>
-  <link rel="stylesheet" href="/assets/campaign-report.css?v=20261023-1">
-  <script src="/assets/campaign-report.js?v=20261023-1" defer></script>
+  <link rel="stylesheet" href="/assets/campaign-report.css?v=20261023-2">
+  <script src="/assets/campaign-report.js?v=20261023-2" defer></script>
 </head>
 <body>
   <a class="skip" href="#campaign-main" data-i18n="skip">انتقل للتقرير</a>
@@ -25,10 +25,22 @@
       <label><span data-i18n="version">إصدار إعداد العرض (اختياري)</span><input name="policy_version" type="number" min="1" max="2147483647" step="1" inputmode="numeric"></label>
       <button type="submit" data-i18n="show">عرض التقرير</button>
     </form>
+    <section id="report-saved-panel" class="panel saved-reports" hidden>
+      <button type="button" id="report-saved-refresh" data-i18n="saved">التقارير النهائية المحفوظة</button>
+      <label><span data-i18n="saved_latest">آخر 50 تقريرًا ضمن صلاحياتك</span><select id="report-saved"><option value=""></option></select></label>
+    </section>
     <p id="report-status" role="status" aria-live="polite"></p>
     <button type="button" id="report-retry" hidden data-i18n="retry">إعادة المحاولة</button>
     <div id="report-content" hidden>
       <p id="report-applied" class="applied"></p>
+      <p id="report-final-evidence" class="date-note" hidden></p>
+      <button type="button" id="report-download" hidden data-i18n="download">تنزيل التقرير النهائي كاملًا</button>
+      <form id="report-finalize-form" class="panel report-finalize" hidden>
+        <h2 data-i18n="finalize_title">حفظ تقرير نهائي للفترة</h2>
+        <p class="explanation" data-i18n="finalize_note">يحفظ جميع صفحات المستفيدين وملخص الأيام كما هي وقت الحفظ. لا يوقف الهدية أو الإعلان ولا يغيّر التقفيلة المحاسبية.</p>
+        <label><span data-i18n="reason">سبب حفظ التقرير</span><input id="report-finalize-reason" name="reason" minlength="3" maxlength="500" required></label>
+        <button type="submit" id="report-finalize" data-i18n="finalize">تأكيد وحفظ التقرير النهائي</button>
+      </form>
       <section id="report-summary" class="report-summary" aria-label="ملخص التقرير"></section>
       <p class="explanation" data-i18n="customer_note">العميل الجديد هنا هو صاحب أول طلب أونلاين غير ملغى ضمن سجل الفروع المختارة. إذا عاد وطلب خلال الفترة نفسها فقد يُحسب جديدًا ومتكررًا، ويظهر مرة واحدة في إجمالي العملاء.</p>
       <section class="panel">

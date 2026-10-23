@@ -3,6 +3,35 @@
 **Decision: not cleared for production migration.** No migration, production
 query, deployment, backup or restore was performed for this review.
 
+## Current continuation: eleven normal migrations
+
+The current review adds `096_campaign_report_closures.sql` and
+`097_authentica_customer_challenges.sql` to the nine-file inventory below.
+There are now **eleven added normal migrations**, 84 source SQL files versus
+73 in production source `4e4d781`; no existing normal SQL file was edited.
+These remain source counts, not the live registry count.
+
+- `096` creates the empty append-only period-report snapshot table, brand/date
+  index and immutability trigger. No report is created and no offer, campaign,
+  order, permission or accounting state is changed by migration. The new table
+  is included in preservation, current export/restore and the distinct prior
+  application's compatibility inventory. Actual populated archive/restore and
+  concurrent finalization witnesses are required on the revised exact head.
+- `097` adds nullable Authentica contract hash/length columns to the existing
+  OTP challenge table, extends two provider allowlists, limits Authentica to
+  ENBISHAN SMS customer/probe challenges and adds a partial generation index.
+  It neither selects nor enables a provider. Existing rows keep null new
+  fields. Constraint validation and index construction can lock existing
+  identity tables. An older application has not been certified for active
+  Authentica data; provider disablement is not a schema downgrade.
+
+Both migrations execute at ordinary startup even while features/providers are
+off. The actual registry, private backup/recovery, realistic locking/duration,
+exact-head CI and final owner production approval gates remain mandatory.
+The following section retains the original nine-migration source review.
+
+## Historical nine-migration review
+
 Reviewed source: `626a224f87828e4929f8e8dd58dbca3c3ed31916`.
 Production-source comparator supplied by the release owner:
 `4e4d781b4fa82b7459410694ff5c4ac06842e6e7`.
@@ -147,3 +176,5 @@ backup, export, production clone or restore artifact is asserted by this review.
 | 070_branch_payment_modes.sql | dd2457a59b28725c9e576ce0c49f7e691399498a9bba75d9832bee2160301007 |
 | 071_late_branch_payment_receipts.sql | d34b62f6a0049584c039a71dd21452451b706979908a4d483d04a11ad3ada68b |
 | 079_customer_engagement.sql | e1d13f47ec11a15818b4d1261587f008eaa4866c7835372ec8f93e010c2fe2e9 |
+| 096_campaign_report_closures.sql | 0e05eb29329fa154d2e923d7692ba997b2b484ba86b48c0282b723a7731e0c58 |
+| 097_authentica_customer_challenges.sql | 41d58a34b1f814b821a3072c4b64afcd3239334e405b008226ccdf09b79af8e3 |

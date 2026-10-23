@@ -8,10 +8,15 @@ from pydantic import ValidationError
 from app import auth
 
 
-def test_authentica_cannot_be_selected_by_owner_settings():
-    with pytest.raises(ValidationError):
-        auth.ChannelUpdateBody(channel='sms', state='testing', enabled=False,
-                               sms_provider='authentica')
+def test_authentica_selection_remains_unavailable_without_approved_contract():
+    # The input vocabulary alone grants no capability. The settings route must
+    # pass the same exact-release/application gates before storing a selection.
+    assert auth.ChannelUpdateBody(channel='sms', state='testing', enabled=False,
+                                  sms_provider='authentica').sms_provider == 'authentica'
+    with pytest.raises(HTTPException):
+        auth._customer_provider_ready('authentica', 'enbishan')
+    assert 'authentica' not in auth._available_sms_providers('enbishan')
+    assert 'authentica' not in auth._available_sms_providers('kps')
 
 
 def test_authentica_secret_does_not_enable_global_provider(monkeypatch):

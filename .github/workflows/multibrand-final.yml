@@ -85,6 +85,7 @@ jobs:
           tests/test_enbishan_shared_float.py tests/test_enbishan_sms_boundary.py
           tests/test_enbishan_dual_brand.py tests/test_storefront_scope.py
           tests/test_multibrand_final_boundary.py tests/test_public_default_brand_scope.py
+          tests/test_production_release_preflight.py tests/test_production_release_preflight_postgres.py
           --junitxml=test-results/multibrand/brand-menu.xml
       - name: Customer taps, district, campaigns and reporting
         if: ${{ !cancelled() }}
@@ -94,6 +95,7 @@ jobs:
           tests/test_minimum_order_feedback.py tests/test_optional_customer_address.py
           tests/test_customer_hotpath.py tests/test_customer_language.py
           tests/test_campaign_reporting.py tests/test_campaign_reporting_postgres.py
+          tests/test_campaign_report_closures_postgres.py tests/test_campaign_report_multibrand_postgres.py
           tests/test_first_order_gift.py tests/test_first_order_gift_postgres.py
           tests/test_storefront_advertising.py tests/test_storefront_advertising_postgres.py
           --junitxml=test-results/multibrand/customer-campaign.xml
@@ -102,6 +104,7 @@ jobs:
         run: >-
           python -m pytest -q
           tests/test_enbishan_otp_provider_gate.py tests/test_tawked_otp.py
+          tests/test_authentica_challenges.py
           tests/test_v5_identity.py tests/test_final_identity.py
           tests/test_context_cookie_isolation.py tests/test_sms_mandatory_policy.py
           tests/test_owner_sensitive_sms.py

@@ -29,10 +29,11 @@ PENDING = frozenset({
     '066_branch_online_refunds.sql', '067_branch_payment_reconciliation.sql',
     '068_branch_payment_renewal.sql', '069_branch_refund_reconciliation.sql',
     '070_branch_payment_modes.sql', '071_late_branch_payment_receipts.sql',
-    '079_customer_engagement.sql',
+    '079_customer_engagement.sql', '096_campaign_report_closures.sql',
+    '097_authentica_customer_challenges.sql',
 })
 TABLES = ('brands', 'branches', 'users', 'orders', 'collections', 'refunds',
-          'branch_payment_attempts', 'branch_online_receipts')
+          'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges')
 
 
 def assert_baseline_source(path, manifest=BASELINE):
@@ -118,6 +119,7 @@ def populated_baseline(monkeypatch, safe_test_environment):
             c.execute("INSERT INTO brands(id,name) VALUES('upgrade-brand','Synthetic upgrade brand')")
             c.execute("INSERT INTO branches(id,brand_id,branch_no,source_id,name,city) VALUES('upgrade-branch','upgrade-brand',1,'synthetic-upgrade','TEST','TEST')")
             c.execute("INSERT INTO users(id,brand_id,role,display_name) VALUES('upgrade-owner','upgrade-brand','owner','TEST owner'),('upgrade-customer','upgrade-brand','customer','TEST customer')")
+            c.execute("INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name) VALUES('upgrade-legacy-otp','upgrade-brand','+966500001999','synthetic-legacy-reference','sms',now()+interval '5 minutes','tawked')")
             for oid, method, subtotal, fee, paid, preparation in (
                 ('upgrade-cash', 'cash', 1000, 500, 'partial', 'new'),
                 ('upgrade-verified', 'card', 2000, 0, 'paid', 'accepted'),
@@ -166,6 +168,11 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
             path.split('/', 1)[1]: digest for path, digest in BASELINE['files'].items()
             if path.startswith('migrations/')}
         columns, before = original_rows(c)
+        channel_columns = [row['column_name'] for row in c.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='identity_channels' ORDER BY ordinal_position")]
+        channel_query = sql.SQL('SELECT {} FROM identity_channels ORDER BY brand_id,channel').format(
+            sql.SQL(',').join(map(sql.Identifier, channel_columns)))
+        before_channels = c.execute(channel_query).fetchall()
         assert c.execute("SELECT sum(amount_halalas) AS n FROM collections").fetchone()['n'] == 1000
         assert c.execute("SELECT sum(amount_halalas) AS n FROM refunds").fetchone()['n'] == 200
         assert c.execute("SELECT sum(amount_halalas) AS n FROM branch_online_receipts WHERE disposition='applied'").fetchone()['n'] == 2000
@@ -174,6 +181,9 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
         db.migrate()
         with db.tx() as c:
             assert original_rows(c, columns)[1] == before
+            assert c.execute(channel_query).fetchall() == before_channels
+            assert c.execute("SELECT authentica_contract_hash,authentica_code_length FROM otp_challenges WHERE id='upgrade-legacy-otp'").fetchone() == {
+                'authentica_contract_hash': None, 'authentica_code_length': None}
             after_registry = c.execute('SELECT * FROM schema_migrations ORDER BY version').fetchall()
             assert [r for r in after_registry if r['version'] not in PENDING] == before_registry
             assert {r['version'] for r in after_registry} == {r['version'] for r in before_registry} | PENDING
@@ -181,7 +191,8 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
             assert c.execute('SELECT count(*) AS n FROM orders WHERE discount_halalas<>0').fetchone()['n'] == 0
             for table in ('branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds',
                           'branch_refund_reconciliation', 'branch_payment_renewals',
-                          'customer_marketing_consents', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries'):
+                          'customer_marketing_consents', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries',
+                          'promotion_report_closures'):
                 assert c.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n'] == 0
             audit = c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC LIMIT 1").fetchone()
             assert audit['details']['verified'] is True

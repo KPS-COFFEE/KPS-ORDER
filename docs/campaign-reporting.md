@@ -20,7 +20,7 @@ Both accept an optional `branch_id` and `policy_version`. Beneficiaries supports
 `limit` (1–100) and `offset`. The date range is inclusive, limited to 93 Riyadh
 calendar dates. The end timestamp is exclusive so midnight is not counted twice.
 These calendar reports supplement, and do not replace, the immutable accounting
-or driver/manager closure reports. There is no new financial write or migration.
+or driver/manager closure reports. There is no new financial write. The additive `096_campaign_report_closures.sql` migration only creates the append-only final-period report store and its index/trigger; it does not change orders, eligibility or accounting.
 
 Online order totals exclude staff delivery-center orders and owner-marked test
 orders. Cancelled/rejected orders are counted separately. First-time and repeat
@@ -47,5 +47,40 @@ returns that explicit grant, and every report read is still authorized server
 side. Failed or revoked access clears the previous report. It has no inline
 script, no stored customer data and no additional OTP requirement.
 
-Immutable campaign closing snapshots and automatic post-close delivery of
-marketing reports are not introduced by this patch.
+Owners can explicitly **save a final period report** from the displayed report
+filters. This automatically captures one complete observation of the summary,
+every day, and **all beneficiary pages**, in one PostgreSQL statement/MVCC
+snapshot. The existing idempotency transaction remains READ COMMITTED, so
+concurrent retries see the original committed response. A repeated request with
+the same key creates no second snapshot. Current role/brand/report/branch access
+is checked before replay. The UI confirms the action without an OTP.
+
+- `POST /api/reports/promotions/closures`: owner only; exact calendar filters,
+  reason and idempotency key required.
+- `GET /api/reports/promotions/closures`: latest scoped saved periods (50/page).
+- `GET /api/reports/promotions/closures/{id}`: frozen daily/summary and paginated
+  masked beneficiaries; current managers may read only if **every** saved branch
+  remains within their current grant. Morning restrictions still apply.
+- `GET /api/reports/promotions/closures/{id}/download?lang=ar|en`: complete UTF-8
+  CSV, all days/beneficiaries, selected scope, definitions, reason, save time and
+  content digest. Spreadsheet formulas are neutralized. Downloads are audited.
+
+The snapshot records the selected date/branch/revision filters and a SHA-256
+of its complete canonical JSON. Database UPDATE/DELETE triggers reject edits.
+Every reopening/download verifies the digest. Later order cancellations,
+new claims or branch renaming do not rewrite the saved report. The durable
+saved-report list is the in-app evidence; no outbound recipient is assumed.
+Both current and prior compatible archives explicitly preserve the new table;
+restoration uses matching current source. The real isolated PostgreSQL witness
+checks populated export/restore and the restored immutability trigger.
+
+Technical limits are 20,000 beneficiaries and 16 MiB per complete snapshot.
+An oversized request fails atomically with a shorter-period instruction; it
+never saves or exports a truncated 'final' report.
+
+**This action finalizes a report, not an offer.** It does not deactivate a
+banner, gift, schedule or accounting shift. It does not invent banner exposure
+attribution or equate gift policy revisions with campaign identity. Scheduled
+automatic campaign-end snapshots/notifications remain unavailable until that
+separate lifecycle is explicitly defined. Existing KPS advertising and gift
+eligibility remain unchanged.

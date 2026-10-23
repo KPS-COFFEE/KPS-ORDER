@@ -2,6 +2,64 @@
 
 **Release state: DRAFT / NOT ACTIVATED.** This is an implementation inventory and review handoff, not a production certificate.
 
+## Continuation after the owner asked to finish
+
+This section supersedes the earlier implementation inventory where noted.
+Exact final-head CI evidence belongs in PR #65; the earlier `44e224be` source
+passed all thirteen required workflows and 3345 unique V5 tests, but that is
+not a certificate for the additional source below.
+
+| Deliverable | Current review state | Evidence / remaining gate |
+| --- | --- | --- |
+| Inventory and code | Updated in the same draft PR; no fork or duplicate backend | PR #65 and this document; no merge/deploy |
+| Website | PARTIAL, official hostname not activated | New read-only DNS/HTTP evidence and domain activation plan linked below |
+| KPS regression | Prior exact source passed; revised source requires its own CI | Retained prior evidence plus mandatory revised exact-head workflows |
+| Advertising | Existing engine/approved KPS creative preserved | Existing screenshots and browser tests; no ENBISHAN offer invented or activated |
+| Customer journey | Existing approved menu simulation and combined technical journeys retained | Source-approved menu import and operating configuration still require live readiness |
+| OTP | Canonical server integration now implemented behind closed release/contract gates | Per-phone serialization, durable retirement/attempts, strict provider contract, expiry/resend/single-use and revised source tests; real provider approval/settings and consented delivery remain unverified |
+| Delivery | Source policies preserved | Live Fawzi grants remain unverified; private read-only collector prepared |
+| Reports | Complete explicit owner-finalized period report implemented | All beneficiaries, consistent daily totals, immutable audited snapshot, scoped reopening and bilingual full CSV; no offer or accounting mutation |
+| Recovery | Private metadata-only preflight prepared | Actual private registry/backup/restore/locking evidence remains unverified |
+| Owner gate | Required after technical and operating checks | No production activation approval is requested or inferred from this continuation |
+
+Report finalization generates the full report when the owner confirms the
+selected period. It does not assume gift policy revisions are campaign IDs,
+invent exposure attribution or shut down an advertisement. A separately
+scheduled automatic campaign-end snapshot is not implemented or claimed.
+
+The new additive normal migrations are `096` (empty append-only period report
+store) and `097` (dormant Authentica canonical challenge/configuration metadata).
+There are now eleven pending normal migrations relative to production source,
+all subject to the same production migration/recovery gate. No existing normal
+migration checksum was edited.
+
+Fresh evidence and prepared operational steps:
+
+- [DNS and HTTP read-only evidence](enbishan-domain-preflight-20261023.json):
+  public resolver NXDOMAIN for ENBISHAN hostname, KPS CNAME present; KPS ready200
+  on the retained production source, ENBISHAN upstream503; origin TLS unverified.
+- [Concrete domain activation plan](enbishan-domain-activation-plan-20261023.md),
+  held until brand routing, recovery and final owner release gates pass.
+- [Private read-only production collector](private-production-preflight-20261023.md),
+  which never starts the application or runs migrations and always leaves
+  backup/restore/activation approval false.
+- [Revised gated OTP implementation and actual provider requirements](../authentica-enbishan-preparation-20261023.md).
+- [Full period-report behavior and definitions](../campaign-reporting.md).
+
+The original inventory and chronological evidence are retained below for their
+own source versions.
+
+Supplemental continuation verification: **1684 source tests and 205 subtests
+passed**, 1729 database/browser/conditional cases explicitly deselected, with no
+failures in that selection. Five Node report UI checks, shipped customer and
+owner-probe OTP input-length witnesses, Python compilation, JavaScript syntax
+and diff checks passed. The initially outdated nine-file startup inventory
+assertion was corrected to the explicit eleven-file inventory while retaining
+all prior checksums; its populated PostgreSQL witness now also preserves legacy
+OTP/channel rows. These are source checks, not actual PostgreSQL, browser,
+provider or production acceptance. Revised exact-head workflow results must be
+recorded in PR #65.
+
 [Review PR #65](https://github.com/KPS-COFFEE/KPS-ORDER/pull/65) targets the existing `agent/kps-order-emergency-v4` branch. The initial published source was `ac3ab03d1f4f769590e3b6ce24f29b6596a91309`, tree `d39a5370b00a3840276c62e5d41294e92ac3ec05`. Subsequent corrective commits require their own final exact-head results.
 
 ## Implementation inventory

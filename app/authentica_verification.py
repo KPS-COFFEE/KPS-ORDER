@@ -1,8 +1,8 @@
-"""Prepared ENBISHAN-only Authentica v2 transport, not a selectable login provider.
+"""ENBISHAN-only Authentica v2 transport for the gated canonical customer adapter.
 
 Official contract: docs.authentica.sa/api-reference/otp-verification/{send,verify}-otp.
-No router imports this adapter. Approval, application settings and canonical
-challenge/resend integration must be certified before adding a runtime selection.
+The canonical adapter independently requires exact-release approval and reviewed
+application settings before a provider selection can be used.
 """
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ _SECRET_NAME = 'AUTHENTICA_ENBISHAN_API_KEY'
 def _secret(brand_id: str) -> str:
     # Never reuse the global/KPS key, even when ENBISHAN has no credential.
     key = os.getenv(_SECRET_NAME, '') if brand_id == 'enbishan' else ''
-    if not key or not key.strip() or '\r' in key or '\n' in key:
+    if (not key or not key.strip() or '\r' in key or '\n' in key
+            or key == os.getenv('AUTHENTICA_API_KEY')):
         raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود التحقق غير مهيأ لهذا البراند.')
     return key
 
@@ -64,7 +65,7 @@ def send(phone: str, *, brand_id: str) -> None:
 
 
 def verify(phone: str, code: str, *, brand_id: str) -> bool:
-    """Transport result only; canonical challenge consumption is still required.
+    """Transport result only; authentica_challenges owns canonical proof consumption.
 
     The runtime integration must enforce the approved application's digit
     length. This transport accepts ASCII digits and never interprets truthy

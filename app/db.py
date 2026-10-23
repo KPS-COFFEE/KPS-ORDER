@@ -115,6 +115,26 @@ def error(status: int, code: str, message: str) -> HTTPException:
 
 
 @contextmanager
+def pooled_connection():
+    """Own an autocommit connection across explicit, short transactions.
+
+    For protocols requiring durable state before an external call. Callers must
+    explicitly release their session locks; the existing pool reset additionally
+    clears session state and advisory locks before reuse. Prefer tx() normally.
+    """
+    url = os.environ.get('DATABASE_URL', '')
+    if not url.startswith(('postgres://', 'postgresql://')):
+        raise RuntimeError('A PostgreSQL DATABASE_URL is required; no temporary storage fallback exists.')
+    pool = _pool_for_url(url)
+    try:
+        with pool.connection(timeout=POOL_CHECKOUT_SECONDS) as conn:
+            conn.execute("SET statement_timeout = '15000ms'")
+            yield conn
+    except (PoolClosed, PoolTimeout, TooManyRequests) as exc:
+        raise psycopg.OperationalError('Database connection capacity is unavailable.') from exc
+
+
+@contextmanager
 def tx(*, pipeline: bool = False):
     url = os.environ.get('DATABASE_URL', '')
     if not url.startswith(('postgres://', 'postgresql://')):
@@ -302,7 +322,7 @@ def migrate():
                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
 
 
-PRESERVED_TABLES = ('first_order_gift_claims', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
+PRESERVED_TABLES = ('promotion_report_closures', 'first_order_gift_claims', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
                     'orders', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
                     'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
                     'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures', 'report_corrections', 'report_renderings', 'report_notifications',

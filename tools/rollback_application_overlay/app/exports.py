@@ -40,7 +40,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache',
           'staff_brand_memberships', 'driver_brand_dedications',
           'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
-          'customer_wallets','benefit_order_states','customer_wallet_entries')
+          'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures')
 AUTH_TABLES = {'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
@@ -72,7 +72,7 @@ def _encode(value) -> bytes:
 def _scoped_sql(table, brand):
     if brand is None:
         return 'TRUE', ()
-    direct = {'driver_location_health', 'delivery_tracking_links', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches','driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'promotion_report_closures', 'driver_location_health', 'delivery_tracking_links', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches','driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'driver_evidence', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',

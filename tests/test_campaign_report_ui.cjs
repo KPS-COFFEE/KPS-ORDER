@@ -37,3 +37,10 @@ test('role, withdrawn report access and morning context cannot open broad report
   assert.equal(ui.hasReportAccess({role:'delivery_manager',effective_permissions:['reports_view']}),true);
   for(const user of [{role:'customer'},{role:'driver',effective_permissions:['reports_view']},{role:'delivery_manager',effective_permissions:[]},{role:'delivery_manager',effective_permissions:['reports_view'],delivery_context:{shift_id:'morning'}}])assert.equal(ui.hasReportAccess(user),false);
 });
+
+test('owner finalization binds applied filters and requires a bounded reason without changing campaign state',()=>{
+  const body=ui.finalizeBody({start:'2026-10-01',end:'2026-10-23',branch_id:'enb-2',policy_version:'2'},'  نهاية الفترة  ');
+  assert.deepEqual(body,{start:'2026-10-01',end:'2026-10-23',branch_id:'enb-2',policy_version:2,reason:'نهاية الفترة'});
+  assert.deepEqual(ui.finalizeBody({start:'2026-10-01',end:'2026-10-23'},'إقفال'),{start:'2026-10-01',end:'2026-10-23',branch_id:null,policy_version:null,reason:'إقفال'});
+  for(const reason of ['', '  ', 'a\0b','x'.repeat(501)])assert.throws(()=>ui.finalizeBody({start:'2026-10-01',end:'2026-10-23'},reason));
+});
