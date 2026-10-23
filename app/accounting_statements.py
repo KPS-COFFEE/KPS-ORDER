@@ -24,11 +24,15 @@ def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
 
 
 def histories(c,user,rows):
+    from .accounting import settlement_action
     ids=[r['id'] for r in rows]
+    snapshots={r['id']:r['snapshot'] for r in rows}
     changes=defaultdict(list)
     for event in c.execute("""SELECT e.*,u.display_name actor_name FROM driver_accounting_settlements e
       JOIN users u ON u.id=e.actor_id WHERE e.brand_id=%s AND e.report_id=ANY(%s) ORDER BY e.report_id,e.revision""",
-      (user['brand_id'],ids)).fetchall():changes[event['report_id']].append(event)
+      (user['brand_id'],ids)).fetchall():
+        history=changes[event['report_id']]
+        history.append(dict(event,action_type=settlement_action(snapshots[event['report_id']],history[-1] if history else None,event)))
     return changes
 
 
@@ -177,7 +181,7 @@ def closure_deadline(row, local, extension=None):
 
 
 def manager_cards(c,user,bids):
-    from .accounting import driver_settlement_values,variance_confirmation,TZ
+    from .accounting import driver_settlement_values,variance_confirmation,cash_correction_requests,can_request_cash_correction,TZ
     from .catalog import normalize_city
     from .operations import safe
     rows=source_rows(c,user,bids)
@@ -194,8 +198,9 @@ def manager_cards(c,user,bids):
         deadline['overdue']=bool((finished or datetime.now(TZ))>=deadline['due_at'])
         deadline['can_extend']=deadline['deadline_policy']=='external_72h' and not deadline['extension'] and not finished
         group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id']),due_on=None))
-        can_correct_cash_receipt=bool(user['role']=='owner' and r['user_id']!=user['id'] and variance_pending and not group['approved_day'])
-        group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,can_correct_cash_receipt=can_correct_cash_receipt,**v,**deadline))
+        tickets=cash_correction_requests(c,user,r['id'])
+        may_request=can_request_cash_correction(c,user,r['id'])
+        group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,cash_correction_requests=tickets,can_request_cash_correction=may_request,**v,**deadline))
     for group in groups.values():
         group['completed']=sum(r['stage']=='cash_received' and not r['variance_pending'] for r in group['drivers'])
         group['total']=len(group['drivers'])

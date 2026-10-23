@@ -108,6 +108,11 @@
 @media(max-width:760px){.accounting .ac-manager-card{padding:10px}.accounting .ac-manager-card td button,.accounting .ac-manager-card td a{min-height:42px}.accounting .ac-manager-card .ac-settlement-links{margin-inline-start:0}}
 
 /* Read-only settlement history lives in the shared modal, outside .accounting. */
+.accounting .ac-cash-ticket{border:1px solid #e6d8c8;border-inline-start:3px solid #ac682c;background:#fffbf5;border-radius:8px;padding:8px 10px;margin-block:8px;max-width:100%;overflow-wrap:anywhere}
+.accounting .ac-cash-ticket header{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;justify-content:space-between;font-size:12px}
+.accounting .ac-cash-ticket header span{color:#875718;background:#fff1df;border-radius:5px;padding:3px 6px}
+.accounting .ac-cash-ticket p{margin:4px 0;font-size:12px;line-height:1.6;white-space:pre-wrap}
+.accounting .ac-cash-ticket small{font-size:11px;line-height:1.6}
 .ac-settlement-history{display:grid;gap:12px;min-width:0;text-align:start;font-size:14px;line-height:1.55;color:#30241e}
 .ac-settlement-history *{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}
 .ac-history-context{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px}
