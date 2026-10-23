@@ -75,5 +75,9 @@ def test_real_order_dispatch_delivery_and_accounting_without_any_collection(ops)
         assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==0
     rows=actor('owner').get('/api/accounting/reports?group=complimentary').json()['rows']
     assert any(r['kind']=='تعويض' and r['reason']==body['reason'] for r in rows)
+    entry=next(r for r in rows if r['kind']=='تعويض' and r['reason']==body['reason'])
+    assert entry['amount']==q['complimentary']['catalog_value_halalas']
+    assert entry['delivery_value']==q['complimentary']['delivery_value_halalas']
+    assert entry['payable']==0
     daily=actor('owner').get('/api/accounting/reports').json()
     assert daily['totals'].get('gross',0)==0 and daily['totals'].get('orders',0)==0

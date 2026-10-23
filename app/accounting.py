@@ -35,11 +35,12 @@ def case_access(user=Depends(auth.current_user)):
     return user
 
 def branches(c,u,selected=''):
-    rows=c.execute('SELECT id,name,branch_no FROM branches WHERE brand_id=%s ORDER BY branch_no',(u['brand_id'],)).fetchall()
+    rows=c.execute('SELECT id,name,branch_no,city FROM branches WHERE brand_id=%s ORDER BY branch_no',(u['brand_id'],)).fetchall()
     allowed={r['id'] for r in rows if u['role']=='owner' or r['id'] in u.get('branch_ids',[])}
     requested=set(filter(None,selected.split(','))) if selected else allowed
     if not requested or not requested<=allowed:fail('BRANCH_SCOPE','الفروع خارج نطاق الحساب.',403)
-    return [r for r in rows if r['id'] in requested]
+    from .catalog import normalize_city
+    return [{**r,'city':normalize_city(r.get('city',''))} for r in rows if r['id'] in requested]
 
 def person(c,u,identifier,bids):
     r=c.execute("SELECT id,display_name,role,branch_ids FROM users WHERE id=%s AND brand_id=%s AND role IN ('driver','delivery_manager')",(identifier,u['brand_id'])).fetchone()
@@ -86,7 +87,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     # Fetch qualifying orders once. Lateral task selection prevents split payment,
     # transfers, refunds or multiple tasks from multiplying order/item counts.
     q="""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
-      o.total_halalas,o.snapshot,o.test_void,o.payment_status,t.driver_id,u.display_name driver_name
+      o.total_halalas,o.snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name
       FROM orders o LEFT JOIN LATERAL (SELECT driver_id FROM driver_tasks WHERE order_id=o.id
       ORDER BY (status='delivered') DESC,created_at DESC,id DESC LIMIT 1) t ON true
       LEFT JOIN users u ON u.id=t.driver_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
@@ -96,7 +97,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,lo,hi]
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
-    q+=" AND NOT (o.snapshot ? 'complimentary')"
+    if group!='items':q+=" AND NOT (o.snapshot ? 'complimentary')"
     if group!='actions':q+=" AND o.test_void IS NULL"
     orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders]
     cols=c.execute('SELECT * FROM collections WHERE order_id=ANY(%s) AND created_at<%s ORDER BY created_at,id',(ids,hi)).fetchall()
@@ -108,7 +109,11 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     for x in refs:
         if x.get('amendment_id'):paid[x['order_id']]-=x['amount_halalas']
         else:refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
+    from .item_sales import new_item,add_line
     rows={};items={};om={o['id']:o for o in orders}
+    if group=='items':
+        products=c.execute('SELECT id,name FROM products WHERE brand_id=%s ORDER BY name,id',(u['brand_id'],)).fetchall()
+        items={p['id']:new_item(p['id'],p['name']) for p in products if not product_id or p['id']==product_id}
     def bucket(o,at):
         d=opday(at)
         key=d if group=='daily' else o['branch_id'] if group=='branch' else (o['driver_id'] or 'unassigned') if group=='driver' else (o['driver_id'] or 'unassigned',d)
@@ -120,7 +125,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         if in_period(o['created_at'],lo,hi):
             b=bucket(o,o['created_at']);b['orders']+=1
             if o['preparation_status'] in ('cancelled','rejected'):b['cancelled']+=1
-        if in_period(o['completed_at'],lo,hi):
+        if in_period(o['completed_at'],lo,hi) and (group!='items' or (o['preparation_status'] not in ('cancelled','rejected') and o['delivery_status']!='cancelled')):
             b=bucket(o,o['completed_at']);b['gross']+=o['total_halalas']
             correct=paid[o['id']]>=o['total_halalas'] and not refunded[o['id']] and o['preparation_status'] not in ('cancelled','rejected') and o['id'] not in treated
             b['correct']+=int(correct);b['processed']+=int(not correct)
@@ -128,9 +133,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
             for x in o['snapshot'].get('items',[]):
                 pid=x['product_id']
                 if product_id and pid!=product_id:continue
-                if pid not in items:items[pid]={'label':x.get('name') or pid,'quantity':0,'returned_quantity':0,'gross':0,'correct':0,'processed':0}
-                it=items[pid];it['quantity']+=int(x['quantity']);it['gross']+=int(x.get('line_total_halalas',0))
-                if pid not in seen:it['correct']+=int(correct);it['processed']+=int(not correct);seen.add(pid)
+                if pid not in items:items[pid]=new_item(pid,x.get('name') or pid)
+                it=items[pid];sold=add_line(it,x,o)
+                if sold and pid not in seen:it['correct']+=int(correct);it['processed']+=int(not correct);seen.add(pid)
     for x in cols:
         if in_period(x['created_at'],lo,hi):bucket(om[x['order_id']],x['created_at'])[x['method']]+=x['amount_halalas']
     for x in refs:
@@ -141,7 +146,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
             if product_id and pid!=product_id:continue
             if pid not in items:
                 name=next((i.get('name',pid) for i in om[x['order_id']]['snapshot'].get('items',[]) if i['product_id']==pid),pid)
-                items[pid]={'label':name,'quantity':0,'returned_quantity':0,'gross':0,'correct':0,'processed':0}
+                items[pid]=new_item(pid,name)
             items[pid]['returned_quantity']+=qty
     for b in rows.values():b['total']=b['cash']+b['card']-b['refunds'];b['net_sales']=b['gross']-b['refunds']+b.get('amendment_refunds',0)
     if group=='daily':
@@ -174,8 +179,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         o=om[t['order_id']];actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(t['created_at']),'kind':'معالجة / Treatment','amount':0,'method':'—','reason':t['note'],'actor':t['actor_name'],'action':t['status']+' / '+t['resolution'],'order_id':o['id']})
     if group=='actions':result=actions
     if group=='deficits':result=deficits
-    return safe({'rows':result,'group':group,'period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'16:00'},'branches':bs,
-      'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات بتاريخ الحركة. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and refunds use transaction time. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.'),
+    return safe({'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'16:00'},'branches':bs,
+      'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات بتاريخ الحركة. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and refunds use transaction time. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
+        (' جميع أصناف البراند ظاهرة حتى بلا مبيعات؛ الكمية المباعة منفصلة عن الهدايا والضيافة والإعلان والتعويض وبقية الأصناف الصفرية. الفروع المختارة هي فروع تنفيذ الطلب.' if lang=='ar' else ' All brand items appear, including items without sales. Sold quantities exclude gifts, hospitality, advertising, compensation and other zero-value items. Selected branches are order fulfilment branches.') if group=='items' else ''),
       'generated_at':datetime.now(TZ)})
 
 def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
@@ -198,7 +204,7 @@ def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
 
 
 def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
-    from .complimentary import KINDS
+    from .complimentary import accounting_values
     en=lang=='en'
     rows=c.execute("""SELECT o.*,b.name branch_name,creator.display_name creator_name,
       t.driver_id,driver.display_name driver_name,e.details cancel_details,e.created_at cancelled_at
@@ -209,17 +215,15 @@ def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
       LEFT JOIN LATERAL (SELECT details,created_at FROM order_events WHERE order_id=o.id
          AND event_type IN ('preparation.cancelled','task.cancelled') ORDER BY created_at DESC,id DESC LIMIT 1) e ON true
       WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
-        AND (o.snapshot ? 'complimentary' OR o.preparation_status IN ('cancelled','rejected') OR o.delivery_status='cancelled')
+        AND (o.snapshot ? 'complimentary' OR o.total_halalas=0 OR o.preparation_status IN ('cancelled','rejected') OR o.delivery_status='cancelled')
         AND ((o.created_at>=%s AND o.created_at<%s) OR (e.created_at>=%s AND e.created_at<%s))
       ORDER BY o.created_at DESC,o.id""",(u['brand_id'],bids,lo,hi,lo,hi)).fetchall()
     output=[]
     for o in rows:
         if driver_id and o['driver_id']!=driver_id:continue
         if product_id and not any(i.get('product_id')==product_id for i in o['snapshot'].get('items',[])):continue
-        free=o['snapshot'].get('complimentary') or {}
         output.append(dict(day=opday(o['created_at']),label=str(o['snapshot'].get('order_reference') or o['order_no']),
-            branch=o['branch_name'],driver=o['driver_name'] or '—',kind=KINDS.get(free.get('kind'),('طلب ملغى','Cancelled order'))[en],
-            amount=free.get('catalog_value_halalas',o['total_halalas']),reason=free.get('reason') or (o['cancel_details'] or {}).get('reason','—'),
+            branch=o['branch_name'],driver=o['driver_name'] or '—',**accounting_values(o,lang),
             actor=o['creator_name'] or (o['cancel_details'] or {}).get('actor_name','—'),
             action=o['delivery_status'] if o['preparation_status'] not in ('cancelled','rejected') else o['preparation_status'],
             notes=' / '.join(str(i['quantity'])+' × '+i['name'] for i in o['snapshot'].get('items',[]))))
@@ -230,10 +234,10 @@ def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
           AND j.created_at>=%s AND j.created_at<%s AND length(trim(j.reprint_reason))>0 ORDER BY j.created_at DESC""",(u['brand_id'],bids,bids,lo,hi)).fetchall()
         for p in reprints:
             output.append(dict(day=opday(p['created_at']),label=str(p['snapshot'].get('order_reference') or p['order_no']),
-                branch=p['branch_name'],driver='—',kind='Reprint' if en else 'إعادة طباعة',amount=0,
+                branch=p['branch_name'],driver='—',kind='Reprint' if en else 'إعادة طباعة',amount=0,delivery_value=0,payable=0,
                 reason=p['reprint_reason'],actor=p['actor_name'],action=p['status'],notes='No new order or charge' if en else 'بدون طلب أو مبلغ إضافي'))
     return safe({'rows':output,'group':'complimentary','branches':bs,'period':{'start':ds,'end':de,'timezone':'Asia/Riyadh'},
-        'definitions':'Reference menu values, not sales or actual product costs. Reprints add no order or charge.' if en else 'القيمة مرجعية من المنيو وليست مبيعات أو تكلفة الأصناف الفعلية. إعادة الطباعة لا تضيف طلبًا أو مبلغًا.',
+        'definitions':'Historical item and delivery reference values are separate from net payable, not sales or actual product costs. Missing reasons or values require review; no current-menu repricing. Reprints add no order or charge.' if en else 'قيمة الأصناف والتوصيل المرجعية وقت الطلب منفصلة عن الصافي المطلوب؛ ليست مبيعات أو تكلفة الأصناف الفعلية. السبب أو القيمة غير الموثقة تحتاج مراجعة، دون تسعير من المنيو الحالي. إعادة الطباعة لا تضيف طلبًا أو مبلغًا.',
         'generated_at':datetime.now(TZ)})
 
 @router.get('/options')
