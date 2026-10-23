@@ -60,7 +60,9 @@ def start(c,user,target,inspection):
                 raise db.error(409,'VEHICLE_PAUSED','السيارة موقوفة عن التشغيل؛ راجع الإدارة.')
             if c.execute("SELECT 1 FROM fleet_operating_segments l JOIN fleet_vehicles v ON v.id=l.vehicle_id JOIN shifts s ON s.id=l.shift_id WHERE v.plate_key=%s AND s.status IN ('open','closing') AND l.returned_at IS NULL",(plate,)).fetchone():
                 raise db.error(409,'VEHICLE_IN_USE','السيارة مستلمة في شفت آخر. سلّمها قبل استلامها من سائق آخر.')
-            last=c.execute("SELECT max((coalesce(x.after_metrics,l.metrics)->>'end_odometer')::numeric) km FROM fleet_operating_segments l JOIN fleet_vehicles v ON v.id=l.vehicle_id LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) x ON true WHERE v.plate_key=%s",(plate,)).fetchone()
+            # Respect each card's audited meter correction, as the canonical
+            # brand path does below; pre-correction history is not a new floor.
+            last=c.execute("SELECT max((coalesce(x.after_metrics,l.metrics)->>'end_odometer')::numeric) km FROM fleet_operating_segments l JOIN fleet_vehicles v ON v.id=l.vehicle_id LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) x ON true WHERE v.plate_key=%s AND (v.details->'odometer_checkpoint' IS NULL OR l.returned_at>(v.details->'odometer_checkpoint'->>'recorded_at')::timestamptz)",(plate,)).fetchone()
             physical_floor=max([int(last['km'] or 0),*[int(card['details'].get('odometer_km') or 0) for card in cards]])
             if inspection.odometer_km<physical_floor:
                 raise db.error(422,'ODOMETER_DECREASE','قراءة العداد أقل من آخر قراءة للسيارة عبر سجلات التشغيل.')

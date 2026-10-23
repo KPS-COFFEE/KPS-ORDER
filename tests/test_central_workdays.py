@@ -358,3 +358,25 @@ def test_foreign_owner_canonical_lists_and_history_keep_current_branch_scope(cen
     response=client.get('/api/operations/alerts')
     assert response.status_code==200,response.text
     assert hidden not in {r['id'] for r in response.json()['unassigned']}
+
+
+@pytest.mark.postgres
+def test_shared_vehicle_opening_respects_audited_meter_correction(central):
+    _,_,post,_,_=central
+    with db.tx() as c:
+        c.execute("UPDATE users SET vehicle=%s WHERE id='dual-driver'",
+                  (db.json({'plate':'SYNTHETIC CHECKPOINT','type':'car'}),))
+    manager,driver=open_days(central)
+    # Synthetic closed history predates an authorized corrected meter reference.
+    # Original opening and ending readings stay in the immutable shift log.
+    with db.tx() as c:
+        root=driver['shift']['id']
+        recorded_at=c.execute('SELECT now() n').fetchone()['n'].isoformat()
+        c.execute("UPDATE shifts SET vehicle_log=jsonb_set(vehicle_log,'{end}',%s),status='closed' WHERE id=%s",
+                  (db.json({'odometer_km':1100,'fuel_percent':100,'recorded_at':recorded_at}),root))
+        c.execute("UPDATE shifts SET status='closed' WHERE user_id='dual-driver' AND id<>%s",(root,))
+        c.execute("UPDATE fleet_vehicles SET details=details||%s WHERE plate_key='SYNTHETICCHECKPOINT'",
+                  (db.json({'odometer_km':900,'odometer_checkpoint':{'recorded_at':recorded_at,'reason':'Synthetic audited meter correction'}}),))
+    opened=post('driver','/api/central-operations/workdays',{
+        'kind':'driver','manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection(950)})
+    assert opened['shift']['vehicle_log']['start']['odometer_km']==950

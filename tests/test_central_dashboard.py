@@ -94,7 +94,20 @@ def test_foreign_owner_amendment_and_customer_request_inboxes_obey_explicit_bran
     with db.tx() as c:
         # An outstanding revised-order receipt enters the amendment inbox;
         # cancellation requests independently enter its requests array.
-        c.execute('UPDATE orders SET amendment_revision=1 WHERE id=%s', (oid,))
+        source = c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
+        revised = dict(source['snapshot'], subtotal_halalas=source['subtotal_halalas'],
+                       delivery_fee_halalas=source['delivery_fee_halalas'],
+                       total_halalas=source['total_halalas'], notes='SYNTHETIC approved revision')
+        # Seed a genuine append-only approval witness; the database must reject
+        # revision-number-only updates without an approved immutable revision.
+        c.execute("INSERT INTO order_amendments(id,order_id,requested_by,base_revision,proposal,status,reason,reviewed_by,consent_by,consent_channel) "
+                  "VALUES('central-inbox-amendment',%s,'dual-enbishan-customer',0,%s,'applied','SYNTHETIC approval','dual-owner','dual-enbishan-customer','customer')",
+                  (oid, db.json({'snapshot': revised, 'customer': source['customer']})))
+        c.execute("INSERT INTO order_revisions(order_id,revision,amendment_id,before_snapshot,before_customer,after_snapshot,after_customer,before_total,after_total,approved_by,consent_by,consent_channel) "
+                  "VALUES(%s,1,'central-inbox-amendment',%s,%s,%s,%s,%s,%s,'dual-owner','dual-enbishan-customer','customer')",
+                  (oid, db.json(source['snapshot']), db.json(source['customer']), db.json(revised),
+                   db.json(source['customer']), source['total_halalas'], source['total_halalas']))
+        c.execute('UPDATE orders SET snapshot=%s,amendment_revision=1 WHERE id=%s', (db.json(revised), oid))
         c.execute("INSERT INTO order_events(id,order_id,event_type,actor_id,details) "
                   "VALUES('central-inbox-request',%s,'customer_request.opened','dual-enbishan-customer',%s)",
                   (oid, db.json({'kind': 'cancel', 'note': 'SYNTHETIC request'})))
@@ -108,3 +121,22 @@ def test_foreign_owner_amendment_and_customer_request_inboxes_obey_explicit_bran
     response = actor('owner', 'enbishan').get('/api/order-amendments/inbox')
     assert response.status_code == 200, response.text
     assert response.json() == {'orders': [], 'requests': []}
+
+
+@pytest.mark.postgres
+def test_central_staff_listing_restricts_foreign_people_and_membership_details(central):
+    _, actor, _, _, _ = central
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids=%s WHERE user_id='dual-owner' AND brand_id='enbishan'",
+                  (db.json(['enbishan-test-1']),))
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('foreign-hidden-driver','SYNTHETIC hidden','driver','enbishan',%s)",
+                  (db.json(['enbishan-test-2']),))
+    response = actor('owner').get('/api/central-operations/staff')
+    assert response.status_code == 200, response.text
+    rows = {row['id']: row for row in response.json()['users']}
+    assert 'foreign-hidden-driver' not in rows
+    # Home-brand personnel remain manageable, but another brand's ungranted
+    # membership details must not leak through their shared identity.
+    assert rows['dual-driver']['branch_grants'] == {
+        'kps': ['kps-branch-1'], 'enbishan': ['enbishan-test-1']}
+    assert set(rows['dual-driver']['branch_ids']) == {'kps-branch-1', 'enbishan-test-1'}

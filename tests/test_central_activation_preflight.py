@@ -104,6 +104,7 @@ def test_collect_executes_on_real_isolated_schema_without_changing_workdays(dual
             # The fixture verifies a localhost synthetic DB before this test.
             # Only source identity is replaced, never readonly guard or queries.
             monkeypatch.setattr(preflight._safety, 'DATABASE_NAME', c.info.dbname)
+            monkeypatch.setattr(preflight._safety, 'DATABASE_SCHEMA', c.execute('SELECT current_schema() AS name').fetchone()['name'])
             return preflight.collect(c)
 
     first = collect_readonly()

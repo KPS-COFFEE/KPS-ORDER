@@ -62,12 +62,12 @@ def guard_component(c, sid):
         require_action()
 
 
-def authorized(c, user, sid, *, manager=False, capability=None):
+def authorized(c, user, sid, *, manager=False, capability=None, lock=True):
     day = association(c, sid)
     if not day:
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة.')
     legs = c.execute('SELECT s.* FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id '
-                     'WHERE l.workday_id=%s ORDER BY s.brand_id FOR UPDATE OF s', (day['id'],)).fetchall()
+                     'WHERE l.workday_id=%s ORDER BY s.brand_id' + (' FOR UPDATE OF s' if lock else ''), (day['id'],)).fetchall()
     if (not legs or day['anchor_shift_id'] not in {s['id'] for s in legs}
             or any(s['user_id'] != day['user_id'] or s['kind'] != day['kind'] for s in legs)):
         raise db.error(409, 'CENTRAL_WORKDAY_INTEGRITY', 'تحتاج سجلات الوردية مراجعة المالك.')
@@ -97,7 +97,7 @@ def drain_metadata(c, user):
     output = []
     for candidate in candidates:
         try:
-            day, legs = authorized(c, user, candidate['anchor_shift_id'])
+            day, legs = authorized(c, user, candidate['anchor_shift_id'], lock=False)
         except HTTPException:
             continue
         output.append({'id':day['id'],'anchor_shift_id':day['anchor_shift_id'],'kind':day['kind'],

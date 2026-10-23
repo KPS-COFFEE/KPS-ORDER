@@ -16,7 +16,7 @@ using System.Windows.Forms;
 
 class KpsPrintBridge {
     const string DefaultOrigin = "https://order.kps.sa";
-    const string BridgeVersion = "20261023.1";
+    const string BridgeVersion = "20261024.2";
     static string Origin = DefaultOrigin;
     static bool RePair;
     static string SecureOrigin(string value) {
@@ -30,6 +30,34 @@ class KpsPrintBridge {
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 4*1024*1024 };
     static readonly string DataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KPS-Print-Bridge");
     static string Token, Printer;
+    static string JournalDir = DataDir;
+    static readonly List<Dictionary<string,object>> Registrations = new List<Dictionary<string,object>>();
+    static void Activate(Dictionary<string,object> registration,string root=null) {
+        Token=Str(registration,"token");Printer=Str(registration,"printer_name");
+        Origin=SecureOrigin(String.IsNullOrEmpty(Str(registration,"origin"))?DefaultOrigin:Str(registration,"origin"));
+        string journal=Str(registration,"journal");
+        if(journal!="" && !System.Text.RegularExpressions.Regex.IsMatch(journal,"^[0-9a-f]{32}$"))
+            throw new Exception("Invalid registration journal.");
+        string storage=root??DataDir;
+        JournalDir=journal==""?storage:Path.Combine(storage,"registrations",journal);
+        Directory.CreateDirectory(JournalDir);
+    }
+    static List<Dictionary<string,object>> DecodeRegistrations(Dictionary<string,object> saved) {
+        var result=new List<Dictionary<string,object>>();
+        if(saved.ContainsKey("registrations")) {
+            foreach(object item in (IList)saved["registrations"])result.Add(Obj(item));
+        } else if(!String.IsNullOrEmpty(Str(saved,"token"))) {
+            // Preserve both the old credential and its original journal on upgrade.
+            result.Add(saved);
+        }
+        return result;
+    }
+    static void SaveRegistrations(string config) {
+        byte[] encrypted=ProtectedData.Protect(Encoding.UTF8.GetBytes(Json.Serialize(new {version=2,registrations=Registrations})),null,DataProtectionScope.CurrentUser);
+        string pending=config+".new";
+        using(var file=new FileStream(pending,FileMode.Create,FileAccess.Write,FileShare.None)) {file.Write(encrypted,0,encrypted.Length);file.Flush(true);}
+        if(File.Exists(config))File.Replace(pending,config,null);else File.Move(pending,config);
+    }
     static Dictionary<string,object> Obj(object value) { return (Dictionary<string,object>)value; }
     static string Str(Dictionary<string,object> value,string key) { return value.ContainsKey(key) && value[key]!=null ? Convert.ToString(value[key],CultureInfo.InvariantCulture) : ""; }
     static bool Bool(Dictionary<string,object> value,string key) { return value.ContainsKey(key) && Convert.ToBoolean(value[key]); }
@@ -53,7 +81,7 @@ class KpsPrintBridge {
     }
     static string JobPath(string id) {
         if(!System.Text.RegularExpressions.Regex.IsMatch(id,"^print_[0-9a-f]{32}$"))throw new Exception("Invalid job identifier");
-        return Path.Combine(DataDir,id+".json");
+        return Path.Combine(JournalDir,id+".json");
     }
     static void Ack(string id,string status) {Api("bridge/jobs/"+id+"/ack",new {status=status});}
     static string RecordedOutcome(Dictionary<string,object> record) {
@@ -75,7 +103,7 @@ class KpsPrintBridge {
         Durable(path,Json.Serialize(new {status="acknowledged",outcome=outcome}));
     }
     static void RecoverAcknowledgements() {
-        foreach(string path in Directory.GetFiles(DataDir,"print_*.json"))AcknowledgeRecord(path,Ack);
+        foreach(string path in Directory.GetFiles(JournalDir,"print_*.json"))AcknowledgeRecord(path,Ack);
     }
     static void DispatchOnce(Dictionary<string,object> job,string path,Action<Dictionary<string,object>> submit) {
         if(File.Exists(path))return;
@@ -86,12 +114,12 @@ class KpsPrintBridge {
     static void Configure() {
         Directory.CreateDirectory(DataDir);string config=Path.Combine(DataDir,"device.bin");
         string setupPath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"setup.json");
-        if(File.Exists(config) && !File.Exists(setupPath) && !RePair) {
+        if(File.Exists(config)) {
             byte[] plain=ProtectedData.Unprotect(File.ReadAllBytes(config),null,DataProtectionScope.CurrentUser);
-            var saved=Obj(Json.DeserializeObject(Encoding.UTF8.GetString(plain)));
-            Token=Str(saved,"token");Printer=Str(saved,"printer_name");
-            Origin=SecureOrigin(String.IsNullOrEmpty(Str(saved,"origin"))?DefaultOrigin:Str(saved,"origin"));
-        } else {
+            Registrations.AddRange(DecodeRegistrations(Obj(Json.DeserializeObject(Encoding.UTF8.GetString(plain)))));
+        }
+        if(Registrations.Count==0 || File.Exists(setupPath) || RePair) {
+            Dictionary<string,object> added=null;
             var printers=PrinterSettings.InstalledPrinters;
             if(printers.Count==0)throw new Exception("No installed Windows printers.");
             var setup=File.Exists(setupPath)?Obj(Json.DeserializeObject(File.ReadAllText(setupPath,Encoding.UTF8))):new Dictionary<string,object>();
@@ -107,7 +135,7 @@ class KpsPrintBridge {
                 foreach(string printer in printers)list.Items.Add(printer);
                 var hint=new Label {Text="اختر الطابعة المعرفة على هذا الكمبيوتر / Select printer",Left=20,Top=65,Width=540,Height=25};
                 var codeBox=new TextBox {Left=20,Top=140,Width=540,Text=Str(setup,"pairing_code"),Visible=!setup.ContainsKey("pairing_code"),RightToLeft=RightToLeft.No};
-                var status=new Label {Left=20,Top=180,Width=540,Height=45,Text=File.Exists(config)?"سيستبدل ربط هذا الكمبيوتر بعد نجاح الربط الجديد / Replace this computer's connection":""};
+                var status=new Label {Left=20,Top=180,Width=540,Height=45,Text=File.Exists(config)?"ستضاف الطابعة مع الاحتفاظ بالطابعات السابقة / Add a printer; existing connections stay":""};
                 var connect=new Button {Text="ربط / Connect",Left=200,Top=240,Width=170,Height=40};
                 form.Controls.AddRange(new Control[]{title,hint,list,codeBox,status,connect});
                 connect.Click+=delegate {
@@ -116,27 +144,32 @@ class KpsPrintBridge {
                     try {
                         Printer=Convert.ToString(list.SelectedItem);Token=null;
                         var paired=Api("bridge/pair",new {pairing_code=codeBox.Text.Trim(),printer_name=Printer});Token=Str(paired,"token");
+                        if(String.IsNullOrEmpty(Token) || String.IsNullOrEmpty(Str(paired,"device_id")))throw new Exception("Invalid pairing response.");
+                        added=new Dictionary<string,object>{{"token",Token},{"printer_name",Printer},{"origin",Origin},
+                            {"device_id",Str(paired,"device_id")},{"branch_name",Str(setup,"branch_name")},{"journal",Guid.NewGuid().ToString("N")}};
                         form.DialogResult=DialogResult.OK;form.Close();
                     }catch(WebException error){var response=error.Response as HttpWebResponse;status.Text=response!=null && response.StatusCode==HttpStatusCode.Unauthorized?"انتهى رمز الربط؛ نزّل إعداد الفرع مجدداً / Download fresh branch setup":"تعذر الاتصال؛ تحقق من الإنترنت والصلاحية / Check connection and permission";connect.Enabled=true;}
                 };
-                if(form.ShowDialog()!=DialogResult.OK)throw new Exception("Setup cancelled; previous connection unchanged.");
+                if(form.ShowDialog()!=DialogResult.OK)throw new Exception("Setup cancelled; previous connections unchanged.");
             }
-            byte[] encrypted=ProtectedData.Protect(Encoding.UTF8.GetBytes(Json.Serialize(new {token=Token,printer_name=Printer,origin=Origin})),null,DataProtectionScope.CurrentUser);
-            string pending=config+".new";
-            using(var file=new FileStream(pending,FileMode.Create,FileAccess.Write,FileShare.None)) {file.Write(encrypted,0,encrypted.Length);file.Flush(true);}
-            if(File.Exists(config))File.Replace(pending,config,null);else File.Move(pending,config);
+            Registrations.Add(added);
+            SaveRegistrations(config);
             if(File.Exists(setupPath))File.Delete(setupPath);
             MessageBox.Show("تم الربط. ارجع للموقع لطباعة صفحة اختبار ثم اعتماد الطابعة.\nConnected. Return to the website to print a test and approve.","KPS",MessageBoxButtons.OK,MessageBoxIcon.Information);
         }
-        var settings=new PrinterSettings {PrinterName=Printer};
-        if(!settings.IsValid)throw new Exception("The paired Windows printer is not installed for this Windows user.");
+        foreach(var registration in Registrations) {
+            Activate(registration);
+            var settings=new PrinterSettings {PrinterName=Printer};
+            Console.WriteLine("Printer: "+Printer+" / "+Str(registration,"branch_name")+
+                (settings.IsValid?"":" — missing Windows driver; other printers continue"));
+        }
         // Resume the paired device on the next sign-in of this Windows user.
         // No machine-wide privileges or changes to printer drivers are needed.
         using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
             key.SetValue("KPS Print Bridge", "\""+System.Reflection.Assembly.GetExecutingAssembly().Location+"\"");
         }
         Console.WriteLine("Receipt layout: PAPER-FIT-20261012 / SALES-QR-V1 (full printable width QR).");
-        Console.WriteLine("Printer: "+Printer+". Keep this window open. Ctrl+C stops the bridge.");
+        Console.WriteLine("Registered printers: "+Registrations.Count+". Keep this window open. Ctrl+C stops the bridge.");
     }
     static List<Dictionary<string,object>> Lines(Dictionary<string,object> payload) {
         var result=new List<Dictionary<string,object>>();
@@ -328,6 +361,34 @@ class KpsPrintBridge {
             string testDir=Path.Combine(Path.GetTempPath(),"KPS-Print-Self-Test-"+Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(testDir);
             try {
+                // Real migration, DPAPI round-trip, destination and ACK isolation.
+                var legacy=Obj(Json.DeserializeObject("{\"token\":\"old-token\",\"printer_name\":\"KPS thermal\",\"origin\":\"https://order.kps.sa\"}"));
+                var migrated=DecodeRegistrations(legacy);
+                if(migrated.Count!=1 || Str(migrated[0],"token")!="old-token")return 17;
+                Activate(migrated[0],testDir);
+                if(JournalDir!=testDir || Printer!="KPS thermal" || Token!="old-token")return 18;
+                var second=new Dictionary<string,object>{{"token","enbishan-token"},{"printer_name","Enbishan thermal"},
+                    {"origin","https://order.enbishan.com"},{"device_id","printer_second"},{"journal",new string('d',32)}};
+                Registrations.Add(migrated[0]);Registrations.Add(second);
+                string config=Path.Combine(testDir,"device.bin");SaveRegistrations(config);
+                var restored=DecodeRegistrations(Obj(Json.DeserializeObject(Encoding.UTF8.GetString(
+                    ProtectedData.Unprotect(File.ReadAllBytes(config),null,DataProtectionScope.CurrentUser)))));
+                if(restored.Count!=2 || Str(restored[0],"token")!="old-token" || Str(restored[1],"token")!="enbishan-token")return 19;
+                Activate(restored[1],testDir);
+                if(Printer!="Enbishan thermal" || Token!="enbishan-token" || Origin!="https://order.enbishan.com" || JournalDir==testDir)return 20;
+                string isolatedId="print_"+new string('e',32),isolatedPath=JobPath(isolatedId);int isolatedPrints=0;
+                DispatchOnce(new Dictionary<string,object>{{"id",isolatedId}},isolatedPath,delegate(Dictionary<string,object> ignored) {
+                    if(Printer!="Enbishan thermal" || Token!="enbishan-token")throw new Exception("Wrong destination credential pair.");
+                    isolatedPrints++;
+                });
+                DispatchOnce(new Dictionary<string,object>{{"id",isolatedId}},isolatedPath,delegate(Dictionary<string,object> ignored) {isolatedPrints++;});
+                if(isolatedPrints!=1)return 21;
+                Activate(restored[0],testDir);
+                if(File.Exists(JobPath(isolatedId)) || Printer!="KPS thermal" || Token!="old-token")return 22;
+                AcknowledgeRecord(isolatedPath,delegate(string jobId,string outcome) {
+                    if(outcome!="submitted")throw new Exception("Isolated printer journal outcome lost.");
+                });
+                Registrations.Clear();
                 string id="print_"+new string('a',32),path=Path.Combine(testDir,id+".json");
                 var job=new Dictionary<string,object>{{"id",id}};int submissions=0,acks=0;
                 Action<Dictionary<string,object>> submit=delegate(Dictionary<string,object> ignored) {
@@ -368,7 +429,7 @@ class KpsPrintBridge {
                     if(jobId!=crashId || outcome!="uncertain")throw new Exception("Interrupted spool must remain uncertain.");
                 });
             } finally {Directory.Delete(testDir,true);}
-            Console.WriteLine("Bridge compile, JSON, logo, durable dispatch and lost-ACK recovery checks passed; no printer used.");return 0;
+            Console.WriteLine("Bridge compile, JSON, logos, multi-printer migration, encrypted registrations, destination isolation, durable dispatch and lost-ACK recovery checks passed; no printer used.");return 0;
         }
         bool created;
         using(var mutex=new Mutex(true,"Local\\KPSBranchPrintBridge",out created)) {
@@ -379,21 +440,27 @@ class KpsPrintBridge {
                 RePair=args.Length>0 && args[0]=="--re-pair";
                 ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;Configure();
                 while(true) {
-                    try {
-                        RecoverAcknowledgements();var response=Api("bridge/next",new {});
-                        if(response["job"]!=null) {
-                            var job=Obj(response["job"]);string id=Str(job,"id"),path=JobPath(id);
-                            DispatchOnce(job,path,Print);
-                            // A duplicate delivery must replay its durable outcome,
-                            // including submitted; it must not downgrade to uncertain.
-                            AcknowledgeRecord(path,Ack,true);
+                    foreach(var registration in Registrations) {
+                        if(Bool(registration,"access_revoked"))continue;
+                        try {
+                            Activate(registration);
+                            RecoverAcknowledgements();var response=Api("bridge/next",new {});
+                            if(response["job"]!=null) {
+                                var job=Obj(response["job"]);string id=Str(job,"id"),path=JobPath(id);
+                                // Credentials and Windows destination are selected together.
+                                // Each registration has its own journal and ACK recovery.
+                                DispatchOnce(job,path,Print);
+                                AcknowledgeRecord(path,Ack,true);
+                            }
+                        }catch(WebException ex) {
+                            var response=ex.Response as HttpWebResponse;
+                            if(response!=null && (response.StatusCode==HttpStatusCode.Unauthorized || response.StatusCode==HttpStatusCode.Forbidden)) {
+                                registration["access_revoked"]=true;
+                                Console.WriteLine("Device access revoked: "+Printer+". Pair this device again; other printers continue.");
+                            } else Console.WriteLine("Connection unavailable: "+Printer+". No automatic reprint; other printers continue.");
+                        }catch(Exception ex) {
+                            Console.WriteLine("Printer needs attention: "+Printer+" / "+ex.Message+". Other printers continue.");
                         }
-                    }catch(WebException ex) {
-                        var response=ex.Response as HttpWebResponse;
-                        if(response!=null && (response.StatusCode==HttpStatusCode.Unauthorized || response.StatusCode==HttpStatusCode.Forbidden)) {
-                            Console.WriteLine("Device access revoked or pairing no longer valid. Ask the manager to pair this computer again.");return 1;
-                        }
-                        Console.WriteLine("Connection unavailable; acknowledgements will retry. No automatic reprint.");
                     }
                     Thread.Sleep(3000);
                 }

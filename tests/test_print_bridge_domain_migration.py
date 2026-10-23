@@ -18,7 +18,7 @@ def test_download_bundle_defaults_to_official_https_origin(monkeypatch):
         source=archive.read('KpsPrintBridge.cs').decode()
         assert 'onrender.com' not in source
         assert 'request.AllowAutoRedirect=false' in source
-        assert 'SecureOrigin' in source and 'origin=Origin' in source
+        assert 'SecureOrigin' in source and '{"origin",Origin}' in source
         assert 'File.Move(config,config+' not in source  # cancelled re-pair preserves credentials
 
 

@@ -69,7 +69,7 @@ def collect(conn):
     source = conn.execute('SELECT current_database() AS database_name,current_schema() AS schema_name').fetchone()
     if source['database_name'] != _safety.DATABASE_NAME or source['schema_name'] != _safety.DATABASE_SCHEMA:
         raise ValueError('Unexpected source identity.')
-    tables = conn.execute("SELECT to_regclass('public.central_workdays') IS NOT NULL AS days,to_regclass('public.central_workday_legs') IS NOT NULL AS legs,to_regclass('public.staff_brand_memberships') IS NOT NULL AS grants").fetchone()
+    tables = conn.execute("SELECT to_regclass('central_workdays') IS NOT NULL AS days,to_regclass('central_workday_legs') IS NOT NULL AS legs,to_regclass('staff_brand_memberships') IS NOT NULL AS grants").fetchone()
     if not tables['grants'] or tables['days'] != tables['legs']:
         raise ValueError('Required membership/group schema is inconsistent.')
     grouping = 'LEFT JOIN central_workday_legs leg ON leg.shift_id=s.id' if tables['legs'] else ''

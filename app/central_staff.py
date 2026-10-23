@@ -26,11 +26,25 @@ def grants(c, target, allowed):
     return output
 
 
-def display(c, target, allowed):
+def display(c, target, allowed, actor):
     item=auth.staff_public(c,target)
     item['branch_grants']=grants(c,target,allowed)
+    for brand, ids in item['branch_grants'].items():
+        principal=multibrand.project(c,actor,brand)
+        if not principal:
+            item['branch_grants'][brand]=[]
+        elif principal.get('home_brand_id'):
+            item['branch_grants'][brand]=[bid for bid in ids if bid in principal.get('branch_ids',[])]
     item['branch_ids']=sorted({bid for values in item['branch_grants'].values() for bid in values})
     item['home_brand_id']=target['brand_id']
+    if item.get('open_shift'):
+        shift=c.execute('SELECT brand_id,branch_ids FROM shifts WHERE id=%s',
+                        (item['open_shift']['id'],)).fetchone()
+        principal=multibrand.project(c,actor,shift['brand_id']) if shift else None
+        if not principal or (principal.get('home_brand_id') and
+                not set(shift['branch_ids'])<=set(principal.get('branch_ids',[]))):
+            item['open_shift']=None
+            item['available']=False
     return item
 
 
@@ -40,7 +54,14 @@ def listing(user=Depends(auth.require_roles('owner'))):
     with db.tx() as c:
         allowed={b['id'] for b in multibrand.available(c,user)}
         rows=c.execute("SELECT * FROM users WHERE brand_id=ANY(%s) AND role<>'customer' ORDER BY role,display_name,id LIMIT 1000",(sorted(allowed),)).fetchall()
-        return {'users':[display(c,row,allowed) for row in rows], 'permission_catalog':employee_permissions.catalog()}
+        visible=[]
+        for row in rows:
+            principal=multibrand.project(c,user,row['brand_id'])
+            if not principal or (principal.get('home_brand_id') and
+                    (not row['branch_ids'] or not set(row['branch_ids'])<=set(principal.get('branch_ids',[])))):
+                continue
+            visible.append(display(c,row,allowed,user))
+        return {'users':visible, 'permission_catalog':employee_permissions.catalog()}
 
 
 class StaffUpdate(auth.StaffUpdateBody):
@@ -100,7 +121,7 @@ def update(identifier:str,body:StaffUpdate,request:Request,user=Depends(auth.req
             db.audit(c,user['id'],'central.staff.branches','user',identifier,
                      {'before':previous,'after':scopes,'reason':body.reason})
         fresh=c.execute('SELECT * FROM users WHERE id=%s',(identifier,)).fetchone()
-        return {'user':display(c,fresh,allowed)}
+        return {'user':display(c,fresh,allowed,user)}
 
 
 @router.post('/invitations')
@@ -127,6 +148,6 @@ def invite(body:auth.StaffInvitationBody,user=Depends(auth.require_roles('owner'
                 c.execute('INSERT INTO staff_brand_memberships(user_id,brand_id,branch_ids,active,granted_by) VALUES(%s,%s,%s,true,%s)',
                           (identifier,brand,db.json(ids),user['id']))
         target=c.execute('SELECT * FROM users WHERE id=%s',(identifier,)).fetchone()
-        output['user']=display(c,target,allowed)
+        output['user']=display(c,target,allowed,user)
         db.audit(c,user['id'],'central.staff.invited','user',identifier,{'branch_grants':scopes})
         return output

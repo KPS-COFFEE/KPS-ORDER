@@ -88,7 +88,7 @@ def test_delegated_history_requires_current_permission_and_each_branch_scope(cen
     forbidden=actor('accountant').get('/api/central-operations/shifts?owner_view=history')
     assert forbidden.status_code==403
     with db.tx() as c:
-        c.execute("UPDATE users SET permissions=%s WHERE id='dual-accountant'",(db.json(['shifts_view']),))
+        c.execute("UPDATE users SET extra_permissions=%s WHERE id='dual-accountant'",(db.json(['shifts_view']),))
     result=get_history(actor,name='accountant')
     assert result['total']==3
     with db.tx() as c:
