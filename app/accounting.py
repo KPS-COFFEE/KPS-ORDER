@@ -205,6 +205,8 @@ def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
 
 def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
     from .complimentary import accounting_values
+    if u['role'] not in {'owner','admin'}:
+        fail('ACCOUNTING_FORBIDDEN','التفاصيل المالية للطلبات المجانية متاحة للمحاسبة فقط.',403)
     en=lang=='en'
     rows=c.execute("""SELECT o.*,b.name branch_name,creator.display_name creator_name,
       t.driver_id,driver.display_name driver_name,e.details cancel_details,e.created_at cancelled_at

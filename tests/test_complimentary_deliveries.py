@@ -33,12 +33,13 @@ def test_complimentary_is_delivery_only(service):
 
 
 @pytest.mark.parametrize('lang',['ar','en'])
-def test_receipt_and_exports_mark_type_and_no_collection(lang):
+def test_receipt_shows_type_only_and_accounting_exports_remain_available(lang):
     snapshot=prepare({'subtotal_halalas':1000,'delivery_fee_halalas':500,'total_halalas':1500,'items':[]},'advertising','TEST advertiser','manager')
     order={'id':'test','order_no':1,'brand_id':'ops-brand','created_at':datetime.now(timezone.utc),'snapshot':snapshot,'payment_method':'cash','payment_status':'not_required','total_halalas':0}
     text=str(receipt(order,{'name':'TEST BRANCH'},'order',lang))
-    assert ('بدون تحصيل' if lang=='ar' else 'NO COLLECTION') in text
-    assert ('ضيافة إعلانية' if lang=='ar' else 'Advertising hospitality') in text
+    assert 'بدون تحصيل' not in text and 'NO COLLECTION' not in text and 'No collection' not in text
+    assert 'TEST advertiser' not in text and '0.00' not in text
+    assert ('إعلان' if lang=='ar' else 'Advertising') in text
     data={'group':'complimentary','rows':[],'period':{'start':'2026-10-21','end':'2026-10-21'},'definitions':'TEST reference values only; no collection'}
     assert render(data,'pdf',lang).startswith(b'%PDF')
     assert render(data,'xlsx',lang).startswith(b'PK')
@@ -55,7 +56,7 @@ def test_real_order_dispatch_delivery_and_accounting_without_any_collection(ops)
     body['customer']['phone']='0501234567'
     body.pop('expected_total_halalas',None)
     q=post('manager','/api/orders/complimentary/quote',body)['quote']
-    assert q['total_halalas']==0 and q['complimentary']['catalog_value_halalas']>0
+    assert q['total_halalas']==0 and q['complimentary']=={'kind':'compensation'}
     body['expected_total_halalas']=0
     result=post('manager','/api/orders/complimentary',body,key='comp-order');oid=result['order']['id']
     assert result['order']['payment_status']=='not_required'
@@ -67,17 +68,28 @@ def test_real_order_dispatch_delivery_and_accounting_without_any_collection(ops)
     with db.tx() as c:c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(oid,))
     post('driver',f'/api/tasks/{task}/transition',{'status':'picked_up'})
     post('driver',f'/api/orders/{oid}/collect',{'method':'cash','amount_halalas':1000,'tendered_halalas':1000},status=409)
+    driver_view=actor('driver').get(f'/api/orders/{oid}').json()['order']
+    assert driver_view['snapshot']['complimentary']=={'kind':'compensation'}
     post('driver',f'/api/tasks/{task}/transition',{'status':'delivered'})
     with db.tx() as c:
         order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
         assert order['delivery_status']=='delivered' and order['total_halalas']==0
+        financial=order['snapshot']['complimentary']
+        assert financial['catalog_value_halalas']>0 and financial['reason']==body['reason']
         assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==0
         assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()['n']==0
+    for who in ('manager','branch'):
+        visible=actor(who).get(f'/api/orders/{oid}').json()['order']
+        assert visible['snapshot']['complimentary']=={'kind':'compensation'}
+    counts=actor('driver').get('/api/tasks').json()['counts']
+    assert counts['completed']==1
+    manager_orders=actor('manager').get('/api/orders?service=delivery').json()['orders']
+    assert any(row['id']==oid and row['delivery_status']=='delivered' for row in manager_orders)
     rows=actor('owner').get('/api/accounting/reports?group=complimentary').json()['rows']
     assert any(r['kind']=='تعويض' and r['reason']==body['reason'] for r in rows)
     entry=next(r for r in rows if r['kind']=='تعويض' and r['reason']==body['reason'])
-    assert entry['amount']==q['complimentary']['catalog_value_halalas']
-    assert entry['delivery_value']==q['complimentary']['delivery_value_halalas']
+    assert entry['amount']==financial['catalog_value_halalas']
+    assert entry['delivery_value']==financial['delivery_value_halalas']
     assert entry['payable']==0
     daily=actor('owner').get('/api/accounting/reports').json()
     assert daily['totals'].get('gross',0)==0 and daily['totals'].get('orders',0)==0

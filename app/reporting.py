@@ -7,6 +7,7 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter,Depends,Response,Request
 from . import auth,db
+from .complimentary import operational_view,contains_complimentary
 from .operations import uid,safe,fail,roles,mutate,day_start
 
 router=APIRouter(prefix='/api/reports',tags=['reports'])
@@ -508,7 +509,7 @@ def report_list(offset:int=0,user=Depends(auth.current_user)):
 @router.get('/{rid}')
 def report_detail(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
-        r=report(c,user,rid);r.pop('pdf_data');r.pop('csv_data');r['renderings']=c.execute('SELECT template_version,view_kind,status,error,attempts,source_sha256,generated_at FROM report_renderings WHERE report_id=%s ORDER BY template_version,view_kind',(rid,)).fetchall();corrections=c.execute('SELECT x.*,n.id resulting_report_id FROM report_corrections x LEFT JOIN closure_reports n ON n.shift_id=x.shift_id WHERE x.report_id=%s ORDER BY correction_version',(rid,)).fetchall();return safe({'report':r,'corrections':corrections})
+        r=report(c,user,rid);r.pop('pdf_data');r.pop('csv_data');r['renderings']=c.execute('SELECT template_version,view_kind,status,error,attempts,source_sha256,generated_at FROM report_renderings WHERE report_id=%s ORDER BY template_version,view_kind',(rid,)).fetchall();corrections=c.execute('SELECT x.*,n.id resulting_report_id FROM report_corrections x LEFT JOIN closure_reports n ON n.shift_id=x.shift_id WHERE x.report_id=%s ORDER BY correction_version',(rid,)).fetchall();return safe(operational_view({'report':r,'corrections':corrections}))
 
 @router.get('/{rid}/print')
 def print_report(rid:str,user=Depends(auth.current_user)):
@@ -520,6 +521,8 @@ def print_report(rid:str,user=Depends(auth.current_user)):
 def download_pdf(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         r=report(c,user,rid)
+        if contains_complimentary(r['snapshot']) and user['role']!='owner':
+            return Response(make_v5_pdf(r['snapshot']),media_type='application/pdf',headers={'Cache-Control':'private, no-store'})
         if r['pdf_status']!='ready' or not r['pdf_data']:fail(409,'ملف PDF غير جاهز؛ راجع حالة التوليد وأعد المحاولة')
         return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="KPS-closure-{rid}.pdf"','Cache-Control':'private, no-store'})
 
@@ -608,10 +611,10 @@ def v5_tables(snap,view='compact'):
     ])
     orders=snap.get('orders',[]);tasks=snap.get('tasks',[]);refunds=snap.get('refunds',[])
     from .complimentary import KINDS
-    table('complimentary','الضيافة والتعويض — بدون تحصيل',['الطلب','النوع','الأصناف','القيمة المرجعية (ر.س)','السبب','الحالة'],[
+    table('complimentary','الضيافة والتعويض',['الطلب','النوع','الأصناف','الحالة'],[
         [display_order_label(o),KINDS[o['snapshot']['complimentary']['kind']][0],
          ' / '.join(str(i['quantity'])+' × '+i['name'] for i in o['snapshot'].get('items',[])),
-         v5_money(o['snapshot']['complimentary']['catalog_value_halalas']),o['snapshot']['complimentary']['reason'],label(o.get('delivery_status'))]
+         label(o.get('delivery_status'))]
         for o in orders if (o.get('snapshot') or {}).get('complimentary',{}).get('kind') in KINDS])
     cancelled=len({t.get('order_id') for t in tasks if t.get('status')=='cancelled'}|{o['id'] for o in orders if o.get('preparation_status')=='cancelled'})
     table('outcomes','نتائج الطلبات',['مكتمل','ملغى','مرتجع/جزئي','قيمة المكتمل (ر.س)'],[[
@@ -1001,6 +1004,8 @@ def saved_rendering(c,user,rid,view=None):
 def original_pdf(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         r=report(c,user,rid)
+        if contains_complimentary(r['snapshot']) and user['role']!='owner':
+            return Response(make_v5_pdf(r['snapshot']),media_type='application/pdf',headers={'Cache-Control':'private, no-store'})
         if r['pdf_status']!='ready' or not r['pdf_data']:fail(409,'النسخة الأصلية قيد التوليد')
         return Response(bytes(r['pdf_data']),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="KPS-original-{rid}.pdf"','Cache-Control':'private, no-store'})
 
@@ -1021,6 +1026,9 @@ def formatted_download(rid:str,format:str,view:str='compact',part:str='main',use
 def v5_download(rid:str,format:str,user=Depends(auth.current_user)):
     if format not in ('print','pdf','csv'):fail(404,'الملف غير موجود')
     with db.tx() as c:r,row,variant=saved_rendering(c,user,rid)
+    if contains_complimentary(r['snapshot']):
+        value=make_v5_print_html(r['snapshot'],variant,rid) if format=='print' else make_v5_pdf(r['snapshot'],variant) if format=='pdf' else make_v5_csv(r['snapshot'],variant)
+        return Response(value,media_type={'print':'text/html','pdf':'application/pdf','csv':'text/csv; charset=utf-8'}[format],headers={'Cache-Control':'private, no-store'})
     if not row or row['status']!='ready':
         generate_v5_files(rid,variant)
         with db.tx() as c:r,row,variant=saved_rendering(c,user,rid)

@@ -1,4 +1,5 @@
 """Scoped intervention desk; administrative review never impersonates a driver."""
+from .complimentary import operational_view
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import ConfigDict, Field, StrictBool, StrictInt
 from . import auth, db, operations, order_amendments, morning_manager_context
@@ -74,7 +75,7 @@ def detail(tid: str, user=Depends(auth.current_user)):
             ORDER BY e.created_at DESC,e.id DESC LIMIT 20""", (order['id'],)).fetchall()
         return operations.safe({'task': task, 'order': {'id': order['id'], 'order_no': order['order_no'], 'order_reference': order['snapshot'].get('order_reference'),
             'version': order['version'], 'revision': revision, 'customer': order['customer'],
-            'snapshot': order['snapshot'], 'payment_status': order['payment_status'],
+            'snapshot': operational_view(order['snapshot']), 'payment_status': order['payment_status'],
             'total_halalas': order['total_halalas'], 'preparation_status': order['preparation_status']},
             'blockers': blockers, 'can_review_revision': bool(revision and not driver_received and
                 not any(x in blockers for x in ('closed','shift_closed','amendment_pending')) and auth.has_permission(user, 'orders_amend')),

@@ -249,8 +249,7 @@ def receipt(order, branch, kind, language, translations=None):
     free=snap.get('complimentary')
     if free:
         from .complimentary import KINDS
-        add(KINDS[free['kind']][0 if ar else 1]+' — '+('بدون تحصيل' if ar else 'NO COLLECTION'),True,True)
-        row('السبب' if ar else 'Reason',free['reason'])
+        add(KINDS[free['kind']][0 if ar else 1],True,True)
     occasion_style = {'font': 'Arial', 'size': 18, 'bold': True, 'align': 'center'} | (snap.get('receipt_occasion_style') or {})
     if kind == 'order':
         for occasion_line in (snap.get('receipt_occasion_text') or '').splitlines():
@@ -285,7 +284,7 @@ def receipt(order, branch, kind, language, translations=None):
         def translated(name):
             return name if ar else (labels.get(name) or print_translations.DEFAULTS.get(name) or name)
         add(translated(item['name']),True,role='item')
-        if kind=='order':
+        if kind=='order' and not free:
             row(('الكمية: ' if ar else 'Quantity: ')+str(item['quantity']),amount(item.get('line_total_halalas')))
         else:
             row('الكمية' if ar else 'Quantity',str(item['quantity']),True)
@@ -295,8 +294,8 @@ def receipt(order, branch, kind, language, translations=None):
                 if choices: add(f"{i}: {translated(option.get('name',''))} — {choices}")
         if item.get('note'): add(('ملاحظة: ' if ar else 'Note: ')+item['note'],True)
         add('────────────────────',False,True)
-    if kind=='preparation' and (order.get('notes') or snap.get('notes')):add(('ملاحظات الطلب: ' if ar else 'Order notes: ')+(order.get('notes') or snap['notes']),True)
-    if kind=='order':
+    if kind=='preparation' and not free and (order.get('notes') or snap.get('notes')):add(('ملاحظات الطلب: ' if ar else 'Order notes: ')+(order.get('notes') or snap['notes']),True)
+    if kind=='order' and not free:
         for key,label,en in [('subtotal_halalas','الأصناف','Subtotal'),('discount_halalas','الخصم','Discount'),('delivery_fee_halalas','التوصيل','Delivery'),('total_halalas','الإجمالي','Total')]:
             value=order.get(key,snap.get(key,0))
             if key=='discount_halalas' and not value:continue

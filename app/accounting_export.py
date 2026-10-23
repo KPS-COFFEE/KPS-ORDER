@@ -34,6 +34,7 @@ LABELS={
  'kind':('النوع','Type'),'amount':('المبلغ','Amount'),'method':('وسيلة الدفع','Payment method'),
  'reason':('السبب','Reason'),'actor':('منفذ / معتمد الإجراء','Actor / authorizer'),'action':('الإجراء المتخذ','Action taken'),
  'delivery_value':('قيمة التوصيل المرجعية','Reference delivery value'),'payable':('الصافي المطلوب','Net payable'),
+ 'treatment':('التحمل المالي','Financial responsibility'),
  'gift_quantity':('كمية الهدايا','Gift quantity'),'hospitality_quantity':('كمية الضيافة','Hospitality quantity'),
  'advertising_quantity':('كمية الإعلان','Advertising quantity'),'compensation_quantity':('كمية التعويض','Compensation quantity'),
  'zero_value_quantity':('كمية صفرية أخرى','Other zero-value quantity'),
@@ -42,7 +43,7 @@ MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
 COLUMNS={
  'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
- 'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','reason','actor','action','notes'],
+ 'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','treatment','reason','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
  'driver_daily':['label','correct','processed','cumulative','cash','card','refunds','total'],
@@ -193,7 +194,7 @@ def pdf(rows,keys,title,meta,definitions,lang,sections=None,compact=False):
         cells=[[text(f'{v:,.2f}' if isinstance(v,float) else v) for v in row] for row in section_rows]
         keys=list(section_keys)
         if lang=='ar':cells=[list(reversed(r)) for r in cells];keys=list(reversed(keys))
-        weights=[7 if k=='adjustments' else 2.8 if k in ('notes','incident_notes','traffic_notes','reason','action','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
+        weights=[7 if k=='adjustments' else 2.8 if k in ('notes','incident_notes','traffic_notes','reason','action','treatment','label','driver_name','branches') else 1.3 for k in keys];available=landscape(A3)[0]-48
         widths=[available*w/sum(weights) for w in weights]
         table=LongTable(cells,colWidths=widths,repeatRows=1,splitByRow=1,splitInRow=1)
         commands=[('BACKGROUND',(0,0),(-1,0),colors.HexColor('#eeeeee')),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#cccccc')),('VALIGN',(0,0),(-1,-1),'TOP')]

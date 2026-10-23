@@ -31,14 +31,15 @@ def accountant():
 def test_complete_item_catalog_and_zero_value_orders_stay_scoped(ops):
     actor,post,order,_=ops
     accountant()
-    sold=order('pickup',items=[{'product_id':'ops-product','name':'Historical coffee','quantity':1,'line_total_halalas':1000},
-                              {'product_id':'ops-gift','name':'Gift','quantity':2,'line_total_halalas':0,'is_gift':True}])
-    zero=order('pickup',total=0)
     with db.tx() as c:
         c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-requested',2,'requested-source','ops-brand','Customer selected branch','حفر الباطن','{}')")
         c.execute("INSERT INTO products(id,brand_id,name,category,price_halalas) VALUES('ops-product','ops-brand','Coffee','Test',9000),('ops-unsold','ops-brand','Unsold','Test',500),('ops-foreign','ops-other','Foreign secret','Test',500)")
-        routing={'internal_routing':{'selected_branch':{'branch_id':'ops-requested','branch_name':'Customer selected branch'}}}
-        c.execute("UPDATE orders SET completed_at=now(),preparation_status='completed',snapshot=snapshot||%s WHERE id=ANY(%s)",(db.json(routing),[sold,zero]))
+    routing={'selected_branch':{'branch_id':'ops-requested','branch_name':'Customer selected branch'}}
+    sold=order('pickup',internal_routing=routing,items=[{'product_id':'ops-product','name':'Historical coffee','quantity':1,'line_total_halalas':1000},
+                              {'product_id':'ops-gift','name':'Gift','quantity':2,'line_total_halalas':0,'is_gift':True}])
+    zero=order('pickup',total=0,internal_routing=routing)
+    with db.tx() as c:
+        c.execute("UPDATE orders SET completed_at=now(),preparation_status='completed' WHERE id=ANY(%s)",([sold,zero],))
     report=actor('accountant').get('/api/accounting/reports?group=items')
     assert report.status_code==200,report.text
     rows={r['product_id']:r for r in report.json()['rows']}

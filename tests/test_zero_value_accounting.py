@@ -2,11 +2,27 @@
 import unittest
 from copy import deepcopy
 
-from app.complimentary import accounting_values, prepare, KINDS
+from app.complimentary import accounting_values, prepare, KINDS, operational_view
 from app.accounting_export import contract, render
 
 
 class ZeroValueAccountingTests(unittest.TestCase):
+    def test_operational_copy_exposes_type_and_preserves_private_accounting_evidence(self):
+        for kind in KINDS:
+            snapshot=prepare({'subtotal_halalas':8500,'delivery_fee_halalas':1000,'total_halalas':9500,
+                              'notes':'Private accounting reason','items':[{'name':'Coffee','quantity':2,
+                              'line_total_halalas':8500,'unit_price_halalas':4250}]},
+                             kind,'Private accounting reason','manager')
+            saved={'orders':[{'total_halalas':0,'snapshot':snapshot}],'summary':{'completed_orders':1}}
+            before=deepcopy(saved)
+            visible=operational_view(saved)
+            self.assertEqual(visible['orders'][0]['snapshot']['complimentary'],{'kind':kind})
+            self.assertNotIn('notes',visible['orders'][0]['snapshot'])
+            self.assertEqual(visible['orders'][0]['snapshot']['items'][0]['quantity'],2)
+            self.assertEqual(visible['summary']['completed_orders'],1)
+            self.assertEqual(saved,before)
+            self.assertEqual(accounting_values(saved['orders'][0])['amount'],8500)
+
     def test_each_recorded_reason_retains_menu_and_delivery_values(self):
         quote={'subtotal_halalas':8500,'delivery_fee_halalas':1000,'total_halalas':9500,'items':[]}
         original=deepcopy(quote)
@@ -18,6 +34,7 @@ class ZeroValueAccountingTests(unittest.TestCase):
                 self.assertEqual((row['amount'],row['delivery_value'],row['payable']),(8500,1000,0))
                 self.assertEqual(row['kind'],labels[index])
                 self.assertEqual(row['reason'],'Approved reason')
+                self.assertIn('لا مديونية' if lang=='ar' else 'no customer',row['treatment'])
             self.assertEqual(quote,original)
 
     def test_unclassified_zero_uses_saved_gift_prices_and_flags_missing_reason(self):

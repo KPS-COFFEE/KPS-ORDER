@@ -1,8 +1,31 @@
 """Explicit staff-created deliveries with no customer collection."""
 from copy import deepcopy
 
-KINDS = {'hospitality': ('ضيافة','Hospitality'), 'advertising': ('ضيافة إعلانية','Advertising hospitality'),
+KINDS = {'hospitality': ('ضيافة','Hospitality'), 'advertising': ('إعلان','Advertising'),
          'compensation': ('تعويض','Compensation')}
+
+
+def operational_view(value):
+    """Copy an outward operational response; accounting evidence stays intact."""
+    if isinstance(value, list):
+        return [operational_view(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    free=value.get('complimentary')
+    result={key:operational_view(item) for key,item in value.items() if key!='complimentary'}
+    if isinstance(free,dict):
+        result['complimentary']={'kind':free.get('kind')}
+        if free.get('reason') and result.get('notes')==free['reason']:
+            result.pop('notes',None)
+    elif 'complimentary' in value:
+        result['complimentary']=free
+    return result
+
+
+def contains_complimentary(value):
+    if isinstance(value, dict):
+        return isinstance(value.get('complimentary'),dict) or any(contains_complimentary(item) for item in value.values())
+    return isinstance(value,list) and any(contains_complimentary(item) for item in value)
 
 
 def is_free(order):
@@ -38,6 +61,9 @@ def accounting_values(order, lang='ar'):
     return {'kind': label, 'amount': amount if type(amount) is int else unknown_value,
             'delivery_value': delivery if type(delivery) is int else unknown_value,
             'payable': 0 if cancelled else order['total_halalas'],
+            'treatment': (('على المنشأة — لا مديونية على العميل أو السائق أو مدير التوصيل',
+                           'Business-funded — no customer, driver or delivery-manager receivable')[en]
+                          if kind else ('تراجع حسب حالة الطلب','Review according to order status')[en]),
             'reason': reason or missing_reason}
 
 
