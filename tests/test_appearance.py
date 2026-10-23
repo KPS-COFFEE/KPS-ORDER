@@ -159,6 +159,8 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                     expect(p.locator('#navigation')).to_be_visible()
                     expect(p.locator('#navigation [data-page=dashboard]')).to_be_visible()
             if role=='owner':
+                p.locator('#navigation [data-page=admin]').click()
+                expect(p.locator('#content')).to_have_attribute('aria-busy','false')
                 p.locator('[data-action=admin-tab][data-tab=settings]').click()
                 expect(p.locator('#appearance-settings')).to_be_visible()
                 _capture_theme(p,'owner-appearance')
