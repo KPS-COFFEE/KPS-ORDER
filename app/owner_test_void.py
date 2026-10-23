@@ -84,9 +84,21 @@ def mark_unpaid_cancelled_test(c,user,order,body):
     if (online_order(order) or active(c,oid)
         or c.execute('SELECT 1 FROM collections WHERE order_id=%s',(oid,)).fetchone()
         or c.execute('SELECT 1 FROM refunds WHERE order_id=%s',(oid,)).fetchone()
-        or c.execute('SELECT 1 FROM fiscal_documents WHERE order_id=%s',(oid,)).fetchone()
         or c.execute('SELECT 1 FROM channel_settlement_allocations WHERE order_id=%s',(oid,)).fetchone()):
         fail(409,'الطلب مرتبط بتحصيل أو مستند أو تعديل؛ يلزم مراجعته دون تغيير مالي.')
+    documents=c.execute('SELECT * FROM fiscal_documents WHERE order_id=%s ORDER BY created_at,number',(oid,)).fetchall()
+    if documents:
+        invoices=[d for d in documents if d['kind']=='invoice']
+        credits=[d for d in documents if d['kind']=='credit_note']
+        # Printing may issue an unpaid invoice; normal cancellation already
+        # credits it in full. Retain that immutable, zero-net document pair.
+        if (len(invoices)!=1 or len(credits)!=1
+            or invoices[0]['document']['total_halalas']!=order['total_halalas']
+            or credits[0]['original_number']!=invoices[0]['number']
+            or credits[0]['refund_id'] is not None
+            or credits[0]['document'].get('credit_reason')!='order_cancelled'
+            or credits[0]['document']['total_halalas']!=order['total_halalas']):
+            fail(409,'يلزم إشعار إلغاء كامل مطابق للفاتورة الأصلية؛ لم يتغير أي مستند أو مبلغ.')
     tasks=c.execute('SELECT * FROM driver_tasks WHERE order_id=%s ORDER BY created_at,id FOR UPDATE',(oid,)).fetchall()
     if not tasks or any(t['status'] not in {'cancelled','transferred','reassigned'} for t in tasks):
         fail(409,'أنهِ مهام الطلب قبل تصنيف التجربة.')

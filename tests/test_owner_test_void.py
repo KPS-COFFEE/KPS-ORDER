@@ -159,16 +159,30 @@ def test_issued_invoice_is_preserved_and_credit_must_succeed_atomically(ops,cred
             assert balance(c,{'id':'test-void-driver','opening_halalas':0})==2050
 
 
-def seed_unpaid_cancelled(ops,task_status="cancelled"):
+def seed_unpaid_cancelled(ops,task_status="cancelled",fiscal_case=None):
     _,_,_,_=ops
     oid='unpaid-test-'+uuid4().hex
     with db.tx() as c:
         user=c.execute("SELECT brand_id,branch_ids FROM users WHERE id='ops-driver'").fetchone()
         for sid,kind,person,parent,status in [('unpaid-manager','manager','ops-manager',None,'closing'),('unpaid-driver','driver','ops-driver','unpaid-manager','submitted')]:
             c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,manager_shift_id,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,'{\"period\":\"morning\"}')",(sid,kind,person,user['brand_id'],db.json(user['branch_ids']),status,parent))
-        snap={'delivery_period':'morning','order_reference':'UNPAID-TEST','items':[]}
-        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,'ops-customer','delivery','cancelled','cancelled','unpaid','cash',2050,0,2050,%s,'{}')",(oid,user['brand_id'],user['branch_ids'][0],db.json(snap)))
+        snap={'delivery_period':'morning','order_reference':'UNPAID-TEST','items':[{'product_id':'ops-product','name':'قهوة تجربة','quantity':1,'unit_price_halalas':2050,'line_total_halalas':2050,'units':[]}]}
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,'ops-customer','delivery',%s,%s,'unpaid','cash',2050,0,2050,%s,'{}')",(oid,user['brand_id'],user['branch_ids'][0],'ready' if fiscal_case else 'cancelled','assigned' if fiscal_case else 'cancelled',db.json(snap)))
         c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,reason) VALUES(%s,%s,'ops-driver','unpaid-driver',%s,'ops-manager','TEST cancelled by owner')",('task-'+oid,oid,task_status))
+        if fiscal_case:
+            from app import fiscal_issuance
+            owner=c.execute("SELECT * FROM users WHERE id='ops-owner'").fetchone()
+            c.execute("INSERT INTO fiscal_policy_decisions(id,brand_id,actor_id,decision) VALUES('unpaid-test-fiscal','kps','ops-owner',%s)",(db.json({'enabled':True,'phase':'unconfirmed','issuance_mode':'owner_requested'}),))
+            source=fiscal_issuance.issue_sale(c,oid,owner,required=True)
+            if fiscal_case=='cancelled':
+                fiscal_issuance.credit_on_cancellation(c,c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone(),owner,'TEST cancellation')
+            elif fiscal_case=='partial':
+                from app import fiscal
+                from datetime import timezone
+                credit=fiscal.credit(source,1000,0,'TEST-PARTIAL-CREDIT',datetime.now(timezone.utc),None,'TEST partial cancellation')
+                credit.update(uuid=str(uuid4()),original_uuid=source['uuid'],credit_reason='order_cancelled',payment_status='unpaid')
+                c.execute("INSERT INTO fiscal_documents(number,order_id,kind,original_number,policy_id,document) VALUES(%s,%s,'credit_note',%s,%s,%s)",(credit['number'],oid,source['number'],source['policy_id'],db.json(credit)))
+            c.execute("UPDATE orders SET preparation_status='cancelled',delivery_status='cancelled' WHERE id=%s",(oid,))
         order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
     return oid,dict(order_reference='UNPAID-TEST',expected_version=order['version'],expected_total_halalas=2050,reason='TEST unpaid cancellation by owner; no actual cash',confirmed_no_cash_received=True)
 
@@ -200,6 +214,23 @@ def test_unpaid_cancelled_test_removes_entitlement_block_without_financial_mutat
         assert c.execute("SELECT status FROM shifts WHERE id='unpaid-driver'").fetchone()['status']=='submitted'
     for who in ('manager','driver','branch','customer'):post(who,url,body,status=403)
     post('other',url,body,status=404)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
+@pytest.mark.parametrize('fiscal_case',['cancelled','invoice_only','partial'])
+def test_unpaid_cancelled_test_preserves_fully_credited_invoice_and_rejects_open_invoice(ops,fiscal_case):
+    _,post,_,_=ops;oid,body=seed_unpaid_cancelled(ops,fiscal_case=fiscal_case)
+    with db.tx() as c:
+        documents=c.execute('SELECT * FROM fiscal_documents WHERE order_id=%s ORDER BY number',(oid,)).fetchall()
+        ledgers={table:c.execute(f'SELECT * FROM {table} ORDER BY id').fetchall() for table in ('collections','refunds','custody_events','custody_transfers')}
+    post('owner',f'/api/orders/{oid}/test-void',body,status=200 if fiscal_case=='cancelled' else 409)
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM fiscal_documents WHERE order_id=%s ORDER BY number',(oid,)).fetchall()==documents
+        row=c.execute('SELECT payment_status,test_void FROM orders WHERE id=%s',(oid,)).fetchone()
+        assert row['payment_status']=='unpaid'
+        assert bool(row['test_void'])==(fiscal_case=='cancelled')
+        for table,rows in ledgers.items():assert c.execute(f'SELECT * FROM {table} ORDER BY id').fetchall()==rows
 
 
 @pytest.mark.postgres
