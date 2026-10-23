@@ -398,3 +398,136 @@ def test_correcting_pending_difference_to_balanced_closes_without_confirmation(o
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
     assert not row['variance_pending'] and row['variance_confirmation'] is None
     post('accountant',endpoint+'/approve-balance',{'expected_revision':3,'bank_halalas':5100,'cash_due_halalas':10000,'note':'TEST balanced is final'},status=409)
+
+
+@pytest.mark.parametrize('overrides', [
+    {'expected_revision':0},{'expected_revision':True},{'expected_revision':1.5},
+    {'cash_received_halalas':-1},{'cash_received_halalas':100000000001},
+    {'cash_received_halalas':True},{'cash_received_halalas':1.5},{'cash_received_halalas':'21500'},
+    {'confirmed':'true'},{'confirmed':1},{'note':'  '},{'note':'x'*2001},
+])
+def test_cash_receipt_correction_validates_strict_money_revision_confirmation_and_reason(overrides):
+    from app.accounting import DriverCashReceiptCorrection
+    with pytest.raises(ValidationError):
+        DriverCashReceiptCorrection(**({'expected_revision':2,'cash_received_halalas':21500,
+            'confirmed':True,'note':'TEST recount corrected receipt'}|overrides))
+
+
+def prepare_cash_correction(post):
+    snapshot={'shift':{'user_id':'ops-driver','submission':{'terminal_total_halalas':25350,
+        'handover_halalas':19250,'expected_card_halalas':25350,'expected_halalas':19250}},'summary':{}}
+    original,opened=make_report(snapshot)
+    endpoint='/api/accounting/driver-settlements/settlement-report'
+    post('accountant',endpoint+'/approve-balance',{'expected_revision':0,'bank_halalas':23100,
+        'cash_due_halalas':21500,'note':'TEST verified bank paper'})
+    receipt=post('accountant',endpoint+'/receive-cash',{'expected_revision':1,'cash_received_halalas':23100,
+        'received_on':datetime.now(TZ).date().isoformat(),'receipt_reference':'TEST original receipt reference',
+        'note':'TEST original entry mistaken as bank amount'})
+    return endpoint,original,opened,receipt
+
+
+@pytest.mark.postgres
+def test_owner_cash_recount_appends_revision_reconciles_najashi_and_preserves_originals(ops):
+    actor,post,_,_=ops
+    accountant();endpoint,snapshot,_,receipt=prepare_cash_correction(post)
+    body={'expected_revision':2,'cash_received_halalas':21500,'confirmed':True,
+          'note':'TEST owner verified physical cash 215 SAR; previous 231 was a typing error'}
+    with db.tx() as c:
+        old=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision',('settlement-report',)).fetchall()
+        custody=c.execute('SELECT * FROM custody_events ORDER BY id').fetchall()
+        collections=c.execute('SELECT * FROM collections ORDER BY id').fetchall()
+    corrected=post('owner',endpoint+'/correct-cash-receipt',body,key='owner-cash-recount')
+    assert corrected['revision']==3 and corrected['action_type']=='cash_receipt_correction'
+    assert corrected['bank_halalas']==23100 and corrected['cash_due_halalas']==21500
+    assert corrected['cash_received_halalas']==21500
+    assert corrected['received_on']==receipt['received_on'] and corrected['receipt_reference']==receipt['receipt_reference']
+    assert corrected['before']['net_difference_halalas']==1600 and corrected['after']['net_difference_halalas']==0
+    assert corrected['after']['shortage_halalas']==corrected['after']['surplus_halalas']==0
+    assert post('owner',endpoint+'/correct-cash-receipt',body,key='owner-cash-recount')==corrected
+    post('owner',endpoint+'/correct-cash-receipt',{**body,'note':'TEST different payload'},key='owner-cash-recount',status=409)
+    row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
+    assert row['revision']==3 and row['actual_total_halalas']==44600 and not row['variance_pending']
+    assert row['history'][-1]['action_type']=='cash_receipt_correction'
+    assert row['variance_confirmation'] is None
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s AND revision<=2 ORDER BY revision',('settlement-report',)).fetchall()==old
+        assert c.execute('SELECT count(*) n FROM driver_accounting_settlements WHERE report_id=%s',('settlement-report',)).fetchone()['n']==3
+        assert c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',('settlement-report',)).fetchone()['snapshot']==snapshot
+        assert c.execute('SELECT * FROM custody_events ORDER BY id').fetchall()==custody
+        assert c.execute('SELECT * FROM collections ORDER BY id').fetchall()==collections
+        audits=c.execute("SELECT * FROM audit_events WHERE action='accounting.driver_settlement.cash_corrected' AND entity_id='settlement-report'").fetchall()
+        assert len(audits)==1 and audits[0]['actor_id']=='ops-owner'
+        assert audits[0]['details']['reason']==body['note']
+        assert audits[0]['details']['before']['cash_received_halalas']==23100
+        assert audits[0]['details']['after']['cash_received_halalas']==21500
+    with pytest.raises(Exception):
+        with db.tx() as c:c.execute('UPDATE driver_accounting_settlements SET cash_received_halalas=0 WHERE id=%s',(corrected['id'],))
+
+
+@pytest.mark.postgres
+def test_cash_recount_owner_scope_validation_stale_noop_and_unreceived_denials(ops):
+    actor,post,_,_=ops
+    accountant();make_report()
+    endpoint='/api/accounting/driver-settlements/settlement-report'
+    body={'expected_revision':1,'cash_received_halalas':21500,'confirmed':True,'note':'TEST owner recount'}
+    post('accountant',endpoint+'/approve-balance',{'expected_revision':0,'bank_halalas':23100,'cash_due_halalas':21500,'note':'TEST initial paper'})
+    post('owner',endpoint+'/correct-cash-receipt',body,status=409)
+    post('accountant',endpoint+'/receive-cash',{'expected_revision':1,'cash_received_halalas':23100,
+        'received_on':datetime.now(TZ).date().isoformat(),'receipt_reference':'TEST reference','note':'TEST receipt'})
+    body['expected_revision']=2
+    for who in ('accountant','manager','driver','customer','branch'):
+        post(who,endpoint+'/correct-cash-receipt',body,status=403)
+    post('other',endpoint+'/correct-cash-receipt',body,status=404)
+    post('owner',endpoint+'/correct-cash-receipt',{**body,'expected_revision':1},status=409)
+    post('owner',endpoint+'/correct-cash-receipt',{**body,'cash_received_halalas':23100},status=409)
+    post('owner',endpoint+'/correct-cash-receipt',{**body,'confirmed':False},status=422)
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM driver_accounting_settlements WHERE report_id=%s',('settlement-report',)).fetchone()['n']==2
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='accounting.driver_settlement.cash_corrected'").fetchone()['n']==0
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('finalized', ['confirmation','day','month','balanced'])
+def test_cash_recount_cannot_reopen_confirmed_balanced_or_closed_period(ops,finalized):
+    _,post,_,_=ops
+    accountant();endpoint,_,opened,_=prepare_cash_correction(post)
+    if finalized=='confirmation':
+        post('accountant',endpoint+'/confirm-variance',{'expected_revision':2,'confirmed':True,
+            'note':'TEST surplus verified','action_taken':'TEST follow up recorded surplus'})
+    elif finalized=='day':
+        with db.tx() as c:
+            c.execute("""INSERT INTO accounting_daily_closures(id,manager_shift_id,brand_id,branch_ids,operational_date,snapshot,approved_by,note)
+              VALUES('cash-correction-day','settlement-manager','ops-brand',%s,%s,'{}','ops-owner','TEST frozen day')""",(db.json(['ops-branch']),opened.date()))
+    elif finalized=='month':
+        with db.tx() as c:
+            c.execute("""INSERT INTO accounting_months(id,brand_id,month,branch_ids,scope_hash,snapshot,closed_by,reason)
+              VALUES('cash-correction-month','ops-brand',%s,%s,'TEST frozen scope','{}','ops-owner','TEST frozen month')""",(opened.date().replace(day=1),db.json(['ops-branch'])))
+    else:
+        post('owner',endpoint+'/correct-cash-receipt',{'expected_revision':2,'cash_received_halalas':21500,
+            'confirmed':True,'note':'TEST owner recount fully balanced'})
+    body={'expected_revision':3 if finalized=='balanced' else 2,'cash_received_halalas':21400,
+        'confirmed':True,'note':'TEST must not reopen finalized settlement'}
+    post('owner',endpoint+'/correct-cash-receipt',body,status=409)
+
+
+@pytest.mark.parametrize('amount', [0,100000000000])
+def test_cash_correction_money_boundaries_are_accepted(amount):
+    from app.accounting import DriverCashReceiptCorrection
+    body=DriverCashReceiptCorrection(expected_revision=1,cash_received_halalas=amount,
+        confirmed=True,note='TEST counted amount boundary')
+    assert body.cash_received_halalas==amount
+
+
+@pytest.mark.postgres
+def test_cash_first_receipt_cannot_be_corrected_before_balance_approval(ops):
+    _,post,_,_=ops
+    accountant();make_report()
+    endpoint='/api/accounting/driver-settlements/settlement-report'
+    post('accountant',endpoint+'/receive-cash',{'expected_revision':0,'cash_received_halalas':23100,
+        'received_on':datetime.now(TZ).date().isoformat(),'receipt_reference':'TEST cash first',
+        'note':'TEST received before balance paper'})
+    result=post('owner',endpoint+'/correct-cash-receipt',{'expected_revision':1,'cash_received_halalas':21500,
+        'confirmed':True,'note':'TEST no finalized reconciliation yet'},status=409)
+    assert result['detail']['code']=='RECONCILIATION_REQUIRED'
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM driver_accounting_settlements WHERE report_id=%s',('settlement-report',)).fetchone()['n']==1
