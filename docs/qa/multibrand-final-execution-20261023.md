@@ -36,6 +36,7 @@ The first remote combined run is [39891433585](https://github.com/KPS-COFFEE/KPS
 - Legacy browser detail selectors and grouped-product accessible labels after image quick-add behavior changed.
 - Verified-customer benefit pricing losing the authenticated principal in the gift quote route.
 - A legacy fingerprint test expecting absent optional consent fields rather than the actual production serialization contract; explicit consent/version distinctions remain asserted.
+- A real four-thread operational-contact insertion race exposed by the additional brand/id unique constraint; a namespaced transaction lock serializes the same opaque contact identifier, preserving brand/identity checks and the original PostgreSQL concurrency witness.
 - Selected ENBISHAN variant thumbnails enlarging base artwork instead of the selected image.
 
 The corrected combined source passed **217 focused local tests**, with 15 PostgreSQL cases explicitly excluded locally. New public default-brand and verified-work projection cases are included in the mandatory isolated PostgreSQL gate. Initial browser results also identified missing consent-read mocks and a closed mobile navigation fixture; their corrections retain all business assertions.

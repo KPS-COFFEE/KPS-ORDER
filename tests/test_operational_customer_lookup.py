@@ -23,11 +23,16 @@ def test_partial_or_non_saudi_number_is_not_a_lookup_key(value):
 
 
 def test_repeat_contact_is_stable_without_authenticated_account_selection():
-    existing={};statements=[]
+    existing={};statements=[];lock_keys=[]
     class Conn:
         def execute(self,sql,args):
             statements.append(sql)
+            if sql.startswith('SELECT pg_advisory_xact_lock'):
+                lock_keys.append(args[0])
+                assert len(statements)%2==1, 'The contact lock must precede every insert'
+                return Result()
             assert sql.startswith('INSERT INTO users') and 'ON CONFLICT(id)' in sql
+            assert len(statements)%2==0 and statements[-2].startswith('SELECT pg_advisory_xact_lock')
             existing.setdefault(args[0],{'id':args[0],'active':True,'identity_kind':'guest','brand_id':args[3]})
             return Result(existing[args[0]])
     customer={'phone':'+966501234567','name':'عميل'}
@@ -35,6 +40,8 @@ def test_repeat_contact_is_stable_without_authenticated_account_selection():
     b=orders.operational_contact(Conn(),'kps',customer,'other-manager')
     c=orders.operational_contact(Conn(),'enbishan',customer,'manager')
     assert a==b and a!=c and len(existing)==2
+    assert lock_keys==['operational-contact:kps:'+a,'operational-contact:kps:'+b,'operational-contact:enbishan:'+c]
+    assert all(customer['phone'] not in value for value in lock_keys)
     assert not any('sessions' in sql or 'customer_identity_links' in sql for sql in statements)
 
 

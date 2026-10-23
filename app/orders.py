@@ -514,6 +514,11 @@ def operational_contact(conn,brand_id,customer,actor_id):
     # created from staff-typed contact data. Concurrent orders reuse one opaque
     # operational principal; verified users are never selected or merged by phone.
     identifier='customer_contact_'+hashlib.sha256((brand_id+'\0'+customer['phone']).encode()).hexdigest()
+    # Serialize this opaque contact before all unique-index checks. The
+    # composite brand/id ownership index can race with the id conflict target
+    # during concurrent inserts even though both describe the same principal.
+    conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',
+                 ('operational-contact:'+brand_id+':'+identifier,))
     row=conn.execute("INSERT INTO users(id,display_name,phone,role,brand_id,identity_kind) VALUES(%s,%s,%s,'customer',%s,'guest') ON CONFLICT(id) DO UPDATE SET updated_at=users.updated_at RETURNING id,active,identity_kind,brand_id",
         (identifier,customer['name'],customer['phone'],brand_id)).fetchone()
     if not row or not row['active'] or row['identity_kind']!='guest' or row['brand_id']!=brand_id:
