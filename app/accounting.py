@@ -11,7 +11,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request, Response, UploadFile, File
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool
 from . import auth, db, service_hours
 from .operations import safe
 
@@ -196,10 +196,12 @@ def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
         if event:
             values=driver_settlement_values(r['snapshot'],event)
             shortage,surplus=values['shortage_halalas'],values['surplus_halalas']
-            if values['stage']=='cash_received':r['review_id']=event['id'];r['review_note']=event['note']
+            confirmation=variance_confirmation(c,r['id'],event['revision'])
+            r['review_id']=confirmation['id'] if confirmation else None
+            r['review_note']=confirmation['details']['reason'] if confirmation else event['note']
         else:shortage,surplus=max(0,-difference),max(0,difference)
         if not shortage and not surplus:continue
-        s=r['snapshot']['summary'];output.append({'id':r['id'],'label':r['snapshot'].get('closure_label') or r['id'],'day':r['accounting_day'].isoformat(),'review_id':r['review_id'],'driver':r['driver_name'],'driver_id':r['user_id'],'orders':s.get('completed_orders',0),'cash':s.get('cash_collected_halalas',0),'card':s.get('card_collected_halalas',0),'total':s.get('net_collections_halalas',0),'shortage':shortage,'surplus':surplus,'approved_shortage':shortage if r['review_id'] else 0,'review':('معتمد / Reviewed' if r['review_id'] else 'بانتظار المحاسبة / Pending accounting'),'notes':r['review_note'] or sub.get('notes','')})
+        s=r['snapshot']['summary'];output.append({'id':r['id'],'label':r['snapshot'].get('closure_label') or r['id'],'day':r['accounting_day'].isoformat(),'review_id':r['review_id'],'settlement_revision':event['revision'] if event else None,'driver':r['driver_name'],'driver_id':r['user_id'],'orders':s.get('completed_orders',0),'cash':s.get('cash_collected_halalas',0),'card':s.get('card_collected_halalas',0),'total':s.get('net_collections_halalas',0),'shortage':shortage,'surplus':surplus,'approved_shortage':shortage if r['review_id'] else 0,'review':('معتمد / Reviewed' if r['review_id'] else 'بانتظار المحاسبة / Pending accounting'),'notes':r['review_note'] or sub.get('notes','')})
     return output
 
 
@@ -273,6 +275,8 @@ def review(report_id:str,body:Note,request:Request,user=Depends(auth.require_per
     with db.tx() as c:
         r=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind='driver' FOR UPDATE",(report_id,user['brand_id'])).fetchone()
         if not r or (user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[]))):fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
+        if c.execute('SELECT 1 FROM driver_accounting_settlements WHERE report_id=%s',(report_id,)).fetchone():
+            fail('USE_VARIANCE_CONFIRMATION','اعتمد فرق التسوية من إجراء تأكيد العجز أو الفائض بعد مراجعة التحصيل.',409)
         def perform():
             if c.execute('SELECT 1 FROM accounting_reviews WHERE report_id=%s',(report_id,)).fetchone():fail('ALREADY_REVIEWED','تم اعتماد المراجعة سابقًا.',409)
             row=c.execute('INSERT INTO accounting_reviews(id,brand_id,report_id,reviewer_id,note) VALUES(%s,%s,%s,%s,%s) RETURNING *',(db.new_id('acr_'),user['brand_id'],report_id,user['id'],body.note)).fetchone()
@@ -538,16 +542,38 @@ def driver_settlement_values(snapshot, latest=None):
     bank = latest['bank_halalas'] if latest else int(sub.get('terminal_total_halalas',net_card) or 0)
     cash_difference = received-expected_cash if received is not None else None
     bank_difference = bank-expected_bank if approved else None
+    reconciliation_complete = approved and received is not None
+    net_difference = cash_difference+bank_difference if reconciliation_complete else None
     return dict(original_bank_halalas=original_bank, original_cash_halalas=original_cash,
                 system_bank_halalas=expected_bank,system_cash_halalas=expected_cash,
                 bank_halalas=bank,balance_approved=approved,cash_recorded=received is not None,
                 cash_due_halalas=cash_due, cash_received_halalas=received,
                 cash_difference_halalas=received-cash_due if received is not None else None,
                 cash_variance_halalas=cash_difference,bank_difference_halalas=bank_difference,
-                shortage_halalas=sum(max(0,-v) for v in (cash_difference,bank_difference) if v is not None),
-                surplus_halalas=sum(max(0,v) for v in (cash_difference,bank_difference) if v is not None),
+                reconciliation_complete=reconciliation_complete,net_difference_halalas=net_difference,
+                system_total_halalas=expected_cash+expected_bank,
+                actual_total_halalas=received+bank if reconciliation_complete else None,
+                shortage_halalas=max(0,-net_difference) if reconciliation_complete else 0,
+                surplus_halalas=max(0,net_difference) if reconciliation_complete else 0,
                 pending_cash_halalas=cash_due if received is None else 0,
                 stage=stage, revision=latest['revision'] if latest else 0)
+
+
+def settlement_action(snapshot, previous, event):
+    before=driver_settlement_values(snapshot,previous)
+    after=driver_settlement_values(snapshot,event)
+    if not before['cash_recorded'] and after['cash_recorded']:
+        return 'cash_receipt'
+    if any(before[key]!=after[key] for key in ('bank_halalas','cash_due_halalas')):
+        return 'correction'
+    return 'approval'
+
+
+def variance_confirmation(c, report_id, revision):
+    return c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id
+      WHERE a.action='accounting.variance_confirmed' AND a.entity_type='report' AND a.entity_id=%s
+      AND a.details->>'settlement_revision'=%s ORDER BY a.created_at,a.id LIMIT 1""",
+      (report_id,str(revision))).fetchone()
 
 
 def driver_settlement_scope(c, user, report_id):
@@ -595,6 +621,8 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
         for row in rows:
             if user['role'] != 'owner' and not set(row['branch_ids']) <= set(user.get('branch_ids', [])): continue
             changes = history[row['id']]
+            changes=[dict(event,action_type=settlement_action(row['snapshot'],changes[index-1] if index else None,event))
+                     for index,event in enumerate(changes)]
             latest = changes[-1] if changes else None
             if row['kind']=='manager' and not latest:
                 legacy=c.execute("SELECT * FROM manager_financial_matches WHERE report_id=%s AND status='matched' ORDER BY revision DESC LIMIT 1",(row['id'],)).fetchone()
@@ -605,12 +633,15 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
             local = any(normalize_city(b['city']) == 'حفر الباطن' for b in c.execute(
                 'SELECT city FROM branches WHERE id=ANY(%s)', (row['branch_ids'],)).fetchall())
             due_on = row['accounting_day'] + timedelta(days=1) if local else None
+            values=driver_settlement_values(row['snapshot'],latest)
+            confirmation=variance_confirmation(c,row['id'],values['revision'])
+            variance_pending=bool(values['reconciliation_complete'] and values['net_difference_halalas'] and not confirmation)
             result.append(dict(id=row['id'], user_id=row['user_id'], driver_name=row['driver_name'],kind=row['kind'],
                 branch_ids=row['branch_ids'], day=row['accounting_day'],manager_shift_id=row['manager_shift_id'],manager_name=row['manager_name'],
                 label=row['snapshot'].get('closure_label') or row['id'],
                 due_on=due_on, overdue=bool(due_on and datetime.now(TZ).date()>due_on and driver_settlement_values(row['snapshot'],latest)['stage']!='cash_received'),
                 waiting_days=max(0, (datetime.now(TZ).date()-approved['created_at'].astimezone(TZ).date()).days) if approved and not latest.get('received_on') else 0,
-                history=changes, **driver_settlement_values(row['snapshot'], latest)))
+                history=changes,variance_confirmation=confirmation,variance_pending=variance_pending, **values))
         result.sort(key=lambda r: r['stage'] == 'cash_received')
         return safe({'settlements': result})
 
@@ -622,7 +653,15 @@ def save_driver_settlement(c, user, report_id, body, receipt=False):
     previous = c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1', (report_id,)).fetchone()
     revision = previous['revision'] if previous else 0
     if previous and previous['cash_received_halalas'] is not None and previous.get('balance_approved',True):
-        fail('SETTLEMENT_FINAL', 'تم اعتماد استلام الكاش والتسوية نهائيًا.', 409)
+        prior_values=driver_settlement_values(row['snapshot'],previous)
+        manager_shift_id=(row['shift_id'] if row['kind']=='manager' else
+            c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()['manager_shift_id'])
+        day_approved=c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(manager_shift_id,)).fetchone()
+        # The counted receipt is fixed. Only a still-unconfirmed discrepancy can
+        # have its reviewed bank/cash-due values corrected before day approval.
+        if (receipt or not prior_values['net_difference_halalas'] or day_approved
+                or variance_confirmation(c,report_id,previous['revision'])):
+            fail('SETTLEMENT_FINAL', 'تم اعتماد استلام الكاش والتسوية نهائيًا.', 409)
     if revision != body.expected_revision: fail('SETTLEMENT_CHANGED', 'حدثت مراجعة أحدث؛ حدّث القائمة.', 409)
     if receipt:
         if previous and previous['cash_received_halalas'] is not None:fail('CASH_ALREADY_RECEIVED','تم تسجيل استلام الكاش سابقًا.',409)
@@ -642,10 +681,13 @@ def save_driver_settlement(c, user, report_id, body, receipt=False):
       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
       (db.new_id('das_'),report_id,user['brand_id'],revision+1,'cash_received' if received is not None else 'balance_approved',
        bank,due,received,received_on,reference,body.note,user['id'],approved)).fetchone()
+    action_type=settlement_action(row['snapshot'],previous,event)
+    before=driver_settlement_values(row['snapshot'],previous)
+    after=driver_settlement_values(row['snapshot'],event)
     db.audit(c,user['id'],'accounting.driver_settlement.'+event['stage'],'report',report_id,
-             {'event_id':event['id'],'revision':event['revision'],'reason':body.note,
-              'before':driver_settlement_values(row['snapshot'],previous),'after':driver_settlement_values(row['snapshot'],event)})
-    return safe(event)
+             {'event_id':event['id'],'revision':event['revision'],'reason':body.note,'action_type':action_type,
+              'before':before,'after':after})
+    return safe(dict(event,action_type=action_type,before=before,after=after))
 
 
 @router.post('/driver-settlements/{report_id}/approve-balance')
@@ -662,6 +704,39 @@ def receive_driver_cash(report_id:str,body:DriverCashReceipt,request:Request,use
     with db.tx() as c:
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.driver_receipt:'+report_id,
             body.model_dump(mode='json'),lambda:save_driver_settlement(c,user,report_id,body,receipt=True))
+
+
+class DriverVarianceConfirmation(Note):
+    expected_revision: StrictInt = Field(ge=1)
+    confirmed: StrictBool
+    action_taken: str = Field(min_length=3,max_length=1000)
+
+
+@router.post('/driver-settlements/{report_id}/confirm-variance')
+def confirm_driver_variance(report_id:str,body:DriverVarianceConfirmation,request:Request,user=Depends(access)):
+    if not auth.has_permission(user,REVIEW):fail('ACCOUNTING_FORBIDDEN','صلاحية الاعتماد غير متاحة.',403)
+    if not body.confirmed:fail('CONFIRMATION_REQUIRED','أكد مراجعة العجز أو الفائض والإجراء المتخذ.')
+    with db.tx() as c:
+        row=driver_settlement_scope(c,user,report_id)
+        def perform():
+            latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
+            if not latest or latest['revision']!=body.expected_revision:
+                fail('SETTLEMENT_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
+            values=driver_settlement_values(row['snapshot'],latest)
+            if not values['reconciliation_complete']:
+                fail('RECONCILIATION_REQUIRED','أكمل اعتماد الموازنة وتسجيل استلام الكاش أولًا.',409)
+            if not values['net_difference_halalas']:
+                fail('VARIANCE_ZERO','التسوية متطابقة ولا يوجد عجز أو فائض لتأكيده.',409)
+            if variance_confirmation(c,report_id,latest['revision']):
+                fail('VARIANCE_ALREADY_CONFIRMED','تم تأكيد فرق هذه التسوية سابقًا.',409)
+            db.audit(c,user['id'],'accounting.variance_confirmed','report',report_id,
+                {'report_id':report_id,'driver_id':row['user_id'],'settlement_revision':latest['revision'],
+                 'net_difference_halalas':values['net_difference_halalas'],'shortage_halalas':values['shortage_halalas'],
+                 'surplus_halalas':values['surplus_halalas'],'action_taken':body.action_taken,'reason':body.note,
+                 'reviewer_id':user['id'],'reviewed_at':datetime.now(TZ).isoformat(),'no_payroll_deduction':True})
+            return safe(variance_confirmation(c,report_id,latest['revision']))
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.variance_confirmation:'+report_id,
+            body.model_dump(),perform)
 
 
 @router.get('/manager-cards')

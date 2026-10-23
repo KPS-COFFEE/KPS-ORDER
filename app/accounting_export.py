@@ -30,6 +30,8 @@ LABELS={
  'returned_quantity':('كمية مرتجعة محددة','Specified returned quantity'),
  'driver':('السائق','Driver'),'shortage':('العجز','Shortage'),'surplus':('الفائض','Surplus'),
  'approved_shortage':('العجز المعتمد محاسبيًا','Accounting-reviewed shortage'),
+ 'pending_shortage':('عجز بانتظار تأكيد المحاسب','Shortage pending accountant confirmation'),
+ 'pending_surplus':('فائض بانتظار تأكيد المحاسب','Surplus pending accountant confirmation'),
  'review':('مراجعة المحاسبة','Accounting review'),'cumulative':('العدد التراكمي للفترة','Cumulative count in period'),
  'kind':('النوع','Type'),'amount':('المبلغ','Amount'),'method':('وسيلة الدفع','Payment method'),
  'reason':('السبب','Reason'),'actor':('منفذ / معتمد الإجراء','Actor / authorizer'),'action':('الإجراء المتخذ','Action taken'),
@@ -39,10 +41,10 @@ LABELS={
  'advertising_quantity':('كمية الإعلان','Advertising quantity'),'compensation_quantity':('كمية التعويض','Compensation quantity'),
  'zero_value_quantity':('كمية صفرية أخرى','Other zero-value quantity'),
  'weekday':('اليوم','Day'),'period':('الفترة بتوقيت الرياض','Period, Riyadh')}
-MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','approved_shortage','amount','delivery_value','payable'}
+MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','pending_shortage','pending_surplus','approved_shortage','amount','delivery_value','payable'}
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
 COLUMNS={
- 'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
+ 'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
  'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','treatment','reason','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
@@ -110,7 +112,7 @@ def render(data,format,lang):
         sections=[]
         for driver in dict.fromkeys(r['driver_id'] for r in rows):
             entries=[r for r in rows if r['driver_id']==driver]
-            for section_keys in (['day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','status'],
+            for section_keys in (['day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status'],
                                  ['day','notes','incident_notes','violations','traffic_notes','traffic'],['day','adjustments']):
                 section_rows=[[LABELS[k][lang=='en'] for k in section_keys]]
                 section_rows += [[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k),(int,float)) else r.get(k,'') for k in section_keys] for r in entries]
