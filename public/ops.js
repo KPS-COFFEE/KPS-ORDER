@@ -416,7 +416,7 @@
   async function timing(){await loadBranches();state.timingView??={};await window.KPSOrderTiming.open({api,tr,esc,heading,user:state.user,branches:state.branches,branchLabel,orderLabel,statusName,datetime,view:state.timingView,reload:()=>loadPage(),active:()=>state.page==='timing'&&!!state.user});}
   async function fleet(){state.fleetView??={mode:'cards',offset:0};await window.KPSFleet.open({api,mutation,tr,esc,heading,modal,closeModal,lang:state.lang,view:state.fleetView,error:message=>setStatus(message,true)});}
   async function accounting(){
-    const brands=state.user.central_operations?.brands||[],brand=state.accountingBrand||state.user.brand_id;
+    const brands=state.user.central_operations?.brands||[],brand=state.user.operations_brands?.length?(state.accountingBrand||state.user.brand_id):undefined;
     const accountingApi=(path,options={})=>api(path,{...options,brand});
     const accountingMutation=(path,body,button)=>mutation(path,body,button,{brand});
     await window.KPSAccounting.open({api:accountingApi,mutation:accountingMutation,tr,esc,money,heading,modal,closeModal,cents,csrf:state.csrf,user:state.user,lang:state.lang,brand});
