@@ -2,6 +2,12 @@
 (() => {
   'use strict';
   const collections = new Map([
+    ['/api/driver-work-hours/current',[]], ['/api/reports',['reports']], ['/api/report-notifications',['notifications']],
+    ['/api/custody',['transfers']], ['/api/printing/devices',['devices']],
+    ['/api/printing/operational-devices',['devices']], ['/api/printing/jobs',['jobs']],
+    ['/api/printing/migration-status',['branches']], ['/api/support-tickets',['tickets']],
+    ['/api/vehicle-maintenance',['reports']], ['/api/dispatch/offers',['offers']],
+    ['/api/fuel-exceptions',['requests']], ['/api/driver-breaks',['breaks']],
     ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/tasks',['tasks']],
     ['/api/conversations',['conversations']], ['/api/conversations/alerts',['awaiting_reply']],
     ['/api/shifts',['shifts','available_manager_shifts']],
@@ -11,14 +17,14 @@
     ['/api/operations/alerts',['unassigned','problems','printing','closure_exceptions']],
     ['/api/orders/customer-search',['contacts']], ['/api/task-recovery',['tasks']],
   ]);
-  const kinds={orders:'order',tasks:'task',conversations:'conversation',shifts:'shift',branches:'branch'};
+  const kinds={orders:'order',tasks:'task',conversations:'conversation',shifts:'shift',branches:'branch',devices:'printer',transfers:'custody',users:'staff',reports:'report'};
   function create(){
-    const records=new Map(),workdays=new Map();let signature='';
+    const records=new Map(),workdays=new Map(),workdayLegs=new Map();let signature='';
     const key=(kind,id)=>kind+':'+id;
     function remember(data,brand){
       if(!data||typeof data!=='object')return data;
       for(const [name,value] of Object.entries(data)){
-        for(const row of Array.isArray(value)?value:[value])if(row?.central_workday_id&&row.id)workdays.set(row.id,row.central_anchor_id||row.id);
+        for(const row of Array.isArray(value)?value:[value])if(row?.central_workday_id&&row.id){const anchor=row.central_anchor_id||row.id;workdays.set(row.id,anchor);if(!workdayLegs.has(anchor))workdayLegs.set(anchor,new Map());workdayLegs.get(anchor).set(row.brand_id||brand,row.id);}
         const kind=kinds[name]||kinds[name+'s'];
         if(kind)for(const row of Array.isArray(value)?value:[value])if(row?.id){
           records.set(key(kind,row.id),row.brand_id||brand);
@@ -50,6 +56,7 @@
         }
         output[name]=[...seen.values()];
       }
+      if(url.pathname==='/api/driver-work-hours/current')output.trip=results.map(r=>r.data.trip).find(Boolean)||null;
       if(output.orders){
         const newest=url.searchParams.get('sort')==='newest';
         output.orders.sort((a,b)=>(newest?-1:1)*(String(a.created_at||'').localeCompare(String(b.created_at||'')))||String(a.id).localeCompare(String(b.id)));
@@ -64,6 +71,7 @@
           if(typeof v==='number')output[name][k]=(output[name][k]||0)+v;
         }
       }
+      for(const name of ['unread_count','migrated_branches','remaining_branches'])if(results.some(r=>name in r.data))output[name]=results.reduce((n,r)=>n+Number(r.data[name]||0),0);
       if(results.some(r=>'total' in r.data))output.total=results.reduce((n,r)=>n+Number(r.data.total||0),0);
       output.has_more=results.some(r=>r.data.has_more);
       return output;
@@ -72,9 +80,9 @@
       const context=user?.central_operations;
       if(!context||options.brand||!path.startsWith('/api/')||user.delivery_context)return raw(path,options);
       const current=user.id+':'+JSON.stringify(context);
-      if(current!==signature){records.clear();workdays.clear();signature=current;}
+      if(current!==signature){records.clear();workdays.clear();workdayLegs.clear();signature=current;}
       const url=new URL(path,'https://central.invalid'),method=options.method||'GET';
-      if(url.pathname==='/api/identity/staff'&&method==='GET')return raw('/api/central-operations/staff',options);
+      if(url.pathname==='/api/identity/staff'&&method==='GET')return remember(await raw('/api/central-operations/staff',options),user.brand_id);
       const staffEdit=url.pathname.match(/^\/api\/identity\/staff\/([^/]+)$/);
       if(url.pathname==='/api/identity/staff/invitations'&&method==='POST')return raw('/api/central-operations/staff/invitations',options);
       if(staffEdit&&method==='PATCH')return raw('/api/central-operations/staff/'+staffEdit[1],options);
@@ -89,6 +97,11 @@
         }
       }
       let resource=null;
+      const custom=[['/api/report-notifications/','notification'],['/api/fuel-exceptions/','fuel'],['/api/driver-breaks/','break'],['/api/dispatch/offers/','offer'],['/api/vehicle-maintenance/','maintenance'],['/api/printing/jobs/','print_job'],['/api/support-tickets/','ticket'],['/api/driver-work-hours/','trip']].find(([prefix])=>url.pathname.startsWith(prefix));
+      const reservedResources=new Set(['current','report','options','policy','photos','daily','shifts','depart','next-destination']);
+      if(custom){const identifier=url.pathname.slice(custom[0].length).split('/')[0];if(identifier&&!reservedResources.has(identifier))resource={kind:custom[1],id:decodeURIComponent(identifier)};}
+      const extra=url.pathname.match(/^\/api\/(?:printing\/devices|reports|custody|identity\/staff)\/([^/]+)/);
+      if(extra)resource={kind:url.pathname.startsWith('/api/printing/')?'printer':url.pathname.startsWith('/api/reports/')?'report':url.pathname.startsWith('/api/custody/')?'custody':'staff',id:decodeURIComponent(extra[1])};
       const match=url.pathname.match(/\/(orders|tasks|shifts|conversations)\/([^/]+)/);
       const reserved=new Set(['current','alerts','customer-search','customer-lookup','delivery-center','complimentary']);
       if(shiftAction?.[1]==='driver-closure')resource={kind:'shift',id:decodeURIComponent(shiftAction[2])};
@@ -100,7 +113,9 @@
       if(resource){
         let brand=records.get(key(resource.kind,resource.id));
         if(!brand){const resolved=await raw('/api/central-operations/resource-context?'+new URLSearchParams({kind:resource.kind,resource_id:resource.id}),{});brand=resolved.brand_id;}
-        return remember(await raw(path,{...options,brand}),brand);
+        let body=options.body;
+        if(resource.kind==='branch'&&body?.shift_id){const anchor=workdays.get(body.shift_id),leg=workdayLegs.get(anchor)?.get(brand);if(leg)body={...body,shift_id:leg};}
+        return remember(await raw(path,{...options,body,brand}),brand);
       }
       const names=collections.get(url.pathname);
       if(method==='GET'&&names){

@@ -29,14 +29,14 @@ def context(conn, user):
         branches = conn.execute(
             'SELECT id,brand_id,branch_no,name,city FROM branches WHERE brand_id=%s '
             'AND (%s OR id=ANY(%s)) ORDER BY branch_no,id',
-            (brand['id'], principal['role'] == 'owner', principal.get('branch_ids', [])),
+            (brand['id'], principal['role'] == 'owner' and not principal.get('home_brand_id'), principal.get('branch_ids', [])),
         ).fetchall()
         scopes.append(dict(brand, branch_ids=[b['id'] for b in branches], branches=branches))
     return {'brands': scopes}
 
 
 @router.get('/resource-context')
-def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'branch'],
+def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'branch', 'printer', 'report', 'staff', 'custody', 'fuel', 'break', 'offer', 'maintenance', 'notification', 'print_job', 'ticket', 'trip'],
                      resource_id: str = Query(min_length=1, max_length=200),
                      user=Depends(auth.current_user)):
     """Resolve a clicked record without asking staff to choose its brand.
@@ -54,6 +54,18 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
             'shift': 'SELECT * FROM shifts WHERE id=%s',
             'conversation': 'SELECT * FROM conversations WHERE id=%s',
             'branch': 'SELECT * FROM branches WHERE id=%s',
+            'fuel': 'SELECT * FROM fuel_exceptions WHERE id=%s',
+            'break': 'SELECT b.*,s.branch_ids FROM driver_breaks b JOIN shifts s ON s.id=b.shift_id WHERE b.id=%s',
+            'offer': 'SELECT f.*,o.branch_id FROM dispatch_offers f JOIN orders o ON o.id=f.order_id WHERE f.id=%s',
+            'maintenance': 'SELECT * FROM vehicle_reports WHERE id=%s',
+            'notification': 'SELECT * FROM report_notifications WHERE id=%s',
+            'print_job': 'SELECT * FROM branch_print_jobs WHERE id=%s',
+            'ticket': 'SELECT t.*,o.brand_id,o.branch_id FROM support_tickets t JOIN orders o ON o.id=t.order_id WHERE t.id=%s',
+            'trip': 'SELECT t.*,s.branch_ids FROM driver_work_trips t JOIN shifts s ON s.id=t.shift_id WHERE t.id=%s',
+            'printer': 'SELECT * FROM branch_print_devices WHERE id=%s',
+            'report': 'SELECT * FROM closure_reports WHERE id=%s',
+            'staff': "SELECT * FROM users WHERE id=%s AND role<>'customer'",
+            'custody': 'SELECT t.*,s.brand_id,s.branch_ids,s.user_id FROM custody_transfers t JOIN shifts s ON s.id=t.from_shift_id WHERE t.id=%s',
         }
         row = conn.execute(statements[kind], (resource_id,)).fetchone()
         principal = multibrand.project(conn, user, row['brand_id']) if row else None
@@ -74,6 +86,48 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
                     allowed = auth.has_permission(principal, 'shifts_view')
                 except HTTPException:
                     allowed = False
+            elif kind in {'fuel','break','trip'}:
+                from fastapi import HTTPException
+                from .operations import shift_access
+                shift=conn.execute('SELECT * FROM shifts WHERE id=%s',(row.get('shift_id'),)).fetchone()
+                try:
+                    if kind=='fuel':
+                        from .fuel_exceptions import scope as fuel_scope
+                        fuel_scope(conn,principal,row['driver_id'],row['manager_shift_id'],row.get('shift_id'))
+                    else:
+                        shift_access(conn,principal,shift)
+                        if principal['role']=='driver' and row['driver_id']!=principal['id']:
+                            raise db.error(404,'CENTRAL_RECORD_UNAVAILABLE','السجل غير متاح.')
+                    allowed=True
+                except HTTPException:
+                    allowed=False
+            elif kind == 'offer':
+                allowed=principal['role']=='driver' and row['driver_id']==principal['id'] and row['branch_id'] in principal.get('branch_ids',[]) and auth.has_permission(principal,'tasks_view')
+            elif kind == 'maintenance':
+                from .maintenance import report as maintenance_report
+                from fastapi import HTTPException
+                try:
+                    maintenance_report(conn,resource_id,principal)
+                    allowed=auth.has_permission(principal,'vehicle_maintenance_view') or auth.has_permission(principal,'vehicle_faults_report')
+                except HTTPException:allowed=False
+            elif kind == 'notification':
+                allowed=principal['role']=='owner' and row['recipient_user_id']==principal['id']
+            elif kind == 'print_job':
+                from .branch_printing import can_access_branch
+                allowed=auth.has_permission(principal,'branch_printers_manage') and can_access_branch(principal,row['branch_id'])
+            elif kind == 'ticket':
+                order=conn.execute('SELECT * FROM orders WHERE id=%s',(row['order_id'],)).fetchone()
+                allowed=auth.has_permission(principal,'support_manage') and auth.can_access_order(principal,order,conn)
+            elif kind == 'printer':
+                from .branch_printing import can_access_branch
+                allowed = auth.has_permission(principal,'branch_printers_manage') and can_access_branch(principal,row['branch_id'])
+            elif kind == 'report':
+                from .reporting import can_read
+                allowed = auth.has_permission(principal,'reports_view') and can_read(principal,row)
+            elif kind == 'staff':
+                allowed = principal['role']=='owner'
+            elif kind == 'custody':
+                allowed = (row['recipient_user_id']==principal['id'] or row['user_id']==principal['id']) and (principal['role']=='owner' or set(row['branch_ids'])<=set(principal.get('branch_ids',[])))
             elif kind == 'branch':
                 allowed = principal['role'] == 'owner' or row['id'] in principal.get('branch_ids', [])
         if not allowed:

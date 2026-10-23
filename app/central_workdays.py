@@ -402,3 +402,42 @@ def return_for_correction(sid:str, body:ops.Review, request:Request, user=Depend
             for principal, shift in legs:
                 ops.return_close_in_tx(c, principal, shift['id'], body)
         return change(c,user,sid,'return',body.model_dump(),request,perform,manager=True,capability='shifts_approve')
+
+
+class CustodyLeg(ops.OperationBody):
+    shift_id: str
+    amount_halalas: ops.StrictInt = ops.Field(ge=0,le=ops.MAX_HALALAS)
+
+
+class WorkdayCustody(ops.OperationBody):
+    legs: list[CustodyLeg] = ops.Field(min_length=1,max_length=2)
+    recipient_user_id: str
+    to_shift_id: str | None = None
+    reference: str = ops.Field(min_length=1,max_length=200)
+
+
+@router.post('/{sid}/custody')
+def custody(sid:str,body:WorkdayCustody,request:Request,user=Depends(auth.current_user)):
+    require_enabled(user,'custody_transfer')
+    ops.roles(user,'owner','delivery_manager','driver')
+    with db.tx() as c:
+        def perform(day,legs):
+            supplied=exact_legs(legs,body.legs)
+            target={}
+            if body.to_shift_id:
+                receiving=association(c,body.to_shift_id)
+                if not receiving:
+                    raise db.error(409,'CENTRAL_CUSTODY_SCOPE','اختر وردية المستلم المشتركة.')
+                target={r['brand_id']:r['shift_id'] for r in c.execute('SELECT brand_id,shift_id FROM central_workday_legs WHERE workday_id=%s',(receiving['id'],)).fetchall()}
+            output=[]
+            for principal,shift in legs:
+                value=supplied[shift['id']]
+                if not value.amount_halalas:continue
+                if body.to_shift_id and shift['brand_id'] not in target:
+                    raise db.error(409,'CENTRAL_CUSTODY_SCOPE','وردية المستلم لا تغطي سجل المبلغ.')
+                output.append(ops.create_custody(c,principal,ops.Custody(from_shift_id=shift['id'],
+                    to_shift_id=target.get(shift['brand_id']),recipient_user_id=body.recipient_user_id,
+                    amount_halalas=value.amount_halalas,reference=body.reference))['transfer'])
+            if not output:raise db.error(422,'CENTRAL_CUSTODY_AMOUNT','أدخل مبلغ التسليم الفعلي.')
+            return {'transfers':output}
+        return change(c,user,sid,'custody',body.model_dump(),request,perform)
