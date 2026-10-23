@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 
 from app import campaign_reporting as reports, db, exports
 from test_campaign_reporting_postgres import campaign_data
+from test_operations import ops
 from test_backup import independent_restore_database
 from test_rollback_schema_compatibility import compat
 
@@ -85,7 +86,9 @@ def test_finalized_report_scopes_replay_filters_roles_and_immediate_revocation(c
     assert client('manager').post(PATH,json=PERIOD,headers={'Idempotency-Key':'final-report-0002'}).status_code==403
     assert client('manager',permission_denials=['reports_view']).get(PATH+'/'+rid).status_code==403
     assert client('manager',_morning_manager_context={'shift_id':'morning'}).get(PATH+'/'+rid).status_code==403
-    assert client('owner',permission_denials=['reports_view']).post(PATH,json=PERIOD|{'branch_id':'ops-branch','policy_version':1},headers={'Idempotency-Key':'final-report-0001'}).status_code==403
+    # Owner capabilities are unconditional in the retained role policy; real
+    # loss of finalization access is a role change, including before replay.
+    assert client('owner',role='delivery_manager').post(PATH,json=PERIOD|{'branch_id':'ops-branch','policy_version':1},headers={'Idempotency-Key':'final-report-0001'}).status_code==403
     assert client().post(PATH,json=PERIOD|{'branch_id':'ops-branch-other'},headers={'Idempotency-Key':'final-report-0003'}).status_code==404
     assert client().post(PATH,json=PERIOD,headers={'Idempotency-Key':'final-report-0001'}).status_code==409
 

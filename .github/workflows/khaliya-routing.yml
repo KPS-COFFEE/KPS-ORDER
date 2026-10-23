@@ -30,6 +30,26 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Match the approved staff acceptance mirror handling; keep suites,
+          # components, signatures, engines and application thresholds unchanged.
+          configured=false
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+            fi
+          done
+          test "$configured" = true
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
       - run: python -m playwright install --with-deps chromium
       - run: python -m compileall -q app tests && node --check public/customer.js
       - run: python -m pytest -q tests/test_khaliya_routing.py tests/test_khaliya_routing_source.py tests/test_khaliya_routing_browser.py tests/test_final_catalog.py tests/test_core.py tests/test_launch_branches.py tests/test_dispatch_numbering.py tests/test_order_support.py --junitxml=test-results/khaliya.xml

@@ -46,6 +46,29 @@ Fresh evidence and prepared operational steps:
 - [Revised gated OTP implementation and actual provider requirements](../authentica-enbishan-preparation-20261023.md).
 - [Full period-report behavior and definitions](../campaign-reporting.md).
 
+Authenticated control-plane continuation: the owner completed Render sign-in.
+The existing service has only the KPS custom hostname. A fresh provider logical
+export was requested and appeared ready at `2026-10-23T11:08Z`, alongside two
+18 October exports. [Sanitized control-plane evidence](render-control-plane-20261023.json)
+and [provider backup status screenshot](render-backup-status-20261023.jpg) retain
+that observation without signed access tokens. Download paths did not materialize
+in the documented shared filesystem, so no archive checksum/content integrity,
+actual registry/grant readback or isolated restoration is claimed. No network
+allowlist was changed. The distroless production image has no supported Shell/SSH
+route; no SSH key, API credential or extra backend was created.
+
+Revised source b5c234 passed 146 real Chromium/WebKit browser tests, including
+the four new final-report journeys, and all 18 new PostgreSQL OTP witnesses.
+The standalone report group exposed missing fixture registration (seven setup
+errors); its explicit import was repaired. A test-only owner-denial expectation
+was corrected to real role revocation under the retained owner policy. The
+accounting browser test now waits for acknowledged initial/language/filter
+renders after a deterministic reproduction of its overlapping-load race.
+Khaliya's Azure apt downloads exhausted the existing 12-minute job deadline
+even though its 129 tests passed; the existing bounded official Ubuntu mirror
+setup was applied without changing tests or that deadline. These corrective
+files require revised exact-head execution before final certification.
+
 The original inventory and chronological evidence are retained below for their
 own source versions.
 

@@ -9,9 +9,10 @@ returned upstream/proxy 503. That response does not establish origin TLS state.
 
 The Render service is still the existing KPS ORDER backend with automatic
 deployment off. The connector has no custom-domain management capability.
-Dashboard access was attempted through secure authentication, but a fresh
-canonical settings page still displayed sign-in after device confirmation.
-No authenticated dashboard/domain association or certificate state is claimed.
+The owner subsequently completed manual secure sign-in. The authenticated
+settings page showed exactly one custom domain, `order.kps.sa`; ENBISHAN was
+not associated. No ENBISHAN certificate state or valid origin TLS is claimed.
+The earlier failed login observation has been superseded by this readback.
 
 ## Prepared change after the release gate
 
