@@ -305,6 +305,109 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
                               'operational_day_start': '16:00', 'branches': windows,
                               'period': 'morning' if morning else 'evening'}
 
+def open_shift_in_tx(c, user, body, *, vehicle_anchor=None):
+    """Canonical opening checks, reusable by an atomic central workday."""
+    context = user.get('_morning_manager_context')
+    target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
+    from . import multibrand
+    if multibrand.enabled():
+        target=multibrand.project(c,target,user['brand_id'])
+    if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')
+    if user['role']=='admin' and target['role'] not in ('driver','delivery_manager'):
+        fail(403,'افتح الشفت لموظف تشغيل مخول فقط')
+    if target['id']!=user['id']:
+        shift_roles(user,'shifts_open','owner','delivery_manager')
+        if user['role']=='delivery_manager' and (target['role']!='driver' or body.kind!='driver'):fail(403,'المدير يفتح شفتات السائقين التابعين فقط')
+    if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
+    if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
+    c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
+    active_sql="SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'"
+    active_params=(target['id'],)
+    if multibrand.enabled():
+        multibrand.isolation_guard()
+        active_sql+=' AND brand_id=%s'
+        active_params+=(target['brand_id'],)
+    if c.execute(active_sql,active_params).fetchone():
+        raise db.error(409,'SHIFT_ALREADY_OPEN','لديك شفت مفتوح بالفعل. انتقل إلى مهام التوصيل أو الشفتات بدل فتح شفت جديد.')
+    brand=target.get('brand_id') or user.get('brand_id')
+    bids=body.branch_ids or target.get('branch_ids',[])
+    manager = None
+    if body.kind == 'driver' and body.manager_shift_id:
+        manager = lock_shift(c, body.manager_shift_id)
+        if (manager and manager['kind'] == 'manager' and manager['status'] == 'open'
+                and manager['brand_id'] == brand
+                and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                and not body.branch_ids):
+            # Morning operates only a subset of the normal driver pool.
+            # Derive it server-side from two already-authorized scopes.
+            bids = [bid for bid in target.get('branch_ids', []) if bid in manager['branch_ids']]
+    if not brand or not bids: fail(422,'يلزم براند وفروع فعلية للشفت')
+    branch_rows=[]
+    for bid in bids:
+        b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
+        if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
+        branch_rows.append(b)
+    if body.opening_halalas:
+        roles(user,'owner')
+        if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
+    if body.kind=='driver':
+        if not body.manager_shift_id:
+            raise db.error(409,'MANAGER_SHIFT_REQUIRED','اختر شفت مدير التوصيل المفتوح. إذا لم يظهر، اطلب من المدير فتح شفت يغطي جميع فروعك المعتمدة.')
+        manager=manager or lock_shift(c,body.manager_shift_id)
+        if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']):
+            raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي جميع فروعك. مدير التوصيل هو من يعدّل نطاق التغطية.')
+        manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
+        if multibrand.enabled():manager_user=multibrand.project(c,manager_user,brand)
+        if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (manager_user['role']!='owner' and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
+        if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
+    elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
+    period = body.delivery_period
+    if body.kind == 'driver':
+        inherited = (manager.get('delivery_window_snapshot') or {}).get('period', 'evening')
+        if period and period != inherited:
+            fail(409, 'فترة السائق يجب أن تطابق مناوبة مديره.')
+        period = inherited
+    if body.receipt_trial:
+        from . import driver_receipt_trial
+        driver_receipt_trial.authorize_open(c, user, target, body, manager, branch_rows)
+    operational_date, delivery_window = delivery_shift_window(
+        c, brand, branch_rows, manager_preparation=body.kind == 'manager',
+        delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
+    sid=uid()
+    carryovers=c.execute('SELECT r.* FROM retained_carryovers r JOIN shifts s ON s.id=r.from_shift_id WHERE r.user_id=%s AND s.brand_id=%s AND r.to_shift_id IS NULL AND r.archived_test_at IS NULL FOR UPDATE OF r',(target['id'],brand)).fetchall()
+    if context and body.kind == 'manager' and carryovers:
+        raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','هذه المناوبة لا تنقل عهدًا مالية سابقة.')
+    carried=sum(x['amount_halalas'] for x in carryovers)
+    permanent_float=None
+    if body.kind=='driver':
+        from . import driver_float
+        carried,permanent_float=driver_float.opening(c,target,carried)
+        if permanent_float and body.opening_halalas:fail(422,'العهدة الدائمة يحددها اعتماد المحاسبة فقط')
+    valid_cash_amount(body.opening_halalas+carried)
+    c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
+    if body.kind=='driver':
+        c.execute('UPDATE shifts SET permanent_float=%s WHERE id=%s',(db.json(permanent_float) if permanent_float else None,sid))
+        from .fuel_exceptions import consume
+        if vehicle_anchor:
+            # A ledger leg is not a second physical shift/vehicle receipt.
+            from .central_workdays import require_action
+            require_action()
+            vehicle_log={'central_vehicle_shift_id':vehicle_anchor}
+        else:
+            if body.vehicle_inspection and body.vehicle_inspection.fuel_exception_id:
+                consume(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),body.vehicle_inspection,'start',target.get('vehicle') or {})
+            if body.receipt_trial:
+                from . import driver_receipt_trial
+                vehicle_log=driver_receipt_trial.opening_log(c,user,body.reason)
+            else:
+                vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
+                vehicle_log['awaiting_refuel']=body.vehicle_inspection.fuel_percent<100 and not body.vehicle_inspection.fuel_exception_id
+        c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
+    for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
+    db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'previous_carry_halalas':sum(x['amount_halalas'] for x in carryovers),'permanent_float':permanent_float,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
+    return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}
+
+
 @router.post('/shifts')
 def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
     context = user.get('_morning_manager_context')
@@ -328,97 +431,7 @@ def open_shift(body:ShiftOpen,request:Request,user=Depends(auth.current_user)):
         if context and context.get('bootstrap') and c.execute("SELECT 1 FROM retained_carryovers WHERE user_id=%s AND to_shift_id IS NULL AND archived_test_at IS NULL LIMIT 1",(user['id'],)).fetchone():
             raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','راجع اعتماد العهدة السابقة قبل فتح مناوبة الصباح المحدودة.')
         def perform():
-            target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
-            from . import multibrand
-            if multibrand.enabled():
-                target=multibrand.project(c,target,user['brand_id'])
-            if not target or not target['active'] or not same_scope(user,target): fail(404,'الموظف غير موجود')
-            if user['role']=='admin' and target['role'] not in ('driver','delivery_manager'):
-                fail(403,'افتح الشفت لموظف تشغيل مخول فقط')
-            if target['id']!=user['id']:
-                shift_roles(user,'shifts_open','owner','delivery_manager')
-                if user['role']=='delivery_manager' and (target['role']!='driver' or body.kind!='driver'):fail(403,'المدير يفتح شفتات السائقين التابعين فقط')
-            if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
-            if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
-            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
-            active_sql="SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'"
-            active_params=(target['id'],)
-            if multibrand.enabled():
-                multibrand.isolation_guard()
-                active_sql+=' AND brand_id=%s'
-                active_params+=(target['brand_id'],)
-            if c.execute(active_sql,active_params).fetchone():
-                raise db.error(409,'SHIFT_ALREADY_OPEN','لديك شفت مفتوح بالفعل. انتقل إلى مهام التوصيل أو الشفتات بدل فتح شفت جديد.')
-            brand=target.get('brand_id') or user.get('brand_id')
-            bids=body.branch_ids or target.get('branch_ids',[])
-            manager = None
-            if body.kind == 'driver' and body.manager_shift_id:
-                manager = lock_shift(c, body.manager_shift_id)
-                if (manager and manager['kind'] == 'manager' and manager['status'] == 'open'
-                        and manager['brand_id'] == brand
-                        and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
-                        and not body.branch_ids):
-                    # Morning operates only a subset of the normal driver pool.
-                    # Derive it server-side from two already-authorized scopes.
-                    bids = [bid for bid in target.get('branch_ids', []) if bid in manager['branch_ids']]
-            if not brand or not bids: fail(422,'يلزم براند وفروع فعلية للشفت')
-            branch_rows=[]
-            for bid in bids:
-                b=c.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(bid,brand)).fetchone()
-                if not b or (target['role']!='owner' and bid not in target.get('branch_ids',[])) or (user['role']!='owner' and bid not in user.get('branch_ids',[])): fail(403,'فرع غير مخول')
-                branch_rows.append(b)
-            if body.opening_halalas:
-                roles(user,'owner')
-                if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
-            if body.kind=='driver':
-                if not body.manager_shift_id:
-                    raise db.error(409,'MANAGER_SHIFT_REQUIRED','اختر شفت مدير التوصيل المفتوح. إذا لم يظهر، اطلب من المدير فتح شفت يغطي جميع فروعك المعتمدة.')
-                manager=manager or lock_shift(c,body.manager_shift_id)
-                if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']):
-                    raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي جميع فروعك. مدير التوصيل هو من يعدّل نطاق التغطية.')
-                manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
-                if multibrand.enabled():manager_user=multibrand.project(c,manager_user,brand)
-                if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (manager_user['role']!='owner' and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
-                if user['role']=='delivery_manager' and manager['user_id']!=user['id']: fail(403,'مدير الشفت غير مطابق')
-            elif body.manager_shift_id: fail(422,'شفت المدير لا يتبع شفت آخر')
-            period = body.delivery_period
-            if body.kind == 'driver':
-                inherited = (manager.get('delivery_window_snapshot') or {}).get('period', 'evening')
-                if period and period != inherited:
-                    fail(409, 'فترة السائق يجب أن تطابق مناوبة مديره.')
-                period = inherited
-            if body.receipt_trial:
-                from . import driver_receipt_trial
-                driver_receipt_trial.authorize_open(c, user, target, body, manager, branch_rows)
-            operational_date, delivery_window = delivery_shift_window(
-                c, brand, branch_rows, manager_preparation=body.kind == 'manager',
-                delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
-            sid=uid()
-            carryovers=c.execute('SELECT r.* FROM retained_carryovers r JOIN shifts s ON s.id=r.from_shift_id WHERE r.user_id=%s AND s.brand_id=%s AND r.to_shift_id IS NULL AND r.archived_test_at IS NULL FOR UPDATE OF r',(target['id'],brand)).fetchall()
-            if context and body.kind == 'manager' and carryovers:
-                raise db.error(403,'MORNING_CARRYOVER_NOT_ALLOWED','هذه المناوبة لا تنقل عهدًا مالية سابقة.')
-            carried=sum(x['amount_halalas'] for x in carryovers)
-            permanent_float=None
-            if body.kind=='driver':
-                from . import driver_float
-                carried,permanent_float=driver_float.opening(c,target,carried)
-                if permanent_float and body.opening_halalas:fail(422,'العهدة الدائمة يحددها اعتماد المحاسبة فقط')
-            valid_cash_amount(body.opening_halalas+carried)
-            c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
-            if body.kind=='driver':
-                c.execute('UPDATE shifts SET permanent_float=%s WHERE id=%s',(db.json(permanent_float) if permanent_float else None,sid))
-                from .fuel_exceptions import consume
-                if body.vehicle_inspection and body.vehicle_inspection.fuel_exception_id:
-                    consume(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(),body.vehicle_inspection,'start',target.get('vehicle') or {})
-                if body.receipt_trial:
-                    vehicle_log=driver_receipt_trial.opening_log(c,user,body.reason)
-                else:
-                    vehicle_log=shift_vehicle.start(c,user,target,body.vehicle_inspection)
-                    vehicle_log['awaiting_refuel']=body.vehicle_inspection.fuel_percent<100 and not body.vehicle_inspection.fuel_exception_id
-                c.execute('UPDATE shifts SET vehicle_log=%s WHERE id=%s',(db.json(vehicle_log),sid))
-            for carry in carryovers:c.execute('UPDATE retained_carryovers SET to_shift_id=%s,carried_at=now() WHERE id=%s',(sid,carry['id']))
-            db.audit(c,user['id'],'shift.open','shift',sid,{**body.model_dump(),'carried_halalas':carried,'previous_carry_halalas':sum(x['amount_halalas'] for x in carryovers),'permanent_float':permanent_float,'carryover_ids':[x['id'] for x in carryovers], 'delivery_window':delivery_window})
-            return {'shift':c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone()}
+            return open_shift_in_tx(c, user, body)
         return mutate(c,user,request,'shift.open',body.model_dump(),perform)
 
 @router.get('/shifts')
@@ -521,6 +534,8 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
                 if user['role']=='delivery_manager' and manager['user_id']!=user['id']:continue
                 eligible.append(row)
             rows=eligible
+        from .central_workdays import annotate
+        annotate(c, rows)
         shift_order_counts.attach(c,rows,user)
         return safe(blind_closure.driver_view(user,{'shifts':rows,**people_data(c,user),**page_meta},shift_money=True))
 
@@ -553,6 +568,8 @@ def people_data(c,user):
         managers = [s for s in managers if (s['id'] == context['shift_id'] or s['user_id'] in approved)
                     and (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
                     and set(s['branch_ids'])==set(user['branch_ids'])]
+    from .central_workdays import annotate
+    annotate(c, managers)
     return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
 
 @router.get('/operations/people')
@@ -650,22 +667,28 @@ def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(
             return {'shift_id':sid,'refuel':entry,'vehicle_summary':shift_vehicle.summary(log)}
         return mutate(c,user,request,'shift.refuel:'+sid,body.model_dump(mode='json'),perform)
 
+def request_close_in_tx(c, user, sid):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
+    s=lock_shift(c,sid); shift_access(c,user,s,capability=close_capability(s))
+    guard_accepted_awaiting_dispatch(c,s)
+    from .driver_work_hours import guard_shift_completion
+    guard_shift_completion(c,s)
+    from .driver_breaks import guard as break_guard
+    break_guard(c,sid)
+    from .driver_closure import guard as closure_guard
+    closure_guard(c,user,s)
+    if s['status']=='open': c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
+    elif s['status']!='closing': fail(409,'الشفت ليس مفتوحا')
+    db.audit(c,user['id'],'shift.closing','shift',sid)
+    return {'shift_id':sid,'status':'closing','unresolved_tasks':unresolved(c,sid),'expected_halalas':balance(c,s)}
+
+
 @router.post('/shifts/{sid}/closing')
 def request_close(sid:str,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         def perform():
-            s=lock_shift(c,sid); shift_access(c,user,s,capability=close_capability(s))
-            guard_accepted_awaiting_dispatch(c,s)
-            from .driver_work_hours import guard_shift_completion
-            guard_shift_completion(c,s)
-            from .driver_breaks import guard as break_guard
-            break_guard(c,sid)
-            from .driver_closure import guard as closure_guard
-            closure_guard(c,user,s)
-            if s['status']=='open': c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
-            elif s['status']!='closing': fail(409,'الشفت ليس مفتوحا')
-            db.audit(c,user['id'],'shift.closing','shift',sid)
-            return {'shift_id':sid,'status':'closing','unresolved_tasks':unresolved(c,sid),'expected_halalas':balance(c,s)}
+            return request_close_in_tx(c, user, sid)
         return mutate(c,user,request,'shift.closing:'+sid,{},perform)
 
 class ClosureHandover(OperationBody):
@@ -684,6 +707,8 @@ class ClosureSubmit(OperationBody):
     retained_halalas: StrictInt=Field(0,ge=0,le=MAX_HALALAS)
 
 def submit_close_in_tx(c,user,sid,body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
     s=lock_shift(c,sid); shift_access(c,user,s,capability=close_capability(s))
     guard_accepted_awaiting_dispatch(c,s)
     from .driver_work_hours import guard_shift_completion
@@ -746,6 +771,8 @@ def return_close(sid:str,body:Review,request:Request,user=Depends(auth.current_u
         return mutate(c,user,request,'shift.return:'+sid,body.model_dump(),perform)
 
 def approve_close_in_tx(c,user,sid,body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
     s=lock_shift(c,sid)
     own_manager=bool(s and s['kind']=='manager' and s['user_id']==user['id'] and user['role']=='delivery_manager')
     shift_access(c,user,s,manager=not own_manager,capability='shifts_approve')
@@ -1481,6 +1508,52 @@ def review_driver_amounts(sid:str,body:DriverAmountReview,request:Request,user=D
             return {'shift_id':sid,'submission':updated}
         return mutate(c,user,request,'shift.manager_amount_review:'+sid,body.model_dump(),perform)
 
+def simple_driver_close_in_tx(c, user, sid, body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
+    s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
+    if user['role']!='delivery_manager':
+        raise HTTPException(403,{'code':'DRIVER_CLOSE_MANAGER_ONLY'})
+    if s['kind']!='driver' or s['status'] not in ('open','closing','submitted'):
+        fail(409,'التقفيلة مقفلة أو غير متاحة')
+    from .driver_work_hours import guard_shift_completion
+    guard_shift_completion(c,s)
+    if not body.confirmed:fail(422,'أكد استلام النقد الفعلي ومراجعة التقفيلة')
+    if s['status'] in ('open','closing'):
+        if body.counted_halalas is None:fail(422,'أدخل النقد المعدود فعليا')
+        if body.received_halalas>body.counted_halalas:fail(422,'المستلم لا يتجاوز المعدود')
+        if not body.exception_reason.strip():fail(422,'اكتب سبب الإقفال نيابة عن السائق')
+        if s['user_id']==user['id']:fail(403,'استخدم إنهاء ورديتك من حساب السائق')
+        if s['status']=='open':
+            c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
+            db.audit(c,user['id'],'shift.closing','shift',sid)
+        submit_close_in_tx(c,user,sid,ClosureSubmit(
+            terminal_total_halalas=body.terminal_total_halalas,counted_halalas=body.counted_halalas,handover_halalas=body.received_halalas,
+            retained_halalas=body.counted_halalas-body.received_halalas,
+            vehicle_inspection=body.vehicle_inspection,exception_reason=body.exception_reason))
+        s=lock_shift(c,sid)
+    elif body.counted_halalas is not None:
+        fail(422,'المعدود المرسل محفوظ؛ أعد التقفيلة للتصحيح عند الحاجة')
+    sub=s['submission']
+    if body.received_halalas!=sub['handover_halalas']:
+        fail(422,'المستلم لا يطابق التسليم المسجل؛ أعد التقفيلة للتصحيح')
+    transfers=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected' FOR UPDATE",(sid,)).fetchall()
+    if not transfers:
+        manager=lock_shift(c,s['manager_shift_id'])
+        if not manager or manager['user_id']!=user['id']:
+            fail(403,'مدير شفت السائق هو من يؤكد الاستلام الفعلي')
+        transfer=create_custody(c,user,Custody(from_shift_id=sid,to_shift_id=manager['id'],
+            recipient_user_id=user['id'],amount_halalas=body.received_halalas,
+            reference='Driver closure '+str(s.get('shift_no') or sid),closure=True))['transfer']
+        transfers=[transfer]
+    for transfer in transfers:
+        if transfer['status']=='pending':
+            if transfer['recipient_user_id']!=user['id']:
+                raise HTTPException(409,{'code':'DRIVER_RECEIPT_OTHER_RECIPIENT'})
+            confirm_custody_in_tx(c,user,transfer['id'])
+    return approve_close_in_tx(c,user,sid,Review(exception_reason=body.exception_reason or None))
+
+
 @router.post('/shifts/{sid}/driver-close')
 def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(auth.current_user)):
     """One explicit receipt and closure confirmation; existing financial guards apply.
@@ -1491,47 +1564,7 @@ def simple_driver_close(sid:str,body:DriverClose,request:Request,user=Depends(au
     roles(user,'owner','delivery_manager')
     with db.tx() as c:
         def perform():
-            s=lock_shift(c,sid);shift_access(c,user,s,manager=True)
-            if user['role']!='delivery_manager':
-                raise HTTPException(403,{'code':'DRIVER_CLOSE_MANAGER_ONLY'})
-            if s['kind']!='driver' or s['status'] not in ('open','closing','submitted'):
-                fail(409,'التقفيلة مقفلة أو غير متاحة')
-            from .driver_work_hours import guard_shift_completion
-            guard_shift_completion(c,s)
-            if not body.confirmed:fail(422,'أكد استلام النقد الفعلي ومراجعة التقفيلة')
-            if s['status'] in ('open','closing'):
-                if body.counted_halalas is None:fail(422,'أدخل النقد المعدود فعليا')
-                if body.received_halalas>body.counted_halalas:fail(422,'المستلم لا يتجاوز المعدود')
-                if not body.exception_reason.strip():fail(422,'اكتب سبب الإقفال نيابة عن السائق')
-                if s['user_id']==user['id']:fail(403,'استخدم إنهاء ورديتك من حساب السائق')
-                if s['status']=='open':
-                    c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
-                    db.audit(c,user['id'],'shift.closing','shift',sid)
-                submit_close_in_tx(c,user,sid,ClosureSubmit(
-                    terminal_total_halalas=body.terminal_total_halalas,counted_halalas=body.counted_halalas,handover_halalas=body.received_halalas,
-                    retained_halalas=body.counted_halalas-body.received_halalas,
-                    vehicle_inspection=body.vehicle_inspection,exception_reason=body.exception_reason))
-                s=lock_shift(c,sid)
-            elif body.counted_halalas is not None:
-                fail(422,'المعدود المرسل محفوظ؛ أعد التقفيلة للتصحيح عند الحاجة')
-            sub=s['submission']
-            if body.received_halalas!=sub['handover_halalas']:
-                fail(422,'المستلم لا يطابق التسليم المسجل؛ أعد التقفيلة للتصحيح')
-            transfers=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected' FOR UPDATE",(sid,)).fetchall()
-            if not transfers:
-                manager=lock_shift(c,s['manager_shift_id'])
-                if not manager or manager['user_id']!=user['id']:
-                    fail(403,'مدير شفت السائق هو من يؤكد الاستلام الفعلي')
-                transfer=create_custody(c,user,Custody(from_shift_id=sid,to_shift_id=manager['id'],
-                    recipient_user_id=user['id'],amount_halalas=body.received_halalas,
-                    reference='Driver closure '+str(s.get('shift_no') or sid),closure=True))['transfer']
-                transfers=[transfer]
-            for transfer in transfers:
-                if transfer['status']=='pending':
-                    if transfer['recipient_user_id']!=user['id']:
-                        raise HTTPException(409,{'code':'DRIVER_RECEIPT_OTHER_RECIPIENT'})
-                    confirm_custody_in_tx(c,user,transfer['id'])
-            return approve_close_in_tx(c,user,sid,Review(exception_reason=body.exception_reason or None))
+            return simple_driver_close_in_tx(c, user, sid, body)
         result=mutate(c,user,request,'shift.driver-close:'+sid,body.model_dump(),perform)
     from .reporting import generate_files
     generate_files(result['report_id'])

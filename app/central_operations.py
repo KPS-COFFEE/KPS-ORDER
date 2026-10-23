@@ -79,3 +79,8 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
         if not allowed:
             raise db.error(404, 'CENTRAL_RECORD_UNAVAILABLE', 'السجل غير متاح.')
         return {'brand_id': row['brand_id']}
+
+
+# Imported after context/enabled are defined to avoid initialization cycles.
+from .central_workdays import router as workdays_router
+router.include_router(workdays_router)

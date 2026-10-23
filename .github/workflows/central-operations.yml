@@ -4,6 +4,11 @@ on:
     branches: [agent/kps-order-emergency-v4]
     paths:
       - app/central_operations.py
+      - app/central_workdays.py
+      - app/operations.py
+      - app/shift_vehicle.py
+      - app/multibrand_migrations/**
+      - tests/test_central_workdays.py
       - public/assets/central-operations.js
       - tests/test_central_operations*
       - .github/workflows/central-operations.yml
@@ -43,4 +48,4 @@ jobs:
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: node --test tests/test_central_operations_adapter.cjs
       - run: node --check public/ops.js
-      - run: python tools/enbishan_test.py tests/test_central_operations.py tests/test_enbishan_dual_brand.py tests/test_multibrand_final_boundary.py
+      - run: python tools/enbishan_test.py tests/test_central_operations.py tests/test_central_workdays.py tests/test_enbishan_dual_brand.py tests/test_multibrand_final_boundary.py

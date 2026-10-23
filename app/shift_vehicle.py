@@ -71,6 +71,17 @@ def start(c,user,target,inspection):
     return {'version':1,'vehicle':vehicle,'start':stamp(c,user,inspection),'refuels':[]}
 
 def finish(c,user,shift,inspection):
+    anchor = (shift.get('vehicle_log') or {}).get('central_vehicle_shift_id')
+    if anchor:
+        from .central_workdays import association, require_action
+        require_action()
+        group, physical = association(c, shift['id']), association(c, anchor)
+        if not group or not physical or group['id'] != physical['id'] or physical['anchor_shift_id'] != anchor:
+            raise db.error(409, 'CENTRAL_VEHICLE_SCOPE', 'مرجع فحص المركبة غير مطابق للوردية.')
+        log = c.execute('SELECT vehicle_log FROM shifts WHERE id=%s', (anchor,)).fetchone()['vehicle_log']
+        if not log.get('end'):
+            raise db.error(409, 'CENTRAL_VEHICLE_INSPECTION', 'أكمل فحص نهاية الوردية أولًا.')
+        return shift['vehicle_log']
     if inspection is None:raise db.error(422,'VEHICLE_INSPECTION_REQUIRED','أكمل فحص نهاية الشفت وقراءة العداد والبنزين قبل إرسال التقفيلة.')
     from .fuel_exceptions import consume
     consume(c,user,shift,inspection,'end',(shift.get('vehicle_log') or {}).get('vehicle') or {})
