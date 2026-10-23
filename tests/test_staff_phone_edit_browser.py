@@ -31,8 +31,8 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
               calls.push({path});
               if(path==='/api/shifts/current')return {shifts:[{user_id:'m',kind:'manager',status:'open',branch_ids:['b']}]};
               if(path.startsWith('/api/catalog'))return {products:[
-                {id:'coffee',name:'Coffee',available:true,price_halalas:1000,image_url:'/assets/kps-receipt-logo.png'},
-                {id:'variant',name:'Cup',available:true,price_halalas:2000,image_url:'/assets/kps-receipt-logo.png',option_groups:[
+                {id:'coffee',name:'Coffee',category:'Coffee',available:true,price_halalas:1000,image_url:'/assets/kps-receipt-logo.png'},
+                {id:'variant',name:'Cup',category:'Coffee',available:true,price_halalas:2000,image_url:'/assets/kps-receipt-logo.png',option_groups:[
                   {code:'color',name:'Color',required:true,min_select:1,max_select:1,values:[{code:'red',name:'Red'},{code:'blue',name:'Blue'},{code:'hidden',name:'Hidden',available:false}]},
                   {code:'flavor',name:'Flavor',required:true,min_select:1,max_select:1,values:[{code:'vanilla',name:'Vanilla'},{code:'lemon',name:'Lemon'}]}
                 ]}
