@@ -76,6 +76,7 @@ jobs:
       TEST_BROWSER: "1"
       RELEASE_FULL_CI: "1"
       ROLLBACK_BASELINE_DIR: /tmp/kps-rollback-baseline
+      PENDING_MIGRATION_BASELINE_DIR: /tmp/kps-startup-baseline
       ROLLBACK_COMPAT_DIR: /tmp/kps-rollback-compat
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +163,14 @@ jobs:
           python tools/rollback_prepare_compat.py --repository "$PWD" --output "$ROLLBACK_COMPAT_DIR"
           mkdir "$ROLLBACK_BASELINE_DIR"
           git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$ROLLBACK_BASELINE_DIR"
+          mkdir "$PENDING_MIGRATION_BASELINE_DIR"
+          git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C "$PENDING_MIGRATION_BASELINE_DIR"
+          python - <<'PYBASELINE'
+          import json, os, pathlib, subprocess
+          revision = '4e4d781b4fa82b7459410694ff5c4ac06842e6e7'
+          tree = subprocess.check_output(['git', 'rev-parse', revision + '^{tree}'], text=True).strip()
+          (pathlib.Path(os.environ['PENDING_MIGRATION_BASELINE_DIR']) / 'baseline-source-identity.json').write_text(json.dumps({'revision': revision, 'tree': tree}))
+          PYBASELINE
       - name: Bound Ubuntu dependency downloads on the ephemeral runner
         shell: bash
         run: |
