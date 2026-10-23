@@ -122,6 +122,9 @@ def test_real_session_context_and_immediate_revocation(dual):
 def test_both_catalogs_branches_quotes_and_foreign_item_rejection(dual):
     client, actor, post, _, _ = dual
     for brand in ['kps','enbishan']:
+        # A customer journey uses that brand's customer credential, never the
+        # fixture's currently projected KPS owner to browse another brand.
+        actor(brand+'-customer')
         data=client.get('/api/catalog',params={'brand_id':brand}).json()
         assert data['brand']['id']==brand
         assert all(p['brand_id']==brand for p in data['products'])

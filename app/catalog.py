@@ -1,6 +1,8 @@
 """Canonical, server-priced catalog and explicitly configured branch availability."""
 from __future__ import annotations
 
+from .storefront_scope import default_brand
+
 import math
 import asyncio
 import hashlib
@@ -406,8 +408,10 @@ def public_product(product: dict, branch=None, service=None) -> dict:
 
 
 @router.get('/catalog')
-def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str | None = Query(default=None, max_length=80),
+def catalog(brand_id: str | None = Query(default=None, max_length=80), branch_id: str | None = Query(default=None, max_length=80),
             service: Literal['pickup', 'car', 'delivery'] | None = Query(default=None)):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     with db.tx(pipeline=True) as conn:
         # Independent, freshly scoped reads share one protocol flush. No menu
         # cache: availability and brand changes remain visible immediately.
@@ -480,7 +484,9 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
 
 
 @router.get('/branches')
-def branches(brand_id: str = Query(default='kps', max_length=80)):
+def branches(brand_id: str | None = Query(default=None, max_length=80)):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active', (brand_id,)).fetchone():
             raise db.error(404, 'BRAND_NOT_FOUND', 'البراند غير متاح.')
@@ -640,7 +646,7 @@ class GiftInfo(_CheckoutModel):
 
 class QuoteBody(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
-    brand_id: str = Field(default='kps', min_length=1, max_length=80)
+    brand_id: str = Field(default_factory=default_brand, min_length=1, max_length=80)
     branch_id: str = Field(min_length=1, max_length=80)
     service: Literal['pickup', 'car', 'delivery']
     payment_method: Literal['cash', 'card', 'split']
@@ -1169,7 +1175,7 @@ class NearestBody(BaseModel):
 
 
 class PublicNearestBody(NearestBody):
-    brand_id: str = Field(default='kps', min_length=1, max_length=80)
+    brand_id: str = Field(default_factory=default_brand, min_length=1, max_length=80)
     service: Literal['pickup', 'car', 'delivery']
 
 

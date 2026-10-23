@@ -35,6 +35,7 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
                 'customer-map/config':{'enabled':False},'banners':{'banners':[]},'customer/profile':{'addresses':[]},
                 'branches/nearest':{'branches':[branch],'excluded':[]},'products/demo-paid/availability':{'available':True},
                 'auth/otp/request':{'challenge_id':'synthetic','channel':'sms'},
+                'customer/marketing-consent':{'brand_id':'kps','notice':None,'marketing':{'sms':False,'whatsapp':False},'affects_order_messages':False},
             }
             if path=='location/parse-map-url':
                 if request.post_data_json['url']!=link:
@@ -48,6 +49,8 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
                 assert request.post_data_json['customer']['address']==''
                 data={'quote':{'subtotal_halalas':1000,'delivery_fee_halalas':500,'total_halalas':1500,'items':[]}}
             else:
+                if path=='customer/marketing-consent':
+                    assert request.method=='GET', 'Location checkout cannot change marketing consent'
                 assert path in responses,'Unexpected API operation: '+path
                 data=responses[path]
             route.fulfill(status=200,content_type='application/json',body=json.dumps(data))
@@ -87,6 +90,9 @@ def test_paste_refresh_otp_checkout_and_invalid_replacement(static_customer,lang
         page.locator('#otp-code').fill('1234');page.locator('#verify-otp').click()
         expect(page.locator('#confirm-dialog')).to_be_visible()
         assert 'orders' not in requests
+        expect(page.locator('#marketing-sms')).to_be_disabled()
+        expect(page.locator('#marketing-whatsapp')).to_be_disabled()
+        assert 'customer/marketing-consent' in requests
         page.keyboard.press('Escape');page.reload(wait_until='networkidle')
         expect(page.locator('#neighborhood')).to_have_value('حي اختبار')
         expect(page.locator('#address')).to_have_value('')

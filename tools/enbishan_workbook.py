@@ -10,7 +10,6 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.enbishan_catalog_import import prepare_rows
 
 NS = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
       'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
@@ -296,6 +295,11 @@ def main():
     parser.add_argument('--owner-approved-20261022', action='store_true', help='Prepare exact final review: hidden drinks, mixed sizes and five original photos; still disabled drafts.')
     args = parser.parse_args()
     inspection = read_workbook(args.workbook)
+    # Raw offline inspection and --help also work in the distinct prior-app
+    # recovery image, which deliberately has no new ENBISHAN application routes.
+    # Compile only when explicitly selected and the reviewed module is present.
+    if args.reference_menu or args.menu_sheet:
+        from app.enbishan_catalog_import import prepare_rows
     if args.reference_menu:
         output = reference_menu(inspection, owner_approved=args.owner_approved_20261020 or args.owner_approved_20261022)
         output['preview'] = prepare_rows(output['rows'])

@@ -130,7 +130,8 @@ class SecurityMiddleware:
         try:
             from .multibrand import enabled as multibrand_enabled
             if (multibrand_enabled() and path not in {'/','/index.html'}
-                    and auth.session_context(request)=='work' and not storefront_scope.forced_work_context(request)
+                    and auth.session_context(request)=='work' and (not storefront_scope.forced_work_context(request)
+                         or storefront_scope.is_public_brand_route(path))
                     and any(re.fullmatch(r'[A-Za-z0-9_-]{40,100}',request.cookies.get(name,''))
                             for name in (auth.COOKIE,'kps_work_session'))):
                 request.state.verified_work_storefront=await run_in_threadpool(storefront_scope.verify_work_override,request)
@@ -145,10 +146,6 @@ class SecurityMiddleware:
                 return
 
             storefront_scope.validate_scope(request, buffered_request.get('body', b''))
-            # Enbishan host defaults are server-owned. Forwarded headers and
-            # caller-supplied foreign brands still fail validation above.
-            if storefront_scope.current_brand.get() == 'enbishan' and 'brand_id' not in request.query_params:
-                scope['query_string'] = scope.get('query_string', b'') + (b'&' if scope.get('query_string') else b'') + b'brand_id=enbishan'
 
             async def bounded_receive():
                 nonlocal buffered_request

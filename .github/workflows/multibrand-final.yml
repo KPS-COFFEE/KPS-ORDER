@@ -72,13 +72,13 @@ jobs:
           tests/test_enbishan_customer_scope_constraints.py tests/test_enbishan_shared_terminal.py
           tests/test_enbishan_shared_float.py tests/test_enbishan_sms_boundary.py
           tests/test_enbishan_dual_brand.py tests/test_storefront_scope.py
-          tests/test_multibrand_final_boundary.py
+          tests/test_multibrand_final_boundary.py tests/test_public_default_brand_scope.py
           --junitxml=test-results/multibrand/brand-menu.xml
       - name: Customer taps, district, campaigns and reporting
         if: ${{ !cancelled() }}
         run: >-
           python -m pytest -q
-          tests/test_customer_card_quantity.py tests/test_customer_neighborhood_policy.py
+          tests/test_customer_card_quantity.py tests/test_customer_gift_pricing_identity.py tests/test_customer_neighborhood_policy.py
           tests/test_minimum_order_feedback.py tests/test_optional_customer_address.py
           tests/test_customer_hotpath.py tests/test_customer_language.py
           tests/test_campaign_reporting.py tests/test_campaign_reporting_postgres.py
@@ -205,7 +205,7 @@ jobs:
           tests/test_experience_entry_browser.py tests/test_customer_location_link_browser.py
           tests/test_customer_map_browser.py tests/test_staff_phone_edit_browser.py
           tests/test_gift_creative_browser.py tests/test_storefront_advertising_browser.py tests/test_campaign_report_browser.py
-          tests/test_v5_ui.py
+          tests/test_v5_ui.py tests/test_customer_language.py tests/test_sms_mandatory_policy.py
           --junitxml=test-results/multibrand/customer-browser.xml
       - name: Delivery manager, vehicle swap and persistent alert interfaces
         if: ${{ !cancelled() }}

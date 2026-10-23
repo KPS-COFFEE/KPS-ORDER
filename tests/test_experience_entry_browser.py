@@ -60,12 +60,15 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
                 'auth/otp/request':{'challenge_id':'synthetic-challenge','channel':'sms'},
                 'auth/otp/verify':session,
                 'customer/profile':{'addresses':[]},
+                'customer/marketing-consent':{'brand_id':'kps','notice':None,'marketing':{'sms':False,'whatsapp':False},'affects_order_messages':False},
                 'branches/nearest':{'branches':[{**branch,'available':True,'direct_distance_meters':500}],'excluded':[]},
                 'products/demo-paid/availability':{'available':True},
                 'quote':{'quote':{**quote,'items':quote['items'][:1],
                     'first_order_gift':{'status':'verification_required','version':1,'items':[]}}},
                 'gifts/quote':{'quote':quote},
             }
+            if path=='customer/marketing-consent':
+                assert request.method=='GET', 'Checkout may read consent but cannot change it'
             if path not in responses:
                 raise AssertionError('Unexpected API operation: '+path)
             route.fulfill(status=200,content_type='application/json',body=json.dumps(responses[path]))
@@ -142,6 +145,9 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
         assert 'auth/otp/request' in requests and 'auth/otp/verify' in requests
         assert 'gifts/quote' in requests and 'orders' not in requests
+        expect(page.locator('#marketing-sms')).to_be_disabled()
+        expect(page.locator('#marketing-whatsapp')).to_be_disabled()
+        assert 'customer/marketing-consent' in requests
         out=ROOT/'test-results';out.mkdir(exist_ok=True)
         page.screenshot(path=str(out/f'customer-entry-{entry_enabled}-{offer_active}-{auth_stage}-{lang}-{width}.png'),full_page=True)
         assert not errors,errors

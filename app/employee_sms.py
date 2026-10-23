@@ -4,6 +4,7 @@ Shares existing canonical challenges and sessions. No SMS is sent unless the
 brand channel already has live proof. Reuses Tawked’s existing four-digit
 contract, or a separately configured four-digit Twilio employee service.
 """
+from .storefront_scope import default_brand
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,7 @@ from . import auth, db, portals, sms_verification, sms_rollout
 class EmployeeSMSRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     phone: str = Field(min_length=8, max_length=30)
-    brand_id: str = Field(default='kps', min_length=1, max_length=80)
+    brand_id: str = Field(default_factory=default_brand, min_length=1, max_length=80)
     lang: Literal['ar','en'] = 'ar'
 
 

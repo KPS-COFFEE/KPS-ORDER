@@ -24,7 +24,7 @@ def verify_work_override(request):
     # Called in the thread pool before storefront binding, never in the event loop.
     with db.tx(pipeline=True) as c:
         principal=auth._find_session(c,request)
-    return bool(principal and principal['role']!='customer')
+    return principal['brand_id'] if principal and principal['role']!='customer' else None
 
 
 def bound_brand(request):
@@ -38,9 +38,17 @@ def bound_brand(request):
         # header cannot turn a customer cookie into a staff credential. This
         # permits explicit staff brand grants without relaxing customer scope.
         from . import auth
+        work_brand = None
         if (request.url.path not in {'/','/index.html'} and auth.session_context(request)=='work'
-                and (forced_work_context(request) or getattr(request.state,'verified_work_storefront',False))):
-            return None
+                and (forced_work_context(request) or getattr(request.state,'verified_work_storefront',None))):
+            if is_public_brand_route(request.url.path):
+                # The fresh session probe already applies current operations
+                # membership. A work header alone never unbinds a public API.
+                verified = getattr(request.state,'verified_work_storefront',None)
+                if isinstance(verified,str):
+                    work_brand = verified
+            else:
+                return None
         if os.getenv('ENBISHAN_ISOLATED_ENABLED') != 'true':
             try:
                 mapping=json.loads(os.environ['KPS_STOREFRONT_HOST_BRANDS'])
@@ -59,13 +67,43 @@ def bound_brand(request):
             # cannot acquire the default KPS storefront accidentally.
             if request.url.hostname not in mapping:
                 raise HTTPException(404,{'code':'STOREFRONT_HOST_UNKNOWN'})
-            return mapping[request.url.hostname]
+            return work_brand or mapping[request.url.hostname]
+        if work_brand:
+            return work_brand
         mapping = {'enbishan.com': 'enbishan', 'order.enbishan.com': 'enbishan', 'enbishan.test': 'enbishan', 'kps.test': 'kps'}
         if configured in mapping:
             return mapping[configured]
         if configured not in KPS_HOSTS and request.url.hostname in mapping:
             return mapping[request.url.hostname]
     return 'kps' if configured in KPS_HOSTS or request.url.hostname in KPS_HOSTS else None
+
+
+# Only routes that actually accept a public brand default. No query-string
+# mutation is performed for private APIs, assets or unrelated application routes.
+_PUBLIC_BRAND_ROUTES = frozenset({
+    '/api/catalog', '/api/branches', '/api/banners', '/api/identity/channels',
+    '/api/customer-map/config', '/api/customer/legal', '/api/experience/public',
+    '/api/identity/staff/login-policy', '/privacy', '/terms', '/refunds',
+    '/api/auth/otp/request', '/api/identity/guest', '/api/identity/email/request',
+    '/api/identity/staff/code/request', '/api/identity/staff/sms/request',
+    '/api/quote', '/api/orders', '/api/branches/nearest',
+})
+
+
+def is_public_brand_route(path):
+    return path in _PUBLIC_BRAND_ROUTES or path.startswith(('/api/banner-assets/', '/api/product-assets/')) or (
+        path.startswith('/api/products/') and path.endswith('/availability'))
+
+
+def default_brand():
+    """Resolve an omitted body/query brand from the verified request context."""
+    return current_brand.get() or 'kps'
+
+
+def resolve_brand(brand=None):
+    brand = default_brand() if brand is None else brand
+    require_brand(brand)
+    return brand
 
 
 def require_brand(brand):

@@ -15,7 +15,8 @@ import tarfile
 from pathlib import Path
 
 FOUNDATION = ('Dockerfile', 'requirements.lock', 'requirements.txt',
-              'tools/security_runtime_root.py', 'tools/container_entrypoint.py')
+              'tools/security_runtime_root.py', 'tools/container_entrypoint.py',
+              'tools/enbishan_workbook.py')
 
 
 def digest(data):

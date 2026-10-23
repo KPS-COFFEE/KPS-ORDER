@@ -30,7 +30,9 @@ def _internal_details(brand_id):
 
 
 @router.get('/api/customer/legal')
-def details(brand_id:str='kps'):
+def details(brand_id:str|None=None):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     # Compatibility metadata only: internal transfer notes and entity mappings
     # belong to the authenticated owner route, never a public customer API.
     return {'details': {}, 'sellers': [], 'complete': False,
@@ -48,15 +50,21 @@ def save(body:LegalDetails,user=Depends(auth.require_roles('owner'))):
         return {'ok':True}
 
 @router.get('/privacy',response_class=HTMLResponse)
-def privacy(brand_id:str='kps',lang:Literal['ar','en']='ar'):
+def privacy(brand_id:str|None=None,lang:Literal['ar','en']='ar'):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     return page('privacy',brand_id,lang)
 
 @router.get('/terms',response_class=HTMLResponse)
-def terms(brand_id:str='kps',lang:Literal['ar','en']='ar'):
+def terms(brand_id:str|None=None,lang:Literal['ar','en']='ar'):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     return page('terms',brand_id,lang)
 
 @router.get('/refunds',response_class=HTMLResponse)
-def refunds(brand_id:str='kps',lang:Literal['ar','en']='ar'):
+def refunds(brand_id:str|None=None,lang:Literal['ar','en']='ar'):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     return page('refunds',brand_id,lang)
 
 def page(kind,brand,lang):

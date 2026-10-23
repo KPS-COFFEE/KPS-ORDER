@@ -34,7 +34,16 @@ def test_owner_saves_dormant_morning_period_without_opening_it(dual_http, langua
             page.goto(base+'/ops?operations_brand=enbishan')
             if language=='en':
                 page.locator('#language').click()
-            page.locator('[data-page=admin]').click()
+            if width <= 650:
+                toggle = page.locator('.dispatch-nav-toggle')
+                expect(toggle).to_be_visible()
+                if toggle.get_attribute('aria-expanded') != 'true':
+                    toggle.click()
+                expect(toggle).to_have_attribute('aria-expanded', 'true')
+                expect(page.locator('#navigation')).to_be_visible()
+            admin_navigation = page.locator('#navigation [data-page=admin]')
+            expect(admin_navigation).to_be_visible()
+            admin_navigation.click()
             page.locator('[data-action=admin-tab][data-tab=branches]').click()
             page.locator('[data-action=edit-branch][data-id=enbishan-test-1]').click()
             periods = page.locator('#delivery_hours-rows .hours-row')

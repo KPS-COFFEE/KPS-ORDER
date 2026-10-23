@@ -1,4 +1,6 @@
 name: Isolated security closure PostgreSQL18 and image
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 permissions:
   contents: read
 concurrency:
@@ -14,6 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
         fetch-depth: 0
         persist-credentials: false
     - id: scope
@@ -55,10 +58,11 @@ jobs:
       RECOVERY_POLL_ENABLED: 'false'
       DISPATCH_AUTO_ASSIGN_ENABLED: 'false'
       DISPATCH_OFFER_ACCEPT_ENABLED: 'false'
-      RUNTIME_REVISION: ${{ github.sha }}
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
         persist-credentials: false
     - uses: actions/setup-python@v5
       with:
@@ -143,7 +147,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: security-host-${{ github.sha }}
+        name: security-host-${{ github.event.pull_request.head.sha || github.sha }}
         path: evidence/
         retention-days: 7
         if-no-files-found: error
@@ -182,10 +186,11 @@ jobs:
       RECOVERY_POLL_ENABLED: 'false'
       DISPATCH_AUTO_ASSIGN_ENABLED: 'false'
       DISPATCH_OFFER_ACCEPT_ENABLED: 'false'
-      RUNTIME_REVISION: ${{ github.sha }}
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
         persist-credentials: false
     - uses: actions/setup-python@v5
       with:
@@ -210,9 +215,9 @@ jobs:
       run: "set -euo pipefail\nif bash -e -o pipefail -c 'exit 17' | tee /dev/null; then\n  echo 'A failed test\
         \ command was incorrectly accepted.' >&2\n  exit 1\nfi\n"
     - name: Build exact candidate Dockerfile without push
-      run: "image=\"kps-order-security-review:$GITHUB_SHA-${{ matrix.role }}\"\ntarget=runtime\nif [ '${{ matrix.role\
+      run: "image=\"kps-order-security-review:$CANDIDATE_SHA-${{ matrix.role }}\"\ntarget=runtime\nif [ '${{ matrix.role\
         \ }}' = rollback ]; then target=rollback; fi\ndocker buildx build --target \"$target\" --platform linux/amd64\
-        \ --load --provenance=false \\\n  --label \"org.opencontainers.image.revision=$GITHUB_SHA\" \\\n  --metadata-file\
+        \ --load --provenance=false \\\n  --label \"org.opencontainers.image.revision=$CANDIDATE_SHA\" \\\n  --metadata-file\
         \ evidence/build-metadata.json --tag \"$image\" . > evidence/image-build.log 2>&1\nimage_id=$(docker image\
         \ inspect --format '{{.Id}}' \"$image\")\nprintf '%s\\n' \"$image_id\" > evidence/candidate-image-id.txt\n\
         printf 'SECURITY_IMAGE_ID=%s\\n' \"$image_id\" >> \"$GITHUB_ENV\"\ndocker image inspect \"$image_id\" >\
@@ -251,7 +256,7 @@ jobs:
         \ \\\n  --mount \"type=bind,src=$PWD/evidence,dst=/evidence\" \\\n  --env PYTHONPATH=/security-safety:/security-test-tools:/app\
         \ \\\n  --env TEST_DATABASE_URL=\"$TEST_DATABASE_URL\" --env APP_ENV=testing \\\n  --env OTP_PROVIDER=disabled\
         \ --env EMAIL_PROVIDER=disabled \\\n  --env REPORT_WORKER_ENABLED=false --env EMAIL_WORKER_ENABLED=false\
-        \ \\\n  --env RECOVERY_POLL_ENABLED=false --env RUNTIME_REVISION=\"$GITHUB_SHA\" \\\n  \"$SECURITY_IMAGE_ID\"\
+        \ \\\n  --env RECOVERY_POLL_ENABLED=false --env RUNTIME_REVISION=\"$CANDIDATE_SHA\" \\\n  \"$SECURITY_IMAGE_ID\"\
         \ -m pytest -q \"${suites[@]}\" -k \"not real_browser\" --deselect tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation --deselect tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser --deselect tests/test_owner_staff_management.py::test_staff_branch_dropdown_count_cancel_and_save \\\n  -p no:cacheprovider --junitxml=/evidence/container-security-focused.xml\
         \ \\\n  | tee evidence/container-security-focused.log\npython - <<'CHECK'\nimport xml.etree.ElementTree\
         \ as E\ncases=list(E.parse('evidence/container-security-focused.xml').getroot().iter('testcase'))\nassert\
@@ -316,7 +321,7 @@ jobs:
           --mount "type=bind,src=$PWD/evidence/image-browser-screenshots,dst=/app/test-artifacts" \
           --env PYTHONPATH=/security-safety:/security-browser:/security-test-tools:/app \
           --env TEST_DATABASE_URL="$TEST_DATABASE_URL" --env TEST_BROWSER=1 \
-          --env APP_ENV=testing --env RUNTIME_REVISION="$GITHUB_SHA" \
+          --env APP_ENV=testing --env RUNTIME_REVISION="$CANDIDATE_SHA" \
           "$SECURITY_IMAGE_ID" -m pytest -q -p exact_image_browser -p no:cacheprovider \
           tests/test_additional_password_owner.py::test_owner_password_form_creates_only_after_confirmation \
           tests/test_owner_staff_management.py::test_owner_employee_actions_in_browser \
@@ -336,11 +341,11 @@ jobs:
         \ \\\n  --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \\\n  --env REPORT_WORKER_ENABLED=false\
         \ --env EMAIL_WORKER_ENABLED=false \\\n  --env RECOVERY_POLL_ENABLED=false --env DISPATCH_AUTO_ASSIGN_ENABLED=false\
         \ \\\n  --env DISPATCH_OFFER_ACCEPT_ENABLED=false \\\n  --env APP_ALLOWED_HOSTS=localhost,127.0.0.1 \\\n\
-        \  --env PORT=18080 --env RUNTIME_REVISION=\"$GITHUB_SHA\" \"$SECURITY_IMAGE_ID\"\npython - <<'PY' | tee\
+        \  --env PORT=18080 --env RUNTIME_REVISION=\"$CANDIDATE_SHA\" \"$SECURITY_IMAGE_ID\"\npython - <<'PY' | tee\
         \ evidence/container-smoke.json\nimport json, os, time, urllib.request\nfor attempt in range(90):\n    try:\n\
         \        result = {}\n        for endpoint in ('health', 'ready'):\n            with urllib.request.urlopen('http://127.0.0.1:18080/'\
         \ + endpoint, timeout=2) as r:\n                assert r.status == 200\n                result[endpoint]\
-        \ = json.load(r)\n                assert result[endpoint]['revision'] == os.environ['GITHUB_SHA']\n    \
+        \ = json.load(r)\n                assert result[endpoint]['revision'] == os.environ['CANDIDATE_SHA']\n    \
         \    print(json.dumps(result, indent=2)); break\n    except Exception:\n        if attempt == 89: raise\n\
         \        time.sleep(1)\nPY\ndocker inspect --format '{{.Image}}' security-candidate > evidence/running-container-image-id.txt\n\
         cmp evidence/candidate-image-id.txt evidence/running-container-image-id.txt\ndocker logs security-candidate\
@@ -375,7 +380,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: security-closure-${{ matrix.role }}-${{ github.sha }}
+        name: security-closure-${{ matrix.role }}-${{ github.event.pull_request.head.sha || github.sha }}
         path: evidence/
         retention-days: 7
         if-no-files-found: error
@@ -383,7 +388,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: security-image-${{ matrix.role }}-${{ github.sha }}
+        name: security-image-${{ matrix.role }}-${{ github.event.pull_request.head.sha || github.sha }}
         path: ${{ runner.temp }}/candidate-image.tar
         retention-days: 14
         compression-level: 1
@@ -423,6 +428,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
         fetch-depth: 0
         persist-credentials: false
     - uses: actions/setup-python@v5

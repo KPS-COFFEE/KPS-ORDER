@@ -91,6 +91,12 @@ def test_additive_fields_preserve_existing_order_replay_fingerprints():
     from tests.test_core import _body
     ordinary=catalog.QuoteBody(**_body())
     legacy={k:v for k,v in ordinary.model_dump().items() if k not in {'gift','benefit_code','cashback_halalas'}}
+    # Production f8f3840 orders._create_order already omitted these two
+    # null consent fields before hashing; expected_total_halalas stayed present.
+    for field in ('expected_gift', 'expected_gift_version'):
+        if legacy[field] is None:
+            legacy.pop(field)
+    assert 'expected_total_halalas' in legacy
     assert db.digest(catalog.order_request_payload(ordinary))==db.digest(legacy)
     explicit=catalog.QuoteBody(**{**_body(),'cashback_halalas':0,'benefit_code':''})
     assert catalog.order_request_payload(explicit)==legacy
@@ -372,3 +378,48 @@ def test_wallet_and_consent_never_follow_phone_to_another_brand(verified_custome
     assert result.json()['brand_id']=='kps' and result.json()['balance_halalas']==0 and not result.json()['entries']
     payload={'channel':'sms','granted':False,'notice_version':'withdrawal','customer_id':foreign['id']}
     assert client.post('/api/customer/marketing-consent',json=payload,headers={'Idempotency-Key':'test-foreign-consent'}).status_code==422
+
+
+@pytest.mark.parametrize('expected,version', [(False, None), (True, 1), (False, 0), (True, 7)])
+def test_explicit_gift_consent_stays_in_historical_and_additive_replay_keys(expected, version):
+    from tests.test_core import _body
+    body = catalog.QuoteBody(**{**_body(), 'expected_gift': expected, 'expected_gift_version': version})
+    current = catalog.order_request_payload(body)
+    assert current['expected_gift'] is expected
+    if version is None:
+        assert 'expected_gift_version' not in current
+    else:
+        assert current['expected_gift_version'] == version
+    original = body.model_dump(exclude={'gift', 'benefit_code', 'cashback_halalas'})
+    for field in ('expected_gift', 'expected_gift_version'):
+        if original[field] is None:
+            original.pop(field)
+    assert db.digest(current) == db.digest(original)
+    changed = body.model_copy(update={'expected_gift': not expected})
+    assert db.digest(catalog.order_request_payload(changed)) != db.digest(current)
+
+
+@pytest.mark.postgres
+def test_verified_storefront_and_gift_quotes_share_coupon_pricing_without_reserving(verified_customer, monkeypatch):
+    """The actual verified storefront switches to this route before checkout."""
+    from tests.test_core import _body
+    client, user = verified_customer
+    enable(monkeypatch, 'customer_benefits')
+    definition = rule()
+    definition['product_ids'] = ['kps-01']
+    definition['discount_bps'] = 1000
+    with db.tx() as c:
+        c.execute("INSERT INTO benefit_rules(id,brand_id,code,definition,active,actor_id) VALUES('test-gift-quote','kps','SYNTHETIC',%s,true,%s)",
+                  (db.json(benefits.Rule(**definition).model_dump(mode='json')), user['id']))
+    payload = {**_body(), 'benefit_code': 'SYNTHETIC'}
+    ordinary = client.post('/api/quote', json=payload)
+    verified = client.post('/api/gifts/quote', json=payload)
+    assert ordinary.status_code == verified.status_code == 200, (ordinary.text, verified.text)
+    before, after = ordinary.json()['quote'], verified.json()['quote']
+    assert before['discount_halalas'] > 0
+    for key in ('discount_halalas', 'total_halalas', 'benefits'):
+        assert before[key] == after[key]
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) AS n FROM orders').fetchone()['n'] == 0
+        assert c.execute('SELECT count(*) AS n FROM benefit_order_states').fetchone()['n'] == 0
+        assert c.execute('SELECT count(*) AS n FROM customer_wallet_entries').fetchone()['n'] == 0

@@ -40,3 +40,15 @@ function fixture(){
   ctx.state.products=[];ctx.addFromCard(plain);assert.equal(ctx.cardQuantity('p1'),2,'A stale card cannot add a missing catalog item');
 }
 console.log('PASS: rapid photo taps, explicit variant removal, required options, item/line limits, availability and note preservation.');
+
+{
+  const helper=source.split('\n').find(line=>line.includes('function showSelectedProductImage()'));
+  const original={id:'synthetic-variant',brand_id:'enbishan',image_url:'/assets/enbishan-menu/base.jpg'};
+  const shown=[];const ctx={state:{product:original},$:()=>({getAttribute:()=>'/assets/enbishan-menu/selected.jpg'}),showImage:product=>shown.push(product)};
+  vm.createContext(ctx);vm.runInContext(helper,ctx);ctx.showSelectedProductImage();
+  assert.equal(shown[0].image_url,'/assets/enbishan-menu/selected.jpg','Enlargement must use the displayed variant artwork');
+  assert.equal(original.image_url,'/assets/enbishan-menu/base.jpg','Never overwrite canonical product artwork');
+  ctx.state.product=null;ctx.showSelectedProductImage();assert.equal(shown.length,1);
+  assert.match(source, /product-image-zoom'\).addEventListener\('click',showSelectedProductImage/);
+  console.log('PASS: selected variant artwork enlarges without mutating canonical product data.');
+}

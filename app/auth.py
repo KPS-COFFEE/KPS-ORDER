@@ -1,6 +1,8 @@
 """Revocable PostgreSQL sessions and independently verified customer identities."""
 from __future__ import annotations
 
+from .storefront_scope import default_brand
+
 import base64
 import getpass
 import hashlib
@@ -491,7 +493,7 @@ def _otp_test_access(conn, brand, channel, request):
 class OTPRequestBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     phone: str = Field(min_length=8, max_length=30)
-    brand_id: str = Field(default='kps', min_length=1, max_length=80)
+    brand_id: str = Field(default_factory=default_brand, min_length=1, max_length=80)
     lang: Literal['ar', 'en'] = 'ar'
     purpose: Literal['login','change_phone']='login'
 
@@ -767,7 +769,9 @@ def assert_customer_order_eligible(conn, user, *, phone_required=None):
 
 
 @router.get('/identity/channels')
-def public_channels(brand_id: str='kps'):
+def public_channels(brand_id: str|None=None):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     with db.tx() as conn:
         if not conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(brand_id,)).fetchone():
             raise db.error(404,'BRAND_NOT_FOUND','البراند غير متاح.')
@@ -779,7 +783,7 @@ class GuestBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     display_name: str = Field(min_length=1,max_length=100)
     phone: str = Field(min_length=8,max_length=30)
-    brand_id: str = Field(default='kps',min_length=1,max_length=80)
+    brand_id: str = Field(default_factory=default_brand,min_length=1,max_length=80)
     email: str | None = Field(default=None,max_length=254)
 
     @field_validator('*')
@@ -994,7 +998,7 @@ def _create_email_token(conn,*,brand,email,purpose,user_id=None,session_id=None,
 class EmailRequestBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     email:str=Field(min_length=3,max_length=254)
-    brand_id:str=Field(default='kps',min_length=1,max_length=80)
+    brand_id:str=Field(default_factory=default_brand,min_length=1,max_length=80)
     purpose:Literal['customer_link','email_login','staff_login','owner_link','recovery']='email_login'
 
 
@@ -1053,7 +1057,7 @@ class EmailVerifyBody(BaseModel):
 class StaffCodeRequestBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     phone:str=Field(min_length=8,max_length=30)
-    brand_id:str=Field(default='kps',min_length=1,max_length=80)
+    brand_id:str=Field(default_factory=default_brand,min_length=1,max_length=80)
 
 
 @router.post('/identity/staff/code/request')

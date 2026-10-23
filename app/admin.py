@@ -693,7 +693,9 @@ def active_banners(conn,brand_id,branch_id,city_name=None):
 
 
 @router.get('/banners')
-def public_banners(brand_id:str='kps',branch_id:str|None=None,city:str|None=None):
+def public_banners(brand_id:str|None=None,branch_id:str|None=None,city:str|None=None):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     with db.tx() as conn:
         rows=active_banners(conn,brand_id,branch_id,city)
         configuration=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand_id,)).fetchone()
@@ -712,7 +714,9 @@ def public_banners(brand_id:str='kps',branch_id:str|None=None,city:str|None=None
 
 
 @router.get('/banner-assets/{record_id}')
-def public_banner_asset(record_id:str,brand_id:str='kps',branch_id:str|None=None,city:str|None=None):
+def public_banner_asset(record_id:str,brand_id:str|None=None,branch_id:str|None=None,city:str|None=None):
+    from .storefront_scope import resolve_brand
+    brand_id = resolve_brand(brand_id)
     with db.tx() as conn:
         banners=active_banners(conn,brand_id,branch_id,city)
         if not any(record_id in {row['desktop_asset_id'],row['mobile_asset_id']} for row in banners):
