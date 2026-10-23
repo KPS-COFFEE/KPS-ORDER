@@ -43,7 +43,7 @@ def test_one_open_action_covers_both_brands_with_one_vehicle_receipt(central):
 @pytest.mark.postgres
 def test_manual_opening_float_is_recorded_once(central):
     _,_,post,_,_=central
-    day=post('owner','/api/central-operations/workdays',{'kind':'manager','opening_halalas':5000,'reason':'Synthetic opening cash'})
+    day=post('owner','/api/central-operations/workdays',{'kind':'manager','branch_ids':['kps-branch-1','enbishan-test-1'],'opening_halalas':5000,'reason':'Synthetic opening cash'})
     assert sum(s['opening_halalas'] for s in day['shifts'])==5000
 
 
@@ -137,3 +137,50 @@ def test_driver_close_requires_exact_breakdown_and_is_atomic(central,monkeypatch
 def test_disabled_rollout_never_opens_a_workday(dual):
     _,_,post,_,_=dual
     post('manager','/api/central-operations/workdays',{'kind':'manager'},status=404)
+
+
+@pytest.mark.postgres
+def test_one_early_close_request_and_decision_updates_the_whole_workday(central):
+    _,_,post,_,_=central
+    _,driver=open_days(central)
+    root=driver['shift']['id'];path='/api/central-operations/workdays/'+root
+    requested=post('driver',path+'/request',{'reason':'Synthetic shared workday complete'})
+    authorization=requested['shift']['closure_authorization']
+    post('manager',path+'/decision',{'request_id':authorization['id'],'decision':'approved','reason':'Synthetic manager approval'})
+    finished=post('driver',path+'/closing',{})
+    assert {s['status'] for s in finished['shifts']}=={'closing'}
+    with db.tx() as c:
+        assert {s['closure_authorization']['status'] for s in c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()}=={'approved'}
+
+
+@pytest.mark.postgres
+def test_owner_branch_editor_preserves_role_and_combines_explicit_grants(central):
+    _,actor,post,_,_=central
+    path='/api/central-operations/staff/dual-driver'
+    updated=post('owner',path,{'branch_ids':['kps-branch-1','enbishan-test-2'],'reason':'Synthetic branch assignment'},method='patch')
+    assert updated['user']['role']=='driver'
+    assert set(updated['user']['branch_ids'])=={'kps-branch-1','enbishan-test-2'}
+    session=actor('driver').get('/api/session').json()['user']
+    assert {s['id']:s['branch_ids'] for s in session['central_operations']['brands']}=={'kps':['kps-branch-1'],'enbishan':['enbishan-test-2']}
+    post('driver',path,{'branch_ids':['kps-branch-1'],'reason':'Unauthorized self grant'},method='patch',status=403)
+    post('owner',path,{'branch_ids':['unknown-branch'],'reason':'Unknown branch'},method='patch',status=403)
+    with db.tx() as c:
+        assert c.execute("SELECT branch_ids FROM staff_brand_memberships WHERE user_id='dual-driver' AND brand_id='enbishan'").fetchone()['branch_ids']==['enbishan-test-2']
+
+
+@pytest.mark.postgres
+def test_branch_editor_rejects_stale_and_running_shift_revocations(central):
+    _,_,post,_,_=central
+    path='/api/central-operations/staff/dual-driver'
+    post('owner',path,{'branch_ids':['kps-branch-1'],'expected_branch_ids':[],'reason':'Synthetic stale edit'},method='patch',status=409)
+    open_days(central)
+    post('owner',path,{'branch_ids':['kps-branch-1'],'reason':'Synthetic unsafe live revocation'},method='patch',status=409)
+
+
+@pytest.mark.postgres
+def test_disabled_noncentral_routes_still_accept_old_brand_shifts(dual):
+    _,_,_,shifts,_=dual
+    manager,driver=shifts('enbishan')
+    with db.tx() as c:
+        assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='open'

@@ -161,6 +161,19 @@ def open_workday(body: ops.ShiftOpen, request: Request, user=Depends(auth.curren
         return ops.safe(ops.blind_closure.driver_view(user, result, shift_money=True))
 
 
+def physical_shift(c, shift):
+    anchor = (shift.get('vehicle_log') or {}).get('central_vehicle_shift_id')
+    if not anchor:
+        return shift
+    day = association(c, shift['id'])
+    if not day or day['anchor_shift_id'] != anchor:
+        raise db.error(409, 'CENTRAL_VEHICLE_SCOPE', 'مرجع السيارة غير مطابق للوردية.')
+    physical = c.execute('SELECT * FROM shifts WHERE id=%s', (anchor,)).fetchone()
+    if not physical or physical['status'] != 'open':
+        raise db.error(409, 'CENTRAL_WORKDAY_CLOSED', 'الوردية لا تستقبل مهام جديدة.')
+    return physical
+
+
 def ordered(legs, anchor):
     return sorted(legs, key=lambda item: (item[1]['id'] != anchor, item[1]['brand_id']))
 
@@ -171,7 +184,14 @@ def result(c, day, legs):
                      'WHERE s.id=%s', (s['id'],)).fetchone() for _, s in legs]
     annotate(c, rows)
     anchor = next(s for s in rows if s['id'] == day['anchor_shift_id'])
-    return {'shift': anchor, 'shifts': rows, 'central_workday_id': day['id']}
+    display = dict(anchor, branch_ids=list(dict.fromkeys(b for r in rows for b in r['branch_ids'])),
+                   central_legs=[{'id':r['id'],'brand_id':r['brand_id'],'branch_ids':r['branch_ids']} for r in rows])
+    display['opening_halalas'] = sum(r['opening_halalas'] for r in rows)
+    display['permanent_float'] = {'amount':sum((r.get('permanent_float') or {}).get('amount',0) for r in rows)}
+    if all(r['submission'] is not None for r in rows):
+        display['submission'] = {key:sum(r['submission'].get(key,0) or 0 for r in rows)
+                                 for key in rows[0]['submission'] if key.endswith('_halalas')}
+    return {'shift': display, 'shifts': rows, 'central_workday_id': day['id']}
 
 
 @router.get('/{sid}')
@@ -180,12 +200,38 @@ def detail(sid: str, user=Depends(auth.current_user)):
     with db.tx() as c:
         day, legs = authorized(c, user, sid, capability='shifts_view')
         output = result(c, day, legs)
+        output['manager_user_id'] = None
+        if day['kind']=='driver':
+            managers = {c.execute('SELECT user_id FROM shifts WHERE id=%s',(shift['manager_shift_id'],)).fetchone()['user_id'] for _,shift in legs}
+            if len(managers)!=1:
+                raise db.error(409,'CENTRAL_MANAGER_SCOPE','وردية السائق لا تتبع مديرًا واحدًا.')
+            output['manager_user_id'] = next(iter(managers))
         output['ledgers'] = []
+        for name in ['tasks','collections','refunds','custody_events','transfers','driver_shifts']:
+            output[name] = []
         for principal, shift in legs:
             item = {'shift_id': shift['id'], 'brand_id': shift['brand_id'],
                     'expected_halalas': ops.balance(c, shift), 'submission': shift['submission'],
-                    'permanent_float': shift.get('permanent_float')}
+                    'permanent_float': shift.get('permanent_float'), 'status':shift['status']}
             output['ledgers'].append(item)
+            sid = shift['id']
+            queries = {
+                'tasks': ('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at', (sid,)),
+                'collections': ('SELECT * FROM collections WHERE shift_id=%s', (sid,)),
+                'refunds': ('SELECT * FROM refunds WHERE shift_id=%s', (sid,)),
+                'custody_events': ('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at', (sid,)),
+                'transfers': ('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s', (sid,sid)),
+                'driver_shifts': ('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at', (sid,)),
+            }
+            for name, (query, params) in queries.items():
+                values = c.execute(query, params).fetchall()
+                if name == 'tasks' and user['role']=='driver':
+                    values = [r for r in values if r['status'] not in ops.TERMINAL]
+                output[name].extend(dict(r,brand_id=shift['brand_id']) for r in values)
+        annotate(c, output['driver_shifts'])
+        output['expected_halalas'] = sum(item['expected_halalas'] for item in output['ledgers'])
+        output['vehicle_summary'] = ops.shift_vehicle.summary(output['shift'].get('vehicle_log'))
+        output['external_enbishan_eligible'] = False
         return ops.safe(ops.blind_closure.driver_view(user, output, shift_money=True))
 
 
@@ -298,3 +344,61 @@ def driver_close(sid: str, body: Receipt, request: Request, user=Depends(auth.cu
     for identifier in output['report_ids']:
         generate_files(identifier)
     return output
+
+
+from . import driver_closure as closure
+
+
+def closure_change(c, user, sid, body, request, operation, helper, *, manager=False):
+    def perform(day, legs):
+        if day['kind'] != 'driver':
+            raise db.error(409, 'CENTRAL_DRIVER_WORKDAY', 'اختر وردية سائق.')
+        anchor = legs[0][1]
+        if hasattr(body, 'request_id') and body.request_id != (anchor.get('closure_authorization') or {}).get('id'):
+            raise db.error(409, 'CLOSURE_REQUEST_STALE', 'تغير طلب إنهاء الوردية؛ حدّث الشاشة.')
+        for principal, shift in legs:
+            current = body
+            if hasattr(body, 'request_id'):
+                current = body.model_copy(update={'request_id':(shift.get('closure_authorization') or {}).get('id','')})
+            helper(c, principal, shift['id'], current)
+    return change(c, user, sid, 'authorization.'+operation, body.model_dump(mode='json'), request,
+                  perform, manager=manager)
+
+
+@router.post('/{sid}/request')
+def closure_request(sid:str, body:closure.Reason, request:Request, user=Depends(auth.current_user)):
+    require_enabled(user, 'shifts_close')
+    with db.tx() as c:
+        return closure_change(c,user,sid,body,request,'request',closure.request_authorization_in_tx)
+
+
+@router.post('/{sid}/decision')
+def closure_decision(sid:str, body:closure.Decision, request:Request, user=Depends(auth.current_user)):
+    require_enabled(user, 'shifts_approve')
+    with db.tx() as c:
+        return closure_change(c,user,sid,body,request,'decision',closure.decide_in_tx,manager=True)
+
+
+@router.put('/{sid}/schedule')
+def closure_schedule(sid:str, body:closure.Schedule, request:Request, user=Depends(auth.current_user)):
+    require_enabled(user, 'shifts_approve')
+    with db.tx() as c:
+        return closure_change(c,user,sid,body,request,'schedule',closure.schedule_in_tx,manager=True)
+
+
+@router.post('/{sid}/withdraw')
+def closure_withdraw(sid:str, body:closure.Withdrawal, request:Request, user=Depends(auth.current_user)):
+    require_enabled(user, 'shifts_close')
+    with db.tx() as c:
+        return closure_change(c,user,sid,body,request,'withdraw',closure.withdraw_in_tx)
+
+
+@router.post('/{sid}/return')
+def return_for_correction(sid:str, body:ops.Review, request:Request, user=Depends(auth.current_user)):
+    require_enabled(user, 'shifts_approve')
+    ops.shift_roles(user, 'shifts_approve', 'owner', 'delivery_manager')
+    with db.tx() as c:
+        def perform(day, legs):
+            for principal, shift in legs:
+                ops.return_close_in_tx(c, principal, shift['id'], body)
+        return change(c,user,sid,'return',body.model_dump(),request,perform,manager=True,capability='shifts_approve')

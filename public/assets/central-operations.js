@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const collections = new Map([
-    ['/api/orders',['orders']], ['/api/tasks',['tasks']],
+    ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/tasks',['tasks']],
     ['/api/conversations',['conversations']], ['/api/conversations/alerts',['awaiting_reply']],
     ['/api/shifts',['shifts','available_manager_shifts']],
     ['/api/shifts/current',['shifts','available_manager_shifts']],
@@ -13,11 +13,12 @@
   ]);
   const kinds={orders:'order',tasks:'task',conversations:'conversation',shifts:'shift',branches:'branch'};
   function create(){
-    const records=new Map();let signature='';
+    const records=new Map(),workdays=new Map();let signature='';
     const key=(kind,id)=>kind+':'+id;
     function remember(data,brand){
       if(!data||typeof data!=='object')return data;
       for(const [name,value] of Object.entries(data)){
+        for(const row of Array.isArray(value)?value:[value])if(row?.central_workday_id&&row.id)workdays.set(row.id,row.central_anchor_id||row.id);
         const kind=kinds[name]||kinds[name+'s'];
         if(kind)for(const row of Array.isArray(value)?value:[value])if(row?.id){
           records.set(key(kind,row.id),row.brand_id||brand);
@@ -32,12 +33,20 @@
       for(const name of names){
         const seen=new Map();
         for(const {data,brand} of results)for(const row of data[name]||[]){
-          const identity=row.id||[row.branch_id,row.phone,row.name].join(':');
+          const identity=row.central_workday_id||row.id||[row.branch_id,row.phone,row.name].join(':');
+          if(row.central_workday_id&&seen.has(identity)){
+            const previous=seen.get(identity),anchor=row.id===row.central_anchor_id?{...row,brand_id:row.brand_id||brand.id}:previous;
+            const order_counts={};for(const item of [previous.order_counts||{},row.order_counts||{}])for(const [k,v]of Object.entries(item))order_counts[k]=(order_counts[k]||0)+v;
+            seen.set(identity,{...anchor,order_counts,opening_halalas:Number(previous.opening_halalas||0)+Number(row.opening_halalas||0),permanent_float:{amount:Number(previous.permanent_float?.amount||0)+Number(row.permanent_float?.amount||0)},branch_ids:[...new Set([...(previous.branch_ids||[]),...(row.branch_ids||[])])],
+              central_legs:[...(previous.central_legs||[]),{id:row.id,brand_id:brand.id,branch_ids:row.branch_ids||[]}],
+              operational_brands:[...new Set([...(previous.operational_brands||[]),brand.id])]});
+            continue;
+          }
           if(['users','drivers','authorized_receivers'].includes(name)&&seen.has(identity)){
             const current=seen.get(identity);
             current.branch_ids=[...new Set([...(current.branch_ids||[]),...(row.branch_ids||[])])];
             current.operational_brands=[...new Set([...(current.operational_brands||[]),brand.id])];
-          }else seen.set(identity,{...row,brand_id:row.brand_id||brand.id,brand_name:brand.name,operational_brands:[brand.id]});
+          }else seen.set(identity,{...row,brand_id:row.brand_id||brand.id,brand_name:brand.name,operational_brands:[brand.id],...(row.central_workday_id?{central_legs:[{id:row.id,brand_id:brand.id,branch_ids:row.branch_ids||[]}]}:{})});
         }
         output[name]=[...seen.values()];
       }
@@ -63,11 +72,26 @@
       const context=user?.central_operations;
       if(!context||options.brand||!path.startsWith('/api/')||user.delivery_context)return raw(path,options);
       const current=user.id+':'+JSON.stringify(context);
-      if(current!==signature){records.clear();signature=current;}
+      if(current!==signature){records.clear();workdays.clear();signature=current;}
       const url=new URL(path,'https://central.invalid'),method=options.method||'GET';
+      if(url.pathname==='/api/identity/staff'&&method==='GET')return raw('/api/central-operations/staff',options);
+      const staffEdit=url.pathname.match(/^\/api\/identity\/staff\/([^/]+)$/);
+      if(url.pathname==='/api/identity/staff/invitations'&&method==='POST')return raw('/api/central-operations/staff/invitations',options);
+      if(staffEdit&&method==='PATCH')return raw('/api/central-operations/staff/'+staffEdit[1],options);
+      if(url.pathname==='/api/shifts'&&method==='POST'&&options.body?.delivery_period!=='morning'){
+        return remember(await raw('/api/central-operations/workdays',options),user.brand_id);
+      }
+      const shiftAction=url.pathname.match(/^\/api\/(shifts|driver-closure)\/([^/]+)(?:\/([^/]+))?$/);
+      if(shiftAction){
+        const id=decodeURIComponent(shiftAction[2]),anchor=workdays.get(id),action=shiftAction[3];
+        if(anchor&&(!action||['closing','approve','return','driver-close','submit','request','decision','schedule','withdraw'].includes(action))){
+          return remember(await raw('/api/central-operations/workdays/'+encodeURIComponent(anchor)+(action?'/'+action:''),options),user.brand_id);
+        }
+      }
       let resource=null;
       const match=url.pathname.match(/\/(orders|tasks|shifts|conversations)\/([^/]+)/);
       const reserved=new Set(['current','alerts','customer-search','customer-lookup','delivery-center','complimentary']);
+      if(shiftAction?.[1]==='driver-closure')resource={kind:'shift',id:decodeURIComponent(shiftAction[2])};
       if(match&&!reserved.has(match[2]))resource={kind:kinds[match[1]],id:decodeURIComponent(match[2])};
       for(const [parameter,kind] of [['order_id','order'],['task_id','task'],['branch_id','branch']]){
         const id=url.searchParams.get(parameter)||options.body?.[parameter];

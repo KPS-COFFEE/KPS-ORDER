@@ -84,3 +84,45 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
 # Imported after context/enabled are defined to avoid initialization cycles.
 from .central_workdays import router as workdays_router
 router.include_router(workdays_router)
+
+from .central_staff import router as staff_router
+router.include_router(staff_router)
+
+
+def project_read(conn, request, user):
+    """Route protected links/images to their owning brand, without an authority grant.
+
+    Downloads cannot attach an operations header. Destination routes still apply
+    their normal role, record, branch and task checks; explicit headers win.
+    Restricted morning requests keep their existing bounded principal.
+    """
+    if (not enabled() or user['role']=='customer' or request.method not in {'GET','HEAD'}
+            or request.headers.getlist('x-operations-brand') or request.headers.get('x-delivery-period')):
+        return user
+    query_brand=request.query_params.get('operations_brand')
+    if query_brand and request.url.path.startswith(('/api/accounting/','/api/admin/')):
+        target=multibrand.project(conn,user,query_brand)
+        if not target:raise db.error(403,'OPERATIONS_BRAND_FORBIDDEN','البراند غير مخول لحسابك.')
+        return target
+    endpoint=request.scope.get('endpoint')
+    if endpoint is None:return user
+    module=endpoint.__module__.rsplit('.',1)[-1]
+    params=request.path_params
+    row=None
+    if params.get('oid') and module in {'orders','operations','order_support','order_amendments','fiscal','fiscal_issuance','invoice_profiles','branch_printing','branch_refunds','driver_evidence'}:
+        row=conn.execute('SELECT brand_id FROM orders WHERE id=%s',(params['oid'],)).fetchone()
+    elif module=='chat' and params.get('aid'):
+        row=conn.execute('SELECT c.brand_id FROM chat_attachments a JOIN conversations c ON c.id=a.conversation_id WHERE a.id=%s',(params['aid'],)).fetchone()
+    elif module=='chat' and params.get('cid'):
+        row=conn.execute('SELECT brand_id FROM conversations WHERE id=%s',(params['cid'],)).fetchone()
+    elif module=='chat' and params.get('tid'):
+        row=conn.execute('SELECT o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.id=%s',(params['tid'],)).fetchone()
+    elif module=='reporting' and params.get('rid'):
+        row=conn.execute('SELECT brand_id FROM closure_reports WHERE id=%s',(params['rid'],)).fetchone()
+    elif module=='report_notifications' and params.get('identifier'):
+        row=conn.execute('SELECT brand_id FROM report_notifications WHERE id=%s',(params['identifier'],)).fetchone()
+    elif module=='branch_printing' and params.get('bid'):
+        row=conn.execute('SELECT brand_id FROM branches WHERE id=%s',(params['bid'],)).fetchone()
+    if row:
+        return multibrand.project(conn,user,row['brand_id']) or user
+    return user

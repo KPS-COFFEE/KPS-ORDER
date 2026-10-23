@@ -756,18 +756,24 @@ class Review(OperationBody):
     exception_reason: str|None=Field(None,max_length=2000)
     reason: str=Field('',max_length=2000)
 
+def return_close_in_tx(c, user, sid, body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
+    s=lock_shift(c,sid);shift_access(c,user,s,manager=True,capability='shifts_approve')
+    if s['status']!='submitted' or not body.reason.strip(): fail(422,'تحتاج تقفيلة مرسلة وسبب تصحيح')
+    if c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchone(): fail(409,'تم تأكيد التسليم النهائي؛ يلزم قيد تصحيح مرتبط')
+    c.execute("UPDATE custody_transfers SET status='rejected' WHERE from_shift_id=%s AND closure AND status='pending'",(sid,))
+    c.execute("UPDATE shifts SET status='closing',submission=NULL,submitted_at=NULL WHERE id=%s",(sid,))
+    db.audit(c,user['id'],'shift.return','shift',sid,{'reason':body.reason})
+    return {'shift_id':sid,'status':'closing'}
+
+
 @router.post('/shifts/{sid}/return')
 def return_close(sid:str,body:Review,request:Request,user=Depends(auth.current_user)):
     shift_roles(user,'shifts_approve','owner','delivery_manager')
     with db.tx() as c:
         def perform():
-            s=lock_shift(c,sid);shift_access(c,user,s,manager=True,capability='shifts_approve')
-            if s['status']!='submitted' or not body.reason.strip(): fail(422,'تحتاج تقفيلة مرسلة وسبب تصحيح')
-            if c.execute("SELECT 1 FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchone(): fail(409,'تم تأكيد التسليم النهائي؛ يلزم قيد تصحيح مرتبط')
-            c.execute("UPDATE custody_transfers SET status='rejected' WHERE from_shift_id=%s AND closure AND status='pending'",(sid,))
-            c.execute("UPDATE shifts SET status='closing',submission=NULL,submitted_at=NULL WHERE id=%s",(sid,))
-            db.audit(c,user['id'],'shift.return','shift',sid,{'reason':body.reason})
-            return {'shift_id':sid,'status':'closing'}
+            return return_close_in_tx(c, user, sid, body)
         return mutate(c,user,request,'shift.return:'+sid,body.model_dump(),perform)
 
 def approve_close_in_tx(c,user,sid,body):
@@ -822,9 +828,13 @@ def eligible_driver_shift(c,s,order):
     from .driver_receipt_trial import assignment_guard
     assignment_guard(s,order)
     from .fuel_exceptions import readiness_guard
-    if s:readiness_guard(s)
+    from .central_workdays import physical_shift
+    physical = physical_shift(c, s) if s else None
+    if physical:
+        readiness_guard(physical)
+        if not physical.get('available', True):fail(409,'الوردية لا تستقبل مهام جديدة')
     from .driver_breaks import guard as break_guard
-    if s:break_guard(c,s['id'])
+    if physical:break_guard(c,physical['id'])
     if not s or s['kind']!='driver' or s['status']!='open' or not s.get('available',True) or s['brand_id']!=order['brand_id'] or order['branch_id'] not in s['branch_ids']:fail(409,'شفت السائق غير مؤهل')
     driver=c.execute('SELECT * FROM users WHERE id=%s',(s['user_id'],)).fetchone()
     from . import multibrand

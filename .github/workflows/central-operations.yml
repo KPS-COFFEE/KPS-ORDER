@@ -5,6 +5,11 @@ on:
     paths:
       - app/central_operations.py
       - app/central_workdays.py
+      - app/central_staff.py
+      - app/auth.py
+      - app/exports.py
+      - app/driver_closure.py
+      - public/ops.js
       - app/operations.py
       - app/shift_vehicle.py
       - app/multibrand_migrations/**

@@ -99,3 +99,13 @@ test('a changed grant cannot reuse another employee context cache',async()=>{
   },{...user,id:'employee-2'});
   assert.match(calls[0],/resource-context/);
 });
+
+test('one shared workday is displayed once with both branch sets and counts',async()=>{
+  const adapter=create();const raw=async(path,options)=>({shifts:[{id:options.brand==='kps'?'root':'enb-leg',brand_id:options.brand,central_workday_id:'day',central_anchor_id:'root',branch_ids:[options.brand+'-branch'],order_counts:{total:options.brand==='kps'?2:3},opening_halalas:options.brand==='kps'?100:0}]});
+  const result=await adapter.request('/api/shifts/current',{},raw,user,'shifts');
+  assert.equal(result.shifts.length,1);assert.equal(result.shifts[0].id,'root');
+  assert.deepEqual(new Set(result.shifts[0].branch_ids),new Set(['kps-branch','enbishan-branch']));
+  assert.equal(result.shifts[0].order_counts.total,5);assert.equal(result.shifts[0].opening_halalas,100);
+  const calls=[];await adapter.request('/api/shifts/root/closing',{method:'POST',body:{}},async(p,o)=>{calls.push(p);return {};},user,'shifts');
+  assert.deepEqual(calls,['/api/central-operations/workdays/root/closing']);
+});

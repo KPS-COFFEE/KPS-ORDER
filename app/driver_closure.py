@@ -73,18 +73,45 @@ def guard(c, user, shift):
     raise db.error(409, 'EARLY_CLOSURE_APPROVAL_REQUIRED',
                    'اطلب موافقة مدير التوصيل قبل بدء التقفيلة / Request delivery manager approval before closing')
 
+def schedule_in_tx(c, user, sid, body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
+    s = driver_shift(c, user, sid); manager(c, user, s)
+    if body.scheduled_end_at is not None and body.scheduled_end_at <= s['opened_at']:
+        raise db.error(422, 'CLOSURE_SCHEDULE_INVALID', 'وقت النهاية بعد بداية الشفت / End must follow shift start')
+    c.execute('UPDATE shifts SET scheduled_end_at=%s,closure_authorization=NULL WHERE id=%s', (body.scheduled_end_at, sid))
+    db.audit(c, user['id'], 'driver_closure.schedule', 'shift', sid, body.model_dump(mode='json'))
+    return {'shift_id': sid, 'scheduled_end_at': body.scheduled_end_at}
+
+
 @router.put('/{sid}/schedule')
 def schedule(sid: str, body: Schedule, request: Request, user=Depends(auth.current_user)):
     with db.tx() as c:
         s = driver_shift(c, user, sid); manager(c, user, s)
         def perform():
-            s = driver_shift(c, user, sid); manager(c, user, s)
-            if body.scheduled_end_at is not None and body.scheduled_end_at <= s['opened_at']:
-                raise db.error(422, 'CLOSURE_SCHEDULE_INVALID', 'وقت النهاية بعد بداية الشفت / End must follow shift start')
-            c.execute('UPDATE shifts SET scheduled_end_at=%s,closure_authorization=NULL WHERE id=%s', (body.scheduled_end_at, sid))
-            db.audit(c, user['id'], 'driver_closure.schedule', 'shift', sid, body.model_dump(mode='json'))
-            return {'shift_id': sid, 'scheduled_end_at': body.scheduled_end_at}
+            return schedule_in_tx(c, user, sid, body)
         return mutate(c, user, request, 'driver_closure.schedule:'+sid, body.model_dump(mode='json'), perform)
+
+def request_authorization_in_tx(c, user, sid, body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
+    roles(user, 'driver')
+    if not auth.has_permission(user, 'shifts_close'):
+        raise db.error(403, 'CLOSURE_FORBIDDEN', 'صلاحية التقفيلة غير متاحة.')
+    s = driver_shift(c, user, sid)
+    if s['user_id'] != user['id']:
+        raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مصرح.')
+    s = driver_shift(c, user, sid)
+    now = c.execute('SELECT now() n').fetchone()['n']
+    old = s.get('closure_authorization') or {}
+    if old.get('status') in ('requested', 'approved'):
+        return {'shift_id': sid, 'authorization': old, 'status': 'open'}
+    approval = {'id': uid(), 'status': 'requested', 'reason': body.reason,
+                'requested_at': now.isoformat(), 'scheduled_end_at': safe(s.get('scheduled_end_at'))}
+    c.execute('UPDATE shifts SET closure_authorization=%s WHERE id=%s', (db.json(approval), sid))
+    db.audit(c, user['id'], 'driver_closure.request', 'shift', sid, approval)
+    return {'shift_id': sid, 'authorization': approval, 'status': 'open'}
+
 
 @router.post('/{sid}/request')
 def request_authorization(sid: str, body: Reason, request: Request, user=Depends(auth.current_user)):
@@ -95,16 +122,7 @@ def request_authorization(sid: str, body: Reason, request: Request, user=Depends
         s = driver_shift(c, user, sid)
         if s['user_id'] != user['id']: raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مصرح / Forbidden')
         def perform():
-            s = driver_shift(c, user, sid)
-            now = c.execute('SELECT now() n').fetchone()['n']
-            old = s.get('closure_authorization') or {}
-            if old.get('status') in ('requested', 'approved'):
-                return {'shift_id': sid, 'authorization': old, 'status': 'open'}
-            approval = {'id': uid(), 'status': 'requested', 'reason': body.reason,
-                        'requested_at': now.isoformat(), 'scheduled_end_at': safe(s.get('scheduled_end_at'))}
-            c.execute('UPDATE shifts SET closure_authorization=%s WHERE id=%s', (db.json(approval), sid))
-            db.audit(c, user['id'], 'driver_closure.request', 'shift', sid, approval)
-            return {'shift_id': sid, 'authorization': approval, 'status': 'open'}
+            return request_authorization_in_tx(c, user, sid, body)
         return mutate(c, user, request, 'driver_closure.request:'+sid, body.model_dump(), perform)
 
 @router.get('')
@@ -114,29 +132,61 @@ def listing(user=Depends(auth.current_user)):
         raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مصرح / Forbidden')
     with db.tx() as c:
         rows = c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='driver' AND s.status='open' AND s.closure_authorization IS NOT NULL ORDER BY s.opened_at", (user['brand_id'],)).fetchall()
+        from .central_workdays import annotate
+        annotate(c, rows)
         visible=[]
         from fastapi import HTTPException
         for s in rows:
             try: shift_access(c, user, s)
             except HTTPException: continue
-            visible.append({key:s[key] for key in ('id','display_name','scheduled_end_at','closure_authorization')})
+            visible.append({key:s[key] for key in ('id','display_name','scheduled_end_at','closure_authorization','brand_id','central_workday_id','central_anchor_id') if key in s})
         return safe({'requests': visible})
+
+def decide_in_tx(c, user, sid, body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
+    s = driver_shift(c, user, sid); manager(c, user, s)
+    old = s.get('closure_authorization') or {}
+    if old.get('status') != 'requested' or old.get('id') != body.request_id or old.get('scheduled_end_at') != safe(s.get('scheduled_end_at')):
+        raise db.error(409, 'CLOSURE_REQUEST_STALE', 'طلب تغير؛ اطلب مجدداً / Request changed; submit again')
+    approval = {**old, 'status': body.decision, 'decision_reason': body.reason,
+                'decided_by': user['id'], 'decided_at': c.execute('SELECT now() n').fetchone()['n'].isoformat()}
+    c.execute('UPDATE shifts SET closure_authorization=%s WHERE id=%s', (db.json(approval), sid))
+    db.audit(c, user['id'], 'driver_closure.'+body.decision, 'shift', sid, approval)
+    return {'shift_id': sid, 'status': 'open', 'authorization': approval}
+
 
 @router.post('/{sid}/decision')
 def decide(sid: str, body: Decision, request: Request, user=Depends(auth.current_user)):
     with db.tx() as c:
         s = driver_shift(c, user, sid); manager(c, user, s)
         def perform():
-            s = driver_shift(c, user, sid); manager(c, user, s)
-            old = s.get('closure_authorization') or {}
-            if old.get('status') != 'requested' or old.get('id') != body.request_id or old.get('scheduled_end_at') != safe(s.get('scheduled_end_at')):
-                raise db.error(409, 'CLOSURE_REQUEST_STALE', 'طلب تغير؛ اطلب مجدداً / Request changed; submit again')
-            approval = {**old, 'status': body.decision, 'decision_reason': body.reason,
-                        'decided_by': user['id'], 'decided_at': c.execute('SELECT now() n').fetchone()['n'].isoformat()}
-            c.execute('UPDATE shifts SET closure_authorization=%s WHERE id=%s', (db.json(approval), sid))
-            db.audit(c, user['id'], 'driver_closure.'+body.decision, 'shift', sid, approval)
-            return {'shift_id': sid, 'status': 'open', 'authorization': approval}
+            return decide_in_tx(c, user, sid, body)
         return mutate(c, user, request, 'driver_closure.decision:'+sid, body.model_dump(), perform)
+
+
+def withdraw_in_tx(c, user, sid, body):
+    from .central_workdays import guard_component
+    guard_component(c, sid)
+    roles(user, 'driver')
+    if not auth.has_permission(user, 'shifts_close'):
+        raise db.error(403, 'CLOSURE_FORBIDDEN', 'صلاحية التقفيلة غير متاحة.')
+    s = driver_shift(c, user, sid)
+    if s['user_id'] != user['id']:
+        raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مصرح.')
+    s = driver_shift(c, user, sid)
+    old = s.get('closure_authorization') or {}
+    if old.get('id') != body.request_id:
+        raise db.error(409, 'CLOSURE_REQUEST_STALE', 'طلب تغير؛ حدّث الشاشة / Request changed; refresh')
+    if old.get('status') == 'withdrawn':
+        return {'shift_id': sid, 'status': 'open', 'authorization': old}
+    if old.get('status') not in ('requested', 'approved'):
+        raise db.error(409, 'CLOSURE_REQUEST_STALE', 'لا يوجد طلب قابل للسحب / No request to withdraw')
+    approval = {**old, 'status': 'withdrawn', 'withdrawal_reason': body.reason,
+                'withdrawn_by': user['id'], 'withdrawn_at': c.execute('SELECT now() n').fetchone()['n'].isoformat()}
+    c.execute('UPDATE shifts SET closure_authorization=%s WHERE id=%s', (db.json(approval), sid))
+    db.audit(c, user['id'], 'driver_closure.withdraw', 'shift', sid, approval)
+    return {'shift_id': sid, 'status': 'open', 'authorization': approval}
 
 
 @router.post('/{sid}/withdraw')
@@ -149,17 +199,5 @@ def withdraw(sid: str, body: Withdrawal, request: Request, user=Depends(auth.cur
         if s['user_id'] != user['id']:
             raise db.error(403, 'CLOSURE_FORBIDDEN', 'غير مصرح / Forbidden')
         def perform():
-            s = driver_shift(c, user, sid)
-            old = s.get('closure_authorization') or {}
-            if old.get('id') != body.request_id:
-                raise db.error(409, 'CLOSURE_REQUEST_STALE', 'طلب تغير؛ حدّث الشاشة / Request changed; refresh')
-            if old.get('status') == 'withdrawn':
-                return {'shift_id': sid, 'status': 'open', 'authorization': old}
-            if old.get('status') not in ('requested', 'approved'):
-                raise db.error(409, 'CLOSURE_REQUEST_STALE', 'لا يوجد طلب قابل للسحب / No request to withdraw')
-            approval = {**old, 'status': 'withdrawn', 'withdrawal_reason': body.reason,
-                        'withdrawn_by': user['id'], 'withdrawn_at': c.execute('SELECT now() n').fetchone()['n'].isoformat()}
-            c.execute('UPDATE shifts SET closure_authorization=%s WHERE id=%s', (db.json(approval), sid))
-            db.audit(c, user['id'], 'driver_closure.withdraw', 'shift', sid, approval)
-            return {'shift_id': sid, 'status': 'open', 'authorization': approval}
+            return withdraw_in_tx(c, user, sid, body)
         return mutate(c, user, request, 'driver_closure.withdraw:'+sid, body.model_dump(), perform)
