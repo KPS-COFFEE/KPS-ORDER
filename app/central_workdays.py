@@ -441,3 +441,74 @@ def custody(sid:str,body:WorkdayCustody,request:Request,user=Depends(auth.curren
             if not output:raise db.error(422,'CENTRAL_CUSTODY_AMOUNT','أدخل مبلغ التسليم الفعلي.')
             return {'transfers':output}
         return change(c,user,sid,'custody',body.model_dump(),request,perform)
+
+
+@router.post('/{sid}/adopt')
+def adopt(sid:str,request:Request,user=Depends(auth.current_user)):
+    """Preserve an existing open shift/cash/vehicle; add only missing ledgers.
+
+    Two pre-existing physical shifts are never merged. They must be settled by
+    their existing canonical paths before a single shared workday can begin.
+    """
+    require_enabled(user,'shifts_open')
+    ops.roles(user,'owner','delivery_manager','driver')
+    with db.tx() as c:
+        lock_lanes(c)
+        existing=association(c,sid)
+        if existing:
+            day,legs=authorized(c,user,sid)
+            return ops.safe(ops.blind_closure.driver_view(user,result(c,day,legs),shift_money=True))
+        root=ops.lock_shift(c,sid)
+        principal=multibrand.project(c,user,root['brand_id']) if root else None
+        if not principal:raise db.error(404,'CENTRAL_WORKDAY_UNAVAILABLE','الوردية غير متاحة.')
+        ops.shift_access(c,principal,root)
+        if root['user_id']!=user['id']:
+            raise db.error(403,'CENTRAL_ADOPT_SELF_ONLY','ضم الفروع إلى ورديتك يتم من حسابك.')
+        def perform():
+            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+user['id'],))
+            rows=c.execute("SELECT * FROM shifts WHERE user_id=%s AND status<>'closed' FOR UPDATE",(user['id'],)).fetchall()
+            if len(rows)!=1 or rows[0]['id']!=sid:
+                raise db.error(409,'CENTRAL_LEGACY_SHIFTS','لديك شفتات سابقة متعددة؛ أكمل تقفيلها قبل فتح الوردية المشتركة.')
+            if (root['status']!='open' or (root.get('delivery_window_snapshot') or {}).get('period')=='morning'
+                    or (root.get('vehicle_log') or {}).get('receipt_trial')
+                    or root['kind']=='driver' and not (root.get('vehicle_log') or {}).get('start')):
+                raise db.error(409,'CENTRAL_LEGACY_SHIFT_END','أكمل الوردية السابقة ثم افتح وردية مشتركة جديدة.')
+            target=c.execute('SELECT * FROM users WHERE id=%s AND active',(root['user_id'],)).fetchone()
+            from .central_operations import context
+            scopes=context(c,target)['brands']
+            parents={}
+            if root['kind']=='driver':
+                parent=association(c,root['manager_shift_id'])
+                if not parent:
+                    raise db.error(409,'CENTRAL_MANAGER_ADOPTION_REQUIRED','يحتاج مديرك فتح شاشة التشغيل لتجهيز ورديته المشتركة أولًا.')
+                parents={r['brand_id']:r['shift_id'] for r in c.execute('SELECT brand_id,shift_id FROM central_workday_legs WHERE workday_id=%s',(parent['id'],)).fetchall()}
+            opened=[root]
+            with action():
+                for scope in scopes:
+                    if scope['id']==root['brand_id'] or not scope['branch_ids']:continue
+                    actor=multibrand.project(c,user,scope['id'])
+                    if not actor:raise db.error(403,'CENTRAL_BRANCH_SCOPE','صلاحية الفرع لم تعد متاحة.')
+                    if root['kind']=='driver' and scope['id'] not in parents:
+                        raise db.error(409,'MANAGER_SHIFT_SCOPE','وردية المدير لا تغطي جميع الفروع المعتمدة.')
+                    body=ops.ShiftOpen(kind=root['kind'],branch_ids=scope['branch_ids'],
+                        manager_shift_id=parents.get(scope['id']) if root['kind']=='driver' else None,
+                        delivery_period='evening')
+                    opened.append(ops.open_shift_in_tx(c,actor,body,vehicle_anchor=sid if root['kind']=='driver' else None)['shift'])
+            # A prior one-brand permission to end does not approve an expanded
+            # workday. Preserve its audited history and request a fresh decision.
+            for shift in opened:
+                c.execute('UPDATE shifts SET scheduled_end_at=%s,closure_authorization=NULL WHERE id=%s',
+                          (root.get('scheduled_end_at'),shift['id']))
+            identifier=ops.uid()
+            c.execute('INSERT INTO central_workdays(id,user_id,kind,anchor_shift_id,created_by) VALUES(%s,%s,%s,%s,%s)',
+                      (identifier,user['id'],root['kind'],sid,user['id']))
+            for shift in opened:
+                c.execute('INSERT INTO central_workday_legs(workday_id,brand_id,shift_id) VALUES(%s,%s,%s)',
+                          (identifier,shift['brand_id'],shift['id']))
+            db.audit(c,user['id'],'central.workday.adopt','central_workday',identifier,
+                     {'preserved_shift_id':sid,'new_legs':[s['id'] for s in opened[1:]]})
+            day,legs=authorized(c,user,sid)
+            return ops.safe(result(c,day,legs))
+        output=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'central.workday.adopt:'+sid,{},perform)
+        authorized(c,user,sid)
+        return ops.safe(ops.blind_closure.driver_view(user,output,shift_money=True))

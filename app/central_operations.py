@@ -108,13 +108,13 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
                 from fastapi import HTTPException
                 try:
                     maintenance_report(conn,resource_id,principal)
-                    allowed=auth.has_permission(principal,'vehicle_maintenance_view') or auth.has_permission(principal,'vehicle_faults_report')
+                    allowed=any(auth.has_permission(principal,p) for p in ('vehicle_maintenance_manage','support_manage','vehicle_faults_report'))
                 except HTTPException:allowed=False
             elif kind == 'notification':
                 allowed=principal['role']=='owner' and row['recipient_user_id']==principal['id']
             elif kind == 'print_job':
                 from .branch_printing import can_access_branch
-                allowed=auth.has_permission(principal,'branch_printers_manage') and can_access_branch(principal,row['branch_id'])
+                allowed=(auth.has_permission(principal,'branch_printers_manage') or auth.has_permission(principal,'orders_print')) and can_access_branch(principal,row['branch_id'])
             elif kind == 'ticket':
                 order=conn.execute('SELECT * FROM orders WHERE id=%s',(row['order_id'],)).fetchone()
                 allowed=auth.has_permission(principal,'support_manage') and auth.can_access_order(principal,order,conn)
@@ -171,6 +171,12 @@ def project_read(conn, request, user):
         row=conn.execute('SELECT brand_id FROM conversations WHERE id=%s',(params['cid'],)).fetchone()
     elif module=='chat' and params.get('tid'):
         row=conn.execute('SELECT o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.id=%s',(params['tid'],)).fetchone()
+    elif module=='driver_evidence' and params.get('eid'):
+        row=conn.execute('SELECT brand_id FROM driver_evidence WHERE id=%s',(params['eid'],)).fetchone()
+    elif module=='order_support' and params.get('aid'):
+        row=conn.execute('SELECT o.brand_id FROM delivery_photos p JOIN orders o ON o.id=p.order_id WHERE p.id=%s',(params['aid'],)).fetchone()
+    elif module=='admin' and params.get('record_id') and request.url.path.startswith('/api/admin/assets/'):
+        row=conn.execute('SELECT brand_id FROM assets WHERE id=%s',(params['record_id'],)).fetchone()
     elif module=='reporting' and params.get('rid'):
         row=conn.execute('SELECT brand_id FROM closure_reports WHERE id=%s',(params['rid'],)).fetchone()
     elif module=='report_notifications' and params.get('identifier'):
@@ -180,3 +186,64 @@ def project_read(conn, request, user):
     if row:
         return multibrand.project(conn,user,row['brand_id']) or user
     return user
+
+
+@router.get('/driver-locations')
+def driver_locations(user=Depends(auth.current_user)):
+    from .central_workdays import require_enabled, association
+    from . import driver_destination
+    from .operations import safe
+    require_enabled(user,'drivers_view')
+    if user['role'] not in {'owner','delivery_manager','delivery_staff'}:
+        raise db.error(403,'ROLE_FORBIDDEN','عرض مواقع السائقين غير متاح لحسابك.')
+    with db.tx() as c:
+        scopes={b['id']:b for b in context(c,user)['brands']}
+        principals={brand:multibrand.project(c,user,brand) for brand in scopes}
+        points=c.execute("SELECT g.*,u.display_name FROM driver_latest_locations g JOIN users u ON u.id=g.driver_id JOIN shifts s ON s.id=g.shift_id AND s.user_id=u.id WHERE u.role='driver' AND u.active AND s.status='open' AND g.updated_at>now()-interval '24 hours'").fetchall()
+        output=[]
+        for point in points:
+            target=c.execute('SELECT id,role,active,brand_id,branch_ids FROM users WHERE id=%s',(point['driver_id'],)).fetchone()
+            group=association(c,point['shift_id'])
+            legs=c.execute("SELECT s.* FROM shifts s WHERE s.id IN (SELECT shift_id FROM central_workday_legs WHERE workday_id=%s) AND s.status='open'",(group['id'],)).fetchall() if group else c.execute("SELECT * FROM shifts WHERE id=%s AND status='open'",(point['shift_id'],)).fetchall()
+            branches=[];states=[]
+            for leg in legs:
+                brand=leg['brand_id'];scope=scopes.get(brand);actor=principals.get(brand)
+                driver=multibrand.project(c,target,brand) if scope and actor else None
+                permitted=[b for b in leg['branch_ids'] if driver and b in driver['branch_ids'] and b in scope['branch_ids']]
+                if not permitted:continue
+                row={'id':target['id'],'shift_id':leg['id'],'branch_ids':permitted,'shift_branches':permitted,'next_destination':leg.get('next_destination')}
+                states.append(driver_destination.metadata(c,actor,[row])[target['id']]);branches.extend(permitted)
+            if not branches:continue
+            active=[r for r in states if r['visible_active_task_count']]
+            brands={r['active_order_brand']['id'] for r in active if r.get('active_order_brand')}
+            name=next(iter(brands)) if len(brands)==1 else 'mixed' if brands else None
+            destination=next((r.get('next_destination') for r in states if r.get('next_destination')),None) if not active else None
+            movement=next((kind for kind in ('delivering','awaiting_pickup','returning') if any(r['movement_state']==kind for r in states)),'at_branch')
+            output.append({'id':target['id'],'display_name':point['display_name'],'branch_ids':sorted(set(branches)),
+                'shift_id':group['anchor_shift_id'] if group else point['shift_id'],
+                'location':{'lat':point['lat'],'lng':point['lng']},'accuracy_m':point['accuracy_m'],'updated_at':point['updated_at'],
+                'stale':(c.execute('SELECT now() n').fetchone()['n']-point['updated_at']).total_seconds()>120,
+                'active_order_brand':{'id':name,'name':{'kps':'KPS','enbishan':'Enbishan','mixed':'Mixed'}[name],'source':'active_task'} if name else None,
+                'visible_active_task_count':sum(r['visible_active_task_count'] for r in states),
+                'next_destination':destination,'movement_state':movement,
+                'destination_choice_required':not active and any(r['destination_choice_required'] for r in states)})
+        return safe({'drivers':output,'stale_after_seconds':120})
+
+
+@router.get('/driver-route-context')
+def driver_route_context(driver_id:str=Query(min_length=1,max_length=100),user=Depends(auth.current_user)):
+    from .central_workdays import require_enabled
+    from .dispatch_map import route_context
+    from .operations import safe
+    require_enabled(user,'drivers_view')
+    if user['role'] not in {'owner','delivery_manager','delivery_staff'}:
+        raise db.error(403,'ROLE_FORBIDDEN','المسارات غير متاحة لحسابك.')
+    with db.tx() as c:
+        values=[]
+        for scope in context(c,user)['brands']:
+            if not c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND brand_id=%s AND status='open' AND kind='driver'",(driver_id,scope['id'])).fetchone():continue
+            principal=multibrand.project(c,user,scope['id'])
+            if principal:values.append(dict(route_context(c,principal,driver_id),brand_id=scope['id']))
+        if not values:raise db.error(404,'CENTRAL_RECORD_UNAVAILABLE','السائق غير متاح ضمن صلاحياتك.')
+        return safe({**values[0],'tasks':[dict(row,brand_id=scope.get('brand_id')) for scope in values for row in scope['tasks']],
+                     'return_branches':[row for value in values for row in value['return_branches']]})

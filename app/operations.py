@@ -95,6 +95,10 @@ def available_balance(c,s):
     return balance(c,s)-int(pending)
 
 def unresolved(c, sid):
+    from .central_workdays import association
+    day = association(c, sid)
+    if day:
+        return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id IN (SELECT shift_id FROM central_workday_legs WHERE workday_id=%s) AND status NOT IN ('delivered','cancelled','transferred')", (day['id'],)).fetchone()['n']
     return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(sid,)).fetchone()['n']
 
 def morning_handover_coverage(c, shift):

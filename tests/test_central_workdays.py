@@ -184,3 +184,65 @@ def test_disabled_noncentral_routes_still_accept_old_brand_shifts(dual):
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='open'
+
+
+@pytest.mark.postgres
+def test_existing_shift_adoption_preserves_cash_vehicle_and_task_identity(central):
+    _,_,post,shifts,order=central
+    manager,driver=shifts('kps')
+    oid=order('kps')
+    task=post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':driver})['task']
+    with db.tx() as c:
+        original=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
+    adopted_manager=post('manager','/api/central-operations/workdays/'+manager+'/adopt',{})
+    adopted_driver=post('driver','/api/central-operations/workdays/'+driver+'/adopt',{})
+    assert adopted_manager['shift']['id']==manager
+    assert adopted_driver['shift']['id']==driver
+    with db.tx() as c:
+        physical=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
+        assert physical['vehicle_log']==original['vehicle_log']
+        assert physical['opening_halalas']==original['opening_halalas']
+        assert physical['opened_at']==original['opened_at']
+        assert c.execute('SELECT shift_id FROM driver_tasks WHERE id=%s',(task['id'],)).fetchone()['shift_id']==driver
+        assert len(c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall())==2
+        assert sum('start' in s['vehicle_log'] for s in c.execute("SELECT vehicle_log FROM shifts WHERE user_id='dual-driver'").fetchall())==1
+
+
+@pytest.mark.postgres
+def test_two_legacy_shifts_are_never_silently_merged(central):
+    _,_,post,shifts,_=central
+    kps,_=shifts('kps');shifts('enbishan')
+    post('manager','/api/central-operations/workdays/'+kps+'/adopt',{},status=409)
+    with db.tx() as c:
+        assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
+
+
+@pytest.mark.postgres
+def test_foreign_brand_pending_task_blocks_a_physical_break(central):
+    _,_,post,_,order=central
+    from app.operations import unresolved
+    _,driver=open_days(central)
+    enb=next(s for s in driver['shifts'] if s['brand_id']=='enbishan')
+    post('manager','/api/orders/'+order('enbishan')+'/assign',{'driver_shift_id':enb['id']},brand='enbishan')
+    with db.tx() as c:
+        assert unresolved(c,driver['shift']['id'])==1
+
+
+@pytest.mark.postgres
+def test_shared_location_uses_one_gps_point_and_revocable_both_brand_scopes(central):
+    _,actor,post,_,_=central
+    _,driver=open_days(central)
+    with db.tx() as c:
+        c.execute("INSERT INTO driver_latest_locations(driver_id,brand_id,shift_id,lat,lng,accuracy_m) VALUES('dual-driver','kps',%s,26.1,45.2,5)",(driver['shift']['id'],))
+    response=actor('manager').get('/api/central-operations/driver-locations')
+    assert response.status_code==200,response.text
+    rows=response.json()['drivers'];assert len(rows)==1
+    assert set(rows[0]['branch_ids'])=={'kps-branch-1','enbishan-test-1','enbishan-test-2'}
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids='[\"enbishan-test-2\"]' WHERE user_id='dual-manager' AND brand_id='enbishan'")
+    rows=actor('manager').get('/api/central-operations/driver-locations').json()['drivers']
+    assert set(rows[0]['branch_ids'])=={'kps-branch-1','enbishan-test-2'}
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-driver' AND brand_id='enbishan'")
+    rows=actor('manager').get('/api/central-operations/driver-locations').json()['drivers']
+    assert rows[0]['branch_ids']==['kps-branch-1']

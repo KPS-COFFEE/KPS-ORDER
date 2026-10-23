@@ -6,7 +6,7 @@
     ['/api/custody',['transfers']], ['/api/printing/devices',['devices']],
     ['/api/printing/operational-devices',['devices']], ['/api/printing/jobs',['jobs']],
     ['/api/printing/migration-status',['branches']], ['/api/support-tickets',['tickets']],
-    ['/api/vehicle-maintenance',['reports']], ['/api/dispatch/offers',['offers']],
+    ['/api/vehicle-maintenance/reports',['reports']], ['/api/dispatch/offers',['offers']],
     ['/api/fuel-exceptions',['requests']], ['/api/driver-breaks',['breaks']],
     ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/tasks',['tasks']],
     ['/api/conversations',['conversations']], ['/api/conversations/alerts',['awaiting_reply']],
@@ -19,12 +19,13 @@
   ]);
   const kinds={orders:'order',tasks:'task',conversations:'conversation',shifts:'shift',branches:'branch',devices:'printer',transfers:'custody',users:'staff',reports:'report'};
   function create(){
-    const records=new Map(),workdays=new Map(),workdayLegs=new Map();let signature='';
+    const records=new Map(),workdays=new Map(),workdayLegs=new Map(),staffScopes=new Map();let signature='';
     const key=(kind,id)=>kind+':'+id;
     function remember(data,brand){
       if(!data||typeof data!=='object')return data;
       for(const [name,value] of Object.entries(data)){
         for(const row of Array.isArray(value)?value:[value])if(row?.central_workday_id&&row.id){const anchor=row.central_anchor_id||row.id;workdays.set(row.id,anchor);if(!workdayLegs.has(anchor))workdayLegs.set(anchor,new Map());workdayLegs.get(anchor).set(row.brand_id||brand,row.id);}
+        if(name==='users')for(const row of Array.isArray(value)?value:[value])if(row?.id&&row.branch_grants)staffScopes.set(row.id,[...row.branch_ids]);
         const kind=kinds[name]||kinds[name+'s'];
         if(kind)for(const row of Array.isArray(value)?value:[value])if(row?.id){
           records.set(key(kind,row.id),row.brand_id||brand);
@@ -50,6 +51,7 @@
           }
           if(['users','drivers','authorized_receivers'].includes(name)&&seen.has(identity)){
             const current=seen.get(identity);
+            current.available=current.available!==false&&row.available!==false;
             current.branch_ids=[...new Set([...(current.branch_ids||[]),...(row.branch_ids||[])])];
             current.operational_brands=[...new Set([...(current.operational_brands||[]),brand.id])];
           }else seen.set(identity,{...row,brand_id:row.brand_id||brand.id,brand_name:brand.name,operational_brands:[brand.id],...(row.central_workday_id?{central_legs:[{id:row.id,brand_id:brand.id,branch_ids:row.branch_ids||[]}]}:{})});
@@ -80,12 +82,14 @@
       const context=user?.central_operations;
       if(!context||options.brand||!path.startsWith('/api/')||user.delivery_context)return raw(path,options);
       const current=user.id+':'+JSON.stringify(context);
-      if(current!==signature){records.clear();workdays.clear();workdayLegs.clear();signature=current;}
+      if(current!==signature){records.clear();workdays.clear();workdayLegs.clear();staffScopes.clear();signature=current;}
       const url=new URL(path,'https://central.invalid'),method=options.method||'GET';
+      if(url.pathname==='/api/operations/driver-locations'&&method==='GET')return raw('/api/central-operations/driver-locations',options);
+      if(url.pathname==='/api/operations/driver-route-context'&&method==='GET')return raw('/api/central-operations/driver-route-context'+url.search,options);
       if(url.pathname==='/api/identity/staff'&&method==='GET')return remember(await raw('/api/central-operations/staff',options),user.brand_id);
       const staffEdit=url.pathname.match(/^\/api\/identity\/staff\/([^/]+)$/);
       if(url.pathname==='/api/identity/staff/invitations'&&method==='POST')return raw('/api/central-operations/staff/invitations',options);
-      if(staffEdit&&method==='PATCH')return raw('/api/central-operations/staff/'+staffEdit[1],options);
+      if(staffEdit&&method==='PATCH'){const expected=staffScopes.get(decodeURIComponent(staffEdit[1]));return raw('/api/central-operations/staff/'+staffEdit[1],{...options,body:{...options.body,...(options.body?.branch_ids&&expected?{expected_branch_ids:expected}:{})}});}
       if(url.pathname==='/api/shifts'&&method==='POST'&&options.body?.delivery_period!=='morning'){
         return remember(await raw('/api/central-operations/workdays',options),user.brand_id);
       }
@@ -97,16 +101,16 @@
         }
       }
       let resource=null;
-      const custom=[['/api/report-notifications/','notification'],['/api/fuel-exceptions/','fuel'],['/api/driver-breaks/','break'],['/api/dispatch/offers/','offer'],['/api/vehicle-maintenance/','maintenance'],['/api/printing/jobs/','print_job'],['/api/support-tickets/','ticket'],['/api/driver-work-hours/','trip']].find(([prefix])=>url.pathname.startsWith(prefix));
+      const custom=[['/api/report-notifications/','notification'],['/api/fuel-exceptions/','fuel'],['/api/driver-breaks/','break'],['/api/dispatch/offers/','offer'],['/api/vehicle-maintenance/reports/','maintenance'],['/api/printing/jobs/','print_job'],['/api/support-tickets/','ticket'],['/api/driver-work-hours/','trip']].find(([prefix])=>url.pathname.startsWith(prefix));
       const reservedResources=new Set(['current','report','options','policy','photos','daily','shifts','depart','next-destination']);
       if(custom){const identifier=url.pathname.slice(custom[0].length).split('/')[0];if(identifier&&!reservedResources.has(identifier))resource={kind:custom[1],id:decodeURIComponent(identifier)};}
       const extra=url.pathname.match(/^\/api\/(?:printing\/devices|reports|custody|identity\/staff)\/([^/]+)/);
-      if(extra)resource={kind:url.pathname.startsWith('/api/printing/')?'printer':url.pathname.startsWith('/api/reports/')?'report':url.pathname.startsWith('/api/custody/')?'custody':'staff',id:decodeURIComponent(extra[1])};
+      if(extra&&!reservedResources.has(extra[1])&&extra[1]!=='promotions')resource={kind:url.pathname.startsWith('/api/printing/')?'printer':url.pathname.startsWith('/api/reports/')?'report':url.pathname.startsWith('/api/custody/')?'custody':'staff',id:decodeURIComponent(extra[1])};
       const match=url.pathname.match(/\/(orders|tasks|shifts|conversations)\/([^/]+)/);
-      const reserved=new Set(['current','alerts','customer-search','customer-lookup','delivery-center','complimentary']);
+      const reserved=new Set(['current','alerts','customer-search','customer-lookup','delivery-center','complimentary','promotions']);
       if(shiftAction?.[1]==='driver-closure')resource={kind:'shift',id:decodeURIComponent(shiftAction[2])};
       if(match&&!reserved.has(match[2]))resource={kind:kinds[match[1]],id:decodeURIComponent(match[2])};
-      for(const [parameter,kind] of [['order_id','order'],['task_id','task'],['branch_id','branch']]){
+      for(const [parameter,kind] of [['order_id','order'],['task_id','task'],['branch_id','branch'],['return_branch_id','branch']]){
         const id=url.searchParams.get(parameter)||options.body?.[parameter];
         if(!resource&&id)resource={kind,id};
       }
@@ -123,7 +127,12 @@
         const results=await Promise.all(context.brands.filter(b=>b.branch_ids.length||user.role==='owner').map(async brand=>{
           const data=await raw(path,{...options,brand:brand.id});remember(data,brand.id);return {brand,data};
         }));
-        return results.length?merge(results,names,url):Object.fromEntries(names.map(n=>[n,[]]));
+        const output=results.length?merge(results,names,url):Object.fromEntries(names.map(n=>[n,[]]));
+        if(['/api/shifts','/api/shifts/current'].includes(url.pathname)&&!url.search&&['delivery_manager','driver'].includes(user.role)){
+          const previous=(output.shifts||[]).filter(s=>s.user_id===user.id&&s.status==='open'&&!s.central_workday_id&&(s.delivery_window_snapshot?.period||'evening')!=='morning');
+          if(previous.length===1){await raw('/api/central-operations/workdays/'+encodeURIComponent(previous[0].id)+'/adopt',{method:'POST',body:{}});return request(path,options,raw,user,page);}
+        }
+        return output;
       }
       // Settings and accounting select their own brand locally. Operating
       // screens never change the signed-in principal or a global brand filter.
