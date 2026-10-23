@@ -23,7 +23,7 @@
     if(!allowed.length)throw new Error(tr('افتح شفت مدير توصيل أولًا.','Open your delivery manager shift first.'));
     let products=[],cart=[],review=null,sequence=0,lookupSequence=0,lookupTimer,selectedContactPhone=null;
     const input=(label,name,type='text',extra='')=>`<label>${esc(label)}<input name="${name}" type="${type}" ${extra}></label>`;
-    modal(complimentary?tr('ضيافة / تعويض — توصيل','Hospitality / compensation — delivery'):tr('طلب نيابة عن العميل','Order for a customer'),`<form class="form-columns${groupedMenu?' staff-order-kps-menu':''}" id="staff-order-form">
+    modal(complimentary?tr('ضيافة / تعويض — توصيل','Hospitality / compensation — delivery'):(user.brand_id==='enbishan'?tr('عميل عنبيشن','Enbishan customer'):tr('عميل كبز','KPS customer')),`<form class="form-columns${groupedMenu?' staff-order-kps-menu':''}" id="staff-order-form">
       <p class="notice full">${esc(tr('الفاتورة باسم مركز التوصيل. اختر فرع التجهيز وأدخل بيانات العميل. الدفع يسجل عند التحصيل الفعلي.','The receipt shows Delivery Center. Select the fulfillment branch and enter customer details. Payment is recorded when actually collected.'))}</p>
       <label>${esc(tr('فرع التجهيز','Fulfillment branch'))}<select name="branch_id">${allowed.map(b=>`<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select></label>
       <label>${esc(tr('الدفع عند الاستلام','Payment on delivery'))}<select name="payment_method"><option value="cash">${esc(tr('كاش','Cash'))}</option><option value="card">${esc(tr('شبكة','Card'))}</option><option value="split">${esc(tr('كاش وشبكة','Cash and card'))}</option></select></label>
