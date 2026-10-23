@@ -65,9 +65,9 @@ def test_accounting_cards_and_filters_fit_and_work(width, lang):
         browser.close()
 
 
-@pytest.mark.parametrize('width', [360,390,768,1280,1440])
+@pytest.mark.parametrize('width,profile', [(360,'stress'),(390,'stress'),(768,'stress'),(1280,'stress'),(1440,'stress'),(390,'realistic'),(1440,'realistic')])
 @pytest.mark.parametrize('lang', ['ar','en'])
-def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,lang):
+def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,profile,lang):
     """Long real-size data stays readable without scrolling across a settlement."""
     from playwright.sync_api import sync_playwright, expect
     with sync_playwright() as runtime:
@@ -80,7 +80,7 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,lang
         page.add_style_tag(content='*{box-sizing:border-box}body{margin:0;padding:20px;background:#faf8f5;font-family:Arial}button,input,select,textarea{font:inherit;padding:10px;border:1px solid #ddd;border-radius:8px}button{cursor:pointer;background:#a64116;color:white}main{max-width:1280px;margin:auto}')
         page.add_style_tag(path=str(ROOT/'public/assets/accounting.css'))
         page.add_script_tag(path=str(ROOT/'public/assets/accounting.js'))
-        page.evaluate('''async lang=>{
+        page.evaluate('''async ({lang,profile})=>{
           const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
           const money=v=>new Intl.NumberFormat(lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(Number(v||0)/100);
           const longName=lang==='ar'?'عبدالله عبدالرحمن الحربي — سائق تجريبي باسم طويل لاختبار وضوح بطاقة المحاسبة':'Abdullah Abdulrahman Alharbi — synthetic driver with a long accounting display name';
@@ -90,7 +90,15 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,lang
             {...base,id:'variance',user_id:'driver-variance',driver_name:longName+' 2',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345666350,shortage_halalas:12550,net_difference_halalas:-12550,variance_pending:true,revision:2,can_extend:false},
             {...base,id:'confirmed',user_id:'driver-confirmed',driver_name:longName+' 3',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345777665,surplus_halalas:98765,net_difference_halalas:98765,variance_pending:false,revision:2,can_extend:false,variance_confirmation:{id:'confirmation',actor_name:lang==='ar'?'محاسب تجريبي باسم طويل لتوثيق المراجعة':'Synthetic accountant with a long reviewer name',created_at:'2026-10-23T12:00:00Z',details:{action_taken:lang==='ar'?'توثيق الفائض للمراجعة والمتابعة دون أي خصم آلي من راتب السائق':'Documented surplus for review and follow-up without any automatic payroll deduction'}}}
           ];
-          rows.forEach(r=>{r.system_total_halalas=111111111000;r.actual_total_halalas=r.reconciliation_complete?r.bank_halalas+r.cash_received_halalas:null;});
+          if(profile==='realistic')rows.forEach((r,index)=>{
+            r.driver_name=(lang==='ar'?'عبدالله الحربي':'Abdullah Alharbi')+' '+(index+1);
+            r.bank_halalas=23100;r.cash_due_halalas=21500;
+            if(r.cash_recorded)r.cash_received_halalas=r.id==='variance'?21400:21600;
+            r.shortage_halalas=r.id==='variance'?100:0;r.surplus_halalas=r.id==='confirmed'?100:0;
+            r.net_difference_halalas=r.cash_recorded?(r.id==='variance'?-100:100):null;
+            if(r.variance_confirmation){r.variance_confirmation.actor_name=lang==='ar'?'محاسب تجريبي':'Test accountant';r.variance_confirmation.details.action_taken=lang==='ar'?'توثيق ومتابعة الفائض':'Document and follow up surplus';}
+          });
+          rows.forEach(r=>{r.system_total_halalas=profile==='realistic'?44600:111111111000;r.actual_total_halalas=r.reconciliation_complete?r.bank_halalas+r.cash_received_halalas:null;});
           window.layoutExpected=rows.map(r=>({id:r.id,name:r.driver_name,total:money(r.bank_halalas+(r.reconciliation_complete?r.cash_received_halalas:r.cash_due_halalas)),money:[r.bank_halalas,r.cash_due_halalas,r.cash_received_halalas,r.shortage_halalas,r.surplus_halalas].map((v,index)=>index>=2&&!r.cash_recorded?'—':money(v))}));
           window.layoutMutations=0;
           await KPSAccounting.open({lang,user:{id:'accountant',role:'owner'},tr:(ar,en)=>lang==='ar'?ar:en,esc,money,cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:()=>{},closeModal:()=>{},mutation:async()=>{window.layoutMutations++;throw Error('Layout acceptance must never post financial data');},api:async url=>{
@@ -99,7 +107,7 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,lang
             if(url.includes('/driver-settlements'))return {settlements:rows};
             return {rows:[],columns:[],totals:{},definitions:'SYNTHETIC LAYOUT ONLY'};
           }});
-        }''',lang)
+        }''',{'lang':lang,'profile':profile})
         page.locator('[data-ac=settlements]').click()
         rows=page.locator('[data-driver-row]')
         expect(rows).to_have_count(3)
@@ -119,11 +127,21 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,lang
               const fits=element=>{const box=element.getBoundingClientRect(),range=document.createRange();range.selectNodeContents(element);return element.scrollWidth<=element.clientWidth+1&&[...range.getClientRects()].every(r=>r.left>=box.left-1&&r.right<=box.right+1);};
               const boxes=cells.map(e=>e.getBoundingClientRect());
               const controls=[...cells[6].querySelectorAll('button,a')];
-              return {rowFits:row.scrollWidth<=row.clientWidth+1,allCellTextFits:cells.every(fits),allActionTextFits:controls.every(fits),headerWidth:boxes[0].width,actionWidth:boxes[6].width,rowWidth:bounds.width,headerBottom:boxes[0].bottom,metricsTop:Math.min(...boxes.slice(1,6).map(b=>b.top)),metricsBottom:Math.max(...boxes.slice(1,6).map(b=>b.bottom)),actionsTop:boxes[6].top};
+              const name=cells[0].querySelector('.ac-driver-heading>strong').getBoundingClientRect(),total=cells[0].querySelector('.ac-driver-total').getBoundingClientRect();
+              const headerGap=Math.max(0,name.left-total.right,total.left-name.right);
+              const headerVerticalGap=Math.max(0,name.top-total.bottom,total.top-name.bottom);
+              return {rowHeight:bounds.height,headerGap,headerVerticalGap,headerSameLine:name.top<total.bottom&&total.top<name.bottom,rowFits:row.scrollWidth<=row.clientWidth+1,allCellTextFits:cells.every(fits),allActionTextFits:controls.every(fits),headerWidth:boxes[0].width,actionWidth:boxes[6].width,rowWidth:bounds.width,headerBottom:boxes[0].bottom,metricsTop:Math.min(...boxes.slice(1,6).map(b=>b.top)),metricsBottom:Math.max(...boxes.slice(1,6).map(b=>b.bottom)),actionsTop:boxes[6].top};
             }''')
             assert geometry['rowFits'] and geometry['allCellTextFits'] and geometry['allActionTextFits'], geometry
             assert geometry['headerWidth']>=geometry['rowWidth']*.8 and geometry['actionWidth']>=geometry['rowWidth']*.8, geometry
             assert geometry['headerBottom']<=geometry['metricsTop']+1 and geometry['metricsBottom']<=geometry['actionsTop']+1, geometry
+            if profile=='realistic':
+                # A short name and its total remain one nearby reading group; large
+                # screens must not turn ordinary settlements into mostly blank cards.
+                assert geometry['headerVerticalGap']<=12, geometry
+                if width>=1280:
+                    assert geometry['headerSameLine'] and geometry['headerGap']<=24, geometry
+                    assert geometry['rowWidth']<=1050 and geometry['rowHeight']<=400, geometry
             expect(row.locator('[data-driver-history]')).to_be_visible()
             expect(row.locator(f'a[href="/api/accounting/driver-settlements/{item["id"]}/print"]')).to_be_visible()
         expect(page.locator('[data-variance-confirm=variance]')).to_be_visible()
@@ -132,5 +150,5 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,lang
         expect(page.locator('[data-driver-balance=confirmed]')).to_have_count(0)
         assert page.evaluate('window.layoutMutations')==0 and not errors
         output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
-        page.screenshot(path=str(output/f'accounting-manager-cards-{lang}-{width}.png'),full_page=True)
+        page.screenshot(path=str(output/f'accounting-manager-cards-{lang}-{width}{"-realistic" if profile=="realistic" else ""}.png'),full_page=True)
         browser.close()

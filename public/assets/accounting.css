@@ -83,3 +83,26 @@
 .accounting .ac-manager-card [data-day-approve]{max-width:100%;min-height:44px;white-space:normal;line-height:1.7}
 @container(max-width:850px){.accounting .ac-manager-card [data-driver-row]{grid-template-columns:repeat(6,minmax(0,1fr))}.accounting .ac-manager-card [data-driver-row]>td{grid-column:span 2}.accounting .ac-manager-card [data-driver-row]>td:nth-child(5),.accounting .ac-manager-card [data-driver-row]>td:nth-child(6){grid-column:span 3}}
 @container(max-width:500px){.accounting .ac-manager-card [data-driver-row]{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px}.accounting .ac-manager-card [data-driver-row]>td{grid-column:auto;font-size:.88rem;padding:10px}.accounting .ac-manager-card [data-driver-row]>td:nth-child(2),.accounting .ac-manager-card [data-driver-row]>td:first-child,.accounting .ac-manager-card [data-driver-row]>td:last-child{grid-column:1/-1}.accounting .ac-manager-card [data-driver-row]>td:nth-child(5),.accounting .ac-manager-card [data-driver-row]>td:nth-child(6){grid-column:auto}.accounting .ac-manager-card .ac-settlement-actions>*,.accounting .ac-manager-card .ac-settlement-links>*{flex:1 1 120px}}
+
+/* Keep driver cards close to their content on wide accounting screens. */
+.accounting .ac-manager-card{padding:14px;max-width:1010px}
+.accounting .ac-manager-card>summary{padding:10px 12px;gap:8px}
+.accounting .ac-manager-card .ac-card-metrics{padding-block:8px;gap:6px}
+.accounting .ac-manager-card .ac-card-metrics span{padding:5px 9px}
+.accounting .ac-manager-card [data-driver-row]{width:min(100%,980px);box-sizing:border-box;align-items:start;gap:7px;margin:0 0 10px;padding:10px;border-radius:12px}
+.accounting .ac-manager-card [data-driver-row]>td{padding:7px 9px;line-height:1.45;border-radius:8px}
+.accounting .ac-manager-card [data-driver-row]>td:before{margin-bottom:3px}
+.accounting .ac-manager-card [data-driver-row]>td:first-child{padding-bottom:6px}
+.accounting .ac-manager-card .ac-driver-heading{justify-content:flex-start;gap:8px 12px}
+.accounting .ac-manager-card .ac-driver-heading>strong{font-size:1rem}
+.accounting .ac-manager-card .ac-driver-total{display:flex;align-items:center;flex-wrap:wrap;gap:3px 8px;min-width:0;padding:4px 8px;border-radius:7px}
+.accounting .ac-manager-card .ac-driver-total>strong{font-size:1rem}
+.accounting .ac-manager-card .ac-driver-total>small{flex-basis:100%;line-height:1.3}
+.accounting .ac-manager-card .ac-driver-deadline{line-height:1.5;margin-top:3px}
+.accounting .ac-manager-card .ac-settlement-status{padding:4px 8px;line-height:1.5}
+.accounting .ac-manager-card .ac-settlement-detail{margin-block:4px;line-height:1.5}
+.accounting .ac-manager-card .ac-settlement-confirmation{padding:7px 9px;margin-block:6px;line-height:1.6}
+.accounting .ac-manager-card .ac-settlement-actions,.accounting .ac-manager-card .ac-settlement-links{display:inline-flex;vertical-align:top;max-width:100%;gap:6px;margin-top:5px}
+.accounting .ac-manager-card .ac-settlement-links{border:0;padding-top:0;margin-inline-start:6px}
+.accounting .ac-manager-card td button,.accounting .ac-manager-card td a{min-height:36px;padding:6px 10px;line-height:1.45}
+@media(max-width:760px){.accounting .ac-manager-card{padding:10px}.accounting .ac-manager-card td button,.accounting .ac-manager-card td a{min-height:42px}.accounting .ac-manager-card .ac-settlement-links{margin-inline-start:0}}
