@@ -91,7 +91,7 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
           const base={day:'2026-10-23',bank_halalas:98765432100,cash_due_halalas:12345678900,cash_received_halalas:null,shortage_halalas:0,surplus_halalas:0,balance_approved:true,cash_recorded:false,reconciliation_complete:false,net_difference_halalas:null,stage:'balance_approved',due_at:'2026-10-24T16:00:00+03:00',can_extend:true,overdue:false,history:[],revision:1};
           const rows=[
             {...base,id:'pending',user_id:'driver-pending',driver_name:longName+' 1'},
-            {...base,id:'variance',user_id:'driver-variance',driver_name:longName+' 2',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345666350,shortage_halalas:12550,net_difference_halalas:-12550,variance_pending:true,revision:2,can_extend:false,can_correct_cash_receipt:true},
+            {...base,id:'variance',user_id:'driver-variance',driver_name:longName+' 2',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345666350,shortage_halalas:12550,net_difference_halalas:-12550,variance_pending:true,revision:2,can_extend:false,can_request_cash_correction:true},
             {...base,id:'confirmed',user_id:'driver-confirmed',driver_name:longName+' 3',stage:'cash_received',cash_recorded:true,reconciliation_complete:true,cash_received_halalas:12345777665,surplus_halalas:98765,net_difference_halalas:98765,variance_pending:false,revision:2,can_extend:false,variance_confirmation:{id:'confirmation',actor_name:lang==='ar'?'محاسب تجريبي باسم طويل لتوثيق المراجعة':'Synthetic accountant with a long reviewer name',created_at:'2026-10-23T12:00:00Z',details:{action_taken:lang==='ar'?'توثيق الفائض للمراجعة والمتابعة دون أي خصم آلي من راتب السائق':'Documented surplus for review and follow-up without any automatic payroll deduction'}}}
           ];
           if(profile==='realistic')rows.forEach((r,index)=>{
@@ -110,12 +110,13 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
             {...eventBase,id:'h2',action_type:'approval',created_at:'2026-10-23T15:32:43Z'},
             {...eventBase,id:'h3',action_type:'cash_receipt',stage:'cash_received',cash_received_halalas:23100,created_at:'2026-10-23T15:53:04Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8)},
             {...eventBase,id:'h4',action_type:'approval',stage:'cash_received',cash_received_halalas:23100,created_at:'2026-10-23T15:57:48Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8),note:lang==='ar'?'تعديل':'Correction'},
-            {...eventBase,id:'h5',action_type:'cash_receipt_correction',actor_name:lang==='ar'?'مالك تجريبي':'Test owner',stage:'cash_received',cash_received_halalas:21600,created_at:'2026-10-23T16:10:00Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8),note:lang==='ar'?'تصحيح تسجيل النقد بعد المراجعة':'Correct receipt entry after review'}
+            {...eventBase,id:'h5',actor_name:lang==='ar'?'مالك تجريبي':'Test owner',stage:'cash_received',cash_received_halalas:21600,created_at:'2026-10-23T16:10:00Z',received_on:'2026-10-23',receipt_reference:'REFERENCE-'+'1234567890'.repeat(8),note:lang==='ar'?'تصحيح تسجيل النقد بعد المراجعة':'Correct receipt entry after review'}
           ];
           rows.forEach(r=>{r.system_total_halalas=profile==='realistic'?44600:111111111000;r.actual_total_halalas=r.reconciliation_complete?r.bank_halalas+r.cash_received_halalas:null;});
           window.layoutExpected=rows.map(r=>({id:r.id,name:r.driver_name,total:money(r.bank_halalas+(r.reconciliation_complete?r.cash_received_halalas:r.cash_due_halalas)),money:[r.bank_halalas,r.cash_due_halalas,r.cash_received_halalas,r.shortage_halalas,r.surplus_halalas].map((v,index)=>index>=2&&!r.cash_recorded?'—':money(v))}));
           window.layoutMutations=0;
-          await KPSAccounting.open({lang,user:{id:'accountant',role:'owner'},tr:(ar,en)=>lang==='ar'?ar:en,esc,money,cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:(title,html)=>{const dialog=document.querySelector('#history-modal');dialog.querySelector('h2').textContent=title;dialog.querySelector('.history-body').innerHTML=html;dialog.showModal();},closeModal:()=>document.querySelector('#history-modal').close(),mutation:async()=>{window.layoutMutations++;throw Error('Layout acceptance must never post financial data');},api:async url=>{
+          window.layoutRows=rows;window.layoutUser={id:'test-owner',role:'owner'};
+          await KPSAccounting.open({lang,user:window.layoutUser,tr:(ar,en)=>lang==='ar'?ar:en,esc,money,cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:(title,html)=>{const dialog=document.querySelector('#history-modal');dialog.querySelector('h2').textContent=title;dialog.querySelector('.history-body').innerHTML=html;dialog.showModal();},closeModal:()=>document.querySelector('#history-modal').close(),mutation:async()=>{window.layoutMutations++;throw Error('Layout acceptance must never post financial data');},api:async url=>{
             if(url.includes('/options'))return {today:'2026-10-23',can_report:true,can_review:true,branches:[{id:'branch',name:'TEST Branch',city:'حفر الباطن'}],people:[],products:[],categories:{},states:{},responsibilities:{}};
             if(url.includes('/manager-cards'))return {cards:[{id:'manager',manager_name:lang==='ar'?'مدير توصيل تجريبي — شفت مسائي حفر الباطن':'Synthetic delivery manager — Hafar evening shift',day:'2026-10-23',drivers:rows,total:3,completed:1,balance_completed:3,cash_completed:2,overdue_count:0,completion_percent:71,ready:false,due_on:'2026-10-24',due_at:'2026-10-24T16:00:00+03:00'}]};
             if(url.includes('/driver-settlements'))return {settlements:rows};
@@ -174,11 +175,12 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
         output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
         page.screenshot(path=str(output/f'accounting-manager-cards-{lang}-{width}{"-realistic" if profile=="realistic" else ""}.png'),full_page=True)
         if profile=='realistic':
-            page.locator('[data-driver-cash-correction=variance]').click()
+            page.locator('[data-cash-correction-request=variance]').click()
             correction=page.locator('#history-modal')
             correction.locator('[name=corrected_cash]').fill('215.00')
             expect(correction.locator('#cash-correction-preview')).to_contain_text(page.evaluate("new Intl.NumberFormat(document.documentElement.lang==='ar'?'ar-SA':'en-SA',{style:'currency',currency:'SAR'}).format(446)"))
-            expect(correction.locator('[name=confirmed]')).not_to_be_checked()
+            expect(correction.locator('[name=confirmed]')).to_have_count(0)
+            expect(correction.locator('button[type=submit]')).to_have_text('رفع تذكرة للمالك' if lang=='ar' else 'Submit ticket to owner')
             assert page.evaluate('window.layoutMutations')==0
             page.screenshot(path=str(output/f'accounting-manager-cards-cash-correction-{lang}-{width}.png'),full_page=True)
             page.keyboard.press('Escape')
@@ -206,4 +208,30 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
             }'''), 'History and full amounts must fit without horizontal scrolling'
             assert page.evaluate('window.layoutMutations')==0 and not errors
             page.screenshot(path=str(output/f'accounting-manager-cards-history-{lang}-{width}.png'),full_page=True)
+            page.keyboard.press('Escape')
+            page.evaluate('''()=>{
+              const row=window.layoutRows.find(r=>r.id==='variance');row.can_request_cash_correction=false;
+              row.cash_correction_requests=[{id:'ticket-1',reference:'CASH-TEST-001',status:'pending',report_id:'variance',expected_revision:2,previous_cash_received_halalas:21400,cash_received_halalas:21500,reason:'TEST cash entry typo correction',requested_by:'test-accountant',requester_name:'TEST ACCOUNTANT',created_at:'2026-10-23T16:20:00Z'}];
+            }''')
+            page.locator('[data-ac=settlements]').click()
+            ticket=page.locator('[data-cash-ticket="ticket-1"]')
+            expect(ticket).to_contain_text('CASH-TEST-001')
+            expect(page.locator('[data-cash-correction-request=variance]')).to_have_count(0)
+            ticket.locator('[data-decision=approve]').click()
+            expect(correction.locator('[name=confirmed]')).not_to_be_checked()
+            expect(correction.locator('[name=corrected_cash]')).to_have_count(0)
+            expect(correction).to_contain_text('TEST cash entry typo correction')
+            expect(correction.locator('button[type=submit]')).to_have_text('اعتماد تعديل إدخال الكاش' if lang=='ar' else 'Approve cash entry correction')
+            page.screenshot(path=str(output/f'accounting-manager-cards-ticket-approval-{lang}-{width}.png'),full_page=True)
+            page.keyboard.press('Escape')
+            ticket.locator('[data-decision=reject]').click()
+            expect(correction.locator('[name=confirmed]')).to_have_count(0)
+            expect(correction.locator('[name=note]')).to_be_visible()
+            expect(correction.locator('button[type=submit]')).to_have_text('رفض طلب تعديل الكاش' if lang=='ar' else 'Reject cash correction request')
+            page.keyboard.press('Escape')
+            page.evaluate("()=>{window.layoutUser.id='test-accountant';window.layoutUser.role='accountant';}")
+            page.locator('[data-ac=settlements]').click()
+            expect(page.locator('[data-cash-ticket-review]')).to_have_count(0)
+            expect(page.locator('[data-cash-ticket="ticket-1"]')).to_be_visible()
+            assert page.evaluate('window.layoutMutations')==0 and not errors
         browser.close()

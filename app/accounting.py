@@ -649,7 +649,9 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
                 label=row['snapshot'].get('closure_label') or row['id'],
                 due_on=due_on, overdue=bool(due_on and datetime.now(TZ).date()>due_on and driver_settlement_values(row['snapshot'],latest)['stage']!='cash_received'),
                 waiting_days=max(0, (datetime.now(TZ).date()-approved['created_at'].astimezone(TZ).date()).days) if approved and not latest.get('received_on') else 0,
-                history=changes,variance_confirmation=confirmation,variance_pending=variance_pending, **values))
+                history=changes,variance_confirmation=confirmation,variance_pending=variance_pending,
+                cash_correction_requests=cash_correction_requests(c,user,row['id']) if row['kind']=='driver' and row['user_id']!=user['id'] else [],
+                can_request_cash_correction=can_request_cash_correction(c,user,row['id']), **values))
         result.sort(key=lambda r: r['stage'] == 'cash_received')
         return safe({'settlements': result})
 
@@ -714,46 +716,158 @@ def receive_driver_cash(report_id:str,body:DriverCashReceipt,request:Request,use
             body.model_dump(mode='json'),lambda:save_driver_settlement(c,user,report_id,body,receipt=True))
 
 
+class DriverCashCorrectionRequest(Note):
+    expected_revision: StrictInt = Field(ge=1)
+    cash_received_halalas: StrictInt = Field(ge=0,le=100000000000)
+
+
+class DriverCashCorrectionApproval(Note):
+    expected_revision: StrictInt = Field(ge=1)
+    confirmed: StrictBool
+
+
+def cash_correction_requests(c,user,report_id):
+    # Audit events are the append-only ticket ledger. Scope is checked before
+    # querying so saved tickets never expose another brand or branch.
+    driver_settlement_scope(c,user,report_id)
+    events=c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a
+      JOIN users u ON u.id=a.actor_id WHERE a.entity_type='report' AND a.entity_id=%s
+      AND a.action IN ('accounting.cash_correction.requested','accounting.cash_correction.approved','accounting.cash_correction.rejected')
+      ORDER BY a.created_at,a.id""",(report_id,)).fetchall()
+    latest=c.execute('SELECT revision FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
+    decisions={e['details']['ticket_id']:e for e in events if e['action']!='accounting.cash_correction.requested'}
+    result=[]
+    for e in events:
+        if e['action']!='accounting.cash_correction.requested':continue
+        d=e['details'];decision=decisions.get(d['ticket_id'])
+        status=('approved' if decision['action'].endswith('.approved') else 'rejected') if decision else (
+            'pending' if latest and latest['revision']==d['expected_revision'] else 'stale')
+        result.append(dict(id=d['ticket_id'],reference=d['reference'],status=status,report_id=report_id,
+            expected_revision=d['expected_revision'],cash_received_halalas=d['cash_received_halalas'],
+            previous_cash_received_halalas=d['previous_cash_received_halalas'],reason=d['reason'],
+            requested_by=e['actor_id'],requester_name=e['actor_name'],created_at=e['created_at'],
+            decision=dict(actor_name=decision['actor_name'],created_at=decision['created_at'],reason=decision['details']['reason']) if decision else None))
+    return safe(result)
+
+
+def can_request_cash_correction(c,user,report_id):
+    if not auth.has_permission(user,REVIEW):return False
+    row=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind='driver'",(report_id,user['brand_id'])).fetchone()
+    if not row or row['user_id']==user['id'] or (user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[]))):return False
+    previous=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
+    if not previous or not driver_settlement_values(row['snapshot'],previous)['reconciliation_complete']:return False
+    if any(t['status']=='pending' for t in cash_correction_requests(c,user,report_id)):return False
+    shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
+    day=shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=16)).date()
+    return not (c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(shift['manager_shift_id'],)).fetchone()
+        or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND branch_ids ?| %s',(user['brand_id'],day.replace(day=1),row['branch_ids'])).fetchone()
+        or variance_confirmation(c,report_id,previous['revision']))
+
+
+def validate_cash_correction(c,user,row,report_id,body):
+    previous=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
+    if not previous or previous['cash_received_halalas'] is None:
+        fail('CASH_NOT_RECEIVED','لم يسجل استلام الكاش لهذه التقفيلة.',409)
+    if previous['revision']!=body.expected_revision:fail('SETTLEMENT_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
+    before=driver_settlement_values(row['snapshot'],previous)
+    if not before['reconciliation_complete']:fail('RECONCILIATION_REQUIRED','أكمل اعتماد الموازنة قبل تصحيح الاستلام.',409)
+    shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
+    day=shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=16)).date()
+    if (c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(shift['manager_shift_id'],)).fetchone()
+            or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND branch_ids ?| %s',
+                (user['brand_id'],day.replace(day=1),row['branch_ids'])).fetchone()
+            or variance_confirmation(c,report_id,previous['revision'])):
+        fail('SETTLEMENT_FINAL','التقفيلة أو فرقها مثبت نهائيًا؛ لا يمكن تعديل سجل الاستلام.',409)
+    # Frozen financial periods require a separate adjustment; an unfrozen
+    # balanced entry may still contain a receipt typing error.
+    if body.cash_received_halalas==previous['cash_received_halalas']:fail('NO_CHANGE','مبلغ الاستلام لم يتغير.',409)
+    return previous,before
+
+
+def apply_cash_correction(c,user,row,report_id,body,ticket):
+    previous,before=validate_cash_correction(c,user,row,report_id,body)
+    event=c.execute("""INSERT INTO driver_accounting_settlements
+      (id,report_id,brand_id,revision,stage,bank_halalas,cash_due_halalas,cash_received_halalas,received_on,receipt_reference,note,actor_id,balance_approved)
+      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+      (db.new_id('das_'),report_id,user['brand_id'],previous['revision']+1,'cash_received',
+       previous['bank_halalas'],previous['cash_due_halalas'],body.cash_received_halalas,
+       previous['received_on'],previous['receipt_reference'],body.note,user['id'],previous['balance_approved'])).fetchone()
+    after=driver_settlement_values(row['snapshot'],event)
+    db.audit(c,user['id'],'accounting.driver_settlement.cash_corrected','report',report_id,
+        {'event_id':event['id'],'previous_event_id':previous['id'],'revision':event['revision'],
+         'action_type':'cash_receipt_correction','reason':body.note,'before':before,'after':after,
+         'no_cash_movement':True,'no_payroll_deduction':True,
+         'ticket_id':ticket['id'],'ticket_reference':ticket['reference'],'request_reason':ticket['reason']})
+    return safe(dict(event,action_type='cash_receipt_correction',before=before,after=after))
+
+
 @router.post('/driver-settlements/{report_id}/correct-cash-receipt')
 def correct_driver_cash_receipt(report_id:str,body:DriverCashReceiptCorrection,request:Request,user=Depends(access)):
-    # Post-receipt correction is higher authority than ordinary accountant review.
-    if user['role']!='owner':fail('OWNER_REQUIRED','تصحيح الكاش المستلم متاح للمالك فقط.',403)
-    if not body.confirmed:fail('CONFIRMATION_REQUIRED','أكد مراجعة مبلغ الكاش المستلم الصحيح.')
+    if user['role']!='owner':fail('OWNER_REQUIRED','تصحيح الكاش المستلم يتطلب موافقة المالك.',403)
+    with db.tx() as c:driver_settlement_scope(c,user,report_id)
+    fail('TICKET_REQUIRED','افتح تذكرة تصحيح الاستلام أولًا ثم اعتمدها من حساب المالك.',409)
+
+
+@router.get('/driver-settlements/{report_id}/cash-correction-requests')
+def list_cash_correction_requests(report_id:str,user=Depends(access)):
+    with db.tx() as c:return {'requests':cash_correction_requests(c,user,report_id)}
+
+
+@router.post('/driver-settlements/{report_id}/cash-correction-requests')
+def request_cash_correction(report_id:str,body:DriverCashCorrectionRequest,request:Request,user=Depends(access)):
+    if not auth.has_permission(user,REVIEW):fail('ACCOUNTING_FORBIDDEN','صلاحية طلب التصحيح غير متاحة.',403)
     with db.tx() as c:
         row=driver_settlement_scope(c,user,report_id)
-        if row['kind']!='driver':fail('REPORT_SCOPE','تصحيح الاستلام متاح لتقفيلة السائق فقط.',404)
+        if row['kind']!='driver':fail('REPORT_SCOPE','التذكرة متاحة لتقفيلة السائق فقط.',404)
         def perform():
-            previous=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
-            if not previous or previous['cash_received_halalas'] is None:
-                fail('CASH_NOT_RECEIVED','لم يسجل استلام الكاش لهذه التقفيلة.',409)
-            if previous['revision']!=body.expected_revision:fail('SETTLEMENT_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
-            before=driver_settlement_values(row['snapshot'],previous)
-            if not before['reconciliation_complete']:fail('RECONCILIATION_REQUIRED','أكمل اعتماد الموازنة قبل تصحيح الاستلام.',409)
-            shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
-            day=shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=16)).date()
-            if (c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(shift['manager_shift_id'],)).fetchone()
-                    or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND branch_ids ?| %s',
-                        (user['brand_id'],day.replace(day=1),row['branch_ids'])).fetchone()
-                    or variance_confirmation(c,report_id,previous['revision'])):
-                fail('SETTLEMENT_FINAL','التقفيلة أو فرقها مثبت نهائيًا؛ لا يمكن تعديل سجل الاستلام.',409)
-            # Only resolve a still-pending discrepancy. Matched/frozen financial
-            # periods require a separate adjustment, not a historical overwrite.
-            if not before['net_difference_halalas']:fail('CORRECTION_NOT_REQUIRED','التسوية متطابقة ولا يوجد فرق معلّق لتصحيحه.',409)
-            if body.cash_received_halalas==previous['cash_received_halalas']:fail('NO_CHANGE','مبلغ الاستلام لم يتغير.',409)
-            event=c.execute("""INSERT INTO driver_accounting_settlements
-              (id,report_id,brand_id,revision,stage,bank_halalas,cash_due_halalas,cash_received_halalas,received_on,receipt_reference,note,actor_id,balance_approved)
-              VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-              (db.new_id('das_'),report_id,user['brand_id'],previous['revision']+1,'cash_received',
-               previous['bank_halalas'],previous['cash_due_halalas'],body.cash_received_halalas,
-               previous['received_on'],previous['receipt_reference'],body.note,user['id'],previous['balance_approved'])).fetchone()
-            after=driver_settlement_values(row['snapshot'],event)
-            db.audit(c,user['id'],'accounting.driver_settlement.cash_corrected','report',report_id,
-                {'event_id':event['id'],'previous_event_id':previous['id'],'revision':event['revision'],
-                 'action_type':'cash_receipt_correction','reason':body.note,'before':before,'after':after,
-                 'no_cash_movement':True,'no_payroll_deduction':True})
-            return safe(dict(event,action_type='cash_receipt_correction',before=before,after=after))
-        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.cash_receipt_correction:'+report_id,
-            body.model_dump(),perform)
+            previous,_=validate_cash_correction(c,user,row,report_id,body)
+            if any(t['status']=='pending' for t in cash_correction_requests(c,user,report_id)):
+                fail('TICKET_PENDING','توجد تذكرة تصحيح معلقة لهذه المراجعة.',409)
+            identifier=db.new_id('ccr_');reference='CCR-'+identifier.removeprefix('ccr_')[:12].upper()
+            db.audit(c,user['id'],'accounting.cash_correction.requested','report',report_id,
+                dict(ticket_id=identifier,reference=reference,expected_revision=body.expected_revision,
+                     cash_received_halalas=body.cash_received_halalas,previous_cash_received_halalas=previous['cash_received_halalas'],reason=body.note))
+            return next(t for t in cash_correction_requests(c,user,report_id) if t['id']==identifier)
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.cash_correction.request:'+report_id,body.model_dump(),perform)
+
+
+def cash_correction_ticket(c,user,report_id,identifier):
+    ticket=next((t for t in cash_correction_requests(c,user,report_id) if t['id']==identifier),None)
+    if not ticket:fail('TICKET_SCOPE','تذكرة التصحيح غير متاحة.',404)
+    return ticket
+
+
+@router.post('/driver-settlements/{report_id}/cash-correction-requests/{identifier}/approve')
+def approve_cash_correction(report_id:str,identifier:str,body:DriverCashCorrectionApproval,request:Request,user=Depends(access)):
+    if user['role']!='owner':fail('OWNER_REQUIRED','اعتماد تذكرة التصحيح متاح للمالك فقط.',403)
+    if not body.confirmed:fail('CONFIRMATION_REQUIRED','أكد مراجعة تذكرة تصحيح الاستلام.')
+    with db.tx() as c:
+        row=driver_settlement_scope(c,user,report_id)
+        ticket=cash_correction_ticket(c,user,report_id,identifier)
+        if ticket['requested_by']==user['id']:fail('SELF_APPROVAL','اعتماد التذكرة من مالك مستقل عن مقدمها.',403)
+        def perform():
+            if ticket['status']!='pending':fail('TICKET_NOT_PENDING','التذكرة معتمدة أو مرفوضة أو تغيرت مراجعتها.',409)
+            if body.expected_revision!=ticket['expected_revision']:fail('SETTLEMENT_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
+            correction=DriverCashReceiptCorrection(expected_revision=body.expected_revision,
+                cash_received_halalas=ticket['cash_received_halalas'],confirmed=True,note=body.note)
+            result=apply_cash_correction(c,user,row,report_id,correction,ticket)
+            db.audit(c,user['id'],'accounting.cash_correction.approved','report',report_id,
+                dict(ticket_id=identifier,reason=body.note,event_id=result['id'],revision=result['revision']))
+            return dict(ticket=cash_correction_ticket(c,user,report_id,identifier),settlement=result)
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.cash_correction.approve:'+identifier,body.model_dump(),perform)
+
+
+@router.post('/driver-settlements/{report_id}/cash-correction-requests/{identifier}/reject')
+def reject_cash_correction(report_id:str,identifier:str,body:Note,request:Request,user=Depends(access)):
+    if user['role']!='owner':fail('OWNER_REQUIRED','رفض تذكرة التصحيح متاح للمالك فقط.',403)
+    with db.tx() as c:
+        driver_settlement_scope(c,user,report_id)
+        ticket=cash_correction_ticket(c,user,report_id,identifier)
+        def perform():
+            if ticket['status']!='pending':fail('TICKET_NOT_PENDING','التذكرة معتمدة أو مرفوضة أو تغيرت مراجعتها.',409)
+            db.audit(c,user['id'],'accounting.cash_correction.rejected','report',report_id,dict(ticket_id=identifier,reason=body.note))
+            return cash_correction_ticket(c,user,report_id,identifier)
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.cash_correction.reject:'+identifier,body.model_dump(),perform)
 
 
 class DriverVarianceConfirmation(Note):
