@@ -146,3 +146,81 @@ def test_public_menu_optional_early_login_and_verified_checkout(static_customer,
         page.screenshot(path=str(out/f'customer-entry-{entry_enabled}-{offer_active}-{auth_stage}-{lang}-{width}.png'),full_page=True)
         assert not errors,errors
         context.close();browser.close()
+
+
+@pytest.mark.parametrize('browser_name',['chromium','webkit'])
+@pytest.mark.parametrize('lang',['ar','en'])
+def test_guest_browsing_hides_optional_form_preserves_details_and_requires_otp(static_customer,lang,browser_name):
+    from playwright.sync_api import sync_playwright,expect
+    branch={'id':'demo-branch','brand_id':'kps','branch_no':1,'name':'فرع المروج','city':'حفر الباطن',
+            'location':{'lat':28.4,'lng':45.9},'location_verified':True,'available':True,'direct_distance_meters':500,
+            'payment_methods':['cash','card'],'services':{'delivery':{'available':True},'pickup':{'available':False},'car':{'available':False}}}
+    product={'id':'demo-paid','name':'قهوة','category':'قهوة','price_halalas':1000,'available':True,'source_verified':True,'option_groups':[]}
+    requests=[]
+    with sync_playwright() as p:
+        browser=getattr(p,browser_name).launch(headless=True)
+        context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True)
+        context.add_init_script("localStorage.setItem('kps_customer_lang',"+json.dumps(lang)+")")
+        page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        def api(route):
+            path=route.request.url.split('/api/',1)[1].split('?',1)[0];requests.append(path)
+            responses={
+                'catalog':{'brand':{'id':'kps','name':'KPS COFFEE'},'products':[product],'source_verified':True},
+                'branches':{'branches':[branch],'brand_services':{'delivery':True,'pickup':False,'car_pickup':False}},
+                'session':{'user':None,'csrf_token':None,'customer_verified':False},
+                'identity/channels':{'customer_phone_required':True,'channels':{'sms':{'available':True}}},
+                'experience/public':{'customer_entry_enabled':False,'gift_offer_active':True},
+                'customer-map/config':{'enabled':False},'banners':{'banners':[]},
+                'branches/nearest':{'branches':[branch],'excluded':[]},
+                'products/demo-paid/availability':{'available':True},
+                'quote':{'quote':{'subtotal_halalas':1000,'delivery_fee_halalas':500,'total_halalas':1500,'items':[]}},
+                'auth/otp/request':{'challenge_id':'synthetic','channel':'sms'},
+            }
+            assert path in responses,'Unexpected API operation: '+path
+            route.fulfill(status=200,content_type='application/json',body=json.dumps(responses[path]))
+        context.route('**/api/**',api)
+        page.goto(static_customer+'/',wait_until='networkidle')
+        expect(page.locator('#entry-form')).to_be_visible()
+        page.locator('#entry-form [name=name]').fill('علي')
+        page.locator('#entry-form [name=phone]').fill('512345678')
+        page.locator('#entry-browse').click()
+        expect(page.locator('#entry-form')).to_have_count(0)
+        expect(page.locator('#customer-name')).to_have_value('علي')
+        expect(page.locator('#customer-phone')).to_have_value('512345678')
+        expect(page.locator('.entry-steps li')).to_have_count(3)
+        for _ in range(2):
+            page.locator('#customer-language').click()
+            expect(page.locator('#entry-form')).to_have_count(0)
+            expect(page.locator('#customer-name')).to_have_value('علي')
+            expect(page.locator('#customer-phone')).to_have_value('512345678')
+        page.locator('#manual-location-button').click();page.locator('#manual-location details summary').click()
+        page.locator('#latitude').fill('28.4');page.locator('#longitude').fill('45.9');page.locator('#save-location').click()
+        expect(page.locator('#nearest-branches button')).to_have_count(1);page.locator('#nearest-branches button').click()
+        page.locator('.product-add-button').first.click();page.locator('#product-add').click()
+        expect(page.locator('#entry-form')).to_have_count(0)
+        expect(page.locator('#customer-name')).to_have_value('علي');expect(page.locator('#customer-phone')).to_have_value('512345678')
+        expect(page.locator('#neighborhood')).to_have_attribute('required','')
+        expect(page.locator('#checkout-button')).to_be_disabled()
+        page.locator('#neighborhood').fill('حي اختبار')
+        expect(page.locator('#address')).to_have_value('')
+        expect(page.locator('#checkout-button')).to_be_enabled()
+        assert 'auth/otp/request' not in requests
+        page.locator('#checkout-button').click()
+        expect(page.locator('#otp-request-form')).to_be_visible()
+        expect(page.locator('#otp-name')).to_have_value('علي');expect(page.locator('#phone')).to_have_value('512345678')
+        assert 'auth/otp/request' not in requests and 'orders' not in requests
+        # Explicit verification remains necessary; the browse flag grants no identity.
+        page.locator('#otp-request-form [type=submit]').click()
+        expect(page.locator('#otp-verify-form')).to_be_visible()
+        assert requests.count('auth/otp/request')==1 and 'orders' not in requests
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#neighborhood')).to_have_value('حي اختبار')
+        expect(page.locator('#entry-form')).to_have_count(0)
+        expect(page.locator('#menu')).to_be_visible()
+        assert page.evaluate("sessionStorage.getItem('kps-customer-browsing-v1:kps')")=='1'
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
+        # A separate tab visit still offers the optional form. No name/mobile is stored by the browse flag.
+        other=context.new_page();other.goto(static_customer+'/',wait_until='networkidle')
+        expect(other.locator('#entry-form')).to_be_visible()
+        assert not errors,errors
+        context.close();browser.close()

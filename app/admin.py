@@ -138,10 +138,17 @@ def hours(value):
     if not isinstance(value, list) or not value or len(value) > 28:
         raise db.error(422, 'HOURS_INVALID', 'أدخل ساعات العمل الفعلية.')
     for row in value:
-        if not isinstance(row, dict) or set(row) != {'days', 'start', 'end'}:
+        if (not isinstance(row, dict) or not {'days', 'start', 'end'} <= set(row)
+                or set(row) - {'days', 'start', 'end', 'enabled'}):
             raise db.error(422, 'HOURS_INVALID', 'صيغة ساعات العمل غير صحيحة.')
+        if 'enabled' in row and type(row['enabled']) is not bool:
+            raise db.error(422, 'HOURS_INVALID', 'تفعيل الفترة يجب أن يكون صحيحًا أو خطأ.')
         if not isinstance(row['days'], list) or not row['days'] or any(type(d) is not int or not 0 <= d <= 6 for d in row['days']):
             raise db.error(422, 'HOURS_INVALID', 'الأيام من الاثنين 0 إلى الأحد 6.')
+        # An explicitly disabled future period may be prepared without invented
+        # times. It cannot admit orders or shifts until valid times are supplied.
+        if row.get('enabled') is False and row['start'] in (None, '') and row['end'] in (None, ''):
+            continue
         for field in ('start', 'end'):
             if not isinstance(row[field], str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', row[field]):
                 raise db.error(422, 'HOURS_INVALID', 'الوقت بصيغة HH:MM وتوقيت الرياض.')
@@ -199,10 +206,14 @@ def validate_options(groups, variants=None):
                 raise db.error(422,'VARIANTS_INVALID','لون العرض غير صحيح.')
 
 
-def validate_branch_settings(settings, branch_city):
+def validate_branch_settings(settings, branch_city, *, brand_id='kps', branch_no=None):
     allowed = {'active','pickup_enabled','car_enabled','delivery_enabled','payment_methods','opening_hours','delivery_hours',
-               'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified'}
+               'coverage','location','location_verified','map_url','map_url_verified','place_id','location_source','delivery_fee_halalas','minimum_order_halalas','ordering_verified','operational_data_verified','online_payment_seller'}
     keys(settings, allowed)
+    if settings.get('online_payment_seller') is not None:
+        from .payment_gateways import IDENTIFIER
+        if not isinstance(settings['online_payment_seller'], str) or not IDENTIFIER.fullmatch(settings['online_payment_seller']):
+            raise db.error(422, 'PAYMENT_SELLER_INVALID', 'اختر معرف منشأة صحيحًا.')
     for field in ('active','pickup_enabled','car_enabled','delivery_enabled','ordering_verified','operational_data_verified','location_verified','map_url_verified'):
         if field in settings and type(settings[field]) is not bool:
             raise db.error(422, 'BOOLEAN_INVALID', 'إعداد التفعيل يجب أن يكون صحيحًا أو خطأ.')
@@ -241,8 +252,8 @@ def validate_branch_settings(settings, branch_city):
                 if not isinstance(point,list) or len(point)!=2:
                     raise db.error(422, 'COVERAGE_INVALID', 'النقطة بصيغة [خط الطول، خط العرض].')
                 coordinate({'lng':point[0],'lat':point[1]})
-    if settings.get('delivery_enabled') and city(branch_city) not in DELIVERY_CITIES:
-        raise db.error(422, 'DELIVERY_CITY_FORBIDDEN', 'التوصيل معتمد للمدن الست فقط في الإطلاق الحالي.')
+    if settings.get('delivery_enabled') and not catalog.delivery_city_eligible({'brand_id': brand_id, 'branch_no': branch_no, 'city': branch_city}):
+        raise db.error(422, 'DELIVERY_CITY_FORBIDDEN', 'التوصيل غير معتمد لهذا الفرع ومدينة البراند.')
 
 
 @router.get('/admin/config')
@@ -250,7 +261,7 @@ def configuration(user=Depends(auth.require_configuration())):
     with db.tx() as conn:
         result = {'brand': conn.execute('SELECT * FROM brands WHERE id=%s',(user['brand_id'],)).fetchone(),
                   'branches': conn.execute('SELECT * FROM branches WHERE brand_id=%s ORDER BY branch_no',(user['brand_id'],)).fetchall(),
-                  'products': conn.execute('SELECT * FROM products WHERE brand_id=%s ORDER BY category,name',(user['brand_id'],)).fetchall(),
+                  'products': catalog.menu_display_order(conn.execute('SELECT * FROM products WHERE brand_id=%s ORDER BY category,name',(user['brand_id'],)).fetchall(), user['brand_id']),
                   'users': conn.execute('SELECT id,username,display_name,role,brand_id,branch_ids,phone,active FROM users WHERE brand_id=%s ORDER BY role,display_name',(user['brand_id'],)).fetchall(),
                   'banners': conn.execute('SELECT * FROM banners WHERE brand_id=%s ORDER BY sort_order,created_at',(user['brand_id'],)).fetchall(),
                   'settings': conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(user['brand_id'],)).fetchone()['settings']}
@@ -294,7 +305,14 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
             name = text(body.get('name',row['name']),200,'اسم الفرع')
             branch_city = text(body.get('city',row['city']),100,'المدينة')
             changes = body.get('settings',{})
-            validate_branch_settings(changes,branch_city)
+            validate_branch_settings(changes,branch_city,brand_id=row['brand_id'],branch_no=row['branch_no'])
+            if 'online_payment_seller' in changes:
+                from . import invoice_profiles
+                if user['role'] != 'owner':
+                    raise db.error(403, 'OWNER_REQUIRED', 'تحديد منشأة الدفع من صلاحيات المالك فقط.')
+                seller = changes['online_payment_seller']
+                if seller is not None and seller not in invoice_profiles.settings(conn, user['brand_id']).get('entities', {}):
+                    raise db.error(422, 'PAYMENT_SELLER_INVALID', 'المنشأة غير موجودة ضمن البراند.')
             settings = row['settings'] | changes
             if 'map_url' in changes and changes['map_url'] is None:
                 settings['map_url_verified'] = False
@@ -306,7 +324,7 @@ def update_branch(record_id: str, body: dict, user=Depends(branch_admin), idem: 
                 settings['location_verified'] = False
             elif 'location' in changes and changes['location'] != row['settings'].get('location') and 'location_verified' not in changes:
                 settings['location_verified'] = False
-            if settings.get('delivery_enabled') and city(branch_city) not in DELIVERY_CITIES:
+            if settings.get('delivery_enabled') and not catalog.delivery_city_eligible(dict(row, city=branch_city)):
                 raise db.error(422,'DELIVERY_CITY_FORBIDDEN','أوقف التوصيل قبل نقل الفرع إلى مدينة غير معتمدة.')
             enabled = any(settings.get(f) for f in ('pickup_enabled','car_enabled','delivery_enabled'))
             if enabled and (not settings.get('ordering_verified') or not settings.get('opening_hours') or not settings.get('payment_methods')):
@@ -327,7 +345,7 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             row = scoped(conn,'products',record_id,user)
             product_scope(row['settings'],user)
             changes = body.get('settings',{})
-            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','image_url','image_asset_id','description','lifecycle','available_branch_ids','print_labels_en'})
+            keys(changes, {'enabled','source_verified','available_cities','unavailable_branch_ids','option_groups','variants','variant_price_matrix','name_en','category_en','description_en','image_url','image_asset_id','description','lifecycle','available_branch_ids','print_labels_en'})
             if 'print_labels_en' in changes:
                 changes['print_labels_en']=print_translations.validate(changes['print_labels_en'])
             if 'lifecycle' in changes and changes['lifecycle'] not in {'draft','active','paused'}:
@@ -365,6 +383,9 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             validate_option_scope(conn,changes.get('option_groups',row['settings'].get('option_groups',[])),user)
             if 'description' in changes:
                 changes['description']=text(changes['description'],2000,'وصف الصنف')
+            for field, maximum in [('name_en',200),('category_en',100),('description_en',2000)]:
+                if field in changes:
+                    changes[field]=text(changes[field],maximum,field)
             settings = row['settings'] | changes
             product_scope(settings,user)
             if settings.get('lifecycle') == 'active' and settings.get('source_verified') is not True:
@@ -373,6 +394,18 @@ def update_product(record_id: str, body: dict, user=Depends(product_admin), idem
             category = text(body.get('category',row['category']),150,'التصنيف')
             price = money(body.get('price_halalas',row['price_halalas']),'سعر الصنف')
             updated = dict(row, name=name, category=category, price_halalas=price, settings=settings)
+            if 'variant_price_matrix' in settings:
+                from .menu_variants import validated
+                try:
+                    validated(updated)
+                except (ValueError, TypeError, KeyError):
+                    raise db.error(422,'PRODUCT_VARIANTS_INVALID','راجع أسعار الأحجام والنكهات والسعر قبل وبعد.') from None
+                if changes.get('source_verified') is True:
+                    auth.require_owner_sms_step_up(conn,user)
+                elif settings.get('owner_approved_digest') != catalog.commercial_digest(updated):
+                    settings['source_verified'] = False
+                    settings['enabled'] = False
+                    settings['lifecycle'] = 'draft'
             if changes.get('source_verified') is True:
                 settings['owner_approved_digest'] = catalog.commercial_digest(updated)
             elif catalog.source_approved(row) and catalog.availability_only_change(row,updated):
@@ -700,7 +733,9 @@ def create_branch(body:dict,user=Depends(owner),idem:str|None=Header(None,alias=
     if not name or not branch_city:
         raise db.error(422,'BRANCH_IDENTITY_REQUIRED','اسم الفرع ومدينته مطلوبان.')
     supplied_settings=body.get('settings',{})
-    validate_branch_settings(supplied_settings,branch_city)
+    if supplied_settings.get('online_payment_seller') is not None:
+        raise db.error(422, 'INITIAL_PAYMENT_SELLER_PENDING', 'اعتمد منشأة الدفع بعد إنشاء الفرع.')
+    validate_branch_settings(supplied_settings,branch_city,brand_id=user['brand_id'],branch_no=branch_no)
     if any(supplied_settings.get(key) for key in ('pickup_enabled','car_enabled','delivery_enabled')):
         raise db.error(422,'INITIAL_BRANCH_DISABLED','أنشئ الفرع متوقفًا ثم راجع بيانات تشغيله قبل التفعيل.')
     with db.tx() as conn:

@@ -25,7 +25,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
-          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'driver_latest_locations', 'driver_location_health', 'orders', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
+          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'driver_latest_locations', 'driver_location_health', 'orders', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
           'first_order_gift_claims', 'custody_events', 'retained_carryovers', 'manager_handovers', 'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
@@ -37,8 +37,11 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations', 'driver_evidence', 'vehicle_reports', 'vehicle_report_events',
           'branch_print_devices', 'branch_print_jobs', 'support_tickets', 'support_ticket_events', 'delivery_photos',
           'accounting_reviews', 'accounting_cases', 'accounting_case_events', 'accounting_case_files', 'accounting_months', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings', 'driver_check_requests',
-          'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache')
-AUTH_TABLES = {'delivery_tracking_links', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+          'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache',
+          'staff_brand_memberships', 'driver_brand_dedications',
+          'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+          'customer_wallets','benefit_order_states','customer_wallet_entries')
+AUTH_TABLES = {'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -67,21 +70,24 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand):
+    if brand and table == 'driver_work_trips':
+        return 'brand_id=%s', (brand,)
+    if brand and table in {'driver_work_trip_orders', 'driver_work_trip_events'}:
+        return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if brand is None:
         return 'TRUE', ()
-    direct = {'delivery_tracking_links', 'driver_location_health', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_online_receipts', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'delivery_tracking_links', 'driver_location_health', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'driver_evidence', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
               'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles', 'driver_check_requests'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
+    if table in {'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+                 'customer_wallets','benefit_order_states','customer_wallet_entries'}:
+        return 'brand_id=%s', (brand,)
     if table == 'app_settings' or table in direct:
         return 'brand_id=%s', (brand,)
-    if table == 'driver_work_trips':
-        return 'brand_id=%s', (brand,)
-    if table in {'driver_work_trip_orders', 'driver_work_trip_events'}:
-        return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
     if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
@@ -263,6 +269,16 @@ def _restored_evidence(conn, archive, manifest):
     return identity_digests, binary_count
 
 
+def migration_manifest():
+    paths = list((db.ROOT / 'migrations').glob('*.sql'))
+    from . import multibrand
+    if multibrand.enabled():
+        multibrand.isolation_guard()
+        paths.extend((db.ROOT / 'app' / 'multibrand_migrations').glob('*.sql'))
+    return [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+            for path in sorted(paths, key=lambda path: path.name)]
+
+
 def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     target_database_id: str | None = None, asset_directory: str | Path | None = None) -> dict:
     """Restore to a NEW isolated test schema; no existing schema is overwritten.
@@ -275,8 +291,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     if not re.fullmatch(r'kps_restore_[a-f0-9]{32}', target_schema):
         raise ValueError('Restore schema must be kps_restore_ plus a new UUID hex value.')
     _restore_target(target_url, target_database_id)
-    expected = [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-                for path in sorted((db.ROOT / 'migrations').glob('*.sql'))]
+    expected = migration_manifest()
     if manifest['migrations'] != expected:
         raise ValueError('Archive migrations do not match this code. Restore with matching code first.')
     destination, files_restored = Path(asset_directory) if asset_directory is not None else None, 0
@@ -302,6 +317,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             # the new isolated restore schema and this transaction.
             conn.execute('ALTER TABLE shifts DISABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users DISABLE TRIGGER register_fleet_vehicle')
+            conn.execute('ALTER TABLE customer_wallet_entries DISABLE TRIGGER wallet_entry_balance')
             for table in manifest['table_order']:
                 column_info = conn.execute(
                     'SELECT column_name,udt_name,is_nullable FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
@@ -330,8 +346,16 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                         sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, row)),
                         sql.SQL(',').join(sql.Placeholder() for _ in row))
                     conn.execute(statement, values)
+            # Validate deferred references/projections before changing trigger
+            # state: PostgreSQL refuses ALTER TABLE with pending FK events on
+            # a populated wallet ledger. A consistent snapshot has no new
+            # benefit delta to materialize here.
+            conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
             conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')
+            conn.execute('ALTER TABLE customer_wallet_entries ENABLE TRIGGER wallet_entry_balance')
+            consent_sequence=conn.execute("SELECT pg_get_serial_sequence('customer_marketing_consents','seq') AS name").fetchone()['name']
+            conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM customer_marketing_consents),0),1),EXISTS(SELECT 1 FROM customer_marketing_consents))",(consent_sequence,))
             # Restores preserve history, never replay physical printing or
             # reactivate device credentials copied from an older snapshot.
             if 'branch_print_devices' in actual:

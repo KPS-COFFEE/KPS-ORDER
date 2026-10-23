@@ -54,6 +54,15 @@ def _ensure_manager_duty(conn, brand_id, branch_id):
     if not table:
         raise db.error(409, 'DELIVERY_DUTY_UNAVAILABLE', 'لا توجد مناوبة توصيل مهيأة لاستقبال الطلبات.')
     # Exact operations schema is shared with the delivery implementation.
+    from . import multibrand
+    if multibrand.enabled():
+        multibrand.isolation_guard()
+        shifts = conn.execute("SELECT s.* FROM shifts s WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' AND s.branch_ids ? %s FOR SHARE", (brand_id,branch_id)).fetchall()
+        for shift in shifts:
+            principal = multibrand.project(conn,conn.execute('SELECT * FROM users WHERE id=%s',(shift['user_id'],)).fetchone(),brand_id)
+            if principal and principal['role'] in ('owner','delivery_manager') and (principal['role']=='owner' or branch_id in principal['branch_ids']):
+                return
+        raise db.error(409, 'DELIVERY_DUTY_UNAVAILABLE', 'خدمة التوصيل مغلقة حاليًا لعدم وجود مناوبة مستلمة.')
     exists = conn.execute("SELECT 1 FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' "
                           "AND s.branch_ids ? %s AND u.brand_id=s.brand_id AND u.active AND u.role IN ('owner','delivery_manager') "
                           "AND (u.role='owner' OR u.branch_ids ? %s) FOR SHARE OF s,u",
@@ -145,6 +154,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
         phone_required=False if delivery_center else user.get('customer_phone_required')
         if phone_required is None:phone_required=auth.customer_phone_required(conn,body.brand_id)
         if delivery_center:
+            if body.gift or body.benefit_code or body.cashback_halalas:
+                raise db.error(422,'CUSTOMER_BENEFIT_IDENTITY_REQUIRED','المزايا والإهداء من حساب العميل الموثق. / Use the verified purchaser account.')
             if body.service != 'delivery':
                 raise db.error(422,'DELIVERY_ONLY','طلب مركز التوصيل مخصص للتوصيل.')
             if not body.customer.phone:
@@ -170,7 +181,10 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             if request and not db.rate_limit(conn,'order-ip:'+(request.client.host if request.client else 'unknown'),200,600):
                 raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
             if delivery_center:delivery_center_scope(conn,user,body.branch_id)
-            quote = catalog.quote_order(conn, body, for_update=True, **({'complimentary':True} if complimentary_order else {}))
+            order_id = db.new_id('order_')
+            quote = catalog.quote_order(conn, body, for_update=True, user=user, order_id=order_id, **({'complimentary':True} if complimentary_order else {}))
+            if not delivery_center:
+                catalog.require_customer_delivery_neighborhood(body)
             if complimentary_order:
                 from . import complimentary
                 quote=complimentary.prepare(quote,body.kind,body.reason,user['id'])
@@ -204,7 +218,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 raise db.error(422,'CUSTOMER_PHONE_REQUIRED','أدخل رقم اتصال صحيحًا قبل الطلب.')
             if phone_required and customer['phone'] != user.get('phone'):
                 raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','تحقق من الرقم الجديد قبل الطلب.')
-            if body.service=='delivery' and phone_required:
+            if body.service=='delivery' and phone_required and not body.gift:
                 address_key='addr_'+hashlib.sha256((user['id']+json.dumps({k:customer.get(k) for k in ('address','neighborhood','location')},sort_keys=True)).encode()).hexdigest()
                 loc=customer.get('location') or {}
                 conn.execute('INSERT INTO customer_addresses(id,customer_id,brand_id,label,address,neighborhood,lat,lng) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET updated_at=now()', (address_key,user['id'],user['brand_id'],customer['neighborhood'],customer['address'],customer['neighborhood'],loc.get('lat'),loc.get('lng')))
@@ -225,6 +239,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             if not delivery_center:
                 gift_phone = first_order_gift.prepare(conn, body, quote, user,
                     (config or {}).get('settings'), for_order=True)
+            from . import gift_orders
+            gift_orders.capture(body,user,customer,quote)
             if user.get('identity_kind') == 'guest':
                 recent=conn.execute("SELECT 1 FROM orders WHERE brand_id=%s AND branch_id=%s AND customer->>'phone'=%s AND snapshot->'items'=%s AND created_at>now()-interval '15 minutes' LIMIT 1",
                                     (body.brand_id,execution_branch_id,customer['phone'],db.json(quote['items']))).fetchone()
@@ -249,7 +265,6 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 quote['channel_commercial'] = channel_commercial.capture(profiles, execution_branch_id, quote, user['id'])
             performance_snapshot = performance.capture_policy(conn, body.brand_id, execution_branch_id,
                                                              settings=(config or {}).get('settings', {}))
-            order_id = db.new_id('order_')
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
                 quote['delivery_operating_day'] = {'date': delivery_day.isoformat(), 'start': '16:00',
@@ -257,15 +272,15 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
             # Allocate the canonical number and insert in one database command.
             # No Python round trip holds the counter before saving the order.
             # These branch fields come from the quote's authoritative SHARE read.
-            prefix = order_numbering.reference_prefix({'city': quote['branch_city'], 'branch_no': quote['branch_no']})
+            prefix = order_numbering.reference_prefix({'city': quote['branch_city'], 'branch_no': quote['branch_no'], 'brand_id': body.brand_id})
             # Prepare the canonical privacy projection before acquiring the
             # branch counter; do not duplicate routing/privacy rules in SQL.
             public = customer_order_view({'snapshot': quote, 'customer': customer, 'branch_id': execution_branch_id})
             gift_cte, gift_params = first_order_gift.claim_cte(gift_phone, (quote.get('first_order_gift') or {}).get('version'))
             ctes = ('next_number AS (' + order_numbering.NEXT_NUMBER_SQL + '), created_order AS ('
                                'INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,payment_status,'
-                               'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
-                               "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
+                               'subtotal_halalas,delivery_fee_halalas,total_halalas,discount_halalas,snapshot,customer,performance_snapshot,delivery_operational_date) '
+                               "SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,jsonb_set(%s::jsonb,'{order_reference}',"
                                "to_jsonb(%s::text || lpad(last_number::text,greatest(4,length(last_number::text)),'0'))),"
                                '%s,%s,%s FROM next_number RETURNING *), '
                     'created_event AS (INSERT INTO order_events(id,order_id,actor_id,event_type,details) '
@@ -285,17 +300,14 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                                 'pending' if body.service == 'delivery' else 'not_applicable', body.payment_method,
                                 'not_required' if complimentary_order else 'unpaid',
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
+                                quote['discount_halalas'],
                                 db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day,
                                 db.new_id('evt_'), user['id'], db.json({'service': body.service}),
                                 db.new_id('audit_'), user['id'], db.json({'branch_id': execution_branch_id,
                                     'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
                                     'total_halalas': quote['total_halalas']}),
                                 *gift_params, public['branch_id'], db.json(public['customer']), db.json(public['snapshot'])))
-        intent = body.model_dump()
-        for field in ('expected_gift', 'expected_gift_version'):
-            if intent[field] is None:
-                intent.pop(field)
-        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', intent, perform,
+        result = db.idempotent(conn, user['id'], idempotency_key, 'orders.delivery_center' if delivery_center else 'orders.create', catalog.order_request_payload(body), perform,
                                pipeline_writes=True, defer_atomic_response=True,encoded_response=request is not None)
     # The database acknowledges COMMIT before the saved JSON reaches HTTP.
     # Replays use the same durable JSON, with no new counter/event/financial write.

@@ -92,13 +92,15 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 def public_user(user: dict, conn=None) -> dict:
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials', 'extra_permissions')}
-    output['employee_sms_email_retired'] = staff_email_retired(user.get('brand_id','kps'), conn=conn)
+    output['employee_sms_email_retired'] = staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     if user.get('_morning_manager_context'):
         output['delivery_context'] = user['_morning_manager_context']
     output['available_permissions'] = sorted(employee_permissions.eligible(user.get('role')) | employee_permissions.grantable(user.get('role')))
     output['base_permissions'] = sorted(employee_permissions.eligible(user.get('role')))
     output['grantable_permissions'] = sorted(employee_permissions.grantable(user.get('role')))
+    if 'operations_brands' in user:
+        output['operations_brands'] = user['operations_brands']
     return output
 
 
@@ -138,12 +140,12 @@ def session_context(request):
         raise db.error(400,'SESSION_CONTEXT_INVALID','اختر سياق الدخول الصحيح. / Invalid session context.')
     if path.startswith('/api/fiscal/orders/') and path.endswith('/documents'):
         return context
-    if (path.startswith(('/api/auth/otp/','/api/customer/profile','/api/customer/addresses')) or path in {'/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
+    if (path.startswith(('/api/auth/otp/','/api/customer/')) or path in {'/api/quote','/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
         return 'customer'
     if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
-            '/api/reports','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
+            '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
             or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
         return 'work'
@@ -173,10 +175,15 @@ def _find_session(conn, request: Request):
             return None
         user['_session_cookie_name']=cookie_name
         user['_csrf_cookie_name']=csrf_name
+        from .multibrand import request_user
+        user = request_user(conn, request, user)
         from .portals import enforce_role
         enforce_role(request, user)
         from .storefront_scope import require_brand
         require_brand(user["brand_id"])
+        from . import multibrand
+        if multibrand.enabled() and user['role'] != 'customer':
+            user['operations_brands'] = multibrand.available(conn, user)
     return user
 
 
@@ -256,6 +263,14 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
             raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
         # An ordinary work login must never double as sensitive owner proof.
         owner_step_up = False
+    from . import multibrand
+    if multibrand.enabled() and user.get('role') != 'customer':
+        selected = multibrand.operation_brand.get()
+        if selected:
+            user = multibrand.project(conn, user, selected)
+            if not user:
+                raise db.error(403, 'OPERATIONS_BRAND_FORBIDDEN', 'البراند غير مخول لحسابك.')
+        user = dict(user, operations_brands=multibrand.available(conn, user))
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a
@@ -451,6 +466,15 @@ def _provider_ready(name):
         raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'التحقق بالجوال غير مفعّل بعد.')
 
 
+def _customer_provider_ready(provider, brand):
+    if brand == 'enbishan':
+        if provider != 'tawked':
+            raise db.error(503, 'OTP_PROVIDER_UNAVAILABLE', 'مزود عنبيشن غير معتمد.')
+        sms_verification.brand_ready(brand)
+    else:
+        _provider_ready(provider)
+
+
 def _otp_test_access(conn, brand, channel, request):
     # Dedicated work routes let an owner certify delivery without borrowing a
     # customer credential or ever enabling an active customer login flow.
@@ -506,7 +530,7 @@ def request_otp(body: OTPRequestBody, request: Request):
             guest=current_user(request)
         else:guest=None
         provider = _sms_provider(conn, body.brand_id)
-        _provider_ready(provider)
+        _customer_provider_ready(provider, body.brand_id)
         _otp_channel_ready(conn, body.brand_id, channel)
         _otp_test_access(conn, body.brand_id, channel, request)
         if provider == 'tawked' and channel != 'sms':
@@ -519,7 +543,7 @@ def request_otp(body: OTPRequestBody, request: Request):
     challenge_id = db.new_id('owner_probe_' if owner_probe else 'otp_')
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     if provider == 'tawked':
-        reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang)
+        reference, provider_expiry = sms_verification.start(phone, challenge_id, body.lang, **({'brand': body.brand_id} if body.brand_id == 'enbishan' else {}))
         expires_at = min(expires_at, provider_expiry)
     else:
         result = _provider_post('Verifications', {'To': phone, 'Channel': channel})
@@ -576,10 +600,10 @@ def verify_otp(body: OTPVerifyBody, request: Request, response: Response):
         provider = challenge['provider_name']
         if _sms_provider(conn, challenge['brand_id']) != provider:
             raise db.error(409, 'OTP_PROVIDER_CHANGED', 'تغير مزود التحقق. اطلب رمزًا جديدًا.')
-        _provider_ready(provider)
+        _customer_provider_ready(provider, challenge['brand_id'])
     # Check the stored provider reference, never a client supplied phone/reference.
     if provider == 'tawked':
-        approved = channel == 'sms' and sms_verification.check(challenge['provider_reference'], body.code)
+        approved = channel == 'sms' and sms_verification.check(challenge['provider_reference'], body.code, **({'brand': challenge['brand_id']} if challenge['brand_id'] == 'enbishan' else {}))
     else:
         result = _provider_post('VerificationCheck', {'VerificationSid': challenge['provider_reference'], 'Code': body.code})
         approved = result.get('status') == 'approved' and result.get('to') == challenge['phone'] and result.get('channel', channel) == channel
@@ -705,7 +729,7 @@ def channel_readiness(conn, brand):
         if channel in {'sms','whatsapp'}:
             try:
                 provider = _selected_sms_provider(channels.get('sms') or {})
-                _provider_ready(provider)
+                _customer_provider_ready(provider, brand)
                 configured = os.getenv('OTP_CHANNEL','sms') == channel and (provider != 'tawked' or channel == 'sms')
             except Exception:
                 configured = False
@@ -1197,7 +1221,7 @@ def require_owner_sms_step_up(conn,user):
 
 
 def require_owner_step_up(conn,user):
-    if staff_email_retired(user.get('brand_id','kps'), conn=conn):
+    if staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn):
         # A timestamp created by a pre-cutover password/email proof is not SMS.
         # Proof must be bound to this owner, this exact live session and the
         # current registered mobile, with a distinct sensitive challenge.

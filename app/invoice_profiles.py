@@ -69,7 +69,7 @@ def capture(conn, brand_id, branch_id, *, brand_settings=None, channel=None):
     stat = BRANCH_MATCHES_PATH.stat()
     version = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
     address = _branch_addresses(BRANCH_MATCHES_PATH, version).get((brand_id, branch_id), '')
-    return {'entity_id': entity_id, **entity, 'address': address,
+    return {'entity_id': entity_id, **entity, 'address': address if brand_id == 'kps' else entity.get('address', ''),
             'issuance_status': 'not_enabled', 'prices_include_vat': bool(entity.get('vat_enabled'))}
 
 
@@ -78,6 +78,7 @@ class Entity(BaseModel):
     legal_name: str = Field(min_length=1, max_length=120)
     vat_enabled: StrictBool
     vat_number: str = Field(default='', max_length=15)
+    address: str = Field(default='', max_length=300)
 
 
 class ProfileBody(BaseModel):

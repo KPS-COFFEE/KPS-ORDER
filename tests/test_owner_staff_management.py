@@ -126,7 +126,6 @@ def test_owner_employee_actions_in_browser(live_app,chromium_browser):
         expect(page.locator(f'[data-action=edit-staff][data-id="{target["id"]}"]')).to_be_visible()
         assert not errors
     finally:context.close()
-
 @pytest.mark.postgres
 @pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Isolated Chromium only')
 def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
@@ -172,4 +171,3 @@ def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
         expect(page.locator('#modal .staff-branch-options input:checked')).to_have_count(2)
         assert not errors
     finally:context.close()
-

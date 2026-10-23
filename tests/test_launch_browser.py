@@ -208,7 +208,7 @@ def test_customer_geolocation_ranks_eligible_branches_filters_cart_delivery_and_
         # Required location does not force selection or hide manual controls.
         page.locator('#branch-select').select_option('kps-branch-1')
         page.locator('input[name=service][value=pickup]').check()
-        page.locator('.product-card[data-product-id="kps-01"] .product-image-button').click()
+        page.locator('.product-card[data-product-id="kps-01"] .product-content h3 button').click()
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
         expect(page.locator('#nearest-branches .nearest-branch-card[data-branch-id="kps-branch-3"]')).to_have_count(0)

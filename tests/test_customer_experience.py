@@ -9,12 +9,14 @@ from tests.test_tawked_otp import setup_provider
 
 @pytest.fixture
 def required(client):
+    client.headers['X-KPS-Context']='customer'
     with db.tx() as c:
         c.execute("UPDATE app_settings SET settings=settings||'{\"customer_phone_required\":true}'::jsonb WHERE brand_id='kps'")
     client.headers['X-KPS-Context']='customer'
     return client
 
 def verify(client,monkeypatch,phone='0500000000',name='TEST customer'):
+    client.headers['X-KPS-Context']='customer'
     setup_provider(monkeypatch)
     client.headers['X-KPS-Context']='customer'
     r=client.post('/api/auth/otp/request',json={'phone':phone})

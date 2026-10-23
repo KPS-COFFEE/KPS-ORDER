@@ -9,7 +9,7 @@
   <script src="/assets/appearance.js?v=1"></script>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/assets/appearance.css?v=1">
-  <link rel="stylesheet" href="/customer.css?v=progress-photo-20261018">
+  <link rel="stylesheet" href="/customer.css?v=20261023-card-neighborhood-progress-photo-20261018">
   <link rel="stylesheet" href="/assets/customer-entry.css?v=20261022-auto-location">
   <link rel="stylesheet" href="/assets/customer-map.css?v=20261020">
   <script defer src="/assets/customer-map.js?v=20261021-precision-20261020"></script>
@@ -19,8 +19,13 @@
   <link rel="stylesheet" href="/assets/kps-gift-creative.css?v=20261022-product-shimmer">
   <script defer src="/assets/kps-gift-creative.js?v=20261022-product-shimmer"></script>
   <!-- KPS_CONTACT_END -->
-  <script defer src="/customer.js?v=20261022-map-link-gps"></script>
+  <script defer src="/assets/customer-extras.js?v=1"></script>
+  <script defer src="/assets/menu-variants.js?v=1"></script>
+  <script defer src="/customer.js?v=20261023-card-neighborhood"></script>
   <script defer src="/assets/car-color.js?v=1"></script>
+  <link rel="stylesheet" href="/assets/saudi-plate.css?v=1">
+  <script defer src="/assets/saudi-plate.js?v=1"></script>
+  <script defer src="/assets/customer-car-plate.js?v=1"></script>
   <!-- KPS_CONTACT_START -->
   <!-- Link preview only; no storefront advertisement. -->
   <meta property="og:type" content="website">
@@ -74,7 +79,7 @@
     <div id="service-notice" class="inline-note" role="status"></div>
     <div class="branch-location-tools"><div class="row wrap"><button id="locate-button" class="button secondary" type="button" data-i18n="use_my_current_location">استخدام موقعي الحالي</button><button id="manual-location-button" class="button quiet" type="button" aria-controls="manual-location" aria-expanded="false" data-i18n="enter_location_manually">لصق رابط خرائط جوجل</button><button id="clear-location" class="button quiet" type="button" hidden data-i18n="clear_selected_location">إلغاء الموقع المحدد</button></div><p id="location-state" class="small muted" role="status" data-i18n="location_is_optional_for_nearby_suggestions_you_can_choose_a_city">حدد موقع التوصيل من الخريطة أو موقعك الحالي، أو الصق رابط خرائط جوجل. للاستلام، اختر الفرع.</p><div id="manual-location" hidden><label class="field"><span data-i18n="google_maps_link">رابط Google Maps </span><span class="muted" data-i18n="optional">اختياري</span><input id="map-url" type="url" dir="ltr" placeholder="https://www.google.com/maps/…"></label><p class="small muted" data-i18n="map_link_auto_hint">الصق رابط موقعك؛ نحدده ونحفظه تلقائيًا.</p><button id="parse-map-url" class="button quiet" type="button" data-i18n="use_link_s_map_pin">إعادة التحقق من الرابط</button><details><summary data-i18n="coordinates_optional">الإحداثيات — اختياري</summary><div class="form-grid"><label class="field"><span data-i18n="latitude">خط العرض</span><input id="latitude" type="number" min="-90" max="90" step="any" inputmode="decimal" dir="ltr"></label><label class="field"><span data-i18n="longitude">خط الطول</span><input id="longitude" type="number" min="-180" max="180" step="any" inputmode="decimal" dir="ltr"></label><button id="save-location" class="button secondary" type="button" data-i18n="save_entered_location">اعتماد الموقع المدخل</button></div></details></div></div>
     <section id="nearest-panel" class="nearest-panel" aria-labelledby="nearest-title" hidden><h3 id="nearest-title" data-i18n="nearest_eligible_branches">الفروع المؤهلة الأقرب إليك</h3><p id="nearest-state" class="small muted" role="status"></p><div id="nearest-branches" class="nearest-branches"></div><details id="nearest-excluded" hidden><summary id="nearest-excluded-title" data-i18n="branches_ineligible_for_this_selection">فروع غير مؤهلة للاختيار الحالي</summary><ul id="nearest-excluded-list"></ul></details></section>
-    <div id="location-fields" class="location-fields" hidden><label class="field"><span data-i18n="neighborhood">الحي </span><span class="muted" data-i18n="optional">اختياري</span><input id="neighborhood" autocomplete="address-level3" maxlength="120" placeholder="اسم الحي" data-i18n-placeholder="neighborhood_name"></label><label class="field"><span data-i18n="address_description">وصف العنوان</span><span class="muted" data-i18n="optional">اختياري</span><input id="address" autocomplete="street-address" maxlength="500" placeholder="الحي، الشارع، رقم المبنى وأي علامة واضحة" data-i18n-placeholder="neighborhood_street_building_number_and_a_clear_landmark"></label></div>
+    <div id="location-fields" class="location-fields" hidden><label class="field"><span data-i18n="neighborhood">الحي </span><span class="muted" data-i18n="required">مطلوب</span><input id="neighborhood" autocomplete="address-level3" maxlength="120" placeholder="اسم الحي" data-i18n-placeholder="neighborhood_name"></label><label class="field"><span data-i18n="address_description">وصف العنوان</span><span class="muted" data-i18n="optional">اختياري</span><input id="address" autocomplete="street-address" maxlength="500" placeholder="الحي، الشارع، رقم المبنى وأي علامة واضحة" data-i18n-placeholder="neighborhood_street_building_number_and_a_clear_landmark"></label></div>
     <div id="car-fields" class="form-grid car-fields" hidden><label class="field"><span data-i18n="car_model">نوع السيارة</span><input id="car-model" maxlength="60" autocomplete="off" placeholder="نوع وموديل السيارة" data-i18n-placeholder="car_make_and_model"></label><label class="field"><span data-i18n="car_color">لون السيارة</span><input id="car-color" maxlength="40" autocomplete="off"></label><label class="field"><span data-i18n="plate_number">رقم اللوحة</span><input id="car-plate" maxlength="30" autocomplete="off"></label></div>
   </section>
   <div class="store-layout">

@@ -1,0 +1,141 @@
+{
+  "brand_id": "enbishan",
+  "owner_decision_at": "2026-10-20T10:29:27+03:00",
+  "latest_operating_decision_date": "2026-10-22",
+  "status": "approved_configuration_not_applied_to_production",
+  "live_activation": false,
+  "service_defaults": {
+    "delivery": true,
+    "pickup": false,
+    "car_pickup": false
+  },
+  "contact_phone": "0509895855",
+  "contact_phone_e164": "+966509895855",
+  "social_handle": "Enbishan",
+  "social_platforms": [
+    "instagram",
+    "snapchat",
+    "tiktok"
+  ],
+  "whatsapp_phone_e164": "+966509895855",
+  "policy_source": "app/customer_policy_content.py",
+  "policy_reference_brand": "kps",
+  "policy_content_changes": "Brand display name and brand contact links only; same terms, privacy, refunds and legal operator as KPS by owner instruction.",
+  "operator": {
+    "name": "مؤسسة ريم فهاد لافي الحربي لتقديم الوجبات",
+    "commercial_registration": "7037181620",
+    "vat_number": "311887526600003",
+    "source": "KPS customer_policy_content constants; same operator authorized by owner"
+  },
+  "invoice": {
+    "reuse_existing_kps_renderer": true,
+    "brand_id": "enbishan",
+    "separate_brand_records": true,
+    "copy_kps_customer_data": false,
+    "explicit_seller_snapshot": "app.fiscal.SELLER",
+    "vat_enabled": true,
+    "preserve_existing_owner_profiles": true,
+    "preparation_only": true
+  },
+  "branches": [
+    {
+      "branch_no": 1,
+      "name": "عنبيشن 1",
+      "name_en": "Enbishan 1",
+      "approved_for_delivery_configuration": true,
+      "maps_url": "https://maps.app.goo.gl/gDAFm844VZwn42geA?g_st=ic",
+      "latitude": 28.4080268,
+      "longitude": 45.9566906,
+      "coordinate_evidence": "HTTP redirect from owner-supplied Google Maps link; q coordinates",
+      "production_enabled": false
+    },
+    {
+      "branch_no": 2,
+      "name": "عنبيشن 2",
+      "name_en": "Enbishan 2",
+      "approved_for_delivery_configuration": true,
+      "maps_url": "https://maps.app.goo.gl/Bz816uXzUbacS5jC9?g_st=ic",
+      "latitude": 28.3969863,
+      "longitude": 45.975683,
+      "coordinate_evidence": "HTTP redirect from owner-supplied Google Maps link; q coordinates",
+      "production_enabled": false
+    },
+    {
+      "branch_no": 3,
+      "name": "عنبيشن 3",
+      "name_en": "Enbishan 3",
+      "approved_for_delivery_configuration": true,
+      "maps_url": "https://maps.app.goo.gl/3a47HiRfz2YbY2ra9?g_st=ic",
+      "latitude": 26.4071114,
+      "longitude": 50.0594619,
+      "coordinate_evidence": "HTTP redirect from owner-supplied Google Maps link; q coordinates",
+      "production_enabled": false
+    },
+    {
+      "branch_no": 4,
+      "name": "عنبيشن 4",
+      "name_en": "Enbishan 4",
+      "approved_for_delivery_configuration": true,
+      "maps_url": "https://maps.app.goo.gl/8mGqSTtCSgAAojkK9?g_st=ic",
+      "latitude": 28.3122998,
+      "longitude": 46.1233859,
+      "coordinate_evidence": "HTTP redirect from owner-supplied Google Maps link; q coordinates",
+      "production_enabled": false
+    }
+  ],
+  "remaining_operational_inputs": [
+    "review branch-specific coverage against approved map locations",
+    "select source KPS branch only where reviewed KPS operating defaults differ",
+    "provider approval and explicit live activation remain separate"
+  ],
+  "safety": {
+    "production_data_unchanged": true,
+    "real_sms_enabled": false,
+    "real_payment_enabled": false
+  },
+  "primary_domain": "enbishan.com",
+  "infrastructure": {
+    "reuse_existing_kps_render_service": true,
+    "reuse_existing_postgresql_database": true,
+    "separate_backend": false,
+    "separate_admin_panel": false,
+    "brand_scoped_customers_orders_addresses_balances": true
+  },
+  "operating_defaults": {
+    "reference_brand": "kps",
+    "fields": [
+      "delivery_fee_halalas",
+      "minimum_order_halalas"
+    ],
+    "copy_mode": "initial_independent_snapshot_preserve_owner_edits",
+    "owner_editable_per_branch": true,
+    "preparation_module": "app/enbishan_operations_preparation.py",
+    "apply_via": "existing brand-scoped owner branch administration",
+    "no_live_cross_brand_link": true
+  },
+  "delivery_schedule": {
+    "timezone": "Asia/Riyadh",
+    "evening": {"start": "15:00", "end": "03:00", "days": [0,1,2,3,4,5,6], "enabled_after_authorized_activation": true},
+    "morning": {"start": null, "end": null, "enabled": false, "owner_times_required_before_enabling": true},
+    "same_independent_rows_for_opening_and_delivery_hours": true,
+    "preserve_existing_owner_edits": true,
+    "kps_hours_unchanged": true
+  },
+  "coverage_snapshot": {
+    "reference_brand": "kps",
+    "approved_cities": ["حفر الباطن", "القيصومة"],
+    "copy_city_coverage": true,
+    "matching_city_required": true,
+    "different_source_values_require_explicit_selection": true,
+    "independent_owner_editable_copy": true,
+    "does_not_enable_any_branch": true
+  },
+  "sms_activation": {"sender": "ENBISHAN", "provider": "tawked", "provider_approval": "pending", "real_sms_enabled": false},
+  "customer_layout": {
+    "beverages_last": true,
+    "beverages_last_surfaces": ["customer_catalog", "delivery_manager_catalog", "owner_catalog"],
+    "reference_brand": "kps",
+    "same_card_and_category_ordering_controls": true,
+    "identity": "Enbishan original logo and colors"
+  }
+}

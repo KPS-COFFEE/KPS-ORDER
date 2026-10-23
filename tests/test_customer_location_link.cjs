@@ -30,16 +30,18 @@ async function main(){for(const lang of ['ar','en']){
   assert.equal(requests,1);assert.equal(c.state.location.lat,pin.lat);assert.equal(e('map-url').value,link);
   assert.match(e('map-link-status').textContent,/✓/);assert.equal(e('parse-map-url').disabled,false);
   await c.resolveMapLink();assert.equal(requests,1,'unchanged successful link is not fetched again');
-  c.state.branchId='b1';c.persistLocationDraft();
+  c.state.branchId='b1';e('neighborhood').value='حي اختبار';e('address').value='مدخل اختياري';c.persistLocationDraft();
   const draft=c.sessionStorage.data;const reload=setup(lang,draft);reload.ctx.state.locationDraftRestored=false;
   reload.ctx.persistLocationDraft();assert.ok(reload.ctx.sessionStorage.getItem('draft:kps'),'startup must not delete the draft before restoring');
   assert.equal(reload.ctx.restoreLocationDraft(),true);assert.equal(reload.ctx.state.location.lng,pin.lng);assert.equal(reload.ctx.state.branchId,'b1');
   assert.equal(reload.element('map-url').value,link);
+  assert.equal(reload.element('neighborhood').value,'حي اختبار');assert.equal(reload.element('address').value,'مدخل اختياري');
   c.api=async()=>({user:{id:'customer-A',role:'customer',brand_id:'kps',phone:'synthetic',display_name:'Test'},csrf_token:'synthetic',customer_verified:true});
   await c.verifyOTP({preventDefault(){}});
   assert.equal(JSON.parse(c.sessionStorage.getItem('draft:kps')).owner,'customer-A','OTP binds the current tab draft to its customer');
   const other=setup(lang,c.sessionStorage.data,{id:'customer-B',role:'customer',brand_id:'kps'});
   assert.equal(other.ctx.restoreLocationDraft(),false);assert.equal(other.ctx.state.location,null);
+  assert.equal(other.element('neighborhood').value,'');assert.equal(other.element('address').value,'');
   e('clear-location').listeners.click();assert.equal(c.sessionStorage.getItem('draft:kps'),null);assert.equal(e('map-url').value,'');
   const bad=setup(lang);bad.element('map-url').value=link;bad.ctx.api=async()=>({location:{lat:999,lng:46}});
   assert.equal(await bad.ctx.resolveMapLink(),false);assert.equal(bad.ctx.state.location,null);assert.equal(bad.ctx.sessionStorage.getItem('draft:kps'),null);
@@ -53,6 +55,10 @@ async function main(){for(const lang of ['ar','en']){
   second({location:{lat:28.6,lng:46.2}});await fresh;first({location:pin});await old;assert.equal(race.ctx.state.location.lat,28.6);
   const expired=setup(lang,{'draft:kps':JSON.stringify({location:pin,owner:null,savedAt:Date.now()-9*60*60*1000})});
   assert.equal(expired.ctx.restoreLocationDraft(),false);
+  const legacy=setup(lang,{'draft:kps':JSON.stringify({location:pin,owner:null,savedAt:Date.now()})});
+  assert.equal(legacy.ctx.restoreLocationDraft(),true);assert.equal(legacy.element('neighborhood').value,'');
+  const oversized=setup(lang,{'draft:kps':JSON.stringify({location:pin,owner:null,savedAt:Date.now(),neighborhood:'x'.repeat(121),address:'x'.repeat(501)})});
+  assert.equal(oversized.ctx.restoreLocationDraft(),true);assert.equal(oversized.element('neighborhood').value,'');assert.equal(oversized.element('address').value,'');
   // Run the shipped standalone GPS listener: a later location action wins even
   // if the device delivers its old success or error callback afterwards.
   const position={coords:{latitude:pin.lat,longitude:pin.lng}};

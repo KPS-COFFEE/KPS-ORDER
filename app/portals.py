@@ -6,6 +6,7 @@ from . import db
 
 PORTAL_ROLES = {
     'order.kps.sa': frozenset({'customer'}),
+    'order.enbishan.com': frozenset({'customer'}),
     'admin.kps.sa': frozenset({'owner', 'admin'}),
     'staff.kps.sa': frozenset({'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}),
 }
@@ -45,7 +46,7 @@ class PortalBoundaryMiddleware:
         if path.startswith('/api/') and request.method not in {'GET', 'HEAD', 'OPTIONS'}:
             # A global allowed-origin list is insufficient between these portals.
             blocked = request.headers.get('origin', '').rstrip('/') != 'https://' + host
-        if host == 'order.kps.sa':
+        if PORTAL_ROLES[host] == frozenset({'customer'}):
             blocked = blocked or path in {'/ops', '/ops.html', '/ops.js'} or path.startswith('/api/identity/staff/') or path == '/api/auth/login'
         else:
             blocked = blocked or path.startswith('/api/auth/otp/') or path == '/api/identity/guest'

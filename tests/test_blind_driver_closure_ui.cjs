@@ -2,19 +2,23 @@ const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync('public/ops.js','utf8');
 const floatHelpers=source.slice(source.indexOf('  function fixedFloatMarkup('),source.indexOf('  async function floatRegister('));
 const identityHelpers=source.slice(source.indexOf('  function driverClosureStatus('),source.indexOf('  function orderLabel('));
-const helper=identityHelpers+floatHelpers+source.slice(source.indexOf('  function terminalComparison('),source.indexOf('  async function shiftDetail('));
+// Execute the shipped dependency too; a stub would hide odometer regressions.
+const odometerHelper=source.slice(source.indexOf('  function currentOdometer('),source.indexOf('  const driverLocation='));
+assert.ok(odometerHelper.startsWith('  function currentOdometer('));
+const helper=identityHelpers+floatHelpers+odometerHelper+source.slice(source.indexOf('  function terminalComparison('),source.indexOf('  async function shiftDetail('));
 (async()=>{
  for(const lang of ['ar','en']) for(const float of [0,20000,80000]){
-  let markup='',submit,sent;const elements=new Map();
+  let markup='',submit,sent,inspectionMinimum;const elements=new Map();
   const element=selector=>{if(!elements.has(selector))elements.set(selector,{value:'0',textContent:'',addEventListener(){}});return elements.get(selector)};
   const ctx={state:{user:{id:'driver',role:'driver'}},tr:(ar,en)=>lang==='ar'?ar:en,esc:String,num:String,money:String,datetime:String,dataItem:(k,v)=>`${k}: ${v}`,shiftLabel:()=> 'D1',statusName:String,
    api:async()=>({draft:null}),people:async()=>({closure_manager_shifts:[{id:'m',user_id:'manager',display_name:'Manager'}]}),
-   notice:String,amountField:(label,name)=>`<label>${label}<input name="${name}"></label>`,inspectionFields:()=>'<section>Vehicle inspection</section>',inspectionValue:()=>({odometer_km:100}),
+   notice:String,amountField:(label,name)=>`<label>${label}<input name="${name}"></label>`,inspectionFields:(phase,min)=>{inspectionMinimum=min;return '<section>Vehicle inspection</section>';},inspectionValue:()=>({odometer_km:100}),
    check:(label,name)=>`<input type="checkbox" name="${name}">${label}`,formEnd:()=>'<p class="form-error"></p><button type="submit">Submit</button>',
    modal:(title,html,callback)=>{markup=html;if(callback)submit=callback;},$:element,closeModal(){},loadPage:async()=>{},
    mutation:async(path,body)=>{sent={path,body};return{}},cents:v=>{if(!/^\d+(\.\d{1,2})?$/.test(v))throw Error('Invalid amount');return Math.round(Number(v)*100)}};
   vm.createContext(ctx);vm.runInContext(helper,ctx);
-  await ctx.driverBlindClosure({shift:{id:'s',user_id:'driver',kind:'driver',status:'closing',manager_shift_id:'m',permanent_float:{amount:float}}});
+  await ctx.driverBlindClosure({shift:{id:'s',user_id:'driver',kind:'driver',status:'closing',manager_shift_id:'m',permanent_float:{amount:float},vehicle_log:{start:{odometer_km:90},refuels:[{odometer_km:100}]}}});
+  assert.equal(inspectionMinimum,100);
   assert.equal((markup.match(/<input name=/g)||[]).length,2);
   assert.equal(element('[name=counted]').value,'');assert.equal(element('[name=terminal_total]').value,'');
   for(const label of ['المتوقع','الفرق','Net cash','Expected','Difference','Collections'])assert.ok(!markup.includes(label),label);

@@ -33,6 +33,14 @@ FINAL_MENU_MANIFEST_SHA256 = '57d67963b0ac752a179ffe60ce25f81fe06ab1b6c19a161769
 KHALIYA_SOURCES = {'classic': 'kps-34', 'pecan': 'kps-33'}
 
 
+def menu_display_order(products, brand_id):
+    """Keep Enbishan beverages last, preserving every other relative position."""
+    if brand_id != 'enbishan':
+        return products
+    beverages = {'المشروبات', 'مشروبات', 'beverages', 'beverage', 'drinks', 'المشروبات - beverage'}
+    return sorted(products, key=lambda product: str(product.get('category') or '').strip().casefold() in beverages)
+
+
 def is_khaliya(product):
     return product['brand_id'] == 'kps' and product['id'] in KHALIYA_SOURCES.values()
 
@@ -59,9 +67,12 @@ def customer_quote_view(quote):
 
 def commercial_snapshot(product: dict) -> dict:
     settings = product['settings']
-    return {**{key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')},
+    result = {**{key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')},
             'source_id': settings.get('source_id', product['id']),
             'option_groups': settings.get('option_groups') or [], 'variants': settings.get('variants') or []}
+    if 'variant_price_matrix' in settings:
+        result['variant_price_matrix'] = settings['variant_price_matrix']
+    return result
 
 
 def commercial_digest(product: dict) -> str:
@@ -72,6 +83,8 @@ def source_approved(product: dict) -> bool:
     settings = product['settings']
     if settings.get('source_verified') is not True:
         return False
+    if 'variant_price_matrix' in settings:
+        return settings.get('owner_approved_digest') == commercial_digest(product)
     approval = settings.get('menu_approval')
     # Legacy explicit owner approvals and other brands keep their existing path.
     if not approval:
@@ -188,18 +201,32 @@ def _minute(value):
     return hour * 60 + minute
 
 
+def delivery_city_eligible(branch):
+    """Owner-approved Enbishan locations; KPS city policy remains unchanged."""
+    city_name = normalize_city(branch.get('city', ''))
+    if branch.get('brand_id') == 'enbishan':
+        approved = {1: 'حفر الباطن', 2: 'حفر الباطن', 3: 'الدمام', 4: 'القيصومة'}
+        number = branch.get('branch_no')
+        return type(number) is int and approved.get(number) == city_name
+    return city_name in DELIVERY_CITIES
+
+
 def branch_service(branch: dict, service: str, now=None, brand_settings=None) -> tuple[bool, str | None, str | None]:
     now = now or service_hours.now_riyadh()
     settings = branch['settings']
     service_key = 'car_pickup' if service == 'car' else service
-    if (brand_settings or {}).get('services', {}).get(service_key, True) is not True:
+    from .branch_payment_policy import required, blockers
+    online = service in {'pickup','car'} and brand_settings is not None and required(branch['brand_id'], brand_settings)
+    if (brand_settings or {}).get('services', {}).get(service_key, not online) is not True:
         return False, 'BRAND_SERVICE_DISABLED', 'هذه الخدمة موقوفة من إدارة البراند.'
     if settings.get('active', True) is not True:
         return False, 'BRANCH_DISABLED', 'الفرع متوقف عن استقبال الطلبات الجديدة.'
-    if service == 'delivery' and normalize_city(branch['city']) not in DELIVERY_CITIES:
+    if service == 'delivery' and not delivery_city_eligible(branch):
         return False, 'DELIVERY_CITY_NOT_ELIGIBLE', 'هذا الفرع غير مشمول بخدمة التوصيل حاليًا.'
     if settings.get(service + '_enabled') is not True:
         return False, 'SERVICE_DISABLED', 'هذه الخدمة غير مفعلة لهذا الفرع.'
+    if online and blockers(branch):
+        return False, 'BRANCH_PAYMENT_NOT_READY', 'الدفع الإلكتروني لهذه الخدمة ينتظر استكمال الاعتماد والتفعيل.'
     if not (settings.get('operational_data_verified') is True or settings.get('ordering_verified') is True):
         return False, 'BRANCH_CONFIGURATION_UNVERIFIED', 'بيانات تشغيل هذا الفرع لم تُعتمد بعد.'
     if not settings.get('opening_hours'):
@@ -351,6 +378,20 @@ def public_product(product: dict, branch=None, service=None) -> dict:
     available, reason = product_availability(product, branch, service=service)
     result = {key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')}
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
+    if product['brand_id'] == 'enbishan':
+        from .enbishan_menu_assets import valid_bundled
+        result['variant_images'] = [entry for entry in settings.get('variant_images', [])
+                                    if isinstance(entry, dict) and valid_bundled(entry.get('image_url'))]
+    if 'variant_price_matrix' in settings:
+        from .menu_variants import validated
+        try:
+            rows = validated(product)
+            result['variant_price_matrix'] = [r.model_dump(exclude_none=True) for r in rows]
+        except (ValueError, TypeError, KeyError):
+            available, reason = False, 'أسعار أحجام ونكهات الصنف بحاجة إلى مراجعة الإدارة.'
+    for field in ('name_en', 'category_en', 'description_en'):
+        if isinstance(settings.get(field), str):
+            result[field] = settings[field]
     groups = []
     for group in settings.get('option_groups') or []:
         values = []
@@ -382,7 +423,7 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
         branch = branch_query.fetchone() if branch_query else None
         if branch_id and not branch:
             raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود.')
-        products = products_query.fetchall()
+        products = menu_display_order(products_query.fetchall(), brand_id)
         preferences = preferences_query.fetchone()
         target = khaliya_branch(conn) if branch and brand_id == 'kps' and service == 'delivery' and normalize_city(branch['city']) == 'حفر الباطن' else None
         from . import morning_delivery
@@ -424,6 +465,11 @@ def catalog(brand_id: str = Query(default='kps', max_length=80), branch_id: str 
             public_products.append(item)
 
     safe_brand = {'id': brand['id'], 'name': brand['name'], 'logo_url': brand['settings'].get('logo_url', '/assets/kps-logo-fb911a7b4bb4.png' if brand_id == 'kps' else None)}
+    from .branch_payment_policy import required
+    safe_brand['branch_online_required'] = required(brand_id, brand['settings'])
+    from . import activation
+    safe_brand['customer_features'] = {'benefits':activation.enabled('customer_benefits',brand_id),
+                                      'gifts':activation.enabled('gift_orders',brand_id)}
     safe_brand['theme'] = {key: value for key, value in ((preferences['settings'] if preferences else {}).get('theme') or {}).items()
                            if key in {'accent', 'background', 'text', 'font', 'profile'}}
     # This allowlisted projection already consists entirely of JSON values.
@@ -448,7 +494,7 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
         item['directions_url'] = directions_url(branch)
         item['location_verified'] = location_verified(branch)
         item['payment_methods'] = branch['settings'].get('payment_methods') or []
-        item['delivery_eligible'] = normalize_city(branch['city']) in DELIVERY_CITIES
+        item['delivery_eligible'] = delivery_city_eligible(branch)
         from . import morning_delivery
         morning = morning_delivery.active(branch, brand_settings, now)
         item['delivery_schedule'] = hours_status(morning_delivery.HOURS if morning else branch['settings'].get('delivery_hours'), now)
@@ -462,8 +508,9 @@ def branches(brand_id: str = Query(default='kps', max_length=80)):
                     available, code, reason = False, 'MORNING_EXECUTION_UNAVAILABLE', 'التوصيل الصباحي غير متاح حاليًا.'
             item['services'][service] = {'available': available, 'code': code, 'reason': reason}
         result.append(item)
+    from .branch_payment_policy import required
     return {'branches': result,
-            'brand_services': {key: brand_settings.get('services', {}).get(key, True) is True
+            'brand_services': {key: brand_settings.get('services', {}).get(key, key=='delivery' or not required(brand_id, brand_settings)) is True
                                for key in ('delivery', 'pickup', 'car_pickup')}}
 
 
@@ -524,17 +571,28 @@ class Location(_CheckoutModel):
 
 class Car(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
-    plate: str = Field(min_length=1, max_length=30)
+    plate: str = Field(default='', max_length=30)
     color: str = Field(min_length=1, max_length=40)
     model: str = Field(default='', max_length=60)
 
-    @field_validator('plate', 'color')
+    @field_validator('color')
     @classmethod
     def car_identification_required(cls, value):
         value = value.strip()
         if not value:
-            raise ValueError('Car plate and color are required.')
+            raise ValueError('Car color is required.')
         return value
+
+    @field_validator('plate')
+    @classmethod
+    def flexible_optional_plate(cls, value):
+        # New checkout values only; never rewrite historical order snapshots.
+        value = value.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789'))
+        if any(not (c in ' -/' or '0' <= c <= '9' or 'A' <= c <= 'Z' or
+                    'a' <= c <= 'z' or '\u0621' <= c <= '\u063a' or
+                    '\u0641' <= c <= '\u064a') for c in value):
+            raise ValueError('Plate may contain Arabic/English letters, digits, spaces, hyphens or slashes.')
+        return ' '.join(value.split())
 
 
 class CustomerInfo(_CheckoutModel):
@@ -573,6 +631,13 @@ class OrderItem(_CheckoutModel):
     note: str = Field(default='', max_length=300)
 
 
+class GiftInfo(_CheckoutModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    recipient_name: str = Field(min_length=1,max_length=100)
+    recipient_phone: str = Field(min_length=8,max_length=30)
+    message: str = Field(default='',max_length=500)
+
+
 class QuoteBody(_CheckoutModel):
     model_config = ConfigDict(extra='forbid')
     brand_id: str = Field(default='kps', min_length=1, max_length=80)
@@ -585,6 +650,9 @@ class QuoteBody(_CheckoutModel):
     expected_total_halalas: StrictInt | None = Field(default=None, ge=0, le=10000000)
     expected_gift: StrictBool | None = None
     expected_gift_version: StrictInt | None = Field(default=None, ge=0)
+    benefit_code: str = Field(default='',pattern=r'^(?:[A-Z0-9_-]{3,50})?$')
+    cashback_halalas: StrictInt = Field(default=0,ge=0,le=10000000)
+    gift: GiftInfo | None = None
 
     @model_validator(mode='before')
     @classmethod
@@ -650,14 +718,36 @@ def _price_units(product: dict, item: OrderItem, branch=None) -> tuple[int, list
                 unit_price += delta
                 choices.append({'code': selected_code, 'name': value['name'], 'price_delta_halalas': delta})
             options_snapshot[code] = {'name': group.get('name', code), 'choices': choices}
+        from .menu_variants import selected_price
+        variant = selected_price(product, unit.options)
+        if variant is not None:
+            unit_price = variant['price_halalas']
         if unit_price < 0:
             raise db.error(409, 'PRODUCT_PRICE_INVALID', 'سعر الصنف غير صالح.')
-        snapshots.append({'options': unit.options, 'option_snapshot': options_snapshot, 'price_halalas': unit_price})
+        snapshots.append({'options': unit.options, 'option_snapshot': options_snapshot, 'price_halalas': unit_price,
+                          **({'compare_at_halalas': variant['compare_at_halalas']} if variant and 'compare_at_halalas' in variant else {})})
         total += unit_price
     return total, snapshots
 
 
-def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False) -> dict:
+def order_request_payload(body):
+    # Preserve fingerprints of already committed ordinary orders across this
+    # additive release. Non-default new fields remain part of the replay key.
+    payload=body.model_dump()
+    for field in ('benefit_code','cashback_halalas','gift'):
+        if not payload.get(field):
+            payload.pop(field,None)
+    for field in ('expected_gift', 'expected_gift_version'):
+        if payload.get(field) is None:
+            payload.pop(field, None)
+    return payload
+
+
+def quote_order(conn, body: QuoteBody, for_update=False, *, user=None, order_id=None, complimentary=False) -> dict:
+    from .storefront_scope import require_brand
+    require_brand(body.brand_id)
+    from . import gift_orders
+    gift_orders.validate(conn,body,user)
     now = service_hours.now_riyadh()
     lock = ' FOR SHARE' if for_update else ''
     with conn.pipeline():
@@ -670,6 +760,10 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False)
     if not available:
         raise db.error(409, code, reason)
     selected_branch = branch
+    from .branch_payment_policy import required
+    online = body.service in {'pickup','car'} and required(body.brand_id, brand['settings'])
+    if online and body.payment_method != 'card':
+        raise db.error(422, 'ONLINE_PAYMENT_REQUIRED', 'الدفع الإلكتروني بعد موافقة الكاشير هو الوسيلة المتاحة لهذه الخدمة.')
     contains_khaliya = body.brand_id == 'kps' and any(item.product_id in KHALIYA_SOURCES.values() for item in body.items)
     from . import morning_delivery
     morning = body.service == 'delivery' and morning_delivery.active(selected_branch, brand['settings'], now)
@@ -731,6 +825,16 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False)
                                   'unit_price_halalas': selected_units[0]['price_halalas'],
                                   'line_total_halalas': sum(unit['price_halalas'] for unit in selected_units),
                                   'units': selected_units, 'note': item.note})
+        elif product['brand_id'] == 'enbishan' and 'variant_price_matrix' in product['settings']:
+            grouped = {}
+            for unit in units:
+                grouped.setdefault(db.digest(unit['options']), []).append(unit)
+            for variant_code, selected_units in grouped.items():
+                snapshots.append({'product_id': product['id'], 'source_id': product['settings'].get('source_id', product['id']),
+                                  'variant_code': variant_code, 'name': product['name'], 'category': product['category'],
+                                  'quantity': len(selected_units), 'unit_price_halalas': selected_units[0]['price_halalas'],
+                                  'line_total_halalas': sum(u['price_halalas'] for u in selected_units),
+                                  'units': selected_units, 'note': item.note})
         else:
             snapshots.append({'product_id': product['id'], 'source_id': product['settings'].get('source_id', product['id']),
                               'name': product['name'], 'category': product['category'], 'quantity': item.quantity,
@@ -740,7 +844,10 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False)
     minimum = max((b['settings'].get('minimum_order_halalas') for b in minimum_branches
                    if type(b['settings'].get('minimum_order_halalas')) is int), default=0)
     if not complimentary and body.service == 'delivery' and isinstance(minimum, int) and subtotal < minimum:
-        raise db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
+        error = db.error(409, 'MINIMUM_ORDER_NOT_MET', 'السلة أقل من الحد الأدنى المعتمد للتوصيل.')
+        error.detail.update(minimum_order_halalas=minimum, subtotal_halalas=subtotal,
+                            remaining_halalas=minimum-subtotal, currency='SAR')
+        raise error
     fee = selected_branch['settings']['delivery_fee_halalas'] if body.service == 'delivery' else 0
     if subtotal + fee > 10000000:
         raise db.error(422, 'ORDER_VALUE_LIMIT', 'قيمة الطلب أعلى من الحد المسموح للموقع.')
@@ -757,14 +864,29 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, complimentary=False)
             'branch_id': selected_branch['id'], 'branch_no': selected_branch['branch_no'],
             'branch_name': selected_branch['name'], 'branch_city': selected_branch['city'],
             'branch_location': selected_branch['settings'].get('location')}}
-    return result
+    if online:
+        from .payment_runtime import mode
+        result.update(branch_payment_mode=mode(), branch_payment_seller=branch['settings']['online_payment_seller'])
+    from . import customer_benefits
+    return customer_benefits.apply(conn,body,result,user,reserve_order_id=order_id)
 
+
+
+def require_customer_delivery_neighborhood(body: QuoteBody):
+    # Checkout-only policy: shared staff quoting/address models stay compatible.
+    if body.service == 'delivery' and not body.customer.neighborhood.strip():
+        raise db.error(422, 'DELIVERY_NEIGHBORHOOD_REQUIRED', 'أدخل اسم حي التوصيل بصورة واضحة.')
 
 
 @router.post('/quote')
 def quote(body: QuoteBody, request: Request = None):
     with db.tx(pipeline=True) as conn:
-        result = {'quote': customer_quote_view(quote_order(conn, body))}
+        user = auth._find_session(conn,request) if request is not None else None
+        priced = quote_order(conn, body, user=user)
+        # The header selects customer feedback, never authorization.
+        if request is not None and request.headers.get('x-kps-context') == 'customer':
+            require_customer_delivery_neighborhood(body)
+        result = {'quote': customer_quote_view(priced)}
     return DatabaseJSONResponse(result) if request is not None else result
 
 

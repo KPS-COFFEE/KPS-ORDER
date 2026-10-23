@@ -256,7 +256,7 @@ def receipt(order, branch, kind, language, translations=None):
         for occasion_line in (snap.get('receipt_occasion_text') or '').splitlines():
             add(occasion_line,occasion_style['bold'],occasion_style['align']=='center',role='occasion')
             lines[-1]['align'] = occasion_style['align']
-    add('كبز قهوة مختصة' if ar else 'KPS COFFEE',True,True,role='brand')
+    add(('عنبيشن' if ar else 'ENBISHAN') if order.get('brand_id')=='enbishan' else ('كبز قهوة مختصة' if ar else 'KPS COFFEE'),True,True,role='brand')
     if fiscal:
         add(('إشعار دائن مبسط' if ar else 'Simplified credit note') if fiscal['kind']=='credit_note' else ('فاتورة ضريبية مبسطة' if ar else 'Simplified tax invoice'),True,True)
         if fiscal.get('status')!='issued':
@@ -279,6 +279,8 @@ def receipt(order, branch, kind, language, translations=None):
                                      ('plate', 'لوحة السيارة', 'License plate')]:
             if car.get(key):
                 row(arabic if ar else english, str(car[key]), True)
+            elif key == 'plate':
+                row(arabic if ar else english, 'لم يُدخل رقم اللوحة' if ar else 'No plate entered', True)
     add('────────────────────',False,True)
     for item in snap.get('items',[]):
         labels=(translations or {}).get(item.get('product_id'),{})

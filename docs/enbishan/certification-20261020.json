@@ -1,0 +1,27 @@
+{
+  "candidate_sha": "82204fb73794c26153bf7ea9920ec63e703816a9",
+  "branch": "agent/enbishan-isolated-development-20261017",
+  "production_revision_observed": "797cdc1771ef4bc15fa9673c83dee5be0a8da24b",
+  "production_changed": false,
+  "local_source_tests": {"passed": 64, "deselected_database_or_browser": 8},
+  "functional_run": {"id": 39416691265, "status": "completed", "conclusion": "success", "engagement_and_preparation_passed": 115, "dual_brand_and_real_browser_passed": 60, "kps_regression_passed": 284},
+  "security_run": {"id": 39416691319, "status": "completed", "conclusion": "success", "high_critical_findings": 0, "secrets": 0, "host_provider_passed": 31, "host_focused_passed": 1352, "host_subtests_passed": 7, "host_policy_browser_passed": 2, "host_operational_browser_passed": 49, "each_image_focused_passed": 1352, "each_image_subtests_passed": 7, "each_image_mandatory_browser_passed": 3},
+  "operational_job": {"id": 118607328885, "passed": 271, "skipped_browser_cases_run_in_dual_brand_job": 7},
+  "menu": {"draft_cards": 31, "canonical_rows": 95, "source_images": 43, "cleaned_images": 11},
+  "private_customer_demo": {
+    "url": "https://enbishan-customer-preview-ali.bushyangel64.chatgpt.site",
+    "project_id": "appgprj_6ad6e721cbc4819194f58cb149f98d1a",
+    "source_sha": "2818fe471a1cc3c82f91dfe8ea4efd258ae6c7a1",
+    "deployment_id": "appgdep_6ad7540a8acc81919b61ca6161b364c3",
+    "status": "succeeded",
+    "synthetic_only": true,
+    "node_acceptance": "PASS",
+    "demo_browser_verification": "not_run_control_browser_unavailable"
+  },
+  "activation_blocks": [
+    "Tawked ENBISHAN sender approval and activation authorization",
+    "Source artwork row 41 prints 11 pieces while approved option is 10",
+    "Review branch coverage and physical printer acceptance",
+    "Seven source rows have no image link; no replacement fabricated"
+  ]
+}
