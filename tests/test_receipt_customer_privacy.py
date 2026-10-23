@@ -29,6 +29,8 @@ def test_branch_receipt_omits_customer_without_mutation(language, kind):
 def test_browser_receipt_all_languages_and_types_excludes_entire_customer_row():
     source = (Path(__file__).resolve().parents[1] / 'public/ops.js').read_text()
     renderer = source[source.index('  function receiptHTML('):source.index('  async function printOrder(')]
+    helpers = '\n'.join(line for line in source.splitlines()
+                        if line.startswith(('  const complimentaryName=', '  const orderAmount=')))
     script = '''
 const assert = require('node:assert/strict');
 const state = {lang:'ar'};
@@ -37,7 +39,7 @@ const esc = s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;');
 const money = s=>String(s??0), datetime=s=>s, serviceName=s=>s, statusName=s=>s;
 const orderLabel=o=>o.order_reference, branchLabel=o=>o.branch_name;
 const location = {origin:'https://example.test'};
-''' + renderer + '''
+''' + helpers + '\n' + renderer + '''
 const o={customer_name:'PRIVATE CUSTOMER NAME',customer:{name:'PRIVATE CUSTOMER NAME'},
  order_reference:'HFR2-261011-10001',branch_name:'Branch',items:[],created_at:'2026-10-11',
  service:'delivery',preparation_status:'new',payment_method:'cash',payment_status:'unpaid'};

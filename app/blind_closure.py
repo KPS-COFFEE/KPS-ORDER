@@ -6,8 +6,9 @@ HIDDEN = frozenset({
 })
 
 def driver_view(user, value, shift_money=False):
-    from .complimentary import operational_view
-    return _driver_view(user, operational_view(value), shift_money)
+    from .complimentary import contains_complimentary, operational_view
+    visible = operational_view(value) if contains_complimentary(value) else value
+    return _driver_view(user, visible, shift_money)
 
 
 def _driver_view(user, value, shift_money=False):
