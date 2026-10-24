@@ -1456,7 +1456,13 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   document.addEventListener('submit',async e=>{
     const form=e.target;if(!form.matches('.staff-branch-form'))return;e.preventDefault();
     const button=form.querySelector('button[type=submit]'),error=form.querySelector('.form-error');button.disabled=true;error.textContent='';
-    try {const fd=new FormData(form);await api(`/api/identity/staff/${encodeURIComponent(form.dataset.staffId)}`,{method:'PATCH',body:{branch_ids:checkedBranches(fd,'scope'),reason:fd.get('reason')}});state.staff=null;await loadPage();setStatus(tr('تم حفظ الفروع المسندة.','Assigned branches saved.'));}
+    try {
+      const fd=new FormData(form);
+      const body={branch_ids:checkedBranches(fd,'scope'),reason:fd.get('reason')};
+      if(state.user?.role==='owner'&&state.user?.employee_sms_email_retired)await ownerStepUp();
+      await api(`/api/identity/staff/${encodeURIComponent(form.dataset.staffId)}`,{method:'PATCH',body});
+      state.staff=null;await loadPage();setStatus(tr('تم حفظ الفروع المسندة.','Assigned branches saved.'));
+    }
     catch(x){error.textContent=x.message;}finally{if(button.isConnected)button.disabled=false;}
   });
   function checkedBranches(fd,name) { const branches=state.user.central_operations?state.user.central_operations.brands.flatMap(b=>b.branches):state.branches;return branches.filter(b=>fd.has(`${name}:${b.id}`)).map(b=>b.id); }
