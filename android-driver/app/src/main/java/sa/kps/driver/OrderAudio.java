@@ -25,10 +25,10 @@ final class OrderAudio {
 
     // Service's single IO executor only. Never block the main thread on a download.
     void refresh(WorkApi.Grant grant)throws Exception{
-        if(fallback==null){
+        if(fallback==null||!fallback.isFile()){
             fallback=new File(context.getCacheDir(),"approved-order-ring.wav");
             try(OutputStream out=new FileOutputStream(fallback)){out.write(ApprovedOrderRing.bytes());}
-            selected=fallback;
+            if(selected==null||!selected.isFile())selected=fallback;
         }
         long now=SystemClock.elapsedRealtime();
         if(now-checkedAt<60000)return;
@@ -40,7 +40,7 @@ final class OrderAudio {
             int length=descriptor.getInt("bytes");
             if(!SoundPolicy.descriptor(hash,length,descriptor.getString("path")))throw new IOException("Invalid sound descriptor");
             File destination=new File(context.getCacheDir(),"order-ring-"+hash+".wav");
-            if(selected!=null&&selected.equals(destination))return;
+            if(selected!=null&&selected.equals(destination)&&destination.isFile()&&destination.length()==length)return;
             byte[] data=WorkApi.soundBytes(descriptor.getString("path"),grant.cookie);
             if(data.length!=length||!SoundPolicy.digest(data).equals(hash)||!SoundPolicy.wave(data))throw new IOException("Invalid sound data");
             temporary=new File(context.getCacheDir(),"order-ring-download.tmp");

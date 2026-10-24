@@ -37,8 +37,8 @@ public final class ShiftLocationService extends Service implements LocationListe
                     try {
                         WorkApi.Grant live=WorkApi.current();
                         if(bound==null||!bound.same(live))throw new WorkApi.Denied();
-                        snapshot=WorkApi.alerts(live);
                         try{orderAudio.refresh(live);}catch(WorkApi.Denied e){throw e;}catch(Exception ignored){}
+                        snapshot=WorkApi.alerts(live);
                         if(!live.same(WorkApi.current()))throw new WorkApi.Denied();
                         outcome=1;
                     }
