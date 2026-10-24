@@ -1,0 +1,87 @@
+# Two-worker emergency release profile
+
+The release Docker command now starts **two Uvicorn web processes in one
+existing Render service**. This is not a second Render instance, a new paid
+service, or a background job worker. PostgreSQL, durable idempotency keys,
+branch receipt counters and existing transactional outboxes remain shared.
+Each process owns its bounded pool (maximum 4 connections each, 8 total).
+The previous 40-backend ceiling saturated the 256-MiB database envelope in
+resource-isolated tests. This bounds database execution concurrency, not HTTP
+users, order count, retries or the unchanged five-second checkout deadline.
+
+The pool retains at most 64 parameterized SQL plans per connection, not rows,
+prices, authorization results or sessions. Every request still reads current
+database state. Reset closes cursors, restores authorization and GUCs, removes
+listeners, releases advisory locks, and discards temporary and sequence state.
+The full DSN/schema and worker PID remain part of pool identity. The direct
+PostgreSQL connection must not be replaced with an incompatible transaction
+pooling proxy without separately validating prepared-statement support.
+
+Migration 052 adds a selective recent-contact index; exact basket equality,
+15-minute age, brand and branch checks remain unchanged. The index does not
+make a phone number proof of customer ownership.
+
+## Explicit capacity proposal, not an authorized upgrade
+
+The current-budget gate stays unchanged: app 0.5 CPU/512 MiB, PostgreSQL
+0.1 CPU/256 MiB. On candidate `7e3e0d72173ed8fb211c1b17f999c97383773265`,
+both runs preserved all orders without HTTP errors or OOM, but 500-user P95
+was 18178.443 / 24494.021 ms: FAIL. Unconstrained runs passed at
+3520.141 / 4390.617 ms; they do not certify the current budget.
+
+Separate CI jobs explicitly select `KPS_LOAD_RESOURCE_PROFILE=proposed`:
+app 2 CPU/4 GiB, PostgreSQL 1 CPU/2 GiB, the same two application workers,
+eight maximum pooled connections, workload, timeouts and acceptance limits.
+Every sample still verifies actual kernel budgets and process ownership.
+The result is named `PASS_PROPOSED_RESOURCE_GATE`, never a current-plan PASS.
+This tests the Render `2c-4g` app / `1c-2g` database resource envelope only;
+provider I/O, network and operating traffic remain separate validation.
+No Render plan, Blueprint, domain, SMS setting or deployment is changed.
+Owner approval of paid capacity and the remaining launch gates is mandatory.
+Plan specifications: https://render.com/docs/compute-plans (checked 2026-10-15).
+
+Both Docker and the isolated harness keep idle HTTP connections for 15 seconds,
+instead of closing them at the HTTP client's same five-second expiry boundary.
+This changes **idle socket lifetime only**, not the latency acceptance limits,
+request timeout, statement timeout, retry allowance or error accounting. A
+real-socket regression verifies reuse across the old five-second boundary. It
+does not, by itself, prove the cause of every observed transport reset; both
+complete load gates still have to pass with all raw failures counted.
+
+The HTTP security middleware now applies the same checks and response headers
+directly at the ASGI boundary, without per-request relay tasks and body-stream
+copies. Cookie multiplicity, streaming, Origin rejection, body-length checks,
+sanitized errors, cache policies and response monitoring have explicit contract
+tests. Frequently used order routes precede the disjoint catalog/auth routers;
+their original route and authorization dependency objects are preserved.
+
+## Acceptance remains unchanged
+
+Both independent load jobs run the actual two-worker release topology against
+isolated PostgreSQL 18: 50, 100, 250 and 500 simultaneous synthetic customers,
+two genuine orders per customer, with concurrent duplicate transmissions.
+Both must pass on the exact release HEAD. The owner requires P95 < 5000 ms,
+P99 <= 10000 ms, unexpected errors <= 1%, zero deadlocks and zero duplicate,
+missing or orphaned business effects. Restart, database outage, exhausted
+connections and post-failure database reconciliation remain mandatory.
+
+The old single-worker 500-user latency failure is **not certified as fixed**.
+Its artifacts remain available, and `--workers 1` retains that diagnostic
+comparison. The intended deployed configuration is now two workers, so neither
+release gate claims single-worker capacity. CPU profiling explicitly uses one
+worker and is never release-performance evidence.
+
+`tests/test_release_worker_profile.py` guards the Docker/harness topology match.
+The full existing functional, browser, security, printing, migration, restore
+and financial tests remain required. No acceptance thresholds were increased,
+no protected business checks disabled and no customer data used.
+
+## Deployment boundary
+
+These are shared-runner engineering measurements, **not proof of 500-user
+capacity on the current Render 0.5-CPU / 512-MiB plan**. Two processes do not
+create additional CPU. Any paid capacity change needs separate owner approval
+and a representative isolated load test. Keep automatic deployment off, leave
+the official domain, customer ordering and existing SMS state unchanged. Do not
+activate or send public SMS. Deploy the existing experimental service only after both load
+runs and full CI pass on its exact candidate SHA.

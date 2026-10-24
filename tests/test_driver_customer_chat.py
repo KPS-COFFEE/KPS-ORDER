@@ -1,0 +1,78 @@
+"""Driver contact must retain live task scope and never grant inbox access."""
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
+from app import chat
+
+
+class Connection:
+    def __init__(self,task,order,shift):self.task=task;self.order=order;self.shift=shift
+    def execute(self,sql,args):
+        self.row=self.task if 'FROM driver_tasks' in sql else self.order if 'FROM orders' in sql else self.shift
+        return self
+    def fetchone(self):return self.row
+
+
+def connection(status='accepted',driver='driver',shift='open'):
+    return Connection({'id':'task','order_id':'order','driver_id':driver,'status':status,'shift_id':'shift'},
+                      {'id':'order','brand_id':'brand','branch_id':'branch','service':'delivery'},
+                      {'user_id':'driver','status':shift})
+
+
+def user():return {'id':'driver','role':'driver','brand_id':'brand','branch_ids':['branch']}
+
+
+@pytest.mark.parametrize('status',['delivered','cancelled','transferred','reassigned','completed'])
+def test_closed_or_reassigned_task_blocks_chat_and_whatsapp(monkeypatch,status):
+    monkeypatch.setattr(chat.auth,'can_access_order',lambda *args:True)
+    with pytest.raises(HTTPException) as err:chat.driver_contact_scope(connection(status),user(),'task')
+    assert err.value.status_code==404
+
+
+def test_other_driver_and_branch_or_brand_denied(monkeypatch):
+    monkeypatch.setattr(chat.auth,'can_access_order',lambda *args:True)
+    with pytest.raises(HTTPException):chat.driver_contact_scope(connection(driver='other'),user(),'task')
+    monkeypatch.setattr(chat.auth,'can_access_order',lambda *args:False)
+    with pytest.raises(HTTPException):chat.driver_contact_scope(connection(),user(),'task')
+
+
+@pytest.mark.parametrize('state',['closing','submitted','closed'])
+def test_shift_must_remain_open(monkeypatch,state):
+    monkeypatch.setattr(chat.auth,'can_access_order',lambda *args:True)
+    with pytest.raises(HTTPException) as err:chat.driver_contact_scope(connection(shift=state),user(),'task')
+    assert err.value.status_code==409
+
+
+def test_active_assignment_allowed_but_no_general_inbox(monkeypatch):
+    monkeypatch.setattr(chat.auth,'can_access_order',lambda *args:True)
+    assert chat.driver_contact_scope(connection(),user(),'task')[0]['id']=='task'
+    assert not chat.allowed(user(),{'brand_id':'brand','branch_id':'branch','route':'delivery'})
+
+
+@pytest.mark.parametrize('phone,expected',[('0501234567','https://wa.me/966501234567'),('+966501234567','https://wa.me/966501234567'),('٠٥٠١٢٣٤٥٦٧','https://wa.me/966501234567'),('javascript:alert(1)',None),('',None)])
+def test_whatsapp_exact_phone_link(phone,expected):
+    assert chat.whatsapp_contact(phone)==expected
+
+
+@pytest.mark.parametrize('text',['','   ','x'*2001])
+def test_empty_or_oversize_message_rejected(text):
+    with pytest.raises(ValidationError):chat.DriverCustomerMessage(text=text)
+
+
+def test_image_only_message_and_caption():
+    assert chat.DriverCustomerMessage(attachment_id='image').text==''
+    assert chat.DriverCustomerMessage(text=' المدخل ',attachment_id='image').text=='المدخل'
+
+
+def test_real_image_validation_and_mime_mismatch():
+    import base64,io
+    from PIL import Image
+    stream=io.BytesIO();Image.new('RGB',(8,8)).save(stream,format='PNG')
+    data=stream.getvalue();encoded=base64.b64encode(data).decode()
+    assert chat.validated_image(chat.Attachment(content_type='image/png',data_base64=encoded))==data
+    with pytest.raises(HTTPException):chat.validated_image(chat.Attachment(content_type='image/jpeg',data_base64=encoded))
+
+
+@pytest.mark.parametrize('mime,data',[('image/svg+xml','PHN2Zy8+'),('image/png','invalid base64'),('image/png','bm90IGFuIGltYWdl')])
+def test_invalid_image_content_rejected(mime,data):
+    with pytest.raises(HTTPException):chat.validated_image(chat.Attachment(content_type=mime,data_base64=data))

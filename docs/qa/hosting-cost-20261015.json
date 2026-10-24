@@ -1,0 +1,1722 @@
+{
+  "generated_at_riyadh": "2026-10-15T13:05:23.059411+03:00",
+  "selection": "economy",
+  "selection_status": "PASS_TWO_INDEPENDENT_ISOLATED_CI_ROUNDS",
+  "render_performance_status": "NOT_YET_CERTIFIED_AFTER_UPGRADE",
+  "upgrade_performed": false,
+  "metadata": {
+    "candidate_sha": "48f199fef91d34d2d0fb8aa2e512ef5b36be7fea",
+    "unchanged_runtime_reference_sha": "64b0a972d65b3c84d79994e6d8c06e6e48af755f",
+    "run_id": 38716754282,
+    "baseline_run_id": 38713461852,
+    "artifacts": [
+      {
+        "id": 11963385166,
+        "name": "hosting-economy-2",
+        "digest": "sha256:5a59bf208e40da9d15e620246f9f371c3314866af925677bd69807c81e4f20f6",
+        "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38716754282/artifacts/11963385166"
+      },
+      {
+        "id": 11962084352,
+        "name": "hosting-economy-1",
+        "digest": "sha256:b985d2e34176698419388dfd30f2a2233a01a3ffc9ba56d10c05a5e8d43b8c84",
+        "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38716754282/artifacts/11962084352"
+      }
+    ],
+    "baseline_artifacts": [
+      {
+        "id": 11962280263,
+        "name": "render-resource-budget-1",
+        "digest": "sha256:bb547652d57e1b5de37fc312dc046c6f5301bfe02ab1137c1cd2a4677cb1c9eb",
+        "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38713461852/artifacts/11962280263"
+      },
+      {
+        "id": 11962110122,
+        "name": "proposed-resource-budget-1",
+        "digest": "sha256:db632fb40b401c24bad3b978ccd1eecc8d1e648e2a5ee9704e73eaf8af694110",
+        "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38713461852/artifacts/11962110122"
+      },
+      {
+        "id": 11961309595,
+        "name": "render-resource-budget-2",
+        "digest": "sha256:7915d2ee3a29ba68d3ca837c59baa52adc002bf40e4ff0e6bd54a9a84bcf6f17",
+        "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38713461852/artifacts/11961309595"
+      },
+      {
+        "id": 11961049972,
+        "name": "proposed-resource-budget-2",
+        "digest": "sha256:b2f8a07009999af8f5695745598d0bf15909f86f426329ec5c847c0b69dc839d",
+        "url": "https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/38713461852/artifacts/11961049972"
+      }
+    ],
+    "jobs": [
+      {
+        "id": 116361202422,
+        "name": "economy-44usd (1)",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_id": 1000055095,
+        "runner_name": "GitHub Actions 1000055095",
+        "started_at": "2026-10-15T09:57:25Z",
+        "completed_at": "2026-10-15T09:59:55Z"
+      },
+      {
+        "id": 116361202740,
+        "name": "economy-44usd (2)",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_id": 1000055096,
+        "runner_name": "GitHub Actions 1000055096",
+        "started_at": "2026-10-15T09:57:25Z",
+        "completed_at": "2026-10-15T09:59:43Z"
+      },
+      {
+        "id": 116362225402,
+        "name": "medium-65usd (${{ matrix.repetition }})",
+        "status": "completed",
+        "conclusion": "skipped",
+        "runner_id": null,
+        "runner_name": null,
+        "started_at": "2026-10-15T09:59:55Z",
+        "completed_at": "2026-10-15T09:59:55Z"
+      }
+    ],
+    "prices_usd": {
+      "current_compute": 13,
+      "economy_compute": 44,
+      "medium_compute": 65,
+      "proposed_compute": 125,
+      "postgres_storage_per_gb_month": 0.3,
+      "usd_sar": 3.75
+    },
+    "render_unchanged": {
+      "service_id": "srv-db4s1v942hec73epmar0",
+      "application_plan": "0.5c-512mb",
+      "auto_deploy": "off",
+      "postgres_id": "dpg-db4rjgo473hc738soueg-a",
+      "postgres_plan": "0.1c-256mb",
+      "disk_size_gb": 1
+    },
+    "sources": {
+      "pricing": "https://render.com/pricing",
+      "compute": "https://render.com/docs/compute-plans",
+      "storage": "https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses",
+      "bandwidth": "https://render.com/docs/outbound-bandwidth",
+      "backups": "https://render.com/docs/postgresql-backups",
+      "fx": "https://www.sama.gov.sa/ar-SA/Currency/FinExc/Pages/Currency.aspx"
+    }
+  },
+  "results": [
+    {
+      "file": "baseline-evidence/baseline125-run1/proposed-budget-1.json",
+      "head": "64b0a972d65b3c84d79994e6d8c06e6e48af755f",
+      "profile": "proposed",
+      "raw_status": "PASS_PROPOSED_RESOURCE_GATE",
+      "validated_pass": true,
+      "failure_reasons": [],
+      "stages": [
+        {
+          "users": 50,
+          "p95_ms": 389.009,
+          "p99_ms": 455.537,
+          "requests": 550,
+          "orders": 100,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 1.0537,
+              "mean_cpu_budget_percent": 52.68,
+              "peak_cgroup_memory_mib": 174.74,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 2.833
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.4183,
+              "mean_cpu_budget_percent": 41.83,
+              "peak_cgroup_memory_mib": 151.82,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 2.833
+            }
+          }
+        },
+        {
+          "users": 100,
+          "p95_ms": 696.489,
+          "p99_ms": 927.753,
+          "requests": 1100,
+          "orders": 200,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 0.975,
+              "mean_cpu_budget_percent": 48.75,
+              "peak_cgroup_memory_mib": 184.35,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 6.64
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.288,
+              "mean_cpu_budget_percent": 28.8,
+              "peak_cgroup_memory_mib": 160.74,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 6.64
+            }
+          }
+        },
+        {
+          "users": 250,
+          "p95_ms": 1940.904,
+          "p99_ms": 2334.951,
+          "requests": 2750,
+          "orders": 500,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 0.9878,
+              "mean_cpu_budget_percent": 49.39,
+              "peak_cgroup_memory_mib": 196.48,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 16.482
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.2514,
+              "mean_cpu_budget_percent": 25.14,
+              "peak_cgroup_memory_mib": 170.44,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 16.482
+            }
+          }
+        },
+        {
+          "users": 500,
+          "p95_ms": 3915.918,
+          "p99_ms": 5470.543,
+          "requests": 5500,
+          "orders": 1000,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 1.0499,
+              "mean_cpu_budget_percent": 52.5,
+              "peak_cgroup_memory_mib": 217.64,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 30.223
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.2754,
+              "mean_cpu_budget_percent": 27.54,
+              "peak_cgroup_memory_mib": 185.82,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 30.223
+            }
+          }
+        }
+      ],
+      "orders_all_levels": 1800,
+      "requests_all_levels": 9900,
+      "database_fault_drills": {
+        "container_safety_verified": true,
+        "outage": {
+          "readiness_http_status_during_outage": 503,
+          "liveness_http_status_during_outage": 200,
+          "interrupted_commit_raised": true,
+          "interrupted_commit_error_type": "AdminShutdown",
+          "recovery_to_ready_seconds": 0.637,
+          "committed_order_count": 1800,
+          "committed_order_fingerprints_preserved": true,
+          "uncommitted_order_rolled_back": true,
+          "passed": true
+        },
+        "connection_capacity": {
+          "configured_max_connections": 100,
+          "owned_application_process_pids": [
+            2962,
+            2963,
+            2964,
+            2965
+          ],
+          "terminated_isolated_app_pool_backends": 1,
+          "exhaustion_reached": true,
+          "remaining_isolated_app_pool_backends": 0,
+          "client_backend_count_at_capacity": 100,
+          "held_connections": 100,
+          "readiness_http_status_at_capacity": 503,
+          "liveness_http_status_at_capacity": 200,
+          "write_http_status_at_capacity": 503,
+          "write_error_code": "DATABASE_UNAVAILABLE",
+          "write_failure_latency_ms": 5002.456,
+          "release_to_ready_seconds": 0.139,
+          "failed_write_left_no_partial_user": true,
+          "committed_order_fingerprints_preserved": true,
+          "passed": true
+        },
+        "passed": true
+      },
+      "recovery_seconds": 2.201,
+      "post_recovery_reports": null
+    },
+    {
+      "file": "baseline-evidence/baseline125-run2/proposed-budget-2.json",
+      "head": "64b0a972d65b3c84d79994e6d8c06e6e48af755f",
+      "profile": "proposed",
+      "raw_status": "PASS_PROPOSED_RESOURCE_GATE",
+      "validated_pass": true,
+      "failure_reasons": [],
+      "stages": [
+        {
+          "users": 50,
+          "p95_ms": 417.304,
+          "p99_ms": 517.517,
+          "requests": 550,
+          "orders": 100,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 1.0088,
+              "mean_cpu_budget_percent": 50.44,
+              "peak_cgroup_memory_mib": 174.5,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 3.23
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.4061,
+              "mean_cpu_budget_percent": 40.61,
+              "peak_cgroup_memory_mib": 151.51,
+              "throttled_periods": 2,
+              "throttled_seconds": 0.026,
+              "sample_window_seconds": 3.23
+            }
+          }
+        },
+        {
+          "users": 100,
+          "p95_ms": 862.886,
+          "p99_ms": 944.298,
+          "requests": 1100,
+          "orders": 200,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 1.0978,
+              "mean_cpu_budget_percent": 54.89,
+              "peak_cgroup_memory_mib": 185.48,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 5.816
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.3245,
+              "mean_cpu_budget_percent": 32.45,
+              "peak_cgroup_memory_mib": 161.37,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 5.816
+            }
+          }
+        },
+        {
+          "users": 250,
+          "p95_ms": 2165.571,
+          "p99_ms": 2263.817,
+          "requests": 2750,
+          "orders": 500,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 1.0959,
+              "mean_cpu_budget_percent": 54.79,
+              "peak_cgroup_memory_mib": 199.08,
+              "throttled_periods": 0,
+              "throttled_seconds": 0.0,
+              "sample_window_seconds": 14.805
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.2923,
+              "mean_cpu_budget_percent": 29.23,
+              "peak_cgroup_memory_mib": 171.18,
+              "throttled_periods": 1,
+              "throttled_seconds": 0.063,
+              "sample_window_seconds": 14.805
+            }
+          }
+        },
+        {
+          "users": 500,
+          "p95_ms": 3675.788,
+          "p99_ms": 4673.835,
+          "requests": 5500,
+          "orders": 1000,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 2,
+              "mean_used_cpus": 1.042,
+              "mean_cpu_budget_percent": 52.1,
+              "peak_cgroup_memory_mib": 217.94,
+              "throttled_periods": 1,
+              "throttled_seconds": 0.003,
+              "sample_window_seconds": 29.877
+            },
+            "postgresql": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.2681,
+              "mean_cpu_budget_percent": 26.81,
+              "peak_cgroup_memory_mib": 186.59,
+              "throttled_periods": 1,
+              "throttled_seconds": 0.025,
+              "sample_window_seconds": 29.877
+            }
+          }
+        }
+      ],
+      "orders_all_levels": 1800,
+      "requests_all_levels": 9900,
+      "database_fault_drills": {
+        "container_safety_verified": true,
+        "outage": {
+          "readiness_http_status_during_outage": 503,
+          "liveness_http_status_during_outage": 200,
+          "interrupted_commit_raised": true,
+          "interrupted_commit_error_type": "AdminShutdown",
+          "recovery_to_ready_seconds": 0.923,
+          "committed_order_count": 1800,
+          "committed_order_fingerprints_preserved": true,
+          "uncommitted_order_rolled_back": true,
+          "passed": true
+        },
+        "connection_capacity": {
+          "configured_max_connections": 100,
+          "owned_application_process_pids": [
+            3002,
+            3003,
+            3004,
+            3005
+          ],
+          "terminated_isolated_app_pool_backends": 1,
+          "exhaustion_reached": true,
+          "remaining_isolated_app_pool_backends": 0,
+          "client_backend_count_at_capacity": 100,
+          "held_connections": 100,
+          "readiness_http_status_at_capacity": 503,
+          "liveness_http_status_at_capacity": 200,
+          "write_http_status_at_capacity": 503,
+          "write_error_code": "DATABASE_UNAVAILABLE",
+          "write_failure_latency_ms": 5002.175,
+          "release_to_ready_seconds": 2.15,
+          "failed_write_left_no_partial_user": true,
+          "committed_order_fingerprints_preserved": true,
+          "passed": true
+        },
+        "passed": true
+      },
+      "recovery_seconds": 2.176,
+      "post_recovery_reports": null
+    },
+    {
+      "file": "baseline-evidence/current-run1/render-budget-1.json",
+      "head": "64b0a972d65b3c84d79994e6d8c06e6e48af755f",
+      "profile": "current",
+      "raw_status": "NOT_READY",
+      "validated_pass": false,
+      "failure_reasons": [
+        "250 latency failure",
+        "500 latency failure"
+      ],
+      "stages": [
+        {
+          "users": 50,
+          "p95_ms": 2803.365,
+          "p99_ms": 2895.467,
+          "requests": 550,
+          "orders": 100,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.1957,
+              "mean_cpu_budget_percent": 39.14,
+              "peak_cgroup_memory_mib": 173.96,
+              "throttled_periods": 1,
+              "throttled_seconds": 0.002,
+              "sample_window_seconds": 10.425
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.0928,
+              "mean_cpu_budget_percent": 92.79,
+              "peak_cgroup_memory_mib": 155.56,
+              "throttled_periods": 98,
+              "throttled_seconds": 18.058,
+              "sample_window_seconds": 10.425
+            }
+          }
+        },
+        {
+          "users": 100,
+          "p95_ms": 2900.478,
+          "p99_ms": 2994.167,
+          "requests": 1100,
+          "orders": 200,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2806,
+              "mean_cpu_budget_percent": 56.12,
+              "peak_cgroup_memory_mib": 181.05,
+              "throttled_periods": 8,
+              "throttled_seconds": 0.133,
+              "sample_window_seconds": 14.268
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.0917,
+              "mean_cpu_budget_percent": 91.75,
+              "peak_cgroup_memory_mib": 160.74,
+              "throttled_periods": 131,
+              "throttled_seconds": 19.676,
+              "sample_window_seconds": 14.268
+            }
+          }
+        },
+        {
+          "users": 250,
+          "p95_ms": 5580.621,
+          "p99_ms": 5927.584,
+          "requests": 2750,
+          "orders": 500,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": false,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2906,
+              "mean_cpu_budget_percent": 58.11,
+              "peak_cgroup_memory_mib": 201.96,
+              "throttled_periods": 46,
+              "throttled_seconds": 1.169,
+              "sample_window_seconds": 32.781
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.0899,
+              "mean_cpu_budget_percent": 89.85,
+              "peak_cgroup_memory_mib": 175.23,
+              "throttled_periods": 294,
+              "throttled_seconds": 45.875,
+              "sample_window_seconds": 32.781
+            }
+          }
+        },
+        {
+          "users": 500,
+          "p95_ms": 9318.878,
+          "p99_ms": 13606.286,
+          "requests": 5500,
+          "orders": 1000,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": false,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.3147,
+              "mean_cpu_budget_percent": 62.93,
+              "peak_cgroup_memory_mib": 225.0,
+              "throttled_periods": 120,
+              "throttled_seconds": 5.67,
+              "sample_window_seconds": 60.22
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.0895,
+              "mean_cpu_budget_percent": 89.46,
+              "peak_cgroup_memory_mib": 192.29,
+              "throttled_periods": 508,
+              "throttled_seconds": 78.284,
+              "sample_window_seconds": 60.22
+            }
+          }
+        }
+      ],
+      "orders_all_levels": 1800,
+      "requests_all_levels": 9900,
+      "database_fault_drills": {
+        "container_safety_verified": true,
+        "outage": {
+          "readiness_http_status_during_outage": 503,
+          "liveness_http_status_during_outage": 200,
+          "interrupted_commit_raised": true,
+          "interrupted_commit_error_type": "AdminShutdown",
+          "recovery_to_ready_seconds": 0.777,
+          "committed_order_count": 1800,
+          "committed_order_fingerprints_preserved": true,
+          "uncommitted_order_rolled_back": true,
+          "passed": true
+        },
+        "connection_capacity": {
+          "configured_max_connections": 100,
+          "owned_application_process_pids": [
+            2760,
+            2761,
+            2762,
+            2763
+          ],
+          "terminated_isolated_app_pool_backends": 4,
+          "exhaustion_reached": true,
+          "remaining_isolated_app_pool_backends": 0,
+          "client_backend_count_at_capacity": 100,
+          "held_connections": 100,
+          "readiness_http_status_at_capacity": 503,
+          "liveness_http_status_at_capacity": 200,
+          "write_http_status_at_capacity": 503,
+          "write_error_code": "DATABASE_UNAVAILABLE",
+          "write_failure_latency_ms": 5001.515,
+          "release_to_ready_seconds": 1.683,
+          "failed_write_left_no_partial_user": true,
+          "committed_order_fingerprints_preserved": true,
+          "passed": true
+        },
+        "passed": true
+      },
+      "recovery_seconds": 6.396,
+      "post_recovery_reports": null
+    },
+    {
+      "file": "baseline-evidence/current-run2/render-budget-2.json",
+      "head": "64b0a972d65b3c84d79994e6d8c06e6e48af755f",
+      "profile": "current",
+      "raw_status": "NOT_READY",
+      "validated_pass": false,
+      "failure_reasons": [
+        "250 latency failure",
+        "500 latency failure"
+      ],
+      "stages": [
+        {
+          "users": 50,
+          "p95_ms": 2193.623,
+          "p99_ms": 2299.572,
+          "requests": 550,
+          "orders": 100,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.1864,
+              "mean_cpu_budget_percent": 37.29,
+              "peak_cgroup_memory_mib": 175.12,
+              "throttled_periods": 4,
+              "throttled_seconds": 0.148,
+              "sample_window_seconds": 11.056
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.094,
+              "mean_cpu_budget_percent": 93.99,
+              "peak_cgroup_memory_mib": 160.05,
+              "throttled_periods": 105,
+              "throttled_seconds": 21.44,
+              "sample_window_seconds": 11.056
+            }
+          }
+        },
+        {
+          "users": 100,
+          "p95_ms": 2690.395,
+          "p99_ms": 2793.438,
+          "requests": 1100,
+          "orders": 200,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.277,
+              "mean_cpu_budget_percent": 55.39,
+              "peak_cgroup_memory_mib": 184.11,
+              "throttled_periods": 15,
+              "throttled_seconds": 0.174,
+              "sample_window_seconds": 13.912
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.0921,
+              "mean_cpu_budget_percent": 92.13,
+              "peak_cgroup_memory_mib": 164.24,
+              "throttled_periods": 127,
+              "throttled_seconds": 19.245,
+              "sample_window_seconds": 13.912
+            }
+          }
+        },
+        {
+          "users": 250,
+          "p95_ms": 6490.242,
+          "p99_ms": 6903.753,
+          "requests": 2750,
+          "orders": 500,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": false,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2999,
+              "mean_cpu_budget_percent": 59.98,
+              "peak_cgroup_memory_mib": 201.72,
+              "throttled_periods": 70,
+              "throttled_seconds": 5.585,
+              "sample_window_seconds": 33.257
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.0883,
+              "mean_cpu_budget_percent": 88.29,
+              "peak_cgroup_memory_mib": 173.84,
+              "throttled_periods": 263,
+              "throttled_seconds": 47.351,
+              "sample_window_seconds": 33.257
+            }
+          }
+        },
+        {
+          "users": 500,
+          "p95_ms": 10604.48,
+          "p99_ms": 11305.761,
+          "requests": 5500,
+          "orders": 1000,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": false,
+          "resources": {
+            "application": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2975,
+              "mean_cpu_budget_percent": 59.5,
+              "peak_cgroup_memory_mib": 222.22,
+              "throttled_periods": 147,
+              "throttled_seconds": 6.756,
+              "sample_window_seconds": 65.87
+            },
+            "postgresql": {
+              "allocated_cpus": 0.1,
+              "mean_used_cpus": 0.089,
+              "mean_cpu_budget_percent": 89.02,
+              "peak_cgroup_memory_mib": 208.31,
+              "throttled_periods": 529,
+              "throttled_seconds": 81.588,
+              "sample_window_seconds": 65.87
+            }
+          }
+        }
+      ],
+      "orders_all_levels": 1800,
+      "requests_all_levels": 9900,
+      "database_fault_drills": {
+        "container_safety_verified": true,
+        "outage": {
+          "readiness_http_status_during_outage": 503,
+          "liveness_http_status_during_outage": 200,
+          "interrupted_commit_raised": true,
+          "interrupted_commit_error_type": "AdminShutdown",
+          "recovery_to_ready_seconds": 2.125,
+          "committed_order_count": 1800,
+          "committed_order_fingerprints_preserved": true,
+          "uncommitted_order_rolled_back": true,
+          "passed": true
+        },
+        "connection_capacity": {
+          "configured_max_connections": 100,
+          "owned_application_process_pids": [
+            2790,
+            2791,
+            2792,
+            2793
+          ],
+          "terminated_isolated_app_pool_backends": 8,
+          "exhaustion_reached": true,
+          "remaining_isolated_app_pool_backends": 0,
+          "client_backend_count_at_capacity": 100,
+          "held_connections": 100,
+          "readiness_http_status_at_capacity": 503,
+          "liveness_http_status_at_capacity": 200,
+          "write_http_status_at_capacity": 503,
+          "write_error_code": "DATABASE_UNAVAILABLE",
+          "write_failure_latency_ms": 5002.339,
+          "release_to_ready_seconds": 1.272,
+          "failed_write_left_no_partial_user": true,
+          "committed_order_fingerprints_preserved": true,
+          "passed": true
+        },
+        "passed": true
+      },
+      "recovery_seconds": 6.345,
+      "post_recovery_reports": null
+    },
+    {
+      "file": "candidate-evidence/hosting-economy-1/economy-1.json",
+      "head": "48f199fef91d34d2d0fb8aa2e512ef5b36be7fea",
+      "profile": "economy",
+      "raw_status": "PASS_CANDIDATE_RESOURCE_GATE",
+      "validated_pass": true,
+      "failure_reasons": [],
+      "stages": [
+        {
+          "users": 50,
+          "p95_ms": 496.732,
+          "p99_ms": 599.596,
+          "requests": 550,
+          "orders": 100,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7124,
+              "mean_cpu_budget_percent": 71.24,
+              "peak_cgroup_memory_mib": 173.39,
+              "throttled_periods": 21,
+              "throttled_seconds": 0.941,
+              "sample_window_seconds": 3.639
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2925,
+              "mean_cpu_budget_percent": 58.5,
+              "peak_cgroup_memory_mib": 158.98,
+              "throttled_periods": 10,
+              "throttled_seconds": 0.794,
+              "sample_window_seconds": 3.639
+            }
+          }
+        },
+        {
+          "users": 100,
+          "p95_ms": 1052.456,
+          "p99_ms": 1153.843,
+          "requests": 1100,
+          "orders": 200,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7432,
+              "mean_cpu_budget_percent": 74.32,
+              "peak_cgroup_memory_mib": 184.45,
+              "throttled_periods": 50,
+              "throttled_seconds": 2.727,
+              "sample_window_seconds": 7.259
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2234,
+              "mean_cpu_budget_percent": 44.67,
+              "peak_cgroup_memory_mib": 168.02,
+              "throttled_periods": 5,
+              "throttled_seconds": 0.279,
+              "sample_window_seconds": 7.259
+            }
+          }
+        },
+        {
+          "users": 250,
+          "p95_ms": 2581.661,
+          "p99_ms": 2709.231,
+          "requests": 2750,
+          "orders": 500,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7395,
+              "mean_cpu_budget_percent": 73.95,
+              "peak_cgroup_memory_mib": 202.3,
+              "throttled_periods": 135,
+              "throttled_seconds": 9.156,
+              "sample_window_seconds": 18.528
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2085,
+              "mean_cpu_budget_percent": 41.71,
+              "peak_cgroup_memory_mib": 175.82,
+              "throttled_periods": 5,
+              "throttled_seconds": 0.234,
+              "sample_window_seconds": 18.528
+            }
+          }
+        },
+        {
+          "users": 500,
+          "p95_ms": 4739.75,
+          "p99_ms": 5025.796,
+          "requests": 5500,
+          "orders": 1000,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7322,
+              "mean_cpu_budget_percent": 73.22,
+              "peak_cgroup_memory_mib": 220.21,
+              "throttled_periods": 279,
+              "throttled_seconds": 11.847,
+              "sample_window_seconds": 39.138
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.1986,
+              "mean_cpu_budget_percent": 39.71,
+              "peak_cgroup_memory_mib": 212.27,
+              "throttled_periods": 17,
+              "throttled_seconds": 1.895,
+              "sample_window_seconds": 39.138
+            }
+          }
+        }
+      ],
+      "orders_all_levels": 1800,
+      "requests_all_levels": 9900,
+      "database_fault_drills": {
+        "container_safety_verified": true,
+        "outage": {
+          "readiness_http_status_during_outage": 503,
+          "liveness_http_status_during_outage": 200,
+          "interrupted_commit_raised": true,
+          "interrupted_commit_error_type": "AdminShutdown",
+          "recovery_to_ready_seconds": 0.868,
+          "committed_order_count": 1800,
+          "committed_order_fingerprints_preserved": true,
+          "uncommitted_order_rolled_back": true,
+          "passed": true
+        },
+        "connection_capacity": {
+          "configured_max_connections": 100,
+          "owned_application_process_pids": [
+            3057,
+            3058,
+            3059,
+            3060
+          ],
+          "terminated_isolated_app_pool_backends": 2,
+          "exhaustion_reached": true,
+          "remaining_isolated_app_pool_backends": 0,
+          "client_backend_count_at_capacity": 100,
+          "held_connections": 100,
+          "readiness_http_status_at_capacity": 503,
+          "liveness_http_status_at_capacity": 200,
+          "write_http_status_at_capacity": 503,
+          "write_error_code": "DATABASE_UNAVAILABLE",
+          "write_failure_latency_ms": 5002.222,
+          "release_to_ready_seconds": 0.376,
+          "failed_write_left_no_partial_user": true,
+          "committed_order_fingerprints_preserved": true,
+          "passed": true
+        },
+        "passed": true
+      },
+      "recovery_seconds": 3.238,
+      "post_recovery_reports": {
+        "expected_orders": 1800,
+        "expected_total_halalas": 2253800,
+        "database_orders": 1800,
+        "database_total_halalas": 2253800,
+        "export": {
+          "http_status": 200,
+          "checksums_verified": true,
+          "orders": 1800,
+          "totals": {
+            "collected_halalas": 0,
+            "orders": 1800,
+            "refunded_halalas": 0,
+            "total_halalas": 2253800
+          },
+          "archived_order_total_halalas": 2253800,
+          "archive_bytes": 7096628
+        },
+        "accounting_reports": [
+          {
+            "language": "ar",
+            "http_status": 200,
+            "uncollected_orders_not_recognized_as_cash_or_card": true,
+            "pdf_valid": true,
+            "xlsx_valid": true
+          },
+          {
+            "language": "en",
+            "http_status": 200,
+            "uncollected_orders_not_recognized_as_cash_or_card": true,
+            "pdf_valid": true,
+            "xlsx_valid": true
+          }
+        ],
+        "order_fingerprints_preserved": true,
+        "passed": true
+      },
+      "source_hash": "02ebcda51f0bacdc9bd6213e2869f4a861ed2a04856ace20f47949e8eff49f58",
+      "resource_limits_proof": {
+        "name": "economy_render_resource_budget",
+        "budget_configuration_verified": true,
+        "paid_resource_change_approved": false,
+        "matches_current_plan_budget": false,
+        "application_limits": {
+          "cpu_quota_us": 100000,
+          "cpu_period_us": 100000,
+          "memory_limit_bytes": 2147483648,
+          "swap_limit_bytes": 0
+        },
+        "postgresql_limits": {
+          "cpu_quota_us": 50000,
+          "cpu_period_us": 100000,
+          "memory_limit_bytes": 1073741824,
+          "swap_limit_bytes": 0
+        },
+        "generator_outside_workload_cgroups": true,
+        "complete_all_requested_levels_even_after_failure": true,
+        "startup_ownership": {
+          "application": {
+            "cpu": {
+              "usage_usec": 2554989,
+              "user_usec": 2395985,
+              "system_usec": 159003,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 29,
+              "nr_throttled": 23,
+              "throttled_usec": 2225865,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 160985088,
+            "pids": [
+              3057,
+              3058,
+              3059,
+              3060
+            ],
+            "observation_scope": "Verified Uvicorn supervisor and all owned descendants; generator/sudo controller excluded."
+          },
+          "postgresql": {
+            "cpu": {
+              "usage_usec": 2324936,
+              "user_usec": 1666954,
+              "system_usec": 657982,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 93,
+              "nr_throttled": 27,
+              "throttled_usec": 1143223,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 133599232,
+            "pids": [
+              2417,
+              2572,
+              2573,
+              2574,
+              2575,
+              2576,
+              2578,
+              2579,
+              2580,
+              3090,
+              3091,
+              3092,
+              3098,
+              3099,
+              3100
+            ]
+          }
+        },
+        "restart_ownership": {
+          "application": {
+            "cpu": {
+              "usage_usec": 55858030,
+              "user_usec": 42418582,
+              "system_usec": 13439448,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 849,
+              "nr_throttled": 530,
+              "throttled_usec": 29119649,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 161148928,
+            "pids": [
+              4097,
+              4098,
+              4099,
+              4100
+            ],
+            "observation_scope": "Verified Uvicorn supervisor and all owned descendants; generator/sudo controller excluded."
+          },
+          "postgresql": {
+            "cpu": {
+              "usage_usec": 1241841,
+              "user_usec": 733678,
+              "system_usec": 508162,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 65,
+              "nr_throttled": 16,
+              "throttled_usec": 1597257,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 61001728,
+            "pids": [
+              3829,
+              3912,
+              3913,
+              3914,
+              3915,
+              3916,
+              3918,
+              3919,
+              3920,
+              4107,
+              4108,
+              4109,
+              4114,
+              4115,
+              4116
+            ]
+          }
+        },
+        "post_report_ownership": {
+          "application": {
+            "cpu": {
+              "usage_usec": 56950952,
+              "user_usec": 43457695,
+              "system_usec": 13493257,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 869,
+              "nr_throttled": 530,
+              "throttled_usec": 29119649,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 198352896,
+            "pids": [
+              4097,
+              4098,
+              4099,
+              4100
+            ],
+            "observation_scope": "Verified Uvicorn supervisor and all owned descendants; generator/sudo controller excluded."
+          },
+          "postgresql": {
+            "cpu": {
+              "usage_usec": 1771646,
+              "user_usec": 1176067,
+              "system_usec": 595578,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 84,
+              "nr_throttled": 17,
+              "throttled_usec": 1597808,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 76783616,
+            "pids": [
+              3829,
+              3912,
+              3913,
+              3914,
+              3915,
+              3916,
+              3918,
+              3919,
+              3920,
+              4107,
+              4108,
+              4109,
+              4114,
+              4115,
+              4116,
+              4148,
+              4149,
+              4150
+            ]
+          }
+        }
+      },
+      "verified_sample_counts": {
+        "50": 14,
+        "100": 27,
+        "250": 67,
+        "500": 141
+      }
+    },
+    {
+      "file": "candidate-evidence/hosting-economy-2/economy-2.json",
+      "head": "48f199fef91d34d2d0fb8aa2e512ef5b36be7fea",
+      "profile": "economy",
+      "raw_status": "PASS_CANDIDATE_RESOURCE_GATE",
+      "validated_pass": true,
+      "failure_reasons": [],
+      "stages": [
+        {
+          "users": 50,
+          "p95_ms": 411.671,
+          "p99_ms": 467.368,
+          "requests": 550,
+          "orders": 100,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7795,
+              "mean_cpu_budget_percent": 77.95,
+              "peak_cgroup_memory_mib": 176.92,
+              "throttled_periods": 17,
+              "throttled_seconds": 1.038,
+              "sample_window_seconds": 2.781
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.3305,
+              "mean_cpu_budget_percent": 66.09,
+              "peak_cgroup_memory_mib": 158.84,
+              "throttled_periods": 11,
+              "throttled_seconds": 1.003,
+              "sample_window_seconds": 2.781
+            }
+          }
+        },
+        {
+          "users": 100,
+          "p95_ms": 887.881,
+          "p99_ms": 957.221,
+          "requests": 1100,
+          "orders": 200,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7602,
+              "mean_cpu_budget_percent": 76.02,
+              "peak_cgroup_memory_mib": 186.04,
+              "throttled_periods": 43,
+              "throttled_seconds": 2.496,
+              "sample_window_seconds": 5.737
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2228,
+              "mean_cpu_budget_percent": 44.57,
+              "peak_cgroup_memory_mib": 167.7,
+              "throttled_periods": 2,
+              "throttled_seconds": 0.143,
+              "sample_window_seconds": 5.737
+            }
+          }
+        },
+        {
+          "users": 250,
+          "p95_ms": 2051.438,
+          "p99_ms": 2180.545,
+          "requests": 2750,
+          "orders": 500,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7472,
+              "mean_cpu_budget_percent": 74.72,
+              "peak_cgroup_memory_mib": 200.98,
+              "throttled_periods": 104,
+              "throttled_seconds": 6.334,
+              "sample_window_seconds": 14.473
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.212,
+              "mean_cpu_budget_percent": 42.4,
+              "peak_cgroup_memory_mib": 175.92,
+              "throttled_periods": 7,
+              "throttled_seconds": 0.544,
+              "sample_window_seconds": 14.473
+            }
+          }
+        },
+        {
+          "users": 500,
+          "p95_ms": 3974.237,
+          "p99_ms": 4180.865,
+          "requests": 5500,
+          "orders": 1000,
+          "errors": 0,
+          "deadlocks": 0,
+          "passed": true,
+          "resources": {
+            "application": {
+              "allocated_cpus": 1,
+              "mean_used_cpus": 0.7555,
+              "mean_cpu_budget_percent": 75.55,
+              "peak_cgroup_memory_mib": 221.36,
+              "throttled_periods": 216,
+              "throttled_seconds": 13.772,
+              "sample_window_seconds": 28.965
+            },
+            "postgresql": {
+              "allocated_cpus": 0.5,
+              "mean_used_cpus": 0.2052,
+              "mean_cpu_budget_percent": 41.05,
+              "peak_cgroup_memory_mib": 206.88,
+              "throttled_periods": 9,
+              "throttled_seconds": 0.702,
+              "sample_window_seconds": 28.965
+            }
+          }
+        }
+      ],
+      "orders_all_levels": 1800,
+      "requests_all_levels": 9900,
+      "database_fault_drills": {
+        "container_safety_verified": true,
+        "outage": {
+          "readiness_http_status_during_outage": 503,
+          "liveness_http_status_during_outage": 200,
+          "interrupted_commit_raised": true,
+          "interrupted_commit_error_type": "AdminShutdown",
+          "recovery_to_ready_seconds": 2.128,
+          "committed_order_count": 1800,
+          "committed_order_fingerprints_preserved": true,
+          "uncommitted_order_rolled_back": true,
+          "passed": true
+        },
+        "connection_capacity": {
+          "configured_max_connections": 100,
+          "owned_application_process_pids": [
+            2842,
+            2843,
+            2844,
+            2845
+          ],
+          "terminated_isolated_app_pool_backends": 7,
+          "exhaustion_reached": true,
+          "remaining_isolated_app_pool_backends": 0,
+          "client_backend_count_at_capacity": 100,
+          "held_connections": 100,
+          "readiness_http_status_at_capacity": 503,
+          "liveness_http_status_at_capacity": 200,
+          "write_http_status_at_capacity": 503,
+          "write_error_code": "DATABASE_UNAVAILABLE",
+          "write_failure_latency_ms": 5001.827,
+          "release_to_ready_seconds": 0.287,
+          "failed_write_left_no_partial_user": true,
+          "committed_order_fingerprints_preserved": true,
+          "passed": true
+        },
+        "passed": true
+      },
+      "recovery_seconds": 2.325,
+      "post_recovery_reports": {
+        "expected_orders": 1800,
+        "expected_total_halalas": 2253800,
+        "database_orders": 1800,
+        "database_total_halalas": 2253800,
+        "export": {
+          "http_status": 200,
+          "checksums_verified": true,
+          "orders": 1800,
+          "totals": {
+            "collected_halalas": 0,
+            "orders": 1800,
+            "refunded_halalas": 0,
+            "total_halalas": 2253800
+          },
+          "archived_order_total_halalas": 2253800,
+          "archive_bytes": 7097670
+        },
+        "accounting_reports": [
+          {
+            "language": "ar",
+            "http_status": 200,
+            "uncollected_orders_not_recognized_as_cash_or_card": true,
+            "pdf_valid": true,
+            "xlsx_valid": true
+          },
+          {
+            "language": "en",
+            "http_status": 200,
+            "uncollected_orders_not_recognized_as_cash_or_card": true,
+            "pdf_valid": true,
+            "xlsx_valid": true
+          }
+        ],
+        "order_fingerprints_preserved": true,
+        "passed": true
+      },
+      "source_hash": "02ebcda51f0bacdc9bd6213e2869f4a861ed2a04856ace20f47949e8eff49f58",
+      "resource_limits_proof": {
+        "name": "economy_render_resource_budget",
+        "budget_configuration_verified": true,
+        "paid_resource_change_approved": false,
+        "matches_current_plan_budget": false,
+        "application_limits": {
+          "cpu_quota_us": 100000,
+          "cpu_period_us": 100000,
+          "memory_limit_bytes": 2147483648,
+          "swap_limit_bytes": 0
+        },
+        "postgresql_limits": {
+          "cpu_quota_us": 50000,
+          "cpu_period_us": 100000,
+          "memory_limit_bytes": 1073741824,
+          "swap_limit_bytes": 0
+        },
+        "generator_outside_workload_cgroups": true,
+        "complete_all_requested_levels_even_after_failure": true,
+        "startup_ownership": {
+          "application": {
+            "cpu": {
+              "usage_usec": 1915998,
+              "user_usec": 1756744,
+              "system_usec": 159254,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 22,
+              "nr_throttled": 17,
+              "throttled_usec": 1783654,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 161288192,
+            "pids": [
+              2842,
+              2843,
+              2844,
+              2845
+            ],
+            "observation_scope": "Verified Uvicorn supervisor and all owned descendants; generator/sudo controller excluded."
+          },
+          "postgresql": {
+            "cpu": {
+              "usage_usec": 1906324,
+              "user_usec": 1149386,
+              "system_usec": 756938,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 80,
+              "nr_throttled": 20,
+              "throttled_usec": 913845,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 131883008,
+            "pids": [
+              2200,
+              2355,
+              2356,
+              2357,
+              2358,
+              2359,
+              2361,
+              2362,
+              2363,
+              2852,
+              2853,
+              2856,
+              2859,
+              2860,
+              2861
+            ]
+          }
+        },
+        "restart_ownership": {
+          "application": {
+            "cpu": {
+              "usage_usec": 43349875,
+              "user_usec": 31519925,
+              "system_usec": 11829950,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 694,
+              "nr_throttled": 415,
+              "throttled_usec": 27100679,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 161030144,
+            "pids": [
+              3712,
+              3713,
+              3714,
+              3715
+            ],
+            "observation_scope": "Verified Uvicorn supervisor and all owned descendants; generator/sudo controller excluded."
+          },
+          "postgresql": {
+            "cpu": {
+              "usage_usec": 1018834,
+              "user_usec": 492131,
+              "system_usec": 526702,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 66,
+              "nr_throttled": 10,
+              "throttled_usec": 1011988,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 60665856,
+            "pids": [
+              3435,
+              3518,
+              3519,
+              3520,
+              3521,
+              3522,
+              3526,
+              3527,
+              3528,
+              3743,
+              3744,
+              3745,
+              3750,
+              3751,
+              3752
+            ]
+          }
+        },
+        "post_report_ownership": {
+          "application": {
+            "cpu": {
+              "usage_usec": 44356808,
+              "user_usec": 32478808,
+              "system_usec": 11877999,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 711,
+              "nr_throttled": 415,
+              "throttled_usec": 27100679,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 200802304,
+            "pids": [
+              3712,
+              3713,
+              3714,
+              3715
+            ],
+            "observation_scope": "Verified Uvicorn supervisor and all owned descendants; generator/sudo controller excluded."
+          },
+          "postgresql": {
+            "cpu": {
+              "usage_usec": 1420909,
+              "user_usec": 806325,
+              "system_usec": 614583,
+              "nice_usec": 0,
+              "core_sched.force_idle_usec": 0,
+              "nr_periods": 83,
+              "nr_throttled": 13,
+              "throttled_usec": 1035686,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memory_events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "memory_current_bytes": 76288000,
+            "pids": [
+              3435,
+              3518,
+              3519,
+              3520,
+              3521,
+              3522,
+              3526,
+              3527,
+              3528,
+              3743,
+              3744,
+              3745,
+              3750,
+              3751,
+              3752,
+              3763,
+              3764,
+              3765
+            ]
+          }
+        }
+      },
+      "verified_sample_counts": {
+        "50": 11,
+        "100": 22,
+        "250": 54,
+        "500": 106
+      }
+    }
+  ],
+  "cost_sar": {
+    "compute": 165,
+    "storage_1gb_estimate": 1.13,
+    "compute_plus_1gb_estimate": 166.13,
+    "compute_saving_vs_125usd": 303.75,
+    "compute_saving_percent": 64.8
+  },
+  "privacy_gate": "OPEN_AND_INDEPENDENT",
+  "scope": "Unchanged accepted legacy-guest workload; closed-loop bursts, synthetic local data, no external SMS or payment traffic. Application/migrations/public/Dockerfile/requirements/render.yaml match 64b0a97 exactly."
+}

@@ -1,0 +1,50 @@
+name: Customer map paste and refresh acceptance
+on:
+  push:
+    branches: [agent/customer-map-autosave-20261022]
+  pull_request:
+    paths:
+      - public/customer.js
+      - public/index.html
+      - tests/test_customer_location_link*
+      - .github/workflows/customer-location-link.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: customer-map-link-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+jobs:
+  customer-location:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_customer_map_link
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d test_customer_map_link" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_BROWSER: '1'
+      TEST_DATABASE_URL: postgresql://postgres:isolated-test-only@127.0.0.1:5432/test_customer_map_link
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium webkit
+      - run: node --check public/customer.js && node tests/test_customer_location_link.cjs
+      - run: python -m pytest -q -x tests/test_customer_location_link_browser.py tests/test_experience_entry_browser.py tests/test_customer_map_browser.py --junitxml=test-results/customer-map-link.xml
+      - run: python -m pytest -q tests/test_customer_map.py tests/test_optional_customer_address.py tests/test_customer_hotpath.py --junitxml=test-results/customer-map-regression.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-map-link-acceptance
+          path: test-results/
