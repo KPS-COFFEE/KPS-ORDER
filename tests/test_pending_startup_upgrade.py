@@ -191,8 +191,8 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
         db.migrate()
         with db.tx() as c:
             assert original_rows(c, columns)[1] == before
-            days = c.execute("SELECT id,reporting_operational_date::text day FROM shifts ORDER BY id").fetchall()
-            assert {r['id']: r['day'] for r in days} == {
+            days = c.execute("SELECT id,reporting_operational_date::text AS operational_day FROM shifts ORDER BY id").fetchall()
+            assert {r['id']: r['operational_day'] for r in days} == {
                 'upgrade-friday-morning': '2026-10-23', 'upgrade-friday-evening': '2026-10-23',
                 'upgrade-saturday-preparation': '2026-10-24'}
             corrections = c.execute('SELECT shift_id,original_day::text,corrected_day::text FROM operational_day_reclassifications ORDER BY shift_id').fetchall()
