@@ -29,4 +29,10 @@ now=205000;ctx.tickAlertSounds();assert.equal(tones.length,14);assert.equal(tone
 now=220000;ctx.syncAlertChannel('orders',['configured']);assert.equal(tones.length,16);assert.equal(tones.at(-1)[2],3);
 now=240000;ctx.syncAlertChannel('orders',['configured']);assert.equal(oscillators.length,4);
 ctx.syncAlertChannel('orders',[]);assert.ok(oscillators[3].stopped);
-console.log('PASS: distinct bells, owner-configured delays/durations, continuous until confirmed action, independent stop, network loss does not mute, session safety.');
+// Native app handles only driver-order audio: no duplicate foreground web tone.
+ctx.state.user={id:'native',role:'driver'};ctx.navigator={userAgent:'Android KPSNativeOrderAudio/1'};
+const beforeNative=tones.length;now=300000;ctx.syncAlertChannel('driver-orders',['native-order']);
+now=305000;ctx.tickAlertSounds();assert.equal(tones.length,beforeNative);
+ctx.syncAlertChannel('messages',['native-chat']);now=310000;ctx.tickAlertSounds();assert.equal(tones.length,beforeNative+2);
+ctx.navigator.userAgent='Android browser';ctx.tickAlertSounds();assert.equal(tones.length,beforeNative+4);
+console.log('PASS: distinct bells, owner-configured timing, independent stop, session safety, no duplicate native driver bell, browser and message tones retained.');
