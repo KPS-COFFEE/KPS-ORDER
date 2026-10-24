@@ -7,7 +7,7 @@ from typing import Literal
 from PIL import Image, UnidentifiedImageError
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field, ConfigDict, model_validator
-from . import auth,db
+from . import auth,db,customer_message_routing as routing
 from .operations import uid,safe,fail,roles,mutate
 
 router=APIRouter(prefix='/api',tags=['chat'])
@@ -50,8 +50,11 @@ def allowed(user,row,conn=None):
         else:
             duty=conn.execute('SELECT opened_at FROM shifts WHERE id=%s',(user['_morning_manager_context']['shift_id'],)).fetchone()
             if not duty or row.get('context_service')!='delivery' or not row.get('created_at') or row['created_at']<duty['opened_at']:return False
-    if user['role']=='owner':return user['brand_id']==row['brand_id'] and (not user.get('home_brand_id') or row['branch_id'] in user.get('branch_ids',[]))
+    if user['role']=='owner':return user['brand_id']==row['brand_id'] and (not user.get('home_brand_id') or row['branch_id'] in user.get('branch_ids',[]) or (row['branch_id'] is None and conn is not None and routing.owner_branchless(conn,user)))
     if user['role']=='customer':return row['customer_id'] in auth.customer_ids(user) and row['brand_id']==user['brand_id']
+    if conn is not None:
+        configured = routing.access(conn, user, row)
+        if configured is not None:return configured
     if row['route'] in ('privacy','review'):return False
     if user['brand_id']!=row['brand_id'] or row['branch_id'] not in user.get('branch_ids',[]):return False
     if row['route']=='delivery':return user['role'] in ('delivery_manager','delivery_staff')
@@ -80,7 +83,7 @@ class CreateConversation(BaseModel):
 
 @router.post('/conversations')
 def create_conversation(body:CreateConversation,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','customer','delivery_manager','delivery_staff','branch_manager')
+    roles(user,'owner','customer','admin','delivery_manager','delivery_staff','branch_manager')
     if body.order_id is None:roles(user,'customer')
     if body.category=='other' and not body.details.strip():fail(422,'اكتب التفاصيل عند اختيار أخرى')
     with db.tx() as c:
@@ -109,7 +112,7 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
             if not db.rate_limit(c,'contact-create:'+user['id'],10,600):raise db.error(429,'CONTACT_RATE_LIMIT','رسائل كثيرة. حاول بعد قليل.')
             route=route_for(body.category,service,body.details)
             row={'customer_id':customer_id,'brand_id':brand_id,'branch_id':branch_id,'route':route,'order_id':order_id,
-                 'context_service':service,'created_at':c.execute('SELECT now() AS n').fetchone()['n']}
+                 'context_service':service,'category':body.category,'created_at':c.execute('SELECT now() AS n').fetchone()['n']}
             if not allowed(user,row,c):fail(403,'المحادثة مخصصة لفريق المتابعة المختص')
             cid=uid();c.execute('INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service,category) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(cid,order_id,brand_id,branch_id,customer_id,route,service,body.category))
             if body.details.strip():
@@ -123,15 +126,18 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
 
 @router.get('/conversations')
 def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
-    roles(user,'owner','customer','delivery_manager','delivery_staff','branch_manager')
+    roles(user,'owner','customer','admin','delivery_manager','delivery_staff','branch_manager')
     if offset<0 or offset>100000:fail(422,'صفحة غير صالحة')
     with db.tx() as c:
         if user['role']=='owner':
             scope='v.brand_id=%s';p=[user['brand_id']]
             if user.get('home_brand_id'):
-                scope+=' AND v.branch_id=ANY(%s)';p.append(user.get('branch_ids',[]))
+                scope+=' AND (v.branch_id=ANY(%s) OR (v.branch_id IS NULL AND %s))';p.extend([user.get('branch_ids',[]),routing.owner_branchless(c,user)])
         elif user['role']=='customer':scope='v.customer_id=ANY(%s) AND v.brand_id=%s';p=[auth.customer_ids(user),user['brand_id']]
+        elif user['role']=='admin':scope='FALSE';p=[]
         else:scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s';p=[user['brand_id'],user.get('branch_ids',[]),'branch' if user['role']=='branch_manager' else 'delivery']
+        configured = routing.scope(c, user)
+        if configured is not None:scope,p=configured
         from .morning_manager_context import conversation_filter
         morning_clause,morning_args=conversation_filter(user)
         scope+=' AND '+morning_clause;p.extend(morning_args)
@@ -141,21 +147,31 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
         rows=c.execute('SELECT v.*,o.order_no,o.snapshot->>\'order_reference\' order_reference,coalesce(o.service,v.context_service) service,b.name branch_name,b.branch_no,coalesce(o.customer->>\'name\',cu.display_name) customer_name,last.text last_message,last.created_at last_message_at,(SELECT count(*) FROM chat_messages m WHERE m.conversation_id=v.id AND m.sender_id<>%s AND m.seq>coalesce((SELECT through_seq FROM conversation_reads r WHERE r.conversation_id=v.id AND r.user_id=%s),0)) unread_count FROM conversations v LEFT JOIN orders o ON o.id=v.order_id LEFT JOIN branches b ON b.id=v.branch_id LEFT JOIN users cu ON cu.id=v.customer_id AND cu.brand_id=v.brand_id LEFT JOIN LATERAL (SELECT text,created_at FROM chat_messages WHERE conversation_id=v.id ORDER BY seq DESC LIMIT 1) last ON true WHERE '+scope+' ORDER BY v.created_at DESC LIMIT 50 OFFSET %s',[user['id'],user['id'],*p,offset]).fetchall()
         if user['role'] == 'customer':
             rows = [customer_conversation_view(c, row) for row in rows]
+        elif routing.config(c, user['brand_id']) is not None:
+            rows = [dict(row, response_team=routing.team(row)) for row in rows]
         return safe({'conversations':rows,'offset':offset,'limit':50})
 
 @router.get('/conversations/alerts')
 def reply_alerts(user=Depends(auth.current_user)):
     """Reading/claiming/resolving is not a reply. Scope matches the inbox."""
-    roles(user,'owner','delivery_manager','delivery_staff','branch_manager')
+    roles(user,'owner','admin','delivery_manager','delivery_staff','branch_manager')
     if user['role']=='owner':
         scope='v.brand_id=%s';params=[user['brand_id']]
         if user.get('home_brand_id'):
             scope+=' AND v.branch_id=ANY(%s)';params.append(user.get('branch_ids',[]))
+    elif user['role']=='admin':scope='FALSE';params=[]
     else:
         scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s'
         params=[user['brand_id'],user.get('branch_ids',[]),
                 'branch' if user['role']=='branch_manager' else 'delivery']
     with db.tx() as c:
+        if user['role']=='owner' and user.get('home_brand_id') and routing.owner_branchless(c,user):
+            scope='v.brand_id=%s';params=[user['brand_id']]
+        configured = routing.scope(c, user, alerts=True)
+        if configured is not None:
+            if user['role']=='owner':
+                scope+=' AND ('+configured[0]+')';params.extend(configured[1])
+            else:scope,params=configured
         from .morning_manager_context import conversation_filter
         morning_clause,morning_args=conversation_filter(user)
         scope+=' AND '+morning_clause;params.extend(morning_args)
@@ -187,6 +203,8 @@ def messages(cid:str,after:int=0,user=Depends(auth.current_user)):
         if user['role'] == 'customer':
             v = customer_conversation_view(c, v)
             transfers=[]
+        elif routing.config(c, user['brand_id']) is not None:
+            v = dict(v, response_team=routing.team(v))
         return safe({'conversation':v,'messages':rows,'transfers':transfers,'tickets':[{'reference':'TKT-'+str(t['ticket_no']).zfill(6),'status':t['status'],'status_label':STATES[t['status']],'category_label':CATEGORIES[t['category']]} for t in tickets]})
 
 class Message(BaseModel):
@@ -211,6 +229,9 @@ def send(cid:str,body:Message,request:Request,user=Depends(auth.current_user)):
             db.audit(c,user['id'],'chat.send','conversation',cid,{'message_id':mid})
             result=c.execute('SELECT * FROM chat_messages WHERE id=%s',(mid,)).fetchone();result['attachment_url']=attachment_url(body.attachment_id,user) if body.attachment_id else None
             return {'message':result}
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.send:'+cid,body.model_dump(),perform)
 
 class Attachment(BaseModel):
@@ -240,6 +261,9 @@ def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_use
             aid=uid();c.execute('INSERT INTO chat_attachments(id,conversation_id,uploader_id,content_type,size_bytes,sha256,data) VALUES(%s,%s,%s,%s,%s,%s,%s)',(aid,cid,user['id'],body.content_type,len(data),digest,data))
             db.audit(c,user['id'],'chat.attachment','conversation',cid,{'attachment_id':aid,'size_bytes':len(data)})
             return {'id':aid,'url':attachment_url(aid,user)}
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.attachment:'+cid,{'sha256':digest,'content_type':body.content_type},perform)
 
 @router.get('/chat-attachments/{aid}')
@@ -256,19 +280,23 @@ class Transfer(BaseModel):
 
 @router.post('/conversations/{cid}/transfer')
 def transfer(cid:str,body:Transfer,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','branch_manager','delivery_manager','delivery_staff')
+    roles(user,'owner','admin','branch_manager','delivery_manager','delivery_staff')
     with db.tx() as c:
         def perform():
             v=conversation(c,user,cid,True)
             o=c.execute('SELECT service FROM orders WHERE id=%s',(v['order_id'],)).fetchone() if v['order_id'] else None
             service=o['service'] if o else v['context_service']
-            if v['route'] in ('privacy','review'):fail(403,'المراجعة لدى المالك فقط')
+            if v['route'] in ('privacy','review') or (routing.config(c,user['brand_id']) is not None and routing.team(v)=='care'):
+                fail(403,'المحادثة مخصصة لفريق متابعة الشكاوى والخصوصية')
             if body.target not in ('delivery','branch') or body.target==v['route']:fail(422,'جهة تحويل غير صالحة')
             if body.target=='branch' and (service=='delivery' or v['route']=='delivery'):fail(409,'شكاوى التوصيل تظل لدى التوصيل')
             tid=uid();c.execute('INSERT INTO conversation_transfers(id,conversation_id,from_route,to_route,reason,actor_id) VALUES(%s,%s,%s,%s,%s,%s)',(tid,cid,v['route'],body.target,body.reason,user['id']))
             c.execute("UPDATE conversations SET route=%s,assignee_id=NULL,status='open' WHERE id=%s",(body.target,cid))
             db.audit(c,user['id'],'chat.transfer','conversation',cid,{'from':v['route'],'to':body.target,'reason':body.reason})
             return {'conversation_id':cid,'route':body.target,'transfer_id':tid}
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.transfer:'+cid,body.model_dump(),perform)
 
 class Read(BaseModel):through_seq:int=Field(ge=0)
@@ -284,7 +312,7 @@ def mark_read(cid:str,body:Read,user=Depends(auth.current_user)):
 
 @router.post('/conversations/{cid}/claim')
 def claim(cid:str,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','branch_manager','delivery_manager','delivery_staff')
+    roles(user,'owner','admin','branch_manager','delivery_manager','delivery_staff')
     with db.tx() as c:
         def perform():
             v=conversation(c,user,cid,True)
@@ -294,13 +322,16 @@ def claim(cid:str,request:Request,user=Depends(auth.current_user)):
             c.execute("UPDATE conversations SET assignee_id=%s,status='in_progress' WHERE id=%s",(user['id'],cid))
             db.audit(c,user['id'],'chat.claim','conversation',cid)
             return {'assignee_id':user['id'],'status':'in_progress'}
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.claim:'+cid,{},perform)
 
 class Status(BaseModel):status:str
 
 @router.post('/conversations/{cid}/status')
 def status(cid:str,body:Status,request:Request,user=Depends(auth.current_user)):
-    roles(user,'owner','branch_manager','delivery_manager','delivery_staff')
+    roles(user,'owner','admin','branch_manager','delivery_manager','delivery_staff')
     with db.tx() as c:
         def perform():
             v=conversation(c,user,cid,True)
@@ -310,6 +341,9 @@ def status(cid:str,body:Status,request:Request,user=Depends(auth.current_user)):
             if body.status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             c.execute('UPDATE conversations SET status=%s WHERE id=%s',(body.status,cid));db.audit(c,user['id'],'chat.status','conversation',cid,body.model_dump())
             return {'status':body.status}
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.status:'+cid,body.model_dump(),perform)
 
 
@@ -423,3 +457,4 @@ def driver_customer_download(tid:str,aid:str,user=Depends(auth.current_user)):
         a=c.execute('SELECT a.* FROM chat_attachments a JOIN conversations v ON v.id=a.conversation_id WHERE a.id=%s AND v.driver_task_id=%s',(aid,tid)).fetchone()
         if not a:fail(404,'المرفق غير موجود')
         return Response(bytes(a['data']),media_type=a['content_type'],headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'inline; filename="image.'+{'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[a['content_type']]+'"'})
+

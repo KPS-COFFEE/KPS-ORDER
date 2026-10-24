@@ -99,6 +99,8 @@ from . import branch_payments, branch_payment_renewal
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
+from . import customer_message_routing
+app.include_router(customer_message_routing.router)
 from . import experience_policy
 app.include_router(experience_policy.router)
 from . import first_order_gift
@@ -257,4 +259,5 @@ def frontend_file(filename: str):
 if (PUBLIC / 'assets').exists():
     app.include_router(image_previews.router)
     app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')
+
 

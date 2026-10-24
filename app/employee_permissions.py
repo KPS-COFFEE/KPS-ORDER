@@ -143,7 +143,9 @@ def effective(user):
     if role == 'owner':
         return eligible(role)
     base = set(user.get('permissions') or []) & ADMIN if role == 'admin' else eligible(role)
-    return (base | (set(user.get('extra_permissions') or []) & grantable(role))) - set(user.get('permission_denials') or [])
+    routed = (set(user.get('_message_capabilities') or []) & {'chat_view', 'chat_reply', 'chat_manage'}
+              if role in {'admin', 'delivery_manager', 'delivery_staff'} else set())
+    return (base | routed | (set(user.get('extra_permissions') or []) & grantable(role))) - set(user.get('permission_denials') or [])
 
 
 def catalog():
@@ -233,3 +235,4 @@ def required_for(endpoint, role, *, user=None):
         return ('shifts_close', 'shifts_delegate_close')
     value = ROUTES.get(module, {}).get(endpoint.__name__)
     return value.get(role) if isinstance(value, dict) else value
+
