@@ -47,4 +47,8 @@ def test_order_and_dashboard_date_filters_include_same_delivery_boundaries(ops):
     owner=actor('owner').get('/api/dashboard',params=general).json()
     assert owner['summary']['orders']==2 and owner['period']['operational_day_start_minutes']==0
     with db.tx() as c:
+        c.execute("INSERT INTO app_settings(brand_id,settings) VALUES('ops-brand',%s)",(db.json({'operational_day_start':'05:30'}),))
         assert [c.execute('SELECT created_at FROM orders WHERE id=%s',(oid,)).fetchone()['created_at'] for oid in ids]==[datetime.fromisoformat(stamp) for stamp in stamps]
+    configured=actor('owner').get('/api/dashboard?period=today').json()['period']
+    assert configured['operational_day_start_minutes']==330
+    assert datetime.fromisoformat(configured['start']).strftime('%H:%M')=='05:30'
