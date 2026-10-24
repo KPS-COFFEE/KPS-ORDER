@@ -141,16 +141,21 @@ def test_incomplete_target_workday_cannot_take_shared_driver(central):
 
 
 @pytest.mark.postgres
-def test_morning_policy_failure_does_not_partially_request_handover(central):
+def test_revoked_evening_successor_rolls_back_all_morning_handover_legs(central):
     _, _, post, _, _ = central
     source, _, _, path, body = setup_handover(central)
     with db.tx() as c:
         c.execute("UPDATE shifts SET delivery_window_snapshot=%s WHERE id=%s",
                   (db.json({'period':'morning'}),next(s['id'] for s in source['shifts'] if s['brand_id']=='kps')))
-    post('manager',path,body,status=409)
+        # Evening is now an approved successor period, but a revoked actual
+        # recipient must roll back the earlier brand leg in this transaction.
+        c.execute("UPDATE users SET active=false WHERE id='dual-owner'")
+    post('manager',path,body,status=403)
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM manager_handovers').fetchone()
         assert not c.execute('SELECT 1 FROM central_manager_handovers').fetchone()
+        assert {r['status'] for r in c.execute('SELECT status FROM shifts WHERE id=ANY(%s)',([s['id'] for s in source['shifts']],)).fetchall()}=={'open'}
+    assert set(parents().values())=={s['id'] for s in source['shifts']}
 
 
 @pytest.mark.postgres

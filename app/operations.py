@@ -72,7 +72,7 @@ def shift_access(c, user, shift, manager=False, capability=None):
     from .morning_manager_context import require_shift
     require_shift(user, shift)
     context = user.get('_morning_manager_context')
-    if context and shift and shift['kind'] == 'manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND (brand_id<>%s OR NOT (branch_ids <@ %s::jsonb) OR COALESCE(delivery_window_snapshot->>'period','evening')<>'morning') LIMIT 1", (shift['id'], user['brand_id'], db.json(user['branch_ids']))).fetchone():
+    if context and shift and shift['kind'] == 'manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND (brand_id<>%s OR NOT (branch_ids <@ %s::jsonb) OR (COALESCE(delivery_window_snapshot->>'period','evening')<>'morning' AND NOT EXISTS(SELECT 1 FROM driver_support_requests r WHERE r.driver_shift_id=shifts.id AND r.to_shift_id=shifts.manager_shift_id AND r.status='accepted'))) LIMIT 1", (shift['id'], user['brand_id'], db.json(user['branch_ids']))).fetchone():
         raise db.error(403, 'MORNING_SHIFT_MIXED_DATA', 'تحتاج المناوبة مراجعة المالك لوجود شفت خارج نطاق الصباح.')
     if context and c.execute("SELECT 1 FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE (t.shift_id=%s OR t.shift_id IN (SELECT id FROM shifts WHERE manager_shift_id=%s)) AND (o.brand_id<>%s OR NOT (o.branch_id=ANY(%s)) OR o.service<>'delivery' OR COALESCE(o.snapshot->>'delivery_period','evening')<>'morning') LIMIT 1", (shift['id'], shift['id'], user['brand_id'], user['branch_ids'])).fetchone():
         raise db.error(403, 'MORNING_SHIFT_MIXED_DATA', 'تحتاج المناوبة مراجعة المالك لوجود طلب خارج نطاق الصباح.')
@@ -107,58 +107,39 @@ def unresolved(c, sid):
         return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id IN (SELECT shift_id FROM central_workday_legs WHERE workday_id=%s) AND status NOT IN ('delivered','cancelled','transferred')", (day['id'],)).fetchone()['n']
     return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(sid,)).fetchone()['n']
 
-def morning_handover_coverage(c, shift):
-    """Only a real accepted, still-operational successor releases dispatch duty."""
-    from . import morning_delivery
-    covered=set()
-    successors=c.execute("SELECT s.*,h.branch_ids AS handed_branch_ids FROM manager_handovers h "
-        "JOIN shifts s ON s.id=h.to_shift_id WHERE h.from_shift_id=%s AND h.status='accepted' "
-        "AND s.kind='manager' AND s.status='open' AND s.brand_id=%s "
-        "AND s.delivery_window_snapshot->>'period'='morning' FOR SHARE OF s",
-        (shift['id'],shift['brand_id'])).fetchall()
-    for successor in successors:
-        principal=c.execute('SELECT * FROM users WHERE id=%s FOR SHARE',(successor['user_id'],)).fetchone()
-        branches=set(shift['branch_ids']) & set(successor['handed_branch_ids']) & set(successor['branch_ids'])
-        for bid in branches:
-            try:
-                morning_delivery.authorize_order(c,principal,{'brand_id':shift['brand_id'],'branch_id':bid,
-                                                              'snapshot':{'delivery_period':'morning'}})
-            except HTTPException as error:
-                if error.status_code!=403:raise
-                continue
-            covered.add(bid)
-    return covered
-
 def guard_accepted_awaiting_dispatch(c, shift):
     """A separately accepted order cannot be abandoned by closing its manager."""
     if shift['kind'] != 'manager':
         return
+    from .manager_handover_scope import guard_received_work, handed_off
+    guard_received_work(c, shift)
     if (shift.get('delivery_window_snapshot') or {}).get('period') == 'morning':
-        remaining_branches=list(set(shift['branch_ids'])-morning_handover_coverage(c,shift))
+        remaining_branches=shift['branch_ids']
         # Morning preparation acceptance belongs to the branch, not a manager
         # event. Even a newly arrived request must retain an open dispatcher.
         # The manager row is locked by the caller; admission holds that row FOR
         # SHARE until the order commits, so closure cannot race past a new order.
-        morning_pending = c.execute("SELECT 1 FROM orders o WHERE o.brand_id=%s "
+        morning_pending = c.execute("SELECT o.* FROM orders o WHERE o.brand_id=%s "
             "AND o.branch_id=ANY(%s) AND o.service='delivery' "
             "AND o.snapshot->>'delivery_period'='morning' AND o.completed_at IS NULL "
+            "AND o.created_at<=COALESCE((SELECT max(h.accepted_at) FROM manager_handovers h WHERE h.from_shift_id=%s AND h.status='accepted'),'infinity'::timestamptz) "
             "AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
             "AND o.delivery_status NOT IN ('cancelled','delivered') "
             "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
-            "AND t.status NOT IN ('cancelled','reassigned','transferred')) LIMIT 1",
-            (shift['brand_id'], remaining_branches)).fetchone()
-        if morning_pending:
+            "AND t.status NOT IN ('cancelled','reassigned','transferred'))",
+            (shift['brand_id'], remaining_branches, shift['id'])).fetchall()
+        if any(not handed_off(c, shift['id'], order) for order in morning_pending):
             raise db.error(409, 'MORNING_ORDERS_AWAITING_DISPATCH',
                            'توجد طلبات صباحية بانتظار المعالجة أو الإسناد. عالجها قبل تقفيل المناوبة.')
-    pending = c.execute("SELECT 1 FROM order_events e JOIN orders o ON o.id=e.order_id "
+    pending = c.execute("SELECT DISTINCT o.* FROM order_events e JOIN orders o ON o.id=e.order_id "
         "WHERE e.event_type='preparation.accepted' AND e.details->>'manager_shift_id'=%s "
         "AND e.details->>'dispatch_pending'='true' AND o.brand_id=%s "
         "AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
         "AND o.delivery_status NOT IN ('cancelled','delivered') "
         "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
-        "AND t.status NOT IN ('cancelled','reassigned','transferred')) LIMIT 1",
-        (shift['id'],shift['brand_id'])).fetchone()
-    if pending:
+        "AND t.status NOT IN ('cancelled','reassigned','transferred'))",
+        (shift['id'],shift['brand_id'])).fetchall()
+    if any(not handed_off(c, shift['id'], order) for order in pending):
         raise db.error(409, 'ACCEPTED_ORDERS_AWAITING_DISPATCH',
                        'لديك طلبات مقبولة بانتظار إسناد سائق. عالجها قبل تقفيل المناوبة.')
 
@@ -607,9 +588,12 @@ def people_data(c,user):
                  for u in users if u['role']=='owner' or u['id'] == user['id'] or u['role'] == 'driver' and (u['id'] in child_ids or set(u['branch_ids']) & set(user['branch_ids']))]
         from .morning_delivery import policy
         approved=policy((c.execute('SELECT settings FROM brands WHERE id=%s',(user['brand_id'],)).fetchone() or {}).get('settings'))['manager_user_ids']
-        managers = [s for s in managers if (s['id'] == context['shift_id'] or s['user_id'] in approved)
-                    and (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
-                    and set(s['branch_ids'])==set(user['branch_ids'])]
+        from .manager_handover_scope import authorized
+        managers = [s for s in managers if set(user['branch_ids']) <= set(s['branch_ids'])
+                    and ((s.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                         and (s['id'] == context['shift_id'] or s['user_id'] in approved)
+                         or (s.get('delivery_window_snapshot') or {}).get('period') != 'morning'
+                         and authorized(c, dict(s, brand_id=user['brand_id']), user['branch_ids']))]
     from .central_workdays import annotate
     annotate(c, managers)
     return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
@@ -906,8 +890,10 @@ def eligible_driver_shift(c,s,order):
     if order.get('snapshot', {}).get('delivery_period') == 'morning':
         from . import morning_delivery
         morning_delivery.authorize_order(c, principal, order)
-        if (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning':
-            fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية.')
+        from .manager_handover_scope import accepted_order
+        if ((manager.get('delivery_window_snapshot') or {}).get('period') != 'morning'
+                and not accepted_order(c, principal, order, shift_id=manager['id'])):
+            fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية أو مستلمًا للطلب بالتسليم.')
         from . import morning_dispatch
         if morning_dispatch.actual_morning(order):
             branch=c.execute('SELECT branch_no,city FROM branches WHERE id=%s AND brand_id=%s',(order['branch_id'],order['brand_id'])).fetchone()
@@ -1144,6 +1130,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
+                from .order_financial_cases import invoice_guard
+                invoice_guard(c,o)
                 from .order_amendments import balance as paid_balance
                 if o['payment_status'] in ('paid','partially_refunded') or paid_balance(c,o)>0:fail(409,'يلزم استرداد كامل قبل الإلغاء')
             if t['status']=='problem' and body.status!='problem':
@@ -1338,11 +1326,21 @@ class Refund(OperationBody):
 @router.post('/orders/{oid}/refund')
 def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
     # Check authority before idempotency lookup, including previously successful retries.
-    roles(user,'owner','branch_manager')
+    roles(user,'owner','branch_manager','admin')
+    if user['role']=='admin' and not auth.has_permission(user,'accounting_review'):fail(403,'صلاحية المراجعة المحاسبية مطلوبة')
     if user['role']=='branch_manager' and not body.amendment_id:fail(403,'الاسترداد الاعتيادي يتطلب المدير')
     with db.tx() as c:
+        if user['role']=='admin':
+            from .order_financial_cases import scoped
+            scoped(c,oid,user)
         def perform():
-            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+            if user['role']=='admin':
+                from .order_financial_cases import scoped,case
+                o=scoped(c,oid,user,True)
+                pending=case(c,oid)
+                if not pending or pending['status']!='pending':fail(409,'يلزم ملف معالجة مالية معلق')
+            else:
+                o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             from .order_amendments import active,balance as paid_balance
             from .branch_payments import online_order
             if online_order(o):
@@ -1365,8 +1363,15 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
                 if q<0 or pid not in lines or q+previous>lines[pid]:fail(422,'كمية استرداد الصنف غير صالحة')
             sid=body.shift_id or col['shift_id']
             if sid:
-                s=lock_shift(c,sid);shift_access(c,user,s)
-                if s['status'] not in ('open','closing') or s['brand_id']!=o['brand_id']:fail(409,'الاسترداد يحتاج عهدة شفت مفتوح؛ لا يعدل تقفيلة تاريخية')
+                s=lock_shift(c,sid);shift_access(c,user,s,capability='accounting_review')
+                from .order_financial_cases import accounting,case
+                financial_case=case(c,oid)
+                postclose_card=(body.method=='card' and body.shift_id is None and not body.amendment_id
+                    and s['status']=='closed' and accounting(user) and financial_case and financial_case['status']=='pending')
+                if postclose_card:
+                    # No new cash custody exists: retain collection lineage, never reopen the saved shift.
+                    sid=None
+                elif s['status'] not in ('open','closing') or s['brand_id']!=o['brand_id']:fail(409,'الاسترداد يحتاج عهدة شفت مفتوح؛ لا يعدل تقفيلة تاريخية')
                 if body.method=='cash' and available_balance(c,s)<body.amount_halalas:fail(409,'العهدة النقدية غير كافية')
             elif o['service']=='delivery' and body.method=='cash':fail(409,'يلزم شفت عهدة للاسترداد النقدي')
             remaining=body.amount_halalas;refund_ids=[]
@@ -1735,7 +1740,10 @@ def morning_handover_scope(c, source, target):
     if (source.get('delivery_window_snapshot') or {}).get('period') != 'morning':
         return
     if (target.get('delivery_window_snapshot') or {}).get('period') != 'morning':
-        fail(409, 'المناوبة البديلة للطلبات الصباحية يجب أن تكون صباحية معتمدة.')
+        from .manager_handover_scope import authorized
+        if not authorized(c, target, source['branch_ids']):
+            fail(403, 'مدير المناوبة المستلمة غير مخول على فروع التسليم.')
+        return
     from . import morning_delivery
     principal=c.execute('SELECT * FROM users WHERE id=%s', (target['user_id'],)).fetchone()
     for bid in source['branch_ids']:
@@ -1752,11 +1760,16 @@ def manager_handover_in_tx(c,user,sid,body):
     if not target or src['kind']!='manager' or target['kind']!='manager' or src['id']==target['id'] or src['status'] not in ('open','closing') or target['status']!='open' or src['brand_id']!=target['brand_id'] or not set(src['branch_ids'])<=set(target['branch_ids']):fail(409,'المناوبة البديلة غير مؤهلة')
     morning_handover_scope(c, src, target)
     if c.execute("SELECT 1 FROM manager_handovers WHERE from_shift_id=%s AND status='pending'",(sid,)).fetchone():fail(409,'يوجد تسليم مناوبة معلق')
-    children=c.execute("SELECT id FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id",(sid,)).fetchall()
+    children=c.execute("SELECT * FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id FOR UPDATE",(sid,)).fetchall()
     for child in children:guard_component(c,child['id'])
     hid=uid();c.execute('INSERT INTO manager_handovers(id,from_shift_id,to_shift_id,branch_ids,driver_shift_ids,reason,requested_by) VALUES(%s,%s,%s,%s,%s,%s,%s)',(hid,sid,target['id'],db.json(src['branch_ids']),db.json([x['id'] for x in children]),body.reason,user['id']))
+    from .manager_handover_scope import snapshot
+    observed=snapshot(c,src,children)
+    c.execute('UPDATE manager_handovers SET operational_snapshot=%s WHERE id=%s',(db.json(observed),hid))
     c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
     db.audit(c,user['id'],'manager.handover.request','shift',sid,{'handover_id':hid,**body.model_dump()})
+    for oid in observed['order_ids']:
+        db.event(c,oid,user['id'],'manager.handover.requested',{'handover_id':hid,'from_shift_id':sid,'to_shift_id':target['id'],'cash_transferred':False,'reason':body.reason})
     return {'handover_id':hid,'status':'pending','driver_shift_ids':[x['id'] for x in children],'cash_handover_requires_separate_confirmation':True}
 
 
@@ -1786,9 +1799,21 @@ def accept_manager_handover_in_tx(c,user,hid):
     shift_access(c,user,target)
     if target['status']!='open' or src['status']!='closing':fail(409,'حالة الشفت غير صالحة')
     morning_handover_scope(c, src, target)
+    from .manager_handover_scope import authorized, snapshot
+    if not authorized(c,target,h['branch_ids']):fail(403,'صلاحية المدير المستلم لم تعد سارية')
+    children=c.execute("SELECT * FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id FOR UPDATE",(src['id'],)).fetchall()
+    expected=c.execute("SELECT id FROM shifts WHERE id=ANY(%s) AND status<>'closed' ORDER BY id FOR UPDATE",(h['driver_shift_ids'],)).fetchall()
+    if {s['id'] for s in children} != {s['id'] for s in expected}:
+        fail(409,'تغيرت قائمة السائقين؛ راجع تسليم المناوبة قبل القبول')
+    observed=snapshot(c,src,children)
+    observed['requested_snapshot']=h['operational_snapshot']
+    observed['order_ids']=sorted(set(observed['order_ids']) | set(h['operational_snapshot'].get('order_ids',[])))
+    c.execute('UPDATE manager_handovers SET operational_snapshot=%s WHERE id=%s',(db.json(observed),hid))
     c.execute("UPDATE shifts SET manager_shift_id=%s WHERE id=ANY(%s) AND manager_shift_id=%s AND status<>'closed'",(target['id'],h['driver_shift_ids'],src['id']))
     c.execute("UPDATE manager_handovers SET status='accepted',accepted_by=%s,accepted_at=now() WHERE id=%s",(user['id'],hid))
     db.audit(c,user['id'],'manager.handover.accept','shift',target['id'],{'handover_id':hid,'driver_shift_ids':h['driver_shift_ids'],'cash_transferred':False})
+    for oid in observed['order_ids']:
+        db.event(c,oid,user['id'],'manager.handover.accepted',{'handover_id':hid,'from_shift_id':src['id'],'to_shift_id':target['id'],'cash_transferred':False})
     return {'handover_id':hid,'status':'accepted','cash_transferred':False}
 
 
@@ -1818,6 +1843,10 @@ def driver_roster(user=Depends(auth.current_user)):
             context = user.get('_morning_manager_context')
             if context:
                 if row.get('shift_id') and row.get('manager_shift_id') != context['shift_id']:
+                    row.update(active_tasks=0, assignment_eligible=False, availability='support_requires_handover',
+                               readiness_action='request_manager_handover', eligible_branch_ids=[],
+                               support_available=True)
+                    visible.append(row)
                     continue
                 row['active_tasks'] = c.execute("SELECT count(*) AS n FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.manager_shift_id=%s AND o.brand_id=%s AND o.branch_id=ANY(%s) AND o.snapshot->>'delivery_period'='morning' AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')", (row['id'], context['shift_id'], user['brand_id'], user['branch_ids'])).fetchone()['n']
             from .driver_readiness import describe

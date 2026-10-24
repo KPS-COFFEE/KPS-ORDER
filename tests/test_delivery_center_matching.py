@@ -12,6 +12,7 @@ from app.branch_printing import receipt
 class Result:
     def __init__(self,row=None):self.row=row
     def fetchone(self):return self.row
+    def fetchall(self):return [] if self.row is None else [self.row]
 
 @pytest.mark.parametrize('value',[{}, {'name':''},{'name':'   '},{'name':'عميل'}])
 def test_optional_customer_name(value):
@@ -83,13 +84,17 @@ def test_bank_cash_matching_are_independent_and_revision_protected(monkeypatch,b
         assert writes[0][4:8]==(900,500,bank,cash)
     assert snap==original
 
-@pytest.mark.parametrize('owner,kind,expected',[('manager','manager',True),('other','manager',False),('driver','driver',False)])
-def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owner,kind,expected):
+@pytest.mark.parametrize('owner,kind,expected,received_work',[('manager','manager',True,False),('other','manager',False,False),('driver','driver',False,False),('manager','manager',False,True)])
+def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owner,kind,expected,received_work):
     s={'id':'s','user_id':owner,'brand_id':'brand','branch_ids':['b'],'kind':kind,'status':'submitted','submission':{'difference_halalas':0,'retained_halalas':0,'handover_halalas':500}}
     captured=[]
     class Conn:
         def execute(self,sql,args):
             if sql.startswith('SELECT user_id'):return Result({'user_id':'manager'} if kind=='driver' else None)
+            if sql.startswith('SELECT DISTINCT o.* FROM manager_handovers'):
+                return Result({'id':'pending-order','brand_id':'brand','branch_id':'b'} if received_work else None)
+            if sql.startswith('SELECT DISTINCT o.* FROM order_events'):return Result()
+            if sql.startswith('SELECT s.*,h.branch_ids AS handed_branches'):return Result()
             if sql.startswith('SELECT coalesce(sum(amount'):return Result({'n':0,'nrows':0})
             if sql.startswith('SELECT 1'):return Result()
             if sql.startswith('UPDATE shifts'):captured.append(args);return Result()
@@ -105,7 +110,9 @@ def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owne
         assert operations.approve_close_in_tx(Conn(),actor,'s',operations.Review())['status']=='closed'
         assert captured[0][2].obj['operational_approved'] is True
     else:
-        with pytest.raises(HTTPException):operations.approve_close_in_tx(Conn(),actor,'s',operations.Review())
+        with pytest.raises(HTTPException) as error:operations.approve_close_in_tx(Conn(),actor,'s',operations.Review())
+        if received_work:
+            assert error.value.detail['code']=='MORNING_ORDERS_AWAITING_DISPATCH'
         assert not captured
 
 
