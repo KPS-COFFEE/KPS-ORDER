@@ -50,7 +50,7 @@ def allowed(user,row,conn=None):
         else:
             duty=conn.execute('SELECT opened_at FROM shifts WHERE id=%s',(user['_morning_manager_context']['shift_id'],)).fetchone()
             if not duty or row.get('context_service')!='delivery' or not row.get('created_at') or row['created_at']<duty['opened_at']:return False
-    if user['role']=='owner':return user['brand_id']==row['brand_id'] and (not user.get('home_brand_id') or row['branch_id'] in user.get('branch_ids',[]))
+    if user['role']=='owner':return user['brand_id']==row['brand_id'] and (not user.get('home_brand_id') or row['branch_id'] in user.get('branch_ids',[]) or (row['branch_id'] is None and conn is not None and routing.owner_branchless(conn,user)))
     if user['role']=='customer':return row['customer_id'] in auth.customer_ids(user) and row['brand_id']==user['brand_id']
     if conn is not None:
         configured = routing.access(conn, user, row)
@@ -132,7 +132,7 @@ def inbox(status:str|None=None,offset:int=0,user=Depends(auth.current_user)):
         if user['role']=='owner':
             scope='v.brand_id=%s';p=[user['brand_id']]
             if user.get('home_brand_id'):
-                scope+=' AND v.branch_id=ANY(%s)';p.append(user.get('branch_ids',[]))
+                scope+=' AND (v.branch_id=ANY(%s) OR (v.branch_id IS NULL AND %s))';p.extend([user.get('branch_ids',[]),routing.owner_branchless(c,user)])
         elif user['role']=='customer':scope='v.customer_id=ANY(%s) AND v.brand_id=%s';p=[auth.customer_ids(user),user['brand_id']]
         elif user['role']=='admin':scope='FALSE';p=[]
         else:scope='v.brand_id=%s AND v.branch_id=ANY(%s) AND v.route=%s';p=[user['brand_id'],user.get('branch_ids',[]),'branch' if user['role']=='branch_manager' else 'delivery']
@@ -165,6 +165,8 @@ def reply_alerts(user=Depends(auth.current_user)):
         params=[user['brand_id'],user.get('branch_ids',[]),
                 'branch' if user['role']=='branch_manager' else 'delivery']
     with db.tx() as c:
+        if user['role']=='owner' and user.get('home_brand_id') and routing.owner_branchless(c,user):
+            scope='v.brand_id=%s';params=[user['brand_id']]
         configured = routing.scope(c, user, alerts=True)
         if configured is not None:
             if user['role']=='owner':

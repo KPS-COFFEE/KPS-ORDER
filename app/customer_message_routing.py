@@ -52,6 +52,16 @@ def access(c, user, row):
             (row['branch_id'] in user['branch_ids'] or (row['branch_id'] is None and group == 'care')))
 
 
+def owner_branchless(c, user):
+    """Only an owner authorized to configure the whole brand supervises its care."""
+    if user['role'] != 'owner' or config(c, user['brand_id']) is None:
+        return False
+    if not user.get('home_brand_id'):
+        return True
+    ids = {r['id'] for r in c.execute('SELECT id FROM branches WHERE brand_id=%s', (user['brand_id'],)).fetchall()}
+    return bool(ids) and ids <= set(user.get('branch_ids', []))
+
+
 def scope(c, user, *, alerts=False):
     """One SQL policy for inbox pagination and alerts; detail checks use access."""
     value = config(c, user['brand_id'])

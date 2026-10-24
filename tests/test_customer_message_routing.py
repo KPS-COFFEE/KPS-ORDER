@@ -8,6 +8,7 @@ from PIL import Image
 from app import auth, db, employee_permissions, customer_message_routing as routing
 from tests.test_core import _make_user, _authenticate
 from tests.sms_policy_helpers import sms_step_up
+from test_enbishan_dual_brand import dual
 
 PATH = '/api/identity/customer-message-routing'
 
@@ -169,3 +170,30 @@ def test_without_configuration_legacy_policy_is_unchanged(client):
     assert client.get('/api/conversations').status_code == 403
     actor(client, manager)
     assert client.get('/api/conversations/'+cid+'/messages').status_code == 404
+
+
+@pytest.mark.postgres
+def test_both_brands_share_identity_without_leaking_revoked_or_unassigned_scope(dual, monkeypatch):
+    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED', 'true')
+    client, use, _, _, _ = dual
+    selection = {'delivery': ['dual-manager', 'dual-accountant'], 'care': ['dual-accountant']}
+    body = {'routing': {brand: selection for brand in ('kps', 'enbishan')},
+            'expected': {'kps': None, 'enbishan': None}, 'reason': 'Synthetic shared team owner approval'}
+    response = use('owner').put(PATH, json=body)
+    assert response.status_code == 200, response.text
+    cid = message({'id': 'dual-enbishan-customer'}, category='privacy', route='privacy', branch=None, brand='enbishan')
+    url = '/api/conversations/'+cid+'/messages'
+    assert use('accountant', 'enbishan').get(url).status_code == 200
+    assert use('manager', 'enbishan').get(url).status_code == 404
+    assert use('accountant').get('/api/central-operations/resource-context', params={'kind': 'conversation', 'resource_id': cid}).status_code == 200
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-accountant' AND brand_id='enbishan'")
+    assert use('accountant').get(url).status_code == 404
+    assert use('accountant').get('/api/central-operations/resource-context', params={'kind': 'conversation', 'resource_id': cid}).status_code == 404
+    assert cid in {r['id'] for r in use('owner', 'enbishan').get('/api/conversations/alerts').json()['awaiting_reply']}
+    # A partially scoped foreign owner cannot manage whole-brand recipients
+    # or read a branchless request.
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids='[\"enbishan-test-1\"]' WHERE user_id='dual-owner' AND brand_id='enbishan'")
+    assert use('owner').put(PATH, json={'routing': {'enbishan': selection}, 'expected': {'enbishan': selection}, 'reason': 'Cannot administer whole brand'}).status_code == 403
+    assert use('owner', 'enbishan').get(url).status_code == 404
