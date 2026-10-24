@@ -218,12 +218,11 @@ async def poll_loop():
 @router.get('/support-daily')
 def daily(day:str|None=None,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager')
-    from datetime import date, time
-    from zoneinfo import ZoneInfo
+    from datetime import date
     try:
         d=date.fromisoformat(day) if day else service_hours.delivery_operational_date()
     except ValueError:fail(422,'تاريخ غير صالح')
-    lo=datetime.combine(d,time(16),ZoneInfo('Asia/Riyadh'));hi=lo+timedelta(days=1)
+    lo=service_hours.parse_reporting_bound(d.isoformat(),delivery=True);hi=lo+timedelta(days=1)
     with db.tx() as c:
         rows=report_tickets(c,user['brand_id'],None if user['role']=='owner' else user.get('branch_ids',[]),lo,hi)
         if user.get('_morning_manager_context'):

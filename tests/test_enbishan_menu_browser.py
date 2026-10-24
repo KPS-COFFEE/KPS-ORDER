@@ -9,6 +9,11 @@ from test_enbishan_menu_readiness import rows, choices
 from app.enbishan_catalog_import import prepare_rows
 
 
+def choose_visible_option(select, value):
+    label = select.locator('option[value="'+value+'"]').text_content()
+    select.locator('..').get_by_role('button', name=label, exact=True).click()
+
+
 @pytest.mark.postgres
 @pytest.mark.parametrize(('language','width'), [('ar',390),('en',1280)])
 def test_owner_saves_dormant_morning_period_without_opening_it(dual_http, language, width):
@@ -96,17 +101,17 @@ def test_enbishan_size_flavour_before_after_prices_and_missing_combination(dual_
             expect(page.locator('html')).to_have_attribute('lang',language)
             page.locator('[data-product-id="'+product['id']+'"] .product-content h3 button').click()
             selects=page.locator('#product-options select')
-            selects.nth(0).select_option(small['SIZE']);selects.nth(1).select_option(small['FLAVOUR'])
+            choose_visible_option(selects.nth(0), small['SIZE']);choose_visible_option(selects.nth(1), small['FLAVOUR'])
             expect(selects.nth(0).locator('option:checked')).to_have_text('Small · 6 pieces' if language=='en' else 'صغير · 6 قطعة')
             expect(selects.nth(1).locator('option:checked')).to_have_text('Pomegranate molasses' if language=='en' else 'دبس رمان')
             expect(page.locator('#product-price')).to_have_attribute('data-variant-price','1300')
             expect(page.locator('#product-price del')).to_have_count(1)
-            selects.nth(0).select_option(large['SIZE']);selects.nth(1).select_option(large['FLAVOUR'])
+            choose_visible_option(selects.nth(0), large['SIZE']);choose_visible_option(selects.nth(1), large['FLAVOUR'])
             expect(selects.nth(0).locator('option:checked')).to_have_text('Large · 12 pieces' if language=='en' else 'كبير · 12 قطعة')
             expect(selects.nth(1).locator('option:checked')).to_have_text('Lemon' if language=='en' else 'ليمون')
             expect(page.locator('#product-price')).to_have_attribute('data-variant-price','1850')
             expect(page.locator('#product-price del')).to_have_count(0)
-            selects.nth(0).select_option(small['SIZE'])
+            choose_visible_option(selects.nth(0), small['SIZE'])
             expect(page.locator('#product-add')).to_be_disabled()
             expect(page.locator('#product-error')).to_be_visible()
             assert not errors,errors
@@ -142,11 +147,11 @@ def test_owner_approved_mahashi_distinct_choices_and_identity(dual_http, languag
             page.locator('[data-product-id="'+product['id']+'"] .product-content h3 button').click()
             selects = page.locator('#product-options select')
             for i, group in enumerate(product['settings']['option_groups']):
-                selects.nth(i).select_option(options[group['code']])
+                choose_visible_option(selects.nth(i), options[group['code']])
             expect(page.locator('#product-price')).to_have_attribute('data-variant-price', '2000')
             expect(page.locator('#product-add')).to_be_enabled()
             choice2 = next(i for i,g in enumerate(product['settings']['option_groups']) if g['code']=='CHOICE_2')
-            selects.nth(choice2).select_option(options['CHOICE_1'])
+            choose_visible_option(selects.nth(choice2), options['CHOICE_1'])
             expect(page.locator('#product-add')).to_be_disabled()
             expect(page.locator('#product-error')).to_be_visible()
         finally:

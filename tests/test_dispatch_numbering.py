@@ -56,8 +56,8 @@ def test_temporary_delivery_without_branch_actions_and_full_mode_preserved(v5):
 def test_references_operating_day_continuous_sequence_and_concurrency(v5):
     def allocate(branch,stamp):
         with db.tx() as c:return order_numbering.allocate(c,branch,stamp)
-    before=datetime(2026,10,11,12,59,59,tzinfo=timezone.utc)
-    after=datetime(2026,10,11,13,0,0,tzinfo=timezone.utc)
+    before=datetime(2026,10,11,0,59,59,tzinfo=timezone.utc)
+    after=datetime(2026,10,11,1,0,0,tzinfo=timezone.utc)
     assert allocate('v5-a',before)=='HFR1-261010-0001'
     assert allocate('v5-b',before)=='HFR9-261010-0001'
     assert allocate('v5-a',after)=='HFR1-261011-0002'

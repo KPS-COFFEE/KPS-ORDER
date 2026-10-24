@@ -52,7 +52,7 @@ def period(start,end):
     try:lo=date.fromisoformat(start) if start else today;hi=date.fromisoformat(end) if end else lo
     except ValueError:fail('DATE_INVALID','التاريخ غير صالح.')
     if hi<lo or (hi-lo).days>366:fail('PERIOD_INVALID','اختر فترة لا تتجاوز سنة.')
-    return lo,hi,datetime.combine(lo,time(16),TZ),datetime.combine(hi+timedelta(days=1),time(16),TZ)
+    return lo,hi,datetime.combine(lo,time(4),TZ),datetime.combine(hi+timedelta(days=1),time(4),TZ)
 
 def opday(value):return service_hours.delivery_operational_date(value).isoformat()
 def in_period(value,lo,hi):return bool(value and lo<=value<hi)
@@ -180,13 +180,13 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         o=om[t['order_id']];actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(t['created_at']),'kind':'معالجة / Treatment','amount':0,'method':'—','reason':t['note'],'actor':t['actor_name'],'action':t['status']+' / '+t['resolution'],'order_id':o['id']})
     if group=='actions':result=actions
     if group=='deficits':result=deficits
-    return safe({'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'16:00'},'branches':bs,
+    return safe({'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'04:00'},'branches':bs,
       'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات بتاريخ الحركة. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and refunds use transaction time. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
         (' جميع أصناف البراند ظاهرة حتى بلا مبيعات؛ الكمية المباعة منفصلة عن الهدايا والضيافة والإعلان والتعويض وبقية الأصناف الصفرية. الفروع المختارة هي فروع تنفيذ الطلب.' if lang=='ar' else ' All brand items appear, including items without sales. Sold quantities exclude gifts, hospitality, advertising, compensation and other zero-value items. Selected branches are order fulfilment branches.') if group=='items' else ''),
       'generated_at':datetime.now(TZ)})
 
 def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
-    rows=c.execute("SELECT r.*,v.id review_id,v.note review_note,v.created_at reviewed_at,u.display_name driver_name,coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) accounting_day FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=s.user_id LEFT JOIN accounting_reviews v ON v.report_id=r.id WHERE r.brand_id=%s AND r.kind='driver' AND coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date)>=%s AND coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date)<%s ORDER BY accounting_day,r.created_at,r.id",(u['brand_id'],lo.date(),hi.date())).fetchall()
+    rows=c.execute("SELECT r.*,v.id review_id,v.note review_note,v.created_at reviewed_at,u.display_name driver_name,coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=s.user_id LEFT JOIN accounting_reviews v ON v.report_id=r.id WHERE r.brand_id=%s AND r.kind='driver' AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)>=%s AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)<%s ORDER BY accounting_day,r.created_at,r.id",(u['brand_id'],lo.date(),hi.date())).fetchall()
     latest={e['report_id']:e for e in c.execute('SELECT DISTINCT ON(report_id) * FROM driver_accounting_settlements WHERE report_id=ANY(%s) ORDER BY report_id,revision DESC',([r['id'] for r in rows],)).fetchall()}
     output=[]
     for r in rows:
@@ -479,8 +479,8 @@ def manager_closures(user=Depends(access)):
     with db.tx() as c:
         rows=c.execute("""SELECT r.id,r.brand_id,r.branch_ids,r.user_id,r.kind,r.snapshot,r.created_at,
           u.display_name manager_name,m.revision,m.status financial_status,m.bank_halalas,m.cash_halalas,
-          m.bank_reference,m.cash_reference,m.note,m.created_at matched_at
-          FROM closure_reports r JOIN users u ON u.id=r.user_id
+          m.bank_reference,m.cash_reference,m.note,m.created_at matched_at,s.reporting_operational_date accounting_day
+          FROM closure_reports r JOIN users u ON u.id=r.user_id JOIN shifts s ON s.id=r.shift_id
           LEFT JOIN LATERAL (SELECT * FROM manager_financial_matches WHERE report_id=r.id ORDER BY revision DESC LIMIT 1) m ON true
           WHERE r.brand_id=%s AND r.kind='manager'
           ORDER BY CASE WHEN m.status='matched' THEN 1 ELSE 0 END,r.created_at DESC LIMIT 500""",(user['brand_id'],)).fetchall()
@@ -489,7 +489,7 @@ def manager_closures(user=Depends(access)):
             if user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[])):continue
             snap=r.pop('snapshot');bank,cash=matching_expected(snap)
             r.update(expected_bank_halalas=bank,expected_cash_halalas=cash,
-                     label=snap.get('closure_label') or snap.get('shift',{}).get('closure_label') or snap.get('reference') or r['id'],day=snap.get('operational_date'),revision=r['revision'] or 0)
+                     label=snap.get('closure_label') or snap.get('shift',{}).get('closure_label') or snap.get('reference') or r['id'],day=r['accounting_day'] or snap.get('operational_date'),original_operational_date=snap.get('operational_date'),revision=r['revision'] or 0)
             result.append(r)
         return safe({'closures':result})
 
@@ -608,8 +608,8 @@ def driver_settlement_scope(c, user, report_id):
 def settlement_original_report(report_id:str,user=Depends(access)):
     with db.tx() as c:
         row=driver_settlement_scope(c,user,report_id)
-        from .reporting import make_print_html
-        return Response(make_print_html(row['snapshot']),media_type='text/html',headers={'Cache-Control':'no-store'})
+        from .reporting import make_v5_print_html, corrected_snapshot
+        return Response(make_v5_print_html(corrected_snapshot(c,row['snapshot'])),media_type='text/html',headers={'Cache-Control':'no-store'})
 
 
 @router.get('/driver-settlements')
@@ -618,7 +618,7 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
         # No date restriction: cash from an older operational day remains visible.
         rows = c.execute("""SELECT r.*,u.display_name driver_name,
           s.manager_shift_id,manager_user.display_name manager_name,
-          coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) accounting_day
+          coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day
           FROM closure_reports r JOIN users u ON u.id=r.user_id JOIN shifts s ON s.id=r.shift_id
           LEFT JOIN shifts manager ON manager.id=s.manager_shift_id
           LEFT JOIN users manager_user ON manager_user.id=manager.user_id
@@ -753,6 +753,13 @@ def cash_correction_requests(c,user,report_id):
     return safe(result)
 
 
+def protected_shift_months(shift):
+    # A reporting correction must never reopen an already frozen original month.
+    original = shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=16)).date()
+    corrected = shift['reporting_operational_date'] or original
+    return sorted({original.replace(day=1), corrected.replace(day=1)})
+
+
 def can_request_cash_correction(c,user,report_id):
     if not auth.has_permission(user,REVIEW):return False
     row=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind='driver'",(report_id,user['brand_id'])).fetchone()
@@ -760,10 +767,10 @@ def can_request_cash_correction(c,user,report_id):
     previous=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
     if not previous or not driver_settlement_values(row['snapshot'],previous)['reconciliation_complete']:return False
     if any(t['status']=='pending' for t in cash_correction_requests(c,user,report_id)):return False
-    shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
-    day=shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=16)).date()
+    shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date,reporting_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
+    months=protected_shift_months(shift)
     return not (c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(shift['manager_shift_id'],)).fetchone()
-        or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND branch_ids ?| %s',(user['brand_id'],day.replace(day=1),row['branch_ids'])).fetchone()
+        or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=ANY(%s) AND branch_ids ?| %s',(user['brand_id'],months,row['branch_ids'])).fetchone()
         or variance_confirmation(c,report_id,previous['revision']))
 
 
@@ -774,11 +781,11 @@ def validate_cash_correction(c,user,row,report_id,body):
     if previous['revision']!=body.expected_revision:fail('SETTLEMENT_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
     before=driver_settlement_values(row['snapshot'],previous)
     if not before['reconciliation_complete']:fail('RECONCILIATION_REQUIRED','أكمل اعتماد الموازنة قبل تصحيح الاستلام.',409)
-    shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
-    day=shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=16)).date()
+    shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date,reporting_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
+    months=protected_shift_months(shift)
     if (c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(shift['manager_shift_id'],)).fetchone()
-            or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND branch_ids ?| %s',
-                (user['brand_id'],day.replace(day=1),row['branch_ids'])).fetchone()
+            or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=ANY(%s) AND branch_ids ?| %s',
+                (user['brand_id'],months,row['branch_ids'])).fetchone()
             or variance_confirmation(c,report_id,previous['revision'])):
         fail('SETTLEMENT_FINAL','التقفيلة أو فرقها مثبت نهائيًا؛ لا يمكن تعديل سجل الاستلام.',409)
     # Frozen financial periods require a separate adjustment; an unfrozen

@@ -75,7 +75,8 @@ def presentation(data,lang='ar'):
                 r.setdefault(key,('غير موثقة','Not recorded')[lang=='en'])
         if data['group']=='daily':
             d=date.fromisoformat(r['day']);r['weekday']=(['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'] if lang=='ar' else ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'])[d.weekday()]
-            r['period']='16:00 → 16:00 (+1)'
+            clock=data.get('period',{}).get('start_time','16:00')
+            r['period']=f'{clock} → {clock} (+1)'
         rows.append(r)
     totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k.endswith('_quantity') or k in ('completed_orders','eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
     # Item counts overlap between items; financial action amounts overlap across

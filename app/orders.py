@@ -347,7 +347,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                                                              settings=(config or {}).get('settings', {}))
             delivery_day = service_hours.delivery_operational_date() if body.service == 'delivery' else None
             if delivery_day:
-                quote['delivery_operating_day'] = {'date': delivery_day.isoformat(), 'start': '16:00',
+                quote['delivery_operating_day'] = {'date': delivery_day.isoformat(), 'start': '04:00',
                                                     'timezone': 'Asia/Riyadh'}
             # Allocate the canonical number and insert in one database command.
             # No Python round trip holds the counter before saving the order.

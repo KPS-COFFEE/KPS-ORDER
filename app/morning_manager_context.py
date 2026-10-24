@@ -281,7 +281,9 @@ def order_allowed(user, order, conn=None):
         return False
     if conn is None:
         return True  # Pure scope checks; authenticated resource reads always pass conn.
-    if user.get('_morning_history_read') or user.get('_morning_cancellation_replay') or user.get('_morning_cancelled_incentive_review'):
+    terminal = (order.get('preparation_status') in ('completed', 'cancelled', 'rejected')
+                or order.get('delivery_status') in ('delivered', 'cancelled'))
+    if terminal and (user.get('_morning_history_read') or user.get('_morning_cancellation_replay') or user.get('_morning_cancelled_incentive_review')):
         from .order_history_scope import allowed
         if allowed(conn,user,order):return True
     preferred = (order.get('snapshot') or {}).get('manager_shift_id')

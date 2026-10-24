@@ -2,7 +2,7 @@ from datetime import datetime
 from app import manager_workday,service_hours
 
 def test_operational_day_boundaries_are_saudi_overnight():
-    for hour,day in [(16,13),(23,13),(0,12),(4,12),(15,12)]:
+    for hour,day in [(16,13),(23,13),(0,12),(4,13),(15,13)]:
         value=datetime(2026,10,13,hour,tzinfo=service_hours.RIYADH)
         assert service_hours.delivery_operational_date(value).day==day
 

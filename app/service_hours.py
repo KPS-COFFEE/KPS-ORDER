@@ -10,7 +10,7 @@ import re
 from zoneinfo import ZoneInfo
 
 RIYADH = ZoneInfo('Asia/Riyadh')
-DELIVERY_DAY_START_MINUTES = 16 * 60
+DELIVERY_DAY_START_MINUTES = 4 * 60
 DEFAULT_DELIVERY_HOURS = [{'days': list(range(7)), 'start': '16:00', 'end': '04:00'}]
 # KPS branch open every day, except Friday 05:30–12:30 Asia/Riyadh.
 # Monday=0, Friday=4; delivery service hours and enablement remain independent.
@@ -32,12 +32,12 @@ def local_time(value=None):
 
 
 def delivery_operational_date(value=None):
-    """After midnight still belongs to the delivery day beginning at 16:00."""
+    """After midnight still belongs to the delivery day beginning at 04:00."""
     return (local_time(value) - timedelta(minutes=DELIVERY_DAY_START_MINUTES)).date()
 
 
 def parse_reporting_bound(value: str, *, delivery: bool = False):
-    """Date-only delivery bounds mean 16:00 Riyadh; explicit times remain exact.
+    """Date-only delivery bounds mean 04:00 Riyadh; explicit times remain exact.
 
     Both endpoints are boundaries: the end is exclusive, just as before.
     General branch/pickup date filters retain their existing midnight behavior.
