@@ -140,6 +140,8 @@ for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions',
 
 from . import dispatch_map
 app.include_router(dispatch_map.router)
+from . import driver_order_sounds
+app.include_router(driver_order_sounds.router)
 from . import map_services
 app.include_router(map_services.router)
 from . import delivery_tracking

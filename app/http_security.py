@@ -108,6 +108,9 @@ class SecurityMiddleware:
                                   for item in headers.get('Cache-Control', '').split(',')}
                     headers['Cache-Control'] = 'private, no-store' if 'private' in directives else 'no-store'
                     headers['Referrer-Policy'] = 'no-referrer'
+                if path in ('/ops', '/ops.html'):
+                    # Local owner-preview blobs only; no remote media origins.
+                    headers['Content-Security-Policy'] += "; media-src 'self' blob:"
                 if os.getenv('APP_ENV', 'production') == 'production':
                     headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
                 public_image = (path.startswith(('/api/product-assets/', '/api/banner-assets/'))
