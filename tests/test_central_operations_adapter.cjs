@@ -255,3 +255,36 @@ test('fleet options and reports use central physical readings contracts',async()
   await adapter.request('/api/fleet/report?start=2026-10-01&offset=50',{},raw,user);
   assert.deepEqual(calls,['/api/central-operations/fleet/options','/api/central-operations/fleet/report?start=2026-10-01&offset=50']);
 });
+
+
+test('dispatch preserves full nested cohort and source counters across both brands',async()=>{
+  const snapshots={
+    kps:{all:{total:536,waiting:12,completed:524,sources:{manager:300,website:236}},current:{total:126,waiting:12,completed:114,sources:{manager:80,website:46}}},
+    enbishan:{all:{total:7,waiting:2,completed:5,sources:{manager:3,website:4}},current:{total:3,waiting:1,completed:2,sources:{manager:1,website:2}}},
+  };
+  const original=JSON.stringify(snapshots),calls=[];
+  const result=await create().request('/api/orders?limit=100&dispatch_workspace=true&dispatch_scope=current&dispatch_city=Hafar',{},async(path,opts)=>{
+    calls.push([path,opts.brand]);
+    return {orders:[{id:opts.brand+'-visible'}],workspace_counts:snapshots[opts.brand]};
+  },user);
+  assert.equal(result.orders.length,2);
+  assert.deepEqual(result.workspace_counts,{
+    all:{total:543,waiting:14,completed:529,sources:{manager:303,website:240}},
+    current:{total:129,waiting:13,completed:116,sources:{manager:81,website:48}},
+  });
+  assert.ok(calls.every(([path])=>path.includes('dispatch_scope=current')&&path.includes('dispatch_city=Hafar')));
+  assert.equal(JSON.stringify(snapshots),original,'canonical response counters stay untouched');
+});
+
+test('an empty second brand retains populated dispatch and explicit zero source counts',async()=>{
+  const result=await create().request('/api/orders?dispatch_workspace=true&dispatch_scope=all',{},async(path,opts)=>({
+    orders:[],workspace_counts:opts.brand==='kps'?
+      {all:{total:536,completed:536,sources:{manager:300,website:236}},current:{total:126,completed:126,sources:{manager:80,website:46}}}:
+      {all:{total:0,sources:{manager:0,website:0}},current:{total:0,sources:{manager:0,website:0}}},
+  }),user);
+  assert.equal(result.workspace_counts.all.total,536);
+  assert.equal(result.workspace_counts.current.total,126);
+  assert.deepEqual(result.workspace_counts.current.sources,{manager:80,website:46});
+  const empty=await create().request('/api/orders?dispatch_workspace=true',{},async()=>({orders:[],workspace_counts:{all:{total:0,sources:{manager:0,website:0}},current:{total:0,sources:{manager:0,website:0}}}}),user);
+  assert.deepEqual(empty.workspace_counts.current,{total:0,sources:{manager:0,website:0}});
+});

@@ -9,7 +9,7 @@ import uvicorn
 from app import auth, db
 from app.shift_vehicle import CHECKS
 from test_enbishan_dual_brand import dual
-from test_central_workdays import open_days
+from test_central_workdays import open_days, overnight_legacy_shifts
 from test_browser import chromium_browser, _context
 
 pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit isolated browser acceptance')]
@@ -53,6 +53,25 @@ def staff_page(central,browser,base,name,language):
     ctx,page,errors=_context(browser,base,client.cookies.get(auth.COOKIE),client.cookies.get(auth.CSRF_COOKIE))
     ctx.add_init_script('localStorage.setItem("kps_ops_lang",'+repr(language)+')')
     return ctx,page,errors
+
+
+@pytest.mark.parametrize('language', ['ar', 'en'])
+def test_existing_overnight_manager_and_driver_load_and_adopt_without_clock_error(central, central_web, chromium_browser, monkeypatch, language):
+    from playwright.sync_api import expect
+    manager, driver = overnight_legacy_shifts(central, monkeypatch)
+    for name, sid in [('manager', manager), ('driver', driver)]:
+        ctx, page, errors = staff_page(central, chromium_browser, central_web, name, language)
+        try:
+            page.goto(central_web+'/ops')
+            expect(page.locator('#navigation')).to_be_visible()
+            page.locator('#navigation [data-page=shifts]').click()
+            expect(page.locator('[data-action=shift-detail][data-id="'+sid+'"]').first).to_be_visible()
+            assert 'MANAGER_SHIFT_HOURS' not in page.locator('body').inner_text()
+            assert not errors, errors
+            with db.tx() as c:
+                assert c.execute('SELECT count(*) n FROM central_workday_legs l JOIN central_workdays w ON w.id=l.workday_id WHERE w.anchor_shift_id=%s', (sid,)).fetchone()['n'] == 2
+        finally:
+            ctx.close()
 
 
 @pytest.mark.parametrize('language',['ar','en'])

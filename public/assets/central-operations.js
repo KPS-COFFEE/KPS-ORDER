@@ -76,11 +76,20 @@
       // The offset advances each constituent stream by the same canonical page
       // size. Do not globally truncate: that would silently drop other rows.
       if(results.some(r=>'next_offset' in r.data))output.next_offset=results.reduce((next,r)=>r.data.next_offset==null?next:Math.max(next??0,r.data.next_offset),null);
+      // Dispatch counts cover the full authorized cohort, not just the
+      // paginated orders. Preserve both scopes and their nested source totals.
+      function sumCounts(target,source){
+        for(const [k,v] of Object.entries(source||{})){
+          if(typeof v==='number')target[k]=(target[k]||0)+v;
+          else if(v&&typeof v==='object'&&!Array.isArray(v)){
+            if(!target[k])target[k]={};
+            sumCounts(target[k],v);
+          }
+        }
+      }
       for(const name of ['counts','workspace_counts'])if(results.some(r=>r.data[name])){
         output[name]={};
-        for(const {data} of results)for(const [k,v] of Object.entries(data[name]||{})){
-          if(typeof v==='number')output[name][k]=(output[name][k]||0)+v;
-        }
+        for(const {data} of results)sumCounts(output[name],data[name]);
       }
       for(const name of ['unread_count','migrated_branches','remaining_branches'])if(results.some(r=>name in r.data))output[name]=results.reduce((n,r)=>n+Number(r.data[name]||0),0);
       if(results.some(r=>'total' in r.data))output.total=results.reduce((n,r)=>n+Number(r.data.total||0),0);

@@ -256,14 +256,14 @@ class ShiftOpen(OperationBody):
     reason: str=''
 
 
-def delivery_shift_window(c, brand, branches, *, manager_preparation=False, delivery_period=None, principal=None):
+def delivery_shift_window(c, brand, branches, *, manager_preparation=False, delivery_period=None, principal=None, admission_at=None):
     """Gate fresh staffing; existing tasks and closures never expire by clock.
 
     Unconfigured legacy/internal brands retain their existing staffing flow.
     The approved default configures eligible KPS branches without enabling them.
     """
     from . import catalog, morning_delivery
-    now = service_hours.now_riyadh()
+    now = service_hours.local_time(admission_at) if admission_at is not None else service_hours.now_riyadh()
     windows = {}
     preparation_date = None
     brand_settings = c.execute('SELECT settings FROM brands WHERE id=%s', (brand,)).fetchone()['settings']
@@ -315,7 +315,7 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
                               'operational_day_start': '16:00', 'branches': windows,
                               'period': 'morning' if morning else 'evening'}
 
-def open_shift_in_tx(c, user, body, *, vehicle_anchor=None):
+def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None):
     """Canonical opening checks, reusable by an atomic central workday."""
     context = user.get('_morning_manager_context')
     target=user if not body.user_id or body.user_id==user['id'] else c.execute('SELECT * FROM users WHERE id=%s',(body.user_id,)).fetchone()
@@ -386,9 +386,27 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None):
     if body.receipt_trial:
         from . import driver_receipt_trial
         driver_receipt_trial.authorize_open(c, user, target, body, manager, branch_rows)
+    continuation = None
+    if adoption_anchor:
+        # Only the endpoint-owned adoption transaction may add a ledger to an
+        # already running physical day. Never accept an admission clock in JSON.
+        from .central_workdays import require_action
+        require_action()
+        continuation = lock_shift(c, adoption_anchor)
+        if (not continuation or continuation['user_id'] != target['id']
+                or continuation['kind'] != body.kind or continuation['status'] != 'open'
+                or continuation['brand_id'] == brand
+                or (continuation.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                or (continuation.get('vehicle_log') or {}).get('receipt_trial')):
+            raise db.error(409, 'CENTRAL_ADOPTION_SCOPE', 'مرجع الوردية القائمة غير مطابق.')
     operational_date, delivery_window = delivery_shift_window(
         c, brand, branch_rows, manager_preparation=body.kind == 'manager',
-        delivery_period=period, principal=manager_user if body.kind == 'driver' else target)
+        delivery_period=period, principal=manager_user if body.kind == 'driver' else target,
+        admission_at=continuation['opened_at'] if continuation else None)
+    if continuation and continuation.get('delivery_operational_date') is not None:
+        operational_date = continuation['delivery_operational_date']
+        if delivery_window:
+            delivery_window['operational_date'] = operational_date.isoformat()
     sid=uid()
     carryovers=c.execute('SELECT r.* FROM retained_carryovers r JOIN shifts s ON s.id=r.from_shift_id WHERE r.user_id=%s AND s.brand_id=%s AND r.to_shift_id IS NULL AND r.archived_test_at IS NULL FOR UPDATE OF r',(target['id'],brand)).fetchall()
     if context and body.kind == 'manager' and carryovers:

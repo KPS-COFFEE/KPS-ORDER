@@ -208,6 +208,74 @@ def test_existing_shift_adoption_preserves_cash_vehicle_and_task_identity(centra
         assert sum('start' in s['vehicle_log'] for s in c.execute("SELECT vehicle_log FROM shifts WHERE user_id='dual-driver'").fetchall())==1
 
 
+def overnight_legacy_shifts(central, monkeypatch, *, hour=3, minute=24):
+    """A genuine prior-day manager/driver pair, before the morning admission."""
+    from datetime import datetime
+    from app import service_hours
+    _, _, post, _, _ = central
+    hours = [{'days': list(range(7)), 'start': '16:00', 'end': '04:00'}]
+    with db.tx() as c:
+        c.execute("UPDATE branches SET settings=jsonb_set(settings,'{delivery_hours}',%s::jsonb)", (db.json(hours),))
+        # The side-brand's intake has ended, but the physical day is still open.
+        side_hours = [{'days': list(range(7)), 'start': '16:00', 'end': '02:00'}]
+        c.execute("UPDATE branches SET settings=jsonb_set(settings,'{delivery_hours}',%s::jsonb) WHERE brand_id='enbishan'", (db.json(side_hours),))
+    manager_at = datetime(2026, 10, 23, 15, 54, tzinfo=service_hours.RIYADH)
+    monkeypatch.setattr(service_hours, 'now_riyadh', lambda: manager_at)
+    manager = post('manager', '/api/shifts', {'kind': 'manager'})['shift']['id']
+    driver_at = datetime(2026, 10, 23, 17, 0, tzinfo=service_hours.RIYADH)
+    monkeypatch.setattr(service_hours, 'now_riyadh', lambda: driver_at)
+    driver = post('driver', '/api/shifts', {'kind': 'driver', 'manager_shift_id': manager,
+        'vehicle_inspection': inspection()})['shift']['id']
+    with db.tx() as c:
+        c.execute('UPDATE shifts SET opened_at=%s WHERE id=%s', (manager_at, manager))
+        c.execute('UPDATE shifts SET opened_at=%s WHERE id=%s', (driver_at, driver))
+    after_midnight = datetime(2026, 10, 24, hour, minute, tzinfo=service_hours.RIYADH)
+    monkeypatch.setattr(service_hours, 'now_riyadh', lambda: after_midnight)
+    return manager, driver
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('hour,minute', [(3, 24), (4, 1)])
+def test_overnight_adoption_preserves_existing_day_and_fresh_manager_gate(central, monkeypatch, hour, minute):
+    _, _, post, _, _ = central
+    manager, driver = overnight_legacy_shifts(central, monkeypatch, hour=hour, minute=minute)
+    with db.tx() as c:
+        original = {r['id']: r for r in c.execute('SELECT * FROM shifts WHERE id=ANY(%s)', ([manager, driver],)).fetchall()}
+    for name, sid in [('manager', manager), ('driver', driver)]:
+        adopted = post(name, '/api/central-operations/workdays/'+sid+'/adopt', {})
+        assert len(adopted['shifts']) == 2
+        assert {r['delivery_operational_date'] for r in adopted['shifts']} == {'2026-10-23'}
+        for leg in adopted['shifts']:
+            assert leg['delivery_window_snapshot']['operational_date'] == '2026-10-23'
+            for window in leg['delivery_window_snapshot']['branches'].values():
+                assert window['window_start'] == '2026-10-23T16:00:00+03:00'
+                if name == 'manager':
+                    assert window['preparation_start'] == '2026-10-23T15:45:00+03:00'
+        with db.tx() as c:
+            preserved = c.execute('SELECT * FROM shifts WHERE id=%s', (sid,)).fetchone()
+            for field in ['opened_at', 'delivery_operational_date', 'delivery_window_snapshot', 'vehicle_log', 'opening_halalas']:
+                assert preserved[field] == original[sid][field]
+    # An owner without an existing workday cannot reuse adoption's past clock.
+    for untrusted in ({}, {'admission_at': '2026-10-23T16:00:00+03:00', 'adoption_anchor': manager}):
+        denied = post('owner', '/api/central-operations/workdays',
+            {'kind': 'manager', 'branch_ids': ['kps-branch-1', 'enbishan-test-1'], **untrusted}, status=409)
+        assert denied['detail']['code'] == 'MANAGER_SHIFT_HOURS'
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM shifts WHERE user_id='dual-owner'").fetchone()
+
+
+@pytest.mark.postgres
+def test_overnight_adoption_still_revalidates_current_branch_enablement(central, monkeypatch):
+    _, _, post, _, _ = central
+    manager, _ = overnight_legacy_shifts(central, monkeypatch)
+    with db.tx() as c:
+        c.execute("UPDATE branches SET settings=jsonb_set(settings,'{delivery_enabled}','false') WHERE brand_id='enbishan'")
+    post('manager', '/api/central-operations/workdays/'+manager+'/adopt', {}, status=409)
+    with db.tx() as c:
+        assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
+        assert not c.execute("SELECT 1 FROM shifts WHERE brand_id='enbishan'").fetchone()
+
+
 @pytest.mark.postgres
 def test_two_legacy_shifts_are_never_silently_merged(central):
     _,_,post,shifts,_=central
