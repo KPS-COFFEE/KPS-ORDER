@@ -88,6 +88,7 @@ def test_audio_cannot_be_read_anonymously_or_cross_brand(client,monkeypatch):
     with db.tx() as c:
         c.execute("INSERT INTO brands(id,name) VALUES('sound-other','Synthetic other')")
         c.execute("INSERT INTO app_settings(brand_id,settings) VALUES('sound-other','{}')")
+    monkeypatch.setenv('EMPLOYEE_SMS_LOGIN_ENABLED','true')
     other=_make_user('owner',brand='sound-other');sms_login(client,other,monkeypatch)
     assert client.get(sound['path']).status_code==404
     assert client.get('/api/operations/driver-order-sound').json()['sound']['default']

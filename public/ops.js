@@ -117,6 +117,12 @@
   function tickAlertSounds(){
     const now=Date.now();
     for(const [kind,channel] of alertChannels){
+      // Only this app version's driver-order audio is native. Browser users,
+      // older APKs and message bells keep their existing web behavior.
+      if(kind==='driver-orders'&&state.user?.role==='driver'&&typeof navigator!=='undefined'
+          &&/(?:^|\s)KPSNativeOrderAudio\/1(?:\s|$)/.test(navigator.userAgent||'')){
+        stopAlertChannel(channel);continue;
+      }
       if(!state.user||channel.user!==state.user.id||!channel.items.size||alertAudio?.state!=='running'){
         stopAlertChannel(channel);if(!state.user||channel.user!==state.user?.id)channel.items.clear();continue;
       }
