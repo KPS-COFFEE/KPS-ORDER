@@ -34,6 +34,7 @@ PENDING = frozenset({
     '098_complimentary_authorizations.sql', '100_manager_handover_snapshot.sql',
     '101_complimentary_revocations.sql', '098_enbishan_guest_checkout.sql',
     '102_morning_first_operational_day.sql',
+    '103_employee_activity.sql',
 })
 TABLES = ('brands', 'branches', 'users', 'orders', 'collections', 'refunds',
           'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges', 'shifts')

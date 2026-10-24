@@ -190,8 +190,10 @@ def fetch_all(conn, sql: str, params=()):
 
 def audit(conn, user_id: str | None, action: str, entity_type: str, entity_id: str, details=None):
     # Never insert passwords, OTP codes, session values or arbitrary request headers here.
-    conn.execute('INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details) VALUES(%s,%s,%s,%s,%s,%s)',
-                 (new_id('audit_'), user_id, action, entity_type, entity_id, json(details or {})))
+    from .activity_context import context
+    actor = context(user_id)
+    conn.execute('INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details,session_id,activity_brand_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',
+                 (new_id('audit_'), user_id, action, entity_type, entity_id, json(details or {}),actor.get('session_id'),actor.get('brand_id')))
 
 
 def event(conn, order_id, user_id, event_type, details=None):
