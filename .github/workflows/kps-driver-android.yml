@@ -28,8 +28,9 @@ jobs:
         working-directory: android-driver
         run: |
           mkdir -p build/policy
-          javac -d build/policy app/src/main/java/sa/kps/driver/TrackingPolicy.java tests/TrackingPolicyTest.java
+          javac -d build/policy app/src/main/java/sa/kps/driver/TrackingPolicy.java app/src/main/java/sa/kps/driver/BellPolicy.java tests/TrackingPolicyTest.java tests/BellPolicyTest.java
           java -cp build/policy TrackingPolicyTest
+          java -cp build/policy BellPolicyTest
       - name: Compile and lint Android variants
         working-directory: android-driver
         run: gradle :app:assembleDebug :app:assembleRelease :app:bundleRelease :app:lintRelease --no-daemon
@@ -45,3 +46,4 @@ jobs:
             android-driver/app/build/reports/lint-results-release.*
           if-no-files-found: error
           retention-days: 7
+

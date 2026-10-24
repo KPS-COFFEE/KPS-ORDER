@@ -18,7 +18,7 @@ public final class MainActivity extends Activity {
     private Button retry;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
-    private boolean visible=false,checking=false,permissionAsked=false;
+    private boolean visible=false,checking=false,permissionAsked=false,notificationsAsked=false;
     private ValueCallback<Uri[]> upload;
     private final Runnable poll=new Runnable(){public void run(){if(visible){checkShift();main.postDelayed(this,15000);}}};
     @Override public void onCreate(Bundle saved){
@@ -26,7 +26,15 @@ public final class MainActivity extends Activity {
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
         LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.HORIZONTAL);bar.setPadding(12,8,12,8);
         status=new TextView(this);status.setText("افتح شفتك كالمعتاد؛ الموقع يعمل أثناء الشفت فقط");
-        retry=new Button(this);retry.setText("الموقع");retry.setOnClickListener(v->{permissionAsked=false;checkShift();});
+        retry=new Button(this);retry.setText("فحص الجاهزية / Check readiness");retry.setOnClickListener(v->{
+            permissionAsked=false;notificationsAsked=false;
+            if(!alertsAudible()){
+                NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
+                Intent settings=new Intent(nm.getNotificationChannel(ShiftLocationService.ORDERS)==null?android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS:android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID,ShiftLocationService.ORDERS);
+                startActivity(settings);
+            }else checkShift();
+        });
         bar.addView(status,new LinearLayout.LayoutParams(0,-2,1));bar.addView(retry);layout.addView(bar);
         web=new WebView(this);layout.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(layout);
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
@@ -81,16 +89,24 @@ public final class MainActivity extends Activity {
                         .setPositiveButton("متابعة",(d,w)->requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION},10))
                         .setNegativeButton("لاحقًا",null).show();}return;
                 }
-                if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED && !permissionAsked){
-                    permissionAsked=true;requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},11);
+                if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED && !notificationsAsked){
+                    notificationsAsked=true;requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},11);return;
                 }
                 if(!ShiftLocationService.running){
                     try{startForegroundService(new Intent(this,ShiftLocationService.class).setAction("START"));}
                     catch(RuntimeException e){status.setText("افتح التطبيق لإعادة تشغيل الموقع");return;}
                 }
-                status.setText("خدمة الموقع أثناء الشفت — راجع إشعار التطبيق");
+                status.setText(alertsAudible()?"الموقع وجرس الطلبات أثناء الشفت / Shift location and order alerts":"تنبيهات الطلبات قد لا تُسمع؛ راجع إعدادات الجهاز / Check device sound and notification settings");
             });
         });
+    }
+    private boolean alertsAudible(){
+        NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
+        NotificationChannel channel=nm.getNotificationChannel(ShiftLocationService.ORDERS);
+        android.media.AudioManager audio=(android.media.AudioManager)getSystemService(AUDIO_SERVICE);
+        return nm.areNotificationsEnabled()&&nm.getCurrentInterruptionFilter()==NotificationManager.INTERRUPTION_FILTER_ALL
+            &&audio.getRingerMode()==android.media.AudioManager.RINGER_MODE_NORMAL&&audio.getStreamVolume(android.media.AudioManager.STREAM_NOTIFICATION)>0
+            &&(channel==null||(channel.getImportance()>=NotificationManager.IMPORTANCE_DEFAULT&&channel.getSound()!=null));
     }
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] grants){super.onRequestPermissionsResult(code,permissions,grants);checkShift();}
     @Override protected void onResume(){super.onResume();visible=true;main.removeCallbacks(poll);main.post(poll);}
@@ -99,3 +115,4 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==31 && upload!=null){upload.onReceiveValue(result==RESULT_OK && data!=null && data.getData()!=null?new Uri[]{data.getData()}:null);upload=null;}}
     @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else super.onBackPressed();}
 }
+

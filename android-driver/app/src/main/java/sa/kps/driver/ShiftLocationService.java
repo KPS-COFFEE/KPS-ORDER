@@ -16,6 +16,8 @@ import java.util.concurrent.*;
 public final class ShiftLocationService extends Service implements LocationListener {
     static volatile boolean running=false;
     static final String CHANNEL="kps-active-shift";
+    static final String ORDERS="kps-driver-pending-orders-v1";
+    private final BellPolicy bell=new BellPolicy();
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LocationManager locations;
@@ -30,11 +32,18 @@ public final class ShiftLocationService extends Service implements LocationListe
             if(!busy) {
                 busy=true;
                 io.execute(()->{
-                    int outcome=0;
-                    try { outcome=bound!=null && bound.same(WorkApi.current())?1:2; }
+                    int outcome=0;WorkApi.Alerts snapshot=null;
+                    try {
+                        WorkApi.Grant live=WorkApi.current();
+                        if(bound==null||!bound.same(live))throw new WorkApi.Denied();
+                        snapshot=WorkApi.alerts(live);
+                        if(!live.same(WorkApi.current()))throw new WorkApi.Denied();
+                        outcome=1;
+                    }
                     catch(WorkApi.Denied e){outcome=2;}catch(Exception ignored){}
                     final int result=outcome;
-                    main.post(()->{busy=false;if(ended)return;if(result==2)finish();else if(result==1)subscribe();else pause();});
+                    final WorkApi.Alerts alerts=snapshot;
+                    main.post(()->{busy=false;if(ended)return;if(result==2)finish();else if(result==1){subscribe();syncBell(alerts);}else pause();});
                 });
             }
             main.postDelayed(this,30000);
@@ -44,6 +53,11 @@ public final class ShiftLocationService extends Service implements LocationListe
         super.onCreate(); locations=(LocationManager)getSystemService(LOCATION_SERVICE);
         NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel(CHANNEL,"موقع السائق أثناء الشفت",NotificationManager.IMPORTANCE_LOW));
+        NotificationChannel orders=new NotificationChannel(ORDERS,"طلبات السائق التي تنتظر إجراء / Pending driver orders",NotificationManager.IMPORTANCE_HIGH);
+        orders.setDescription("يتكرر التنبيه حتى تنفيذ الإجراء / Repeats until action is completed");
+        orders.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+            new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION).build());
+        nm.createNotificationChannel(orders);
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
         if(intent==null || !"START".equals(intent.getAction()) || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED) {
@@ -61,7 +75,7 @@ public final class ShiftLocationService extends Service implements LocationListe
                 WorkApi.Grant grant=WorkApi.current();
                 main.post(()->{
                     if(ended)return; bound=grant;
-                    subscribe();main.postDelayed(heartbeat,30000);
+                    subscribe();main.post(heartbeat);
                 });
             }catch(Exception e){main.post(this::finish);}
         });
@@ -102,7 +116,23 @@ public final class ShiftLocationService extends Service implements LocationListe
     private void pause(){
         try{locations.removeUpdates(this);}catch(SecurityException ignored){}
         subscribed=false;
+        bell.invalidate();((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).cancel(7102);
         notification("تعذر التحديث؛ ستتم المحاولة تلقائيًا عند عودة الاتصال");
+    }
+    private void syncBell(WorkApi.Alerts snapshot){
+        if(snapshot==null)return;
+        bell.configure(snapshot.policy.optInt("first_after_seconds",0),snapshot.policy.optInt("second_after_seconds",30),snapshot.policy.optInt("continuous_after_seconds",60));
+        long now=SystemClock.elapsedRealtime();bell.update(snapshot.pending,now);
+        NotificationManager manager=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
+        if(bell.count()==0){manager.cancel(7102);return;}
+        if(!bell.ring(now)||!manager.areNotificationsEnabled())return;
+        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
+        PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+        manager.notify(7102,new Notification.Builder(this,ORDERS)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert).setContentTitle("KPS Driver")
+            .setContentText("طلبات تنتظر إجراء / Orders awaiting action: "+bell.count())
+            .setContentIntent(open).setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(false)
+            .setVisibility(Notification.VISIBILITY_PRIVATE).build());
     }
     private void notification(String body){
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
@@ -113,6 +143,7 @@ public final class ShiftLocationService extends Service implements LocationListe
     }
     private void finish() {
         if(ended)return;ended=true;bound=null;running=false;
+        bell.clear();((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).cancel(7102);
         main.removeCallbacksAndMessages(null);
         try{locations.removeUpdates(this);}catch(SecurityException ignored){}
         stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();
@@ -123,3 +154,4 @@ public final class ShiftLocationService extends Service implements LocationListe
     @Override public void onProviderEnabled(String provider){}
     @Override public void onStatusChanged(String p,int s,Bundle b){}
 }
+

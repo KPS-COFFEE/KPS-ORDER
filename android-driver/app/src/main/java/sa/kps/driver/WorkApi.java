@@ -15,8 +15,12 @@ final class WorkApi {
     static final class Denied extends Exception {}
     static final class Grant {
         final String user, shift, csrf, cookie;
+        final boolean multibrand;
         Grant(String user, String shift, String csrf, String cookie) {
-            this.user=user; this.shift=shift; this.csrf=csrf; this.cookie=cookie;
+            this(user,shift,csrf,cookie,false);
+        }
+        Grant(String user,String shift,String csrf,String cookie,boolean multibrand){
+            this.user=user;this.shift=shift;this.csrf=csrf;this.cookie=cookie;this.multibrand=multibrand;
         }
         boolean same(Grant other) { return other != null && user.equals(other.user) && shift.equals(other.shift) && cookie.equals(other.cookie); }
     }
@@ -58,8 +62,26 @@ final class WorkApi {
                 if(branches.getString(a).equals(assigned.getString(b))) overlap=true;
             if (u.optString("brand_id").equals(s.optString("brand_id")) && !s.optString("id").isEmpty()
                 && TrackingPolicy.allowed(u.optString("role"),u.optBoolean("active"),u.optString("id"),s.optString("user_id"),s.optString("kind"),s.optString("status"),overlap))
-                return new Grant(u.getString("id"),s.getString("id"),csrf,cookie);
+                return new Grant(u.getString("id"),s.getString("id"),csrf,cookie,u.optJSONArray("operations_brands")!=null&&u.getJSONArray("operations_brands").length()>1);
         }
         throw new Denied();
     }
+    static final class Alerts {
+        final java.util.Set<String> pending=new java.util.HashSet<>();
+        final JSONObject policy;
+        Alerts(JSONObject policy){this.policy=policy;}
+    }
+    static Alerts alerts(Grant grant)throws Exception{
+        JSONObject result=call("GET",grant.multibrand?"/api/multibrand/driver-tasks":"/api/tasks",grant.cookie,null,null);
+        JSONArray tasks=result.getJSONArray("tasks"); // Missing/malformed payload is not an empty inbox.
+        Alerts alerts=new Alerts(call("GET","/api/operations/alert-policy",grant.cookie,null,null).getJSONObject("policy"));
+        for(int i=0;i<tasks.length();i++){
+            JSONObject task=tasks.getJSONObject(i);
+            if(BellPolicy.pending(task.optString("status"),task.optString("driver_id"),grant.user,task.optString("transfer_shift_id"))){
+                String id=task.getString("id");if(!id.isEmpty())alerts.pending.add(id);
+            }
+        }
+        return alerts;
+    }
 }
+
