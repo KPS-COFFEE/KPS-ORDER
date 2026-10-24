@@ -11,6 +11,7 @@ on:
       - tests/test_employee_tickets.py
       - tests/test_employee_tickets_browser.py
       - app/accounting.py
+      - app/financial_totals.py
       - app/shift_reconciliation.py
       - tests/test_shift_reconciliation.py
       - app/item_sales.py

@@ -113,3 +113,31 @@ def test_live_shift_and_accounting_endpoints_share_revision(ops):
     with db.tx() as c:
         assert c.execute("SELECT snapshot FROM closure_reports WHERE id='settlement-report'").fetchone()['snapshot']==original
     assert actor('driver').get('/api/shifts/settlement-shift').json().get('reconciliation') is None
+
+
+@pytest.mark.postgres
+def test_dashboard_and_accounting_same_period_after_late_completion_and_refund(ops):
+    from datetime import datetime,timedelta,timezone
+    from app.accounting import period
+    actor,post,order,_=ops
+    accountant()
+    oid=order('pickup')
+    post('branch',f'/api/orders/{oid}/collect',dict(method='card',amount_halalas=1000,reference='TEST card payment'))
+    ds,de,lo,hi=period('','')
+    with db.tx() as c:
+        c.execute('UPDATE orders SET created_at=%s,completed_at=%s WHERE id=%s',(lo-timedelta(hours=2),lo+timedelta(hours=1),oid))
+    post('owner',f'/api/orders/{oid}/refund',dict(method='card',amount_halalas=200,reason='TEST actual partial return',line_quantities={}))
+    a=actor('accountant').get('/api/accounting/reports',params={'start':ds.isoformat(),'end':de.isoformat()}).json()['totals']
+    response=actor('manager').get('/api/dashboard',params={'start':lo.isoformat(),'end':hi.isoformat()})
+    assert response.status_code==200,response.text
+    d=response.json()['summary']
+    assert d['gross_completed_halalas']==a['gross']==1000
+    assert d['refund_halalas']==a['refunds']==200
+    assert d['net_completed_halalas']==a['net_sales']==800
+    assert d['net_receipts_halalas']==a['total']==800
+
+
+def test_amendment_refund_does_not_double_deduct_sales():
+    from app.financial_totals import net_sales
+    assert net_sales(800,200,200)==800
+    assert net_sales(800,300,200)==700

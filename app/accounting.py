@@ -148,7 +148,8 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
                 name=next((i.get('name',pid) for i in om[x['order_id']]['snapshot'].get('items',[]) if i['product_id']==pid),pid)
                 items[pid]=new_item(pid,name)
             items[pid]['returned_quantity']+=qty
-    for b in rows.values():b['total']=b['cash']+b['card']-b['refunds'];b['net_sales']=b['gross']-b['refunds']+b.get('amendment_refunds',0)
+    from .financial_totals import net_sales
+    for b in rows.values():b['total']=b['cash']+b['card']-b['refunds'];b['net_sales']=net_sales(b['gross'],b['refunds'],b.get('amendment_refunds',0))
     if group=='daily':
         for n in range((de-ds).days+1):
             day=(ds+timedelta(days=n)).isoformat()
