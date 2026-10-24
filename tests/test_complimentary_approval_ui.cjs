@@ -21,5 +21,15 @@ const vm=require('node:vm');
   await click({target:{closest:()=>button}});
   assert.deepEqual(JSON.parse(JSON.stringify(submitted)),{...payload,authorization_id:'approved-1',expected_total_halalas:0});
   assert.equal(created,'new');assert.equal(closed,true);
-  console.log('Complimentary inbox executes the exact authorized payload.');
+  let submitRevocation,revoked=false;
+  const delegated={...ctx,user:{role:'admin',effective_permissions:['complimentary_approve']},
+    modal:(title,body,onSubmit)=>{rendered=body;if(onSubmit)submitRevocation=onSubmit;},
+    mutation:async(path,body)=>{assert.equal(path,'/api/orders/complimentary/authorizations/approved-1/revoke');assert.equal(body.reason,'Correct the recipient');revoked=true;}};
+  await context.window.KPSCustomerOrder.approved(delegated);
+  assert.match(rendered,/data-courtesy-revoke/);
+  assert.doesNotMatch(rendered,/data-courtesy-index=/);
+  await click({target:{closest:selector=>selector==='[data-courtesy-revoke]'?{dataset:{courtesyRevoke:'0'}}:null}});
+  await submitRevocation({get:key=>key==='reason'?'Correct the recipient':null});
+  assert.equal(revoked,true);
+  console.log('Complimentary inbox executes exact payloads; delegated approver can revoke unused approval.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

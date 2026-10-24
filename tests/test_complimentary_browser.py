@@ -59,7 +59,7 @@ def test_owner_authorizes_manager_executes_once_and_customer_copy_has_no_amounts
         form.locator('[name=address]').fill('TEST ONLY Address')
         form.locator('[name=lat]').fill('28.4')
         form.locator('[name=lng]').fill('45.9')
-        form.locator('[name=notes]').fill('TEST PRIVATE missing or damaged item')
+        form.locator('[name=reason]').fill('TEST PRIVATE missing or damaged item')
         form.locator('[data-menu-category=coffee]').click()
         form.locator('.staff-menu-photo[data-menu-add="kps-01"]').click()
         expect(form.locator('#staff-cart > div')).to_have_count(1)

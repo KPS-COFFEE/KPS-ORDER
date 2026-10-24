@@ -12,6 +12,9 @@ def operational_view(value):
     if not isinstance(value, dict):
         return value
     free=value.get('complimentary')
+    internal=free
+    if not isinstance(internal,dict) and isinstance(value.get('snapshot'),dict):
+        internal=value['snapshot'].get('complimentary')
     result={key:operational_view(item) for key,item in value.items() if key!='complimentary'}
     if isinstance(free,dict):
         result['complimentary']={'kind':free.get('kind')}
@@ -19,6 +22,8 @@ def operational_view(value):
             result.pop('notes',None)
     elif 'complimentary' in value:
         result['complimentary']=free
+    if isinstance(internal,dict) and internal.get('reason') and str(result.get('notes') or '').strip()==internal['reason'].strip():
+        result.pop('notes',None)
     return result
 
 
@@ -77,6 +82,10 @@ def prepare(quote, kind, reason, actor_id, authorization=None):
         'reference_items':deepcopy(quote['items']),
         'catalog_value_halalas':quote['subtotal_halalas'], 'delivery_value_halalas':quote['delivery_fee_halalas']}
     result['complimentary'].update(authorization or {})
+    # Legacy clients put the internal approval reason in customer notes too.
+    # Remove that duplicate at the durable source, before any print projection.
+    if str(result.get('notes') or '').strip()==str(reason).strip():
+        result.pop('notes',None)
     for key in ('subtotal_halalas','delivery_fee_halalas','total_halalas','discount_halalas'):result[key]=0
     for item in result['items']:
         item['unit_price_halalas']=item['line_total_halalas']=0

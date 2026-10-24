@@ -108,38 +108,67 @@ class ComplimentaryOrder(DeliveryCenterOrder):
 
 
 @router.post('/complimentary/authorizations')
-def authorize_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('owner')),
+def authorize_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('owner','admin','delivery_manager')),
                             idempotency_key:str|None=Header(default=None)):
     if user['brand_id']!=body.brand_id:raise db.error(403,'BRAND_FORBIDDEN','البراند خارج نطاقك.')
     from . import complimentary_authorizations
+    complimentary_authorizations.approver_scope(user,body.brand_id,body.branch_id)
     from .operations import safe
     with db.tx() as conn:
         branch=conn.execute('SELECT id FROM branches WHERE id=%s AND brand_id=%s',(body.branch_id,body.brand_id)).fetchone()
         if not branch:raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير موجود.')
+        complimentary_authorizations.validate_approval_scope(conn,body,user,{'branch_id':body.branch_id})
         return db.idempotent(conn,user['id'],idempotency_key,'complimentary.authorize',body.model_dump(),
             lambda:{'authorization':safe(complimentary_authorizations.approve(conn,body,user))})
 
 
 @router.get('/complimentary/authorizations')
-def list_complimentary_authorizations(user=Depends(auth.require_roles('owner','delivery_manager'))):
+def list_complimentary_authorizations(user=Depends(auth.require_roles('owner','admin','delivery_manager'))):
+    if not any(auth.has_permission(user,p) for p in ('orders_create_customer','complimentary_approve')):
+        raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية الأوامر المعتمدة غير متاحة.')
     from .operations import safe
     with db.tx() as conn:
-        rows=conn.execute("SELECT * FROM complimentary_authorizations WHERE brand_id=%s AND executed_order_id IS NULL ORDER BY created_at DESC LIMIT 200",(user['brand_id'],)).fetchall()
+        rows=conn.execute("SELECT * FROM complimentary_authorizations WHERE brand_id=%s AND (%s OR branch_id=ANY(%s)) AND executed_order_id IS NULL AND NOT EXISTS (SELECT 1 FROM complimentary_authorization_revocations r WHERE r.authorization_id=complimentary_authorizations.id) ORDER BY created_at DESC LIMIT 200",(user['brand_id'],user['role']=='owner',user.get('branch_ids') or [])).fetchall()
         return {'authorizations':safe([row for row in rows if user['role']=='owner' or row['branch_id'] in user.get('branch_ids',[])])}
 
 
+class ComplimentaryRevocation(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    reason: str=Field(min_length=5,max_length=1000)
+
+
+@router.post('/complimentary/authorizations/{identifier}/revoke')
+def revoke_complimentary_authorization(identifier:str,body:ComplimentaryRevocation,
+        user=Depends(auth.require_roles('owner','admin','delivery_manager')),
+        idempotency_key:str|None=Header(default=None)):
+    from . import complimentary_authorizations
+    from .operations import safe
+    complimentary_authorizations.approver_scope(user,user['brand_id'])
+    with db.tx() as conn:
+        row=conn.execute('SELECT * FROM complimentary_authorizations WHERE id=%s AND brand_id=%s',(identifier,user['brand_id'])).fetchone()
+        if not row:raise db.error(404,'COMPLIMENTARY_APPROVAL_NOT_FOUND','الأمر غير موجود ضمن نطاقك.')
+        complimentary_authorizations.validate_approval_scope(conn,ComplimentaryOrder(**row['payload']),user,{'branch_id':row['branch_id']})
+        return db.idempotent(conn,user['id'],idempotency_key,'complimentary.revoke',
+            {'identifier':identifier,**body.model_dump()},
+            lambda:{'revocation':safe(complimentary_authorizations.revoke(conn,identifier,user,body.reason))})
+
+
 @router.post('/complimentary/quote')
-def quote_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('owner','delivery_manager'))):
-    if not auth.has_permission(user,'orders_create_customer'):
+def quote_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('owner','admin','delivery_manager'))):
+    can_approve=auth.has_permission(user,'complimentary_approve')
+    if not can_approve and not auth.has_permission(user,'orders_create_customer'):
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إنشاء الطلب متوقفة.')
     if user['brand_id']!=body.brand_id:raise db.error(403,'BRAND_FORBIDDEN','البراند خارج نطاقك.')
     with db.tx() as conn:
-        if user['role']!='owner':delivery_center_scope(conn,user,body.branch_id)
+        if not can_approve:delivery_center_scope(conn,user,body.branch_id)
         from . import complimentary
         from .complimentary_authorizations import check
-        authorization=check(conn,body) if user['role']!='owner' else None
+        authorization=check(conn,body) if body.authorization_id or not can_approve else None
         quote=catalog.quote_order(conn,body,complimentary=True)
-        if user['role']!='owner':delivery_center_scope(conn,user,quote['branch_id'])
+        if can_approve:
+            from .complimentary_authorizations import validate_approval_scope
+            validate_approval_scope(conn,body,user,quote)
+        if not can_approve:delivery_center_scope(conn,user,quote['branch_id'])
         return {'quote':operational_view(complimentary.prepare(quote,body.kind,body.reason,user['id'],authorization))}
 
 

@@ -1,7 +1,7 @@
 """Single-use, exact-payload approvals; never a permission to alter a paid sale."""
 from collections import Counter
 import json
-from . import db
+from . import auth, db
 
 
 def approved_payload(body):
@@ -40,7 +40,7 @@ def validate_original(conn, body):
                     result[key]+=1
             return result
         remaining=units(original['snapshot'].get('items',[]))
-        previous=conn.execute("SELECT payload FROM complimentary_authorizations WHERE brand_id=%s AND payload->>'kind'='completion' AND payload->>'original_order_id'=%s AND id<>%s",
+        previous=conn.execute("SELECT payload FROM complimentary_authorizations WHERE brand_id=%s AND payload->>'kind'='completion' AND payload->>'original_order_id'=%s AND id<>%s AND NOT EXISTS (SELECT 1 FROM complimentary_authorization_revocations r WHERE r.authorization_id=complimentary_authorizations.id)",
                               (body.brand_id,body.original_order_id,body.authorization_id or '')).fetchall()
         for approval in previous:
             remaining.subtract(units(approval['payload']['items']))
@@ -50,11 +50,48 @@ def validate_original(conn, body):
 
 
 
+def approver_scope(user, brand_id, *branch_ids):
+    if not auth.has_permission(user,'complimentary_approve'):
+        raise db.error(403,'COMPLIMENTARY_APPROVER_REQUIRED','اعتماد الأوامر يحتاج تفويضًا صريحًا من المالك.')
+    if user['brand_id']!=brand_id or (user['role']!='owner' and not set(branch_ids)<=set(user.get('branch_ids') or [])):
+        raise db.error(403,'COMPLIMENTARY_APPROVER_SCOPE','الأمر أو الطلب الأصلي خارج نطاق تفويضك.')
+
+
+def validate_approval_scope(conn,body,user,quote):
+    approver_scope(user,body.brand_id,body.branch_id,quote['branch_id'])
+    if body.kind in {'compensation','completion'} and body.original_order_id:
+        original=conn.execute('SELECT branch_id FROM orders WHERE id=%s AND brand_id=%s',
+                              (body.original_order_id,body.brand_id)).fetchone()
+        if original:approver_scope(user,body.brand_id,original['branch_id'])
+
+
+def revoke(conn,identifier,user,reason):
+    row=conn.execute('SELECT * FROM complimentary_authorizations WHERE id=%s AND brand_id=%s FOR UPDATE',
+                     (identifier,user['brand_id'])).fetchone()
+    if not row:raise db.error(404,'COMPLIMENTARY_APPROVAL_NOT_FOUND','الأمر غير موجود ضمن نطاقك.')
+    approver_scope(user,row['brand_id'],row['branch_id'])
+    if row['executed_order_id']:
+        raise db.error(409,'COMPLIMENTARY_APPROVAL_USED','الأمر منفذ؛ معالجته تتم من رحلة الطلب.')
+    if row['payload'].get('original_order_id'):
+        original=conn.execute('SELECT branch_id FROM orders WHERE id=%s AND brand_id=%s FOR UPDATE',
+                              (row['payload']['original_order_id'],row['brand_id'])).fetchone()
+        if original:approver_scope(user,row['brand_id'],original['branch_id'])
+    if conn.execute('SELECT 1 FROM complimentary_authorization_revocations WHERE authorization_id=%s',(identifier,)).fetchone():
+        raise db.error(409,'COMPLIMENTARY_APPROVAL_REVOKED','سبق إلغاء الأمر غير المنفذ.')
+    result=conn.execute("""INSERT INTO complimentary_authorization_revocations
+        (authorization_id,brand_id,revoked_by,reason) VALUES(%s,%s,%s,%s) RETURNING *""",
+        (identifier,row['brand_id'],user['id'],reason)).fetchone()
+    db.audit(conn,user['id'],'complimentary.revoked','complimentary_authorization',identifier,{'reason':reason})
+    return result
+
+
 def approve(conn,body,user):
+    approver_scope(user,body.brand_id,body.branch_id)
     from . import catalog
     if body.authorization_id:
         raise db.error(422,'COMPLIMENTARY_APPROVAL_INPUT','إنشاء الأمر لا يقبل رقم اعتماد سابق.')
-    catalog.quote_order(conn,body,complimentary=True)
+    quote=catalog.quote_order(conn,body,complimentary=True)
+    validate_approval_scope(conn,body,user,quote)
     validate_original(conn,body)
     identifier=db.new_id('courtesy_')
     row=conn.execute('''INSERT INTO complimentary_authorizations
@@ -74,6 +111,8 @@ def check(conn,body,*,order_id=None,actor_id=None):
         raise db.error(403,'COMPLIMENTARY_APPROVAL_INVALID','تفاصيل الطلب لا تطابق الأمر المعتمد.')
     if row['executed_order_id']:
         raise db.error(409,'COMPLIMENTARY_APPROVAL_USED','سبق تنفيذ الأمر المعتمد.')
+    if conn.execute('SELECT 1 FROM complimentary_authorization_revocations WHERE authorization_id=%s',(row['id'],)).fetchone():
+        raise db.error(409,'COMPLIMENTARY_APPROVAL_REVOKED','أُلغي الأمر قبل التنفيذ؛ اختر أمرًا معتمدًا آخر.')
     validate_original(conn,body)
     if order_id:
         conn.execute('''UPDATE complimentary_authorizations SET executed_order_id=%s,

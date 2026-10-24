@@ -77,8 +77,11 @@ DEFINITIONS.append(('driver_hours_reports', 'عرض وتصدير ساعات عم
                     'View and export scoped driver work hours', 'reports', {'delivery_manager'}))
 DEFINITIONS.append(('driver_support_approve', 'اعتماد أو رفض طلب دعم سائق',
                     'Approve or reject scoped driver support requests', 'shifts', set()))
+DEFINITIONS.append(('complimentary_approve', 'اعتماد وإلغاء أوامر الضيافة والتعويض والاستكمال غير المنفذة',
+                    'Authorize and revoke unused courtesy fulfillment commands', 'orders', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'complimentary_approve': {'admin', 'delivery_manager'},
     'driver_support_approve': {'admin', 'delivery_manager'},
     'branch_availability': {'driver', 'delivery_staff', 'delivery_manager', 'admin'},
     'branch_printers_manage': {'driver', 'branch_manager', 'delivery_manager', 'delivery_staff', 'admin'},
@@ -96,6 +99,7 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
+    'complimentary_approve': {'methods':['GET','POST'], 'paths':['/api/orders/complimentary/quote','/api/orders/complimentary/authorizations','/api/orders/complimentary/authorizations/{identifier}/revoke'], 'scope':'explicit_owner_grant_current_brand_all_original_and_fulfillment_branches_no_refund_or_cash_permission'},
     'driver_support_approve': {'methods':['GET','POST'], 'paths':['/api/driver-support','/api/driver-support/{rid}/accept','/api/driver-support/{rid}/resolve'], 'scope':'owner_granted_staff_identity_all_affected_brand_and_branch_scopes_no_cash_transfer'},
     'staff_catalog_view': {'methods':['GET'], 'paths':['/api/identity/permissions/catalog'], 'scope':'catalog_only_no_personnel_no_grant'},
     'orders_operational_view': {'methods':['GET'], 'paths':['/api/staff/scoped/orders','/api/staff/scoped/orders/{order_id}/history'], 'scope':'current_brand_and_assigned_branches_operational_projection'},
@@ -177,7 +181,7 @@ ROUTES = {
         'accept_manager_handover': 'shifts_handover', 'closure_draft': 'shifts_view',
         'save_closure_draft': 'shifts_close', 'set_shift_availability': 'drivers_availability',
     },
-    'orders': {'create_delivery_center_order': 'orders_create_customer', 'quote_delivery_center_order': 'orders_create_customer', 'create_complimentary':'orders_create_customer', 'quote_complimentary':'orders_create_customer', 'list_orders': 'orders_view', 'get_order': 'orders_view',
+    'orders': {'create_delivery_center_order': 'orders_create_customer', 'quote_delivery_center_order': 'orders_create_customer', 'create_complimentary':'orders_create_customer', 'quote_complimentary':('orders_create_customer','complimentary_approve'), 'authorize_complimentary':'complimentary_approve', 'revoke_complimentary_authorization':'complimentary_approve', 'list_complimentary_authorizations':('orders_create_customer','complimentary_approve'), 'list_orders': 'orders_view', 'get_order': 'orders_view',
                'preparation': {'delivery_manager': 'orders_cancel', 'branch_manager': 'orders_prepare'}, 'operational_confirmation': 'orders_contact'},
     'reporting': {name: 'reports_view' for name in (
         'report_list', 'report_detail', 'print_report', 'download_pdf', 'download_csv',

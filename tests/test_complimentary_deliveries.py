@@ -72,6 +72,7 @@ def test_real_order_dispatch_delivery_and_accounting_without_any_collection(ops,
             VALUES(%s,'kps','kps-branch-1','ops-customer','delivery','ready','pending','paid',
                    'cash',2000,0,2000,%s,%s)""",
                   (original,db.json(original_snapshot),db.json({'name':'TEST original recipient'})))
+    baseline=actor('owner').get('/api/accounting/reports').json()['totals']
     body.update(original_order_id=original,original_invoice_number=reference)
     post('manager','/api/orders/complimentary',body,status=403)
     post('manager','/api/orders/complimentary/authorizations',body,status=403)
@@ -131,7 +132,8 @@ def test_real_order_dispatch_delivery_and_accounting_without_any_collection(ops,
     assert entry['authorized_name']=='owner' and entry['actor']=='manager'
     assert entry['original_invoice_number']==reference
     daily=actor('owner').get('/api/accounting/reports').json()
-    assert daily['totals'].get('gross',0)==0 and daily['totals'].get('orders',0)==0
+    assert daily['totals'].get('gross',0)==baseline.get('gross',0)
+    assert daily['totals'].get('orders',0)==baseline.get('orders',0)
 
 
 def test_internal_export_separates_approval_execution_and_original_invoice():
@@ -155,3 +157,78 @@ def test_internal_export_separates_approval_execution_and_original_invoice():
     legacy=contract({**data,'rows':[{'actor':'Legacy executor'}]},'en')['rows'][0]
     assert legacy['authorized_name']=='Not recorded'
     assert legacy['original_invoice_number']=='—'
+
+
+@pytest.mark.parametrize('role',['delivery_manager','admin','driver','branch_manager'])
+def test_courtesy_approval_is_explicit_never_default_or_inherited_from_support(role):
+    from app.employee_permissions import effective,grantable
+    user={'role':role,'permissions':['accounting_review'],'extra_permissions':['driver_support_approve']}
+    assert 'complimentary_approve' not in effective(user)
+    user['extra_permissions'].append('complimentary_approve')
+    assert ('complimentary_approve' in effective(user))==(role in {'delivery_manager','admin'})
+    assert ('complimentary_approve' in grantable(role))==(role in {'delivery_manager','admin'})
+    if role=='delivery_manager':
+        user['_morning_manager_context']={'bootstrap':False}
+        assert 'complimentary_approve' in effective(user)
+        user['extra_permissions']=[]
+        assert 'complimentary_approve' not in effective(user)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('ops',['fiscal-kps'],indirect=True)
+@pytest.mark.parametrize('approver',['manager','admin'])
+def test_delegated_approval_revocation_frees_completion_and_blocks_execution(ops,approver):
+    import psycopg
+    from test_core import _prepare_catalog,_body
+    actor,post,_,shifts=ops
+    _prepare_catalog();shifts()
+    if approver=='admin':
+        with db.tx() as c:
+            c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('ops-admin','TEST approver','admin','kps','[\"kps-branch-1\"]')")
+    body={**_body('delivery'),'kind':'completion','reason':'TEST missing original items'}
+    body['customer']['phone']='0501234567'
+    original=db.new_id('completion_original_')
+    snapshot={'order_reference':'TEST-PAID-COMPLETION','items':body['items']}
+    with db.tx() as c:
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,
+            delivery_status,payment_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+            VALUES(%s,'kps','kps-branch-1','ops-customer','delivery','ready','pending','paid','cash',2000,0,2000,%s,'{}')""",(original,db.json(snapshot)))
+    body.update(original_order_id=original,original_invoice_number='TEST-PAID-COMPLETION')
+    post(approver,'/api/orders/complimentary/authorizations',body,status=403)
+    with db.tx() as c:
+        c.execute("UPDATE users SET extra_permissions='[\"complimentary_approve\"]' WHERE id=%s",('ops-'+approver,))
+    # Delegation stays bound to both original and fulfillment branch scopes.
+    post(approver,'/api/orders/complimentary/authorizations',{**body,'branch_id':'kps-branch-5'},status=403)
+    approval=post(approver,'/api/orders/complimentary/authorizations',body)['authorization']
+    bound={**body,'authorization_id':approval['id']}
+    post('owner','/api/orders/complimentary/authorizations',body,status=422)
+    revoke_path='/api/orders/complimentary/authorizations/'+approval['id']+'/revoke'
+    if approver=='admin':post('manager',revoke_path,{'reason':'TEST unauthorized revoke'},status=403)
+    revoked=post(approver,revoke_path,{'reason':'TEST typo correction'},key='revoke-courtesy')
+    assert post(approver,revoke_path,{'reason':'TEST typo correction'},key='revoke-courtesy')==revoked
+    post('manager','/api/orders/complimentary/quote',bound,status=409)
+    post('manager','/api/orders/complimentary',bound,status=409)
+    assert actor(approver).get('/api/orders/complimentary/authorizations').json()['authorizations']==[]
+    replacement=post(approver,'/api/orders/complimentary/authorizations',body)['authorization']
+    result=post('manager','/api/orders/complimentary',{**body,'authorization_id':replacement['id'],'expected_total_halalas':0})
+    assert result['order']['payment_status']=='not_required'
+    post(approver,'/api/orders/complimentary/authorizations/'+replacement['id']+'/revoke',{'reason':'TEST executed cannot revoke'},status=409)
+    with db.tx() as c:
+        assert c.execute('SELECT payload FROM complimentary_authorizations WHERE id=%s',(approval['id'],)).fetchone()['payload']==approval['payload']
+        with pytest.raises(psycopg.Error),c.transaction():
+            c.execute('DELETE FROM complimentary_authorization_revocations WHERE authorization_id=%s',(approval['id'],))
+    with db.tx() as c:
+        c.execute("UPDATE users SET extra_permissions='[]' WHERE id=%s",('ops-'+approver,))
+    post(approver,'/api/orders/complimentary/authorizations',{**body,'kind':'hospitality'},status=403)
+
+
+def test_internal_reason_never_survives_as_customer_notes_even_for_legacy_clients():
+    from app.complimentary import operational_view
+    quote={'subtotal_halalas':950,'delivery_fee_halalas':500,'total_halalas':1450,
+           'items':[],'notes':'TEST PRIVATE approval reason'}
+    snap=prepare(quote,'compensation','TEST PRIVATE approval reason','executor')
+    assert 'notes' not in snap
+    assert snap['complimentary']['reason']=='TEST PRIVATE approval reason'
+    assert 'TEST PRIVATE' not in str(operational_view(snap))
+    snap=prepare({**quote,'notes':'Leave at reception'},'compensation','TEST PRIVATE approval reason','executor')
+    assert snap['notes']=='Leave at reception'

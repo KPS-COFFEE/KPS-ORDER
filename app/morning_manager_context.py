@@ -34,7 +34,7 @@ for _module in ('operations', 'orders', 'reporting', 'chat', 'order_support',
             ENDPOINTS.setdefault(_module, set()).add(_name)
 # Driver acceptance, pickup and delivery events remain driver-authored.
 ENDPOINTS['operations'].discard('task_transition')
-ENDPOINTS['orders'].update({'customer_lookup', 'customer_search', 'change_delivery_location'})
+ENDPOINTS['orders'].update({'authorize_complimentary','revoke_complimentary_authorization','list_complimentary_authorizations','customer_lookup', 'customer_search', 'change_delivery_location'})
 ENDPOINTS['order_requests'] = {'decide'}
 ENDPOINTS['driver_support'] = {'list_requests', 'request_support', 'accept_support', 'resolve_request'}
 ENDPOINTS['order_financial_cases'] = {'cancel','journey','inbox'}
@@ -56,7 +56,7 @@ def capabilities(user):
     from . import auth
     base = dict(user)
     base.pop('_morning_manager_context', None)
-    extra = {'driver_support_approve'} if auth.has_permission(base, 'driver_support_approve') else set()
+    extra = {permission for permission in ('driver_support_approve','complimentary_approve') if auth.has_permission(base, permission)}
     return CAPABILITIES | extra
 
 

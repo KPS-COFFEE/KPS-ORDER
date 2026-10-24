@@ -12,7 +12,12 @@ from test_operations import ops
 from test_backup import independent_restore_database
 
 
-TABLE_NAMES=('complimentary_authorizations','driver_support_requests')
+TABLE_NAMES=('complimentary_authorizations','complimentary_authorization_revocations','driver_support_requests')
+
+
+def table_rows(conn,table):
+    key='authorization_id' if table=='complimentary_authorization_revocations' else 'id'
+    return conn.execute(sql.SQL('SELECT * FROM {} ORDER BY {}').format(sql.Identifier(table),sql.Identifier(key))).fetchall()
 
 
 def test_lifecycle_export_dependencies_and_brand_scope():
@@ -22,6 +27,7 @@ def test_lifecycle_export_dependencies_and_brand_scope():
         assert _scoped_sql(table,'synthetic-brand')==('brand_id=%s',('synthetic-brand',))
         assert _scoped_sql(table,None)==('TRUE',())
     assert TABLES.index('complimentary_authorizations')>TABLES.index('orders')
+    assert TABLES.index('complimentary_authorization_revocations')>TABLES.index('complimentary_authorizations')
     assert TABLES.index('driver_support_requests')>TABLES.index('shifts')
 
 
@@ -42,6 +48,9 @@ def test_nonempty_courtesy_and_driver_support_survive_full_restore(
         c.execute("""INSERT INTO complimentary_authorizations(id,brand_id,branch_id,authorized_by,payload,
             executed_order_id,executed_by,executed_at) VALUES(%s,'ops-brand','ops-branch','ops-owner',%s,
             %s,'ops-manager',clock_timestamp())""",(approval_id,db.json(payload),executed))
+        pending=db.new_id('backup_revoked_')
+        c.execute("INSERT INTO complimentary_authorizations(id,brand_id,branch_id,authorized_by,payload) VALUES(%s,'ops-brand','ops-branch','ops-owner',%s)",(pending,db.json(payload)))
+        c.execute("INSERT INTO complimentary_authorization_revocations(authorization_id,brand_id,revoked_by,reason) VALUES(%s,'ops-brand','ops-owner','TEST canceled unused approval')",(pending,))
         # Accepted responsibility retains its original balances and task list;
         # copying the record must not manufacture any receipt or cash transfer.
         snapshot={'driver_id':'ops-driver','driver_shift_id':driver,'cash_expected_halalas':1000,
@@ -52,14 +61,14 @@ def test_nonempty_courtesy_and_driver_support_survive_full_restore(
             VALUES(%s,%s,%s,%s,'ops-brand','["ops-branch"]','TEST evening support','accepted',
                    'ops-manager','backup-evening-manager',%s,clock_timestamp(),'TEST-support-group')""",
                   (support_id,driver,manager,target_shift,db.json(snapshot)))
-        source={table:c.execute(sql.SQL('SELECT * FROM {} ORDER BY id').format(sql.Identifier(table))).fetchall()
+        source={table:table_rows(c,table)
                 for table in TABLE_NAMES}
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         raw,_=build_archive(c,brand_id='ops-brand')
         archive,scoped=verify_archive(raw)
         for table in TABLE_NAMES:
-            assert scoped['counts'][table]==1
+            assert scoped['counts'][table]==len(source[table])
             assert json.loads(archive.read(f'data/{table}.json'))[0]['brand_id']=='ops-brand'
         _,other=build_archive(c,brand_id='ops-other')
         assert all(other['counts'][table]==0 for table in TABLE_NAMES)
@@ -74,7 +83,7 @@ def test_nonempty_courtesy_and_driver_support_survive_full_restore(
         with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
             c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
             for table in TABLE_NAMES:
-                assert c.execute(sql.SQL('SELECT * FROM {} ORDER BY id').format(sql.Identifier(table))).fetchall()==source[table]
+                assert table_rows(c,table)==source[table]
             assert c.execute('SELECT id FROM orders WHERE id=%s',(original,)).fetchone()['id']==original
             assert c.execute('SELECT id FROM orders WHERE id=%s',(executed,)).fetchone()['id']==executed
             assert c.execute('SELECT user_id FROM shifts WHERE id=%s',(driver,)).fetchone()['user_id']=='ops-driver'
@@ -83,7 +92,7 @@ def test_nonempty_courtesy_and_driver_support_survive_full_restore(
         # Restore is isolated and leaves the source archive evidence untouched.
         with db.tx() as c:
             for table in TABLE_NAMES:
-                assert c.execute(sql.SQL('SELECT * FROM {} ORDER BY id').format(sql.Identifier(table))).fetchall()==source[table]
+                assert table_rows(c,table)==source[table]
     finally:
         with psycopg.connect(independent_restore_database,autocommit=True) as c:
             c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(target)))

@@ -163,6 +163,10 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
                     if uid:
                         person=c.execute('SELECT display_name FROM users WHERE id=%s',(uid,)).fetchone()
                         details[field+'_name']=person['display_name'] if person else None
+                complimentary=details.get('complimentary')
+                if isinstance(complimentary,dict) and complimentary.get('authorized_by'):
+                    person=c.execute('SELECT display_name FROM users WHERE id=%s',(complimentary['authorized_by'],)).fetchone()
+                    details['complimentary']={**complimentary,'authorized_by_name':person['display_name'] if person else None}
                 event['details']=details
         # Drivers see their retained assignment, not administrative financial notes.
         if user['role']=='driver':events=[{k:v for k,v in e.items() if k!='details'} for e in events if e['event_type'].startswith(('task.','order.operationally_cancelled'))]

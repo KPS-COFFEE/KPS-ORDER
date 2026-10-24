@@ -158,8 +158,17 @@ def test_postclose_card_case_refund_keeps_frozen_closure_and_collection_lineage(
 
 @pytest.mark.postgres
 def test_zero_collectible_complimentary_cancellation_does_not_create_impossible_refund_case(ops):
-    _,post,_,_=ops;oid='free-cancel-'+uuid4().hex
+    actor,post,_,_=ops;oid='free-cancel-'+uuid4().hex
     with db.tx() as c:
         c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,payment_status,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','ready','pending','cash','not_required',0,0,0,%s,'{}')",(oid,db.json({'items':[],'complimentary':{'kind':'hospitality'}})))
+        db.event(c,oid,'ops-manager','order.created',{'complimentary':{'kind':'hospitality','authorized_by':'ops-owner'}})
+        owner_name=c.execute("SELECT display_name FROM users WHERE id='ops-owner'").fetchone()['display_name']
     result=post('manager','/api/order-financial-cases/orders/'+oid+'/cancel',{'version':1,'reason':'إلغاء تجهيز الضيافة'})
     assert result['financial_case'] is None and result['payment_status']=='not_required'
+    journey=actor('owner').get('/api/order-financial-cases/orders/'+oid+'/journey').json()
+    created=next(e for e in journey['timeline'] if e['event_type']=='order.created')
+    assert created['actor_id']=='ops-manager'
+    assert created['details']['complimentary']['authorized_by_name']==owner_name
+    with db.tx() as c:
+        saved=c.execute("SELECT details FROM order_events WHERE order_id=%s AND event_type='order.created'",(oid,)).fetchone()
+        assert 'authorized_by_name' not in saved['details']['complimentary']
