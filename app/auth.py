@@ -98,6 +98,7 @@ def public_user(user: dict, conn=None) -> dict:
         user = dict(user, _message_capabilities=sorted(message_capabilities(conn, user)))
     output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials', 'extra_permissions')}
     output['employee_sms_email_retired'] = staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn)
+    output['activity_tracking_enabled'] = user['role'] != 'customer'
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     if user.get('_morning_manager_context'):
         output['delivery_context'] = user['_morning_manager_context']

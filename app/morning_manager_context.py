@@ -122,7 +122,7 @@ def apply(conn, user, request, *, session=False):
     endpoint = request.scope.get('endpoint')
     module = getattr(endpoint, '__module__', '').rsplit('.', 1)[-1]
     name = getattr(endpoint, '__name__', '')
-    scoped = resolve(conn, user, allow_bootstrap=session or module == 'operations' and name in {'open_shift', 'shifts'})
+    scoped = resolve(conn, user, allow_bootstrap=session or module == 'operations' and name in {'open_shift', 'shifts'} or module == 'employee_activity' and name == 'view')
     if request.method=='GET' and ((module=='order_financial_cases' and name in {'journey','inbox'}) or (module=='orders' and name=='get_order')):
         scoped['_morning_history_read']=True
     if request.method=='POST' and module=='order_financial_cases' and name=='cancel':

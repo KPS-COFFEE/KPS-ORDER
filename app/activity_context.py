@@ -19,7 +19,7 @@ class ActivityContextMiddleware:
 
 
 def associate(request, user):
-    if user['role'] != 'customer':
+    if user['role'] != 'customer' and user.get('session_id'):
         request.scope.setdefault('state', {})['activity_actor'] = {
             'id': user['id'], 'session_id': user['session_id'], 'brand_id': user['brand_id']}
 
