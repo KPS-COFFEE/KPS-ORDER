@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('public/assets/accounting.js','utf8');
+const helper=source.split('\n').find(line=>line.trim().startsWith('const reportValue='));
+const context={lang:'en',money:value=>(value/100).toFixed(2)};
+vm.createContext(context);vm.runInContext(helper+'\nthis.value=reportValue;',context);
+const row={authorized_name:'Approver',actor:'Executor',authorized_at:'2026-10-24T10:00:00Z',original_invoice_number:'INV-1',amount:1500,payable:0};
+assert.equal(context.value(row,{key:'actor'}),'Executor');
+assert.equal(context.value(row,{key:'authorized_name'}),'Approver');
+assert.equal(context.value(row,{key:'original_invoice_number'}),'INV-1');
+assert.match(context.value(row,{key:'authorized_at'}),/13:00:00/);
+assert.equal(context.value(row,{key:'amount',money:true}),'15.00');
+assert.equal(context.value(row,{key:'payable',money:true}),'0.00');
+assert.equal(context.value({authorized_at:'—'},{key:'authorized_at'}),'—');
+console.log('Accounting separates authorizer, executor, original invoice, reference value and zero payable.');

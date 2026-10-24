@@ -152,6 +152,10 @@ def authorize_order(c, user, order, *, preparation=False):
         raise db.error(403,'MORNING_USER_NOT_APPROVED','المستخدم غير مخول لهذا الطلب.')
     if user['role']=='owner':
         return
+    if not preparation and user['role']=='delivery_manager':
+        from .manager_handover_scope import accepted_order
+        if accepted_order(c, user, order):
+            return
     row=c.execute('SELECT settings FROM brands WHERE id=%s',(order['brand_id'],)).fetchone()
     field='preparer_user_ids' if preparation else 'manager_user_ids'
     expected='branch_manager' if preparation else 'delivery_manager'
