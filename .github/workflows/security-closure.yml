@@ -41,15 +41,15 @@ jobs:
       postgres:
         image: postgres:18.6
         env:
-          POSTGRES_DB: test_security_closure
+          POSTGRES_DB: test_enbishan_security_closure
           POSTGRES_USER: security_test
           POSTGRES_PASSWORD: isolated-synthetic-only
         ports:
         - 5432:5432
-        options: --health-cmd "pg_isready -U security_test -d test_security_closure" --health-interval 5s --health-timeout
+        options: --health-cmd "pg_isready -U security_test -d test_enbishan_security_closure" --health-interval 5s --health-timeout
           5s --health-retries 12
     env:
-      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_security_closure
+      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_security_closure
       APP_ENV: testing
       OTP_PROVIDER: disabled
       EMAIL_PROVIDER: disabled
@@ -169,15 +169,15 @@ jobs:
       postgres:
         image: postgres:18.6
         env:
-          POSTGRES_DB: test_security_closure
+          POSTGRES_DB: test_enbishan_security_closure
           POSTGRES_USER: security_test
           POSTGRES_PASSWORD: isolated-synthetic-only
         ports:
         - 5432:5432
-        options: --health-cmd "pg_isready -U security_test -d test_security_closure" --health-interval 5s --health-timeout
+        options: --health-cmd "pg_isready -U security_test -d test_enbishan_security_closure" --health-interval 5s --health-timeout
           5s --health-retries 12
     env:
-      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_security_closure
+      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_security_closure
       APP_ENV: testing
       OTP_PROVIDER: disabled
       EMAIL_PROVIDER: disabled
