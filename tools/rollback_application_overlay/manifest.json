@@ -18,7 +18,8 @@
     "scoped named branch transition history without public actor disclosure",
     "Explicit current payment, engagement and membership export/preservation coverage; restore using matching current source only",
     "Explicit courtesy authorization and driver support export/preservation coverage; no new lifecycle mutation routes in prior application",
-    "Explicit immutable unused courtesy revocation export and preservation coverage"
+    "Explicit immutable unused courtesy revocation export and preservation coverage",
+    "Immutable operational-day correction export and preservation coverage; restored by matching current source"
   ],
   "fallbacks": [
     "80a prior operations UI",
@@ -27,10 +28,10 @@
   ],
   "files": {
     "app/admin.py": "b4870d67c8aa12b32ac23ff6b2622efd161ef89a4cd4fa1e77d9186f2ffb8dc2",
-    "app/db.py": "b3ac2c0b4c3cacaafe3fb32e2974218816e31bdb96d5486593b27c228620b774",
+    "app/db.py": "6eb47b7f85db8025f22c950b81bf92f0f757c8796e36d64f3f6b58437b9de1cc",
     "app/driver_work_hours.py": "4490cd9ab275b78a8b9be3ac2bc387537f3383b6b51aadf88bc4faf0f2e78ad5",
     "app/employee_permissions.py": "605843c9677bbf0d7c86c55fcd199ba4959ea9b73e3700b17d4622c80b3121e5",
-    "app/exports.py": "be9feea0bf0f864204e0f8e687d8bdc4562e4d7a71d6299c823a0958407b1a5a",
+    "app/exports.py": "c1fbb303d0cd9fe90023fde5feef5de8377159fdd692fb221b814c893c041531",
     "app/http_security.py": "7d449b91f1f6c69c1a1d97473a6bf047f9915419cfb187f22bc51f910665158a",
     "app/main.py": "7e87ce7ac0d74c486425e60906ae58d2e629639b0543e9e7930823c940ccf6f1",
     "app/operations.py": "b85a442aefbe54dd7f90c7eabfb68714be2fb2d86ff3bde788a1220c279169d9",

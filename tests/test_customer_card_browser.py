@@ -61,7 +61,10 @@ def test_photo_taps_quantity_required_choices_and_neighborhood(static_customer, 
         page.locator('#product-add').click()
         expect(page.locator('#product-error')).to_be_visible()
         expect(option_card.locator('.product-card-quantity')).to_have_text('٠' if lang == 'ar' else '0')
-        page.locator('#product-options select').select_option('A')
+        if brand == 'enbishan':
+            page.locator('#product-options').get_by_role('button', name='خيار أ' if lang == 'ar' else 'Option A', exact=True).click()
+        else:
+            page.locator('#product-options select').select_option('A')
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
         expect(option_card.locator('.product-card-quantity')).to_have_text('١' if lang == 'ar' else '1')
