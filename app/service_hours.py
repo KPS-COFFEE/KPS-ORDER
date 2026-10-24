@@ -36,6 +36,18 @@ def delivery_operational_date(value=None):
     return (local_time(value) - timedelta(minutes=DELIVERY_DAY_START_MINUTES)).date()
 
 
+def parse_reporting_bound(value: str, *, delivery: bool = False):
+    """Date-only delivery bounds mean 16:00 Riyadh; explicit times remain exact.
+
+    Both endpoints are boundaries: the end is exclusive, just as before.
+    General branch/pickup date filters retain their existing midnight behavior.
+    """
+    parsed = datetime.fromisoformat(value)
+    if delivery and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        parsed += timedelta(minutes=DELIVERY_DAY_START_MINUTES)
+    return local_time(parsed)
+
+
 def _minute(value):
     if not isinstance(value, str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', value):
         raise ValueError('Invalid configured time')

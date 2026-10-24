@@ -1684,13 +1684,14 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         config={**cfg['settings'],**(setting['settings'] if setting else {})}
         minutes,configured=day_start(config)
         # Delivery's day is independent of pickup/car reporting settings.
-        if service=='delivery':minutes,configured=service_hours.DELIVERY_DAY_START_MINUTES,True
+        delivery_period = service=='delivery' or (not service and user['role'] in {'delivery_manager','delivery_staff'})
+        if delivery_period:minutes,configured=service_hours.DELIVERY_DAY_START_MINUTES,True
         now=datetime.now(RIYADH);day=(now-timedelta(minutes=minutes)).date()
         if period=='yesterday':day-=timedelta(days=1)
         try:
-            lo=datetime.fromisoformat(start) if start else datetime.combine(day,datetime.min.time(),RIYADH)+timedelta(minutes=minutes)
+            lo=service_hours.parse_reporting_bound(start,delivery=delivery_period) if start else datetime.combine(day,datetime.min.time(),RIYADH)+timedelta(minutes=minutes)
             lo=lo.replace(tzinfo=RIYADH) if lo.tzinfo is None else lo.astimezone(RIYADH)
-            hi=datetime.fromisoformat(end) if end else lo+timedelta(days=1)
+            hi=service_hours.parse_reporting_bound(end,delivery=delivery_period) if end else lo+timedelta(days=1)
             hi=hi.replace(tzinfo=RIYADH) if hi.tzinfo is None else hi.astimezone(RIYADH)
         except ValueError:fail(422,'تاريخ غير صالح')
         if hi<=lo or hi-lo>timedelta(days=93):fail(422,'الفترة يجب أن تكون بين يوم و93 يوما')

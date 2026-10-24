@@ -544,7 +544,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             clock = (config['settings'] if config else {}).get('operational_day_start')
             configured = bool(clock)
             minutes = catalog._minute(clock) if configured else 0
-            if service=='delivery' or user['role'] in {'delivery_manager','delivery_staff','driver'}:
+            delivery_period = service=='delivery' or user['role'] in {'delivery_manager','delivery_staff','driver'}
+            if delivery_period:
                 minutes,configured=service_hours.DELIVERY_DAY_START_MINUTES,True
             day = (service_hours.now_riyadh() - timedelta(minutes=minutes)).date()
             if period == 'yesterday':
@@ -552,8 +553,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
             if period == 'custom' and (not start or not end):
                 raise db.error(422, 'PERIOD_DATES_REQUIRED', 'حدد بداية ونهاية الفترة.')
             def parse(value):
-                parsed = datetime.fromisoformat(value)
-                return parsed.astimezone(catalog.RIYADH) if parsed.tzinfo else parsed.replace(tzinfo=catalog.RIYADH)
+                return service_hours.parse_reporting_bound(value, delivery=delivery_period)
             try:
                 low = parse(start) if start else datetime.combine(day, datetime.min.time(), catalog.RIYADH) + timedelta(minutes=minutes)
                 high = parse(end) if end else low + timedelta(days=1)
