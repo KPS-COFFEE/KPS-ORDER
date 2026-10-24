@@ -39,7 +39,7 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
               ]};
               return {contacts:[]};
             },
-            mutation:async(path,body)=>{calls.push({path,body});return path==='/api/quote'?{quote:{subtotal_halalas:1000,delivery_fee_halalas:0,total_halalas:1000}}:{order:{id:'synthetic'}};},
+            mutation:async(path,body)=>{calls.push({path,body});return path==='/api/orders/delivery-center/quote'?{quote:{subtotal_halalas:1000,delivery_fee_halalas:0,total_halalas:1000}}:{order:{id:'synthetic'}};},
             modal:(title,html,submit)=>{
               document.querySelector('#modal').innerHTML=html;
               const form=document.querySelector('form');
@@ -82,7 +82,7 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
         variant.click()
         expect(page.locator('[data-product-count=variant]')).to_have_text('3')
         expect(page.locator('#staff-options input:checked')).to_have_count(0)
-        page.locator('#staff-product').select_option('coffee')
+        coffee.click()
 
         def paste(value, start=0, end=None):
             phone.evaluate('''(input,{value,start,end})=>{
@@ -130,7 +130,7 @@ def test_whatsapp_paste_middle_edit_and_canonical_submission(static_customer, en
         page.wait_for_function("calls.some(c=>c.path==='/api/orders/delivery-center')")
         payloads=page.evaluate("calls.filter(c=>c.body).map(c=>c.body.customer.phone)")
         assert payloads == ['+966531041449', '+966531041449']
-        items=page.evaluate("calls.find(c=>c.path==='/api/quote').body.items")
+        items=page.evaluate("calls.find(c=>c.path==='/api/orders/delivery-center/quote').body.items")
         item=next(item for item in items if item['product_id']=='variant')
         assert item['quantity']==3 and len(item['units'])==3
         assert all(unit['options']=={'color':['red'],'flavor':['vanilla']} for unit in item['units'])

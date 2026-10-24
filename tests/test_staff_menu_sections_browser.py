@@ -53,6 +53,8 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
           });
         }''', {'products': products, 'brand': brand, 'lang': lang})
         cards = page.locator('#staff-menu .staff-menu-card')
+        expect(page.locator('#staff-product')).to_be_hidden()
+        expect(cards.first).to_be_visible()
         if brand == 'enbishan':
             buttons = page.locator('#staff-menu-categories [data-menu-category]')
             expect(buttons).to_have_count(9)
@@ -102,8 +104,9 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
             expect(page.locator('#staff-cart > div')).to_have_count(2)
             page.locator('[data-menu-category=coffee]').click()
             expect(page.locator('[data-product-count=kps-02]')).to_have_text('2')
-            # The existing item selector also follows the correct category.
-            page.locator('#staff-product').select_option('kps-30')
+            # Items are selected through their photo cards, with no visible dropdown.
+            page.locator('[data-menu-category=thermal]').click()
+            page.locator('.staff-menu-photo[data-menu-add=kps-30]').click()
             expect(page.locator('[data-menu-category=thermal]')).to_have_attribute('aria-pressed', 'true')
             expect(page.locator('.staff-menu-photo[data-menu-add=kps-30]')).to_be_visible()
             assert page.locator('#modal').evaluate('(dialog)=>dialog.scrollWidth<=dialog.clientWidth+1')

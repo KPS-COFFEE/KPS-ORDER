@@ -63,7 +63,7 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
                 payload = {'drivers': []}
             elif path == '/api/conversations':
                 payload = {'conversations': []}
-            elif path == '/api/quote':
+            elif path == '/api/orders/delivery-center/quote':
                 payload = {'quote': {'subtotal_halalas': 1000, 'delivery_fee_halalas': 0, 'total_halalas': 1000}}
             elif path == '/api/orders/delivery-center':
                 if sum(item[0] == path for item in writes) == 1:

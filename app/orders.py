@@ -126,6 +126,27 @@ def create_complimentary(body:ComplimentaryOrder,request:Request=None,
     return _create_order(body,request,user,idempotency_key,delivery_center=True,complimentary_order=True)
 
 
+@router.post('/delivery-center/quote')
+def quote_delivery_center_order(body: DeliveryCenterOrder,
+                                user=Depends(auth.require_roles('owner','delivery_manager'))):
+    """Price staff orders with the same fresh brand/branch/duty as creation.
+
+    The customer /api/quote intentionally selects a customer cookie and stays
+    bound to its storefront host. Staff must not reuse that boundary.
+    """
+    if user['brand_id'] != body.brand_id:
+        raise db.error(403, 'BRAND_FORBIDDEN', 'البراند خارج نطاقك.')
+    if body.service != 'delivery':
+        raise db.error(422, 'DELIVERY_ONLY', 'طلب مركز التوصيل مخصص للتوصيل.')
+    if body.gift or body.benefit_code or body.cashback_halalas:
+        raise db.error(422, 'CUSTOMER_BENEFIT_IDENTITY_REQUIRED', 'المزايا والإهداء من حساب العميل الموثق. / Use the verified purchaser account.')
+    with db.tx() as conn:
+        delivery_center_scope(conn, user, body.branch_id)
+        priced = catalog.quote_order(conn, body, user=user)
+        delivery_center_scope(conn, user, priced['branch_id'])
+        return {'quote': catalog.customer_quote_view(priced)}
+
+
 @router.post('/delivery-center')
 def create_delivery_center_order(body: DeliveryCenterOrder, request: Request = None,
                                  user=Depends(auth.require_roles('owner','delivery_manager')),
