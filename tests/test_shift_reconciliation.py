@@ -127,7 +127,7 @@ def test_dashboard_and_accounting_same_period_after_late_completion_and_refund(o
     with db.tx() as c:
         c.execute('UPDATE orders SET created_at=%s,completed_at=%s WHERE id=%s',(lo-timedelta(hours=2),lo+timedelta(hours=1),oid))
     post('owner',f'/api/orders/{oid}/refund',dict(method='card',amount_halalas=200,reason='TEST actual partial return',line_quantities={}))
-    a=actor('accountant').get('/api/accounting/reports',params={'start':ds.isoformat(),'end':de.isoformat()}).json()['totals']
+    a=actor('accountant').get('/api/accounting/reports',params={'start':ds.isoformat(),'end':de.isoformat()}).json()['rows'][0]
     response=actor('manager').get('/api/dashboard',params={'start':lo.isoformat(),'end':hi.isoformat()})
     assert response.status_code==200,response.text
     d=response.json()['summary']
