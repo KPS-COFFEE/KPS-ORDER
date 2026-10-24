@@ -1,4 +1,4 @@
-# Driver native order reminders — 0.2.0 pilot
+# Driver native order reminders — 0.2.1 pilot
 
 The active-shift foreground service reads the existing authenticated task API
 and owner alert timing policy. It posts a native high-importance order
@@ -37,6 +37,46 @@ followed by debug/release compilation, lint, and binary permission/signature
 audit. Physical locked-screen/audio/battery and Play Protect acceptance remain
 device checks. No driver installation is requested at this stage.
 
-Version code is 3. Existing owner-signed 0.1.1 is not modified. Once this update
+Version code is 4. Existing owner-signed 0.1.1 is not modified. Once this update
 passes CI, a new release APK must be signed locally with the same owner key;
 no production key, password, or signed owner APK is uploaded by this PR.
+# Owner-approved sound and remote updates — 0.2.1-pilot
+
+The approved sound is `KPS-Restaurant-Order-Ring-2.wav`, SHA-256
+`e31f18ed4c2a3ab8acf0950adebc50dade1046e94f70d9eeb1d86e7196dc577c`.
+`ApprovedOrderRing.bytes()` reproduces it byte-for-byte without a network request.
+The build's sound-policy test compares this SHA and validates the PCM WAV format.
+
+`OrderAudio` checks the existing authenticated work host for a new descriptor at
+most once per 60 seconds, during the existing verified-shift heartbeat. Downloads
+are same-origin HTTPS only, have no redirects, are capped at 1 MB and verified
+against the descriptor's SHA-256 and strict mono PCM WAV structure (0.1–10 seconds).
+Only verified bytes are published by atomic cache-file rename. Failure retains
+the approved or last verified sound. A missing backend endpoint does not block
+tracking or the approved ring. Downloaded data never executes as code.
+
+One existing notification channel remains authoritative. No new channel is
+created on a sound change. Group-child notifications suppress duplicate system
+audio; the selected file plays using `USAGE_NOTIFICATION` with transient audio
+focus. App/channel disablement, null channel sound, low channel importance,
+silent mode, notification volume zero, DND or denied permission prevent playback.
+These conditions are checked before playback, again after preparation and every
+250 ms while playing. No device volume, DND or notification setting is overridden.
+
+Playback stops on cleared pending work, failed authorization, verification loss,
+closed shift, service destruction, audio-focus loss and device mute. Previewing or
+opening a notification is not task acceptance. Reminder timing is unchanged.
+
+Owner controls are a separate server change: **Operation bell settings → Driver
+app sound**. The owner can preview current/new audio, upload a validated WAV,
+confirm and save, or restore the approved ring. Updates are brand-scoped,
+owner-only, idempotent and audited without audio bytes in audit/idempotency data.
+Sounds are stored separately from hot/public settings. The work endpoints never
+return sound data from a different brand. Shared drivers use their authenticated
+work-session brand's sound. This does not change browser bell tones.
+
+The owner must install/sign this new APK once before remote sound updates work.
+Existing owner-signed 0.1.1 does not gain this capability from website changes.
+No owner key/password, production deploy or physical-device acceptance is part of
+this preparation. Android device acceptance remains required before rollout.
+

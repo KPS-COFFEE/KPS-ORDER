@@ -66,6 +66,24 @@ final class WorkApi {
         }
         throw new Denied();
     }
+    static byte[] soundBytes(String path,String cookie)throws Exception{
+        if(!path.matches("/api/operations/driver-order-sound/audio/[a-f0-9]{64}"))throw new Denied();
+        HttpsURLConnection c=(HttpsURLConnection)new URL(ORIGIN+path).openConnection();
+        c.setInstanceFollowRedirects(false);c.setConnectTimeout(7000);c.setReadTimeout(7000);
+        c.setRequestProperty("Accept","audio/wav");c.setRequestProperty("X-KPS-Context","work");c.setRequestProperty("Cookie",cookie);
+        try{
+            int code=c.getResponseCode();
+            if(code==401||code==403||(code>=300&&code<400))throw new Denied();
+            if(code!=200||c.getContentLengthLong()>SoundPolicy.MAX_BYTES)throw new java.io.IOException("Sound unavailable");
+            String type=c.getContentType();
+            if(type==null||!type.split(";",2)[0].trim().equals("audio/wav"))throw new java.io.IOException("Invalid sound type");
+            try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+                byte[] buffer=new byte[8192];int n;
+                while((n=in.read(buffer))!=-1){if(out.size()+n>SoundPolicy.MAX_BYTES)throw new java.io.IOException("Sound too large");out.write(buffer,0,n);}
+                return out.toByteArray();
+            }
+        }finally{c.disconnect();}
+    }
     static final class Alerts {
         final java.util.Set<String> pending=new java.util.HashSet<>();
         final JSONObject policy;

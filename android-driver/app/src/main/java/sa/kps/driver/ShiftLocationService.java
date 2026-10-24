@@ -18,6 +18,7 @@ public final class ShiftLocationService extends Service implements LocationListe
     static final String CHANNEL="kps-active-shift";
     static final String ORDERS="kps-driver-pending-orders-v1";
     private final BellPolicy bell=new BellPolicy();
+    private OrderAudio orderAudio;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LocationManager locations;
@@ -37,6 +38,7 @@ public final class ShiftLocationService extends Service implements LocationListe
                         WorkApi.Grant live=WorkApi.current();
                         if(bound==null||!bound.same(live))throw new WorkApi.Denied();
                         snapshot=WorkApi.alerts(live);
+                        try{orderAudio.refresh(live);}catch(WorkApi.Denied e){throw e;}catch(Exception ignored){}
                         if(!live.same(WorkApi.current()))throw new WorkApi.Denied();
                         outcome=1;
                     }
@@ -50,7 +52,7 @@ public final class ShiftLocationService extends Service implements LocationListe
         }
     };
     @Override public void onCreate() {
-        super.onCreate(); locations=(LocationManager)getSystemService(LOCATION_SERVICE);
+        super.onCreate(); locations=(LocationManager)getSystemService(LOCATION_SERVICE);orderAudio=new OrderAudio(this);
         NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel(CHANNEL,"موقع السائق أثناء الشفت",NotificationManager.IMPORTANCE_LOW));
         NotificationChannel orders=new NotificationChannel(ORDERS,"طلبات السائق التي تنتظر إجراء / Pending driver orders",NotificationManager.IMPORTANCE_HIGH);
@@ -117,6 +119,7 @@ public final class ShiftLocationService extends Service implements LocationListe
         try{locations.removeUpdates(this);}catch(SecurityException ignored){}
         subscribed=false;
         bell.invalidate();((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).cancel(7102);
+        orderAudio.stop();
         notification("تعذر التحديث؛ ستتم المحاولة تلقائيًا عند عودة الاتصال");
     }
     private void syncBell(WorkApi.Alerts snapshot){
@@ -124,15 +127,19 @@ public final class ShiftLocationService extends Service implements LocationListe
         bell.configure(snapshot.policy.optInt("first_after_seconds",0),snapshot.policy.optInt("second_after_seconds",30),snapshot.policy.optInt("continuous_after_seconds",60));
         long now=SystemClock.elapsedRealtime();bell.update(snapshot.pending,now);
         NotificationManager manager=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
-        if(bell.count()==0){manager.cancel(7102);return;}
+        if(bell.count()==0){manager.cancel(7102);orderAudio.stop();return;}
         if(!bell.ring(now)||!manager.areNotificationsEnabled())return;
         if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
         PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         manager.notify(7102,new Notification.Builder(this,ORDERS)
             .setSmallIcon(android.R.drawable.ic_dialog_alert).setContentTitle("KPS Driver")
             .setContentText("طلبات تنتظر إجراء / Orders awaiting action: "+bell.count())
-            .setContentIntent(open).setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(false)
+            .setContentIntent(open).setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(true)
+            .setGroup("kps-driver-order-audio").setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
             .setVisibility(Notification.VISIBILITY_PRIVATE).build());
+        // No group summary is posted: suppress the duplicate system tone. OrderAudio
+        // uses the notification audio stream and honors this same channel's settings.
+        orderAudio.play();
     }
     private void notification(String body){
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
@@ -144,6 +151,7 @@ public final class ShiftLocationService extends Service implements LocationListe
     private void finish() {
         if(ended)return;ended=true;bound=null;running=false;
         bell.clear();((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).cancel(7102);
+        if(orderAudio!=null)orderAudio.close();
         main.removeCallbacksAndMessages(null);
         try{locations.removeUpdates(this);}catch(SecurityException ignored){}
         stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();

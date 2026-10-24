@@ -101,12 +101,7 @@ public final class MainActivity extends Activity {
         });
     }
     private boolean alertsAudible(){
-        NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel channel=nm.getNotificationChannel(ShiftLocationService.ORDERS);
-        android.media.AudioManager audio=(android.media.AudioManager)getSystemService(AUDIO_SERVICE);
-        return nm.areNotificationsEnabled()&&nm.getCurrentInterruptionFilter()==NotificationManager.INTERRUPTION_FILTER_ALL
-            &&audio.getRingerMode()==android.media.AudioManager.RINGER_MODE_NORMAL&&audio.getStreamVolume(android.media.AudioManager.STREAM_NOTIFICATION)>0
-            &&(channel==null||(channel.getImportance()>=NotificationManager.IMPORTANCE_DEFAULT&&channel.getSound()!=null));
+        return OrderAudio.audible(this);
     }
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] grants){super.onRequestPermissionsResult(code,permissions,grants);checkShift();}
     @Override protected void onResume(){super.onResume();visible=true;main.removeCallbacks(poll);main.post(poll);}
