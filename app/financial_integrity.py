@@ -4,9 +4,22 @@
 def inspect_snapshot(snapshot):
     issues = []
     required = ('orders', 'collections', 'refunds', 'summary')
-    if any(key not in snapshot for key in required):
+    if not isinstance(snapshot, dict) or any(key not in snapshot for key in required):
         return {'verified': False, 'issues': [{'code': 'EVIDENCE_MISSING'}]}
     summary = snapshot['summary']
+    if not isinstance(summary, dict) or any(not isinstance(snapshot[key], list) for key in required[:-1]):
+        return {'verified': False, 'issues': [{'code': 'INVALID_EVIDENCE'}]}
+    if any(not isinstance(row, dict) or not isinstance(row.get('id'), str)
+           for key in required[:-1] for row in snapshot[key]):
+        return {'verified': False, 'issues': [{'code': 'INVALID_RECORD'}]}
+    if any(type(row.get('total_halalas')) is not int or row['total_halalas'] < 0 for row in snapshot['orders']):
+        return {'verified': False, 'issues': [{'code': 'INVALID_ORDER_MONEY'}]}
+    external = snapshot.get('external_enbishan', [])
+    if (not isinstance(external, list) or not isinstance(snapshot.get('external_enbishan_totals', {}), dict)
+            or any(not isinstance(row, dict) or not isinstance(row.get('shift_id'), str)
+                   or any(type(row.get(key)) is not int or row[key] < 0
+                          for key in ('order_count', 'cash_halalas', 'card_halalas', 'total_halalas')) for row in external)):
+        return {'verified': False, 'issues': [{'code': 'INVALID_EXTERNAL_EVIDENCE'}]}
 
     def check(key, actual, expected):
         if actual != expected:
@@ -38,7 +51,6 @@ def inspect_snapshot(snapshot):
     check('unique_orders', summary.get('unique_orders'), len(orders))
     check('completed_orders', summary.get('completed_orders'), len(completed))
     check('gross_completed_halalas', summary.get('gross_completed_halalas'), sum(o['total_halalas'] for o in completed))
-    external = snapshot.get('external_enbishan', [])
     shift_ids = [r.get('shift_id') for r in external]
     if len(shift_ids) != len(set(shift_ids)):
         issues.append({'code': 'DUPLICATE_EXTERNAL_SHIFT'})
