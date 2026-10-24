@@ -78,6 +78,10 @@ from . import portals
 app.add_middleware(portals.PortalBoundaryMiddleware)
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(OfficialHostMiddleware)
+from .activity_context import ActivityContextMiddleware
+app.add_middleware(ActivityContextMiddleware)
+from . import employee_activity
+app.include_router(employee_activity.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -248,7 +252,7 @@ def metric_definitions(user=Depends(auth.current_user)):
 @app.get('/{filename}')
 def frontend_file(filename: str):
     # Never mount the repository, data files, migrations, environment or the legacy executable menu.
-    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js'}:
+    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js','employee-activity.js','employee-activity.css'}:
         raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
     path = PUBLIC / filename
     if not path.is_file() or path.is_symlink():

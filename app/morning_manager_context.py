@@ -44,6 +44,7 @@ ENDPOINTS['dispatch_map'] = {'map_config', 'driver_locations', 'discover_driver_
 ENDPOINTS['driver_work_hours'] = {'report'}
 ENDPOINTS['driver_hours_reports'] = {'dashboard', 'export_xlsx', 'export_pdf'}
 ENDPOINTS['task_recovery'] = {'listing', 'detail', 'review_revision'}
+ENDPOINTS['employee_activity'] = {'view'}
 
 
 def enabled(user):

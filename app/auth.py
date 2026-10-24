@@ -156,7 +156,7 @@ def session_context(request):
             '/api/central-operations','/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
             '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
-            or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
+            or path.startswith(('/ops','/employee-activity','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
         return 'work'
     return context
 
@@ -221,6 +221,8 @@ def current_user(request: Request) -> dict:
     required = employee_permissions.required_for(request.scope.get('endpoint'), user['role'], user=user)
     if required and not any(has_permission(user, value) for value in ((required,) if isinstance(required, str) else required)):
         raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'هذه الصلاحية متوقفة لحسابك. تواصل مع المالك.')
+    from .activity_context import associate
+    associate(request, user)
     return user
 
 
@@ -300,8 +302,8 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
     if user['role'] == 'customer' and (user.get('identity_kind') == 'guest' or customer_verified):
         hours = GUEST_SESSION_SECONDS // 3600
     expiry = datetime.now(timezone.utc) + timedelta(hours=hours)
-    conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at,customer_verified_at) '
-                 'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END,CASE WHEN %s THEN now() ELSE NULL END)',
+    conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at,customer_verified_at,activity_tracking) '
+                 'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END,CASE WHEN %s THEN now() ELSE NULL END,true)',
                  (db.new_id('session_'), token_hash(token), token_hash(csrf), user['id'], expiry,
                   bool(owner_step_up and user['role'] == 'owner'), bool(customer_verified and user['role'] == 'customer')))
     cookie_name,csrf_name=context_cookie_names('customer' if user['role']=='customer' else 'work') if context_cookies_enabled(conn) else (COOKIE,CSRF_COOKIE)
