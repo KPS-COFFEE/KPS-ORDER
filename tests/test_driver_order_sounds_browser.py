@@ -20,7 +20,7 @@ def test_owner_can_preview_upload_and_restore_ring(live_app,chromium_browser,lan
         page.locator('[data-action=alert-policy]').click()
         page.get_by_role('button',name='Driver app sound — preview and change' if language=='en' else 'صوت تطبيق السائق — معاينة وتغيير',exact=True).click()
         expect(page.locator('[data-preview-current]')).to_be_visible()
-        with page.expect_response(lambda r:'/api/operations/driver-order-sound/audio/' in r.url) as current:
+        with page.expect_response(lambda r:'/api/operations/driver-order-sound/brands/' in r.url and '/audio/' in r.url) as current:
             page.locator('[data-preview-current]').click()
         assert current.value.status==200
         page.locator('[name=sound_file]').set_input_files({'name':'Synthetic ring.wav','mimeType':'audio/wav','buffer':replacement()})
