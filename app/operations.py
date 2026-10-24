@@ -42,7 +42,8 @@ def safe(value):
     def encode(o):
         if isinstance(o,Decimal):return int(o) if o==o.to_integral_value() else float(o)
         return o.isoformat() if hasattr(o,'isoformat') else str(o)
-    return jsonlib.loads(jsonlib.dumps(value,default=encode))
+    from .operational_day_policy import present_dates
+    return present_dates(jsonlib.loads(jsonlib.dumps(value,default=encode)))
 
 def fail(status, message): raise HTTPException(status, message)
 
@@ -293,7 +294,7 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
         return None, None
     operational_date = preparation_date or service_hours.delivery_operational_date(now)
     return operational_date, {'timezone': 'Asia/Riyadh', 'operational_date': operational_date.isoformat(),
-                              'operational_day_start': '16:00', 'branches': windows,
+                              'operational_day_start': '04:00', 'branches': windows,
                               'period': 'morning' if morning else 'evening'}
 
 def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None):
@@ -514,7 +515,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             if search.strip():
                 where.append('(strpos(lower(u.display_name),lower(%s))>0 OR strpos(lower(s.id),lower(%s))>0)')
                 params.extend([search.strip(),search.strip()])
-            day="COALESCE(s.delivery_operational_date, ((s.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '16 hours')::date)"
+            day="COALESCE(s.reporting_operational_date,s.delivery_operational_date, ((s.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '4 hours')::date)"
             if start:where.append(day+'>=%s');params.append(start)
             if end:where.append(day+'<=%s');params.append(end)
             source=' FROM shifts s JOIN users u ON u.id=s.user_id WHERE '+' AND '.join(where)

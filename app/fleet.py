@@ -26,7 +26,7 @@ DEFINITIONS=('KM/L: full-to-full measured distance / filled liters. Grey: open o
  'Per-vehicle operating baseline (legacy default 10 KM/L): Green >=90%; Orange >=80% and <90%; Red <80% of the baseline saved when the shift started. This is a review indicator, not driver liability. '
  'Google Maps expected KM is manually recorded for the complete itinerary including return; it is not GPS or an automatic API reading. Absolute difference: green <=10% or <=5 KM, orange <=25%, red >25%. Implausible odometers are excluded from distance totals and fuel efficiency. GPS remains blank until measured. '
  'Average KM/L uses only comparable full-to-full rows (sum KM / sum liters), not a mean of ratios. '
- 'One row per vehicle shift. Multiple shifts in one day remain separate. Operational day starts 16:00 Asia/Riyadh. '
+ 'One row per vehicle shift. Multiple shifts in one day remain separate. Operational day starts 04:00 Asia/Riyadh. '
  'الفترة يوم تشغيلي بتوقيت الرياض. الكفاءة من فل إلى فل فقط؛ الرمادي بيانات ناقصة. الألوان للمراجعة ولا تثبت مسؤولية السائق.')
 
 def access(user=Depends(auth.require_permission(PERMISSION))):return user
@@ -47,7 +47,7 @@ BASE=""" FROM fleet_operating_segments l JOIN shifts s ON s.id=l.shift_id
  LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) correction ON true
  LEFT JOIN LATERAL(SELECT * FROM fleet_route_readings WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) route_reading ON true """
 METRICS="fleet_distance_review(coalesce(correction.after_metrics,l.metrics),route_reading.expected_km,l.received_at,l.returned_at)"
-SELECT=f"""SELECT l.segment_no,l.multi_vehicle,l.shift_id,l.vehicle_id,l.operating_day,l.revision,v.plate,v.details,u.id driver_id,u.display_name driver_name,
+SELECT=f"""SELECT l.segment_no,l.multi_vehicle,l.shift_id,l.vehicle_id,s.reporting_operational_date AS operating_day,l.revision,v.plate,v.details,u.id driver_id,u.display_name driver_name,
  s.branch_ids,l.received_at,l.returned_at,
  {METRICS} metrics,route_reading.source_url route_source_url,route_reading.itinerary route_itinerary,route_reading.created_at route_recorded_at,
  CASE WHEN l.multi_vehicle THEN NULL ELSE (SELECT count(DISTINCT t.order_id) FROM driver_tasks t WHERE t.shift_id=s.id) END orders,
@@ -62,7 +62,7 @@ SELECT=f"""SELECT l.segment_no,l.multi_vehicle,l.shift_id,l.vehicle_id,l.operati
 def filters(user,start=None,end=None,vehicle_id=None,driver_id=None,branch_id=None,fuel_status=None,faults_only=False,exceptions_only=False,metric=None):
     lo=start or service_hours.delivery_operational_date();hi=end or lo
     if hi<lo or (hi-lo).days>366:raise db.error(422,'FLEET_PERIOD_INVALID','اختر فترة صحيحة لا تتجاوز سنة.')
-    clauses,args=scoped(user);clauses+=['l.operating_day BETWEEN %s AND %s'];args +=[lo,hi]
+    clauses,args=scoped(user);clauses+=['s.reporting_operational_date BETWEEN %s AND %s'];args +=[lo,hi]
     for name,value in [('l.vehicle_id',vehicle_id),('s.user_id',driver_id)]:
         if value:clauses.append(name+'=%s');args.append(value)
     if branch_id:clauses.append('s.branch_ids ? %s');args.append(branch_id)
@@ -185,7 +185,7 @@ def vehicle(vid:str,limit:int=Query(50,ge=1,le=200),offset:int=Query(0,ge=0,le=1
             if not card:raise db.error(404,'VEHICLE_NOT_FOUND','السيارة غير موجودة ضمن نطاقك.')
         where=' WHERE '+' AND '.join(clauses)
         total=c.execute('SELECT count(*) n'+BASE+where,args).fetchone()['n']
-        rows=c.execute(SELECT+BASE+where+' ORDER BY l.operating_day DESC,s.opened_at DESC,l.shift_id DESC LIMIT %s OFFSET %s',args+[limit,offset]).fetchall()
+        rows=c.execute(SELECT+BASE+where+' ORDER BY s.reporting_operational_date DESC,s.opened_at DESC,l.shift_id DESC LIMIT %s OFFSET %s',args+[limit,offset]).fetchall()
         return {'vehicle':card,'rows':present_rows(c,user,rows),'total':total,'limit':limit,'offset':offset}
 
 @router.get('/export')

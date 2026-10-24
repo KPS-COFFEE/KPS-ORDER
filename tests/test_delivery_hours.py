@@ -32,9 +32,9 @@ def configured_branch():
 @pytest.mark.parametrize(('stamp', 'opened', 'day'), [
     ('2026-10-10T03:59:00', True, '2026-10-09'),
     ('2026-10-10T03:59:59', True, '2026-10-09'),
-    ('2026-10-10T04:00:00', False, '2026-10-09'),
-    ('2026-10-10T15:59:00', False, '2026-10-09'),
-    ('2026-10-10T15:59:59', False, '2026-10-09'),
+    ('2026-10-10T04:00:00', False, '2026-10-10'),
+    ('2026-10-10T15:59:00', False, '2026-10-10'),
+    ('2026-10-10T15:59:59', False, '2026-10-10'),
     ('2026-10-10T16:00:00', True, '2026-10-10'),
     ('2026-10-10T23:59:59', True, '2026-10-10'),
     ('2026-10-11T00:00:00', True, '2026-10-10'),
@@ -72,12 +72,12 @@ def test_utc_input_and_owner_custom_weekday_hours():
 
 
 @pytest.mark.parametrize(('stamp', 'manager_open', 'customer_open', 'day'), [
-    ('2026-10-19T15:44:59', False, False, '2026-10-18'),
+    ('2026-10-19T15:44:59', False, False, '2026-10-19'),
     ('2026-10-19T15:45:00', True, False, '2026-10-19'),
     ('2026-10-19T15:59:59', True, False, '2026-10-19'),
     ('2026-10-19T16:00:00', True, True, '2026-10-19'),
     ('2026-10-20T00:00:00', True, True, '2026-10-19'),
-    ('2026-10-20T04:00:00', False, False, '2026-10-19'),
+    ('2026-10-20T04:00:00', False, False, '2026-10-20'),
     ('2026-10-19T12:45:00+00:00', True, False, '2026-10-19'),
 ])
 def test_manager_preparation_is_separate_from_customer_admission(stamp, manager_open, customer_open, day):

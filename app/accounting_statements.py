@@ -9,13 +9,13 @@ def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
     q="""SELECT r.*,s.manager_shift_id,s.submission,s.scheduled_end_at,s.delivery_window_snapshot,
       s.closed_at shift_closed_at,mu.display_name manager_name,
       u.display_name driver_name,
-      coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) AS "day"
+      coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day"
       FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=r.user_id
       JOIN shifts m ON m.id=s.manager_shift_id JOIN users mu ON mu.id=m.user_id
       WHERE r.brand_id=%s AND r.kind='driver' AND m.status='closed' AND r.branch_ids ?| %s"""
     args=[user['brand_id'],bids]
     if ds:
-        q+=" AND coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) BETWEEN %s AND %s"
+        q+=" AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) BETWEEN %s AND %s"
         args.extend([ds,de])
     if manager_shift_id:q+=' AND s.manager_shift_id=%s';args.append(manager_shift_id)
     rows=c.execute(q+' ORDER BY "day",r.created_at,r.id',args).fetchall()

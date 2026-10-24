@@ -33,7 +33,8 @@ def closed_shift(c, shift):
     confirmation = variance_confirmation(c, report['id'], values['revision'])
     return dict(values, state='closed_snapshot', report_id=report['id'],
                 shift_id=shift['id'], brand_id=shift['brand_id'],
-                operational_date=snap.get('operational_date'),
+                operational_date=shift.get('reporting_operational_date') or snap.get('operational_date'),
+                original_operational_date=snap.get('operational_date'),
                 summary=snap.get('summary', {}),
                 external_enbishan_totals=snap.get('external_enbishan_totals', {}),
                 variance_pending=bool(values['reconciliation_complete'] and values['net_difference_halalas'] and not confirmation))
