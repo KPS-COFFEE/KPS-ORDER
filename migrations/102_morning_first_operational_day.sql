@@ -3,6 +3,8 @@
 ALTER TABLE shifts ADD COLUMN reporting_operational_date date GENERATED ALWAYS AS (
  CASE WHEN delivery_window_snapshot->>'period'='morning'
       THEN (opened_at AT TIME ZONE 'Asia/Riyadh')::date
+      WHEN delivery_window_snapshot->>'period'='evening' AND delivery_operational_date IS NOT NULL
+      THEN delivery_operational_date
       ELSE ((opened_at AT TIME ZONE 'Asia/Riyadh') - interval '4 hours')::date END
 ) STORED;
 CREATE INDEX shifts_reporting_day ON shifts(brand_id,reporting_operational_date);

@@ -25,7 +25,7 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
-          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'central_workdays', 'central_workday_legs', 'driver_latest_locations', 'driver_location_health', 'orders', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
+          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'operational_day_reclassifications', 'central_workdays', 'central_workday_legs', 'driver_latest_locations', 'driver_location_health', 'orders', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
           'first_order_gift_claims', 'custody_events', 'retained_carryovers', 'manager_handovers', 'driver_support_requests', 'central_manager_handovers', 'central_manager_handover_legs', 'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
@@ -76,7 +76,7 @@ def _scoped_sql(table, brand):
         return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if brand is None:
         return 'TRUE', ()
-    direct = {'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests', 'promotion_report_closures', 'delivery_tracking_links', 'driver_location_health', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'operational_day_reclassifications', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests', 'promotion_report_closures', 'delivery_tracking_links', 'driver_location_health', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'driver_evidence', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
@@ -320,15 +320,17 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             conn.execute('ALTER TABLE customer_wallet_entries DISABLE TRIGGER wallet_entry_balance')
             for table in manifest['table_order']:
                 column_info = conn.execute(
-                    'SELECT column_name,udt_name,is_nullable FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
+                    'SELECT column_name,udt_name,is_nullable,is_generated FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
                     (target_schema, table)).fetchall()
                 columns = {row['column_name']: row['udt_name'] for row in column_info}
                 nullable = {row['column_name'] for row in column_info if row['is_nullable']=='YES'}
+                generated = {row['column_name'] for row in column_info if row['is_generated']=='ALWAYS'}
                 for row in json.loads(archive.read(f'data/{table}.json')):
                     if set(row) != set(columns):
                         raise ValueError('Backup columns do not match target.')
                     values = []
-                    for column, value in row.items():
+                    writable = {column: value for column,value in row.items() if column not in generated}
+                    for column, value in writable.items():
                         if columns[column] == 'bytea' and value is not None:
                             if not isinstance(value, dict) or set(value) != {'$binary', 'sha256', 'size_bytes'}:
                                 raise ValueError('Invalid binary reference.')
@@ -343,8 +345,8 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                         else:
                             values.append(value)
                     statement = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
-                        sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, row)),
-                        sql.SQL(',').join(sql.Placeholder() for _ in row))
+                        sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, writable)),
+                        sql.SQL(',').join(sql.Placeholder() for _ in writable))
                     conn.execute(statement, values)
             # Validate deferred references/projections before changing trigger
             # state: PostgreSQL refuses ALTER TABLE with pending FK events on

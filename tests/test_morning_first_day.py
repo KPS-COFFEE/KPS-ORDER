@@ -5,6 +5,7 @@ import pytest
 from app import db
 from app.operational_day_policy import present_dates, report_snapshot
 from test_operations import ops
+from test_backup import independent_restore_database
 
 
 def test_projection_preserves_financial_evidence_and_original_date():
@@ -58,3 +59,36 @@ def test_closed_morning_and_evening_share_friday_without_mutating_money(ops):
         after = c.execute('SELECT id,submission,opening_halalas,delivery_operational_date,reporting_operational_date '
                           'FROM shifts WHERE id=ANY(%s) ORDER BY id', ([manager, driver],)).fetchall()
     assert after == before
+
+
+@pytest.mark.postgres
+def test_date_correction_and_generated_day_survive_private_restore(ops, independent_restore_database):
+    from uuid import uuid4
+    import psycopg
+    from psycopg import sql
+    from app.exports import build_archive, restore_archive
+    _, _, _, shifts = ops
+    manager, _ = shifts()
+    with db.tx() as c:
+        c.execute("UPDATE shifts SET opened_at='2026-10-23T12:27:00+03:00',"
+                  "delivery_operational_date='2026-10-22',delivery_window_snapshot=%s WHERE id=%s",
+                  (db.json({'period': 'morning'}), manager))
+        c.execute('INSERT INTO operational_day_reclassifications(shift_id,brand_id,original_day,corrected_day) '
+                  'SELECT id,brand_id,delivery_operational_date,reporting_operational_date FROM shifts WHERE id=%s',
+                  (manager,))
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        archive, manifest = build_archive(c, full=True)
+    schema = 'kps_restore_' + uuid4().hex
+    try:
+        result = restore_archive(archive, target_url=independent_restore_database, target_schema=schema)
+        assert result['verified'] and result['counts'] == manifest['counts']
+        with psycopg.connect(independent_restore_database) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+            assert c.execute('SELECT delivery_operational_date,reporting_operational_date FROM shifts WHERE id=%s',
+                             (manager,)).fetchone() == (date(2026, 10, 22), date(2026, 10, 23))
+            assert c.execute('SELECT count(*) FROM operational_day_reclassifications WHERE shift_id=%s',
+                             (manager,)).fetchone()[0] == 1
+    finally:
+        with psycopg.connect(independent_restore_database, autocommit=True) as c:
+            c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))

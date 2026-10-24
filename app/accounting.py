@@ -479,18 +479,17 @@ def manager_closures(user=Depends(access)):
     with db.tx() as c:
         rows=c.execute("""SELECT r.id,r.brand_id,r.branch_ids,r.user_id,r.kind,r.snapshot,r.created_at,
           u.display_name manager_name,m.revision,m.status financial_status,m.bank_halalas,m.cash_halalas,
-          m.bank_reference,m.cash_reference,m.note,m.created_at matched_at
-          FROM closure_reports r JOIN users u ON u.id=r.user_id
+          m.bank_reference,m.cash_reference,m.note,m.created_at matched_at,s.reporting_operational_date accounting_day
+          FROM closure_reports r JOIN users u ON u.id=r.user_id JOIN shifts s ON s.id=r.shift_id
           LEFT JOIN LATERAL (SELECT * FROM manager_financial_matches WHERE report_id=r.id ORDER BY revision DESC LIMIT 1) m ON true
           WHERE r.brand_id=%s AND r.kind='manager'
           ORDER BY CASE WHEN m.status='matched' THEN 1 ELSE 0 END,r.created_at DESC LIMIT 500""",(user['brand_id'],)).fetchall()
         result=[]
         for r in rows:
             if user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[])):continue
-            from .operational_day_policy import report_snapshot
-            snap=report_snapshot(c,r.pop('snapshot'));bank,cash=matching_expected(snap)
+            snap=r.pop('snapshot');bank,cash=matching_expected(snap)
             r.update(expected_bank_halalas=bank,expected_cash_halalas=cash,
-                     label=snap.get('closure_label') or snap.get('shift',{}).get('closure_label') or snap.get('reference') or r['id'],day=snap.get('operational_date'),revision=r['revision'] or 0)
+                     label=snap.get('closure_label') or snap.get('shift',{}).get('closure_label') or snap.get('reference') or r['id'],day=r['accounting_day'] or snap.get('operational_date'),original_operational_date=snap.get('operational_date'),revision=r['revision'] or 0)
             result.append(r)
         return safe({'closures':result})
 
