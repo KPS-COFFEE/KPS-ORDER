@@ -92,3 +92,16 @@ def test_date_correction_and_generated_day_survive_private_restore(ops, independ
     finally:
         with psycopg.connect(independent_restore_database, autocommit=True) as c:
             c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))
+
+
+def test_support_daily_uses_same_morning_boundary(monkeypatch):
+    from contextlib import nullcontext
+    from app import order_support
+    seen = []
+    monkeypatch.setattr(db, 'tx', lambda: nullcontext(None))
+    monkeypatch.setattr(order_support, 'report_tickets', lambda c, brand, branches, lo, hi: seen.append((lo, hi)) or [])
+    result = order_support.daily(day='2026-10-23', user={'role': 'owner', 'brand_id': 'b'})
+    assert result['day'] == '2026-10-23'
+    lo, hi = seen[0]
+    assert lo.isoformat() == '2026-10-23T04:00:00+03:00'
+    assert hi.isoformat() == '2026-10-24T04:00:00+03:00'
