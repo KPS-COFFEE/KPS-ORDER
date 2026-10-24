@@ -1,4 +1,4 @@
-"""KPS category filters use actual catalog names; Enbishan keeps its existing menu."""
+"""Brand-specific manager menu sections preserve cart and responsive cards."""
 import json
 import os
 from pathlib import Path
@@ -21,6 +21,13 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
     products = [dict(id=p['id'], name=p['name'], category=p['category'], available=True,
                      price_halalas=1000, image_url='/assets/kps-receipt-logo.png')
                 for p in catalog['products']]
+    if brand == 'enbishan':
+        reviewed = json.loads((Path(__file__).resolve().parents[1] /
+                               'docs/enbishan/menu-review/owner-final-20261022.json').read_text())
+        unique = {row['product_code']: row for row in reviewed['rows']}
+        products = [dict(id=code, name=row['name'], category=row['category'],
+                         available=True, price_halalas=1000)
+                    for code, row in unique.items()]
     expected = {
         'sweets': {'kps-03', *(f'kps-{i:02}' for i in range(15, 25))},
         'cold': {'kps-32', *(f'kps-{i:02}' for i in range(9, 15))},
@@ -28,7 +35,8 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
         'boxes': {'kps-33', 'kps-34', *(f'kps-{i:02}' for i in range(25, 30))},
         'thermal': {'kps-30', 'kps-31'}, 'extras': {'kps-35'},
     }
-    assert set.union(*expected.values()) == {p['id'] for p in products}
+    if brand == 'kps':
+        assert set.union(*expected.values()) == {p['id'] for p in products}
     with sync_playwright() as p:
         browser = getattr(p, engine).launch()
         page = browser.new_page(viewport={'width': width, 'height': 1000})
@@ -46,10 +54,33 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
         }''', {'products': products, 'brand': brand, 'lang': lang})
         cards = page.locator('#staff-menu .staff-menu-card')
         if brand == 'enbishan':
-            expect(page.locator('#staff-menu-categories')).to_be_hidden()
-            expect(cards).to_have_count(len(products))
-            assert not page.locator('#staff-order-form').get_attribute('class').endswith('staff-order-kps-menu')
-            assert page.locator('#modal').bounding_box()['width'] <= 720
+            buttons = page.locator('#staff-menu-categories [data-menu-category]')
+            expect(buttons).to_have_count(9)
+            assert buttons.last.get_attribute('data-menu-category') == 'drinks'
+            labels = buttons.all_text_contents()
+            assert any(('الخلية' if lang == 'ar' else 'Khaliya') in label for label in labels)
+            assert not any('المخبوزات' in label for label in labels)
+            seen = set()
+            for key in ['grape', 'mahashi', 'fattah', 'fried', 'bakery',
+                        'drinks', 'mojito-meals', 'boxes', 'other']:
+                page.locator(f'[data-menu-category={key}]').click()
+                expect(page.locator(f'[data-menu-category={key}]')).to_have_attribute('aria-pressed', 'true')
+                ids = set(page.locator('#staff-menu [data-menu-add]').evaluate_all(
+                    '(buttons)=>buttons.map(b=>b.dataset.menuAdd)'))
+                assert ids and not seen.intersection(ids)
+                seen.update(ids)
+            assert seen == {p['id'] for p in products}
+            page.locator('[data-menu-category=grape]').click()
+            assert all('ورق عنب' in name for name in
+                       page.locator('#staff-menu strong').all_text_contents())
+            grape_id = page.locator('#staff-menu .staff-menu-photo').first.get_attribute('data-menu-add')
+            page.locator('#staff-menu .staff-menu-photo').first.click()
+            page.locator('[data-menu-category=drinks]').click()
+            expect(page.locator('#staff-cart > div')).to_have_count(1)
+            page.locator('[data-menu-category=grape]').click()
+            expect(page.locator(f'[data-product-count="{grape_id}"]')).to_have_text('1')
+            assert page.locator('#staff-menu').evaluate(
+                '(grid)=>getComputedStyle(grid).gridTemplateColumns.split(" ").length') == (5 if width >= 640 else 2)
         else:
             buttons = page.locator('#staff-menu-categories [data-menu-category]')
             expect(buttons).to_have_count(6)
