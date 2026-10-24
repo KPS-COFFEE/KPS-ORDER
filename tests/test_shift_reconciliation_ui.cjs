@@ -1,0 +1,16 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('public/ops.js','utf8');
+const snippet=source.slice(source.indexOf('  function reconciliationPanel('),source.indexOf('  function vehicleFields('));
+const ctx={state:{user:{role:'delivery_manager'},lang:'en'},tr:(ar,en)=>en,esc:s=>String(s),money:n=>(Number(n)/100).toFixed(2),dataItem:(label,value)=>`${label}:${value}`,notice:s=>s,table:()=>'',window:{KPSSaudiPlate:{render:()=>''}},datetime:()=>'',inspectionItems:{},currentOdometer:()=>0};
+vm.createContext(ctx);vm.runInContext(snippet,ctx);
+const pending={state:'closed_snapshot',revision:0,summary:{completed_orders:37,gross_completed_halalas:68350,net_collections_halalas:68350},system_cash_halalas:19750,system_bank_halalas:48600,cash_received_halalas:null,net_difference_halalas:null};
+let html=ctx.reconciliationPanel(pending);
+assert.match(html,/Accounting review pending/);assert.match(html,/197.50/);assert.match(html,/486.00/);assert.match(html,/Final variance:—/);
+html=ctx.reconciliationPanel({...pending,reconciliation_complete:true,balance_approved:true,variance_pending:true,bank_halalas:48550,cash_received_halalas:17550,net_difference_halalas:-2250});
+assert.match(html,/Variance awaiting resolution/);assert.match(html,/-22.50/);assert.match(html,/175.50/);
+assert.match(ctx.reconciliationPanel({state:'missing_snapshot'}),/cannot be confirmed/);
+ctx.state.user.role='driver';assert.equal(ctx.reconciliationPanel(pending),'');
+ctx.state.user.role='delivery_manager';
+const frozen=ctx.vehicleShiftSummary({shift:{kind:'driver',status:'closed'},tasks:[{order_id:'changed-after-close',status:'delivered',total_halalas:999999}]});
+assert.doesNotMatch(frozen,/9999.99|Completed order value/);
+console.log('PASS: shared pending/final amounts, variance state, missing snapshot, driver privacy, frozen totals.');

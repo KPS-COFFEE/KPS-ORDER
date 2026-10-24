@@ -2,7 +2,7 @@
 HIDDEN = frozenset({
     'expected_halalas', 'difference_halalas', 'expected_card_halalas',
     'card_difference_halalas', 'collections', 'refunds', 'custody_events',
-    'opening_halalas', 'closure_exception', 'exception_reason',
+    'reconciliation', 'opening_halalas', 'closure_exception', 'exception_reason',
 })
 
 def driver_view(user, value, shift_money=False):
