@@ -1,0 +1,53 @@
+name: KPS Driver Android pilot
+on:
+  push:
+    branches: [agent/kps-driver-android-pilot-20261021]
+    paths: ['android-driver/**', '.github/workflows/kps-driver-android.yml']
+  pull_request:
+    paths: ['android-driver/**', '.github/workflows/kps-driver-android.yml']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify owner-local key custody helper
+        run: python3 -m unittest discover -s android-driver/tests -p test_local_signing.py -v
+      - name: Verify authority and fresh location rules
+        working-directory: android-driver
+        run: |
+          mkdir -p build/policy
+          javac -d build/policy app/src/main/java/sa/kps/driver/TrackingPolicy.java app/src/main/java/sa/kps/driver/BellPolicy.java app/src/main/java/sa/kps/driver/SoundPolicy.java app/src/main/java/sa/kps/driver/ApprovedOrderRing.java tests/TrackingPolicyTest.java tests/BellPolicyTest.java tests/SoundPolicyTest.java
+          java -cp build/policy TrackingPolicyTest
+          java -cp build/policy BellPolicyTest
+          java -cp build/policy SoundPolicyTest
+          javac -cp build/policy -d build/policy app/src/main/java/sa/kps/driver/BrandBellPolicy.java tests/BrandBellPolicyTest.java
+          java -cp build/policy BrandBellPolicyTest
+      - name: Compile and lint Android variants
+        working-directory: android-driver
+        run: gradle :app:assembleDebug :app:assembleRelease :app:bundleRelease :app:lintRelease --no-daemon
+      - name: Verify compiled APK identity, permissions and signing
+        run: python3 android-driver/tests/audit_apks.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kps-driver-release-preparation
+          path: |
+            android-driver/app/build/outputs/apk/release/app-release-unsigned.apk
+            android-driver/app/build/outputs/bundle/release/app-release.aab
+            android-driver/app/build/reports/release-audit.json
+            android-driver/app/build/reports/lint-results-release.*
+          if-no-files-found: error
+          retention-days: 7
+
+

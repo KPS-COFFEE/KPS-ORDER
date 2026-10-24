@@ -1,0 +1,35 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'sa.kps.driver'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'sa.kps.driver'
+        minSdk 26
+        targetSdk 35
+        versionCode 5
+        versionName '0.2.2-pilot'
+    }
+    // Release identity must come from the company's protected signing store.
+    // Never use the debug certificate or create throwaway keys for a release.
+    def releaseStore = System.getenv('KPS_DRIVER_KEYSTORE')
+    if (releaseStore) {
+        def required = ['KPS_DRIVER_STORE_PASSWORD', 'KPS_DRIVER_KEY_ALIAS', 'KPS_DRIVER_KEY_PASSWORD']
+        required.each { if (!System.getenv(it)) throw new GradleException('Missing protected release signing configuration: ' + it) }
+        signingConfigs {
+            company {
+                storeFile file(releaseStore)
+                storePassword System.getenv('KPS_DRIVER_STORE_PASSWORD')
+                keyAlias System.getenv('KPS_DRIVER_KEY_ALIAS')
+                keyPassword System.getenv('KPS_DRIVER_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            debuggable false
+            if (releaseStore) signingConfig signingConfigs.company
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+
