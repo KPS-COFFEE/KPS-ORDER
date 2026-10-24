@@ -3,12 +3,30 @@
   'use strict';
   window.KPSCustomerOrder={open:async function(ctx){
     const {api,mutation,tr,esc,money,modal,closeModal,user,branches,onCreated,complimentary=false}=ctx;
-    const morning=Boolean(user.delivery_context),groupedMenu=user.brand_id==='kps';
+    const morning=Boolean(user.delivery_context),groupedMenu=['kps','enbishan'].includes(user.brand_id);
     let activeMenuCategory=null;
-    const menuCategories=[['sweets','الحلا','Desserts'],['cold','المشروبات الباردة','Cold drinks'],['coffee','القهوة بأنواعها','Coffee'],['boxes','البوكسات','Boxes'],['thermal','المج الحراري','Thermal mugs'],['extras','الإضافات','Extras']];
+    let menuCategories=[['sweets','الحلا','Desserts'],['cold','المشروبات الباردة','Cold drinks'],['coffee','القهوة بأنواعها','Coffee'],['boxes','البوكسات','Boxes'],['thermal','المج الحراري','Thermal mugs'],['extras','الإضافات','Extras']];
+    if(user.brand_id==='enbishan')menuCategories=[
+      ['grape','ورق عنب','Grape leaves'],['mahashi','المحاشي والملفوف','Mahashi & cabbage'],
+      ['fattah','الفتات','Fattah'],['fried','المقليات','Fried items'],
+      ['bakery','الخلية','Khaliya'],['drinks','المشروبات','Drinks'],
+      ['mojito-meals','وجبات الموهيتو','Mojito meals'],['boxes','البوكسات','Boxes'],
+      ['other','أصناف أخرى','Other items']
+    ];
     function menuCategory(product){
       const normalize=value=>String(value||'').normalize('NFKC').toLowerCase().replace(/[\u064b-\u065f\u0670\u0640]/g,'').replace(/[أإآ]/g,'ا');
       const name=normalize(product.name),category=normalize(product.category),both=name+' '+category;
+      if(user.brand_id==='enbishan'){
+        if(/بوكس|\bbox(?:es)?\b|bundle/.test(both))return 'boxes';
+        if(/موهيتو.*(?:مع|صحن)|mojito.*(?:with|plate)/.test(name))return 'mojito-meals';
+        if(/ورق\s*عنب|grape\s*leav/.test(name))return 'grape';
+        if(/فت[ةه]|fatt?ah/.test(name))return 'fattah';
+        if(/محاشي|ملفوف|stuffed|cabbage/.test(category+' '+name))return 'mahashi';
+        if(/مقليات|fried/.test(category))return 'fried';
+        if(/مخبوزات|bakery/.test(category))return 'bakery';
+        if(/مشروبات|beverage|drink/.test(category))return 'drinks';
+        return 'other';
+      }
       if(/حراري|thermal|tumbler|\bmug\b/.test(both))return 'thermal';
       if(/بوكس|\bbox(?:es)?\b|bundle/.test(both))return 'boxes';
       if(/حلوي|حلو|سناكس|dessert|sweet|snack|bakery/.test(category))return 'sweets';
@@ -112,7 +130,23 @@
       form.elements.phone.addEventListener('input',()=>{if(selectedContactPhone&&normalizedPhone(form.elements.phone.value)!==selectedContactPhone)clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupBox.textContent=tr('أدخل الجوال كاملًا للبحث.','Enter the complete mobile to search.');lookupTimer=setTimeout(lookupCustomer,400);});
       form.elements.branch_id.addEventListener('change',()=>{clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupCustomer();});
     }
-    function drawOptions(){const p=products.find(p=>p.id===select.value);options.innerHTML=(p?.option_groups||[]).map((g,i)=>`<fieldset><legend>${esc(g.name)} · ${esc(tr('الاختيارات','Selections'))} ${g.min_select??(g.required===false?0:1)}–${g.max_select??1}</legend>${(g.values||[]).filter(v=>v.available!==false&&v.enabled!==false).map(v=>`<label><input type="checkbox" data-group="${i}" value="${esc(v.code||v.id)}">${esc(v.name)} ${Number(v.price_delta_halalas)?`(+${esc(money(v.price_delta_halalas))})`:''}</label>`).join('')}</fieldset>`).join('');add.disabled=!p;}
+    function productGroups(product){
+      const groups=product?.option_groups||[];
+      if(user.brand_id!=='enbishan')return groups;
+      const rank=value=>{
+        const name=String(value.name||value.name_en||'').trim();
+        return /^(صغير|small)(?:$|\s|·)/i.test(name)?0:/^(وسط|متوسط|medium)(?:$|\s|·)/i.test(name)?1:/^(كبير|large)(?:$|\s|·)/i.test(name)?2:3;
+      };
+      return groups.map(group=>group.code==='SIZE'?{...group,values:[...(group.values||[])].sort((a,b)=>rank(a)-rank(b))}:group);
+    }
+    function fixedSingleSize(group){
+      const values=group.values||[];
+      return user.brand_id==='enbishan'&&group.code==='SIZE'&&values.length===1
+        &&values[0].available!==false&&values[0].enabled!==false
+        &&(/^(فردي|فردية|single)$/i.test(String(values[0].name||'').trim())
+          ||/^single$/i.test(String(values[0].name_en||'').trim()));
+    }
+    function drawOptions(){const p=products.find(p=>p.id===select.value);options.innerHTML=productGroups(p).map((g,i)=>fixedSingleSize(g)?`<input type="checkbox" hidden checked data-group="${i}" value="${esc(g.values[0].code||g.values[0].id)}">`:`<fieldset><legend>${esc(g.name)} · ${esc(tr('الاختيارات','Selections'))} ${g.min_select??(g.required===false?0:1)}–${g.max_select??1}</legend>${(g.values||[]).filter(v=>v.available!==false&&v.enabled!==false).map(v=>`<label><input type="checkbox" data-group="${i}" value="${esc(v.code||v.id)}">${esc(v.name)} ${Number(v.price_delta_halalas)?`(+${esc(money(v.price_delta_halalas))})`:''}</label>`).join('')}</fieldset>`).join('');add.disabled=!p;}
     function photoUrl(value){try{const url=new URL(value||'',location.origin);return value&&(url.protocol==='https:'||url.origin===location.origin)?url.href:null;}catch{return null;}}
     function drawMenu(){
       let visibleProducts=products;
@@ -120,7 +154,7 @@
         const counts=new Map(menuCategories.map(([key])=>[key,products.filter(p=>menuCategory(p)===key).length]));
         if(!counts.get(activeMenuCategory))activeMenuCategory=menuCategories.find(([key])=>counts.get(key))?.[0]||'sweets';
         const categories=form.querySelector('#staff-menu-categories');
-        categories.innerHTML=menuCategories.filter(([key])=>key!=='extras'||counts.get(key)).map(([key,ar,en])=>`<button type="button" id="staff-menu-category-${key}" class="quiet${key===activeMenuCategory?' active':''}" data-menu-category="${key}" aria-pressed="${key===activeMenuCategory}" aria-controls="staff-menu"${counts.get(key)?'':' disabled'}>${esc(tr(ar,en))} <span>${counts.get(key)}</span></button>`).join('');
+        categories.innerHTML=menuCategories.filter(([key])=>user.brand_id==='enbishan'?counts.get(key):key!=='extras'||counts.get(key)).map(([key,ar,en])=>`<button type="button" id="staff-menu-category-${key}" class="quiet${key===activeMenuCategory?' active':''}" data-menu-category="${key}" aria-pressed="${key===activeMenuCategory}" aria-controls="staff-menu"${counts.get(key)?'':' disabled'}>${esc(tr(ar,en))} <span>${counts.get(key)}</span></button>`).join('');
         visibleProducts=products.filter(p=>menuCategory(p)===activeMenuCategory);
         form.querySelector('#staff-menu').setAttribute('aria-labelledby','staff-menu-category-'+activeMenuCategory);
         if(!visibleProducts.some(p=>p.id===select.value)&&visibleProducts.length){select.value=visibleProducts[0].id;form.elements.item_note.value='';drawOptions();}
@@ -129,7 +163,7 @@
     function updateCounts(){for(const count of form.querySelectorAll('[data-product-count]'))count.textContent=String(cart.filter(item=>item.product_id===count.dataset.productCount).reduce((sum,item)=>sum+item.quantity,0));}
     async function load(){const seq=++sequence;add.disabled=true;select.disabled=true;form.querySelector('#staff-menu').replaceChildren();form.querySelector('#staff-menu-categories').replaceChildren();try{const d=await api(`/api/catalog?brand_id=${encodeURIComponent(user.brand_id)}&branch_id=${encodeURIComponent(form.elements.branch_id.value)}&service=delivery`);if(seq!==sequence||!form.isConnected)return;products=d.products.filter(p=>p.available);select.innerHTML=products.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} — ${esc(money(p.price_halalas))}</option>`).join('');drawOptions();drawMenu();}catch(e){if(seq===sequence)fail(e);}finally{if(seq===sequence)select.disabled=false;}}
     function drawCart(){form.querySelector('#staff-cart').innerHTML=cart.map((item,i)=>`<div class="actions"><span>${esc(item.label)} × ${item.quantity}${item.note?` · ${esc(item.note)}`:''}</span><button type="button" class="quiet" data-cart-minus="${i}" aria-label="${esc(tr('إنقاص ','Decrease ')+item.label)}">−</button><button type="button" class="quiet" data-cart-plus="${i}" aria-label="${esc(tr('زيادة ','Increase ')+item.label)}">+</button><button type="button" class="quiet" data-remove="${i}">${esc(tr('حذف','Remove'))}</button></div>`).join('');updateCounts();invalidate();}
-    function selectedItem(quantity){const p=products.find(p=>p.id===select.value);if(!p)throw new Error(tr('اختر الصنف.','Select an item.'));if(!Number.isInteger(quantity)||quantity<1||quantity>50)throw new Error(tr('الكمية من 1 إلى 50.','Quantity must be 1–50.'));const choices={},labels=[];for(const [i,g] of (p.option_groups||[]).entries()){const selected=[...options.querySelectorAll(`[data-group="${i}"]:checked`)].map(x=>x.value);if(selected.length<(g.min_select??(g.required===false?0:1))||selected.length>(g.max_select??1)){options.focus();throw new Error(tr('راجع اختيارات ','Check selections for ')+g.name);}choices[g.code||g.id]=selected;labels.push(...selected.map(code=>g.values.find(v=>(v.code||v.id)===code)?.name||code));}return {product_id:p.id,quantity,units:Array.from({length:quantity},()=>({options:structuredClone(choices)})),note:form.elements.item_note.value,label:p.name+(labels.length?' · '+labels.join(' / '):'')};}
+    function selectedItem(quantity){const p=products.find(p=>p.id===select.value);if(!p)throw new Error(tr('اختر الصنف.','Select an item.'));if(!Number.isInteger(quantity)||quantity<1||quantity>50)throw new Error(tr('الكمية من 1 إلى 50.','Quantity must be 1–50.'));const choices={},labels=[];for(const [i,g] of productGroups(p).entries()){const selected=[...options.querySelectorAll(`[data-group="${i}"]:checked`)].map(x=>x.value);if(selected.length<(g.min_select??(g.required===false?0:1))||selected.length>(g.max_select??1)){options.focus();throw new Error(tr('راجع اختيارات ','Check selections for ')+g.name);}choices[g.code||g.id]=selected;labels.push(...selected.map(code=>g.values.find(v=>(v.code||v.id)===code)?.name||code));}return {product_id:p.id,quantity,units:Array.from({length:quantity},()=>({options:structuredClone(choices)})),note:form.elements.item_note.value,label:p.name+(labels.length?' · '+labels.join(' / '):'')};}
     function sameVariant(a,b){return a.product_id===b.product_id&&a.note===b.note&&JSON.stringify(a.units[0].options)===JSON.stringify(b.units[0].options);}
     function changeQuantity(item,delta){const next=item.quantity+delta;if(next>50)throw new Error(tr('الكمية القصوى لنفس الاختيارات 50.','Maximum quantity for the same options is 50.'));if(next<=0){cart.splice(cart.indexOf(item),1);return;}const choices=item.units[0].options;item.quantity=next;item.units=Array.from({length:next},()=>({options:structuredClone(choices)}));}
     function addSelected(quantity){const candidate=selectedItem(quantity),existing=cart.find(item=>sameVariant(item,candidate));if(existing)changeQuantity(existing,quantity);else{if(cart.length>=50)throw new Error(tr('وصلت للحد الأقصى للأصناف.','Maximum item rows reached.'));cart.push(candidate);}drawCart();form.querySelector('.form-error').textContent='';}
