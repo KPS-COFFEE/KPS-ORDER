@@ -148,7 +148,7 @@ def session_context(request):
         return context
     if (path.startswith(('/api/auth/otp/','/api/customer/')) or path in {'/api/quote','/api/identity/guest','/branch-payment'} or (path=='/api/orders' and request.method=='POST')):
         return 'customer'
-    if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
+    if (path=='/api/auth/login' or path.startswith(('/api/identity/customer-message-routing','/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/central-operations','/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
             '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
@@ -185,6 +185,8 @@ def _find_session(conn, request: Request):
         user = request_user(conn, request, user)
         from .central_operations import project_read
         user = project_read(conn, request, user)
+        from .customer_message_routing import capabilities as message_capabilities
+        user['_message_capabilities'] = sorted(message_capabilities(conn, user))
         from .portals import enforce_role
         enforce_role(request, user)
         from .storefront_scope import require_brand
@@ -1899,4 +1901,5 @@ def update_identity_settings(body:ChannelUpdateBody,user=Depends(require_roles('
 def email_outbox_status(user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         return {'messages':conn.execute('SELECT id,kind,status,attempts,last_error,created_at,delivery_at FROM email_outbox WHERE brand_id=%s ORDER BY created_at DESC LIMIT 100',(user['brand_id'],)).fetchall()}
+
 
