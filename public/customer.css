@@ -126,3 +126,8 @@ html[data-storefront-brand="enbishan"] .product-add-button{grid-column:2;grid-ro
 html[data-storefront-brand="enbishan"] .product-card-bottom{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto}
 html[data-storefront-brand="enbishan"] .product-card-bottom>.product-card-controls{grid-column:1;grid-row:3;justify-content:space-between;margin-top:5px}
 html[data-storefront-brand="enbishan"] .product-card-controls>.product-add-button{grid-column:auto;grid-row:auto}
+
+/* Direct option selection, using the current brand palette and button design. */
+.customer-option-choices{display:flex;flex-wrap:wrap;gap:.5rem;margin-block:.5rem}
+.customer-option-choices button{min-height:44px;flex:1 0 auto}
+.customer-option-choices button[aria-pressed="true"]{outline:2px solid currentColor;outline-offset:2px;font-weight:700}
