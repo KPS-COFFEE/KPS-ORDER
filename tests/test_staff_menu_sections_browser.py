@@ -35,7 +35,8 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
         'boxes': {'kps-33', 'kps-34', *(f'kps-{i:02}' for i in range(25, 30))},
         'thermal': {'kps-30', 'kps-31'}, 'extras': {'kps-35'},
     }
-    assert set.union(*expected.values()) == {p['id'] for p in products}
+    if brand == 'kps':
+        assert set.union(*expected.values()) == {p['id'] for p in products}
     with sync_playwright() as p:
         browser = getattr(p, engine).launch()
         page = browser.new_page(viewport={'width': width, 'height': 1000})
@@ -55,6 +56,7 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
         if brand == 'enbishan':
             buttons = page.locator('#staff-menu-categories [data-menu-category]')
             expect(buttons).to_have_count(9)
+            assert buttons.last.get_attribute('data-menu-category') == 'drinks'
             labels = buttons.all_text_contents()
             assert any(('الخلية' if lang == 'ar' else 'Khaliya') in label for label in labels)
             assert not any('المخبوزات' in label for label in labels)

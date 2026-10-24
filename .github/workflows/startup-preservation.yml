@@ -1,0 +1,96 @@
+name: Startup preservation concurrency PostgreSQL18
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/db.py
+      - tests/test_startup_preservation_concurrency.py
+      - tests/test_final_release.py
+      - tests/test_pending_startup_upgrade.py
+      - .github/workflows/startup-preservation.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: startup-preservation-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+jobs:
+  startup-preservation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_startup_preservation
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kps_test -d test_startup_preservation"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-synthetic-only@127.0.0.1:5432/test_startup_preservation
+      PENDING_MIGRATION_BASELINE_DIR: /tmp/startup-preservation-baseline
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Locked runtime and test tools
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source-sha.txt
+      - name: Reproduce the old startup deadlock on PostgreSQL18
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp app/db.py /tmp/candidate-startup-db.py
+          trap 'cp /tmp/candidate-startup-db.py app/db.py' EXIT
+          git show 400a5d07a9d112be709fbb2091d8d4b10c25adff:app/db.py > app/db.py
+          set +e
+          python -m pytest -q tests/test_startup_preservation_concurrency.py::test_startup_snapshot_allows_opposite_order_operational_writes --junitxml=evidence/old-deadlock.xml > evidence/old-deadlock.log 2>&1
+          result=$?
+          set -e
+          test "$result" -eq 1
+          python - <<'PY'
+          import xml.etree.ElementTree as E
+          cases=list(E.parse('evidence/old-deadlock.xml').getroot().iter('testcase'))
+          assert len(cases)==1 and cases[0].find('skipped') is None
+          failures=cases[0].findall('failure')+cases[0].findall('error')
+          assert failures and 'deadlock detected' in '\n'.join(E.tostring(f,encoding='unicode') for f in failures).lower()
+          PY
+          cp /tmp/candidate-startup-db.py app/db.py
+          trap - EXIT
+      - name: Prepare the genuine populated-upgrade baseline
+        run: |
+          mkdir "$PENDING_MIGRATION_BASELINE_DIR"
+          git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C "$PENDING_MIGRATION_BASELINE_DIR"
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          revision='4e4d781b4fa82b7459410694ff5c4ac06842e6e7'
+          tree=subprocess.check_output(['git','rev-parse',revision+'^{tree}'],text=True).strip()
+          (pathlib.Path(os.environ['PENDING_MIGRATION_BASELINE_DIR'])/'baseline-source-identity.json').write_text(json.dumps({'revision':revision,'tree':tree}))
+          PY
+      - name: Concurrent startup, preservation rejection and forward-upgrade regressions
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_startup_preservation_concurrency.py tests/test_final_release.py tests/test_pending_startup_upgrade.py tests/test_trip_printer_migration_preservation.py --junitxml=evidence/startup.xml | tee evidence/startup.log
+          python - <<'PY'
+          import xml.etree.ElementTree as E
+          cases=list(E.parse('evidence/startup.xml').getroot().iter('testcase'))
+          assert cases and not any(c.find(t) is not None for c in cases for t in ('failure','error','skipped'))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: startup-preservation-${{ github.event.pull_request.head.sha || github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

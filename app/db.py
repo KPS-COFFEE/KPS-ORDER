@@ -7,6 +7,7 @@ import json as jsonlib
 import os
 import re
 import threading
+import time
 import uuid
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -309,17 +310,36 @@ def migrate():
     if multibrand.enabled():
         # Reject a bad test DSN before opening a connection or acquiring locks.
         multibrand.isolation_guard()
-    with tx() as conn:
-        conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
-        baseline = preservation_snapshot(conn)
-        apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
-        after = preservation_snapshot(conn, baseline)
-        if baseline != after:
-            raise RuntimeError('Release aborted: existing operational data changed during migration.')
-        revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
-        audit(conn, None, 'release.operational_data_preserved', 'runtime', revision,
-              {'verified': bool(baseline), 'tables_checked': len(baseline),
-               'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
+    with pooled_connection() as conn:
+        # Serialize boot workers BEFORE taking an MVCC snapshot. A transaction
+        # advisory-lock SELECT in REPEATABLE READ would take its snapshot before
+        # waiting, leaving the next worker with stale migration/catalog state.
+        conn.execute('SELECT pg_advisory_lock(%s)', (764832610,))
+        try:
+            for attempt in range(3):
+                try:
+                    with conn.transaction():
+                        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+                        baseline = preservation_snapshot(conn, lock_tables=False)
+                        apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
+                        after = preservation_snapshot(conn, baseline, lock_tables=False)
+                        if baseline != after:
+                            raise RuntimeError('Release aborted: existing operational data changed during migration.')
+                        revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
+                        audit(conn, None, 'release.operational_data_preserved', 'runtime', revision,
+                              {'verified': bool(baseline), 'tables_checked': len(baseline),
+                               'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
+                    break
+                except (psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected) as exc:
+                    # Retry the entire rolled-back transaction with a fresh
+                    # snapshot, never a statement inside an aborted transaction.
+                    if attempt == 2:
+                        raise
+                    print(jsonlib.dumps({'event': 'startup_migration_retry',
+                                         'attempt': attempt + 1, 'sqlstate': exc.sqlstate}), flush=True)
+                    time.sleep(0.1 * (attempt + 1))
+        finally:
+            conn.execute('SELECT pg_advisory_unlock(%s)', (764832610,))
 
 
 PRESERVED_TABLES = ('central_workdays', 'central_workday_legs', 'central_manager_handovers', 'central_manager_handover_legs', 'promotion_report_closures', 'first_order_gift_claims', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
@@ -335,18 +355,22 @@ PRESERVED_TABLES = ('central_workdays', 'central_workday_legs', 'central_manager
                     'customer_wallets','benefit_order_states','customer_wallet_entries')
 
 
-def preservation_snapshot(conn, baseline=None):
+def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     """Compare existing columns/bytes in the same bounded migration transaction.
 
-    New columns are additive and excluded from an old baseline. Brief shared
-    locks prevent concurrent operational writes from creating a false mismatch.
+    New columns are additive and excluded from an old baseline. Startup uses
+    REPEATABLE READ: both comparisons see one committed snapshot plus our own
+    writes, so legitimate concurrent activity neither blocks nor mismatches.
+    Other callers retain the original shared-lock behavior by default.
     Only counts and opaque hashes enter the private audit, never row contents.
     Catalog/branch edits are separately guarded by their explicit owner decisions.
     """
+    if not lock_tables and conn.execute('SHOW transaction_isolation').fetchone()['transaction_isolation'] not in {'repeatable read', 'serializable'}:
+        raise RuntimeError('Unlocked preservation requires a transaction-wide stable snapshot.')
     available = {row['table_name'] for row in conn.execute(
         "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'").fetchall()}
     names = [name for name in PRESERVED_TABLES if name in available] if baseline is None else list(baseline)
-    if names:
+    if names and lock_tables:
         conn.execute(sql.SQL('LOCK TABLE {} IN SHARE MODE').format(sql.SQL(',').join(map(sql.Identifier, names))))
     result = {}
     for table in names:
