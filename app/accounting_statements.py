@@ -254,6 +254,8 @@ def approve_day(c,user,manager_shift_id,note):
     if any(driver_settlement_values(r['snapshot'],changes[r['id']][-1] if changes[r['id']] else None)['stage']!='cash_received' for r in rows):
         fail('PENDING_SETTLEMENTS','أكمل الموازنة والكاش لكل سائق أولًا.',409)
     for r in rows:
+        from .financial_integrity import require_verified
+        require_verified(r['snapshot'])
         v=driver_settlement_values(r['snapshot'],changes[r['id']][-1])
         if v['net_difference_halalas'] and not variance_confirmation(c,r['id'],v['revision']):
             fail('PENDING_VARIANCE_CONFIRMATION','أكد العجز أو الفائض والإجراء المتخذ لكل سائق أولًا.',409)

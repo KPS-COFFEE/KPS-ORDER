@@ -419,6 +419,9 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
         driver_reports=source_rows(c,user,bids,ds,de);driver_events=histories(c,user,driver_reports)
         if any(driver_settlement_values(r['snapshot'],driver_events[r['id']][-1] if driver_events[r['id']] else None)['stage']!='cash_received' for r in driver_reports):
             fail('PENDING_SETTLEMENTS','أكمل تسويات السائقين قبل إقفال الشهر.',409)
+        from .financial_integrity import require_verified
+        for report in driver_reports:
+            require_verified(report['snapshot'])
         from .driver_incentives import report_data
         entitlements=report_data(c,user,ds,de,branch_ids=bids)
         if entitlements['pending_review'] or entitlements['awaiting_approval'] or any(r['incomplete'] for r in entitlements['rows']):fail('PENDING_INCENTIVES','راجع أسباب الطلبات الملغية والمرتجعة واعتمادات الشفتات قبل إقفال الشهر.',409)
@@ -504,6 +507,8 @@ def match_manager_closure(report_id:str,body:FinancialMatch,request:Request,user
             revision=previous['revision'] if previous else 0
             if previous and previous['status']=='matched':fail('ALREADY_MATCHED','تمت المطابقة المالية سابقًا.',409)
             if revision!=body.expected_revision:fail('MATCH_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
+            from .financial_integrity import require_verified
+            require_verified(r['snapshot'])
             bank,cash=matching_expected(r['snapshot'])
             matched=body.bank_halalas==bank and body.cash_halalas==cash
             if not matched and not body.note:fail('DIFFERENCE_NOTE','اكتب ملاحظة توضح فرق البنك أو الكاش.')
@@ -536,6 +541,8 @@ class DriverCashReceiptCorrection(Note):
 
 
 def driver_settlement_values(snapshot, latest=None):
+    from .financial_integrity import inspect_snapshot
+    integrity = inspect_snapshot(snapshot)
     sub = (snapshot.get('shift') or {}).get('submission') or {}
     summary = snapshot.get('summary') or {}
     submitted = sub.get('driver_original_submission') or sub
@@ -553,7 +560,7 @@ def driver_settlement_values(snapshot, latest=None):
     bank_difference = bank-expected_bank if approved else None
     reconciliation_complete = approved and received is not None
     net_difference = cash_difference+bank_difference if reconciliation_complete else None
-    return dict(original_bank_halalas=original_bank, original_cash_halalas=original_cash,
+    return dict(integrity=integrity, financial_approval_allowed=integrity['verified'], original_bank_halalas=original_bank, original_cash_halalas=original_cash,
                 system_bank_halalas=expected_bank,system_cash_halalas=expected_cash,
                 bank_halalas=bank,balance_approved=approved,cash_recorded=received is not None,
                 cash_due_halalas=cash_due, cash_received_halalas=received,
@@ -661,6 +668,9 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
 
 def save_driver_settlement(c, user, report_id, body, receipt=False):
     row = driver_settlement_scope(c, user, report_id)
+    if not receipt:
+        from .financial_integrity import require_verified
+        require_verified(row['snapshot'])
     if row['kind']=='manager' and c.execute("SELECT 1 FROM manager_financial_matches WHERE report_id=%s AND status='matched'",(report_id,)).fetchone():
         fail('SETTLEMENT_FINAL','التقفيلة معتمدة ماليًا مسبقًا.',409)
     previous = c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1', (report_id,)).fetchone()
@@ -896,6 +906,8 @@ def confirm_driver_variance(report_id:str,body:DriverVarianceConfirmation,reques
             latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
             if not latest or latest['revision']!=body.expected_revision:
                 fail('SETTLEMENT_CHANGED','حدثت مراجعة أحدث؛ حدّث القائمة.',409)
+            from .financial_integrity import require_verified
+            require_verified(row['snapshot'])
             values=driver_settlement_values(row['snapshot'],latest)
             if not values['reconciliation_complete']:
                 fail('RECONCILIATION_REQUIRED','أكمل اعتماد الموازنة وتسجيل استلام الكاش أولًا.',409)
