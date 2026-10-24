@@ -109,7 +109,8 @@ def cancel(oid:str,body:Cancellation,user=Depends(auth.require_roles('owner','de
                 decision={'request_id':request['id'],'status':'resolved','note':body.reason,'financial_status':details['financial_status'],'resolution_scope':'operational_cancellation'}
                 db.event(c,oid,user['id'],'customer_request.decided',decision)
                 db.audit(c,user['id'],'customer_request.decided','order',oid,decision)
-            return {'order_id':oid,'operational_status':'cancelled','payment_status':o['payment_status'],'financial_case':case(c,oid)}
+            followups=[{'type':'driver_incentive_review','status':'review_required','responsible_role':'delivery_manager','shift_id':t['shift_id'],'task_id':t['id'],'order_id':oid,'review_url':'/api/driver-incentives/shifts/'+t['shift_id']} for t in tasks]
+            return {'operational_followups':followups,'order_id':oid,'operational_status':'cancelled','payment_status':o['payment_status'],'financial_case':case(c,oid)}
         return db.idempotent(c,user['id'],idempotency_key,'financial-case.cancel:'+oid,body.model_dump(),perform)
 
 
@@ -167,7 +168,9 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
         if user['role']=='driver':events=[{k:v for k,v in e.items() if k!='details'} for e in events if e['event_type'].startswith(('task.','order.operationally_cancelled'))]
         collections=[] if user['role']=='driver' else c.execute('SELECT id,collector_id,method,amount_halalas,created_at FROM collections WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         refunds=[] if user['role']=='driver' else c.execute('SELECT id,authorized_by,method,amount_halalas,reason,created_at FROM refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
-        return {'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
+        online_collections=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,provider,amount_halalas,disposition,created_at FROM branch_online_receipts WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
+        online_refunds=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,authorized_by,amount_halalas,reason,status,created_at,verified_at FROM branch_online_refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
+        return {'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
                 'payment_status':o['payment_status'],'version':o['version'],'tasks':tasks,'timeline':events,
                 'financial_case':None if user['role']=='driver' else case(c,oid)}
 

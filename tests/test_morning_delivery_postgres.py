@@ -181,6 +181,14 @@ def test_accepted_morning_handover_releases_old_manager_only_with_live_successor
     body={'counted_halalas':0,'handover_halalas':0}
     assert post('manager',f'/api/shifts/{manager}/submit',body,status=409)['detail']['code']=='MORNING_ORDERS_AWAITING_DISPATCH'
     post('owner',f'/api/manager-handovers/{handover}/accept')
+    with db.tx() as c:
+        events=c.execute("SELECT event_type,actor_id FROM order_events WHERE order_id=%s AND event_type LIKE 'manager.handover.%%' ORDER BY created_at,id",(oid,)).fetchall()
+        assert {e['event_type'] for e in events}=={'manager.handover.requested','manager.handover.accepted'}
+        assert {e['actor_id'] for e in events}=={'ops-manager','ops-owner'}
+        if successor_period=='morning':
+            c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer,created_at) "
+                      "VALUES(%s,'kps','kps-branch-1','ops-customer','delivery','new','pending','cash',1000,0,1000,%s,'{}',now()+interval '1 second')",
+                      ('new-duty-'+uuid4().hex,db.json({'items':[],'delivery_period':'morning'})))
     assert post('manager',f'/api/shifts/{manager}/submit',body)['status']=='submitted'
     with db.tx() as c:c.execute("UPDATE users SET active=false WHERE id='ops-owner'")
     assert post('manager',f'/api/shifts/{manager}/approve',status=409)['detail']['code']=='MORNING_ORDERS_AWAITING_DISPATCH'
@@ -191,7 +199,7 @@ def test_accepted_morning_handover_releases_old_manager_only_with_live_successor
 
 
 @pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
-def test_individual_driver_support_requires_source_acceptance_and_preserves_custody(ops, monkeypatch):
+def test_individual_driver_support_requires_delegated_approval_and_preserves_custody(ops, monkeypatch):
     _, post, _, _ = ops
     enable_morning(monkeypatch)
     source=post('manager','/api/shifts',{'kind':'manager','delivery_period':'morning'})['shift']['id']
@@ -204,8 +212,9 @@ def test_individual_driver_support_requires_source_acceptance_and_preserves_cust
     rid=request['request_id']
     with db.tx() as c:
         assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(driver,)).fetchone()['manager_shift_id']==source
-    post('owner',f'/api/driver-support/{rid}/accept',status=403)
-    result=post('manager',f'/api/driver-support/{rid}/accept')
+    post('manager',f'/api/driver-support/{rid}/accept',status=403)
+    create_support_approver()
+    result=post('approver',f'/api/driver-support/{rid}/accept')
     assert result['cash_transferred'] is False
     with db.tx() as c:
         assert c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()==before|{'manager_shift_id':target}
@@ -216,7 +225,7 @@ def test_individual_driver_support_requires_source_acceptance_and_preserves_cust
 
 
 @pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
-@pytest.mark.parametrize('action,actor', [('reject','manager'),('withdraw','owner')])
+@pytest.mark.parametrize('action,actor', [('reject','approver'),('withdraw','owner')])
 def test_driver_support_can_be_resolved_without_moving_driver(ops, monkeypatch, action, actor):
     _, post, _, _ = ops
     enable_morning(monkeypatch)
@@ -225,8 +234,10 @@ def test_driver_support_can_be_resolved_without_moving_driver(ops, monkeypatch, 
     target=post('owner','/api/shifts',{'kind':'manager','delivery_period':'morning'})['shift']['id']
     body={'driver_shift_id':driver,'target_manager_shift_id':target,'reason':'طلب دعم'}
     rid=post('owner','/api/driver-support',body)['request_id']
+    create_support_approver()
+    post('manager',f'/api/driver-support/{rid}/resolve',{'action':'reject','reason':'غير مخول'},status=403)
     post(actor,f'/api/driver-support/{rid}/resolve',{'action':action,'reason':'لا نحتاج دعم الآن'})
-    post('manager',f'/api/driver-support/{rid}/accept',status=409)
+    post('approver',f'/api/driver-support/{rid}/accept',status=409)
     with db.tx() as c:
         assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(driver,)).fetchone()['manager_shift_id']==source
     assert post('owner','/api/driver-support',body)['status']=='pending'
@@ -240,8 +251,30 @@ def test_driver_support_rechecks_recipient_revocation(ops, monkeypatch):
     driver=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':source})['shift']['id']
     target=post('owner','/api/shifts',{'kind':'manager','delivery_period':'morning'})['shift']['id']
     rid=post('owner','/api/driver-support',{'driver_shift_id':driver,'target_manager_shift_id':target,'reason':'طلب دعم'})['request_id']
+    create_support_approver()
     with db.tx() as c:c.execute("UPDATE users SET active=false WHERE id='ops-owner'")
-    post('manager',f'/api/driver-support/{rid}/accept',status=403)
+    post('approver',f'/api/driver-support/{rid}/accept',status=403)
     with db.tx() as c:
         assert c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s',(driver,)).fetchone()['manager_shift_id']==source
         assert c.execute('SELECT status FROM driver_support_requests WHERE id=%s',(rid,)).fetchone()['status']=='pending'
+
+
+def create_support_approver():
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,extra_permissions) VALUES('ops-approver','Synthetic support approver','admin','kps','[\"kps-branch-1\"]','[\"driver_support_approve\"]')")
+
+
+@pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
+def test_support_approver_revocation_blocks_acceptance_and_replay(ops, monkeypatch):
+    actor, post, _, _ = ops
+    enable_morning(monkeypatch)
+    source=post('manager','/api/shifts',{'kind':'manager','delivery_period':'morning'})['shift']['id']
+    driver=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':source})['shift']['id']
+    target=post('owner','/api/shifts',{'kind':'manager','delivery_period':'morning'})['shift']['id']
+    rid=post('owner','/api/driver-support',{'driver_shift_id':driver,'target_manager_shift_id':target,'reason':'طلب دعم'})['request_id']
+    create_support_approver()
+    listing=actor('approver').get('/api/driver-support').json()['requests']
+    assert listing[0]['can_approve'] is True
+    post('approver',f'/api/driver-support/{rid}/accept',key='support-grant-replay')
+    with db.tx() as c:c.execute("UPDATE users SET extra_permissions='[]' WHERE id='ops-approver'")
+    post('approver',f'/api/driver-support/{rid}/accept',key='support-grant-replay',status=403)

@@ -1,4 +1,4 @@
-"""One driver joins a scoped manager duty only after their current manager accepts."""
+"""A driver joins a scoped duty after an explicitly delegated approver decides."""
 from fastapi import APIRouter, Depends, Request
 from pydantic import Field
 from . import auth, db, operations as ops
@@ -11,6 +11,18 @@ class Support(ops.OperationBody):
     driver_shift_id: str
     target_manager_shift_id: str
     reason: str = Field(min_length=1, max_length=2000)
+
+
+def approver(c, user, brand, branches):
+    """A freshly read explicit owner grant, never a display name or source role."""
+    from . import multibrand
+    principal = c.execute('SELECT * FROM users WHERE id=%s FOR SHARE', (user['id'],)).fetchone()
+    if principal and multibrand.enabled():
+        principal = multibrand.project(c, principal, brand)
+    return bool(principal and principal['active'] and principal['brand_id'] == brand
+                and principal['role'] in ('owner', 'admin', 'delivery_manager')
+                and auth.has_permission(principal, 'driver_support_approve')
+                and (ops.unrestricted_owner(principal) or set(branches) <= set(principal.get('branch_ids', []))))
 
 
 def supported(c, driver, target_id):
@@ -57,7 +69,7 @@ def driver_snapshot(c, source, driver):
     return observed
 
 
-def components(c, driver, target, user):
+def components(c, driver, target, user, *, approval=False):
     from . import central_workdays as days
     from .central_handovers import workday, principal
     driver_day = days.association(c, driver['id'])
@@ -65,7 +77,7 @@ def components(c, driver, target, user):
     drivers = c.execute('SELECT s.* FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id WHERE l.workday_id=%s ORDER BY s.brand_id FOR UPDATE OF s', (driver_day['id'],)).fetchall() if driver_day else [driver]
     targets = workday(c, target['id'])[1] if target_day else {target['brand_id']: target}
     if driver_day or target_day or days.association(c, driver['manager_shift_id']):
-        days.require_enabled(user, 'shifts_handover', existing_sid=driver['id'] if driver_day else target['id'])
+        days.require_enabled(user, 'driver_support_approve' if approval else 'shifts_handover', existing_sid=driver['id'] if driver_day else target['id'])
     legs = []
     for d in drivers:
         t = targets.get(d['brand_id'])
@@ -104,9 +116,12 @@ def request_support(body: Support, request: Request, user=Depends(auth.current_u
                 if c.execute("SELECT 1 FROM driver_support_requests WHERE driver_shift_id=%s AND status='pending'", (d['id'],)).fetchone():
                     ops.fail(409, 'يوجد طلب دعم معلق لهذا السائق')
                 rid = ops.uid()
+                observed = driver_snapshot(c, source, d)
                 c.execute('INSERT INTO driver_support_requests(id,group_id,driver_shift_id,from_shift_id,to_shift_id,brand_id,branch_ids,reason,requested_by,operational_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
-                    (rid, group_id, d['id'], source['id'], t['id'], t['brand_id'], db.json(d['branch_ids']), body.reason, user['id'], db.json(driver_snapshot(c, source, d))))
+                    (rid, group_id, d['id'], source['id'], t['id'], t['brand_id'], db.json(d['branch_ids']), body.reason, user['id'], db.json(observed)))
                 db.audit(c, user['id'], 'driver.support.request', 'shift', d['id'], {'request_id': rid, 'group_id': group_id, 'from_shift_id': source['id'], 'to_shift_id': t['id'], 'reason': body.reason})
+                for oid in observed['order_ids']:
+                    db.event(c,oid,user['id'],'driver.support.requested',{'request_id':rid,'driver_shift_id':d['id'],'from_shift_id':source['id'],'to_shift_id':t['id'],'cash_transferred':False,'reason':body.reason})
                 records.append({'request_id': rid, 'brand_id': d['brand_id'], 'driver_shift_id': d['id']})
             primary = next(r for r in records if r['driver_shift_id'] == driver['id'])
             return dict(primary, group_id=group_id, status='pending', legs=records, cash_transferred=False)
@@ -117,18 +132,22 @@ def request_support(body: Support, request: Request, user=Depends(auth.current_u
 
 @router.get('/driver-support')
 def list_requests(user=Depends(auth.current_user)):
-    ops.roles(user, 'owner', 'delivery_manager')
+    ops.roles(user, 'owner', 'delivery_manager', 'admin')
     with db.tx() as c:
+        can_review = approver(c,user,user['brand_id'],[])
         rows = c.execute("SELECT r.*,s.user_id AS from_user_id,t.user_id AS to_user_id,u.display_name AS driver_name "
             "FROM driver_support_requests r JOIN shifts s ON s.id=r.from_shift_id "
             "JOIN shifts t ON t.id=r.to_shift_id JOIN shifts d ON d.id=r.driver_shift_id JOIN users u ON u.id=d.user_id "
-            "WHERE r.brand_id=%s AND (s.user_id=%s OR t.user_id=%s) "
-            "ORDER BY r.created_at DESC LIMIT 100", (user['brand_id'], user['id'], user['id'])).fetchall()
+            "WHERE r.brand_id=%s AND (s.user_id=%s OR t.user_id=%s OR %s) "
+            "ORDER BY r.created_at DESC LIMIT 100", (user['brand_id'], user['id'], user['id'], can_review)).fetchall()
         rows = [r for r in rows if ops.unrestricted_owner(user) or set(r['branch_ids']) <= set(user['branch_ids'])]
+        for row in rows:
+            row['can_approve'] = approver(c,user,row['brand_id'],row['branch_ids'])
+            row['can_withdraw'] = row['to_user_id'] == user['id']
         return ops.safe({'requests': rows})
 
 
-def load_group(c, rid, user):
+def load_group(c, rid, user, *, approval=False):
     from .central_handovers import principal
     r = c.execute('SELECT * FROM driver_support_requests WHERE id=%s FOR UPDATE', (rid,)).fetchone()
     if not r or r['brand_id'] != user['brand_id']:
@@ -138,6 +157,11 @@ def load_group(c, rid, user):
     for record in records:
         shifts = {sid: ops.lock_shift(c, sid) for sid in sorted([record['from_shift_id'], record['to_shift_id'], record['driver_shift_id']])}
         source, target, driver = (shifts[record[k]] for k in ('from_shift_id', 'to_shift_id', 'driver_shift_id'))
+        if approval:
+            if not approver(c,user,record['brand_id'],record['branch_ids']):
+                ops.fail(403, 'يلزم تفويض صريح لاعتماد دعم السائق على جميع البراندات والفروع')
+            result.append((record, driver, source, target))
+            continue
         if user['id'] not in (source['user_id'], target['user_id']):
             ops.fail(403, 'الإجراء مخصص لمديري طلب الدعم')
         own = source if source['user_id'] == user['id'] else target
@@ -150,21 +174,19 @@ def load_group(c, rid, user):
 
 @router.post('/driver-support/{rid}/accept')
 def accept_support(rid: str, request: Request, user=Depends(auth.current_user)):
-    ops.roles(user, 'owner', 'delivery_manager')
+    ops.roles(user, 'owner', 'delivery_manager', 'admin')
     from . import central_workdays as days
     with db.tx() as c:
         days.lock_lanes(c)
-        records = load_group(c, rid, user)
+        records = load_group(c, rid, user, approval=True)
         for r, driver, source, target in records:
-            if source['user_id'] != user['id']:
-                ops.fail(403, 'مدير السائق الحالي فقط يعتمد الدعم')
             if not authorized(c, target, r['branch_ids']):
                 ops.fail(403, 'صلاحية المدير المستفيد لم تعد سارية')
         def perform():
             # Reconstruct live group membership to prevent partial/shared transfers.
             expected = {(d['id'], src['id'], dst['id']) for _, d, src, dst in records}
             r, driver, source, target = next(row for row in records if row[0]['id'] == rid)
-            current = components(c, driver, target, user)
+            current = components(c, driver, target, user, approval=True)
             if expected != {(d['id'], src['id'], dst['id']) for d, src, dst in current}:
                 ops.fail(409, 'تغيرت أجزاء وردية السائق؛ اسحب الطلب وأعد طلب الدعم')
             for r, driver, source, target in records:
@@ -190,15 +212,14 @@ class Resolve(ops.OperationBody):
 
 @router.post('/driver-support/{rid}/resolve')
 def resolve_request(rid: str, body: Resolve, request: Request, user=Depends(auth.current_user)):
-    ops.roles(user, 'owner', 'delivery_manager')
+    ops.roles(user, 'owner', 'delivery_manager', 'admin')
     from .central_workdays import lock_lanes
     with db.tx() as c:
         lock_lanes(c)
-        records = load_group(c, rid, user)
+        records = load_group(c, rid, user, approval=body.action == 'reject')
         for r, driver, source, target in records:
-            expected = source if body.action == 'reject' else target
-            if expected['user_id'] != user['id']:
-                ops.fail(403, 'مدير المصدر يرفض، ومدير الطلب يسحب طلبه فقط')
+            if body.action == 'withdraw' and target['user_id'] != user['id']:
+                ops.fail(403, 'مدير الطلب يسحب طلبه فقط؛ الرفض يحتاج مخول اعتماد الدعم')
         def perform():
             for r, driver, source, target in records:
                 if r['status'] != 'pending':

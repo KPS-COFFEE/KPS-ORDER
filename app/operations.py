@@ -122,11 +122,12 @@ def guard_accepted_awaiting_dispatch(c, shift):
         morning_pending = c.execute("SELECT o.* FROM orders o WHERE o.brand_id=%s "
             "AND o.branch_id=ANY(%s) AND o.service='delivery' "
             "AND o.snapshot->>'delivery_period'='morning' AND o.completed_at IS NULL "
+            "AND o.created_at<=COALESCE((SELECT max(h.accepted_at) FROM manager_handovers h WHERE h.from_shift_id=%s AND h.status='accepted'),'infinity'::timestamptz) "
             "AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
             "AND o.delivery_status NOT IN ('cancelled','delivered') "
             "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
             "AND t.status NOT IN ('cancelled','reassigned','transferred'))",
-            (shift['brand_id'], remaining_branches)).fetchall()
+            (shift['brand_id'], remaining_branches, shift['id'])).fetchall()
         if any(not handed_off(c, shift['id'], order) for order in morning_pending):
             raise db.error(409, 'MORNING_ORDERS_AWAITING_DISPATCH',
                            'توجد طلبات صباحية بانتظار المعالجة أو الإسناد. عالجها قبل تقفيل المناوبة.')
@@ -1767,6 +1768,8 @@ def manager_handover_in_tx(c,user,sid,body):
     c.execute('UPDATE manager_handovers SET operational_snapshot=%s WHERE id=%s',(db.json(observed),hid))
     c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
     db.audit(c,user['id'],'manager.handover.request','shift',sid,{'handover_id':hid,**body.model_dump()})
+    for oid in observed['order_ids']:
+        db.event(c,oid,user['id'],'manager.handover.requested',{'handover_id':hid,'from_shift_id':sid,'to_shift_id':target['id'],'cash_transferred':False,'reason':body.reason})
     return {'handover_id':hid,'status':'pending','driver_shift_ids':[x['id'] for x in children],'cash_handover_requires_separate_confirmation':True}
 
 
@@ -1809,6 +1812,8 @@ def accept_manager_handover_in_tx(c,user,hid):
     c.execute("UPDATE shifts SET manager_shift_id=%s WHERE id=ANY(%s) AND manager_shift_id=%s AND status<>'closed'",(target['id'],h['driver_shift_ids'],src['id']))
     c.execute("UPDATE manager_handovers SET status='accepted',accepted_by=%s,accepted_at=now() WHERE id=%s",(user['id'],hid))
     db.audit(c,user['id'],'manager.handover.accept','shift',target['id'],{'handover_id':hid,'driver_shift_ids':h['driver_shift_ids'],'cash_transferred':False})
+    for oid in observed['order_ids']:
+        db.event(c,oid,user['id'],'manager.handover.accepted',{'handover_id':hid,'from_shift_id':src['id'],'to_shift_id':target['id'],'cash_transferred':False})
     return {'handover_id':hid,'status':'accepted','cash_transferred':False}
 
 

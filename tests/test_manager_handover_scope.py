@@ -36,3 +36,27 @@ def test_handover_grant_requires_identified_order_and_exact_target_shift(monkeyp
     assert not scope.accepted_order(Connection(user, []), user, order)
     assert not scope.accepted_order(Connection(user, [s]), user, order | {'id': None})
     assert not scope.accepted_order(Connection(user | {'active': False}, [s]), user, order)
+
+
+def test_support_approval_is_explicit_and_independent_of_display_name(monkeypatch):
+    from app import driver_support, employee_permissions
+    monkeypatch.setattr('app.multibrand.enabled', lambda: False)
+    principal = {'id':'u','active':True,'role':'delivery_manager','brand_id':'kps','branch_ids':['b']}
+    assert 'driver_support_approve' not in employee_permissions.eligible('delivery_manager')
+    assert 'driver_support_approve' not in employee_permissions.eligible('admin')
+    assert 'driver_support_approve' in employee_permissions.grantable('delivery_manager')
+    for name in ('محمد','فوزي','any manager'):
+        assert not driver_support.approver(Connection(principal | {'display_name':name}), principal, 'kps', ['b'])
+    granted=principal | {'extra_permissions':['driver_support_approve']}
+    assert driver_support.approver(Connection(granted), principal, 'kps', ['b'])
+    assert not driver_support.approver(Connection(granted), principal, 'kps', ['outside'])
+    assert not driver_support.approver(Connection(principal), granted, 'kps', ['b'])
+    assert not driver_support.approver(Connection(granted | {'active':False}), granted, 'kps', ['b'])
+
+
+def test_morning_context_does_not_invent_support_approval():
+    from app import employee_permissions
+    principal={'id':'u','role':'delivery_manager','_morning_manager_context':{'shift_id':'s'}}
+    assert 'driver_support_approve' not in employee_permissions.effective(principal)
+    assert 'driver_support_approve' in employee_permissions.effective(principal | {'extra_permissions':['driver_support_approve']})
+    assert 'driver_support_approve' not in employee_permissions.effective(principal | {'extra_permissions':['driver_support_approve'],'permission_denials':['driver_support_approve']})

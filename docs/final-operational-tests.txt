@@ -113,3 +113,5 @@ tests/test_driver_support_central.py
 tests/test_morning_delivery_postgres.py
 
 tests/test_order_financial_case_morning.py
+
+tests/test_operations_lifecycle_backup.py

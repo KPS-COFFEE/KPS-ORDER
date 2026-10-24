@@ -51,7 +51,13 @@ def enabled(user):
 
 
 def capabilities(user):
-    return BOOTSTRAP_CAPABILITIES if enabled(user).get('bootstrap') else CAPABILITIES
+    if enabled(user).get('bootstrap'):
+        return BOOTSTRAP_CAPABILITIES
+    from . import auth
+    base = dict(user)
+    base.pop('_morning_manager_context', None)
+    extra = {'driver_support_approve'} if auth.has_permission(base, 'driver_support_approve') else set()
+    return CAPABILITIES | extra
 
 
 def resolve(conn, user, *, shift_id=None, allow_bootstrap=False):
@@ -120,6 +126,8 @@ def apply(conn, user, request, *, session=False):
         scoped['_morning_history_read']=True
     if request.method=='POST' and module=='order_financial_cases' and name=='cancel':
         scoped['_morning_cancellation_replay']=True
+    if request.method=='POST' and module=='driver_incentives' and name=='decide':
+        scoped['_morning_cancelled_incentive_review']=True
     # Resource checks precede endpoint-specific idempotency replay. A saved
     # response must never escape a newly narrowed or revoked context.
     params = request.path_params
@@ -273,7 +281,7 @@ def order_allowed(user, order, conn=None):
         return False
     if conn is None:
         return True  # Pure scope checks; authenticated resource reads always pass conn.
-    if user.get('_morning_history_read') or user.get('_morning_cancellation_replay'):
+    if user.get('_morning_history_read') or user.get('_morning_cancellation_replay') or user.get('_morning_cancelled_incentive_review'):
         from .order_history_scope import allowed
         if allowed(conn,user,order):return True
     preferred = (order.get('snapshot') or {}).get('manager_shift_id')

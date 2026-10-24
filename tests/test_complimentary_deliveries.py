@@ -52,16 +52,26 @@ def test_receipt_shows_type_only_and_accounting_exports_remain_available(lang,ki
 @pytest.mark.parametrize('kind',['hospitality','advertising','compensation','completion'])
 def test_real_order_dispatch_delivery_and_accounting_without_any_collection(ops,kind):
     from test_core import _prepare_catalog,_body
-    actor,post,order_factory,shifts=ops
+    actor,post,_,shifts=ops
     _prepare_catalog()
     manager,driver=shifts()
     body={**_body('delivery'),'kind':kind,'reason':'TEST ONLY damaged product'}
     body['customer']['phone']='0501234567'
     body.pop('expected_total_halalas',None)
-    original=order_factory(items=[{**item,'name':'TEST original','unit_price_halalas':1000,'line_total_halalas':1000} for item in body['items']])
+    original=db.new_id('courtesy_original_')
+    reference='TEST-ORIGINAL-'+kind
+    # The generic ops fixture intentionally has no invoice reference. Seed a
+    # registered historical original at INSERT, never mutate its snapshot.
+    original_snapshot={'order_reference':reference,'branch_name':'TEST original branch',
+        'items':[{**item,'name':'TEST original','unit_price_halalas':1000,
+                  'line_total_halalas':1000*item['quantity']} for item in body['items']]}
     with db.tx() as c:
-        c.execute("UPDATE orders SET payment_status='paid' WHERE id=%s",(original,))
-        reference=c.execute('SELECT snapshot FROM orders WHERE id=%s',(original,)).fetchone()['snapshot']['order_reference']
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,
+            preparation_status,delivery_status,payment_status,payment_method,
+            subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+            VALUES(%s,'kps','kps-branch-1','ops-customer','delivery','ready','pending','paid',
+                   'cash',2000,0,2000,%s,%s)""",
+                  (original,db.json(original_snapshot),db.json({'name':'TEST original recipient'})))
     body.update(original_order_id=original,original_invoice_number=reference)
     post('manager','/api/orders/complimentary',body,status=403)
     post('manager','/api/orders/complimentary/authorizations',body,status=403)

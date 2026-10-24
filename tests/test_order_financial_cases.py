@@ -59,6 +59,9 @@ def test_paid_cancel_preserves_cash_closes_operations_and_requires_real_refund(o
     with db.tx() as c:
         assert c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY id',(driver,)).fetchall()==custody
         assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==0
+    review=actor('manager').get('/api/driver-incentives/shifts/'+driver).json()['entries'][0]
+    assert review['state']=='pending_review'
+    post('manager','/api/driver-incentives/orders/'+oid+'/decision',{'task_id':task,'incident_key':review['incident_key'],'version':review['decision_version'],'responsibility':'customer','reason':'اختبار موثق: طلب العميل الإلغاء دون تقصير السائق'})
     close_driver(post,driver,manager,counted=1000)
     assert len(actor('accountant').get('/api/order-financial-cases').json()['cases'])==1
     # Cash is now with manager; refund explicitly uses that real open custody.
@@ -131,6 +134,9 @@ def test_postclose_card_case_refund_keeps_frozen_closure_and_collection_lineage(
     def card_post(who,path,body=None,**kwargs):
         if path.endswith('/submit'):body={**body,'terminal_total_halalas':1000}
         return post(who,path,body,**kwargs)
+    review=actor('manager').get('/api/driver-incentives/shifts/'+driver).json()['entries'][0]
+    assert review['state']=='pending_review'
+    post('manager','/api/driver-incentives/orders/'+oid+'/decision',{'task_id':task,'incident_key':review['incident_key'],'version':review['decision_version'],'responsibility':'customer','reason':'اختبار موثق: طلب العميل الإلغاء دون تقصير السائق'})
     close_driver(card_post,driver,manager,counted=0)
     with db.tx() as c:
         before=c.execute('SELECT snapshot FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()
@@ -152,8 +158,8 @@ def test_postclose_card_case_refund_keeps_frozen_closure_and_collection_lineage(
 
 @pytest.mark.postgres
 def test_zero_collectible_complimentary_cancellation_does_not_create_impossible_refund_case(ops):
-    _,post,order,_=ops;oid=order(total=0)
+    _,post,_,_=ops;oid='free-cancel-'+uuid4().hex
     with db.tx() as c:
-        c.execute("UPDATE orders SET payment_status='not_required',snapshot=snapshot||%s WHERE id=%s",(db.json({'complimentary':{'kind':'hospitality'}}),oid))
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,payment_status,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','ready','pending','cash','not_required',0,0,0,%s,'{}')",(oid,db.json({'items':[],'complimentary':{'kind':'hospitality'}})))
     result=post('manager','/api/order-financial-cases/orders/'+oid+'/cancel',{'version':1,'reason':'إلغاء تجهيز الضيافة'})
     assert result['financial_case'] is None and result['payment_status']=='not_required'

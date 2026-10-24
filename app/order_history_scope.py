@@ -6,7 +6,7 @@ def allowed(c,user,order):
     context=user.get('_morning_manager_context') or {}
     sid=context.get('shift_id')
     historical_read=user.get('_morning_history_read')
-    cancelled_replay=user.get('_morning_cancellation_replay') and order and order.get('preparation_status')=='cancelled'
+    cancelled_replay=(user.get('_morning_cancellation_replay') or user.get('_morning_cancelled_incentive_review')) and order and order.get('preparation_status')=='cancelled'
     if not ((historical_read or cancelled_replay) and sid and order
             and order['brand_id']==user['brand_id'] and order['branch_id'] in user['branch_ids']
             and order['service']=='delivery' and order['snapshot'].get('delivery_period')=='morning'):
