@@ -753,6 +753,13 @@ def cash_correction_requests(c,user,report_id):
     return safe(result)
 
 
+def protected_shift_months(shift):
+    # A reporting correction must never reopen an already frozen original month.
+    original = shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=16)).date()
+    corrected = shift['reporting_operational_date'] or original
+    return sorted({original.replace(day=1), corrected.replace(day=1)})
+
+
 def can_request_cash_correction(c,user,report_id):
     if not auth.has_permission(user,REVIEW):return False
     row=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind='driver'",(report_id,user['brand_id'])).fetchone()
@@ -761,9 +768,9 @@ def can_request_cash_correction(c,user,report_id):
     if not previous or not driver_settlement_values(row['snapshot'],previous)['reconciliation_complete']:return False
     if any(t['status']=='pending' for t in cash_correction_requests(c,user,report_id)):return False
     shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date,reporting_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
-    day=shift['reporting_operational_date'] or shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=4)).date()
+    months=protected_shift_months(shift)
     return not (c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(shift['manager_shift_id'],)).fetchone()
-        or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND branch_ids ?| %s',(user['brand_id'],day.replace(day=1),row['branch_ids'])).fetchone()
+        or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=ANY(%s) AND branch_ids ?| %s',(user['brand_id'],months,row['branch_ids'])).fetchone()
         or variance_confirmation(c,report_id,previous['revision']))
 
 
@@ -775,10 +782,10 @@ def validate_cash_correction(c,user,row,report_id,body):
     before=driver_settlement_values(row['snapshot'],previous)
     if not before['reconciliation_complete']:fail('RECONCILIATION_REQUIRED','أكمل اعتماد الموازنة قبل تصحيح الاستلام.',409)
     shift=c.execute('SELECT manager_shift_id,opened_at,delivery_operational_date,reporting_operational_date FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone()
-    day=shift['reporting_operational_date'] or shift['delivery_operational_date'] or (shift['opened_at'].astimezone(TZ)-timedelta(hours=4)).date()
+    months=protected_shift_months(shift)
     if (c.execute('SELECT 1 FROM accounting_daily_closures WHERE manager_shift_id=%s',(shift['manager_shift_id'],)).fetchone()
-            or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=%s AND branch_ids ?| %s',
-                (user['brand_id'],day.replace(day=1),row['branch_ids'])).fetchone()
+            or c.execute('SELECT 1 FROM accounting_months WHERE brand_id=%s AND month=ANY(%s) AND branch_ids ?| %s',
+                (user['brand_id'],months,row['branch_ids'])).fetchone()
             or variance_confirmation(c,report_id,previous['revision'])):
         fail('SETTLEMENT_FINAL','التقفيلة أو فرقها مثبت نهائيًا؛ لا يمكن تعديل سجل الاستلام.',409)
     # Frozen financial periods require a separate adjustment; an unfrozen

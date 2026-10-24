@@ -105,3 +105,14 @@ def test_support_daily_uses_same_morning_boundary(monkeypatch):
     lo, hi = seen[0]
     assert lo.isoformat() == '2026-10-23T04:00:00+03:00'
     assert hi.isoformat() == '2026-10-24T04:00:00+03:00'
+
+
+def test_date_reclassification_keeps_original_and_corrected_month_frozen():
+    from datetime import datetime
+    from app.accounting import protected_shift_months
+    shift = {'delivery_operational_date': date(2026, 10, 31),
+             'reporting_operational_date': date(2026, 11, 1),
+             'opened_at': datetime.fromisoformat('2026-11-01T04:00:00+03:00')}
+    assert protected_shift_months(shift) == [date(2026, 10, 1), date(2026, 11, 1)]
+    shift['delivery_operational_date'] = None
+    assert protected_shift_months(shift) == [date(2026, 10, 1), date(2026, 11, 1)]
