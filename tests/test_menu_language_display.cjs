@@ -43,7 +43,11 @@ function load(saved=null,blocked=false){
     localStorage:storage,queueMicrotask:fn=>fn(),
     document:{documentElement:{},getElementById:element,querySelectorAll:()=>[],createElement:tag=>new Element(tag)}};
   vm.createContext(context);
-  const extra=[line('  const groups ='),line('  const isKhaliya ='),line('  const cartLineName ='),
+  // The shipped option helper spans multiple lines; execute its complete body.
+  const groupsStart=source.indexOf('  const groups =');
+  const groupsEnd=source.indexOf('  const progressLabels=',groupsStart);
+  assert.ok(groupsStart>=0&&groupsEnd>groupsStart,'Complete shipped option helper must be located');
+  const extra=[source.slice(groupsStart,groupsEnd),line('  const isKhaliya ='),line('  const cartLineName ='),
     line('  const locale='),line('  const currency ='),line('  const money ='),line('  const number ='),
     line('  const node ='),line('  const text ='),line('  const safeImage ='),
     line('  const restricted ='),line('  const isMug ='),
