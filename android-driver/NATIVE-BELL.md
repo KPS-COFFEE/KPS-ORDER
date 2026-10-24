@@ -1,4 +1,4 @@
-# Driver native order reminders — 0.2.1 pilot
+# Driver native order reminders — 0.2.2 pilot
 
 The active-shift foreground service reads the existing authenticated task API
 and owner alert timing policy. It posts a native high-importance order
@@ -37,7 +37,7 @@ followed by debug/release compilation, lint, and binary permission/signature
 audit. Physical locked-screen/audio/battery and Play Protect acceptance remain
 device checks. No driver installation is requested at this stage.
 
-Version code is 4. Existing owner-signed 0.1.1 is not modified. Once this update
+Version code is 5. Existing owner-signed 0.1.1 is not modified. Once this update
 passes CI, a new release APK must be signed locally with the same owner key;
 no production key, password, or signed owner APK is uploaded by this PR.
 # Owner-approved sound and remote updates — 0.2.1-pilot
@@ -71,9 +71,22 @@ Owner controls are a separate server change: **Operation bell settings → Drive
 app sound**. The owner can preview current/new audio, upload a validated WAV,
 confirm and save, or restore the approved ring. Updates are brand-scoped,
 owner-only, idempotent and audited without audio bytes in audit/idempotency data.
-Sounds are stored separately from hot/public settings. The work endpoints never
-return sound data from a different brand. Shared drivers use their authenticated
-work-session brand's sound. This does not change browser bell tones.
+Sounds are stored separately from hot/public settings. Each requested brand is
+checked against live membership. Owner sound settings include a brand selector.
+Shared drivers ring according to each TASK'S brand, not their home/login brand.
+Each brand has an independent pending-task escalation clock, default sound and
+verified download cache. Simultaneous brands queue sequentially without mixing.
+Clearing one brand's tasks stops/prunes only that brand; closure or verification
+loss clears all playback. The queue expires after 30 seconds without a fresh
+verified inbox. This does not change browser bell tones.
+
+KPS keeps the exact approved triple-short-burst file/hash above. Enbishan uses
+a distinct double-long-burst ring, SHA-256
+`1c7d03a750534c1b48cab17d36d596049d243d226410784d8f1a15fa3c8337e5`.
+Both are bundled and independently owner-replaceable without another APK.
+Brand-scoped audio paths include the brand ID and digest; a descriptor for one
+brand cannot be downloaded into another brand's cache. Revoked membership is
+checked on both descriptors and audio downloads. No implicit cross-brand grant.
 
 The owner must install/sign this new APK once before remote sound updates work.
 Existing owner-signed 0.1.1 does not gain this capability from website changes.

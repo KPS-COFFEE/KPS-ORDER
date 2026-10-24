@@ -39,7 +39,7 @@ public final class MainActivity extends Activity {
         web=new WebView(this);layout.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(layout);
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);
-        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.1 KPSNativeOrderAudio/1");
+        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.2 KPSNativeOrderAudio/1");
         s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setGeolocationEnabled(false); // Native service owns GPS; never a second browser watcher.
         web.setWebViewClient(new WebViewClient(){

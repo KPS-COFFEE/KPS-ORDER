@@ -8,6 +8,11 @@ import java.security.MessageDigest;
 /** Strict, bounded PCM WAV data only. No URI, script, archive or arbitrary URL. */
 public final class SoundPolicy {
     public static final int MAX_BYTES=1000000;
+    public static boolean brand(String value){return value!=null&&value.matches("[a-z0-9][a-z0-9_-]{0,79}");}
+    public static boolean descriptor(String hash,int bytes,String path,String brand){
+        return brand(brand)&&hash!=null&&hash.matches("[a-f0-9]{64}")&&bytes>=46&&bytes<=MAX_BYTES
+            &&("/api/operations/driver-order-sound/brands/"+brand+"/audio/"+hash).equals(path);
+    }
     public static boolean descriptor(String hash,int bytes,String path){
         return hash!=null&&hash.matches("[a-f0-9]{64}")&&bytes>=46&&bytes<=MAX_BYTES
             &&("/api/operations/driver-order-sound/audio/"+hash).equals(path);

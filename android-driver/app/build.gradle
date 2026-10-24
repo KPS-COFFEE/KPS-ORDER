@@ -6,8 +6,8 @@ android {
         applicationId 'sa.kps.driver'
         minSdk 26
         targetSdk 35
-        versionCode 4
-        versionName '0.2.1-pilot'
+        versionCode 5
+        versionName '0.2.2-pilot'
     }
     // Release identity must come from the company's protected signing store.
     // Never use the debug certificate or create throwaway keys for a release.

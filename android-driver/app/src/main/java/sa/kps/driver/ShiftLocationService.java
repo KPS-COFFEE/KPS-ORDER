@@ -17,7 +17,7 @@ public final class ShiftLocationService extends Service implements LocationListe
     static volatile boolean running=false;
     static final String CHANNEL="kps-active-shift";
     static final String ORDERS="kps-driver-pending-orders-v1";
-    private final BellPolicy bell=new BellPolicy();
+    private final BrandBellPolicy bell=new BrandBellPolicy();
     private OrderAudio orderAudio;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
@@ -124,11 +124,13 @@ public final class ShiftLocationService extends Service implements LocationListe
     }
     private void syncBell(WorkApi.Alerts snapshot){
         if(snapshot==null)return;
-        bell.configure(snapshot.policy.optInt("first_after_seconds",0),snapshot.policy.optInt("second_after_seconds",30),snapshot.policy.optInt("continuous_after_seconds",60));
-        long now=SystemClock.elapsedRealtime();bell.update(snapshot.pending,now);
+        long now=SystemClock.elapsedRealtime();
+        bell.update(snapshot.pendingByBrand,now,snapshot.policy.optInt("first_after_seconds",0),snapshot.policy.optInt("second_after_seconds",30),snapshot.policy.optInt("continuous_after_seconds",60));
+        orderAudio.reconcile(bell.active());
         NotificationManager manager=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
         if(bell.count()==0){manager.cancel(7102);orderAudio.stop();return;}
-        if(!bell.ring(now)||!manager.areNotificationsEnabled())return;
+        java.util.List<String> due=bell.due(now);
+        if(due.isEmpty()||!manager.areNotificationsEnabled())return;
         if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
         PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         manager.notify(7102,new Notification.Builder(this,ORDERS)
@@ -139,7 +141,7 @@ public final class ShiftLocationService extends Service implements LocationListe
             .setVisibility(Notification.VISIBILITY_PRIVATE).build());
         // No group summary is posted: suppress the duplicate system tone. OrderAudio
         // uses the notification audio stream and honors this same channel's settings.
-        orderAudio.play();
+        orderAudio.play(due);
     }
     private void notification(String body){
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;

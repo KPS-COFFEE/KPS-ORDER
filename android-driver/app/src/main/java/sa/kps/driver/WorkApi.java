@@ -16,6 +16,8 @@ final class WorkApi {
     static final class Grant {
         final String user, shift, csrf, cookie;
         final boolean multibrand;
+        String brand;
+        final java.util.Set<String> brands=new java.util.HashSet<>();
         Grant(String user, String shift, String csrf, String cookie) {
             this(user,shift,csrf,cookie,false);
         }
@@ -62,12 +64,22 @@ final class WorkApi {
                 if(branches.getString(a).equals(assigned.getString(b))) overlap=true;
             if (u.optString("brand_id").equals(s.optString("brand_id")) && !s.optString("id").isEmpty()
                 && TrackingPolicy.allowed(u.optString("role"),u.optBoolean("active"),u.optString("id"),s.optString("user_id"),s.optString("kind"),s.optString("status"),overlap))
-                return new Grant(u.getString("id"),s.getString("id"),csrf,cookie,u.optJSONArray("operations_brands")!=null&&u.getJSONArray("operations_brands").length()>1);
+            {
+                Grant grant=new Grant(u.getString("id"),s.getString("id"),csrf,cookie,u.optJSONArray("operations_brands")!=null&&u.getJSONArray("operations_brands").length()>1);
+                grant.brand=u.getString("brand_id");
+                if(!SoundPolicy.brand(grant.brand))throw new Denied();
+                grant.brands.add(grant.brand);
+                JSONArray scopes=u.optJSONArray("operations_brands");
+                if(scopes!=null)for(int j=0;j<scopes.length();j++){
+                    String brand=scopes.getJSONObject(j).getString("id");if(!SoundPolicy.brand(brand))throw new Denied();grant.brands.add(brand);
+                }
+                return grant;
+            }
         }
         throw new Denied();
     }
     static byte[] soundBytes(String path,String cookie)throws Exception{
-        if(!path.matches("/api/operations/driver-order-sound/audio/[a-f0-9]{64}"))throw new Denied();
+        if(!path.matches("/api/operations/driver-order-sound/brands/[a-z0-9][a-z0-9_-]{0,79}/audio/[a-f0-9]{64}"))throw new Denied();
         HttpsURLConnection c=(HttpsURLConnection)new URL(ORIGIN+path).openConnection();
         c.setInstanceFollowRedirects(false);c.setConnectTimeout(7000);c.setReadTimeout(7000);
         c.setRequestProperty("Accept","audio/wav");c.setRequestProperty("X-KPS-Context","work");c.setRequestProperty("Cookie",cookie);
@@ -86,6 +98,7 @@ final class WorkApi {
     }
     static final class Alerts {
         final java.util.Set<String> pending=new java.util.HashSet<>();
+        final java.util.Map<String,java.util.Set<String>> pendingByBrand=new java.util.HashMap<>();
         final JSONObject policy;
         Alerts(JSONObject policy){this.policy=policy;}
     }
@@ -96,7 +109,12 @@ final class WorkApi {
         for(int i=0;i<tasks.length();i++){
             JSONObject task=tasks.getJSONObject(i);
             if(BellPolicy.pending(task.optString("status"),task.optString("driver_id"),grant.user,task.optString("transfer_shift_id"))){
-                String id=task.getString("id");if(!id.isEmpty())alerts.pending.add(id);
+                String id=task.getString("id"),brand=task.optString("brand_id",grant.brand);
+                if(!grant.brands.contains(brand))throw new java.io.IOException("Unknown task brand");
+                if(!id.isEmpty()){
+                    alerts.pending.add(id);
+                    alerts.pendingByBrand.computeIfAbsent(brand,key->new java.util.HashSet<>()).add(id);
+                }
             }
         }
         return alerts;
