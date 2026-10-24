@@ -153,6 +153,10 @@ def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
         form.locator(f'input[name="scope:{branch}"]').check()
         form.locator('[name=reason]').fill('Synthetic branch assignment')
         form.locator('button[type=submit]').click()
+        # Scope changes remain uncommitted until owner SMS verification succeeds.
+        with db.tx() as conn:
+            assert conn.execute('SELECT branch_ids FROM users WHERE id=%s',(target['id'],)).fetchone()['branch_ids']==['kps-branch-1']
+        complete_owner_sms_dialog(page, owner)
         expect(form.locator('details')).not_to_have_attribute('open','')
         expect(form.locator('output')).to_have_text('2')
         with db.tx() as conn:

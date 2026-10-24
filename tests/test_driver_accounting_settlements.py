@@ -79,7 +79,9 @@ def test_approval_rejects_invalid_money(amount):
 
 
 def make_report(snapshot=None):
-    opened = datetime.now(TZ)-timedelta(days=3)
+    # Use a daytime fixture so calendar-day assertions do not depend on CI running
+    # before the 04:00 operational-day boundary. Boundary behavior has dedicated tests.
+    opened = (datetime.now(TZ)-timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
     snapshot = snapshot or {'shift': {'user_id': 'ops-driver', 'submission': {'terminal_total_halalas': 5000, 'handover_halalas': 10000}}, 'summary': {}}
     with db.tx() as c:
         c.execute("""INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at)
