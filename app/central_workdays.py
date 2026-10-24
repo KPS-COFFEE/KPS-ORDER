@@ -249,6 +249,9 @@ def detail(sid: str, user=Depends(auth.current_user)):
             item = {'shift_id': shift['id'], 'brand_id': shift['brand_id'],
                     'expected_halalas': ops.balance(c, shift), 'submission': shift['submission'],
                     'permanent_float': shift.get('permanent_float'), 'status':shift['status']}
+            if user['role'] != 'driver':
+                from .shift_reconciliation import closed_shift
+                item['reconciliation'] = closed_shift(c,shift)
             output['ledgers'].append(item)
             sid = shift['id']
             queries = {

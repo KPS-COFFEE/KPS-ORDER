@@ -312,7 +312,12 @@ def test_dashboard_setting_midnight_refund_and_card_split(ops):
     post('manager','/api/orders/'+oid+'/refund',refund,status=403)
     post('owner','/api/orders/'+oid+'/refund',refund)
     dash=actor('owner').get('/api/dashboard?start=2026-10-09T05:30:00&end=2026-10-10T05:30:00').json()
-    assert dash['summary']['completed']==1 and dash['summary']['net_completed_halalas']==800
+    # Intake counts use creation time; money uses completion/refund event time.
+    # Only created_at was moved into this historical period.
+    assert dash['summary']['completed']==1
+    assert dash['summary']['gross_completed_halalas']==0
+    assert dash['summary']['refund_halalas']==0
+    assert dash['summary']['net_completed_halalas']==0
     assert dash['top_items'][0]['net_halalas']==800 and dash['top_items'][0]['quantity']==1
     assert dash['period']['operational_day_start_minutes']==330
     with db.tx() as c:c.execute("UPDATE app_settings SET settings=%s WHERE brand_id='ops-brand'",(db.json({'operational_day_start':'02:15'}),))

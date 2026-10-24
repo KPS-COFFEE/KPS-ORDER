@@ -641,6 +641,11 @@ class ExternalEnbishan(OperationBody):
 
 def external_enbishan_eligible(c, s):
     from .catalog import normalize_city
+    from .central_operations import enabled
+    # Existing legacy summaries remain correctable; website-era shifts cannot
+    # add a second manual revenue source once central operations is enabled.
+    if enabled() and not s.get('external_enbishan'):
+        return False
     if s['brand_id'] != 'kps' or s['kind'] != 'driver' or not s['branch_ids']:
         return False
     rows=c.execute('SELECT city FROM branches WHERE brand_id=%s AND id=ANY(%s)',(s['brand_id'],s['branch_ids'])).fetchall()
@@ -683,7 +688,9 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
         task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
-        return safe(blind_closure.driver_view(user,{'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
+        from .shift_reconciliation import closed_shift
+        reconciliation = closed_shift(c,s) if user['role'] != 'driver' else None
+        return safe(blind_closure.driver_view(user,{'reconciliation':reconciliation,'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
 
 @router.post('/shifts/{sid}/refuel')
 def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
@@ -841,7 +848,8 @@ def approve_close_in_tx(c,user,sid,body):
     fixed_amount=int((s.get('permanent_float') or {}).get('amount',0))
     unusual_retained=sub['retained_halalas']!=min(sub.get('counted_halalas',0),fixed_amount) or (not s.get('permanent_float') and sub['retained_halalas'])
     if sub['difference_halalas'] or sub.get('card_difference_halalas') or unusual_retained or sub.get('counted_halalas',0)<fixed_amount:
-        if not body.exception_reason or not body.exception_reason.strip(): fail(422,'يلزم سبب ظاهر لفرق النقد أو موازنة الشبكة أو العهدة المحتفظ بها')
+        from .shift_reconciliation import meaningful_reason
+        if not meaningful_reason(body.exception_reason): fail(422,'اكتب تفسيرًا واضحًا لفرق النقد أو الشبكة؛ الصفر والأرقام وحدها لا تكفي')
     if unresolved(c,sid): fail(409,'مهام معلقة')
     if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
     if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'سائق غير مقفل')
@@ -1374,6 +1382,7 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             status=('paid' if net==o['total_halalas'] else 'unpaid') if body.amendment_id else ('refunded' if net==0 else 'partially_refunded')
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',(status,oid))
             db.audit(c,user['id'],'order.refund','order',oid,{'refund_id':rid,**body.model_dump()})
+            db.event(c,oid,user['id'],'order.refund',{'refund_ids':refund_ids,**body.model_dump(),'shift_id':sid,'payment_status':status})
             return {'refund_id':refund_ids[0],'refund_ids':refund_ids,'payment_status':status}
         return mutate(c,user,request,'order.refund:'+oid,body.model_dump(),perform)
 
@@ -1693,11 +1702,11 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         clauses.append(morning_clause);params.extend(morning_params)
         where=' AND '.join(clauses)+" AND o.test_void IS NULL"
         summary=c.execute("SELECT count(*) orders,count(*) FILTER(WHERE preparation_status='new') new,count(*) FILTER(WHERE completed_at IS NULL AND preparation_status NOT IN ('cancelled','rejected','new')) active,count(*) FILTER(WHERE completed_at IS NOT NULL) completed,count(*) FILTER(WHERE preparation_status IN ('cancelled','rejected')) cancelled,coalesce(sum(total_halalas) FILTER(WHERE completed_at IS NOT NULL),0) gross_completed_halalas,coalesce(sum(delivery_fee_halalas) FILTER(WHERE completed_at IS NOT NULL),0) delivery_fee_halalas FROM orders o WHERE "+where,params).fetchone()
-        refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE r.amendment_id IS NULL AND o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
         late=config.get('late_after_minutes',60)
         if not isinstance(late,int) or not 1<=late<=1440:fail(503,'حد التأخير غير صحيح')
         summary['live_overdue']=c.execute("SELECT count(*) n FROM orders o WHERE o.service='delivery' AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected') AND o.created_at<now()-(%s*interval '1 minute') AND "+where,[late,*params]).fetchone()['n']
-        summary['refund_halalas']=int(refs);summary['net_completed_halalas']=int(summary['gross_completed_halalas'])-int(refs)
+        from .financial_totals import period_totals
+        summary.update(period_totals(c,where,params))
         items=c.execute("WITH lines AS (SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item WHERE o.completed_at IS NOT NULL AND "+where+" GROUP BY o.id,o.total_halalas,item->>'product_id') SELECT product_id,max(name) name,sum(greatest(quantity-coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)) quantity,sum(gross_halalas) gross_halalas,round(sum(gross_halalas::numeric*greatest(total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)/nullif(total_halalas,0))) net_halalas FROM lines GROUP BY product_id ORDER BY quantity DESC LIMIT 10",params).fetchall()
         branch_top=c.execute("SELECT o.branch_id,b.branch_no,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.branch_no,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
         timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
