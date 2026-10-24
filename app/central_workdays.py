@@ -529,7 +529,8 @@ def adopt(sid:str,request:Request,user=Depends(auth.current_user)):
                     body=ops.ShiftOpen(kind=root['kind'],branch_ids=scope['branch_ids'],
                         manager_shift_id=parents.get(scope['id']) if root['kind']=='driver' else None,
                         delivery_period='evening')
-                    opened.append(ops.open_shift_in_tx(c,actor,body,vehicle_anchor=sid if root['kind']=='driver' else None)['shift'])
+                    opened.append(ops.open_shift_in_tx(c,actor,body,
+                        vehicle_anchor=sid if root['kind']=='driver' else None, adoption_anchor=sid)['shift'])
             # A prior one-brand permission to end does not approve an expanded
             # workday. Preserve its audited history and request a fresh decision.
             for shift in opened:
