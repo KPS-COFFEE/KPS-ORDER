@@ -229,7 +229,9 @@ def send(cid:str,body:Message,request:Request,user=Depends(auth.current_user)):
             db.audit(c,user['id'],'chat.send','conversation',cid,{'message_id':mid})
             result=c.execute('SELECT * FROM chat_messages WHERE id=%s',(mid,)).fetchone();result['attachment_url']=attachment_url(body.attachment_id,user) if body.attachment_id else None
             return {'message':result}
-        conversation(c,user,cid)  # Recheck scope before an idempotent replay.
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.send:'+cid,body.model_dump(),perform)
 
 class Attachment(BaseModel):
@@ -259,7 +261,9 @@ def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_use
             aid=uid();c.execute('INSERT INTO chat_attachments(id,conversation_id,uploader_id,content_type,size_bytes,sha256,data) VALUES(%s,%s,%s,%s,%s,%s,%s)',(aid,cid,user['id'],body.content_type,len(data),digest,data))
             db.audit(c,user['id'],'chat.attachment','conversation',cid,{'attachment_id':aid,'size_bytes':len(data)})
             return {'id':aid,'url':attachment_url(aid,user)}
-        conversation(c,user,cid)  # Recheck scope before an idempotent replay.
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.attachment:'+cid,{'sha256':digest,'content_type':body.content_type},perform)
 
 @router.get('/chat-attachments/{aid}')
@@ -290,7 +294,9 @@ def transfer(cid:str,body:Transfer,request:Request,user=Depends(auth.current_use
             c.execute("UPDATE conversations SET route=%s,assignee_id=NULL,status='open' WHERE id=%s",(body.target,cid))
             db.audit(c,user['id'],'chat.transfer','conversation',cid,{'from':v['route'],'to':body.target,'reason':body.reason})
             return {'conversation_id':cid,'route':body.target,'transfer_id':tid}
-        conversation(c,user,cid)  # Recheck scope before an idempotent replay.
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.transfer:'+cid,body.model_dump(),perform)
 
 class Read(BaseModel):through_seq:int=Field(ge=0)
@@ -316,7 +322,9 @@ def claim(cid:str,request:Request,user=Depends(auth.current_user)):
             c.execute("UPDATE conversations SET assignee_id=%s,status='in_progress' WHERE id=%s",(user['id'],cid))
             db.audit(c,user['id'],'chat.claim','conversation',cid)
             return {'assignee_id':user['id'],'status':'in_progress'}
-        conversation(c,user,cid)  # Recheck scope before an idempotent replay.
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.claim:'+cid,{},perform)
 
 class Status(BaseModel):status:str
@@ -333,7 +341,9 @@ def status(cid:str,body:Status,request:Request,user=Depends(auth.current_user)):
             if body.status not in ('open','in_progress','resolved'):fail(422,'حالة غير صالحة')
             c.execute('UPDATE conversations SET status=%s WHERE id=%s',(body.status,cid));db.audit(c,user['id'],'chat.status','conversation',cid,body.model_dump())
             return {'status':body.status}
-        conversation(c,user,cid)  # Recheck scope before an idempotent replay.
+        # A configured team's revoked access must reject cached replies too.
+        # Legacy transfer receipts remain replayable after their route changes.
+        if routing.config(c,user['brand_id']) is not None:conversation(c,user,cid)
         return mutate(c,user,request,'chat.status:'+cid,body.model_dump(),perform)
 
 
