@@ -9,9 +9,9 @@
     if(user.brand_id==='enbishan')menuCategories=[
       ['grape','ورق عنب','Grape leaves'],['mahashi','المحاشي والملفوف','Mahashi & cabbage'],
       ['fattah','الفتات','Fattah'],['fried','المقليات','Fried items'],
-      ['bakery','الخلية','Khaliya'],['drinks','المشروبات','Drinks'],
+      ['bakery','الخلية','Khaliya'],
       ['mojito-meals','وجبات الموهيتو','Mojito meals'],['boxes','البوكسات','Boxes'],
-      ['other','أصناف أخرى','Other items']
+      ['other','أصناف أخرى','Other items'],['drinks','المشروبات','Drinks']
     ];
     function menuCategory(product){
       const normalize=value=>String(value||'').normalize('NFKC').toLowerCase().replace(/[\u064b-\u065f\u0670\u0640]/g,'').replace(/[أإآ]/g,'ا');
