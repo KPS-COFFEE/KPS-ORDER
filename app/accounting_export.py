@@ -14,6 +14,10 @@ LABELS={
  'traffic_notes':('تفاصيل المخالفات المرورية','Traffic violation details'),
  'adjustments':('التعديلات: قبل وبعد والمنفذ والوقت والسبب','Changes: before, after, actor, time and reason'),
  'status':('حالة الاعتماد','Approval status'),
+ 'authorized_name':('صاحب أمر التنفيذ','Fulfillment authorizer'),
+ 'authorized_at':('وقت اعتماد أمر التنفيذ','Fulfillment approval time'),
+ 'original_invoice_number':('الفاتورة الأصلية','Original invoice'),
+ 'original_order_id':('معرف الطلب الأصلي','Original order ID'),
  'eligible':('طلبات مستحقة للحافز','Eligible orders'),'excluded':('مستبعدة بسبب السائق','Excluded: driver'),
  'pending_review':('بانتظار تحديد المسؤولية','Responsibility pending'),'awaiting_approval':('بانتظار اعتماد الشفت','Awaiting shift approval'),
  'open_shifts':('شفتات غير معتمدة','Unapproved shifts'),'incomplete':('غير مكتملة','Incomplete'),
@@ -45,7 +49,7 @@ MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
 COLUMNS={
  'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
- 'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','treatment','reason','actor','action','notes'],
+ 'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','treatment','reason','authorized_name','authorized_at','original_invoice_number','original_order_id','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
  'driver_daily':['label','correct','processed','cumulative','cash','card','refunds','total'],
@@ -60,6 +64,9 @@ def presentation(data,lang='ar'):
     for source in data['rows']:
         r=dict(source)
         if data['group']=='complimentary':
+            r['authorized_name']=r.get('authorized_name') or r.get('authorized_by') or ('غير موثق','Not recorded')[lang=='en']
+            for key in ('authorized_at','original_invoice_number','original_order_id'):
+                r[key]=r.get(key) or '—'
             # Frozen reports predate these fields; do not manufacture amounts.
             for key in ('delivery_value','payable'):
                 r.setdefault(key,('غير موثقة','Not recorded')[lang=='en'])
@@ -88,6 +95,8 @@ def contract(data,lang):
     return {**data,'rows':rows,'totals':totals,'columns':[{'key':k,'label':column_label(data,k,lang),'money':k in MONEY} for k in keys]}
 
 def column_label(data,key,lang):
+    if data['group']=='complimentary' and key=='actor':
+        return ('منفذ الإجراء','Action executor')[lang=='en']
     if data['group']=='complimentary' and key=='amount':
         return ('قيمة الأصناف المرجعية','Reference item value')[lang=='en']
     if data['group']=='complimentary' and key=='branch':

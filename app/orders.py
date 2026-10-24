@@ -94,7 +94,10 @@ class DeliveryCenterOrder(catalog.QuoteBody):
 class ComplimentaryOrder(DeliveryCenterOrder):
     service: Literal['delivery']='delivery'
     payment_method: Literal['cash']='cash'
-    kind: Literal['hospitality','advertising','compensation']
+    kind: Literal['hospitality','advertising','compensation','completion']
+    authorization_id: str|None=Field(default=None,max_length=100)
+    original_order_id: str|None=Field(default=None,max_length=100)
+    original_invoice_number: str|None=Field(default=None,max_length=150)
     reason: str=Field(min_length=1,max_length=1000)
 
     @field_validator('reason')
@@ -104,17 +107,40 @@ class ComplimentaryOrder(DeliveryCenterOrder):
         return value.strip()
 
 
+@router.post('/complimentary/authorizations')
+def authorize_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('owner')),
+                            idempotency_key:str|None=Header(default=None)):
+    if user['brand_id']!=body.brand_id:raise db.error(403,'BRAND_FORBIDDEN','البراند خارج نطاقك.')
+    from . import complimentary_authorizations
+    from .operations import safe
+    with db.tx() as conn:
+        branch=conn.execute('SELECT id FROM branches WHERE id=%s AND brand_id=%s',(body.branch_id,body.brand_id)).fetchone()
+        if not branch:raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير موجود.')
+        return db.idempotent(conn,user['id'],idempotency_key,'complimentary.authorize',body.model_dump(),
+            lambda:{'authorization':safe(complimentary_authorizations.approve(conn,body,user))})
+
+
+@router.get('/complimentary/authorizations')
+def list_complimentary_authorizations(user=Depends(auth.require_roles('owner','delivery_manager'))):
+    from .operations import safe
+    with db.tx() as conn:
+        rows=conn.execute("SELECT * FROM complimentary_authorizations WHERE brand_id=%s AND executed_order_id IS NULL ORDER BY created_at DESC LIMIT 200",(user['brand_id'],)).fetchall()
+        return {'authorizations':safe([row for row in rows if user['role']=='owner' or row['branch_id'] in user.get('branch_ids',[])])}
+
+
 @router.post('/complimentary/quote')
-def quote_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('delivery_manager'))):
+def quote_complimentary(body:ComplimentaryOrder,user=Depends(auth.require_roles('owner','delivery_manager'))):
     if not auth.has_permission(user,'orders_create_customer'):
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إنشاء الطلب متوقفة.')
     if user['brand_id']!=body.brand_id:raise db.error(403,'BRAND_FORBIDDEN','البراند خارج نطاقك.')
     with db.tx() as conn:
-        delivery_center_scope(conn,user,body.branch_id)
+        if user['role']!='owner':delivery_center_scope(conn,user,body.branch_id)
         from . import complimentary
+        from .complimentary_authorizations import check
+        authorization=check(conn,body) if user['role']!='owner' else None
         quote=catalog.quote_order(conn,body,complimentary=True)
-        delivery_center_scope(conn,user,quote['branch_id'])
-        return {'quote':operational_view(complimentary.prepare(quote,body.kind,body.reason,user['id']))}
+        if user['role']!='owner':delivery_center_scope(conn,user,quote['branch_id'])
+        return {'quote':operational_view(complimentary.prepare(quote,body.kind,body.reason,user['id'],authorization))}
 
 
 @router.post('/complimentary')
@@ -210,7 +236,9 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 catalog.require_customer_delivery_neighborhood(body)
             if complimentary_order:
                 from . import complimentary
-                quote=complimentary.prepare(quote,body.kind,body.reason,user['id'])
+                from .complimentary_authorizations import check
+                authorization=check(conn,body,order_id=order_id,actor_id=user['id'])
+                quote=complimentary.prepare(quote,body.kind,body.reason,user['id'],authorization)
             execution_branch_id = quote['branch_id']
             if user.get('_morning_manager_context'):
                 # The clock and routing are authoritative on the server. A
@@ -325,7 +353,9 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                                 quote['subtotal_halalas'], quote['delivery_fee_halalas'], quote['total_halalas'],
                                 quote['discount_halalas'],
                                 db.json(quote), prefix, db.json(customer), db.json(performance_snapshot), delivery_day,
-                                db.new_id('evt_'), user['id'], db.json({'service': body.service}),
+                                db.new_id('evt_'), user['id'], db.json({'service': body.service,
+                                    **({'complimentary':{key:value for key,value in quote['complimentary'].items()
+                                        if key in {'kind','authorization_id','authorized_by','authorized_at','original_order_id','original_invoice_number'}}} if complimentary_order else {})}),
                                 db.new_id('audit_'), user['id'], db.json({'branch_id': execution_branch_id,
                                     'selected_branch_id': body.branch_id, 'routing_reason': (quote.get('internal_routing') or {}).get('reason'),
                                     'total_halalas': quote['total_halalas']}),
@@ -393,13 +423,10 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
     elif user['role'] != 'owner':
         raise db.error(403, 'ROLE_FORBIDDEN', 'الوصول غير مسموح.')
     if user.get('_morning_manager_context'):
-        conditions.append("o.snapshot->>'delivery_period'='morning'")
-        preferred="COALESCE(NULLIF(o.snapshot->>'manager_shift_id',''),(SELECT NULLIF(ce.details->>'manager_shift_id','') FROM order_events ce WHERE ce.order_id=o.id AND ce.event_type='preparation.accepted' AND ce.details ? 'manager_shift_id' ORDER BY ce.created_at DESC,ce.id DESC LIMIT 1))"
-        conditions.append('COALESCE('+preferred+',%s)=%s')
-        params.extend([user['_morning_manager_context']['shift_id']]*2)
-        conditions.append("NOT EXISTS (SELECT 1 FROM driver_tasks ct JOIN shifts cs ON cs.id=ct.shift_id WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned') AND (cs.manager_shift_id IS DISTINCT FROM %s OR cs.kind<>'driver' OR cs.brand_id IS DISTINCT FROM o.brand_id OR cs.delivery_window_snapshot->>'period' IS DISTINCT FROM 'morning' OR cs.branch_ids<>jsonb_build_array(o.branch_id)))")
-        params.append(user['_morning_manager_context']['shift_id'])
-        conditions.append("(EXISTS (SELECT 1 FROM driver_tasks ct WHERE ct.order_id=o.id AND ct.status NOT IN ('cancelled','transferred','reassigned')) OR (o.completed_at IS NULL AND o.preparation_status NOT IN ('completed','cancelled','rejected') AND o.delivery_status NOT IN ('delivered','cancelled')))")
+        from .morning_manager_context import order_filter
+        scoped_clause, scoped_params = order_filter(user)
+        conditions.append(scoped_clause)
+        params.extend(scoped_params)
     if customer_view:
         if user['role'] != 'customer':
             raise db.error(403, 'ROLE_FORBIDDEN', 'هذا العرض مخصص للعميل.')
@@ -859,6 +886,8 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
             if body.status == 'cancelled':
                 if not body.reason.strip():
                     raise db.error(422, 'CANCELLATION_REASON_REQUIRED', 'اكتب سبب رفض أو إلغاء الطلب.')
+                from .order_financial_cases import invoice_guard
+                invoice_guard(conn,order)
                 from .order_amendments import balance as paid_balance
                 from .complimentary import is_free
                 if (order['payment_status'] not in {'unpaid', 'refunded'} and not is_free(order)) or paid_balance(conn,order)>0:

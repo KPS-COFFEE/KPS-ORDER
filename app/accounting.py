@@ -211,10 +211,11 @@ def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
     if u['role'] not in {'owner','admin'}:
         fail('ACCOUNTING_FORBIDDEN','التفاصيل المالية للطلبات المجانية متاحة للمحاسبة فقط.',403)
     en=lang=='en'
-    rows=c.execute("""SELECT o.*,b.name branch_name,creator.display_name creator_name,
+    rows=c.execute("""SELECT o.*,b.name branch_name,creator.display_name creator_name,approver.display_name authorized_name,
       t.driver_id,driver.display_name driver_name,e.details cancel_details,e.created_at cancelled_at
       FROM orders o JOIN branches b ON b.id=o.branch_id
       LEFT JOIN users creator ON creator.id=o.snapshot->>'created_by_staff_id'
+      LEFT JOIN users approver ON approver.id=o.snapshot->'complimentary'->>'authorized_by'
       LEFT JOIN LATERAL (SELECT driver_id FROM driver_tasks WHERE order_id=o.id ORDER BY created_at DESC,id DESC LIMIT 1) t ON true
       LEFT JOIN users driver ON driver.id=t.driver_id
       LEFT JOIN LATERAL (SELECT details,created_at FROM order_events WHERE order_id=o.id
@@ -229,6 +230,7 @@ def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
         if product_id and not any(i.get('product_id')==product_id for i in o['snapshot'].get('items',[])):continue
         output.append(dict(day=opday(o['created_at']),label=str(o['snapshot'].get('order_reference') or o['order_no']),
             branch=o['branch_name'],driver=o['driver_name'] or '—',**accounting_values(o,lang),
+            authorized_name=o.get('authorized_name'),
             actor=o['creator_name'] or (o['cancel_details'] or {}).get('actor_name','—'),
             action=o['delivery_status'] if o['preparation_status'] not in ('cancelled','rejected') else o['preparation_status'],
             notes=' / '.join(str(i['quantity'])+' × '+i['name'] for i in o['snapshot'].get('items',[]))))

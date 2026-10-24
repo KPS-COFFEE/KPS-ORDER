@@ -36,6 +36,8 @@ for _module in ('operations', 'orders', 'reporting', 'chat', 'order_support',
 ENDPOINTS['operations'].discard('task_transition')
 ENDPOINTS['orders'].update({'customer_lookup', 'customer_search', 'change_delivery_location'})
 ENDPOINTS['order_requests'] = {'decide'}
+ENDPOINTS['driver_support'] = {'list_requests', 'request_support', 'accept_support', 'resolve_request'}
+ENDPOINTS['order_financial_cases'] = {'cancel','journey','inbox'}
 ENDPOINTS['map_services'] = {'recommendations', 'health', 'alerts', 'zones', 'plan', 'trips'}
 ENDPOINTS['driver_closure'] = {'listing', 'schedule', 'decide'}
 ENDPOINTS['dispatch_map'] = {'map_config', 'driver_locations', 'discover_driver_routes', 'permit_driver_route'}
@@ -90,7 +92,12 @@ def resolve(conn, user, *, shift_id=None, allow_bootstrap=False):
     scoped = dict(user)
     scoped['branch_ids'] = [b['id'] for b in branches]
     scoped['_morning_manager_context'] = {'period': 'morning', 'shift_id': duty['id'],
-        'branch_ids': scoped['branch_ids']}
+        'branch_ids': scoped['branch_ids'],
+        'supported_shift_ids': [r['id'] for r in conn.execute(
+            "SELECT s.id FROM shifts s WHERE s.manager_shift_id=%s AND s.brand_id=%s "
+            "AND s.branch_ids <@ %s::jsonb AND EXISTS(SELECT 1 FROM driver_support_requests r "
+            "WHERE r.driver_shift_id=s.id AND r.to_shift_id=s.manager_shift_id AND r.status='accepted')",
+            (duty['id'], user['brand_id'], db.json(scoped['branch_ids']))).fetchall()]}
     return scoped
 
 
@@ -109,6 +116,10 @@ def apply(conn, user, request, *, session=False):
     module = getattr(endpoint, '__module__', '').rsplit('.', 1)[-1]
     name = getattr(endpoint, '__name__', '')
     scoped = resolve(conn, user, allow_bootstrap=session or module == 'operations' and name in {'open_shift', 'shifts'})
+    if request.method=='GET' and ((module=='order_financial_cases' and name in {'journey','inbox'}) or (module=='orders' and name=='get_order')):
+        scoped['_morning_history_read']=True
+    if request.method=='POST' and module=='order_financial_cases' and name=='cancel':
+        scoped['_morning_cancellation_replay']=True
     # Resource checks precede endpoint-specific idempotency replay. A saved
     # response must never escape a newly narrowed or revoked context.
     params = request.path_params
@@ -146,15 +157,17 @@ def order_filter(user, alias='o'):
         "AND ce.event_type='preparation.accepted' AND ce.details ? 'manager_shift_id' "
         "ORDER BY ce.created_at DESC,ce.id DESC LIMIT 1))")
     clause = (f"{o}.brand_id=%s AND {o}.branch_id=ANY(%s) AND {o}.service='delivery' "
-        f"AND {o}.snapshot->>'delivery_period'='morning' AND COALESCE({preferred},%s)=%s "
+        f"AND {o}.snapshot->>'delivery_period'='morning' AND (COALESCE({preferred},%s)=%s "
+        f"OR EXISTS(SELECT 1 FROM manager_handovers h WHERE h.status='accepted' AND h.to_shift_id=%s AND h.operational_snapshot->'order_ids' ? {o}.id) "
+        f"OR EXISTS(SELECT 1 FROM driver_support_requests r JOIN shifts ds ON ds.id=r.driver_shift_id WHERE r.status='accepted' AND r.to_shift_id=%s AND ds.manager_shift_id=r.to_shift_id AND r.operational_snapshot->'order_ids' ? {o}.id)) "
         f"AND NOT EXISTS (SELECT 1 FROM driver_tasks ct JOIN shifts cs ON cs.id=ct.shift_id WHERE ct.order_id={o}.id "
         "AND ct.status NOT IN ('cancelled','transferred','reassigned') "
         f"AND (cs.manager_shift_id IS DISTINCT FROM %s OR cs.kind<>'driver' OR cs.brand_id IS DISTINCT FROM {o}.brand_id "
-        f"OR cs.delivery_window_snapshot->>'period' IS DISTINCT FROM 'morning' OR cs.branch_ids<>jsonb_build_array({o}.branch_id))) "
+        f"OR (cs.delivery_window_snapshot->>'period' IS DISTINCT FROM 'morning' AND NOT EXISTS(SELECT 1 FROM driver_support_requests sr WHERE sr.driver_shift_id=cs.id AND sr.to_shift_id=cs.manager_shift_id AND sr.status='accepted')) OR cs.branch_ids<>jsonb_build_array({o}.branch_id))) "
         f"AND (EXISTS (SELECT 1 FROM driver_tasks ct WHERE ct.order_id={o}.id AND ct.status NOT IN ('cancelled','transferred','reassigned')) "
         f"OR ({o}.completed_at IS NULL AND {o}.preparation_status NOT IN ('completed','cancelled','rejected') "
         f"AND {o}.delivery_status NOT IN ('delivered','cancelled')))")
-    return clause, [user['brand_id'], user['branch_ids'], context['shift_id'], context['shift_id'], context['shift_id']]
+    return clause, [user['brand_id'], user['branch_ids'], *([context['shift_id']]*5)]
 
 
 def require_order(conn, user, oid):
@@ -199,6 +212,8 @@ def recheck_resources(conn, user, request, module, name):
     for key in ('shift_id', 'from_shift_id', 'to_shift_id', 'driver_shift_id', 'manager_shift_id'):
         sid = body.get(key)
         if sid:
+            if module == 'driver_support' and name == 'request_support' and key == 'driver_shift_id':
+                continue  # The endpoint validates the external driver and both live managers.
             require_shift(user, conn.execute('SELECT * FROM shifts WHERE id=%s', (sid,)).fetchone())
     if body.get('order_id'):
         require_order(conn, user, body['order_id'])
@@ -258,6 +273,9 @@ def order_allowed(user, order, conn=None):
         return False
     if conn is None:
         return True  # Pure scope checks; authenticated resource reads always pass conn.
+    if user.get('_morning_history_read') or user.get('_morning_cancellation_replay'):
+        from .order_history_scope import allowed
+        if allowed(conn,user,order):return True
     preferred = (order.get('snapshot') or {}).get('manager_shift_id')
     if not preferred:
         accepted = conn.execute("SELECT details->>'manager_shift_id' AS manager_shift_id FROM order_events "
@@ -265,7 +283,9 @@ def order_allowed(user, order, conn=None):
             "ORDER BY created_at DESC,id DESC LIMIT 1", (order['id'],)).fetchone()
         preferred = (accepted or {}).get('manager_shift_id')
     if preferred and preferred != context['shift_id']:
-        return False
+        from .manager_handover_scope import accepted_order
+        if not accepted_order(conn, user, order, shift_id=context['shift_id']):
+            return False
     bindings = conn.execute("SELECT s.* FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id "
         "WHERE t.order_id=%s AND t.status NOT IN ('cancelled','transferred','reassigned')", (order['id'],)).fetchall()
     if bindings:
@@ -282,7 +302,8 @@ def shift_allowed(user, shift):
     context = enabled(user)
     return not context or bool(not context.get('bootstrap') and shift and shift.get('brand_id') == user['brand_id']
         and shift.get('branch_ids') and set(shift['branch_ids']) <= set(user['branch_ids'])
-        and (shift.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+        and ((shift.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+             or shift.get('kind') == 'driver' and shift['id'] in context.get('supported_shift_ids', []))
         and (shift['id'] == context['shift_id'] or shift.get('manager_shift_id') == context['shift_id']))
 
 

@@ -1,8 +1,8 @@
 """Explicit staff-created deliveries with no customer collection."""
 from copy import deepcopy
 
-KINDS = {'hospitality': ('ضيافة','Hospitality'), 'advertising': ('إعلان','Advertising'),
-         'compensation': ('تعويض','Compensation')}
+KINDS = {'hospitality': ('ضيافة','Hospitality'), 'advertising': ('ضيافة إعلانية','Advertising hospitality'),
+         'compensation': ('تعويض','Compensation'), 'completion': ('استكمال طلب','Order completion')}
 
 
 def operational_view(value):
@@ -64,13 +64,19 @@ def accounting_values(order, lang='ar'):
             'treatment': (('على المنشأة — لا مديونية على العميل أو السائق أو مدير التوصيل',
                            'Business-funded — no customer, driver or delivery-manager receivable')[en]
                           if kind else ('تراجع حسب حالة الطلب','Review according to order status')[en]),
-            'reason': reason or missing_reason}
+            'reason': reason or missing_reason,
+            'authorized_by':free.get('authorized_by'), 'authorized_at':free.get('authorized_at'),
+            'original_order_id':free.get('original_order_id'),
+            'original_invoice_number':free.get('original_invoice_number'),
+            'authorization_id':free.get('authorization_id')}
 
 
-def prepare(quote, kind, reason, actor_id):
+def prepare(quote, kind, reason, actor_id, authorization=None):
     result=deepcopy(quote)
     result['complimentary']={'kind':kind,'reason':reason,'created_by':actor_id,
+        'reference_items':deepcopy(quote['items']),
         'catalog_value_halalas':quote['subtotal_halalas'], 'delivery_value_halalas':quote['delivery_fee_halalas']}
+    result['complimentary'].update(authorization or {})
     for key in ('subtotal_halalas','delivery_fee_halalas','total_halalas','discount_halalas'):result[key]=0
     for item in result['items']:
         item['unit_price_halalas']=item['line_total_halalas']=0
