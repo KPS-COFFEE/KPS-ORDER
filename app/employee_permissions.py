@@ -172,7 +172,7 @@ ROUTES = {
         'accept_manager_handover': 'shifts_handover', 'closure_draft': 'shifts_view',
         'save_closure_draft': 'shifts_close', 'set_shift_availability': 'drivers_availability',
     },
-    'orders': {'create_delivery_center_order': 'orders_create_customer', 'create_complimentary':'orders_create_customer', 'quote_complimentary':'orders_create_customer', 'list_orders': 'orders_view', 'get_order': 'orders_view',
+    'orders': {'create_delivery_center_order': 'orders_create_customer', 'quote_delivery_center_order': 'orders_create_customer', 'create_complimentary':'orders_create_customer', 'quote_complimentary':'orders_create_customer', 'list_orders': 'orders_view', 'get_order': 'orders_view',
                'preparation': {'delivery_manager': 'orders_cancel', 'branch_manager': 'orders_prepare'}, 'operational_confirmation': 'orders_contact'},
     'reporting': {name: 'reports_view' for name in (
         'report_list', 'report_detail', 'print_report', 'download_pdf', 'download_csv',

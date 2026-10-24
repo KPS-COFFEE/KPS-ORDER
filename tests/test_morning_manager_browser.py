@@ -113,7 +113,7 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
             elif path=='/api/operations/people':payload={'users':[],'authorized_receivers':[],'available_manager_shifts':[manager]}
             elif path=='/api/operations/people':payload={'users':[],'authorized_receivers':[],'available_manager_shifts':[manager]}
             elif path=='/api/orders':payload={'orders':[created] if any(path=='/api/orders/delivery-center' for path,_ in writes) else [],'next_offset':None}
-            elif path=='/api/quote':
+            elif path=='/api/orders/delivery-center/quote':
                 writes.append((path,request.post_data_json))
                 payload={'quote':{'subtotal_halalas':1000,'delivery_fee_halalas':0,'total_halalas':1000}}
             elif path=='/api/orders/delivery-center':
@@ -149,7 +149,7 @@ def test_morning_whatsapp_order_uses_branch_two_without_customer_history(static_
         expect(created_button).to_be_visible()
         created_button.click()
         expect(page.locator('#modal [data-action=manager-accept]')).to_be_visible()
-        assert [path for path,_ in writes]==['/api/quote','/api/orders/delivery-center']
+        assert [path for path,_ in writes]==['/api/orders/delivery-center/quote','/api/orders/delivery-center']
         assert created['preparation_status']=='new' and created['delivery_status']=='pending'
         assert 'preparation_status' not in writes[-1][1]  # Creation never accepts for the branch.
         assert all(body['branch_id']=='branch2' and body['service']=='delivery' for _,body in writes)

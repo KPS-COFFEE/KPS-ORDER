@@ -281,3 +281,49 @@ def test_central_routes_choose_work_credentials_even_with_customer_hint(hint):
     request=Request({'type':'http','method':'GET','path':'/api/central-operations/resource-context',
                      'query_string':b'','headers':[(b'x-kps-context',hint.encode())] if hint else []})
     assert auth.session_context(request)=='work'
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('brand', ['kps', 'enbishan'])
+@pytest.mark.parametrize('context_cookies', ['true', 'false'])
+def test_staff_quote_uses_work_cookie_and_keeps_customer_host_isolation(central, monkeypatch, brand, context_cookies):
+    from app import auth
+    from test_core import _body
+    _, actor, _, _, _ = central
+    client = actor('manager', brand)
+    monkeypatch.setenv('SESSION_CONTEXT_COOKIES_ENABLED', context_cookies)
+    if context_cookies == 'true':
+        client.cookies.set('kps_work_session', client.cookies.get(auth.COOKIE))
+        client.cookies.delete(auth.COOKIE)
+    branch = 'kps-branch-1' if brand == 'kps' else 'enbishan-test-1'
+    body = _body('delivery', branch, 'dual-' + brand)
+    body['brand_id'] = brand
+    body['customer']['phone'] = '0501234567'
+    with db.tx() as c:
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES('staff-quote-duty','manager','dual-manager',%s,%s)",
+                  (brand, db.json([branch])))
+        before = c.execute('SELECT count(*) n FROM orders').fetchone()['n']
+    # Reproduce the production storefront binding without weakening public quote.
+    monkeypatch.setenv('PUBLIC_BASE_URL', 'https://order.kps.sa')
+    if brand == 'enbishan':
+        rejected = client.post('/api/quote', json=body)
+        assert rejected.status_code == 403, rejected.text
+        assert rejected.json()['detail']['code'] == 'STOREFRONT_BRAND_MISMATCH'
+    response = client.post('/api/orders/delivery-center/quote', json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()['quote']['subtotal_halalas'] == (2000 if brand == 'kps' else 4000)
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM orders').fetchone()['n'] == before
+    body['expected_total_halalas'] = response.json()['quote']['total_halalas']
+    created = client.post('/api/orders/delivery-center', json=body, headers={'Idempotency-Key':'staff-quote-create'})
+    assert created.status_code == 200, created.text
+    replay = client.post('/api/orders/delivery-center', json=body, headers={'Idempotency-Key':'staff-quote-create'})
+    assert replay.json() == created.json()
+    assert created.json()['order']['brand_id'] == brand
+    # Revocation, CSRF and duty are checked afresh before every quote.
+    csrf = client.headers.pop('X-CSRF-Token')
+    assert client.post('/api/orders/delivery-center/quote', json=body).status_code == 403
+    client.headers['X-CSRF-Token'] = csrf
+    with db.tx() as c:
+        c.execute("UPDATE users SET permission_denials=%s WHERE id='dual-manager'", (db.json(['orders_create_customer']),))
+    assert client.post('/api/orders/delivery-center/quote', json=body).status_code == 403
