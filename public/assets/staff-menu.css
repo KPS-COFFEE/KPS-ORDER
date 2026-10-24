@@ -13,3 +13,6 @@ dialog:has(.staff-order-kps-menu){width:min(1120px,calc(100vw - 24px))}
 .staff-menu-categories span{font-variant-numeric:tabular-nums;opacity:.7;margin-inline-start:5px}
 .staff-menu-kps-grid{grid-template-columns:repeat(5,minmax(0,1fr));max-height:min(56dvh,560px)}
 @media(max-width:640px){.staff-menu-kps-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.staff-menu-categories button{flex:0 0 auto}}
+
+.staff-order-kps-menu label[hidden]{display:none}
+.staff-selected-product{font-weight:700;margin-block:12px 6px}
