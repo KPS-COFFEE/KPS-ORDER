@@ -39,6 +39,26 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Match the approved staff acceptance mirror handling; keep suites,
+          # components, signatures, engines and application thresholds unchanged.
+          configured=false
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+            fi
+          done
+          test "$configured" = true
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
       - run: python -m playwright install --with-deps chromium webkit
       - run: node --check public/customer.js && node tests/test_customer_location_link.cjs
       - run: python -m pytest -q -x tests/test_customer_location_link_browser.py tests/test_experience_entry_browser.py tests/test_customer_map_browser.py --junitxml=test-results/customer-map-link.xml
@@ -48,3 +68,4 @@ jobs:
         with:
           name: customer-map-link-acceptance
           path: test-results/
+
