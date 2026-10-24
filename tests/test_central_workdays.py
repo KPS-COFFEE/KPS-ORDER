@@ -256,7 +256,8 @@ def test_overnight_adoption_preserves_existing_day_and_fresh_manager_gate(centra
             for field in ['opened_at', 'delivery_operational_date', 'delivery_window_snapshot', 'vehicle_log', 'opening_halalas']:
                 assert preserved[field] == original[sid][field]
     # An owner without an existing workday cannot reuse adoption's past clock.
-    denied = post('owner', '/api/central-operations/workdays', {'kind': 'manager'}, status=409)
+    denied = post('owner', '/api/central-operations/workdays',
+        {'kind': 'manager', 'branch_ids': ['kps-branch-1', 'enbishan-test-1']}, status=409)
     assert denied['detail']['code'] == 'MANAGER_SHIFT_HOURS'
     with db.tx() as c:
         assert not c.execute("SELECT 1 FROM shifts WHERE user_id='dual-owner'").fetchone()
