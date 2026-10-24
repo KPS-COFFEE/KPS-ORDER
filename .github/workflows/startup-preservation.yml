@@ -31,6 +31,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       TEST_DATABASE_URL: postgresql://kps_test:isolated-synthetic-only@127.0.0.1:5432/test_startup_preservation
+      PENDING_MIGRATION_BASELINE_DIR: ${{ runner.temp }}/startup-preservation-baseline
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,6 +68,16 @@ jobs:
           PY
           cp /tmp/candidate-startup-db.py app/db.py
           trap - EXIT
+      - name: Prepare the genuine populated-upgrade baseline
+        run: |
+          mkdir "$PENDING_MIGRATION_BASELINE_DIR"
+          git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C "$PENDING_MIGRATION_BASELINE_DIR"
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          revision='4e4d781b4fa82b7459410694ff5c4ac06842e6e7'
+          tree=subprocess.check_output(['git','rev-parse',revision+'^{tree}'],text=True).strip()
+          (pathlib.Path(os.environ['PENDING_MIGRATION_BASELINE_DIR'])/'baseline-source-identity.json').write_text(json.dumps({'revision':revision,'tree':tree}))
+          PY
       - name: Concurrent startup, preservation rejection and forward-upgrade regressions
         run: |
           set -euo pipefail
