@@ -170,7 +170,14 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
         refunds=[] if user['role']=='driver' else c.execute('SELECT id,authorized_by,method,amount_halalas,reason,created_at FROM refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         online_collections=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,provider,amount_halalas,disposition,created_at FROM branch_online_receipts WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         online_refunds=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,authorized_by,amount_halalas,reason,status,created_at,verified_at FROM branch_online_refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
-        return {'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
+        from .driver_incentives import source_rows,classify
+        followups=[]
+        if user['role']!='driver':
+            for source in source_rows(c,user,order_id=oid):
+                entry=classify(source)
+                if entry['state']=='pending_review':
+                    followups.append({'type':'driver_incentive_review','status':'review_required','responsible_role':'delivery_manager','shift_id':entry['shift_id'],'task_id':entry['task_id'],'order_id':oid,'review_url':'/api/driver-incentives/shifts/'+entry['shift_id']})
+        return {'operational_followups':followups,'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
                 'payment_status':o['payment_status'],'version':o['version'],'tasks':tasks,'timeline':events,
                 'financial_case':None if user['role']=='driver' else case(c,oid)}
 
