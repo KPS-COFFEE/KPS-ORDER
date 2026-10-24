@@ -27,6 +27,12 @@ def test_approved_waveform_is_exact_owner_selected_sample():
     assert len(data)==793844
 
 
+def test_enbishan_has_distinct_default_ring():
+    data=approved_wave('enbishan')
+    assert valid_wave(data) and data!=approved_wave('kps')
+    assert hashlib.sha256(data).hexdigest()=='1c7d03a750534c1b48cab17d36d596049d243d226410784d8f1a15fa3c8337e5'
+
+
 @pytest.mark.parametrize('kind',['header','size','format','stereo','bits','metadata','rate','alignment','too_short','too_long'])
 def test_invalid_audio_rejected(kind):
     data=bytearray(replacement())

@@ -61,11 +61,12 @@
       form.prepend(button);
     }
   }
-  async function driverOrderSoundSettings(){
+  async function driverOrderSoundSettings(brandId=state.user?.brand_id){
     if(state.user?.role!=='owner')throw new Error(tr('للمالك فقط.','Owner only.'));
     // Keep both operations in the current work scope; an unrelated admin-page
     // brand selector must not retarget only the save request.
-    const result=await scopedApi('/api/operations/driver-order-sound');
+    const soundQuery='?brand_id='+encodeURIComponent(brandId);
+    const result=await scopedApi('/api/operations/driver-order-sound'+soundQuery);
     let replacement=null,preview=null,previewUrl=null,selectedFile=null;
     const cleanup=()=>{if(preview){preview.pause();preview.src='';preview=null;}if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=null;}};
     const chooser=await modal(tr('صوت تطبيق السائق','Driver app sound'),`<form>${notice(tr('يسري على تطبيق السائق الجديد أثناء الشفت؛ يتحدث خلال دورة المزامنة بعد الحفظ دون APK جديد. لا يغير صوت الموقع أو إعدادات الجهاز.','Applies to the new driver app during a shift; updates on its next sound sync after saving, without another APK. Website sound and device settings are unchanged.'))}<p>${esc(result.sound.name)}</p><div class="actions"><button class="quiet" type="button" data-preview-current>${esc(tr('اسمع الصوت الحالي','Preview current sound'))}</button><button class="quiet" type="button" data-preview-new disabled>${esc(tr('اسمع الصوت المختار','Preview selected sound'))}</button></div>${field(tr('اسم الصوت الجديد','New sound name'),'sound_name','',{maxlength:80})}<label>${esc(tr('ملف WAV أحادي PCM 16-bit — حتى 10 ثوانٍ وأقل من 1 MB','Mono PCM 16-bit WAV — up to 10 seconds, under 1 MB'))}<input type="file" name="sound_file" accept=".wav,audio/wav"></label><p data-sound-status role="status"></p><label><input type="checkbox" name="reset_sound"> ${esc(tr('استعادة الجرس المعتمد','Restore approved ring'))}</label>${formEnd(tr('تأكيد واعتماد الصوت','Confirm and apply sound'))}</form>`,async fd=>{
@@ -74,10 +75,16 @@
       const name=String(fd.get('sound_name')||'').trim();
       if(!reset&&(!name||name.length>80))throw new Error(tr('أدخل اسمًا للصوت.','Enter a sound name.'));
       await ownerOperationalConfirm(tr('تغيير صوت تطبيق السائق','Change driver app sound'));
-      await scopedApi('/api/admin/driver-order-sound',{method:'PATCH',body:reset?{reset:true}:{name,data_base64:replacement}});
+      await scopedApi('/api/admin/driver-order-sound'+soundQuery,{method:'PATCH',body:reset?{reset:true}:{name,data_base64:replacement}});
       cleanup();closeModal();
     });
     const form=document.querySelector('#modal form');if(!form)return;
+    const brandLabel=document.createElement('label');brandLabel.textContent=tr('براند صوت الطلب','Order sound brand');
+    const brandSelect=document.createElement('select');brandSelect.setAttribute('data-sound-brand','');
+    const brands=state.user.operations_brands?.length?state.user.operations_brands:[{id:state.user.brand_id,name:state.user.brand_id==='enbishan'?'Enbishan':'KPS'}];
+    for(const brand of brands){const option=document.createElement('option');option.value=brand.id;option.textContent=brand.name;option.selected=brand.id===brandId;brandSelect.append(option);}
+    brandSelect.addEventListener('change',()=>driverOrderSoundSettings(brandSelect.value).catch(error=>alert(error.message)));
+    brandLabel.append(brandSelect);form.prepend(brandLabel);
     form.querySelector('[name=sound_file]').addEventListener('change',async event=>{
       replacement=null;selectedFile=null;cleanup();const file=event.target.files?.[0];
       const button=form.querySelector('[data-preview-new]'),status=form.querySelector('[data-sound-status]');button.disabled=true;
