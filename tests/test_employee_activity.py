@@ -54,6 +54,8 @@ def test_pdf_multipage():
 @pytest.mark.postgres
 def test_sessions_scope_events_and_pdf(client):
     from tests.test_core import _make_user,_authenticate
+    with db.tx() as c:
+        c.execute("INSERT INTO brands(id,name) VALUES('enbishan','Foreign test brand') ON CONFLICT(id) DO NOTHING")
     staff=_make_user('admin');owner=_make_user('owner');foreign=_make_user('admin',brand='enbishan')
     _authenticate(client,staff)
     assert client.get('/api/session').status_code==200
