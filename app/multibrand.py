@@ -98,6 +98,7 @@ def project(conn, user, brand):
         if not original:
             return None
         user = dict(user, **original)
+        user.pop('home_brand_id',None)
     if user['brand_id'] == brand:
         return user
     if not enabled() or user['role'] not in {'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}:

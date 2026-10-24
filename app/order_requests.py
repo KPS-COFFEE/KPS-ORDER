@@ -52,7 +52,7 @@ def pending_inbox(c, user):
           AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=o.id
             AND d.event_type='customer_request.decided' AND d.details->>'request_id'=e.id)
         ORDER BY e.created_at LIMIT 100""",
-        (user['brand_id'], user['role']=='owner', user.get('branch_ids', []),
+        (user['brand_id'], user['role']=='owner' and not user.get('home_brand_id'), user.get('branch_ids', []),
          user['role'], user['role'], user['role'])).fetchall()
     if user.get('_morning_manager_context'):
         from .morning_manager_context import order_allowed

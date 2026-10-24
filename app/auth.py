@@ -105,6 +105,8 @@ def public_user(user: dict, conn=None) -> dict:
         output['operations_brands'] = user['operations_brands']
     if user.get('central_operations') and not user.get('_morning_manager_context'):
         output['central_operations'] = user['central_operations']
+    if user.get('central_workday_drain') and not user.get('_morning_manager_context'):
+        output['central_workday_drain'] = user['central_workday_drain']
     return output
 
 
@@ -148,7 +150,7 @@ def session_context(request):
         return 'customer'
     if (path=='/api/auth/login' or path.startswith(('/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
-            '/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
+            '/api/central-operations','/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
             '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
             or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/docs/metrics'))):
@@ -181,6 +183,8 @@ def _find_session(conn, request: Request):
         user['_csrf_cookie_name']=csrf_name
         from .multibrand import request_user
         user = request_user(conn, request, user)
+        from .central_operations import project_read
+        user = project_read(conn, request, user)
         from .portals import enforce_role
         enforce_role(request, user)
         from .storefront_scope import require_brand
@@ -190,6 +194,8 @@ def _find_session(conn, request: Request):
             user['operations_brands'] = multibrand.available(conn, user)
             from .central_operations import context as central_context
             user['central_operations'] = central_context(conn, user)
+            from .central_workdays import drain_metadata
+            user['central_workday_drain'] = drain_metadata(conn,user)
     return user
 
 
@@ -239,7 +245,7 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
         return False
     role = user['role']
     if role == 'owner':
-        return True
+        return not user.get('home_brand_id') or order['branch_id'] in user.get('branch_ids',[])
     if role == 'customer':
         return order['customer_id'] in customer_ids(user)
     if role == 'branch_manager':
@@ -279,6 +285,8 @@ def establish_session(conn, user: dict, response: Response, *, owner_step_up=Fal
         user = dict(user, operations_brands=multibrand.available(conn, user))
         from .central_operations import context as central_context
         user['central_operations'] = central_context(conn, user)
+        from .central_workdays import drain_metadata
+        user['central_workday_drain'] = drain_metadata(conn,user)
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     hours = max(1, min(72, int(os.getenv('SESSION_TTL_HOURS', '12'))))
     # An unverified contact number is never a recovery credential. Remember a
@@ -1404,6 +1412,9 @@ def create_staff_invitation(conn,body:StaffInvitationBody,actor,*,draft_only=Fal
     if not user or user['role'] != 'owner':
         raise db.error(403,'ROLE_FORBIDDEN','إنشاء حسابات الموظفين ودعواتهم للمالك فقط.')
     if user['brand_id']!=actor.get('brand_id'):
+        from . import multibrand
+        user = multibrand.project(conn,user,actor.get('brand_id'))
+    if not user or user['brand_id']!=actor.get('brand_id'):
         raise db.error(403,'BRAND_SCOPE_FORBIDDEN','الدعوة خارج نطاق البراند المخول.')
     user=dict(user,session_id=actor.get('session_id'))
     if draft_only:
@@ -1639,115 +1650,119 @@ class StaffUpdateBody(BaseModel):
     reason:str|None=Field(default=None,min_length=3,max_length=500)
 
 
+def update_staff_in_tx(conn, identifier, body, user):
+    row=_staff_record(conn,identifier,user)
+    if row['invitation_status']=='archived':
+        raise db.error(409,'STAFF_ARCHIVED','استعد الموظف المحذوف قبل تعديل بياناته.')
+    role=body.role if body.role is not None else row['role']
+    role_changed=role!=row['role']
+    if role_changed:
+        require_owner_step_up(conn,user)
+        if row.get('extra_permissions'):
+            require_owner_sms_step_up(conn,user)
+        if identifier==user['id'] or not (body.reason or '').strip():
+            raise db.error(409,'STAFF_ROLE_CHANGE_BLOCKED','لا تغير دور حسابك الحالي، وسجل سبب تغيير دور الموظف.')
+        ensure_safe_staff_scope_change(conn,row,[],False)
+    if body.permissions is not None:
+        if user['role']!='owner' or role!='admin':
+            raise db.error(403,'ADMIN_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الأدمن.')
+        permissions=validate_admin_permissions(body.permissions)
+        require_owner_step_up(conn,user)
+    else:
+        permissions=(row.get('permissions') or []) if role=='admin' else []
+    denials=[] if role_changed else row.get('permission_denials') or []
+    if body.permission_denials is not None:
+        if user['role']!='owner':
+            raise db.error(403,'STAFF_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الموظفين.')
+        denials=validate_permission_denials(body.permission_denials,role)
+        if denials!=(row.get('permission_denials') or []):
+            require_owner_step_up(conn,user)
+    scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
+    active=body.active if body.active is not None else row['active']
+    sms_approved=staff_sms_account_approved(row)
+    if active and not row['active'] and sms_approved:
+        require_owner_step_up(conn,user)
+    if role_changed and not row['email_verified_at'] and not sms_approved:
+        active=False
+    email=email_delivery.normalize_email(body.email) if body.email is not None else row['email']
+    email_changed=email!=row['email']
+    if email_changed and not staff_email_retired(row['brand_id']):
+        if row['role']=='owner':
+            require_owner_step_up(conn,user)
+        if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(row['id'],)).fetchone():
+            raise db.error(409,'STAFF_OPEN_SHIFT','أغلق الشفت وسلّم العهدة قبل تغيير بريد الدخول.')
+        if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s AND id<>%s',(user['brand_id'],email,identifier)).fetchone():
+            raise db.error(409,'STAFF_IDENTITY_CONFLICT','البريد غير متاح لحساب الموظف.')
+        if body.active:
+            raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','تغيير البريد يتطلب دعوة وتحققًا جديدين.')
+        active=False
+    if active and (row['invitation_status'] not in {'active','paused'} or not row['email_verified_at']):
+        # Legacy active staff remain during migration, but cannot be activated by bypassing proof.
+        existing_password_owner=(row['active'] and row['role']=='owner' and role=='owner'
+                                 and row['identity_kind']=='staff_password' and row['invitation_status']=='active')
+        if not sms_approved and not existing_password_owner and not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
+            raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
+    ensure_safe_staff_scope_change(conn,row,scope,active)
+    name=body.display_name.strip() if body.display_name is not None else row['display_name']
+    if not name or '\x00' in name:
+        raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')
+    phone=normalize_phone(body.phone) if body.phone else row['phone']
+    if phone!=row['phone'] and row['role']=='owner':
+        require_owner_step_up(conn,user)
+    phone_changed=phone!=row['phone']
+    if phone_changed and staff_email_retired(row['brand_id']):
+        # Canonical staff/owner SMS verifies a challenge rather than writing
+        # the legacy users.phone_* timestamps. Recognize that actual proof
+        # against this account's current mobile before allowing any edit.
+        owner_phone_proven = row['role']=='owner' and (
+            row.get('phone_verified_at') or row.get('phone_sms_verified_at') or
+            conn.execute(
+                "SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND brand_id=%s "
+                "AND phone=normalized_identity_phone(%s) AND delivery_channel='sms' "
+                "AND provider_name IN ('twilio_verify','tawked') AND verified_at IS NOT NULL "
+                "AND (id LIKE 'employee_otp_%%' OR id LIKE 'owner_sms_%%') LIMIT 1",
+                (row['id'],row['brand_id'],row.get('phone'))).fetchone())
+        if owner_phone_proven:
+            raise db.error(409,'OWNER_PHONE_VERIFICATION_REQUIRED','غيّر جوال المالك عبر مسار التحقق المستقل من الرقم الجديد. / Use the owner mobile verification flow.')
+        require_owner_sms_step_up(conn,user)
+        ensure_safe_staff_scope_change(conn,row,[],False)
+    elif row['phone_verified_at'] and phone_changed:
+        raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','رقم موثق يحتاج تحققًا مستقلًا لتغييره.')
+    if phone and (body.phone is not None or email_changed):
+        _assert_staff_phone_available(conn,user['brand_id'],normalize_phone(phone),identifier)
+    vehicle=_vehicle(body.vehicle) if body.vehicle is not None else row['vehicle']
+    status=row['invitation_status'] if active else 'paused' if row['invitation_status']=='active' else row['invitation_status']
+    if active and (row['email_verified_at'] or sms_approved):
+        status='active'
+    output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
+    if phone_changed:
+        output=conn.execute('UPDATE users SET phone_verified_at=NULL,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL WHERE id=%s RETURNING *',(identifier,)).fetchone()
+    if body.permissions is not None or role_changed:
+        output=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
+    if body.permission_denials is not None or role_changed:
+        output=conn.execute('UPDATE users SET permission_denials=%s WHERE id=%s RETURNING *',(db.json(denials),identifier)).fetchone()
+        if denials!=(row.get('permission_denials') or []):
+            _invalidate_staff_tokens(conn,identifier)
+    if role_changed:
+        output=conn.execute("UPDATE users SET role=%s,extra_permissions='[]'::jsonb WHERE id=%s RETURNING *",(role,identifier)).fetchone()
+        if not row['email_verified_at'] and not sms_approved:
+            output=conn.execute("UPDATE users SET invitation_status='draft' WHERE id=%s RETURNING *",(identifier,)).fetchone()
+    if email_changed and staff_email_retired(row['brand_id']):
+        output=conn.execute('UPDATE users SET email=%s,email_verified_at=NULL WHERE id=%s RETURNING *',(email,identifier)).fetchone()
+    elif email_changed:
+        output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
+    if role_changed or scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone'] or permissions!=(row.get('permissions') or []):
+        conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
+        conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
+        conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
+    db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role,'old_extra_permissions':row.get('extra_permissions') or [],'extra_permissions':[]} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {}),**({'old_permission_denials':row.get('permission_denials') or [],'permission_denials':denials} if body.permission_denials is not None else {})})
+    return {'user':staff_public(conn,output)}
+
+
 @router.patch('/identity/staff/{identifier}')
 def update_staff(identifier:str,body:StaffUpdateBody,user=Depends(require_roles('owner'))):
     with db.tx() as conn:
-        row=_staff_record(conn,identifier,user)
-        if row['invitation_status']=='archived':
-            raise db.error(409,'STAFF_ARCHIVED','استعد الموظف المحذوف قبل تعديل بياناته.')
-        role=body.role if body.role is not None else row['role']
-        role_changed=role!=row['role']
-        if role_changed:
-            require_owner_step_up(conn,user)
-            if row.get('extra_permissions'):
-                require_owner_sms_step_up(conn,user)
-            if identifier==user['id'] or not (body.reason or '').strip():
-                raise db.error(409,'STAFF_ROLE_CHANGE_BLOCKED','لا تغير دور حسابك الحالي، وسجل سبب تغيير دور الموظف.')
-            ensure_safe_staff_scope_change(conn,row,[],False)
-        if body.permissions is not None:
-            if user['role']!='owner' or role!='admin':
-                raise db.error(403,'ADMIN_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الأدمن.')
-            permissions=validate_admin_permissions(body.permissions)
-            require_owner_step_up(conn,user)
-        else:
-            permissions=(row.get('permissions') or []) if role=='admin' else []
-        denials=[] if role_changed else row.get('permission_denials') or []
-        if body.permission_denials is not None:
-            if user['role']!='owner':
-                raise db.error(403,'STAFF_PERMISSION_OWNER_REQUIRED','المالك فقط يحدد صلاحيات الموظفين.')
-            denials=validate_permission_denials(body.permission_denials,role)
-            if denials!=(row.get('permission_denials') or []):
-                require_owner_step_up(conn,user)
-        scope=_staff_scope(conn,user,body.branch_ids if body.branch_ids is not None else row['branch_ids'])
-        active=body.active if body.active is not None else row['active']
-        sms_approved=staff_sms_account_approved(row)
-        if active and not row['active'] and sms_approved:
-            require_owner_step_up(conn,user)
-        if role_changed and not row['email_verified_at'] and not sms_approved:
-            active=False
-        email=email_delivery.normalize_email(body.email) if body.email is not None else row['email']
-        email_changed=email!=row['email']
-        if email_changed and not staff_email_retired(row['brand_id']):
-            if row['role']=='owner':
-                require_owner_step_up(conn,user)
-            if conn.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(row['id'],)).fetchone():
-                raise db.error(409,'STAFF_OPEN_SHIFT','أغلق الشفت وسلّم العهدة قبل تغيير بريد الدخول.')
-            if conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s AND id<>%s',(user['brand_id'],email,identifier)).fetchone():
-                raise db.error(409,'STAFF_IDENTITY_CONFLICT','البريد غير متاح لحساب الموظف.')
-            if body.active:
-                raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','تغيير البريد يتطلب دعوة وتحققًا جديدين.')
-            active=False
-        if active and (row['invitation_status'] not in {'active','paused'} or not row['email_verified_at']):
-            # Legacy active staff remain during migration, but cannot be activated by bypassing proof.
-            existing_password_owner=(row['active'] and row['role']=='owner' and role=='owner'
-                                     and row['identity_kind']=='staff_password' and row['invitation_status']=='active')
-            if not sms_approved and not existing_password_owner and not (row['active'] and row['identity_kind'] in {'legacy','staff_owner_approved'}):
-                raise db.error(403,'STAFF_EMAIL_VERIFICATION_REQUIRED','ينشط الموظف بعد تحقق بريده؛ لا توثيق بالنيابة عنه.')
-        ensure_safe_staff_scope_change(conn,row,scope,active)
-        name=body.display_name.strip() if body.display_name is not None else row['display_name']
-        if not name or '\x00' in name:
-            raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')
-        phone=normalize_phone(body.phone) if body.phone else row['phone']
-        if phone!=row['phone'] and row['role']=='owner':
-            require_owner_step_up(conn,user)
-        phone_changed=phone!=row['phone']
-        if phone_changed and staff_email_retired(row['brand_id']):
-            # Canonical staff/owner SMS verifies a challenge rather than writing
-            # the legacy users.phone_* timestamps. Recognize that actual proof
-            # against this account's current mobile before allowing any edit.
-            owner_phone_proven = row['role']=='owner' and (
-                row.get('phone_verified_at') or row.get('phone_sms_verified_at') or
-                conn.execute(
-                    "SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND brand_id=%s "
-                    "AND phone=normalized_identity_phone(%s) AND delivery_channel='sms' "
-                    "AND provider_name IN ('twilio_verify','tawked') AND verified_at IS NOT NULL "
-                    "AND (id LIKE 'employee_otp_%%' OR id LIKE 'owner_sms_%%') LIMIT 1",
-                    (row['id'],row['brand_id'],row.get('phone'))).fetchone())
-            if owner_phone_proven:
-                raise db.error(409,'OWNER_PHONE_VERIFICATION_REQUIRED','غيّر جوال المالك عبر مسار التحقق المستقل من الرقم الجديد. / Use the owner mobile verification flow.')
-            require_owner_sms_step_up(conn,user)
-            ensure_safe_staff_scope_change(conn,row,[],False)
-        elif row['phone_verified_at'] and phone_changed:
-            raise db.error(409,'PHONE_CHANGE_REQUIRES_VERIFICATION','رقم موثق يحتاج تحققًا مستقلًا لتغييره.')
-        if phone and (body.phone is not None or email_changed):
-            _assert_staff_phone_available(conn,user['brand_id'],normalize_phone(phone),identifier)
-        vehicle=_vehicle(body.vehicle) if body.vehicle is not None else row['vehicle']
-        status=row['invitation_status'] if active else 'paused' if row['invitation_status']=='active' else row['invitation_status']
-        if active and (row['email_verified_at'] or sms_approved):
-            status='active'
-        output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
-        if phone_changed:
-            output=conn.execute('UPDATE users SET phone_verified_at=NULL,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL WHERE id=%s RETURNING *',(identifier,)).fetchone()
-        if body.permissions is not None or role_changed:
-            output=conn.execute('UPDATE users SET permissions=%s WHERE id=%s RETURNING *',(db.json(permissions),identifier)).fetchone()
-        if body.permission_denials is not None or role_changed:
-            output=conn.execute('UPDATE users SET permission_denials=%s WHERE id=%s RETURNING *',(db.json(denials),identifier)).fetchone()
-            if denials!=(row.get('permission_denials') or []):
-                _invalidate_staff_tokens(conn,identifier)
-        if role_changed:
-            output=conn.execute("UPDATE users SET role=%s,extra_permissions='[]'::jsonb WHERE id=%s RETURNING *",(role,identifier)).fetchone()
-            if not row['email_verified_at'] and not sms_approved:
-                output=conn.execute("UPDATE users SET invitation_status='draft' WHERE id=%s RETURNING *",(identifier,)).fetchone()
-        if email_changed and staff_email_retired(row['brand_id']):
-            output=conn.execute('UPDATE users SET email=%s,email_verified_at=NULL WHERE id=%s RETURNING *',(email,identifier)).fetchone()
-        elif email_changed:
-            output=conn.execute("UPDATE users SET email=%s,email_verified_at=NULL,identity_kind='pending_email',invitation_status='draft' WHERE id=%s RETURNING *",(email,identifier)).fetchone()
-        if role_changed or scope!=row['branch_ids'] or active!=row['active'] or email_changed or phone!=row['phone'] or permissions!=(row.get('permissions') or []):
-            conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
-            conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
-            conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
-        db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role,'old_extra_permissions':row.get('extra_permissions') or [],'extra_permissions':[]} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {}),**({'old_permission_denials':row.get('permission_denials') or [],'permission_denials':denials} if body.permission_denials is not None else {})})
-        return {'user':staff_public(conn,output)}
+        return update_staff_in_tx(conn, identifier, body, user)
 
 
 class StaffLifecycleBody(BaseModel):

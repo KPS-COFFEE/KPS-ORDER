@@ -16,7 +16,8 @@ from pathlib import Path
 
 FOUNDATION = ('Dockerfile', 'requirements.lock', 'requirements.txt',
               'tools/security_runtime_root.py', 'tools/container_entrypoint.py',
-              'tools/enbishan_workbook.py')
+              'tools/enbishan_workbook.py', 'tools/central_activation_preflight.py',
+              'tools/production_release_preflight.py')
 
 
 def digest(data):

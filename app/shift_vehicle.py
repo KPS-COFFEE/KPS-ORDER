@@ -47,6 +47,25 @@ def start(c,user,target,inspection):
     vehicle=dict(target.get('vehicle') or {})
     plate=re.sub(r'\s+', '', str(vehicle.get('plate','')).upper())
     if plate:
+        from .central_operations import enabled as central_enabled
+        from . import multibrand
+        active_group = multibrand.enabled() and c.execute(
+            "SELECT 1 FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id WHERE s.status<>'closed' LIMIT 1").fetchone()
+        if central_enabled() or active_group:
+            # Brand asset ledgers remain separate, but a plate is one physical car.
+            # Serialize receipts across both ledgers before testing occupancy.
+            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('physical-vehicle:'+plate,))
+            cards=c.execute('SELECT id,details FROM fleet_vehicles WHERE plate_key=%s ORDER BY id',(plate,)).fetchall()
+            if any(card['details'].get('operating_status')=='paused' for card in cards):
+                raise db.error(409,'VEHICLE_PAUSED','السيارة موقوفة عن التشغيل؛ راجع الإدارة.')
+            if c.execute("SELECT 1 FROM fleet_operating_segments l JOIN fleet_vehicles v ON v.id=l.vehicle_id JOIN shifts s ON s.id=l.shift_id WHERE v.plate_key=%s AND s.status IN ('open','closing') AND l.returned_at IS NULL",(plate,)).fetchone():
+                raise db.error(409,'VEHICLE_IN_USE','السيارة مستلمة في شفت آخر. سلّمها قبل استلامها من سائق آخر.')
+            # Respect each card's audited meter correction, as the canonical
+            # brand path does below; pre-correction history is not a new floor.
+            last=c.execute("SELECT max((coalesce(x.after_metrics,l.metrics)->>'end_odometer')::numeric) km FROM fleet_operating_segments l JOIN fleet_vehicles v ON v.id=l.vehicle_id LEFT JOIN LATERAL(SELECT after_metrics FROM vehicle_log_corrections WHERE shift_id=l.shift_id AND NOT l.multi_vehicle ORDER BY revision DESC LIMIT 1) x ON true WHERE v.plate_key=%s AND (v.details->'odometer_checkpoint' IS NULL OR l.returned_at>(v.details->'odometer_checkpoint'->>'recorded_at')::timestamptz)",(plate,)).fetchone()
+            physical_floor=max([int(last['km'] or 0),*[int(card['details'].get('odometer_km') or 0) for card in cards]])
+            if inspection.odometer_km<physical_floor:
+                raise db.error(422,'ODOMETER_DECREASE','قراءة العداد أقل من آخر قراءة للسيارة عبر سجلات التشغيل.')
         vid='veh_'+hashlib.md5((target['brand_id']+':'+plate).encode()).hexdigest()
         c.execute('INSERT INTO fleet_vehicles(id,brand_id,plate_key,plate,details) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',(vid,target['brand_id'],plate,vehicle['plate'],db.json(vehicle)))
         v=c.execute('SELECT id,details FROM fleet_vehicles WHERE brand_id=%s AND plate_key=%s FOR UPDATE',(target['brand_id'],plate)).fetchone()
@@ -71,6 +90,17 @@ def start(c,user,target,inspection):
     return {'version':1,'vehicle':vehicle,'start':stamp(c,user,inspection),'refuels':[]}
 
 def finish(c,user,shift,inspection):
+    anchor = (shift.get('vehicle_log') or {}).get('central_vehicle_shift_id')
+    if anchor:
+        from .central_workdays import association, require_action
+        require_action()
+        group, physical = association(c, shift['id']), association(c, anchor)
+        if not group or not physical or group['id'] != physical['id'] or physical['anchor_shift_id'] != anchor:
+            raise db.error(409, 'CENTRAL_VEHICLE_SCOPE', 'مرجع فحص المركبة غير مطابق للوردية.')
+        log = c.execute('SELECT vehicle_log FROM shifts WHERE id=%s', (anchor,)).fetchone()['vehicle_log']
+        if not log.get('end'):
+            raise db.error(409, 'CENTRAL_VEHICLE_INSPECTION', 'أكمل فحص نهاية الوردية أولًا.')
+        return shift['vehicle_log']
     if inspection is None:raise db.error(422,'VEHICLE_INSPECTION_REQUIRED','أكمل فحص نهاية الشفت وقراءة العداد والبنزين قبل إرسال التقفيلة.')
     from .fuel_exceptions import consume
     consume(c,user,shift,inspection,'end',(shift.get('vehicle_log') or {}).get('vehicle') or {})

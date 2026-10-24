@@ -139,7 +139,7 @@ def inbox(user=Depends(auth.require_roles('owner','delivery_manager','branch_man
                 AND o.preparation_status NOT IN ('cancelled','rejected') AND o.amendment_revision>0
                 AND NOT EXISTS(SELECT 1 FROM order_revision_receipts r WHERE r.order_id=o.id
                   AND r.revision=o.amendment_revision AND r.kind='branch')))
-            ORDER BY o.created_at LIMIT 100""",(user['brand_id'],user['role']=='owner',user.get('branch_ids',[]),
+            ORDER BY o.created_at LIMIT 100""",(user['brand_id'],user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]),
             user['role'],user['role'],user['role'])).fetchall()
         # Apply operational routing on the server, including expired requests:
         # opening a request or its conversation cannot remove it from this inbox.

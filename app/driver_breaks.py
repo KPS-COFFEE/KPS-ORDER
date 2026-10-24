@@ -56,6 +56,11 @@ def guard(c,sid):
     if active(c,sid):raise db.error(409,'DRIVER_ON_BREAK','السائق في استراحة؛ يجب إنهاؤها صراحةً.')
 
 
+def require_physical_shift(s):
+    if (s.get('vehicle_log') or {}).get('central_vehicle_shift_id'):
+        raise db.error(409,'CENTRAL_VEHICLE_ANCHOR_REQUIRED','نفّذ الاستراحة من الوردية الأساسية المشتركة.')
+
+
 def get_policy(c,s):
     parent=c.execute('SELECT user_id FROM shifts WHERE id=%s',(s['manager_shift_id'],)).fetchone()
     row=c.execute('SELECT policy FROM driver_break_policies WHERE manager_id=%s AND brand_id=%s',((parent or {}).get('user_id'),s['brand_id'])).fetchone()
@@ -119,6 +124,7 @@ def request_break(body:BreakRequest,request:Request,user=Depends(auth.current_us
         shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(body.shift_id,)).fetchone())
         def perform():
             s=lock_shift(c,body.shift_id);shift_access(c,user,s)
+            require_physical_shift(s)
             if s['user_id']!=user['id'] or s['kind']!='driver' or s['status']!='open':raise db.error(409,'BREAK_SHIFT','الشفت غير متاح.')
             if unresolved(c,s['id']):raise db.error(409,'BREAK_ACTIVE_TASKS','أكمل الطلبات أو سلّمها قبل الاستراحة.')
             if c.execute("SELECT 1 FROM driver_breaks WHERE shift_id=%s AND status IN ('requested','active')",(s['id'],)).fetchone():raise db.error(409,'BREAK_OVERLAP','توجد استراحة أو طلب استراحة قائم.')
@@ -144,6 +150,7 @@ def change(bid:str,body:Action,request:Request,user=Depends(auth.current_user)):
         if user['role']!='driver':manager(user)
         def perform():
             s=lock_shift(c,b['shift_id']);shift_access(c,user,s)
+            require_physical_shift(s)
             current=c.execute('SELECT * FROM driver_breaks WHERE id=%s FOR UPDATE',(bid,)).fetchone()
             if body.action=='end':
                 if current['status'] not in ('active','requested'):raise db.error(409,'BREAK_ENDED','الاستراحة منتهية.')

@@ -19,8 +19,15 @@ is separate from live connectivity. A previously approved offline printer is not
 shown as online. Historic print journals are preserved during replacement.
 
 No inbound port, public printer IP, admin password or remote-desktop access required.
-One bridge process per Windows account. The device key is encrypted with Windows
-DPAPI for this user; never copy it to another computer. Pair each branch separately.
+One bridge process per Windows account serves all registered KPS and Enbishan
+printers. Device keys are encrypted with Windows DPAPI for this user; never copy
+them to another computer. Pair each branch separately. Adding another setup keeps
+all existing registrations and print journals; it does not replace other printers.
+Keep one permanent bridge folder. To add another printer, stop the bridge, extract
+the new branch setup into that same folder, and run Start.cmd again. The server
+selects jobs by device credentials; each registration uses its own Windows printer
+and ACK recovery journal. A revoked or unavailable device does not stop the others.
+Legacy device.bin credentials and journals are preserved during the first upgrade.
 
 Queued: waiting for this computer.
 Claimed: received by the bridge; physical output is not confirmed.
@@ -40,7 +47,9 @@ custom paper height. Verify Arabic, logo, margins and a long order on real hardw
 before enabling normal branch printing. No physical-printer test is claimed here.
 To re-pair a revoked device: stop the running bridge, then run
 Start.cmd --re-pair
-Select the printer and enter a NEW pairing code. Old print journals are kept.
+Select the printer and enter a NEW pairing code. This adds its new registration;
+other registrations and old print journals are kept. Revoke the retired device
+from printer administration after reviewing its pending jobs and physical output.
 Restoring a server backup revokes printer devices and cancels pending prints;
 pair again after the manager reviews the Windows print queue.
 

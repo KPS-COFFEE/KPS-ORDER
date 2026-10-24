@@ -23,6 +23,8 @@ def map_config(user=Depends(auth.require_roles('owner', 'delivery_manager', 'del
     if not re.fullmatch(r'[a-z][a-z0-9_-]{1,59}', brand):
         return {'enabled': False}
     token = os.getenv('MAPBOX_PUBLIC_TOKEN_' + brand.upper().replace('-', '_'), '')
+    if not token and user.get('central_operations') and any(b['id']=='kps' for b in user['central_operations']['brands']):
+        token=os.getenv('MAPBOX_PUBLIC_TOKEN_KPS','')
     if not enabled() or not re.fullmatch(r'pk\.[A-Za-z0-9_.-]{20,2048}', token):
         return {'enabled': False}
     return {'enabled': True, 'provider': 'mapbox', 'public_token': token,
@@ -152,18 +154,34 @@ def route_context(c, user, driver_id):
         raise HTTPException(403, 'صلاحية عرض السائقين غير متاحة.')
     if not map_config(user).get('enabled'):
         raise HTTPException(409, 'خدمة الخريطة غير مفعلة.')
-    row = c.execute("SELECT u.id,u.branch_ids,s.branch_ids shift_branches,s.id shift_id,s.next_destination,g.lat,g.lng,g.updated_at "
-                    "FROM users u JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
-                    "JOIN driver_latest_locations g ON g.driver_id=u.id AND g.shift_id=s.id AND g.brand_id=u.brand_id "
-                    "WHERE u.id=%s AND u.brand_id=%s AND u.role='driver' AND u.active "
-                    "AND s.kind='driver' AND s.status='open' AND g.updated_at>=now()-interval '120 seconds' AND g.accuracy_m<=100",
-                    (driver_id, user['brand_id'])).fetchone()
+    from .central_operations import enabled as central_enabled
+    if central_enabled() and not user.get('_morning_manager_context'):
+        from . import multibrand
+        from .central_workdays import association
+        driver=c.execute("SELECT id,role,active,brand_id,branch_ids FROM users WHERE id=%s AND role='driver' AND active",(driver_id,)).fetchone()
+        driver=multibrand.project(c,driver,user['brand_id']) if driver else None
+        shift=c.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='driver' AND status='open'",(driver_id,user['brand_id'])).fetchone() if driver else None
+        gps=c.execute("SELECT g.* FROM driver_latest_locations g JOIN shifts s ON s.id=g.shift_id AND s.brand_id=g.brand_id WHERE g.driver_id=%s AND s.user_id=%s AND s.status='open' AND g.updated_at>=now()-interval '120 seconds' AND g.accuracy_m<=100",(driver_id,driver_id)).fetchone() if shift else None
+        row=None
+        if gps:
+            source,target=association(c,gps['shift_id']),association(c,shift['id'])
+            if gps['shift_id']==shift['id'] or source and target and source['id']==target['id']:
+                row={'id':driver_id,'branch_ids':driver['branch_ids'],'shift_branches':shift['branch_ids'],
+                     'shift_id':shift['id'],'next_destination':shift.get('next_destination'),
+                     'lat':gps['lat'],'lng':gps['lng'],'updated_at':gps['updated_at']}
+    else:
+        row = c.execute("SELECT u.id,u.branch_ids,s.branch_ids shift_branches,s.id shift_id,s.next_destination,g.lat,g.lng,g.updated_at "
+                        "FROM users u JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
+                        "JOIN driver_latest_locations g ON g.driver_id=u.id AND g.shift_id=s.id AND g.brand_id=u.brand_id "
+                        "WHERE u.id=%s AND u.brand_id=%s AND u.role='driver' AND u.active "
+                        "AND s.kind='driver' AND s.status='open' AND g.updated_at>=now()-interval '120 seconds' AND g.accuracy_m<=100",
+                        (driver_id, user['brand_id'])).fetchone()
     if not row:
         raise HTTPException(409, 'يلزم موقع حديث للسائق وشفت مفتوح.')
     if user.get('_morning_manager_context'):
         shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(row['shift_id'],)).fetchone())
     branches = [b for b in row['branch_ids'] if b in row['shift_branches'] and
-                (user['role'] == 'owner' or b in user.get('branch_ids', []))]
+                (user['role']=='owner' and (not central_enabled() or not user.get('home_brand_id')) or b in user.get('branch_ids',[]))]
     if not branches:
         raise HTTPException(403, 'السائق خارج نطاق الفروع المسموح.')
     tasks = c.execute("SELECT t.id,t.order_id,o.order_no,o.customer FROM driver_tasks t JOIN orders o ON o.id=t.order_id "
