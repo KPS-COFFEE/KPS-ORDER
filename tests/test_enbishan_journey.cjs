@@ -15,7 +15,7 @@ const p={id:'e1'};const group={code:'SIZE',name:'Size',required:true,values:[{co
 const ctx={state:{product:p,optionValues:[{}],branchCatalogPending:false,branchId:'b',branchCatalogId:'b'},requestedBrandId:'enbishan',
  $:id=>fields[id]||(fields[id]=new Element('div')),groups:()=>[group],fixedSingleSize:()=>false,isMug:()=>false,isKhaliya:()=>false,
  node:(tag,cls,text)=>new Element(tag,text),Option:function(text,value){const el=new Element('option',text);el.value=value;return el;},
- text:()=>{},number:{format:String},t:x=>x,groupLabel:g=>g.name,sourceText:v=>v.name,eligibleForProduct:()=>({ok:true}),showError:()=>{},renderVariantPrice:()=>priced++};
+ entryText:(ar,en)=>en,text:()=>{},number:{format:String},t:x=>x,groupLabel:g=>g.name,sourceText:v=>v.name,eligibleForProduct:()=>({ok:true}),showError:()=>{},renderVariantPrice:()=>priced++};
 fields['product-qty']=new Element('input');fields['product-qty'].value='1';vm.createContext(ctx);
 vm.runInContext(source.slice(source.indexOf('  function renderOptions()'),source.indexOf('  function addProduct()',source.indexOf('  function renderOptions()'))>0?source.indexOf('  function addProduct()',source.indexOf('  function renderOptions()')):source.indexOf('  async function addProduct()',source.indexOf('  function renderOptions()'))),ctx);
 ctx.renderOptions();let buttons=fields['product-options'].querySelectorAll('button');assert.equal(buttons.length,3);assert.equal(buttons[2].disabled,true);

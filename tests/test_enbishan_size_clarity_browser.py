@@ -40,3 +40,34 @@ def test_size_contents_price_and_photo_are_visible_before_flavour(static_custome
         assert page.evaluate('document.documentElement.scrollWidth')<=width+1
         assert not errors
         browser.close()
+
+
+def test_mahashi_choices_do_not_repeat_and_have_no_flavour_instruction(static_customer):
+    from playwright.sync_api import sync_playwright,expect
+    lang='ar';width=390
+    product=json.loads((ROOT/'tests/fixtures/enbishan-mahashi-small.json').read_text())
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True)
+        context=browser.new_context(viewport={'width':width,'height':900})
+        context.add_init_script("localStorage.setItem('kps_customer_lang',"+json.dumps(lang)+")")
+        page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        def route_api(route):
+            key=route.request.url.split('/api/',1)[1].split('?',1)[0]
+            responses={'catalog':{'brand':{'id':'enbishan','name':'عنبيشن'},'source_verified':True,'products':[product]},'branches':{'branches':[],'brand_services':{'delivery':True,'pickup':False,'car_pickup':False}},'session':{'user':None,'csrf_token':None,'customer_verified':False},'identity/channels':{'customer_phone_required':False,'channels':{'guest':{'available':True}}},'experience/public':{'customer_entry_enabled':True},'customer-map/config':{'enabled':False},'banners':{'banners':[]}}
+            route.fulfill(content_type='application/json',body=json.dumps(responses.get(key,{})))
+        page.route('**/api/**',route_api)
+        page.goto(static_customer+'/?brand_id=enbishan',wait_until='networkidle')
+        page.add_style_tag(path=str(ROOT/'public/assets/enbishan.css'))
+        page.locator('.product-image-button').click()
+        expect(page.locator('#product-option-hint')).not_to_contain_text('نكهة')
+        page.get_by_role('button',name='صغير ٢٠٫٠٠ ر.س',exact=True).click()
+        choices=page.locator('.customer-option-choices').filter(has_not=page.get_by_role('button',name='صغير ٢٠٫٠٠ ر.س',exact=True))
+        choices.nth(0).get_by_role('button',name='كوسا · حبتان',exact=True).click()
+        expect(choices.nth(1).get_by_role('button',name='كوسا · حبتان',exact=True)).to_have_count(0)
+        choices.nth(1).get_by_role('button',name='بصل · حبتان',exact=True).click()
+        expect(choices.nth(2).get_by_role('button',name='كوسا · حبتان',exact=True)).to_have_count(0)
+        expect(choices.nth(2).get_by_role('button',name='بصل · حبتان',exact=True)).to_have_count(0)
+        choices.nth(2).get_by_role('button',name='باذنجان · حبتان',exact=True).click()
+        expect(page.locator('#product-add')).to_be_enabled()
+        assert not errors
+        browser.close()
