@@ -192,7 +192,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         o=om[t['order_id']];actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(t['created_at']),'kind':'معالجة / Treatment','amount':0,'method':'—','reason':t['note'],'actor':t['actor_name'],'action':t['status']+' / '+t['resolution'],'order_id':o['id']})
     if group=='actions':result=actions
     if group=='deficits':result=deficits
-    return safe({'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'04:00'},'branches':bs,
+    from .aggregate_driver_closure import pending_financial_rows
+    pending_shared=pending_financial_rows(c,brand_id=u['brand_id'],branch_ids=bids,before=hi)
+    return safe({'pending_shared_closures':pending_shared,'financial_completion_blocked':bool(pending_shared),'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'04:00'},'branches':bs,
       'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات بتاريخ الحركة. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and refunds use transaction time. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
         (' جميع أصناف البراند ظاهرة حتى بلا مبيعات؛ الكمية المباعة منفصلة عن الهدايا والضيافة والإعلان والتعويض وبقية الأصناف الصفرية. الفروع المختارة هي فروع تنفيذ الطلب.' if lang=='ar' else ' All brand items appear, including items without sales. Sold quantities exclude gifts, hospitality, advertising, compensation and other zero-value items. Selected branches are order fulfilment branches.') if group=='items' else '')+(' فواتير ساباد المستوردة تُنسب ليوم التشغيل الأصلي الموثق؛ تاريخ التسجيل ليس وقت التسليم أو التحصيل الفعلي.' if lang=='ar' else ' Imported Sabad invoices are allocated to their documented original operational day; recording timestamps are not actual delivery or collection times.'),
       'generated_at':datetime.now(TZ)})
@@ -292,6 +294,8 @@ def review(report_id:str,body:Note,request:Request,user=Depends(auth.require_per
         if not r or (user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[]))):fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
         if c.execute('SELECT 1 FROM driver_accounting_settlements WHERE report_id=%s',(report_id,)).fetchone():
             fail('USE_VARIANCE_CONFIRMATION','اعتمد فرق التسوية من إجراء تأكيد العجز أو الفائض بعد مراجعة التحصيل.',409)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=r['shift_id'])
         def perform():
             if c.execute('SELECT 1 FROM accounting_reviews WHERE report_id=%s',(report_id,)).fetchone():fail('ALREADY_REVIEWED','تم اعتماد المراجعة سابقًا.',409)
             row=c.execute('INSERT INTO accounting_reviews(id,brand_id,report_id,reviewer_id,note) VALUES(%s,%s,%s,%s,%s) RETURNING *',(db.new_id('acr_'),user['brand_id'],report_id,user['id'],body.note)).fetchone()
@@ -424,6 +428,8 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         bs=branches(c,user,body.branch_ids);bids=sorted(b['id'] for b in bs);h=hashlib.sha256(','.join(bids).encode()).hexdigest()
         _,_,lo,hi=period(ds.isoformat(),de.isoformat())
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,brand_id=user['brand_id'],branch_ids=bids,before=hi)
         if c.execute("SELECT 1 FROM shifts WHERE brand_id=%s AND status<>'closed' AND opened_at<%s AND coalesce(submitted_at,now())>=%s AND branch_ids ?| %s",(user['brand_id'],hi,lo,bids)).fetchone():fail('OPEN_SHIFTS','توجد شفتات غير مقفلة في الشهر.',409)
         if c.execute("SELECT 1 FROM closure_reports r WHERE r.brand_id=%s AND r.kind='manager' AND r.created_at>=%s AND r.created_at<%s AND r.branch_ids ?| %s AND r.snapshot->'shift'->'submission'->>'operational_approved'='true' AND NOT EXISTS(SELECT 1 FROM manager_financial_matches m WHERE m.report_id=r.id AND m.status='matched') AND NOT EXISTS(SELECT 1 FROM driver_accounting_settlements d WHERE d.report_id=r.id AND d.stage='cash_received' AND d.balance_approved) AND NOT EXISTS(SELECT 1 FROM accounting_daily_closures a WHERE a.manager_shift_id=r.shift_id) LIMIT 1",(user['brand_id'],lo,hi,bids)).fetchone():
             fail('PENDING_MANAGER_MATCHES','ثبّت البنك والكاش لتقفيلات المدير قبل إقفال الشهر.',409)
@@ -511,6 +517,8 @@ def match_manager_closure(report_id:str,body:FinancialMatch,request:Request,user
     with db.tx() as c:
         r=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s FOR UPDATE",(report_id,user['brand_id'])).fetchone()
         matching_report_scope(user,r)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=r['shift_id'])
         def perform():
             previous=c.execute('SELECT * FROM manager_financial_matches WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
             revision=previous['revision'] if previous else 0
@@ -566,6 +574,7 @@ def driver_settlement_values(snapshot, latest=None):
     reconciliation_complete = approved and received is not None
     net_difference = cash_difference+bank_difference if reconciliation_complete else None
     return dict(original_bank_halalas=original_bank, original_cash_halalas=original_cash,
+                original_amount_provenance=sub.get('provenance','driver_submission'),shared_declaration_id=sub.get('shared_declaration_id'),shared_receipt_id=sub.get('shared_receipt_id'),
                 system_bank_halalas=expected_bank,system_cash_halalas=expected_cash,
                 bank_halalas=bank,balance_approved=approved,cash_recorded=received is not None,
                 cash_due_halalas=cash_due, cash_received_halalas=received,
@@ -719,6 +728,9 @@ def save_driver_settlement(c, user, report_id, body, receipt=False):
 def approve_driver_balance(report_id:str,body:DriverBalanceApproval,request:Request,user=Depends(access)):
     if not auth.has_permission(user, REVIEW): fail('ACCOUNTING_FORBIDDEN','صلاحية الاعتماد غير متاحة.',403)
     with db.tx() as c:
+        row=driver_settlement_scope(c,user,report_id)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=row['shift_id'])
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.driver_balance:'+report_id,
             body.model_dump(),lambda:save_driver_settlement(c,user,report_id,body))
 
@@ -904,6 +916,8 @@ def confirm_driver_variance(report_id:str,body:DriverVarianceConfirmation,reques
     if not body.confirmed:fail('CONFIRMATION_REQUIRED','أكد مراجعة العجز أو الفائض والإجراء المتخذ.')
     with db.tx() as c:
         row=driver_settlement_scope(c,user,report_id)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=row['shift_id'])
         def perform():
             latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
             if not latest or latest['revision']!=body.expected_revision:

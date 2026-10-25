@@ -128,7 +128,8 @@ def _open(c, user, body):
     if not target or target['role'] not in {'driver', 'delivery_manager', 'owner'}:
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الموظف غير متاح.')
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', ('shift:'+target['id'],))
-    if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'", (target['id'],)).fetchone():
+    from .aggregate_driver_closure import staffing_pending_sql
+    if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND "+staffing_pending_sql(), (target['id'],)).fetchone():
         raise db.error(409, 'SHIFT_ALREADY_OPEN', 'للموظف وردية مفتوحة؛ أكملها قبل فتح وردية جديدة.')
     from .central_operations import context
     scopes = context(c, target)['brands']
@@ -153,6 +154,10 @@ def _open(c, user, body):
     opened = []
     for scope in scopes:
         bids = [bid for bid in scope['branch_ids'] if not selected or bid in selected]
+        if body.kind == 'driver':
+            parent_id=parent_legs.get(scope['id'])
+            parent_shift=c.execute('SELECT branch_ids FROM shifts WHERE id=%s',(parent_id,)).fetchone() if parent_id else None
+            bids=[bid for bid in bids if parent_shift and bid in parent_shift['branch_ids']]
         if not bids:
             continue
         principal = multibrand.project(c, user, scope['id'])
@@ -189,7 +194,7 @@ def open_workday(body: ops.ShiftOpen, request: Request, user=Depends(auth.curren
         # locked server record and retain the canonical single-brand contract.
         manager = ops.lock_shift(c, body.manager_shift_id) if body.kind == 'driver' and body.manager_shift_id else None
         if (manager and manager['kind'] == 'manager'
-                and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                and manager['status']=='open'
                 and not association(c, manager['id'])):
             principal = multibrand.project(c, user, manager['brand_id'])
             if not principal:
@@ -345,6 +350,7 @@ def submit(sid: str, body: Submission, request: Request, user=Depends(auth.curre
     require_enabled(user, 'shifts_delegate_close' if user['role']=='admin' and auth.has_permission(user, 'shifts_delegate_close') else 'shifts_close', existing_sid=sid)
     with db.tx() as c:
         def perform(day, legs):
+            if day['kind']=='driver':raise db.error(409,'SHARED_PHYSICAL_SUBMISSION_REQUIRED','السائق يسجل الكاش والشبكة مرة واحدة من التقفيلة الموحدة؛ إسناد البراندات للمحاسبة.')
             supplied = exact_legs(legs, body.legs)
             for principal, shift in legs:
                 value = supplied[shift['id']]
@@ -359,6 +365,8 @@ def approve(sid: str, body: ops.Review, request: Request, user=Depends(auth.curr
     require_enabled(user, 'shifts_approve', existing_sid=sid)
     with db.tx() as c:
         def perform(day, legs):
+            if day['kind']=='driver' and any((s.get('submission') or {}).get('shared_declaration_id') for _,s in legs):
+                raise db.error(409,'SHARED_ACCOUNTING_PENDING','الاستلام الفعلي من مدير التوصيل وإسناد المبالغ للمحاسبة من التقفيلة الموحدة.')
             reports = []
             for principal, shift in legs:
                 reports.append(ops.approve_close_in_tx(c, principal, shift['id'], body)['report_id'])
@@ -392,14 +400,7 @@ def driver_close(sid: str, body: Receipt, request: Request, user=Depends(auth.cu
         def perform(day, legs):
             if day['kind'] != 'driver':
                 raise db.error(409, 'CENTRAL_DRIVER_WORKDAY', 'اختر وردية سائق.')
-            supplied = exact_legs(legs, body.legs)
-            reports = []
-            for principal, shift in legs:
-                value = supplied[shift['id']]
-                reports.append(ops.simple_driver_close_in_tx(c, principal, shift['id'], ops.DriverClose(
-                    **value.model_dump(exclude={'shift_id'}), confirmed=body.confirmed,
-                    vehicle_inspection=body.vehicle_inspection, exception_reason=body.exception_reason))['report_id'])
-            return {'report_ids': reports}
+            raise db.error(409,'SHARED_PHYSICAL_SUBMISSION_REQUIRED','السائق يسجل الكاش والشبكة مرة واحدة؛ استلمها من التقفيلة الموحدة وأحل الإسناد للمحاسبة.')
         output = change(c, user, sid, 'driver-close', body.model_dump(), request, perform, manager=True)
     from .reporting import generate_files
     for identifier in output['report_ids']:
@@ -410,7 +411,7 @@ def driver_close(sid: str, body: Receipt, request: Request, user=Depends(auth.cu
 from . import driver_closure as closure
 
 
-def closure_change(c, user, sid, body, request, operation, helper, *, manager=False):
+def closure_change(c, user, sid, body, request, operation, helper, *, manager=False, capability=None):
     def perform(day, legs):
         if day['kind'] != 'driver':
             raise db.error(409, 'CENTRAL_DRIVER_WORKDAY', 'اختر وردية سائق.')
@@ -423,7 +424,7 @@ def closure_change(c, user, sid, body, request, operation, helper, *, manager=Fa
                 current = body.model_copy(update={'request_id':(shift.get('closure_authorization') or {}).get('id','')})
             helper(c, principal, shift['id'], current)
     return change(c, user, sid, 'authorization.'+operation, body.model_dump(mode='json'), request,
-                  perform, manager=manager)
+                  perform, manager=manager, capability=capability)
 
 
 @router.post('/{sid}/request')
@@ -442,9 +443,9 @@ def closure_decision(sid:str, body:closure.Decision, request:Request, user=Depen
 
 @router.put('/{sid}/schedule')
 def closure_schedule(sid:str, body:closure.Schedule, request:Request, user=Depends(auth.current_user)):
-    require_enabled(user, 'shifts_approve', existing_sid=sid)
+    require_enabled(user, 'driver_duty_manage', existing_sid=sid)
     with db.tx() as c:
-        return closure_change(c,user,sid,body,request,'schedule',closure.schedule_in_tx,manager=True)
+        return closure_change(c,user,sid,body,request,'schedule',closure.schedule_in_tx,manager=True,capability='driver_duty_manage')
 
 
 @router.post('/{sid}/withdraw')
@@ -460,6 +461,8 @@ def return_for_correction(sid:str, body:ops.Review, request:Request, user=Depend
     ops.shift_roles(user, 'shifts_approve', 'owner', 'delivery_manager')
     with db.tx() as c:
         def perform(day, legs):
+            if any((s.get('submission') or {}).get('shared_declaration_id') for _,s in legs):
+                raise db.error(409,'SHARED_PHYSICAL_RETURN_REQUIRED','أعد التقفيلة من مسار التقفيلة الموحدة مع الحفاظ على أصل السائق.')
             for principal, shift in legs:
                 ops.return_close_in_tx(c, principal, shift['id'], body)
         return change(c,user,sid,'return',body.model_dump(),request,perform,manager=True,capability='shifts_approve')

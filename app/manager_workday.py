@@ -4,8 +4,15 @@ ACTIVE = "o.preparation_status NOT IN ('completed','cancelled','rejected') AND o
 UNASSIGNED = "NOT EXISTS(SELECT 1 FROM effective_driver_tasks wt WHERE wt.order_id=o.id AND wt.status NOT IN ('cancelled','transferred','reassigned'))"
 
 
+def _physical_staffing_clause():
+    # The completion marker is installed only by the multi-brand migration.
+    # Old submitted financial records remain history, never fresh staffing.
+    from . import multibrand
+    return ' AND staffing_ended_at IS NULL' if multibrand.enabled() else ''
+
+
 def current_shift(conn, user):
-    return conn.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='manager' AND status<>'closed' ORDER BY opened_at DESC LIMIT 1",(user['id'],user['brand_id'])).fetchone()
+    return conn.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='manager' AND status<>'closed'"+_physical_staffing_clause()+" ORDER BY opened_at DESC LIMIT 1",(user['id'],user['brand_id'])).fetchone()
 
 
 def current_orders(shift, user):
@@ -34,7 +41,7 @@ def workspace_orders(conn, user):
     """Owner sees the union of real active manager shifts; no invented day window."""
     if user['role'] == 'delivery_manager':
         return current_orders(current_shift(conn, user), user)
-    shifts = conn.execute("SELECT * FROM shifts WHERE brand_id=%s AND kind='manager' AND status<>'closed'", (user['brand_id'],)).fetchall()
+    shifts = conn.execute("SELECT * FROM shifts WHERE brand_id=%s AND kind='manager' AND status<>'closed'"+_physical_staffing_clause(), (user['brand_id'],)).fetchall()
     predicates, values = [], []
     for shift in shifts:
         predicate, params = current_orders(shift, {'id': shift['user_id']})

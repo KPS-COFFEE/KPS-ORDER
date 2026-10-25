@@ -143,6 +143,28 @@ def test_audit_no_csrf_or_wrong_origin_cannot_collect(client,population):
 def test_audit_prevent_unthrottled_public_map_resolution(client,monkeypatch):
     """After SEC-01: the historical25-success proof must now be impossible."""
     from app import map_resolution
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    # The production budget is per database-clock minute. A CI run crossing
+    # that boundary legitimately starts another window; hold only that clock
+    # result steady while exercising real PostgreSQL counters/leases/cache.
+    with db.tx() as c:
+        bucket=c.execute("SELECT date_trunc('minute',clock_timestamp()) AS bucket").fetchone()['bucket']
+    buckets=[]
+    class BucketResult:
+        def fetchone(self):return {'bucket':bucket}
+    class FixedBudgetClock:
+        def __init__(self,connection):self.connection=connection
+        def execute(self,statement,*args,**kwargs):
+            if statement == "SELECT date_trunc('minute',clock_timestamp()) AS bucket":
+                buckets.append(bucket)
+                return BucketResult()
+            return self.connection.execute(statement,*args,**kwargs)
+        def __getattr__(self,name):return getattr(self.connection,name)
+    @contextmanager
+    def fixed_budget_transaction():
+        with db.tx() as c:yield FixedBudgetClock(c)
+    monkeypatch.setattr(map_resolution,'db',SimpleNamespace(tx=fixed_budget_transaction,error=db.error,json=db.json))
     calls=[]
     async def resolve(value):
         calls.append(value)
@@ -153,6 +175,7 @@ def test_audit_prevent_unthrottled_public_map_resolution(client,monkeypatch):
         r=client.post('/api/location/parse-map-url',json={'url':'https://maps.app.goo.gl/SyntheticAuditOnly'})
         statuses.append(r.status_code)
     assert statuses==[200]*map_resolution.CLIENT_LIMIT+[429]*(25-map_resolution.CLIENT_LIMIT)
+    assert len(buckets)==25 and set(buckets)=={bucket}
     assert len(calls)==1
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM map_resolution_clients').fetchone()['n']==1

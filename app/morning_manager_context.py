@@ -37,7 +37,8 @@ ENDPOINTS['operations'].discard('task_transition')
 ENDPOINTS['orders'].update({'authorize_complimentary','revoke_complimentary_authorization','list_complimentary_authorizations','customer_lookup', 'customer_search', 'change_delivery_location'})
 ENDPOINTS['order_requests'] = {'decide'}
 ENDPOINTS['driver_support'] = {'list_requests', 'request_support', 'accept_support', 'resolve_request'}
-ENDPOINTS['order_financial_cases'] = {'cancel','journey','inbox'}
+ENDPOINTS['order_financial_cases'] = {'cancel','nonreceipt','free_item_return','journey','inbox'}
+ENDPOINTS['financial_clarifications'] = {'listing','decide'}
 ENDPOINTS['map_services'] = {'recommendations', 'health', 'alerts', 'zones', 'plan', 'trips'}
 ENDPOINTS['driver_closure'] = {'listing', 'schedule', 'decide'}
 ENDPOINTS['dispatch_map'] = {'map_config', 'driver_locations', 'discover_driver_routes', 'permit_driver_route'}
@@ -123,6 +124,10 @@ def apply(conn, user, request, *, session=False):
     name = getattr(endpoint, '__name__', '')
     scoped = resolve(conn, user, allow_bootstrap=session or module == 'operations' and name in {'open_shift', 'shifts'})
     if request.method=='GET' and ((module=='order_financial_cases' and name in {'journey','inbox'}) or (module=='orders' and name=='get_order')):
+        scoped['_morning_history_read']=True
+    if module=='financial_clarifications' and name in {'listing','decide'}:
+        # Evidence follow-up reads its immutable source before its own versioned
+        # transition; current-duty historical provenance remains mandatory.
         scoped['_morning_history_read']=True
     if request.method=='POST' and module=='order_financial_cases' and name=='cancel':
         scoped['_morning_cancellation_replay']=True
@@ -253,6 +258,11 @@ def recheck_resources(conn, user, request, module, name):
         if not row:
             raise db.error(404, 'MORNING_TICKET_NOT_FOUND', 'التذكرة غير موجودة ضمن مناوبتك.')
         require_order(conn, user, row['order_id'])
+    if module == 'financial_clarifications' and name == 'decide':
+        row=conn.execute('SELECT order_id FROM financial_case_clarifications WHERE id=%s',(params.get('identifier'),)).fetchone()
+        if not row:
+            raise db.error(404,'MORNING_CLARIFICATION_NOT_FOUND','طلب الاستكمال غير موجود ضمن مناوبتك.')
+        require_order(conn,user,row['order_id'])
     if module == 'order_amendments' and params.get('aid'):
         row = conn.execute('SELECT order_id FROM order_amendments WHERE id=%s', (params['aid'],)).fetchone()
         if not row:

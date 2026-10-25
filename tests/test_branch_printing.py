@@ -83,8 +83,22 @@ def test_driver_sees_only_fully_covering_manager_and_clear_missing_selection(ops
     result=post('driver','/api/shifts',{'kind':'driver'},status=409)
     assert result['detail']['code']=='MANAGER_SHIFT_REQUIRED'
     with db.tx() as conn:
-        conn.execute("UPDATE users SET branch_ids=%s WHERE id='ops-driver'",(db.json(['ops-branch','extra-scope']),))
+        conn.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('extra-scope',2,'extra-source','ops-brand','Extra branch','حفر الباطن','{}')")
+        conn.execute("UPDATE users SET branch_ids=%s WHERE id='ops-driver'",(db.json(['extra-scope']),))
+    # No overlap remains unavailable, and a driver cannot select another scope.
     assert actor('driver').get('/api/shifts/current').json()['available_manager_shifts']==[]
+    post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager,'branch_ids':['ops-branch']},status=403)
+    post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager},status=422)
+    with db.tx() as conn:
+        assert not conn.execute("SELECT 1 FROM shifts WHERE user_id='ops-driver'").fetchone()
+        conn.execute("UPDATE users SET branch_ids=%s WHERE id='ops-driver'",(db.json(['ops-branch','extra-scope']),))
+    # An authorized open manager need cover only the shared operating branches.
+    available=actor('driver').get('/api/shifts/current').json()['available_manager_shifts']
+    assert any(s['id']==manager for s in available)
+    opened=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager})['shift']
+    assert opened['branch_ids']==['ops-branch'] and opened['manager_shift_id']==manager
+    with db.tx() as conn:
+        assert conn.execute("SELECT branch_ids FROM users WHERE id='ops-driver'").fetchone()['branch_ids']==['ops-branch','extra-scope']
 
 
 @pytest.mark.postgres

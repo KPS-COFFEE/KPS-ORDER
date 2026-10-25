@@ -112,25 +112,17 @@ def test_closing_rolls_back_all_brands_when_one_has_a_pending_order(central):
 
 
 @pytest.mark.postgres
-def test_driver_close_requires_exact_breakdown_and_is_atomic(central,monkeypatch):
+def test_shared_driver_legacy_perbrand_close_is_rejected_atomically(central):
     _,_,post,_,_=central
-    from app import reporting
-    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
     _,driver=open_days(central)
     path='/api/central-operations/workdays/'+driver['shift']['id']+'/driver-close'
     rows=[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'terminal_total_halalas':0} for s in driver['shifts']]
     body={'legs':rows,'confirmed':True,'exception_reason':'Synthetic delegated end','vehicle_inspection':inspection(1010)}
-    post('manager',path,{**body,'legs':rows[:1]},status=422)
+    result=post('manager',path,body,status=409)
+    assert result['detail']['code']=='SHARED_PHYSICAL_SUBMISSION_REQUIRED'
     with db.tx() as c:
         assert not c.execute("SELECT 1 FROM shifts WHERE user_id='dual-driver' AND status<>'open'").fetchone()
-    done=post('manager',path,body)
-    assert {s['status'] for s in done['shifts']}=={'closed'}
-    assert len(done['report_ids'])==2
-    with db.tx() as c:
-        rows=c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
-        assert sum('end' in s['vehicle_log'] for s in rows)==1
-        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='shift.vehicle.end'").fetchone()['n']==1
-        assert len(c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=ANY(%s) AND status='confirmed'",([s['id'] for s in rows],)).fetchall())==2
+        assert not c.execute('SELECT 1 FROM custody_transfers').fetchone()
 
 
 @pytest.mark.postgres
@@ -279,7 +271,10 @@ def test_overnight_adoption_still_revalidates_current_branch_enablement(central,
 @pytest.mark.postgres
 def test_two_legacy_shifts_are_never_silently_merged(central):
     _,_,post,shifts,_=central
-    kps,_=shifts('kps');shifts('enbishan')
+    kps,_=shifts('kps')
+    # Two historical manager shifts remain separate; do not create an invalid
+    # second physical driver shift just to seed this manager-adoption witness.
+    post('manager','/api/shifts',{'kind':'manager'},brand='enbishan')
     post('manager','/api/central-operations/workdays/'+kps+'/adopt',{},status=409)
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
@@ -402,10 +397,13 @@ def test_flag_off_drains_existing_group_without_component_bypass(central,monkeyp
         post('driver','/api/shifts/'+leg['id']+'/closing',{},brand=leg['brand_id'],status=409)
     detail=actor('driver').get('/api/central-operations/workdays/'+driver['shift']['id'])
     assert detail.status_code==200,detail.text
-    done=post('manager','/api/central-operations/workdays/'+driver['shift']['id']+'/driver-close',{
-        'legs':[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'terminal_total_halalas':0} for s in driver['shifts']],
-        'confirmed':True,'exception_reason':'Synthetic flag rollback drain','vehicle_inspection':inspection(1010)})
-    assert {s['status'] for s in done['shifts']}=={'closed'}
+    prefix='/api/central-operations/workdays/'+driver['shift']['id']
+    declared=post('manager',prefix+'/physical-submit',{'cash_halalas':0,'card_halalas':0,'reason':'Synthetic flag rollback drain','vehicle_inspection':inspection(1010)})
+    receipt=post('manager',prefix+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':0,'confirmed':True,'reference':'Flag-off physical receipt'})
+    done=post('accountant',prefix+'/physical-allocation',{'declaration_id':declared['declaration_id'],'receipt_id':receipt['receipt_id'],'confirmed':True,'reason':'Verified zero-activity brand allocation',
+        'legs':[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'retained_halalas':0,'terminal_total_halalas':0,'evidence':'No activity verified'} for s in driver['shifts']]})
+    assert done['state']=='allocated'
+
 
 
 @pytest.mark.postgres
@@ -524,8 +522,10 @@ def test_old_client_evening_standalone_is_not_treated_as_morning(central):
     _, _, post, _, _ = central
     manager = post('manager', '/api/shifts', {'kind': 'manager'})['shift']
     result = post('driver', '/api/central-operations/workdays', {
-        'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()}, status=409)
-    assert result['detail']['code'] == 'MANAGER_SHIFT_SCOPE'
+        'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()})
+    assert result['shift']['manager_shift_id']==manager['id']
+    assert result['shift']['delivery_window_snapshot']['period']=='evening'
+    assert not result.get('workday')
 
 
 def test_morning_compat_delegates_canonical_contract_without_group_action(monkeypatch):

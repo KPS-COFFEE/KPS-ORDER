@@ -112,9 +112,11 @@ def ticket_events(c,user,identifier,lock=False):
 
 def render_ticket(created,changes):
     d=created['details'];last=changes[-1]['details'] if changes else dict(status='open',version=1)
-    return safe(dict(id=created['entity_id'],reference=d['reference'],type=d['type'],issue=d['issue'],reason=d['reason'],
+    result=safe(dict(id=created['entity_id'],reference=d['reference'],type=d['type'],issue=d['issue'],reason=d['reason'],
         description=d['description'],type_label=d['type_label'],issue_label=d['issue_label'],reason_label=d['reason_label'],requested_by=created['actor_id'],requester_name=created['actor_name'],
         requester_role=d['requester_role'],created_at=created['created_at'],status=last['status'],version=last['version']))
+    from .administrative_guidance import employee_ticket
+    return dict(result,guidance=employee_ticket(result))
 
 
 @router.post('')

@@ -62,6 +62,13 @@ def create_ticket(body:TicketBody,request:Request,user=Depends(auth.current_user
     with db.tx() as c:
         def perform():
             o=order_access(c,user,body.order_id,True)
+            if body.category=='payment':
+                from .order_amendments import balance
+                from .order_financial_cases import open_collection_case
+                actual=balance(c,o)
+                if o['service']=='delivery' and o['preparation_status'] not in ('cancelled','rejected') and 0<actual<o['total_halalas']:
+                    task=c.execute('SELECT shift_id FROM driver_tasks WHERE order_id=%s ORDER BY created_at DESC,id DESC LIMIT 1',(o['id'],)).fetchone()
+                    open_collection_case(c,o,user,body.note,actual,o['total_halalas']-actual,task['shift_id'] if task else None)
             v=c.execute("SELECT * FROM conversations WHERE order_id=%s AND category='help' FOR UPDATE",(o['id'],)).fetchone()
             if not v:
                 cid=uid();c.execute("INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route,context_service) VALUES(%s,%s,%s,%s,%s,'delivery',%s)",(cid,o['id'],o['brand_id'],o['branch_id'],o['customer_id'],o['service']))
@@ -89,6 +96,11 @@ def update_ticket(tid:str,body:UpdateTicket,request:Request,user=Depends(auth.cu
             t=c.execute('SELECT * FROM support_tickets WHERE id=%s',(tid,)).fetchone()
             if not t:fail(404,'التذكرة غير موجودة')
             order_access(c,user,t['order_id'],True)
+            if t['category']=='payment' and body.status in ('resolved','closed'):
+                from .order_financial_cases import case
+                pending=case(c,t['order_id'])
+                if pending and pending['status']=='pending':
+                    raise db.error(409,'ACCOUNTING_CASE_PENDING','المعالجة المالية لدى المحاسبة؛ يمكنك تحديث المتابعة، ولا تُغلق المشكلة قبل معالجة الفرق.')
             t=c.execute('SELECT * FROM support_tickets WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             if body.status=='closed' and t['status']!='resolved':fail(409,'سجل الحل أولاً ثم أغلق الإجراء نهائيًا')
             if t['status']=='closed' and body.status!='in_progress':fail(409,'أعد فتح التذكرة قيد المعالجة أولاً')

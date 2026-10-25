@@ -24,7 +24,7 @@ from . import auth, db
 
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
-TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
+TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'driver_duty_profiles', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
           'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'operational_day_reclassifications', 'central_workdays', 'central_workday_legs', 'driver_latest_locations', 'driver_location_health', 'orders', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'order_driver_attribution_corrections', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
           'first_order_gift_claims', 'custody_events', 'retained_carryovers', 'manager_handovers', 'driver_support_requests', 'central_manager_handovers', 'central_manager_handover_legs', 'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures',
           'report_corrections', 'conversations', 'chat_attachments',
@@ -41,8 +41,9 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'staff_brand_memberships', 'driver_brand_dedications',
           'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
-          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports')
-AUTH_TABLES = {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations', 'shared_driver_closure_declarations', 'shared_driver_closure_returns', 'shared_driver_closure_receipts', 'shared_driver_closure_allocations', 'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations', 'financial_case_clarifications', 'financial_case_clarification_events','legacy_invoice_imports')
+SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations','shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
+AUTH_TABLES = SHARED_PHYSICAL_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -71,7 +72,13 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand):
-    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations', 'legacy_invoice_imports'}:
+    if brand and table == 'driver_duty_profiles':
+        return 'driver_id IN (SELECT id FROM users WHERE brand_id=%s)', (brand,)
+    if brand and table == 'financial_case_clarifications':
+        return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
+    if brand and table == 'financial_case_clarification_events':
+        return 'clarification_id IN (SELECT id FROM financial_case_clarifications WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
+    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations','legacy_invoice_imports'}:
         return 'brand_id=%s', (brand,)
     if brand and table in {'prior_delivery_grants', 'prior_delivery_records'}:
         return 'brand_id=%s', (brand,)

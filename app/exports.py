@@ -24,7 +24,7 @@ from . import auth, db
 
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
-TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
+TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'driver_duty_profiles', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
           'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'operational_day_reclassifications', 'central_workdays', 'central_workday_legs', 'driver_latest_locations', 'driver_location_health', 'orders', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'order_driver_attribution_corrections', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
           'first_order_gift_claims', 'custody_events', 'retained_carryovers', 'manager_handovers', 'driver_support_requests', 'central_manager_handovers', 'central_manager_handover_legs', 'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures',
           'report_corrections', 'conversations', 'chat_attachments',
@@ -41,8 +41,15 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'staff_brand_memberships', 'driver_brand_dedications',
           'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
-          'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports')
-AUTH_TABLES = {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+          'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations',
+          'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
+          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations',
+          'financial_case_clarifications','financial_case_clarification_events','legacy_invoice_imports')
+SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
+                          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
+# Combined physical actuals cannot be split into invented brand amounts in a brand export.
+# Full private archives retain the whole immutable declaration and its provenance.
+AUTH_TABLES = SHARED_PHYSICAL_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -71,7 +78,13 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand):
-    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations', 'legacy_invoice_imports'}:
+    if brand and table == 'driver_duty_profiles':
+        return 'driver_id IN (SELECT id FROM users WHERE brand_id=%s)', (brand,)
+    if brand and table == 'financial_case_clarifications':
+        return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
+    if brand and table == 'financial_case_clarification_events':
+        return 'clarification_id IN (SELECT id FROM financial_case_clarifications WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
+    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations','legacy_invoice_imports'}:
         return 'brand_id=%s', (brand,)
     if brand and table in {'prior_delivery_grants','prior_delivery_records'}:
         return 'brand_id=%s', (brand,)
@@ -145,6 +158,17 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
     selected = [table for table in TABLES if table in available and (full or table not in AUTH_TABLES)]
     if available - set(TABLES) - {'schema_migrations'}:
         raise db.error(409, 'EXPORT_SCHEMA_UNSUPPORTED', 'أضيفت سجلات تشغيلية جديدة. يلزم تحديث صيغة التصدير قبل إخراج نسخة كاملة.')
+    if not full:
+        # A scoped export cannot carry staffing completion while omitting the
+        # cross-brand immutable receipt which justifies it. Preserve the exact
+        # source and direct the owner to a whole private archive instead.
+        for shared in ('shared_driver_closure_declarations','shared_manager_closure_declarations'):
+            if shared in available and conn.execute(sql.SQL(
+                'SELECT 1 FROM {} d JOIN central_workday_legs l ON l.workday_id=d.workday_id '
+                'JOIN shifts s ON s.id=l.shift_id WHERE s.brand_id=%s LIMIT 1'
+            ).format(sql.Identifier(shared)), (brand_id,)).fetchone():
+                raise db.error(409, 'EXPORT_SHARED_PHYSICAL_SCOPE',
+                    'توجد تقفيلات فعلية مشتركة بين البراندين. استخدم الأرشيف الخاص الكامل لحفظ الأصل والاستلام وإسناد المحاسبة معًا؛ لا يمكن فصلها في تصدير براند واحد.')
     migrations = conn.execute('SELECT version,sha256 FROM schema_migrations ORDER BY version').fetchall()
     with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         def add(name, content):
@@ -193,6 +217,7 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                     'credentials_included': bool(full),
                     'map_runtime_import_policy': 'Private database archives only; verify then discard signing key, counters, leases and location cache on isolated restore.',
                     'excluded_tables': [] if full else sorted(AUTH_TABLES),
+                    'shared_physical_exclusion_reason': None if full else 'Combined actual declarations require a full private archive; no invented brand allocation is exported.',
                     'infrastructure_tables': [table for table in selected if table in INFRASTRUCTURE_TABLES],
                     'infrastructure_import_policy': 'Preserve observations and failure queues as historical source records; do not activate source hosting configuration or replay alerts.'}
         archive.writestr('manifest.json', _encode(manifest))
@@ -286,6 +311,34 @@ def migration_manifest():
             for path in sorted(paths, key=lambda path: path.name)]
 
 
+def _verify_staffing_markers(conn, available):
+    """Validate imported physical completion against immutable full-archive evidence."""
+    proofs = ["""(s.kind='driver' AND EXISTS (
+        SELECT 1 FROM central_workday_legs l
+        JOIN central_workdays w ON w.id=l.workday_id
+        JOIN shared_driver_closure_declarations d ON d.workday_id=w.id
+        JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id
+        LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id
+        WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at
+          AND (a.id IS NOT NULL OR d.retained_halalas >=
+             (SELECT coalesce(sum((j->>'permanent_float_halalas')::bigint),0)
+              FROM jsonb_array_elements(d.expected_snapshot) j))))"""]
+    if 'shared_manager_closure_receipts' in available:
+        proofs.append("""(s.kind='manager' AND EXISTS (
+            SELECT 1 FROM central_workday_legs l
+            JOIN central_workdays w ON w.id=l.workday_id
+            JOIN shared_manager_closure_declarations d ON d.workday_id=w.id
+            JOIN shared_manager_closure_receipts r ON r.declaration_id=d.id
+            WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at
+              AND r.received_by=d.recipient_user_id
+              AND NOT EXISTS (SELECT 1 FROM shared_manager_closure_returns returned
+                              WHERE returned.declaration_id=d.id)))""")
+    invalid = conn.execute("SELECT s.id FROM shifts s WHERE s.staffing_ended_at IS NOT NULL "
+        "AND (s.status NOT IN ('submitted','closed') OR NOT ("+' OR '.join(proofs)+")) LIMIT 1").fetchone()
+    if invalid:
+        raise ValueError('Restored staffing completion lacks its immutable physical receipt.')
+
+
 def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     target_database_id: str | None = None, asset_directory: str | Path | None = None) -> dict:
     """Restore to a NEW isolated test schema; no existing schema is overwritten.
@@ -326,6 +379,13 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             conn.execute('ALTER TABLE shifts DISABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users DISABLE TRIGGER register_fleet_vehicle')
             conn.execute('ALTER TABLE customer_wallet_entries DISABLE TRIGGER wallet_entry_balance')
+            # Physical completion is imported with its exact historical receipt;
+            # its insert guard normally forbids creating already-ended staffing.
+            # Disable only in this newly created schema, then verify all markers
+            # against immutable receipts before restoring the live write guard.
+            restore_staffing_guard = 'shared_driver_closure_receipts' in actual
+            if restore_staffing_guard:
+                conn.execute('ALTER TABLE shifts DISABLE TRIGGER guarded_staffing_end')
             for table in manifest['table_order']:
                 column_info = conn.execute(
                     'SELECT column_name,udt_name,is_nullable,is_generated FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
@@ -364,6 +424,9 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')
             conn.execute('ALTER TABLE customer_wallet_entries ENABLE TRIGGER wallet_entry_balance')
+            if restore_staffing_guard:
+                _verify_staffing_markers(conn, actual)
+                conn.execute('ALTER TABLE shifts ENABLE TRIGGER guarded_staffing_end')
             consent_sequence=conn.execute("SELECT pg_get_serial_sequence('customer_marketing_consents','seq') AS name").fetchone()['name']
             conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM customer_marketing_consents),0),1),EXISTS(SELECT 1 FROM customer_marketing_consents))",(consent_sequence,))
             # Restores preserve history, never replay physical printing or

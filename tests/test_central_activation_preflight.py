@@ -111,7 +111,17 @@ def test_collect_executes_on_real_isolated_schema_without_changing_workdays(dual
     assert first['metadata_preflight_clear'], first
     assert {row['shift_id'] for row in first['legacy_adoption_candidates']} == {manager, driver}
     assert first['physical_vehicle_conflicts'] == []
-    other_manager, other_driver = open_shifts('enbishan')
+    # Explicit pre-existing legacy conflict: new APIs correctly refuse a second
+    # physical driver shift. Seed the historical inconsistency being audited;
+    # never reinterpret dual.shifts or relax the current admission guard.
+    from uuid import uuid4
+    other_manager, other_driver = 'legacy-manager-'+uuid4().hex, 'legacy-driver-'+uuid4().hex
+    with db.tx() as c:
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'manager','dual-manager','enbishan',%s)",
+                  (other_manager,db.json(['enbishan-test-1','enbishan-test-2'])))
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,vehicle_log) "
+                  "SELECT %s,'driver','dual-driver','enbishan',%s,%s,vehicle_log FROM shifts WHERE id=%s",
+                  (other_driver,db.json(['enbishan-test-1','enbishan-test-2']),other_manager,driver))
     second = collect_readonly()
     assert not second['metadata_preflight_clear']
     assert second['legacy_adoption_candidates'] == []

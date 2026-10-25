@@ -79,8 +79,10 @@ DEFINITIONS.append(('driver_support_approve', 'اعتماد أو رفض طلب �
                     'Approve or reject scoped driver support requests', 'shifts', set()))
 DEFINITIONS.append(('complimentary_approve', 'اعتماد وإلغاء أوامر الضيافة والتعويض والاستكمال غير المنفذة',
                     'Authorize and revoke unused courtesy fulfillment commands', 'orders', set()))
+DEFINITIONS.append(('driver_duty_manage', 'تحديد ساعات دوام السائقين', 'Configure driver duty hours', 'staff', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'driver_duty_manage': {'admin', 'delivery_manager'},
     'complimentary_approve': {'admin', 'delivery_manager'},
     'driver_support_approve': {'admin', 'delivery_manager'},
     'branch_availability': {'driver', 'delivery_staff', 'delivery_manager', 'admin'},
@@ -99,6 +101,7 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
+    'driver_duty_manage': {'methods':['GET','PUT'], 'paths':['/api/driver-duty','/api/driver-duty/{identifier}'], 'scope':'current_brand_assigned_driver_branches_next_shift_only_no_financial_authority'},
     'complimentary_approve': {'methods':['GET','POST'], 'paths':['/api/orders/complimentary/quote','/api/orders/complimentary/authorizations','/api/orders/complimentary/authorizations/{identifier}/revoke'], 'scope':'explicit_owner_grant_current_brand_all_original_and_fulfillment_branches_no_refund_or_cash_permission'},
     'driver_support_approve': {'methods':['GET','POST'], 'paths':['/api/driver-support','/api/driver-support/{rid}/accept','/api/driver-support/{rid}/resolve'], 'scope':'owner_granted_staff_identity_all_affected_brand_and_branch_scopes_no_cash_transfer'},
     'staff_catalog_view': {'methods':['GET'], 'paths':['/api/identity/permissions/catalog'], 'scope':'catalog_only_no_personnel_no_grant'},
@@ -161,7 +164,7 @@ def catalog():
 
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
-    'order_financial_cases': {'refund_context':'accounting_review','cancel':'orders_cancel','journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':'accounting_review'},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
+    'order_financial_cases': {'nonreceipt':'payments_collect','free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':'orders_cancel','journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':'accounting_review'},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
     'task_recovery': {'listing':'tasks_resolve_delivery', 'detail':'tasks_resolve_delivery', 'review_revision':'tasks_resolve_delivery'},
     'driver_float': {'listing':('drivers_view','accounting_review'), 'propose':'custody_transfer', 'decide':'accounting_review'},
     'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':'orders_amend', 'request_amendment':'orders_amend', 'decide':'orders_amend',
@@ -222,6 +225,10 @@ ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branc
                                 for name in ('order_output_status','confirm_order_output')})
 
 
+ROUTES['financial_clarifications'] = {'listing':('support_manage','accounting_review'),'request_clarification':'accounting_review','decide':('support_manage','accounting_review')}
+ROUTES['aggregate_manager_closure'] = {'return_declaration':'shifts_close','detail':('shifts_view','accounting_review'),'submit':'shifts_close','receive':'custody_transfer','allocate':'accounting_review','inbox':('shifts_view','accounting_review')}
+ROUTES['aggregate_driver_closure'] = {'detail':('shifts_view','accounting_review'),'submit':{'driver':'shifts_close','delivery_manager':'shifts_delegate_close'},'receive':'shifts_delegate_close','return_declaration':'shifts_approve','allocate':'accounting_review','inbox':'accounting_review'}
+ROUTES['driver_duty'] = {'listing':'driver_duty_manage','configure':'driver_duty_manage'}
 ROUTES['driver_support'] = {'list_requests': ('shifts_view','driver_support_approve'), 'request_support': 'shifts_handover', 'accept_support': 'driver_support_approve', 'resolve_request': ('shifts_handover','driver_support_approve')}
 
 def required_for(endpoint, role, *, user=None):

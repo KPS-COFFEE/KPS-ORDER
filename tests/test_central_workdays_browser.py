@@ -110,7 +110,7 @@ def test_manager_has_one_workday_both_order_menus_and_unified_conversations(cent
 
 
 @pytest.mark.parametrize('language',['ar','en'])
-def test_driver_shared_closure_has_one_inspection_and_both_ledger_inputs(central,central_web,chromium_browser,language):
+def test_driver_shared_closure_has_one_cash_card_input_and_accounting_allocation(central,central_web,chromium_browser,language):
     from playwright.sync_api import expect
     _,_,post,_,_=central
     _,driver=open_days(central);sid=driver['shift']['id'];prefix='/api/central-operations/workdays/'+sid
@@ -123,8 +123,10 @@ def test_driver_shared_closure_has_one_inspection_and_both_ledger_inputs(central
         page.locator('#navigation [data-page=shifts]').click()
         page.locator('[data-action=shift-detail][data-id="'+sid+'"]').first.click()
         expect(page.locator('#modal input[name=inspection_odometer]')).to_have_count(1)
-        expect(page.locator('#modal input[name^="counted:"]')).to_have_count(2)
-        expect(page.locator('#modal input[name^="terminal:"]')).to_have_count(2)
+        expect(page.locator('#modal input[name=cash]')).to_have_count(1)
+        expect(page.locator('#modal input[name^="counted:"]')).to_have_count(0)
+        expect(page.locator('#modal input[name=card]')).to_have_count(1)
+        expect(page.locator('#modal input[name^="terminal:"]')).to_have_count(0)
         assert not errors,errors
         # Submit actual values through the genuine driver form, then receive
         # both canonical ledgers through the manager's single closure dialog.
@@ -132,8 +134,8 @@ def test_driver_shared_closure_has_one_inspection_and_both_ledger_inputs(central
         form.locator('[name=inspection_odometer]').fill('1025')
         form.locator('[name=fuel_full]').select_option('yes')
         for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
-        for field in ['counted','terminal']:
-            for control in form.locator('[name^="'+field+':"]').all():control.fill('0')
+        form.locator('[name=cash]').fill('0')
+        form.locator('[name=card]').fill('0')
         page.once('dialog',lambda dialog:dialog.dismiss())
         page.locator('#modal-close').click()
         expect(form).to_be_visible()
@@ -149,18 +151,45 @@ def test_driver_shared_closure_has_one_inspection_and_both_ledger_inputs(central
             manager_page.locator('[data-action=shift-detail][data-id="'+sid+'"]').first.click()
             receipt=manager_page.locator('#central-closure-form')
             expect(receipt.locator('[name=inspection_odometer]')).to_have_count(0)
-            expect(receipt.locator('[name^="received:"]')).to_have_count(2)
-            expect(receipt.locator('[data-action=return-shift]')).to_have_count(1)
-            for control in receipt.locator('[name^="received:"]').all():control.fill('0')
+            expect(receipt.locator('[name=received]')).to_have_count(1)
+            expect(receipt.locator('[data-action=shared-driver-return]')).to_have_count(1)
+            receipt.locator('[name=received]').fill('0')
+            receipt.locator('[name=reference]').fill('Physical zero cash receipt')
             receipt.locator('[name=confirmed]').check()
             receipt.locator('button[type=submit]').click()
             expect(manager_page.locator('#modal')).not_to_be_visible(timeout=30000)
             assert not manager_errors,manager_errors
             with db.tx() as c:
                 rows=c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
-                assert {s['status'] for s in rows}=={'closed'}
+                assert {s['status'] for s in rows}=={'submitted'}
+                assert all(s['staffing_ended_at'] is not None for s in rows)
+                declaration=c.execute('SELECT * FROM shared_driver_closure_declarations').fetchone()
+                physical=c.execute('SELECT * FROM shared_driver_closure_receipts').fetchone()
                 assert sum('end' in s['vehicle_log'] for s in rows)==1
-                assert c.execute("SELECT count(*) n FROM audit_events WHERE action='shift.vehicle.end'").fetchone()['n']==1
+                assert c.execute("SELECT count(*) n FROM closure_reports WHERE shift_id=ANY(%s)",([s['id'] for s in rows],)).fetchone()['n']==0
+            # Evidence-backed accounting allocation creates the brand snapshots;
+            # manager receipt itself never fabricates brand actuals.
+            accountant_ctx,accountant_page,accountant_errors=staff_page(central,chromium_browser,central_web,'accountant',language)
+            try:
+                accountant_page.goto(central_web+'/ops')
+                accountant_page.locator('#navigation [data-page=accounting]').click()
+                accountant_page.locator('[data-action=shared-driver-inbox]').click()
+                accountant_page.locator('[data-action=shared-driver-case][data-id="'+sid+'"]').click()
+                allocation=accountant_page.locator('#central-closure-form')
+                expect(allocation.locator('[name^="cash:"]')).to_have_count(2)
+                expect(allocation.locator('[name^="card:"]')).to_have_count(2)
+                for shift in rows:
+                    for name in ('cash','card','retained'):
+                        allocation.locator('[name="'+name+':'+shift['id']+'"]').fill('0')
+                    allocation.locator('[name="evidence:'+shift['id']+'"]').fill('No activity verified')
+                allocation.locator('[name=reason]').fill('Verified zero-activity brand allocation')
+                allocation.locator('[name=confirmed]').check()
+                allocation.locator('button[type=submit]').click()
+                expect(accountant_page.locator('#modal')).not_to_be_visible(timeout=30000)
+                assert not accountant_errors,accountant_errors
+            finally:accountant_ctx.close()
+            with db.tx() as c:
+                assert {s['status'] for s in c.execute("SELECT status FROM shifts WHERE user_id='dual-driver'").fetchall()}=={'closed'}
                 assert c.execute("SELECT count(*) n FROM closure_reports WHERE shift_id=ANY(%s)",([s['id'] for s in rows],)).fetchone()['n']==2
         finally:manager_ctx.close()
         assert not errors,errors
