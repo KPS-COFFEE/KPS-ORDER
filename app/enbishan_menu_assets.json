@@ -326,5 +326,9 @@
   "owner-20261025:source-ff47b177d47c34cf": {
     "path": "/assets/enbishan-menu/owner-20261025/source-ff47b177d47c34cf.webp",
     "sha256": "3972502003b078d4db3ff202da824b374672c2816681231771a0f62a787e684f"
+  },
+  "owner-20261026:citrus": {
+    "path": "/assets/enbishan-menu/citrus-20261026.svg",
+    "sha256": "ebb33dbbb4c2b87b9d469e59d96affc5d86a8e5efdb24bf4f1a5aaa2fd5c12fc"
   }
 }

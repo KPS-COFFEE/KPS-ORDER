@@ -12,6 +12,8 @@ on:
       - public/assets/enbishan-menu/**
       - migrations/109_enbishan_family_menu_clarity.sql
       - migrations/110_enbishan_family_commercial_approval.sql
+      - migrations/111_enbishan_flavours_and_citrus.sql
+      - tests/test_enbishan_flavour_decision.py
       - tests/test_enbishan_family_menu_clarity.py
       - tests/test_enbishan_size_clarity_browser.py
       - migrations/103_enbishan_pickup_default_paused.sql
@@ -50,7 +52,7 @@ jobs:
           node-version: '22'
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: node --check public/customer.js
-      - run: python -m pytest -q tests/test_enbishan_journey.py tests/test_enbishan_approved_journey.py tests/test_enbishan_family_menu_clarity.py tests/test_guest_session_policy.py tests/test_customer_neighborhood_policy.py tests/test_customer_card_quantity.py tests/test_optional_customer_address.py tests/test_enbishan_customer_scope_constraints.py tests/test_customer_hotpath.py tests/test_customer_language.py::test_customer_translation_codes_are_complete_and_keep_approved_source_immutable
+      - run: python -m pytest -q tests/test_enbishan_journey.py tests/test_enbishan_approved_journey.py tests/test_enbishan_family_menu_clarity.py tests/test_enbishan_flavour_decision.py tests/test_guest_session_policy.py tests/test_customer_neighborhood_policy.py tests/test_customer_card_quantity.py tests/test_optional_customer_address.py tests/test_enbishan_customer_scope_constraints.py tests/test_customer_hotpath.py tests/test_customer_language.py::test_customer_translation_codes_are_complete_and_keep_approved_source_immutable
       - name: Install Chromium dependencies
         run: python -m playwright install --with-deps chromium
       - name: Verify approved journey in Arabic mobile and English desktop
