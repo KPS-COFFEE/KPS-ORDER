@@ -330,5 +330,25 @@
   "owner-20261026:citrus": {
     "path": "/assets/enbishan-menu/citrus-20261026.svg",
     "sha256": "ebb33dbbb4c2b87b9d469e59d96affc5d86a8e5efdb24bf4f1a5aaa2fd5c12fc"
+  },
+  "owner-20261026:mojito-grape.jpeg": {
+    "path": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg",
+    "sha256": "ca11e087eed3e7c9d0f2aaa78548d5b86e3c0a7bcf0d0d2ba5e9f6b4c53538ec"
+  },
+  "owner-20261026:mojito-mahashi.jpeg": {
+    "path": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg",
+    "sha256": "0bd142644b0ebc6f1cd2199453753e09cb26b23ce55487ff3b18433c9a4ce069"
+  },
+  "owner-20261026:mojito-fattah.jpeg": {
+    "path": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg",
+    "sha256": "9139e64f7b214f00de2c7929d2f168270cb0980b65c24de9c6a6db8ad5f08477"
+  },
+  "owner-20261026:citrus-can.jpg": {
+    "path": "/assets/enbishan-menu/owner-20261026/citrus-can.jpg",
+    "sha256": "e6101f1bf0c4c07e42217d72a316da2fed490c28f53591a11976f91ae3f335a7"
+  },
+  "owner-20261026:grape-cabbage-family.webp": {
+    "path": "/assets/enbishan-menu/owner-20261026/grape-cabbage-family.webp",
+    "sha256": "57ced526538a9d884ee2c731291c413f957d527b6fbfca4cf5c39fba79ab867f"
   }
 }

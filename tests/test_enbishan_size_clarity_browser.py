@@ -71,3 +71,41 @@ def test_mahashi_choices_do_not_repeat_and_have_no_flavour_instruction(static_cu
         expect(page.locator('#product-add')).to_be_enabled()
         assert not errors
         browser.close()
+
+
+@pytest.mark.parametrize('product_index',[0,1])
+def test_grape_flavours_are_two_individual_choices_or_mixed(static_customer,product_index):
+    from playwright.sync_api import sync_playwright,expect
+    product=json.loads((ROOT/'tests/fixtures/enbishan-grape-flavours-public.json').read_text())[product_index]
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True)
+        context=browser.new_context(viewport={'width':390,'height':844})
+        context.add_init_script("localStorage.setItem('kps_customer_lang','ar')")
+        page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        def route_api(route):
+            key=route.request.url.split('/api/',1)[1].split('?',1)[0]
+            responses={'catalog':{'brand':{'id':'enbishan','name':'عنبيشن'},'source_verified':True,'products':[product]},'branches':{'branches':[],'brand_services':{'delivery':True,'pickup':False,'car_pickup':False}},'session':{'user':None,'csrf_token':None,'customer_verified':False},'identity/channels':{'customer_phone_required':False,'channels':{'guest':{'available':True}}},'experience/public':{'customer_entry_enabled':True},'customer-map/config':{'enabled':False},'banners':{'banners':[]}}
+            route.fulfill(content_type='application/json',body=json.dumps(responses.get(key,{})))
+        page.route('**/api/**',route_api)
+        page.goto(static_customer+'/?brand_id=enbishan',wait_until='networkidle')
+        page.add_style_tag(path=str(ROOT/'public/assets/enbishan.css'))
+        page.locator('.product-image-button').click()
+        page.locator('.customer-option-choices').first.get_by_role('button').first.click()
+        choices=page.locator('.grape-flavour-choices')
+        expect(choices.get_by_role('button')).to_have_count(4)
+        expect(choices).not_to_contain_text('+')
+        choices.get_by_role('button',name='دبس رمان',exact=True).click()
+        choices.get_by_role('button',name='سبايسي',exact=True).click()
+        expect(choices.get_by_role('button',name='ليمون',exact=True)).to_be_disabled()
+        choices.get_by_role('button',name='مشكل',exact=True).click()
+        expect(choices.locator('[aria-pressed=true]')).to_have_count(1)
+        expect(choices.locator('[aria-pressed=true]')).to_have_text('مشكل')
+        choices.get_by_role('button',name='ليمون',exact=True).click()
+        expect(choices.get_by_role('button',name='مشكل',exact=True)).to_have_attribute('aria-pressed','false')
+        page.locator('#product-add').click()
+        expect(page.locator('#product-error')).to_be_visible()
+        choices.get_by_role('button',name='دبس رمان',exact=True).click()
+        page.locator('#product-add').click()
+        expect(page.locator('#product-dialog')).not_to_be_visible()
+        assert not errors
+        browser.close()

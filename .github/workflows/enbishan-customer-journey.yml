@@ -13,6 +13,8 @@ on:
       - migrations/109_enbishan_family_menu_clarity.sql
       - migrations/110_enbishan_family_commercial_approval.sql
       - migrations/111_enbishan_flavours_and_citrus.sql
+      - migrations/112_enbishan_product_artwork.sql
+      - migrations/113_enbishan_khaliya_offer.sql
       - tests/test_enbishan_flavour_decision.py
       - tests/test_enbishan_family_menu_clarity.py
       - tests/test_enbishan_size_clarity_browser.py

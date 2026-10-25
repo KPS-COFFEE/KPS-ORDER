@@ -1245,7 +1245,54 @@
     $('product-add').disabled=!eligibleForProduct(product).ok||invalid;
     if(invalid)showError('product-error',t('variant_combination_unavailable'));
   }
-  function renderOptions() { const product=state.product; if(!product)return; const quantity=Math.max(1,Math.min(30,Math.floor(Number($('product-qty').value)||1))); $('product-qty').value=String(quantity); while(state.optionValues.length<quantity)state.optionValues.push({}); state.optionValues.length=quantity; const allGroups=groups(product); for(const options of state.optionValues)for(const group of allGroups)if(fixedSingleSize(product,group))options[group.code]=group.values[0].code||group.values[0].id; const optionGroups=allGroups.filter(group=>!fixedSingleSize(product,group)); const container=$('product-options');container.replaceChildren(); $('product-option-hint').hidden=!optionGroups.length; text('product-option-hint',isMug(product)?t("choose_the_quantity_then_a_color_for_each_mug"):isKhaliya(product)?t("choose_a_type_for_each_unit_classic_or_pecan"):optionGroups.length?(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("حدد اختياراتك لكل وحدة قبل الإضافة.","Choose the options for each unit before adding."):t("choose_the_quantity_then_a_flavor_for_each_unit")):''); $('apply-first-option').hidden=optionGroups.length===0||quantity<2; text('apply-first-option',isMug(product)?t("use_the_first_mug_s_color_for_all"):isKhaliya(product)?t("use_the_first_unit_s_type_for_all"):(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("تطبيق اختيارات الوحدة الأولى على الكل","Use the first unit’s choices for all"):t("use_the_first_unit_s_flavor_for_all"))); for(let index=0;index<quantity&&optionGroups.length;index++){const unit=node('div','option-unit');unit.append(node('h3','',`${isMug(product)?t("mug"):t("unit")} ${number.format(index+1)}`));for(const group of optionGroups){const label=node('label','field',groupLabel(group));const select=node('select');select.setAttribute('aria-label',`${groupLabel(group)} ${number.format(index+1)}`); select.append(new Option(isKhaliya(product)?t("choose_a_type"):t("choose_0",{"0":()=>(isMug(product)?t("color"):groupLabel(group))}),''));for(const value of group.values||[]){const available=(state.branchCatalogPending&&state.branchCatalogId!==state.branchId||eligibleForProduct(product).ok)&&value.enabled!==false&&value.available!==false;const repeated=requestedBrandId==='enbishan'&&group.code.startsWith('CHOICE_')&&Object.entries(state.optionValues[index]).some(([code,selected])=>code!==group.code&&code.startsWith('CHOICE_')&&selected===(value.code||value.id));if(repeated)continue;const option=new Option(String(sourceText(value))+(available?'':String(t('unavailable_option'))),value.code||value.id);option.disabled=!available;select.append(option);}select.value=state.optionValues[index][group.code]||'';select.required=group.required!==false;select.addEventListener('change',()=>{state.optionValues[index][group.code]=select.value;if(group.code.startsWith('CHOICE_')){renderOptions();return;}showError('product-error','');renderVariantPrice();});label.append(select);
+  // Partial picks stay local; only a complete approved combination is sent to the API.
+  const grapeFlavourDrafts=new WeakMap();
+  function renderGrapeFlavours(product,group,index){
+    if(requestedBrandId!=='enbishan'||group.code!=='FLAVOUR')return null;
+    const pairs=(group.values||[]).filter(v=>v.code?.startsWith('pair-'));
+    const mixed=(group.values||[]).find(v=>v.name==='مشكل');
+    if(pairs.length!==3||!mixed)return null;
+    const split=v=>String(v.name).split(' + ');
+    const names=[...new Set(pairs.flatMap(split))];
+    if(names.length!==3)return null;
+    const options=state.optionValues[index];
+    const selected=pairs.find(v=>v.code===options.FLAVOUR);
+    let picks=selected?split(selected):options.FLAVOUR===mixed.code?[]:grapeFlavourDrafts.get(options)||[];
+    const field=node('fieldset','field grape-flavour-field');
+    field.append(node('legend','',entryText('نكهات ورق العنب','Grape leaf flavours')));
+    const hint=node('p','small muted',entryText('اختر نكهتين من أول ثلاث، أو اختر مشكل.','Choose two of the first three flavours, or choose Mixed.'));
+    hint.setAttribute('aria-live','polite');field.append(hint);
+    const choices=node('div','customer-option-choices grape-flavour-choices');
+    choices.setAttribute('role','group');choices.setAttribute('aria-label',`${entryText('نكهات ورق العنب','Grape leaf flavours')} ${number.format(index+1)}`);
+    const enabled=v=>v.enabled!==false&&v.available!==false;
+    const buttons=[];
+    const draw=()=>{
+      const isMixed=options.FLAVOUR===mixed.code;
+      buttons.forEach((button,i)=>{
+        const active=i===3?isMixed:!isMixed&&picks.includes(names[i]);
+        button.setAttribute('aria-pressed',String(active));
+        button.disabled=!eligibleForProduct(product).ok||(i===3?!enabled(mixed):!pairs.some(v=>enabled(v)&&split(v).includes(names[i]))||(!active&&picks.length===2));
+      });
+      hint.textContent=isMixed?entryText('تم اختيار مشكل.','Mixed selected.'):entryText(`اختر نكهتين من أول ثلاث، أو اختر مشكل. المحدد: ${number.format(picks.length)} من ${number.format(2)}`,`Choose two of the first three flavours, or choose Mixed. Selected: ${picks.length} of 2`);
+    };
+    [...names,mixed.name].forEach((name,i)=>{
+      const pair=pairs.find(v=>split(v).includes(name));
+      const english=i===3?'Mixed':String(pair.name_en).split(' + ')[split(pair).indexOf(name)];
+      const button=node('button','button secondary',entryText(name,english));button.type='button';
+      button.addEventListener('click',()=>{
+        if(i===3){picks=[];options.FLAVOUR=mixed.code;}
+        else{
+          if(options.FLAVOUR===mixed.code)picks=[];
+          picks=picks.includes(name)?picks.filter(n=>n!==name):picks.length<2?[...picks,name]:picks;
+          const match=pairs.find(v=>enabled(v)&&picks.length===2&&split(v).every(n=>picks.includes(n)));
+          if(match)options.FLAVOUR=match.code;else delete options.FLAVOUR;
+        }
+        grapeFlavourDrafts.set(options,picks);draw();showError('product-error','');renderVariantPrice();
+      });buttons.push(button);choices.append(button);
+    });
+    field.append(choices);draw();return field;
+  }
+  function renderOptions() { const product=state.product; if(!product)return; const quantity=Math.max(1,Math.min(30,Math.floor(Number($('product-qty').value)||1))); $('product-qty').value=String(quantity); while(state.optionValues.length<quantity)state.optionValues.push({}); state.optionValues.length=quantity; const allGroups=groups(product); for(const options of state.optionValues)for(const group of allGroups)if(fixedSingleSize(product,group))options[group.code]=group.values[0].code||group.values[0].id; const optionGroups=allGroups.filter(group=>!fixedSingleSize(product,group)); const container=$('product-options');container.replaceChildren(); $('product-option-hint').hidden=!optionGroups.length; text('product-option-hint',isMug(product)?t("choose_the_quantity_then_a_color_for_each_mug"):isKhaliya(product)?t("choose_a_type_for_each_unit_classic_or_pecan"):optionGroups.length?(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("حدد اختياراتك لكل وحدة قبل الإضافة.","Choose the options for each unit before adding."):t("choose_the_quantity_then_a_flavor_for_each_unit")):''); $('apply-first-option').hidden=optionGroups.length===0||quantity<2; text('apply-first-option',isMug(product)?t("use_the_first_mug_s_color_for_all"):isKhaliya(product)?t("use_the_first_unit_s_type_for_all"):(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("تطبيق اختيارات الوحدة الأولى على الكل","Use the first unit’s choices for all"):t("use_the_first_unit_s_flavor_for_all"))); for(let index=0;index<quantity&&optionGroups.length;index++){const unit=node('div','option-unit');unit.append(node('h3','',`${isMug(product)?t("mug"):t("unit")} ${number.format(index+1)}`));for(const group of optionGroups){if(requestedBrandId==='enbishan'&&group.code==='FLAVOUR'){const flavours=renderGrapeFlavours(product,group,index);if(flavours){unit.append(flavours);continue;}}const label=node('label','field',groupLabel(group));const select=node('select');select.setAttribute('aria-label',`${groupLabel(group)} ${number.format(index+1)}`); select.append(new Option(isKhaliya(product)?t("choose_a_type"):t("choose_0",{"0":()=>(isMug(product)?t("color"):groupLabel(group))}),''));for(const value of group.values||[]){const available=(state.branchCatalogPending&&state.branchCatalogId!==state.branchId||eligibleForProduct(product).ok)&&value.enabled!==false&&value.available!==false;const repeated=requestedBrandId==='enbishan'&&group.code.startsWith('CHOICE_')&&Object.entries(state.optionValues[index]).some(([code,selected])=>code!==group.code&&code.startsWith('CHOICE_')&&selected===(value.code||value.id));if(repeated)continue;const option=new Option(String(sourceText(value))+(available?'':String(t('unavailable_option'))),value.code||value.id);option.disabled=!available;select.append(option);}select.value=state.optionValues[index][group.code]||'';select.required=group.required!==false;select.addEventListener('change',()=>{state.optionValues[index][group.code]=select.value;if(group.code.startsWith('CHOICE_')){renderOptions();return;}showError('product-error','');renderVariantPrice();});label.append(select);
       if(requestedBrandId==='enbishan'){
         select.hidden=true;
         const choices=node('div','customer-option-choices');choices.setAttribute('role','group');choices.setAttribute('aria-label',select.getAttribute('aria-label'));
