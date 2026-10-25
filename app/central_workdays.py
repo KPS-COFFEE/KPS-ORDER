@@ -184,6 +184,28 @@ def open_workday(body: ops.ShiftOpen, request: Request, user=Depends(auth.curren
     require_enabled(user, 'shifts_open')
     with db.tx() as c:
         lock_lanes(c)
+        # Older clients send every driver opening here, including a driver
+        # joining a standalone morning manager. Resolve that period from the
+        # locked server record and retain the canonical single-brand contract.
+        manager = ops.lock_shift(c, body.manager_shift_id) if body.kind == 'driver' and body.manager_shift_id else None
+        if (manager and manager['kind'] == 'manager'
+                and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                and not association(c, manager['id'])):
+            principal = multibrand.project(c, user, manager['brand_id'])
+            if not principal:
+                raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة ضمن صلاحياتك الحالية.')
+            ops.shift_roles(principal, 'shifts_open', 'owner', 'delivery_manager', 'driver')
+            if (principal['role'] == 'driver' and body.branch_ids
+                    and set(body.branch_ids) != set(principal.get('branch_ids', []))):
+                ops.fail(403, 'فروع السائق يحددها مدير التوصيل؛ لا يمكن تغيير نطاق الشفت')
+            token = multibrand.operation_brand.set(manager['brand_id'])
+            try:
+                # Do not enter action(): morning must not bypass grouped-shift
+                # protections. mutate also rechecks current scope on replay.
+                return ops.safe(ops.mutate(c, principal, request, 'shift.open', body.model_dump(),
+                                          lambda: ops.open_shift_in_tx(c, principal, body)))
+            finally:
+                multibrand.operation_brand.reset(token)
         def perform():
             with action():
                 return ops.safe(_open(c, user, body))
