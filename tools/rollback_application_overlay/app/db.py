@@ -306,7 +306,7 @@ PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authoriz
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
                     'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
                     'first_order_gift_claims', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries', 'staff_brand_memberships', 'driver_brand_dedications',
-                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations')
+                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports')
 
 
 def preservation_snapshot(conn, baseline=None):

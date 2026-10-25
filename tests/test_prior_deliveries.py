@@ -189,3 +189,60 @@ def test_early_manager_day_keeps_original_ledger_and_grants_attached_driver_day(
         assert c.execute("SELECT delivery_operational_date FROM shifts WHERE id='prior-manager'").fetchone()['delivery_operational_date']==day-timedelta(days=1)
         c.execute("UPDATE shifts SET delivery_operational_date=%s WHERE id='prior-driver'",(day+timedelta(days=1),))
     post('owner','/api/prior-deliveries/grants',body,brand='enbishan',status=422)
+
+
+@pytest.mark.postgres
+def test_closed_manager_supplement_requires_new_owner_only_grant_and_preserves_originals(prior_setup):
+    actor,post,old_grant,meta,pending,actual=prior_setup
+    from app import reporting
+    body=pending()
+    body['prior'].update(cash_halalas=0,card_halalas=1000)
+    with db.tx() as c:
+        for sid in ('prior-driver','prior-manager'):
+            c.execute("UPDATE shifts SET status='closed',closed_at=%s,submission=%s WHERE id=%s",(actual+timedelta(minutes=10),db.json({'expected_halalas':13900,'counted_halalas':5000,'handover_halalas':5000,'difference_halalas':-8900}),sid))
+            reporting.create_snapshot(c,sid,'dual-owner')
+        originals=c.execute("SELECT * FROM shifts WHERE id IN ('prior-driver','prior-manager') ORDER BY id").fetchall()
+        reports=c.execute('SELECT id,snapshot FROM closure_reports ORDER BY id').fetchall()
+    post('owner',path(old_grant),body,brand='enbishan',status=409)
+    grant_body={'manager_shift_id':'prior-manager','driver_shift_ids':['prior-driver'],'closed_manager_supplement':True,'reason':'Owner authorized closed-manager historical supplement only'}
+    post('manager','/api/prior-deliveries/grants',grant_body,brand='enbishan',status=403)
+    new=post('owner','/api/prior-deliveries/grants',grant_body,brand='enbishan')['grant']
+    assert new['closed_manager_supplement'] is True
+    post('manager',path(new),body,brand='enbishan',status=403)
+    post('manager',path(new,'quote'),body,brand='enbishan',status=403)
+    assert not actor('manager','enbishan').get('/api/prior-deliveries/options').json()['grants']
+    result=post('owner',path(new),body,brand='enbishan',key='closed-manager-one')
+    assert post('owner',path(new),body,brand='enbishan',key='closed-manager-one')==result
+    post('owner',path(new),body,brand='enbishan',status=409)
+    with db.tx() as c:
+        assert c.execute("SELECT * FROM shifts WHERE id IN ('prior-driver','prior-manager') ORDER BY id").fetchall()==originals
+        assert c.execute('SELECT id,snapshot FROM closure_reports WHERE id=ANY(%s) ORDER BY id',([r['id'] for r in reports],)).fetchall()==reports
+        supplement=c.execute("SELECT * FROM shifts WHERE supplement_of_shift_id='prior-driver'").fetchone()
+        assert supplement['status']=='closed' and supplement['manager_shift_id']=='prior-manager'
+        assert supplement['delivery_operational_date']==service_hours.delivery_operational_date(actual)
+        assert supplement['opened_at']==supplement['closed_at'] and supplement['opening_halalas']==0
+        assert not c.execute('SELECT 1 FROM custody_events').fetchone()
+        assert not c.execute('SELECT 1 FROM custody_transfers').fetchone()
+        payments=c.execute('SELECT method,amount_halalas FROM collections').fetchall()
+        assert payments==[{'method':'card','amount_halalas':1000}]
+        snapshot=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(result['supplement_report_id'],)).fetchone()['snapshot']
+        assert snapshot['summary']['card_collected_halalas']==1000
+        assert snapshot['summary']['cash_collected_halalas']==0
+
+
+@pytest.mark.postgres
+def test_closed_manager_grant_does_not_bypass_driver_closure_or_revocation(prior_setup):
+    actor,post,g,meta,pending,actual=prior_setup
+    body=pending()
+    grant_body={'manager_shift_id':'prior-manager','driver_shift_ids':['prior-driver'],'closed_manager_supplement':True,'reason':'Synthetic owner-only supplement'}
+    post('owner','/api/prior-deliveries/grants',grant_body,brand='enbishan',status=403)
+    with db.tx() as c:
+        c.execute("UPDATE shifts SET status='closed',closed_at=%s WHERE id='prior-manager'",(actual+timedelta(minutes=10),))
+    post('owner','/api/prior-deliveries/grants',grant_body,brand='enbishan',status=422)
+    with db.tx() as c:
+        c.execute("UPDATE shifts SET status='closed',closed_at=%s WHERE id='prior-driver'",(actual+timedelta(minutes=10),))
+    new=post('owner','/api/prior-deliveries/grants',grant_body,brand='enbishan')['grant']
+    post('owner','/api/prior-deliveries/grants/'+new['id']+'/revoke',{'reason':'Synthetic revoke owner supplement'},brand='enbishan')
+    post('owner',path(new),body,brand='enbishan',status=403)
+    with db.tx() as c:
+        assert not c.execute('SELECT 1 FROM prior_delivery_records').fetchone()
