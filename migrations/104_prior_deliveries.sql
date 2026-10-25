@@ -13,7 +13,7 @@ CREATE TABLE prior_delivery_revocations (
  actor_id text NOT NULL REFERENCES users(id), reason text NOT NULL,
  created_at timestamptz NOT NULL DEFAULT now()
 );
-ALTER TABLE shifts ADD COLUMN supplement_of_shift_id text REFERENCES shifts(id);
+ALTER TABLE shifts ADD COLUMN supplement_of_shift_id text REFERENCES shifts(id) DEFERRABLE INITIALLY DEFERRED;
 CREATE INDEX shift_supplements ON shifts(supplement_of_shift_id) WHERE supplement_of_shift_id IS NOT NULL;
 CREATE TABLE prior_delivery_records (
  id text PRIMARY KEY, grant_id text NOT NULL REFERENCES prior_delivery_grants(id),

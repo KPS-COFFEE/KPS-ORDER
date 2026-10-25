@@ -138,3 +138,38 @@ def test_new_missing_order_uses_price_and_actual_date_without_public_opening(pri
         assert c.execute('SELECT count(*) n FROM branch_print_jobs WHERE order_id=%s',(o['id'],)).fetchone()['n']==0
         assert c.execute('SELECT count(*) n FROM fiscal_documents WHERE order_id=%s',(o['id'],)).fetchone()['n']==0
     post('manager',path(g),body,brand='enbishan',status=409)
+
+
+@pytest.mark.postgres
+def test_prior_records_and_supplements_survive_restore_and_brand_export(prior_setup):
+    import os
+    from uuid import uuid4
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from app.exports import build_archive, restore_archive
+    actor,post,g,meta,pending,actual=prior_setup
+    body=pending()
+    with db.tx() as c:
+        c.execute("UPDATE shifts SET status='closed',closed_at=%s WHERE id='prior-driver'",(actual+timedelta(minutes=10),))
+    post('manager',path(g),body,brand='enbishan')
+    post('owner','/api/prior-deliveries/grants/'+g['id']+'/revoke',{'reason':'Synthetic completed entry'},brand='enbishan')
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        archive,manifest=build_archive(c,full=True)
+        _,enbishan=build_archive(c,brand_id='enbishan')
+        _,kps=build_archive(c,brand_id='kps')
+        originals={table:c.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(table))).fetchall() for table in ['prior_delivery_grants','prior_delivery_revocations','prior_delivery_records']}
+        for table in originals:
+            assert enbishan['counts'][table]==1 and kps['counts'][table]==0
+    target=os.environ['TEST_DATABASE_URL'];schema='kps_restore_'+uuid4().hex
+    try:
+        restore_archive(archive,target_url=target,target_schema=schema)
+        with psycopg.connect(target,row_factory=dict_row) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+            for table,rows in originals.items():
+                assert c.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(table))).fetchall()==rows
+            assert c.execute("SELECT count(*) n FROM shifts WHERE supplement_of_shift_id='prior-driver'").fetchone()['n']==1
+    finally:
+        with psycopg.connect(target,autocommit=True) as c:
+            c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))

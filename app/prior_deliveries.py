@@ -114,6 +114,8 @@ def grant(body: Grant, user=Depends(access), key: str | None=Header(None, alias=
 def revoke(gid:str, body:Revocation, user=Depends(access), key:str|None=Header(None,alias='Idempotency-Key')):
     if user['role']!='owner':raise db.error(403,'PRIOR_OWNER_REQUIRED','المالك فقط.')
     with db.tx() as c:
+        from .central_workdays import lock_lanes
+        lock_lanes(c)
         g=c.execute('SELECT * FROM prior_delivery_grants WHERE id=%s AND brand_id=%s FOR UPDATE',(gid,user['brand_id'])).fetchone()
         if not g:raise db.error(404,'PRIOR_GRANT_MISSING','الفتح غير موجود.')
         shift_scope(c,user,g['manager_shift_id'])
