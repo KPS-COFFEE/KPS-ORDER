@@ -182,6 +182,8 @@ def _find_session(conn, request: Request):
     if user:
         if context and (user['role']=='customer') != (context=='customer'):
             return None
+        from .staff_geo_access import require_user as require_work_location
+        require_work_location(conn, request, user)
         user['_session_cookie_name']=cookie_name
         user['_csrf_cookie_name']=csrf_name
         from .multibrand import request_user
@@ -268,7 +270,12 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
     return False
 
 
-def establish_session(conn, user: dict, response: Response, *, owner_step_up=False, customer_verified=False, employee_sms_challenge=None) -> dict:
+def establish_session(conn, user: dict, response: Response, *, request: Request | None = None, owner_step_up=False, customer_verified=False, employee_sms_challenge=None) -> dict:
+    # Every work credential path converges here. A geo-restricted production
+    # session cannot be minted without the actual request and an exact-user
+    # owner exception; customer sessions retain their existing policy.
+    from .staff_geo_access import require_user as require_work_location
+    require_work_location(conn, request, user)
     from .storefront_scope import require_brand
     require_brand(user['brand_id'])
     from .sms_rollout import work_sms_required
@@ -394,7 +401,7 @@ def login(body: LoginBody, request: Request, response: Response):
             raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
         from .portals import enforce_role
         enforce_role(request, user)
-        return establish_session(conn, user, response)
+        return establish_session(conn, user, response, request=request)
 
 
 @router.post('/auth/logout')
@@ -704,7 +711,7 @@ def _complete_customer_otp(conn, challenge, body, request, response, provider):
         conn.execute('UPDATE customer_addresses SET customer_id=%s WHERE customer_id=%s AND brand_id=%s',(user['id'],owned['id'],user['brand_id']))
         conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s',(owned['id'],))
         db.audit(conn,user['id'],'customer.owned_guest_linked','user',user['id'],{'source_user_id':owned['id']})
-    return establish_session(conn, user, response, customer_verified=True)
+    return establish_session(conn, user, response, request=request, customer_verified=True)
 
 
 def bootstrap_owner(username: str, password: str, brand_id: str = 'kps', display_name: str = 'الإدارة'):
@@ -874,7 +881,7 @@ def guest_session(body:GuestBody,request:Request,response:Response):
         else:
             identifier=db.new_id('guest_')
             user=conn.execute("INSERT INTO users(id,display_name,phone,role,brand_id,identity_kind,contact_email) VALUES(%s,%s,%s,'customer',%s,'guest',%s) RETURNING *",(identifier,name,phone,body.brand_id,contact_email)).fetchone()
-        return establish_session(conn,user,response)
+        return establish_session(conn,user,response,request=request)
 
 
 def _optional_identity(request, conn):
@@ -1086,6 +1093,9 @@ def email_request(body:EmailRequestBody,request:Request):
             valid=account and (body.purpose=='recovery' or (body.purpose=='staff_login' and account['role']!='customer') or (body.purpose=='email_login' and account['role']=='customer'))
             if staff_email_retired(body.brand_id) and account and account['role'] != 'customer':
                 valid=False
+            if valid and account['role'] != 'customer':
+                from .staff_geo_access import require_user as require_work_location
+                require_work_location(conn, request, account)
             if valid or (body.purpose=='email_login' and not conn.execute('SELECT 1 FROM users WHERE brand_id=%s AND lower(email)=%s',(body.brand_id,email)).fetchone()):
                 identifier=_create_email_token(conn,brand=body.brand_id,email=email,purpose=body.purpose,user_id=account['id'] if valid else None)
     return {'accepted':True,'challenge_id':identifier,'expires_in':900}
@@ -1125,6 +1135,8 @@ def request_staff_code(body:StaffCodeRequestBody,request:Request):
         _email_ready(conn,body.brand_id,testing=True)
         if conn.execute('SELECT 1 FROM brands WHERE id=%s AND active',(body.brand_id,)).fetchone():
             matches=conn.execute("SELECT * FROM users WHERE brand_id=%s AND role<>'customer' AND normalized_identity_phone(phone)=%s ORDER BY id",(body.brand_id,phone)).fetchall()
+            from .staff_geo_access import require_user as require_work_location
+            require_work_location(conn, request, matches[0] if len(matches) == 1 else None)
             if len(matches)==1:
                 user=matches[0]
                 pending=user['invitation_status']=='pending_email'
@@ -1257,7 +1269,7 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         # independent older browser session must never inherit this step-up.
         from .portals import enforce_role
         enforce_role(request,user)
-        result=establish_session(conn,user,response,owner_step_up=user['role']=='owner')
+        result=establish_session(conn,user,response,request=request,owner_step_up=user['role']=='owner')
         db.audit(conn,user['id'],'identity.email.verified','user',user['id'],{'purpose':row['purpose']})
         return result
 
