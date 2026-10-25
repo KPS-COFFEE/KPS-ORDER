@@ -87,10 +87,18 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --require-hashes --only-binary=:all: --target "$RUNNER_TEMP/rollback-test-tools" -r requirements-security-tests.lock
+          # The prior writer retains its original full-coverage admission policy.
+          # Certify that policy with its exact baseline witness; current-image
+          # acceptance separately certifies the new intersection policy.
+          prior_tests="$RUNNER_TEMP/prior-contract-tests"
+          mkdir -p "$prior_tests"
+          cp -a tests/. "$prior_tests/"
+          cp "$ROLLBACK_BASELINE_DIR/tests/test_branch_printing.py" "$prior_tests/test_branch_printing.py"
+          cmp "$ROLLBACK_BASELINE_DIR/tests/test_branch_printing.py" "$prior_tests/test_branch_printing.py"
           chmod 0777 evidence
           docker run --rm --network host --entrypoint python \
             --mount "type=bind,src=$RUNNER_TEMP/rollback-test-tools,dst=/test-tools,readonly" \
-            --mount "type=bind,src=$PWD/tests,dst=/app/tests,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/prior-contract-tests,dst=/app/tests,readonly" \
             --mount "type=bind,src=$PWD/evidence,dst=/evidence" \
             --env PYTHONPATH=/test-tools:/app --env TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             --env APP_ENV=testing --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \
