@@ -51,11 +51,24 @@ def eligible_manager(c,user,order,identifier):
     target=c.execute('SELECT * FROM users WHERE id=%s',(identifier,)).fetchone()
     if multibrand.enabled():target=multibrand.project(c,target,order['brand_id'])
     if (not target or not target.get('active') or target['role']!='delivery_manager'
-            or target['brand_id']!=order['brand_id'] or order['branch_id'] not in target.get('branch_ids',[])
-            or not auth.has_permission(target,'support_manage')):
+            or target['brand_id']!=order['brand_id'] or order['branch_id'] not in target.get('branch_ids',[])):
         raise db.error(422,'CLARIFICATION_ASSIGNEE_SCOPE','اختر مدير توصيل مفعلًا ومخولًا لمتابعة الطلب ضمن فرعه.')
-    # The source's actual service/period restrictions still apply to acceptance.
-    if not auth.can_access_order(target,order,c):
+    if (order['brand_id']=='kps' and order['service']=='delivery'
+            and (order.get('snapshot') or {}).get('delivery_period')=='morning'):
+        # An approved morning manager may lack standing evening capabilities.
+        # Resolve the actual current duty afresh, including when accounting is
+        # discovering an assignee. Never copy ephemeral rights into users.
+        from .morning_manager_context import resolve
+        from fastapi import HTTPException
+        try:target=resolve(c,target)
+        except HTTPException as exc:
+            if exc.status_code==403:
+                raise db.error(422,'CLARIFICATION_ASSIGNEE_SCOPE','يلزم مدير صباح معتمد ومناوبة فعلية تغطي هذا الطلب.') from exc
+            raise
+        # A clarification can concern a recorded completed/cancelled order, but
+        # only with actual provenance to this current duty, as for journey reads.
+        target['_morning_history_read']=True
+    if not auth.has_permission(target,'support_manage') or not auth.can_access_order(target,order,c):
         raise db.error(422,'CLARIFICATION_ASSIGNEE_SCOPE','المدير غير مخول بمتابعة هذا الطلب.')
     return target
 
