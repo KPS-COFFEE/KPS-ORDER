@@ -1576,6 +1576,8 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     modal(tr('تعديل الصنف والتوفر','Edit item and availability'),`<form class="form-columns" id="product-editor">
       ${field(tr('معرّف الصنف — ثابت','Product ID — immutable'),'id',p.id,{readonly:true})}
       ${field(tr('اسم الصنف','Item name'),'name',p.name,{required:true})}
+      ${field(tr('اسم الصنف بالإنجليزية','English item name'),'name_en',s.name_en||'',{dir:'ltr',maxlength:200})}
+      <div class="full"><button type="button" id="save-product-names" class="quiet">${esc(tr('حفظ الأسماء فقط','Save names only'))}</button></div>
       ${field(tr('التصنيف','Category'),'category',p.category,{required:true})}
       ${amountField(tr('السعر الأساسي بالريال','Base price (SAR)'),'price',p.price_halalas)}
       <label>${esc(tr('حالة الصنف','Item lifecycle'))}<select name="lifecycle">${['draft','active','paused'].map(v=>`<option value="${v}" ${(s.lifecycle||(s.enabled===false?'paused':'active'))===v?'selected':''}>${esc(({draft:tr('مسودة','Draft'),active:tr('مفعل','Active'),paused:tr('موقوف','Paused')})[v])}</option>`).join('')}</select></label>
@@ -1593,6 +1595,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       ${formEnd(tr('حفظ الصنف','Save item'))}
     </form>`,async(fd,form)=>{
       const settings={lifecycle:fd.get('lifecycle'),enabled:fd.has('enabled')&&fd.get('lifecycle')==='active',source_verified:fd.has('source_verified'),description:fd.get('description'),available_branch_ids:getProductScope(fd),available_cities:String(fd.get('cities')).split(/[,،]/).map(x=>x.trim()).filter(Boolean),unavailable_branch_ids:checkedBranches(fd,'unavailable'),option_groups:getGroups(fd,form)};
+      settings.name_en=String(fd.get('name_en')||'').trim();
       settings.print_labels_en={...(s.print_labels_en||{}),...Object.fromEntries([...fd.entries()].filter(([k])=>k.startsWith('print_translation:')).map(([k,v])=>[k.slice(18),v]))};
       if(cityPolicyWidened(s.available_cities||[],settings.available_cities)&&!fd.has('confirm_policy_widen'))throw new Error(tr('توسيع نطاق المدن يحتاج تأكيد اعتمادك كمالك. سياسة الإطلاق للخلية: حفر الباطن فقط.','Widening cities requires your explicit owner approval. Launch policy for Khaliya is Hafar Al Batin only.'));
       if(fd.get('image_url'))settings.image_url=fd.get('image_url');
@@ -1602,6 +1605,20 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       closeModal();await loadPage();
     });
     bindProductEditor(s);
+    $('#save-product-names').addEventListener('click',async event=>{
+      const button=event.currentTarget,form=$('#product-editor'),fd=new FormData(form);
+      const name=String(fd.get('name')||'').trim(),english=String(fd.get('name_en')||'').trim();
+      if(!name||name.length>200||english.length>200){$('.form-error',form).textContent=tr('راجع أسماء الصنف (حتى 200 حرف).','Check item names (up to 200 characters).');return;}
+      button.disabled=true;
+      try{
+        const settings={name_en:english,print_labels_en:{...(s.print_labels_en||{}),[name]:english}};
+        if(s.source_verified===true)settings.source_verified=true;
+        const save=()=>api(`/api/admin/products/${encodeURIComponent(id)}`,{method:'PATCH',body:{name,settings}});
+        try{await save();}catch(error){if(error.code!=='OWNER_STEP_UP_REQUIRED'||s.source_verified!==true)throw error;await ownerStepUp();await save();}
+        closeModal();await loadPage();
+      }catch(error){$('.form-error',form).textContent=error.message;}
+      finally{if(button.isConnected)button.disabled=false;}
+    });
     const form=$('#product-editor'),cities=$('input[name=cities]',form),confirm=$('#policy-widen-confirm',form),enabled=$('input[name=enabled]',form),lifecycle=$('select[name=lifecycle]',form);
     enabled.addEventListener('change',()=>{lifecycle.value=enabled.checked?'active':'paused';});
     lifecycle.addEventListener('change',()=>{enabled.checked=lifecycle.value==='active';});
