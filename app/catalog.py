@@ -226,7 +226,8 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None, *,
     service_key = 'car_pickup' if service == 'car' else service
     from .branch_payment_policy import required, blockers
     online = service in {'pickup','car'} and brand_settings is not None and required(branch['brand_id'], brand_settings)
-    if (brand_settings or {}).get('services', {}).get(service_key, not online) is not True:
+    default_enabled = not online and (branch.get('brand_id') != 'enbishan' or service == 'delivery')
+    if (brand_settings or {}).get('services', {}).get(service_key, default_enabled) is not True:
         return False, 'BRAND_SERVICE_DISABLED', 'هذه الخدمة موقوفة من إدارة البراند.'
     if settings.get('active', True) is not True:
         return False, 'BRANCH_DISABLED', 'الفرع متوقف عن استقبال الطلبات الجديدة.'
@@ -526,7 +527,7 @@ def branches(brand_id: str | None = Query(default=None, max_length=80)):
         result.append(item)
     from .branch_payment_policy import required
     return {'branches': result,
-            'brand_services': {key: brand_settings.get('services', {}).get(key, key=='delivery' or not required(brand_id, brand_settings)) is True
+            'brand_services': {key: brand_settings.get('services', {}).get(key, key=='delivery' or (brand_id != 'enbishan' and not required(brand_id, brand_settings))) is True
                                for key in ('delivery', 'pickup', 'car_pickup')}}
 
 
