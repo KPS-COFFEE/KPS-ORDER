@@ -95,9 +95,9 @@ def test_real_shared_declaration_receipt_and_allocation_block_prior_writer_witho
             event=c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC,id DESC LIMIT 1").fetchone()['details']
             assert set(tables)<=set(event['checks'])
     refuse()
-    post('manager',path+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True,'reference':'Synthetic rollback source receipt'})
+    received=post('manager',path+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True,'reference':'Synthetic rollback source receipt'})
     refuse()
-    post('owner',path+'/physical-allocation',{'declaration_id':declared['declaration_id'],'legs':rows(driver['shifts']),'reason':'Synthetic accounting source attribution','confirmed':True})
+    post('owner',path+'/physical-allocation',{'declaration_id':declared['declaration_id'],'receipt_id':received['receipt_id'],'legs':rows(driver['shifts']),'reason':'Synthetic accounting source attribution','confirmed':True})
     refuse()
 
 
