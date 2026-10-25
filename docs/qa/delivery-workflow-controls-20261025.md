@@ -35,3 +35,12 @@ The automatic approval reviewer rejected publishing this candidate to the public
 Database tests, browser acceptance, concurrency, migration preservation/rollback, broad security and release checks remain mandatory before production. No accounting integrity or production readiness certification is claimed.
 
 The broader approved scope still includes one aggregate cross-brand shift declaration/receipt without inventing per-brand cash allocations, configurable AM/PM staffing and duration, and complete state-specific operational guidance. Those changes are not implemented by this candidate. Existing per-brand closure forms remain until the pooled physical custody and financial reporting contract is implemented and tested; simply splitting an actual aggregate shortage across brands would be incorrect.
+
+
+## Owner addition — visible administrative sequence (2026-10-25)
+
+Mandatory additional acceptance: every administrative matter must identify its current responsible department/person, the exact action needed, the next receiving party, permitted return destination, required correction and complete actor/time/reason history inside the current screens.
+
+See [Administrative action sequence and responsibility](administrative-action-sequence-20261025.md). This is an added scope/acceptance requirement, not an implemented or deployed feature. Preserve the distinction between operational closure and financial completion, existing role/branch/brand authority, and immutable declarations/receipts after custody acceptance. Accounting requests for clarification return to accounting after the responsible party responds; they must not reopen a finalized financial record.
+
+Checkpoint clarification: the earlier local-only statements above record the preparation phase. PR #102 was subsequently published as a draft, and the dedicated PostgreSQL/browser acceptance run [40169620231](https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/40169620231) passed 141 tests on functional head d0fe44f5b248a30e4f213e3750fe2e63e0263c98. That focused result does not certify this newly added administrative-sequence scope or the complete release. The PR remains unmerged and unpublished to production at this checkpoint.
