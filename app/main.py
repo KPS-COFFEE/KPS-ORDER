@@ -145,6 +145,8 @@ for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 
 from . import dispatch_map
 from . import prior_deliveries
 app.include_router(prior_deliveries.router)
+from . import legacy_invoice_imports
+app.include_router(legacy_invoice_imports.router)
 from . import legacy_closures
 app.include_router(legacy_closures.router)
 from . import driver_attribution

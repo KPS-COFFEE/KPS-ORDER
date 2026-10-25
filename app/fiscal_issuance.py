@@ -88,6 +88,9 @@ def original(conn, order_id):
 def issue_sale(conn, order_id, actor, *, required=False):
     # All entry paths lock the canonical sale, including distinct retry keys.
     order = conn.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE', (order_id,)).fetchone()
+    if order['snapshot'].get('legacy_invoice'):
+        if required:raise db.error(409,'FISCAL_EXTERNAL_SOURCE_INVOICE','هذه فاتورة مصدر ساباد مستوردة؛ لا تُصدر فاتورة ضريبية ثانية لها.')
+        return None
     if order['snapshot'].get('complimentary'):
         if required:raise db.error(409,'COMPLIMENTARY_NOT_SALE','طلب تجهيز ضيافة أو تعويض؛ ليس فاتورة بيع.')
         return None
