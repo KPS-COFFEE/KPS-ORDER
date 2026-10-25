@@ -1119,7 +1119,9 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
                 db.event(c,o['id'],user['id'],'preparation.handed_over',
                          {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch'})
             from .complimentary import is_free
-            if body.status=='delivered' and o['payment_status']!='paid' and not is_free(o):fail(409,'يلزم تحصيل فعلي ودليل تسليم')
+            if body.status=='delivered' and o['payment_status']!='paid' and not is_free(o):
+                from .order_financial_cases import documented_shortfall
+                if not documented_shortfall(c,o):fail(409,'يلزم تسجيل التحصيل الفعلي أو فرق موثق للمحاسبة ودليل تسليم')
             if body.status in ('picked_up','delivered'):
                 from .order_support import require_photo
                 if resolving_problem and body.status=='picked_up':
@@ -1144,7 +1146,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
             if body.status=='delivered':
                 from .fiscal_issuance import issue_sale
-                issue_sale(c,t['order_id'],user)
+                if o['payment_status']=='paid' or is_free(o):
+                    issue_sale(c,t['order_id'],user)
             if body.status=='cancelled':
                 from .fiscal_issuance import credit_on_cancellation
                 credit_on_cancellation(c,o,user,body.reason)
@@ -1181,7 +1184,10 @@ def operational_alerts(user=Depends(auth.current_user)):
         from .complimentary import operational_view
         return safe(operational_view({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions}))
 
-class TaskHandover(OperationBody): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
+class TaskHandover(OperationBody):
+    driver_shift_id:str
+    reason:str=Field(min_length=1,max_length=2000)
+    reassign_before_pickup:StrictBool=False
 
 @router.post('/tasks/{tid}/handover')
 def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.current_user)):
@@ -1205,16 +1211,31 @@ def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.cu
             if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(prior['order_id'],)).fetchone():
                 fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
         def perform():
+            prior=c.execute('SELECT order_id FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+            if not prior:fail(404,'المهمة غير موجودة')
+            c.execute('SELECT id FROM orders WHERE id=%s FOR UPDATE',(prior['order_id'],))
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             if not t:fail(404,'المهمة غير موجودة')
             shift_access(c,user,lock_shift(c,t['shift_id']))
             to=lock_shift(c,body.driver_shift_id);o=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone()
+            order_access(c,user,o)
+            if to and not same_scope(user,to):fail(404,'شفت السائق غير متاح ضمن نطاقك')
             if t['status'] in TERMINAL or not to or to['status']!='open' or to['kind']!='driver' or to['brand_id']!=o['brand_id'] or o['branch_id'] not in to['branch_ids'] or to['id']==t['shift_id']:fail(409,'شفت الاستلام غير مؤهل')
             eligible_driver_shift(c,to,o)
             from .driver_receipt_trial import physical_guard
             physical_guard(to,t['status'])
             if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(t['order_id'],)).fetchone():fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
+            if body.reassign_before_pickup and not t.get('picked_up_at') and t['status'] in ('assigned','accepted'):
+                c.execute("UPDATE driver_tasks SET status='transferred',reason=%s,transfer_shift_id=NULL WHERE id=%s",(body.reason,tid))
+                newid=uid()
+                c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) VALUES(%s,%s,%s,%s,'assigned',%s)",(newid,t['order_id'],to['user_id'],to['id'],user['id']))
+                c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(t['order_id'],))
+                details={'previous_task_id':tid,'task_id':newid,'previous_driver_id':t['driver_id'],'driver_id':to['user_id'],'reason':body.reason,'previous':t['status'],'status':'assigned','acceptance_required':False}
+                db.event(c,t['order_id'],user['id'],'task.reassigned',details)
+                db.audit(c,user['id'],'task.reassigned','task',tid,details)
+                return {'task_id':newid,'transfer_shift_id':to['id'],'acceptance_required':False}
             c.execute('UPDATE driver_tasks SET transfer_shift_id=%s,transfer_requested_by=%s,reason=%s WHERE id=%s',(to['id'],user['id'],body.reason,tid))
+            db.event(c,t['order_id'],user['id'],'task.handover.requested',{'task_id':tid,'previous_driver_id':t['driver_id'],'driver_id':to['user_id'],**body.model_dump()})
             db.audit(c,user['id'],'task.handover.request','task',tid,body.model_dump())
             return {'task_id':tid,'transfer_shift_id':to['id'],'acceptance_required':True}
         return mutate(c,user,request,'task.handover:'+tid,body.model_dump(),perform)
@@ -1244,6 +1265,12 @@ def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)
             return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(newid,)).fetchone()}
         return mutate(c,user,request,'task.handover.accept:'+tid,{},perform)
 
+class CardPayment(OperationBody):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    amount_halalas: StrictInt = Field(gt=0, le=MAX_HALALAS)
+    reference: str = Field('', max_length=200)
+
+
 class Collection(OperationBody):
     method:str
     amount_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
@@ -1251,6 +1278,8 @@ class Collection(OperationBody):
     reference:str=Field('',max_length=200)
     cash_halalas:StrictInt|None=Field(None,gt=0,le=MAX_HALALAS)
     card_halalas:StrictInt|None=Field(None,gt=0,le=MAX_HALALAS)
+    card_payments:list[CardPayment]|None=Field(None,min_length=1,max_length=20)
+    shortfall_reason:str=Field('',max_length=1000)
 
 @router.post('/orders/{oid}/collect')
 def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_user)):
@@ -1267,7 +1296,12 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             from .order_amendments import guard,balance as paid_balance
             guard(c,o,driver_id=user['id'] if user['role']=='driver' else None)
             due=o['total_halalas']-paid_balance(c,o)
-            if body.method not in ('cash','card','split') or due<=0 or body.amount_halalas!=due:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح؛ حصّل المتبقي فقط')
+            if body.method not in ('cash','card','split') or due<=0 or body.amount_halalas>due:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح؛ حصّل المتبقي فقط')
+            shortfall=body.amount_halalas<due
+            if shortfall and (user['role']!='driver' or o['service']!='delivery' or len(body.shortfall_reason.strip())<3):
+                raise db.error(422,'COLLECTION_SHORTFALL_REASON','سجّل سبب نقص التحصيل؛ يبقى الفرق للمحاسبة ولا يخصم من الفاتورة.')
+            if not shortfall and body.shortfall_reason:
+                fail(422,'لا يوجد فرق تحصيل؛ احذف سبب النقص')
             if body.method=='split':
                 if body.cash_halalas is None or body.card_halalas is None or body.cash_halalas+body.card_halalas!=body.amount_halalas:
                     fail(422,'مجموع الكاش والشبكة يجب أن يساوي قيمة الطلب، وكل جزء أكبر من صفر')
@@ -1276,7 +1310,17 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
                 if body.cash_halalas is not None or body.card_halalas is not None:fail(422,'مبالغ التقسيم مخصصة للكاش والشبكة معًا')
                 parts=[(body.method,body.amount_halalas)]
             cash=next((amount for method,amount in parts if method=='cash'),0)
-            if not (user['role']=='driver' and o['service']=='delivery') and any(method=='card' for method,_ in parts) and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
+            card_total=sum(amount for method,amount in parts if method=='card')
+            if body.card_payments is not None:
+                if not card_total or sum(p.amount_halalas for p in body.card_payments)!=card_total:
+                    fail(422,'مجموع عمليات الشبكة يجب أن يساوي جزء الشبكة')
+                if body.reference:fail(422,'استخدم مرجع كل عملية شبكة بدل المرجع الإجمالي')
+                parts=([('cash',cash)] if cash else [])+[('card',p.amount_halalas) for p in body.card_payments]
+                references=iter(p.reference for p in body.card_payments)
+                if not (user['role']=='driver' and o['service']=='delivery') and any(not p.reference for p in body.card_payments):fail(422,'يلزم مرجع لكل عملية شبكة')
+            else:
+                references=iter([body.reference.strip()])
+                if not (user['role']=='driver' and o['service']=='delivery') and card_total and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
             if cash and (body.tendered_halalas is None or body.tendered_halalas<cash):fail(422,'المبلغ النقدي المسلم غير كاف')
             sid=None
             if o['service']=='delivery':
@@ -1292,11 +1336,16 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             ids=[]
             for method,amount in parts:
                 cid=uid();ids.append(cid)
-                c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference,amendment_revision) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],method,amount,body.tendered_halalas if method=='cash' else None,change if method=='cash' else 0,body.reference.strip() if method=='card' else '',o.get('amendment_revision',0)))
+                c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference,amendment_revision,payment_piece) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],method,amount,body.tendered_halalas if method=='cash' else None,change if method=='cash' else 0,next(references) if method=='card' else '',o.get('amendment_revision',0),cid))
                 if sid and method=='cash':event(c,sid,amount,'collection',cid,user['id'],'تحصيل نقدي صافي بعد الباقي')
-            c.execute("UPDATE orders SET payment_status='paid',payment_method=%s,version=version+1 WHERE id=%s",(body.method,oid))
+            payment_status='unpaid' if shortfall else 'paid'
+            if shortfall:
+                from .order_financial_cases import open_collection_case
+                open_collection_case(c,o,user,body.shortfall_reason,body.amount_halalas,due-body.amount_halalas,sid)
+            c.execute("UPDATE orders SET payment_status=%s,payment_method=%s,version=version+1 WHERE id=%s",(payment_status,body.method,oid))
             db.audit(c,user['id'],'order.collect','order',oid,{'collection_ids':ids,'amount_halalas':body.amount_halalas,'method':body.method,'cash_halalas':cash,'card_halalas':body.amount_halalas-cash,'change_halalas':change})
-            return {'collection_id':ids[0],'collection_ids':ids,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
+            db.event(c,oid,user['id'],'order.collected',{'collection_ids':ids,'amount_halalas':body.amount_halalas,'method':body.method,'remaining_halalas':due-body.amount_halalas,'shortfall_reason':body.shortfall_reason})
+            return {'collection_id':ids[0],'collection_ids':ids,'payment_status':payment_status,'amount_halalas':body.amount_halalas,'remaining_halalas':due-body.amount_halalas,'change_halalas':change}
         return mutate(c,user,request,'order.collect:'+oid,body.model_dump(),perform)
 
 class TestVoid(OperationBody):
@@ -1362,6 +1411,9 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             for pid,q in body.line_quantities.items():
                 previous=c.execute("SELECT coalesce(sum((line_quantities->>%s)::int),0) n FROM refunds WHERE order_id=%s",(pid,oid)).fetchone()['n']
                 if q<0 or pid not in lines or q+previous>lines[pid]:fail(422,'كمية استرداد الصنف غير صالحة')
+            returned_products={pid for pid,q in body.line_quantities.items() if q>0}
+            if returned_products and all(x.get('line_total_halalas')==0 for x in o['snapshot']['items'] if x['product_id'] in returned_products):
+                raise db.error(422,'FREE_ITEM_HAS_NO_REFUND','الصنف المجاني قيمته صفر؛ وثّق إرجاعه دون خصم أو استرداد مبلغ.')
             sid=body.shift_id or col['shift_id']
             if sid:
                 s=lock_shift(c,sid);shift_access(c,user,s,capability='accounting_review')
@@ -1555,33 +1607,10 @@ class DriverAmountReview(OperationBody):
 
 @router.post('/shifts/{sid}/review-amounts')
 def review_driver_amounts(sid:str,body:DriverAmountReview,request:Request,user=Depends(auth.current_user)):
-    """Manager correction before approval; original submission remains in audit."""
-    roles(user,'delivery_manager')
-    if not auth.has_permission(user,'shifts_approve'):fail(403,'صلاحية مراجعة التقفيلة غير متاحة')
-    with db.tx() as c:
-        def perform():
-            s=lock_shift(c,sid);shift_access(c,user,s,manager=True,capability='shifts_approve')
-            if s['kind']!='driver' or s['status']!='submitted':fail(409,'التعديل لتقفيلة سائق مرسلة وقبل اعتمادها فقط')
-            manager=lock_shift(c,s['manager_shift_id'])
-            if not manager or manager['user_id']!=user['id'] or manager['status']!='open':fail(403,'المراجعة لمدير الشفت المسؤول فقط')
-            transfers=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected' FOR UPDATE",(sid,)).fetchall()
-            if any(t['status']=='confirmed' for t in transfers):fail(409,'الاستلام مؤكد؛ التصحيح اللاحق من خلال تسوية المحاسبة')
-            if len(transfers)>1:fail(409,'توجد تسليمات متعددة؛ أعد التقفيلة للتصحيح والمراجعة')
-            from .driver_float import split
-            handover,retained=split(s,body.counted_halalas)
-            original=dict(s['submission']);updated=dict(original)
-            updated.update(counted_halalas=body.counted_halalas,handover_halalas=handover,retained_halalas=retained,
-                           terminal_total_halalas=body.terminal_total_halalas,
-                           difference_halalas=body.counted_halalas-original['expected_halalas'])
-            updated.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas,(s.get('external_enbishan') or {}).get('card_halalas',0)))
-            updated['driver_original_submission']=original.get('driver_original_submission') or {k:v for k,v in original.items() if k!='driver_original_submission'}
-            c.execute('UPDATE shifts SET submission=%s WHERE id=%s',(db.json(updated),sid))
-            for transfer in transfers:
-                c.execute('UPDATE custody_transfers SET amount_halalas=%s WHERE id=%s',(handover,transfer['id']))
-            db.audit(c,user['id'],'shift.manager_amount_review','shift',sid,
-                     {'before':original,'after':updated,'reason':body.reason,'fields':['counted_halalas','terminal_total_halalas']})
-            return {'shift_id':sid,'submission':updated}
-        return mutate(c,user,request,'shift.manager_amount_review:'+sid,body.model_dump(),perform)
+    """Retained URL fails closed for older clients; no submitted values are overwritten."""
+    raise db.error(403,'ACCOUNTING_CORRECTION_REQUIRED',
+                   'لا يغيّر مدير التوصيل أرقام السائق؛ أعد التقفيلة للتصحيح قبل الاستلام، أو أحلها للمحاسبة بعد الاستلام.')
+
 
 def simple_driver_close_in_tx(c, user, sid, body):
     from .central_workdays import guard_component

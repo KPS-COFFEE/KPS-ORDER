@@ -39,16 +39,52 @@ def scoped(c, oid, user, lock=False):
 
 
 def case(c, oid):
-    row=c.execute("SELECT id,actor_id,created_at,details FROM order_events WHERE order_id=%s AND event_type='financial_case.opened' ORDER BY created_at,id LIMIT 1",(oid,)).fetchone()
+    row=c.execute("SELECT id,actor_id,created_at,details FROM order_events WHERE order_id=%s AND event_type='financial_case.opened' ORDER BY created_at DESC,id DESC LIMIT 1",(oid,)).fetchone()
     if not row:return None
-    resolved=c.execute("SELECT actor_id,created_at,details FROM order_events WHERE order_id=%s AND event_type='financial_case.resolved' ORDER BY created_at,id LIMIT 1",(oid,)).fetchone()
+    resolved=c.execute("SELECT actor_id,created_at,details FROM order_events WHERE order_id=%s AND event_type='financial_case.resolved' AND details->>'case_id'=%s ORDER BY created_at,id LIMIT 1",(oid,row['id'])).fetchone()
     from .order_amendments import balance
     from .fiscal_issuance import original
     order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
     invoice=original(c,oid)
-    return {'pending_amount_halalas':balance(c,order),'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
+    kind='cancellation' if order['preparation_status'] in ('cancelled','rejected') else row['details'].get('kind','cancellation')
+    collected=balance(c,order)
+    return {'kind':kind,'collected_halalas':collected,'pending_amount_halalas':max(0,order['total_halalas']-collected) if kind=='collection_shortfall' else collected,'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
             'responsible_role':'accounting','status':'resolved' if resolved else 'pending',
             'reason':row['details']['reason'],'resolution':resolved,'operationally_blocking':False}
+
+
+def open_collection_case(c, order, user, reason, actual, remaining, shift_id):
+    """The order is locked by collection; never rewrite an invoice or assign blame."""
+    details={'kind':'collection_shortfall','reason':reason,'actual_collected_halalas':actual,
+             'remaining_halalas':remaining,'original_amount_halalas':order['total_halalas'],
+             'shift_id':shift_id,'requester_id':user['id'],'responsible_role':'accounting',
+             'financial_status':'pending','operationally_blocking':False,'responsibility':'unreviewed'}
+    existing=case(c,order['id'])
+    name='financial_case.collection_updated' if existing and existing['status']=='pending' else 'financial_case.opened'
+    db.event(c,order['id'],user['id'],name,details)
+    db.audit(c,user['id'],name,'order',order['id'],details)
+
+
+def documented_shortfall(c, order):
+    pending=case(c,order['id'])
+    return bool(pending and pending['kind']=='collection_shortfall' and pending['status']=='pending'
+                and pending['collected_halalas']>0)
+
+
+def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None, before=None):
+    """A recorded receipt/operational closure may proceed; financial approval may not."""
+    row=c.execute("""SELECT o.id FROM orders o
+        WHERE (%s::text IS NULL OR o.brand_id=%s)
+          AND (%s::jsonb IS NULL OR %s::jsonb ? o.branch_id)
+          AND (%s::timestamptz IS NULL OR o.created_at<%s)
+          AND (%s::text IS NULL OR EXISTS(SELECT 1 FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id
+                WHERE t.order_id=o.id AND (s.id=%s OR s.manager_shift_id=%s)))
+          AND EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND e.event_type='financial_case.opened'
+                AND e.details->>'kind'='collection_shortfall'
+                AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='financial_case.resolved' AND r.details->>'case_id'=e.id))
+        LIMIT 1""",(brand_id,brand_id,db.json(branch_ids) if branch_ids is not None else None,
+                     db.json(branch_ids) if branch_ids is not None else None,before,before,shift_id,shift_id,shift_id)).fetchone()
+    if row:raise db.error(409,'COLLECTION_CASE_PENDING','يوجد فرق تحصيل بانتظار المحاسبة؛ أكمل معالجة الطلب قبل الاعتماد المالي. استلام النقد والإقفال التشغيلي متاحان.')
 
 
 def needs_accounting(c,o):
@@ -98,7 +134,8 @@ def cancel(oid:str,body:Cancellation,user=Depends(auth.require_roles('owner','de
                      'operational_approver_id':user['id'],'financial_approver_id':None,
                      'previous':{'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],'payment_status':o['payment_status']},
                      'financial_status':'pending' if required else 'not_required','physical_resolution':body.physical_resolution}
-            if required and not case(c,oid):db.event(c,oid,user['id'],'financial_case.opened',details)
+            previous_case=case(c,oid)
+            if required and (not previous_case or previous_case['status']=='resolved'):db.event(c,oid,user['id'],'financial_case.opened',details)
             for t in tasks:
                 c.execute("UPDATE driver_tasks SET status='cancelled',reason=%s WHERE id=%s",(body.reason,t['id']))
                 db.event(c,oid,user['id'],'task.cancelled',{'task_id':t['id'],'driver_id':t['driver_id'],'shift_id':t['shift_id'],'previous_task_status':t['status'],**details})
@@ -123,10 +160,14 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
             o=scoped(c,oid,user,True); pending=case(c,oid)
             if not pending or pending['status']!='pending':raise db.error(409,'FINANCIAL_CASE_NOT_PENDING','لا توجد معالجة مالية معلقة.')
             from .order_amendments import balance
-            if balance(c,o)!=0 or o['payment_status'] not in ('unpaid','refunded'):
+            if pending['kind']=='collection_shortfall':
+                if balance(c,o)!=o['total_halalas'] or o['payment_status']!='paid':
+                    raise db.error(409,'ACTUAL_COLLECTION_REQUIRED','فرق التحصيل ما زال قائمًا؛ وثّق تحصيل المتبقي قبل الإقفال. الملاحظة لا تسوّي المبلغ.')
+            elif balance(c,o)!=0 or o['payment_status'] not in ('unpaid','refunded'):
                 raise db.error(409,'ACTUAL_REFUND_REQUIRED','أكمل الاسترداد الفعلي بالمسار المعتمد أولًا؛ الإلغاء ليس استردادًا.')
-            from .fiscal_issuance import credit_on_cancellation
-            credit_on_cancellation(c,o,user,body.reason)
+            if pending['kind']!='collection_shortfall':
+                from .fiscal_issuance import credit_on_cancellation
+                credit_on_cancellation(c,o,user,body.reason)
             details={'case_id':pending['id'],'reason':body.reason,'approver_id':user['id'],'executor_id':user['id']}
             db.event(c,oid,user['id'],'financial_case.resolved',details)
             db.audit(c,user['id'],'financial_case.resolved','order',oid,details)
@@ -134,11 +175,110 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
         return db.idempotent(c,user['id'],idempotency_key,'financial-case.resolve:'+oid,body.model_dump(),perform)
 
 
+class Recovery(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    amount_halalas:StrictInt=Field(gt=0,le=100000000000)
+    method:Literal['cash','card']
+    shift_id:str|None=None
+    reference:str=Field(min_length=3,max_length=200,pattern=r'^[^\x00]+$')
+    reason:str=Field(min_length=3,max_length=1000,pattern=r'^[^\x00]+$')
+    version:StrictInt=Field(ge=1)
+
+
+class FreeItemReturn(Resolution):
+    version:StrictInt=Field(ge=1)
+    line_index:StrictInt=Field(ge=0,le=200)
+    quantity:StrictInt=Field(ge=1,le=1000)
+    received_by:Literal['driver','branch']
+
+
+def free_items(c,o):
+    events=c.execute("SELECT details FROM order_events WHERE order_id=%s AND event_type='order.free_item_returned'",(o['id'],)).fetchall()
+    result=[]
+    for index,item in enumerate(o['snapshot'].get('items',[])):
+        if item.get('line_total_halalas')!=0:continue
+        returned=sum(e['details']['quantity'] for e in events if e['details']['line_index']==index)
+        result.append({'line_index':index,'name':item.get('name',''),'quantity':item['quantity'],'returned':returned,'remaining':item['quantity']-returned})
+    return result
+
+
+@router.post('/orders/{oid}/free-item-return')
+def free_item_return(oid:str,body:FreeItemReturn,user=Depends(auth.require_roles('owner','delivery_manager')),idempotency_key:str|None=Header(None)):
+    if not auth.has_permission(user,'support_manage'):raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية متابعة المشكلات غير متاحة.')
+    with db.tx() as c:
+        scoped(c,oid,user)
+        def perform():
+            o=scoped(c,oid,user,True)
+            if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث الصفحة.')
+            line=next((x for x in free_items(c,o) if x['line_index']==body.line_index),None)
+            if not line or body.quantity>line['remaining']:raise db.error(422,'FREE_RETURN_QUANTITY','اختر صنفًا مجانيًا وكمية لم تُسجّل مرتجعة من قبل.')
+            details={**body.model_dump(),'name':line['name'],'financial_effect_halalas':0,'invoice_total_halalas':o['total_halalas']}
+            db.event(c,oid,user['id'],'order.free_item_returned',details)
+            db.audit(c,user['id'],'order.free_item_returned','order',oid,details)
+            c.execute('UPDATE orders SET version=version+1 WHERE id=%s',(oid,))
+            return {'financial_effect_halalas':0,'invoice_total_halalas':o['total_halalas'],'message':'تم توثيق إرجاع الصنف المجاني؛ لا يتغير مبلغ الفاتورة أو التحصيل.'}
+        return db.idempotent(c,user['id'],idempotency_key,'free-item-return:'+oid,body.model_dump(),perform)
+
+
+@router.get('/orders/{oid}/recovery-context')
+def recovery_context(oid:str,user=Depends(auth.current_user)):
+    if not accounting(user):raise db.error(403,'ACCOUNTING_REVIEW_REQUIRED','المعالجة المالية للمحاسبة فقط.')
+    with db.tx() as c:
+        o=scoped(c,oid,user); pending=case(c,oid)
+        if not pending or pending['status']!='pending' or pending['kind']!='collection_shortfall':
+            raise db.error(409,'COLLECTION_CASE_REQUIRED','لا يوجد فرق تحصيل معلق.')
+        from .operations import shift_access
+        shifts=[]
+        for s in c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='manager' AND s.status IN ('open','closing') AND s.branch_ids ? %s ORDER BY s.opened_at",(o['brand_id'],o['branch_id'])).fetchall():
+            try:shift_access(c,user,s,capability='accounting_review')
+            except HTTPException as exc:
+                if exc.status_code in (403,404):continue
+                raise
+            shifts.append({k:s[k] for k in ('id','display_name','shift_no')})
+        return {'version':o['version'],'financial_case':pending,'shifts':shifts}
+
+
+@router.post('/orders/{oid}/recover')
+def recover(oid:str,body:Recovery,user=Depends(auth.current_user),idempotency_key:str|None=Header(None)):
+    if not accounting(user):raise db.error(403,'ACCOUNTING_REVIEW_REQUIRED','توثيق معالجة فرق التحصيل للمحاسبة فقط.')
+    with db.tx() as c:
+        c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('operations:'+user['brand_id'],))
+        scoped(c,oid,user)
+        def perform():
+            o=scoped(c,oid,user,True); pending=case(c,oid)
+            if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث الصفحة.')
+            if not pending or pending['status']!='pending' or pending['kind']!='collection_shortfall':
+                raise db.error(409,'COLLECTION_CASE_REQUIRED','لا يوجد فرق تحصيل معلق.')
+            if body.amount_halalas>pending['pending_amount_halalas']:
+                raise db.error(422,'COLLECTION_RECOVERY_AMOUNT','المبلغ يتجاوز المتبقي للتحصيل.')
+            from .operations import lock_shift,shift_access,balance,event,valid_cash_amount
+            sid=body.shift_id
+            if body.method=='cash':
+                shift=lock_shift(c,sid) if sid else None
+                if not shift or shift['status'] not in ('open','closing') or shift['kind']!='manager' or shift['brand_id']!=o['brand_id'] or o['branch_id'] not in shift['branch_ids']:
+                    raise db.error(409,'RECOVERY_CASH_CUSTODY_REQUIRED','اختر عهدة مدير مفتوحة لاستلام النقد الفعلي؛ لا نعدّل تقفيلة السائق السابقة.')
+                shift_access(c,user,shift,capability='accounting_review')
+                valid_cash_amount(balance(c,shift)+body.amount_halalas)
+            elif sid:
+                raise db.error(422,'RECOVERY_CARD_CUSTODY','عملية الشبكة لا تُضاف لعهدة نقدية.')
+            cid=db.new_id('recovery_')
+            c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,reference,amendment_revision,payment_piece) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (cid,oid,sid,user['id'],body.method,body.amount_halalas,body.reference,o.get('amendment_revision',0),cid))
+            if sid:event(c,sid,body.amount_halalas,'collection',cid,user['id'],body.reason+' / '+body.reference)
+            paid=body.amount_halalas==pending['pending_amount_halalas']
+            c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',('paid' if paid else 'unpaid',oid))
+            details={**body.model_dump(),'collection_id':cid,'case_id':pending['id'],'responsibility':'unreviewed'}
+            db.event(c,oid,user['id'],'financial_case.recovery_recorded',details)
+            db.audit(c,user['id'],'financial_case.recovery_recorded','order',oid,details)
+            return {'financial_case':case(c,oid)}
+        return db.idempotent(c,user['id'],idempotency_key,'financial-case.recover:'+oid,body.model_dump(),perform)
+
+
 @router.get('')
 def inbox(user=Depends(auth.require_roles('owner','admin','delivery_manager','branch_manager'))):
     if user['role']=='admin' and not accounting(user):raise db.error(403,'ACCOUNTING_REVIEW_REQUIRED','صلاحية المحاسبة مطلوبة.')
     with db.tx() as c:
-        candidates=c.execute("SELECT DISTINCT o.id,o.order_no,o.branch_id FROM orders o JOIN order_events e ON e.order_id=o.id WHERE o.brand_id=%s AND e.event_type='financial_case.opened' AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='financial_case.resolved') ORDER BY o.id",(user['brand_id'],)).fetchall()
+        candidates=c.execute("SELECT DISTINCT o.id,o.order_no,o.branch_id FROM orders o JOIN order_events e ON e.order_id=o.id WHERE o.brand_id=%s AND e.event_type='financial_case.opened' AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='financial_case.resolved' AND r.details->>'case_id'=e.id) ORDER BY o.id",(user['brand_id'],)).fetchall()
         result=[]
         for row in candidates:
             try:scoped(c,row['id'],user)
@@ -181,7 +321,7 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
                 entry=classify(source)
                 if entry['state']=='pending_review':
                     followups.append({'type':'driver_incentive_review','status':'review_required','responsible_role':'delivery_manager','shift_id':entry['shift_id'],'task_id':entry['task_id'],'order_id':oid,'review_url':'/api/driver-incentives/shifts/'+entry['shift_id']})
-        return {'operational_followups':followups,'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
+        return {'free_items':[] if user['role']=='driver' else free_items(c,o),'operational_followups':followups,'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
                 'payment_status':o['payment_status'],'version':o['version'],'tasks':tasks,'timeline':events,
                 'financial_case':None if user['role']=='driver' else case(c,oid)}
 
@@ -193,6 +333,7 @@ def refund_context(oid:str,user=Depends(auth.current_user)):
         o=scoped(c,oid,user)
         pending=case(c,oid)
         if not pending or pending['status']!='pending':raise db.error(409,'FINANCIAL_CASE_NOT_PENDING','لا توجد معالجة مالية معلقة.')
+        if pending['kind']=='collection_shortfall':raise db.error(409,'COLLECTION_NOT_REFUND','هذه معالجة نقص تحصيل، وليست استردادًا للعميل.')
         from .operations import available_balance,shift_access
         shifts=[]
         for shift in c.execute("SELECT * FROM shifts WHERE brand_id=%s AND status IN ('open','closing') ORDER BY opened_at,id",(o['brand_id'],)).fetchall():

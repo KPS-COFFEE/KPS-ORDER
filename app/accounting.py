@@ -280,6 +280,8 @@ def review(report_id:str,body:Note,request:Request,user=Depends(auth.require_per
         if not r or (user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[]))):fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
         if c.execute('SELECT 1 FROM driver_accounting_settlements WHERE report_id=%s',(report_id,)).fetchone():
             fail('USE_VARIANCE_CONFIRMATION','اعتمد فرق التسوية من إجراء تأكيد العجز أو الفائض بعد مراجعة التحصيل.',409)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=r['shift_id'])
         def perform():
             if c.execute('SELECT 1 FROM accounting_reviews WHERE report_id=%s',(report_id,)).fetchone():fail('ALREADY_REVIEWED','تم اعتماد المراجعة سابقًا.',409)
             row=c.execute('INSERT INTO accounting_reviews(id,brand_id,report_id,reviewer_id,note) VALUES(%s,%s,%s,%s,%s) RETURNING *',(db.new_id('acr_'),user['brand_id'],report_id,user['id'],body.note)).fetchone()
@@ -412,6 +414,8 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         bs=branches(c,user,body.branch_ids);bids=sorted(b['id'] for b in bs);h=hashlib.sha256(','.join(bids).encode()).hexdigest()
         _,_,lo,hi=period(ds.isoformat(),de.isoformat())
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,brand_id=user['brand_id'],branch_ids=bids,before=hi)
         if c.execute("SELECT 1 FROM shifts WHERE brand_id=%s AND status<>'closed' AND opened_at<%s AND coalesce(submitted_at,now())>=%s AND branch_ids ?| %s",(user['brand_id'],hi,lo,bids)).fetchone():fail('OPEN_SHIFTS','توجد شفتات غير مقفلة في الشهر.',409)
         if c.execute("SELECT 1 FROM closure_reports r WHERE r.brand_id=%s AND r.kind='manager' AND r.created_at>=%s AND r.created_at<%s AND r.branch_ids ?| %s AND r.snapshot->'shift'->'submission'->>'operational_approved'='true' AND NOT EXISTS(SELECT 1 FROM manager_financial_matches m WHERE m.report_id=r.id AND m.status='matched') AND NOT EXISTS(SELECT 1 FROM driver_accounting_settlements d WHERE d.report_id=r.id AND d.stage='cash_received' AND d.balance_approved) AND NOT EXISTS(SELECT 1 FROM accounting_daily_closures a WHERE a.manager_shift_id=r.shift_id) LIMIT 1",(user['brand_id'],lo,hi,bids)).fetchone():
             fail('PENDING_MANAGER_MATCHES','ثبّت البنك والكاش لتقفيلات المدير قبل إقفال الشهر.',409)
@@ -499,6 +503,8 @@ def match_manager_closure(report_id:str,body:FinancialMatch,request:Request,user
     with db.tx() as c:
         r=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s FOR UPDATE",(report_id,user['brand_id'])).fetchone()
         matching_report_scope(user,r)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=r['shift_id'])
         def perform():
             previous=c.execute('SELECT * FROM manager_financial_matches WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
             revision=previous['revision'] if previous else 0
@@ -707,6 +713,9 @@ def save_driver_settlement(c, user, report_id, body, receipt=False):
 def approve_driver_balance(report_id:str,body:DriverBalanceApproval,request:Request,user=Depends(access)):
     if not auth.has_permission(user, REVIEW): fail('ACCOUNTING_FORBIDDEN','صلاحية الاعتماد غير متاحة.',403)
     with db.tx() as c:
+        row=driver_settlement_scope(c,user,report_id)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=row['shift_id'])
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.driver_balance:'+report_id,
             body.model_dump(),lambda:save_driver_settlement(c,user,report_id,body))
 
@@ -892,6 +901,8 @@ def confirm_driver_variance(report_id:str,body:DriverVarianceConfirmation,reques
     if not body.confirmed:fail('CONFIRMATION_REQUIRED','أكد مراجعة العجز أو الفائض والإجراء المتخذ.')
     with db.tx() as c:
         row=driver_settlement_scope(c,user,report_id)
+        from .order_financial_cases import guard_financial_closure
+        guard_financial_closure(c,shift_id=row['shift_id'])
         def perform():
             latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
             if not latest or latest['revision']!=body.expected_revision:

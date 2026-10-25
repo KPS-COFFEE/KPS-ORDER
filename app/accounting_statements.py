@@ -242,6 +242,8 @@ def approve_day(c,user,manager_shift_id,note):
     allowed={b['id'] for b in branches(c,user)}
     if not manager or not set(manager['branch_ids'])<=allowed:fail('DAY_SCOPE','التقفيلة خارج نطاقك.',404)
     if manager['user_id']==user['id']:fail('SELF_SETTLEMENT','الاعتماد من حساب محاسب مستقل.',403)
+    from .order_financial_cases import guard_financial_closure
+    guard_financial_closure(c,shift_id=manager_shift_id,brand_id=user['brand_id'])
     if manager['status']!='closed':fail('OPEN_SHIFTS','أقفل شفت مدير التوصيل أولًا.',409)
     previous=c.execute('SELECT * FROM accounting_daily_closures WHERE manager_shift_id=%s',(manager_shift_id,)).fetchone()
     if previous:fail('DAY_CLOSED','تقفيلة اليوم معتمدة مسبقًا.',409)

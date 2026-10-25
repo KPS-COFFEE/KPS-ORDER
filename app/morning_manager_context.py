@@ -37,7 +37,7 @@ ENDPOINTS['operations'].discard('task_transition')
 ENDPOINTS['orders'].update({'authorize_complimentary','revoke_complimentary_authorization','list_complimentary_authorizations','customer_lookup', 'customer_search', 'change_delivery_location'})
 ENDPOINTS['order_requests'] = {'decide'}
 ENDPOINTS['driver_support'] = {'list_requests', 'request_support', 'accept_support', 'resolve_request'}
-ENDPOINTS['order_financial_cases'] = {'cancel','journey','inbox'}
+ENDPOINTS['order_financial_cases'] = {'cancel','free_item_return','journey','inbox'}
 ENDPOINTS['map_services'] = {'recommendations', 'health', 'alerts', 'zones', 'plan', 'trips'}
 ENDPOINTS['driver_closure'] = {'listing', 'schedule', 'decide'}
 ENDPOINTS['dispatch_map'] = {'map_config', 'driver_locations', 'discover_driver_routes', 'permit_driver_route'}
