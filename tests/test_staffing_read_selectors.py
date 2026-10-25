@@ -1,5 +1,6 @@
 """Fresh operational work ignores ended staffing, preserves pending finance."""
 import pytest
+from test_enbishan_dual_brand import dual
 from app import db, manager_workday
 from test_central_workdays import central, inspection
 from test_aggregate_driver_closure import submit_physical
