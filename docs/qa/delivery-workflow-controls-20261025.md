@@ -44,3 +44,12 @@ Mandatory additional acceptance: every administrative matter must identify its c
 See [Administrative action sequence and responsibility](administrative-action-sequence-20261025.md). This is an added scope/acceptance requirement, not an implemented or deployed feature. Preserve the distinction between operational closure and financial completion, existing role/branch/brand authority, and immutable declarations/receipts after custody acceptance. Accounting requests for clarification return to accounting after the responsible party responds; they must not reopen a finalized financial record.
 
 Checkpoint clarification: the earlier local-only statements above record the preparation phase. PR #102 was subsequently published as a draft, and the dedicated PostgreSQL/browser acceptance run [40169620231](https://github.com/KPS-COFFEE/KPS-ORDER/actions/runs/40169620231) passed 141 tests on functional head d0fe44f5b248a30e4f213e3750fe2e63e0263c98. That focused result does not certify this newly added administrative-sequence scope or the complete release. The PR remains unmerged and unpublished to production at this checkpoint.
+
+
+## Owner addition — solutions inside every administrative flow
+
+The owner additionally requires employees to find actual solutions and fallback paths inside the existing screens, without repeatedly returning to the assistant. See [Built-in resolution paths](administrative-resolution-paths-20261025.md). This mandatory scope includes a responsible actor, direct supported action, evidence, next step, return destination, safe alternative and proof of resolution for each known case, plus a durable assigned fallback for unfamiliar cases.
+
+Additional gaps identified during the source review must be resolved and tested before this scope is called complete: zero-collection delivery, manager delivery-recovery parity for documented partial collections, authorized non-recovery financial treatment, selected-line refund valuation, accepted cross-department handoffs, and corrections that preserve received/finalized financial evidence. Existing generic tickets or escalation text alone do not satisfy this requirement.
+
+This documentation addition does not implement these paths, alter permissions or monetary records, or deploy the draft to production.

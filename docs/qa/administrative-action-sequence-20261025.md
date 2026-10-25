@@ -100,3 +100,10 @@ The owner can inspect the whole authorized sequence in the existing oversight vi
 - Preserve the current owner-approved UI structure throughout all three workstreams.
 
 Reference source reviewed: production commit b26fdd197a08c8561ac4c59668e63b7d5d583ff7 and PR #102 functional head d0fe44f5b248a30e4f213e3750fe2e63e0263c98.
+
+
+## Owner addition — built-in solutions and alternatives
+
+Every required step above must also offer its supported solution, the authorized executor, necessary evidence, the next party, and a safe alternative or an assigned tracked follow-up when the first action cannot succeed. Routine incidents must be manageable inside the system without repeatedly asking the AI assistant or the owner.
+
+See [Built-in resolution paths](administrative-resolution-paths-20261025.md) for the concrete order, payment, closure, access, device and unknown-case matrix. A handoff is not a resolution; preserve responsibility until acceptance and distinguish operational completion from verified financial treatment. This additional scope remains pending implementation and release verification.
