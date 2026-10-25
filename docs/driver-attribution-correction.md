@@ -32,6 +32,11 @@ even for card-only corrections. It does not make an old application compatible.
 Restore a compatible application build; do not remove correction records,
 disable immutable-record triggers, or rewrite historical evidence.
 
+The prior-application compatibility overlay preserves and exports the correction
+ledger, including its original collection evidence. This certifies data retention
+only; it does not add effective attribution to that older application's screens
+or mutation routes. Its pre-correction rollback drill must still pass unchanged.
+
 Validation: `tests/test_driver_attribution_correction.py` is included in the
 required PostgreSQL host and exact-image suites. The required host workflow also
 runs `node --test tests/test_driver_attribution_ui.cjs`.

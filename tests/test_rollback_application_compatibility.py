@@ -10,7 +10,7 @@ from test_operations import ops
 ROOT=Path(__file__).resolve().parents[1]
 BASE=Path(os.environ.get('ROLLBACK_BASELINE_DIR', ROOT/'test-artifacts/rollback-baseline-source'))
 COMPAT=Path(os.environ.get('ROLLBACK_COMPAT_DIR', ROOT/'test-artifacts/rollback-compat-source'))
-SPECIAL=('driver_work_trips','driver_work_trip_orders','driver_work_trip_events','branch_print_devices','branch_print_jobs','driver_accounting_settlements','prior_delivery_grants','prior_delivery_revocations','prior_delivery_records')
+SPECIAL=('driver_work_trips','driver_work_trip_orders','driver_work_trip_events','branch_print_devices','branch_print_jobs','driver_accounting_settlements','prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','order_driver_attribution_corrections')
 
 
 def assert_candidate_source_identity(identity):

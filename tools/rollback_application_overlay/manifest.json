@@ -20,7 +20,8 @@
     "Explicit courtesy authorization and driver support export/preservation coverage; no new lifecycle mutation routes in prior application",
     "Explicit immutable unused courtesy revocation export and preservation coverage",
     "Immutable operational-day correction export and preservation coverage; restored by matching current source",
-    "Immutable prior-delivery grant, revocation and record export/preservation coverage; no prior-delivery mutation routes in rollback application"
+    "Immutable prior-delivery grant, revocation and record export/preservation coverage; no prior-delivery mutation routes in rollback application",
+    "Immutable completed-driver attribution correction export/preservation coverage only; operational rollback after a correction requires an attribution-aware build"
   ],
   "fallbacks": [
     "80a prior operations UI",
@@ -29,10 +30,10 @@
   ],
   "files": {
     "app/admin.py": "b4870d67c8aa12b32ac23ff6b2622efd161ef89a4cd4fa1e77d9186f2ffb8dc2",
-    "app/db.py": "b18c26fbc5471c6f062386e772e7636a196ee13261a8429070eed8f240a1001d",
+    "app/db.py": "650beb17c16511506a1f16113bead35f2d0f102b9c0cabad1c8ddc369890bf36",
     "app/driver_work_hours.py": "4490cd9ab275b78a8b9be3ac2bc387537f3383b6b51aadf88bc4faf0f2e78ad5",
     "app/employee_permissions.py": "605843c9677bbf0d7c86c55fcd199ba4959ea9b73e3700b17d4622c80b3121e5",
-    "app/exports.py": "859f66cd4e7bff72680aeb6a8c7eda1f1f2260a45119341bbfc2a0976e802ddc",
+    "app/exports.py": "0f01e04b9eea123750cca763719a6d61325362710b5864836ccce74620b5a3f7",
     "app/http_security.py": "7d449b91f1f6c69c1a1d97473a6bf047f9915419cfb187f22bc51f910665158a",
     "app/main.py": "7e87ce7ac0d74c486425e60906ae58d2e629639b0543e9e7930823c940ccf6f1",
     "app/operations.py": "b85a442aefbe54dd7f90c7eabfb68714be2fb2d86ff3bde788a1220c279169d9",

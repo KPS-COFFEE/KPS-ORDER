@@ -31,15 +31,15 @@ def seed(ops, monkeypatch, method='cash', amounts=(3500, 3750), cash_parts=None)
     for number, amount in enumerate(amounts):
         oid = make_order(total=amount)
         tid = 'task-' + oid
-        ref = 'SYNTHETIC-CORRECTION-' + str(number)
         cash = cash_parts[number] if cash_parts is not None else (amount if method == 'cash' else (1500 if method == 'split' else 0))
         card = amount - cash
         actual_method = 'split' if cash and card else ('cash' if cash else 'card')
         with db.tx() as c:
-            c.execute("""UPDATE orders SET preparation_status='completed',delivery_status='delivered',payment_status='paid',
-              payment_method=%s,created_at=now()-interval '35 minutes',completed_at=now()-interval '5 minutes',
-              snapshot=snapshot||%s WHERE id=%s""",
-              (actual_method, db.json({'delivery_period': 'evening', 'order_reference': ref}), oid))
+            # The normal delivered transition leaves preparation handed_over.
+            # make_order already froze the original snapshot; never rewrite it.
+            c.execute("""UPDATE orders SET preparation_status='handed_over',delivery_status='delivered',payment_status='paid',
+              payment_method=%s,created_at=now()-interval '35 minutes',completed_at=now()-interval '5 minutes'
+              WHERE id=%s""", (actual_method, oid))
             c.execute("""INSERT INTO driver_tasks
               (id,order_id,driver_id,shift_id,status,assigned_by,created_at,accepted_at,picked_up_at,delivered_at,proof)
               VALUES(%s,%s,'ops-driver','correction-source','delivered','ops-manager',
@@ -96,7 +96,17 @@ def test_two_order_correction_preserves_raw_evidence_and_conserves_sales_and_cas
     rows = seed(ops, monkeypatch, method)
     actor, post, _, _ = ops
     with db.tx() as c:
+        c.execute("INSERT INTO fiscal_policy_decisions(id,brand_id,actor_id,decision) VALUES('correction-fiscal-policy','ops-brand','ops-owner',%s)",
+                  (db.json({'enabled': True, 'phase': 'phase1', 'evidence_reference': 'Synthetic preservation fixture'}),))
+        for oid, _ in rows:
+            amount = c.execute('SELECT total_halalas FROM orders WHERE id=%s', (oid,)).fetchone()['total_halalas']
+            number = 'SYNTHETIC-INVOICE-' + oid
+            document = {'status': 'issued', 'number': number, 'order_id': oid, 'kind': 'invoice',
+                        'phase': '1', 'total_halalas': amount, 'net_halalas': amount, 'tax_halalas': 0}
+            c.execute("INSERT INTO fiscal_documents(number,order_id,kind,policy_id,document) VALUES(%s,%s,'invoice','correction-fiscal-policy',%s)",
+                      (number, oid, db.json(document)))
         before = evidence(c)
+        assert len(before['fiscal_documents']) == 2
         original_cash = sum(x['amount_halalas'] for x in before['collections'] if x['method'] == 'cash')
         original_card = 7250 - original_cash
     for oid, body in rows:
@@ -173,7 +183,7 @@ def test_existing_target_order_is_preserved_when_6700_cash_and_550_card_are_corr
     actor, post, make_order, _ = ops
     existing = make_order(total=2400)
     with db.tx() as c:
-        c.execute("UPDATE orders SET preparation_status='completed',delivery_status='delivered',payment_status='paid',payment_method='card',completed_at=now() WHERE id=%s", (existing,))
+        c.execute("UPDATE orders SET preparation_status='handed_over',delivery_status='delivered',payment_status='paid',payment_method='card',completed_at=now() WHERE id=%s", (existing,))
         c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at,delivered_at) VALUES(%s,%s,'ops-driver2','correction-target','delivered','ops-manager',now(),now(),now())", ('target-task-' + existing, existing))
         c.execute("INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,reference) VALUES(%s,%s,'correction-target','ops-driver2','card',2400,'SYNTHETIC-EXISTING-TARGET')", ('target-card-' + existing, existing))
         before = evidence(c)
@@ -277,10 +287,11 @@ def test_future_cash_refund_uses_corrected_custody_and_cannot_test_void(ops, mon
     with db.tx() as c:
         row = c.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
     denied = actor('owner').post('/api/orders/' + oid + '/test-void', json={
-        'order_reference': row['snapshot']['order_reference'], 'expected_version': row['version'],
+        'order_reference': row['snapshot'].get('order_reference') or str(row['order_no']), 'expected_version': row['version'],
         'expected_total_halalas': 1000, 'reason': 'Synthetic already corrected receipt',
         'confirmed_no_cash_received': True}, headers={'Idempotency-Key': uuid4().hex})
     assert denied.status_code == 409, denied.text
+    assert 'تم تصحيح نسبة الطلب' in str(denied.json())
     result = post('owner', '/api/orders/' + oid + '/refund', {'amount_halalas': 300, 'method': 'cash', 'reason': 'Synthetic actual refund'})
     with db.tx() as c:
         refund = c.execute('SELECT * FROM refunds WHERE id=%s', (result['refund_id'],)).fetchone()

@@ -68,7 +68,7 @@ def source(c, user, o, lock=False):
     if c.execute('SELECT 1 FROM order_driver_attribution_corrections WHERE order_id=%s', (o['id'],)).fetchone():
         fail('تم تصحيح نسبة هذا الطلب مسبقًا؛ راجع سجل التصحيح.')
     if (o['service'] != 'delivery' or o['delivery_status'] != 'delivered' or
-            o['preparation_status'] != 'completed' or o['payment_status'] != 'paid' or
+            o['preparation_status'] in ('cancelled', 'rejected') or o['payment_status'] != 'paid' or
             not o.get('completed_at') or o.get('test_void') or o['snapshot'].get('complimentary')):
         fail('التصحيح مخصص لطلب توصيل مكتمل ومحصّل بالكامل.')
     from .branch_payments import online_order
