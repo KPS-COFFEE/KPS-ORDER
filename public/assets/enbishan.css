@@ -80,3 +80,5 @@ html[dir=rtl] .enbishan-journey .mobile-basket{transform:translateX(50%)}
 
 .enbishan-journey .customer-option-choices .button:has(.enbishan-size-price){display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
 .enbishan-journey .enbishan-size-price{width:100%;white-space:nowrap}
+
+@media(max-width:550px){.enbishan-journey .customer-option-choices:has(.enbishan-size-price){grid-template-columns:minmax(0,1fr)}}
