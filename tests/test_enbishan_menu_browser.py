@@ -1,5 +1,6 @@
 """Actual AR/EN mobile/desktop variant controls against isolated PostgreSQL."""
 import os
+import re
 import pytest
 from playwright.sync_api import sync_playwright, expect
 from app import catalog, db
@@ -11,7 +12,7 @@ from app.enbishan_catalog_import import prepare_rows
 
 def choose_visible_option(select, value):
     label = select.locator('option[value="'+value+'"]').text_content()
-    select.locator('..').get_by_role('button', name=label, exact=True).click()
+    select.locator('..').get_by_role('button', name=re.compile('^'+re.escape(label))).click()
 
 
 @pytest.mark.postgres
