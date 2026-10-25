@@ -17,8 +17,9 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def dual_http(dual,tmp_path,monkeypatch):
-    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','true')
+def dual_http(dual,tmp_path,monkeypatch,request):
+    if request.node.name.startswith('test_shared_driver_sees_both_brand_tasks'):
+        monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','true')
     with socket.socket() as reserve:
         reserve.bind(('127.0.0.1',0));port=reserve.getsockname()[1]
     base=f'http://127.0.0.1:{port}'
