@@ -56,7 +56,7 @@ def view(c,user,day,legs):
       'cash_difference_halalas':declaration['cash_halalas']-sum(x['expected_halalas'] for x in declaration['expected_snapshot']) if declaration else None,
       'card_difference_halalas':declaration['card_halalas']-sum(x['expected_card_halalas'] for x in declaration['expected_snapshot']) if declaration else None,
       'legs':[{'shift_id':s['id'],'brand_id':s['brand_id'],'expected_cash_halalas':ops.balance(c,s),'permanent_float_halalas':(s.get('permanent_float') or {}).get('amount',0)} for _,s in legs],
-      'can_allocate':accounting(user)}
+      'can_allocate':accounting(user),'staffing_finished':all(physical_finished(c,s['id']) for _,s in legs),'staffing_block_reason':'retained_float_attribution' if receipt and not all(physical_finished(c,s['id']) for _,s in legs) else None}
     if user['role']=='driver':
         for key in ['expected_cash_halalas','expected_card_halalas','cash_difference_halalas','card_difference_halalas','legs']:output.pop(key,None)
         if declaration:output['declaration']={k:v for k,v in declaration.items() if k not in {'expected_snapshot'}}
@@ -170,6 +170,8 @@ def receive(sid:str,body:PhysicalReceipt,request:Request,user=Depends(auth.curre
             for principal,s in legs:require_decisions(c,principal,s)
             identifier=ops.uid()
             c.execute('INSERT INTO shared_driver_closure_receipts(id,declaration_id,received_halalas,received_by,manager_shift_ids,reference) VALUES(%s,%s,%s,%s,%s,%s)',(identifier,declaration['id'],body.received_halalas,user['id'],db.json([s['manager_shift_id'] for _,s in legs]),body.reference))
+            for _,s in legs:
+                c.execute('UPDATE shifts SET submission=submission||%s::jsonb WHERE id=%s',(db.json({'physical_state':'received','physical_receipt_id':identifier}),s['id']))
             recorded=c.execute('SELECT created_at FROM shared_driver_closure_receipts WHERE id=%s',(identifier,)).fetchone()['created_at']
             if declaration['retained_halalas']>=sum(row['permanent_float_halalas'] for row in declaration['expected_snapshot']):
                 for row in declaration['expected_snapshot']:
@@ -238,7 +240,7 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
                 if ops.balance(c,s)!=source['expected_halalas']:raise db.error(409,'SHARED_EXPECTED_CHANGED','تغير دفتر النقد بعد التصريح؛ يلزم مراجعة مرتبطة من المحاسبة.')
                 from .driver_incentives import require_decisions
                 require_decisions(c,principal,s)
-                values={'expected_halalas':source['expected_halalas'],'counted_halalas':row.counted_halalas,'handover_halalas':row.received_halalas,'retained_halalas':row.retained_halalas,'terminal_total_halalas':row.terminal_total_halalas,'expected_card_halalas':source['expected_card_halalas'],'difference_halalas':row.counted_halalas-source['expected_halalas'],'card_difference_halalas':row.terminal_total_halalas-source['expected_card_halalas'],'provenance':'accounting_allocation','shared_declaration_id':declaration['id'],'shared_receipt_id':receipt['id'],'shared_allocation_id':identifier,'allocation_evidence':row.evidence,'allocated_by':user['id'],'financial_state':'allocated_pending_reconciliation','physical_received_by':receipt['received_by']}
+                values={'expected_halalas':source['expected_halalas'],'counted_halalas':row.counted_halalas,'handover_halalas':row.received_halalas,'retained_halalas':row.retained_halalas,'terminal_total_halalas':row.terminal_total_halalas,'expected_card_halalas':source['expected_card_halalas'],'difference_halalas':row.counted_halalas-source['expected_halalas'],'card_difference_halalas':row.terminal_total_halalas-source['expected_card_halalas'],'provenance':'accounting_allocation','shared_declaration_id':declaration['id'],'shared_receipt_id':receipt['id'],'shared_allocation_id':identifier,'allocation_evidence':row.evidence,'allocated_by':user['id'],'financial_state':'allocated_pending_reconciliation','physical_received_by':receipt['received_by'],'physical_state':'received','physical_receipt_id':receipt['id']}
                 # This is attribution of an already witnessed physical receipt,
                 # recorded by the actual accountant, never another receipt.
                 transfer=ops.uid()

@@ -75,7 +75,11 @@ def operational_ready(c,legs):
         if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'HANDOVER_PENDING','أكمل تسليم مسؤولية المناوبة أولًا.')
         if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'RECEIPT_PENDING','أكد أو أعد تسليم النقد المعلق قبل إرسال تقفيلة المدير.')
         children=c.execute("SELECT id FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(s['id'],)).fetchall()
-        if any(not physical_finished(c,r['id']) for r in children):raise db.error(409,'DRIVER_PHYSICAL_RECEIPT_PENDING','استلم تقفيلات السائقين فعليًا أولًا؛ إسناد المحاسبة يمكن استكماله لاحقًا.')
+        for child in children:
+            if physical_finished(c,child['id']):continue
+            held=c.execute('SELECT 1 FROM central_workday_legs l JOIN shared_driver_closure_declarations d ON d.workday_id=l.workday_id JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id WHERE l.shift_id=%s',(child['id'],)).fetchone()
+            if held:raise db.error(409,'SHARED_FLOAT_ATTRIBUTION_PENDING','عهدة سائق محتفظ بها أقل من المعتمد؛ على المحاسبة إسناد العهدة الفعلية من التقفيلة الموحدة قبل نقل عهدة المدير.')
+            raise db.error(409,'DRIVER_PHYSICAL_RECEIPT_PENDING','استلم تقفيلات السائقين فعليًا أولًا؛ إسناد المحاسبة يمكن استكماله لاحقًا.')
 
 
 @router.get(BASE+'/manager-physical-closure')
@@ -136,7 +140,7 @@ def receive(sid:str,body:Receipt,request:Request,user=Depends(auth.current_user)
             identifier=ops.uid()
             c.execute('INSERT INTO shared_manager_closure_receipts(id,declaration_id,received_halalas,received_by) VALUES(%s,%s,%s,%s)',(identifier,dec['id'],body.received_halalas,user['id']))
             at=c.execute('SELECT created_at FROM shared_manager_closure_receipts WHERE id=%s',(identifier,)).fetchone()['created_at']
-            for _,s in legs:c.execute('UPDATE shifts SET staffing_ended_at=%s WHERE id=%s',(at,s['id']))
+            for _,s in legs:c.execute('UPDATE shifts SET staffing_ended_at=%s,submission=submission||%s::jsonb WHERE id=%s',(at,db.json({'physical_state':'received','physical_receipt_id':identifier}),s['id']))
             db.audit(c,user['id'],'shared_manager.physical_received','central_workday',day['id'],{'receipt_id':identifier,'declaration_id':dec['id'],'received_halalas':body.received_halalas,'financial_state':'awaiting_accounting'})
             return {'receipt_id':identifier}
         value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_manager.receipt:'+day['id'],body.model_dump(),perform)
@@ -193,7 +197,7 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
                 amount=supplied[s['id']].cash_halalas
                 child_card=c.execute("SELECT coalesce(sum((submission->>'terminal_total_halalas')::bigint),0) n FROM shifts WHERE manager_shift_id=%s AND kind='driver' AND status='closed'",(s['id'],)).fetchone()['n']
                 own_card=ops.blind_closure.card_reconciliation(c,s['id'],0)['expected_card_halalas']
-                values={'expected_halalas':ledger,'counted_halalas':amount,'handover_halalas':amount,'retained_halalas':0,'difference_halalas':amount-ledger,'terminal_total_halalas':int(child_card)+own_card,'provenance':'accounting_allocation','operational_approved':True,'shared_manager_declaration_id':dec['id'],'shared_manager_receipt_id':receipt['id'],'shared_manager_allocation_id':identifier,'allocation_evidence':supplied[s['id']].evidence,'allocated_by':user['id'],'financial_state':'allocated_pending_reconciliation'}
+                values={'expected_halalas':ledger,'counted_halalas':amount,'handover_halalas':amount,'retained_halalas':0,'difference_halalas':amount-ledger,'terminal_total_halalas':int(child_card)+own_card,'provenance':'accounting_allocation','operational_approved':True,'shared_manager_declaration_id':dec['id'],'shared_manager_receipt_id':receipt['id'],'shared_manager_allocation_id':identifier,'allocation_evidence':supplied[s['id']].evidence,'allocated_by':user['id'],'financial_state':'allocated_pending_reconciliation','physical_state':'received','physical_receipt_id':receipt['id']}
                 transfer=ops.uid()
                 c.execute("INSERT INTO custody_transfers(id,from_shift_id,recipient_user_id,amount_halalas,reference,closure,status,created_by,confirmed_by,confirmed_at) VALUES(%s,%s,%s,%s,%s,true,'confirmed',%s,%s,%s)",(transfer,s['id'],receipt['received_by'],amount,'Allocation of shared manager receipt '+receipt['id'],user['id'],receipt['received_by'],receipt['created_at']))
                 ops.event(c,s['id'],-amount,'transfer_out',transfer,user['id'],'Accounting attribution of owner cash receipt '+receipt['id'])
