@@ -197,7 +197,7 @@ def quote_delivery_center_order(body: DeliveryCenterOrder,
         raise db.error(422, 'CUSTOMER_BENEFIT_IDENTITY_REQUIRED', 'المزايا والإهداء من حساب العميل الموثق. / Use the verified purchaser account.')
     with db.tx() as conn:
         delivery_center_scope(conn, user, body.branch_id)
-        priced = catalog.quote_order(conn, body, user=user)
+        priced = catalog.quote_order(conn, body, user=user, delivery_center=True)
         delivery_center_scope(conn, user, priced['branch_id'])
         return {'quote': catalog.customer_quote_view(priced)}
 
@@ -260,7 +260,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 raise db.error(429,'ORDER_RATE_LIMIT','طلبات كثيرة مؤقتًا. حاول بعد قليل.')
             if delivery_center:delivery_center_scope(conn,user,body.branch_id)
             order_id = db.new_id('order_')
-            quote = catalog.quote_order(conn, body, for_update=True, user=user, order_id=order_id, **({'complimentary':True} if complimentary_order else {}))
+            quote = catalog.quote_order(conn, body, for_update=True, user=user, order_id=order_id, delivery_center=delivery_center, **({'complimentary':True} if complimentary_order else {}))
             if not delivery_center:
                 catalog.require_customer_delivery_neighborhood(body)
             if complimentary_order:
