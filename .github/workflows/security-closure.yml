@@ -106,6 +106,8 @@ jobs:
 
         node tests/test_driver_collection_ui.cjs
 
+        node --test tests/test_driver_attribution_ui.cjs
+
         node tests/test_driver_simple_ui.cjs
 
 

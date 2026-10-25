@@ -277,8 +277,8 @@ def detail(sid: str, user=Depends(auth.current_user)):
             output['ledgers'].append(item)
             sid = shift['id']
             queries = {
-                'tasks': ('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at', (sid,)),
-                'collections': ('SELECT * FROM collections WHERE shift_id=%s', (sid,)),
+                'tasks': ('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status,o.brand_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at', (sid,)),
+                'collections': ('SELECT * FROM effective_collections WHERE shift_id=%s', (sid,)),
                 'refunds': ('SELECT * FROM refunds WHERE shift_id=%s', (sid,)),
                 'custody_events': ('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at', (sid,)),
                 'transfers': ('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s', (sid,sid)),
