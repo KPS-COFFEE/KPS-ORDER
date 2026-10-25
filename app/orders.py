@@ -330,7 +330,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
             quote['receipt_occasion_style'] = (config or {}).get('settings', {}).get('receipt_occasion_style', {})
             quote['receipt_occasion_text'] = (config or {}).get('settings', {}).get('receipt_occasion_text', '')
-            quote['delivery_workflow'] = (config or {}).get('settings', {}).get('delivery_workflow', 'branch_fulfillment')
+            from .delivery_workflow import configured_workflow
+            quote['delivery_workflow'] = configured_workflow(body.brand_id, (config or {}).get('settings', {}))
             if quote.get('delivery_period') == 'morning':
                 quote['delivery_workflow'] = 'branch_fulfillment'
             # Read immutable receipt/policy snapshots before the per-branch
@@ -1006,5 +1007,6 @@ def operational_confirmation(order_id:str,body:ContactConfirmationBody,
             return {'order_id':order_id,'result':body.result,'phone_verified':bool(order['customer'].get('phone_verified')),
                     'operational_confirmation_only':True}
         return db.idempotent(conn,user['id'],idempotency_key,'order.operational_confirmation:'+order_id,body.model_dump(),perform)
+
 
 

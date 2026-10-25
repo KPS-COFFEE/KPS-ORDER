@@ -1181,13 +1181,24 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status=='picked_up' and morning_pickup and o['preparation_status'] not in {'ready','handed_over'}:
                 raise db.error(409,'MORNING_PREPARATION_REQUIRED','انتظر اكتمال تجهيز الفرع قبل الاستلام الفعلي.')
             if body.status=='picked_up' and o['preparation_status']!='handed_over':
-                if o['snapshot'].get('delivery_workflow')!='manager_dispatch' and not morning_pickup:
-                    fail(409,'يلزم تأكيد تسليم الفرع للسائق')
+                legacy_manager_pickup = False
+                if o['brand_id']=='enbishan' and not morning_pickup and o['snapshot'].get('delivery_workflow')!='manager_dispatch':
+                    # The owner's Enbishan operation has no branch operator.
+                    # Keep the frozen order snapshot; authorize the actual
+                    # assigned driver's photo receipt under today's policy.
+                    from .delivery_workflow import is_legacy_manager_pickup
+                    policy=c.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR SHARE',(o['brand_id'],)).fetchone()
+                    legacy_manager_pickup=is_legacy_manager_pickup(o,t,s,user,(policy or {}).get('settings',{}))
+                if o['snapshot'].get('delivery_workflow')!='manager_dispatch' and not morning_pickup and not legacy_manager_pickup:
+                    raise db.error(409,'BRANCH_HANDOVER_REQUIRED','بانتظار تأكيد تسليم الفرع للسائق؛ راجع مدير التوصيل إذا كان التشغيل دون مسؤول فرع.')
                 if user['role']!='driver' or t['driver_id']!=user['id']:
                     fail(403,'تأكيد الاستلام الفعلي من السائق المكلف فقط')
                 c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(o['id'],))
                 db.event(c,o['id'],user['id'],'preparation.handed_over',
-                         {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch'})
+                         {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch',
+                          **({'frozen_workflow':o['snapshot'].get('delivery_workflow'),
+                              'policy_source':'owner_approved_enbishan_manager_dispatch',
+                              'policy_scope':'enbishan_unpicked_delivery'} if legacy_manager_pickup else {})})
             from .complimentary import is_free
             if body.status=='delivered' and o['payment_status']!='paid' and not is_free(o):
                 from .order_financial_cases import documented_shortfall
@@ -2055,3 +2066,4 @@ def set_shift_availability(sid:str,body:AvailabilityUpdate,request:Request,user=
             db.audit(c,user['id'],'shift.availability','shift',sid,{'available':body.available})
             return {'shift_id':sid,'available':body.available}
         return mutate(c,user,request,'shift.availability:'+sid,body.model_dump(),perform)
+
