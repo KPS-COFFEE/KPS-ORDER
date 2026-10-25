@@ -8,7 +8,7 @@ function fixture(){
   const ctx={state:{cart:[],products:[plain,flavour]},number:{format:String},groups:p=>p.option_groups||[],
     eligibleForProduct:p=>({ok:p.enabled!==false,reason:'unavailable'}),toast:x=>calls.push(['toast',x]),
     openProduct:p=>calls.push(['options',p.id]),cartChanged:()=>calls.push(['changed']),key:()=>String(++sequence),t:x=>x,
-    prefersLessMotion:()=>true,$:id=>({scrollIntoView:()=>calls.push(['scroll',id])}),
+    showBasket:()=>calls.push(['scroll','basket']),prefersLessMotion:()=>true,$:id=>({scrollIntoView:()=>calls.push(['scroll',id])}),
     updateQuantity:(id,delta)=>{const row=ctx.state.cart.find(line=>line.rowId===id);row.quantity+=delta;if(!row.quantity)ctx.state.cart=ctx.state.cart.filter(line=>line!==row);}};
   vm.createContext(ctx);vm.runInContext(section,ctx);return {ctx,plain,flavour,calls};
 }

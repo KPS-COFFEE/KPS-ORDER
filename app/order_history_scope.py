@@ -12,7 +12,7 @@ def allowed(c,user,order):
             and order['service']=='delivery' and order['snapshot'].get('delivery_period')=='morning'):
         return False
     return bool(c.execute("""SELECT 1 WHERE
-        EXISTS(SELECT 1 FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id
+        EXISTS(SELECT 1 FROM effective_driver_tasks t JOIN shifts s ON s.id=t.shift_id
           WHERE t.order_id=%s AND s.manager_shift_id=%s AND s.brand_id=%s
           AND s.kind='driver' AND s.branch_ids <@ %s::jsonb)
         OR EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=%s

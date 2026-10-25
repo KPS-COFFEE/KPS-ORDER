@@ -149,21 +149,21 @@ def customer_html(source, request):
                 return '''<meta property="og:type" content="website">
   <meta property="og:site_name" content="Enbishan">
   <meta property="og:locale" content="ar_SA">
-  <meta property="og:title" content="عنبيشن | Enbishan">
-  <meta property="og:description" content="لذّة عنبيشن صارت أقرب… اطلبها بكل سهولة 💙">
+  <meta property="og:title" content="عنبيشن | ENBISHAN">
+  <meta property="og:description" content="الطعم اللي يعلّق بالذاكرة، صار أقرب لك 💛">
   <meta property="og:url" content="https://order.enbishan.com">
-  <meta property="og:image" content="https://order.enbishan.com/assets/enbishan-menu/source-6f7efb0f38241172.jpg">
-  <meta property="og:image:secure_url" content="https://order.enbishan.com/assets/enbishan-menu/source-6f7efb0f38241172.jpg">
+  <meta property="og:image" content="https://order.enbishan.com/assets/enbishan-share-20261025.jpg">
+  <meta property="og:image:secure_url" content="https://order.enbishan.com/assets/enbishan-share-20261025.jpg">
   <meta property="og:image:type" content="image/jpeg">
-  <meta property="og:image:width" content="600">
-  <meta property="og:image:height" content="400">
-  <meta property="og:image:alt" content="عنبيشن سيجنتشر — بوكس المحاشي العائلي مع الكبة">'''
+  <meta property="og:image:width" content="1536">
+  <meta property="og:image:height" content="1024">
+  <meta property="og:image:alt" content="بوكسات عنبيشن مع ورق العنب والفتة والكبة">'''
             for old, new in [('KPS COFFEE', 'Enbishan'), ('كبز قهوة مختصة', 'عنبيشن'), ('0550472662', '0509895855'), ('966550472662', '966509895855'), ('+966 55 047 2662', '+966 50 989 5855'), ('kps.coffe', 'Enbishan'), ('Kps.cofee', 'Enbishan'), ('data-kps-contact', 'data-enbishan-contact')]:
                 fragment = fragment.replace(old, new)
             return fragment
         source = re.sub(r'<!-- KPS_CONTACT_START -->.*?<!-- KPS_CONTACT_END -->', brand_fragment, source, flags=re.S)
         if brand == 'enbishan':
             source = source.replace('<html lang="ar" dir="rtl">', '<html lang="ar" dir="rtl" data-storefront-brand="enbishan">')
-            source = source.replace('</head>', '<link rel="stylesheet" href="/assets/enbishan.css?v=20261020"></head>')
+            source = source.replace('</head>', '<link rel="stylesheet" href="/assets/enbishan.css?v=20261025-approved-journey"></head>')
         return source
     return source

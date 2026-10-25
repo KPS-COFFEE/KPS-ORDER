@@ -1,7 +1,7 @@
 """Read-only manager workspace over canonical shifts, tasks and order events."""
 
 ACTIVE = "o.preparation_status NOT IN ('completed','cancelled','rejected') AND o.delivery_status NOT IN ('delivered','cancelled') AND o.completed_at IS NULL"
-UNASSIGNED = "NOT EXISTS(SELECT 1 FROM driver_tasks wt WHERE wt.order_id=o.id AND wt.status NOT IN ('cancelled','transferred','reassigned'))"
+UNASSIGNED = "NOT EXISTS(SELECT 1 FROM effective_driver_tasks wt WHERE wt.order_id=o.id AND wt.status NOT IN ('cancelled','transferred','reassigned'))"
 
 
 def current_shift(conn, user):
@@ -12,7 +12,7 @@ def current_orders(shift, user):
     if not shift:
         return 'FALSE', []
     # Task membership, not the wall clock, keeps overnight/overdue work visible.
-    sql = f"""(EXISTS(SELECT 1 FROM driver_tasks wt JOIN shifts ws ON ws.id=wt.shift_id
+    sql = f"""(EXISTS(SELECT 1 FROM effective_driver_tasks wt JOIN shifts ws ON ws.id=wt.shift_id
         WHERE wt.order_id=o.id AND ws.manager_shift_id=%s AND wt.status NOT IN ('transferred','reassigned'))
         OR ({ACTIVE} AND {UNASSIGNED} AND o.branch_id=ANY(%s))
         OR EXISTS(SELECT 1 FROM order_events we WHERE we.order_id=o.id

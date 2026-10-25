@@ -84,7 +84,7 @@ def enrich_orders(conn, rows, now=None):
     events = conn.execute('SELECT order_id,event_type,created_at FROM order_events WHERE order_id=ANY(%s) '
                           'ORDER BY created_at,id', (ids,)).fetchall()
     tasks = conn.execute('SELECT t.order_id,t.driver_id,t.created_at,t.accepted_at,t.picked_up_at,t.delivered_at,t.status,t.reason,u.display_name '
-                         'FROM driver_tasks t JOIN users u ON u.id=t.driver_id WHERE t.order_id=ANY(%s) '
+                         'FROM effective_driver_tasks t JOIN users u ON u.id=t.driver_id WHERE t.order_id=ANY(%s) '
                          'ORDER BY t.created_at,t.id', (ids,)).fetchall()
     points, names = {}, {}
     for event in events:

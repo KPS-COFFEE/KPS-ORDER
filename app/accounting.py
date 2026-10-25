@@ -88,11 +88,11 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     # transfers, refunds or multiple tasks from multiplying order/item counts.
     q="""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
       o.total_halalas,o.snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name
-      FROM orders o LEFT JOIN LATERAL (SELECT driver_id FROM driver_tasks WHERE order_id=o.id
+      FROM orders o LEFT JOIN LATERAL (SELECT driver_id FROM effective_driver_tasks WHERE order_id=o.id
       ORDER BY (status='delivered') DESC,created_at DESC,id DESC LIMIT 1) t ON true
       LEFT JOIN users u ON u.id=t.driver_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
       AND (o.created_at>=%s AND o.created_at<%s OR o.completed_at>=%s AND o.completed_at<%s
-      OR EXISTS(SELECT 1 FROM collections x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)
+      OR EXISTS(SELECT 1 FROM effective_collections x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)
       OR EXISTS(SELECT 1 FROM refunds x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s))"""
     args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,lo,hi]
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
@@ -100,7 +100,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     if group!='items':q+=" AND NOT (o.snapshot ? 'complimentary')"
     if group!='actions':q+=" AND o.test_void IS NULL"
     orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders]
-    cols=c.execute('SELECT * FROM collections WHERE order_id=ANY(%s) AND created_at<%s ORDER BY created_at,id',(ids,hi)).fetchall()
+    cols=c.execute('SELECT * FROM effective_collections WHERE order_id=ANY(%s) AND created_at<%s ORDER BY created_at,id',(ids,hi)).fetchall()
     refs=c.execute('SELECT r.*,u.display_name actor_name FROM refunds r JOIN users u ON u.id=r.authorized_by WHERE order_id=ANY(%s) AND r.created_at<%s ORDER BY r.created_at,r.id',(ids,hi)).fetchall()
     tickets=c.execute('SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
     events=c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
@@ -216,7 +216,7 @@ def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
       FROM orders o JOIN branches b ON b.id=o.branch_id
       LEFT JOIN users creator ON creator.id=o.snapshot->>'created_by_staff_id'
       LEFT JOIN users approver ON approver.id=o.snapshot->'complimentary'->>'authorized_by'
-      LEFT JOIN LATERAL (SELECT driver_id FROM driver_tasks WHERE order_id=o.id ORDER BY created_at DESC,id DESC LIMIT 1) t ON true
+      LEFT JOIN LATERAL (SELECT driver_id FROM effective_driver_tasks WHERE order_id=o.id ORDER BY created_at DESC,id DESC LIMIT 1) t ON true
       LEFT JOIN users driver ON driver.id=t.driver_id
       LEFT JOIN LATERAL (SELECT details,created_at FROM order_events WHERE order_id=o.id
          AND event_type IN ('preparation.cancelled','task.cancelled') ORDER BY created_at DESC,id DESC LIMIT 1) e ON true
@@ -543,7 +543,7 @@ def driver_settlement_values(snapshot, latest=None):
     original_bank = int(submitted.get('terminal_total_halalas', net_card) or 0)
     original_cash = int(submitted.get('handover_halalas') or 0)
     approved = bool(latest and latest.get('balance_approved',True))
-    cash_due = latest['cash_due_halalas'] if latest else int(sub.get('handover_halalas') or 0)
+    cash_due = latest['cash_due_halalas'] if latest else int(sub.get('supplemental_cash_due_halalas', sub.get('handover_halalas')) or 0)
     received = latest['cash_received_halalas'] if latest else None
     stage = ('cash_received' if approved else 'cash_pending_balance') if received is not None else ('balance_approved' if approved else 'pending_balance')
     expected_cash = int(sub.get('expected_halalas',original_cash-int(sub.get('difference_halalas',0))) or 0)-int(sub.get('retained_halalas',0) or 0)

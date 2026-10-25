@@ -35,9 +35,9 @@ def create_snapshot(c,sid,approved_by):
         children=c.execute('SELECT r.id,r.shift_id,r.version,r.snapshot FROM closure_reports r JOIN shifts s ON s.id=r.shift_id WHERE s.manager_shift_id=%s ORDER BY r.created_at',(sid,)).fetchall()
         shift_ids += [r['shift_id'] for r in children]
     manager_user_id=s['user_id'] if s['kind']=='manager' else c.execute('SELECT user_id FROM shifts WHERE id=%s',(s['manager_shift_id'],)).fetchone()['user_id']
-    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.test_void,o.created_at,o.completed_at FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
-    tasks=c.execute('SELECT * FROM driver_tasks WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
-    collections=c.execute('SELECT * FROM collections WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
+    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.test_void,o.created_at,o.completed_at FROM orders o JOIN effective_driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
+    tasks=c.execute('SELECT * FROM effective_driver_tasks WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
+    collections=c.execute('SELECT * FROM effective_collections WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     refunds=c.execute('SELECT * FROM refunds WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     events=c.execute('SELECT * FROM custody_events WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     transfers=c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s) ORDER BY created_at',(shift_ids,shift_ids)).fetchall()
@@ -54,7 +54,7 @@ def create_snapshot(c,sid,approved_by):
                 if o['id'] not in child_orders or o.get('fulfilled_in_report'):child_orders[o['id']]=o
         orders=list(child_orders.values())
         tasks=merge('tasks',[])
-        collections=merge('collections',c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall())
+        collections=merge('collections',c.execute('SELECT * FROM effective_collections WHERE shift_id=%s',(sid,)).fetchall())
         refunds=merge('refunds',c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall())
         events=merge('custody_events',c.execute('SELECT * FROM custody_events WHERE shift_id=%s',(sid,)).fetchall())
         transfers=merge('transfers',c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall())
@@ -64,7 +64,9 @@ def create_snapshot(c,sid,approved_by):
     for order in orders:
         order['snapshot']=safe(order['snapshot']);order['snapshot'].pop('notes',None);order['snapshot'].pop('note',None)
         for item in order['snapshot'].get('items',[]):item.pop('note',None)
-    fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and t.get('delivered_at')}
+    attestations=c.execute('SELECT id,order_id,task_id,shift_id,actor_id,reason,operational_date,recorded_at FROM legacy_delivery_attestations WHERE shift_id=ANY(%s) ORDER BY recorded_at,id',(shift_ids,)).fetchall()
+    attested={a['order_id'] for a in attestations}
+    fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and (t.get('delivered_at') or t['order_id'] in attested)}
     for o in orders:o['fulfilled_in_report']=not o.get('test_void') and o.get('fulfilled_in_report',o['id'] in fulfilled)
     cash=sum(r['amount_halalas'] for r in collections if r['method']=='cash')-sum(r['amount_halalas'] for r in refunds if r.get('record_kind')=='test_void')
     card=sum(r['amount_halalas'] for r in collections if r['method']=='card')
@@ -80,6 +82,8 @@ def create_snapshot(c,sid,approved_by):
         snap['operational_date']=(s.get('reporting_operational_date') or s['delivery_operational_date']).isoformat()
         snap['delivery_window']=s.get('delivery_window_snapshot')
         snap['delivery_operational_day_start']='04:00'
+    snap['driver_attribution_corrections']=safe(c.execute('SELECT * FROM order_driver_attribution_corrections WHERE source_shift_id=ANY(%s) OR target_shift_id=ANY(%s) ORDER BY created_at,id',(shift_ids,shift_ids)).fetchall())
+    snap['legacy_delivery_attestations']=safe(attestations)
     # Display metadata is captured only for this new snapshot, never backfilled.
     snap['schema_version']=2;snap['presentation_template_version']=TEMPLATE_VERSION
     snap['display_users']={k:v for child in children for k,v in child['snapshot'].get('display_users',{}).items()}
@@ -90,6 +94,12 @@ def create_snapshot(c,sid,approved_by):
     for row in c.execute('SELECT id,display_name FROM users WHERE id=ANY(%s)',(list(user_ids),)).fetchall():snap['display_users'].setdefault(row['id'],row['display_name'] or row['id'])
     snap['display_branches']={b['id']:{'name':b['name'],'branch_no':b['branch_no'],'city':b['city']} for b in c.execute('SELECT id,name,branch_no,city FROM branches WHERE id=ANY(%s)',(list(set(s['branch_ids'])|{o['branch_id'] for o in orders}),)).fetchall()}
     snap['closure_label']=display_shift_label(s)
+    if s.get('supplement_of_shift_id'):
+        original=c.execute('SELECT * FROM shifts WHERE id=%s',(s['supplement_of_shift_id'],)).fetchone()
+        snap['closure_label']='ملحق / Supplement '+display_shift_label(original)+' · '+display_shift_label(s)
+        snap['supplement_of_shift_id']=original['id']
+        snap['supplement_note']='تسجيل طلبات سابقة؛ استلام المدير للنقد غير مؤكد / Prior deliveries; manager cash receipt not confirmed'
+        snap['shift']['submission']['notes']=(snap['shift']['submission'].get('notes') or '')+' — '+snap['supplement_note']
     snap['driver_reports']=[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'shift_no':r['snapshot']['shift'].get('shift_no'),'closure_label':r['snapshot'].get('closure_label') or display_shift_label(r['snapshot']['shift']),'user_id':r['snapshot']['shift']['user_id'],'summary':r['snapshot']['summary'],'closure':r['snapshot']['shift']['submission']} for r in children]
     if s['kind']=='driver':
         external=s.get('external_enbishan') or {}
@@ -687,6 +697,9 @@ def v5_tables(snap,view='compact'):
         table('card-reconciliation','موازنة جهاز الشبكة',['حسب النظام','موازنة الجهاز','فرق الشبكة'],[[
             v5_money(closure.get('expected_card_halalas')),v5_money(closure['terminal_total_halalas']),v5_money(closure.get('card_difference_halalas'))]])
     table('reconciliation','نتيجة المطابقة',['الحالة','الفرق بالريال'],[['عجز' if difference<0 else 'فائض' if difference>0 else 'متوافق',v5_money(difference)]])
+    table('legacy-deliveries','تسليم سابق بإقرار المالك — لا يثبت التحصيل',['الطلب','يوم التشغيل','سبب الإقرار','وقت تسجيل الإقرار؛ وقت التسليم الفعلي غير موثق'],[
+        [order_name(a['order_id']),a.get('operational_date'),a.get('reason'),v5_stamp(a.get('recorded_at'))]
+        for a in snap.get('legacy_delivery_attestations',[])])
     if snap.get('kind')=='driver':
         terminal=closure.get('payment_terminal') or {}
         table('payment-terminal','جهاز الشبكة المسند للسائق',['البيان','القيمة'],[

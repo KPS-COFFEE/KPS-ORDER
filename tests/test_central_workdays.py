@@ -448,3 +448,125 @@ def test_shared_vehicle_opening_respects_audited_meter_correction(central):
     opened=post('driver','/api/central-operations/workdays',{
         'kind':'driver','manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection(950)})
     assert opened['shift']['vehicle_log']['start']['odometer_km']==950
+
+
+@pytest.fixture
+def standalone_morning(central, monkeypatch):
+    from app import service_hours
+    from test_morning_delivery import at
+    monkeypatch.setattr(service_hours, 'now_riyadh', lambda: at('08:00:00'))
+    with db.tx() as c:
+        c.execute("UPDATE brands SET settings=settings||%s WHERE id='kps'", (db.json({'morning_delivery': {
+            'enabled': True, 'version': 1, 'execution_branch_ids': ['kps-branch-1'],
+            'manager_user_ids': ['dual-manager'], 'preparer_user_ids': []}}),))
+        c.execute("UPDATE users SET branch_ids=%s WHERE id='dual-driver'",
+                  (db.json(['kps-branch-1', 'kps-branch-2']),))
+    _, _, post, _, _ = central
+    manager = post('manager', '/api/shifts', {'kind': 'manager', 'delivery_period': 'morning'})['shift']
+    return central, manager
+
+
+@pytest.mark.postgres
+def test_old_client_morning_open_uses_one_canonical_shift_and_replay(standalone_morning):
+    central, manager = standalone_morning
+    _, _, post, _, _ = central
+    body = {'kind': 'driver', 'manager_shift_id': manager['id'], 'branch_ids': [],
+            'vehicle_inspection': inspection()}
+    first = post('driver', '/api/central-operations/workdays', body, key='morning-compat')
+    assert first['shift']['delivery_window_snapshot']['period'] == 'morning'
+    assert first['shift']['branch_ids'] == ['kps-branch-1']
+    assert first['shift']['brand_id'] == 'kps'
+    assert post('driver', '/api/central-operations/workdays', body, key='morning-compat') == first
+    assert post('driver', '/api/shifts', body, key='morning-compat') == first
+    with db.tx() as c:
+        rows = c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
+        assert len(rows) == 1
+        assert rows[0]['vehicle_log']['start']['odometer_km'] == 1000
+        assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
+        c.execute("UPDATE users SET branch_ids='[]' WHERE id='dual-driver'")
+    post('driver', '/api/central-operations/workdays', body, key='morning-compat', status=403)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('change,status', [
+    ('missing_inspection', 422), ('self_scope', 403), ('mismatched_period', 409),
+    ('closed_manager', 409), ('revoked_manager', 409), ('foreign_actor', 404),
+])
+def test_old_client_morning_open_preserves_canonical_guards(standalone_morning, change, status):
+    central, manager = standalone_morning
+    _, _, post, _, _ = central
+    body = {'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()}
+    brand = 'kps'
+    if change == 'missing_inspection':
+        body.pop('vehicle_inspection')
+    elif change == 'self_scope':
+        body['branch_ids'] = ['kps-branch-1']
+    elif change == 'mismatched_period':
+        body['delivery_period'] = 'evening'
+    else:
+        with db.tx() as c:
+            if change == 'closed_manager':
+                c.execute("UPDATE users SET branch_ids='[\"kps-branch-1\"]' WHERE id='dual-driver'")
+                c.execute("UPDATE shifts SET status='closed' WHERE id=%s", (manager['id'],))
+            elif change == 'revoked_manager':
+                c.execute("UPDATE users SET active=false WHERE id='dual-manager'")
+            elif change == 'foreign_actor':
+                c.execute("UPDATE users SET brand_id='enbishan',branch_ids='[\"enbishan-test-1\"]' WHERE id='dual-driver'")
+                brand = 'enbishan'
+    post('driver', '/api/central-operations/workdays', body, brand=brand, status=status)
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM shifts WHERE user_id='dual-driver'").fetchone()
+        assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
+
+
+@pytest.mark.postgres
+def test_old_client_evening_standalone_is_not_treated_as_morning(central):
+    _, _, post, _, _ = central
+    manager = post('manager', '/api/shifts', {'kind': 'manager'})['shift']
+    result = post('driver', '/api/central-operations/workdays', {
+        'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()}, status=409)
+    assert result['detail']['code'] == 'MANAGER_SHIFT_SCOPE'
+
+
+def test_morning_compat_delegates_canonical_contract_without_group_action(monkeypatch):
+    """The old central endpoint fails here at the real missing-association guard."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from app import central_workdays as workdays, central_operations, multibrand, operations
+    user = {'id': 'driver', 'role': 'driver', 'active': True, 'brand_id': 'kps', 'branch_ids': ['branch']}
+    manager = {'id': 'morning', 'kind': 'manager', 'status': 'open', 'brand_id': 'kps',
+               'delivery_window_snapshot': {'period': 'morning'}}
+    class Connection:
+        def execute(self, sql, values=()):
+            row = user if 'FROM users' in sql else None
+            return SimpleNamespace(fetchone=lambda: row)
+    c = Connection()
+    @contextmanager
+    def tx():
+        yield c
+    monkeypatch.setattr(db, 'tx', tx)
+    monkeypatch.setattr(workdays, 'require_enabled', lambda *args: None)
+    monkeypatch.setattr(workdays, 'lock_lanes', lambda *args: None)
+    monkeypatch.setattr(workdays, 'association', lambda *args: None)
+    monkeypatch.setattr(operations, 'lock_shift', lambda *args: manager)
+    monkeypatch.setattr(multibrand, 'project', lambda conn, actor, brand: user)
+    monkeypatch.setattr(central_operations, 'context', lambda *args: {'brands': [{'id': 'kps'}]})
+    monkeypatch.setattr(db, 'idempotent', lambda conn, actor, key, op, body, perform: perform())
+    calls = []
+    def canonical(conn, principal, body):
+        assert not workdays._action.get(), 'Canonical grouped-shift protections must remain active'
+        assert multibrand.operation_brand.get() == 'kps'
+        calls.append((principal, body))
+        return {'shift': {'id': 'driver-morning', 'brand_id': 'kps'}}
+    def mutate(conn, principal, request, operation, body, perform):
+        assert operation == 'shift.open'
+        assert request.headers['Idempotency-Key'] == 'same-canonical-key'
+        return perform()
+    monkeypatch.setattr(operations, 'open_shift_in_tx', canonical)
+    monkeypatch.setattr(operations, 'mutate', mutate)
+    body = operations.ShiftOpen(kind='driver', manager_shift_id='morning', vehicle_inspection=inspection())
+    before = multibrand.operation_brand.get()
+    result = workdays.open_workday(body, SimpleNamespace(headers={'Idempotency-Key': 'same-canonical-key'}), user)
+    assert result['shift']['id'] == 'driver-morning'
+    assert calls == [(user, body)]
+    assert multibrand.operation_brand.get() == before

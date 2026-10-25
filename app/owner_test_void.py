@@ -11,6 +11,8 @@ def perform(c,user,oid,body):
     from .operations import order_access,lock_shift,event,available_balance,uid,fail
     order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone()
     order_access(c,user,order)
+    if c.execute('SELECT 1 FROM order_driver_attribution_corrections WHERE order_id=%s',(oid,)).fetchone():
+        fail(409,'تم تصحيح نسبة الطلب؛ الإلغاء التجريبي غير متاح، استخدم المراجعة المالية.')
     if order.get('test_void'):fail(409,'الفاتورة ملغاة تجريبيًا مسبقًا.')
     if not body.confirmed_no_cash_received:fail(422,'أكد أن المبلغ لم يُستلم ولم يُصرف فعليًا.')
     if (order['version']!=body.expected_version or order['total_halalas']!=body.expected_total_halalas

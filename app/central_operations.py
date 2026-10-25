@@ -192,7 +192,7 @@ def project_read(conn, request, user):
     module=endpoint.__module__.rsplit('.',1)[-1]
     params=request.path_params
     row=None
-    if params.get('oid') and module in {'orders','operations','order_support','order_amendments','fiscal','fiscal_issuance','invoice_profiles','branch_printing','branch_refunds','driver_evidence'}:
+    if params.get('oid') and module in {'orders','operations','order_support','order_amendments','fiscal','fiscal_issuance','invoice_profiles','branch_printing','branch_refunds','driver_evidence','driver_attribution'}:
         row=conn.execute('SELECT brand_id FROM orders WHERE id=%s',(params['oid'],)).fetchone()
     elif module=='chat' and params.get('aid'):
         row=conn.execute('SELECT c.brand_id FROM chat_attachments a JOIN conversations c ON c.id=a.conversation_id WHERE a.id=%s',(params['aid'],)).fetchone()

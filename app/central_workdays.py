@@ -184,6 +184,28 @@ def open_workday(body: ops.ShiftOpen, request: Request, user=Depends(auth.curren
     require_enabled(user, 'shifts_open')
     with db.tx() as c:
         lock_lanes(c)
+        # Older clients send every driver opening here, including a driver
+        # joining a standalone morning manager. Resolve that period from the
+        # locked server record and retain the canonical single-brand contract.
+        manager = ops.lock_shift(c, body.manager_shift_id) if body.kind == 'driver' and body.manager_shift_id else None
+        if (manager and manager['kind'] == 'manager'
+                and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                and not association(c, manager['id'])):
+            principal = multibrand.project(c, user, manager['brand_id'])
+            if not principal:
+                raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الوردية غير متاحة ضمن صلاحياتك الحالية.')
+            ops.shift_roles(principal, 'shifts_open', 'owner', 'delivery_manager', 'driver')
+            if (principal['role'] == 'driver' and body.branch_ids
+                    and set(body.branch_ids) != set(principal.get('branch_ids', []))):
+                ops.fail(403, 'فروع السائق يحددها مدير التوصيل؛ لا يمكن تغيير نطاق الشفت')
+            token = multibrand.operation_brand.set(manager['brand_id'])
+            try:
+                # Do not enter action(): morning must not bypass grouped-shift
+                # protections. mutate also rechecks current scope on replay.
+                return ops.safe(ops.mutate(c, principal, request, 'shift.open', body.model_dump(),
+                                          lambda: ops.open_shift_in_tx(c, principal, body)))
+            finally:
+                multibrand.operation_brand.reset(token)
         def perform():
             with action():
                 return ops.safe(_open(c, user, body))
@@ -255,8 +277,8 @@ def detail(sid: str, user=Depends(auth.current_user)):
             output['ledgers'].append(item)
             sid = shift['id']
             queries = {
-                'tasks': ('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at', (sid,)),
-                'collections': ('SELECT * FROM collections WHERE shift_id=%s', (sid,)),
+                'tasks': ('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status,o.brand_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at', (sid,)),
+                'collections': ('SELECT * FROM effective_collections WHERE shift_id=%s', (sid,)),
                 'refunds': ('SELECT * FROM refunds WHERE shift_id=%s', (sid,)),
                 'custody_events': ('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at', (sid,)),
                 'transfers': ('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s', (sid,sid)),
