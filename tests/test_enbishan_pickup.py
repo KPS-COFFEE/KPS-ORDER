@@ -10,21 +10,26 @@ from test_operations import ops
 
 @pytest.mark.postgres
 def test_legacy_enbishan_pickup_requires_actual_driver_photo_and_preserves_snapshot(ops):
-    actor, post, order, shifts = ops
-    manager, driver = shifts()
-    oid = order()
-    task = post('manager', '/api/orders/'+oid+'/assign', {'driver_shift_id': driver})['task']['id']
-    post('driver', '/api/tasks/'+task+'/transition', {'status': 'accepted'})
+    actor, post, _, shifts = ops
     with db.tx() as c:
-        # Move the isolated fixture's complete, consistent scope into Enbishan.
+        # Establish the isolated Enbishan scope before any shift or order exists.
+        # Confirmed orders must never be moved across brands or have their
+        # frozen snapshot rewritten, including by this regression fixture.
         c.execute("INSERT INTO brands(id,name) VALUES('enbishan','Enbishan test') ON CONFLICT(id) DO NOTHING")
         c.execute("INSERT INTO app_settings(brand_id,settings) VALUES('enbishan','{}') ON CONFLICT(brand_id) DO UPDATE SET settings='{}'")
         c.execute("UPDATE branches SET brand_id='enbishan',branch_no=901 WHERE id='ops-branch'")
         c.execute("UPDATE users SET brand_id='enbishan' WHERE brand_id='ops-brand'")
-        c.execute("UPDATE shifts SET brand_id='enbishan' WHERE brand_id='ops-brand'")
-        c.execute("UPDATE orders SET brand_id='enbishan',preparation_status='accepted',snapshot=snapshot||%s WHERE id=%s",
-                  (db.json({'delivery_workflow':'branch_fulfillment'}),oid))
+    manager, driver = shifts()
+    oid = 'enbishan-pickup-'+uuid4().hex
+    snapshot = {'delivery_workflow':'branch_fulfillment', 'branch_name':'Enbishan test',
+                'items':[{'product_id':'ops-product','name':'Test food','quantity':1,
+                          'unit_price_halalas':1000,'line_total_halalas':1000,'units':[],'note':''}]}
+    with db.tx() as c:
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'enbishan','ops-branch','ops-customer','delivery','accepted','pending','cash',1000,0,1000,%s,%s)",
+                  (oid,db.json(snapshot),db.json({'name':'Test customer'})))
         original = deepcopy(c.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()['snapshot'])
+    task = post('manager', '/api/orders/'+oid+'/assign', {'driver_shift_id': driver})['task']['id']
+    post('driver', '/api/tasks/'+task+'/transition', {'status': 'accepted'})
 
     path = '/api/tasks/'+task+'/transition'
     # A missing photo cannot record either a pickup or a simulated handover.
