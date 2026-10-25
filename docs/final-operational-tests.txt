@@ -123,3 +123,5 @@ tests/test_driver_attribution_correction.py
 # Saudi-only staff access and owner-issued temporary permissions
 tests/test_staff_geo.py
 tests/test_staff_geo_access.py
+tests/test_delivery_workflow_policy.py
+tests/test_enbishan_pickup.py
