@@ -90,6 +90,12 @@ def create_snapshot(c,sid,approved_by):
     for row in c.execute('SELECT id,display_name FROM users WHERE id=ANY(%s)',(list(user_ids),)).fetchall():snap['display_users'].setdefault(row['id'],row['display_name'] or row['id'])
     snap['display_branches']={b['id']:{'name':b['name'],'branch_no':b['branch_no'],'city':b['city']} for b in c.execute('SELECT id,name,branch_no,city FROM branches WHERE id=ANY(%s)',(list(set(s['branch_ids'])|{o['branch_id'] for o in orders}),)).fetchall()}
     snap['closure_label']=display_shift_label(s)
+    if s.get('supplement_of_shift_id'):
+        original=c.execute('SELECT * FROM shifts WHERE id=%s',(s['supplement_of_shift_id'],)).fetchone()
+        snap['closure_label']='ملحق / Supplement '+display_shift_label(original)+' · '+display_shift_label(s)
+        snap['supplement_of_shift_id']=original['id']
+        snap['supplement_note']='تسجيل طلبات سابقة؛ استلام المدير للنقد غير مؤكد / Prior deliveries; manager cash receipt not confirmed'
+        snap['shift']['submission']['notes']=(snap['shift']['submission'].get('notes') or '')+' — '+snap['supplement_note']
     snap['driver_reports']=[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'shift_no':r['snapshot']['shift'].get('shift_no'),'closure_label':r['snapshot'].get('closure_label') or display_shift_label(r['snapshot']['shift']),'user_id':r['snapshot']['shift']['user_id'],'summary':r['snapshot']['summary'],'closure':r['snapshot']['shift']['submission']} for r in children]
     if s['kind']=='driver':
         external=s.get('external_enbishan') or {}

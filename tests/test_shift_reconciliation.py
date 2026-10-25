@@ -18,6 +18,7 @@ def fixture_rows(latest=None):
     c = Mock()
     def execute(sql, params):
         result = Mock()
+        result.fetchall.return_value = []
         if 'FROM closure_reports' in sql:
             assert params == ('driver-shift','kps')
             result.fetchone.return_value = dict(id='report-1',snapshot=snap)

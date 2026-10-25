@@ -29,13 +29,15 @@ def closed_shift(c, shift):
             latest = dict(revision=0, bank_halalas=legacy['bank_halalas'],
                           cash_due_halalas=legacy['expected_cash_halalas'], cash_received_halalas=legacy['cash_halalas'])
     snap = report['snapshot']
+    supplements = c.execute('SELECT s.id AS shift_id,r.id AS report_id,r.snapshot FROM shifts s JOIN closure_reports r ON r.shift_id=s.id WHERE s.supplement_of_shift_id=%s AND s.brand_id=%s ORDER BY s.opened_at,s.id', (shift['id'],shift['brand_id'])).fetchall()
+    supplements = [{'shift_id':r['shift_id'],'report_id':r['report_id'],'label':r['snapshot'].get('closure_label'), 'summary':r['snapshot'].get('summary',{})} for r in supplements]
     values = driver_settlement_values(snap, latest)
     confirmation = variance_confirmation(c, report['id'], values['revision'])
     return dict(values, state='closed_snapshot', report_id=report['id'],
                 shift_id=shift['id'], brand_id=shift['brand_id'],
                 operational_date=shift.get('reporting_operational_date') or snap.get('operational_date'),
                 original_operational_date=snap.get('operational_date'),
-                summary=snap.get('summary', {}),
+                summary=snap.get('summary', {}), supplements=supplements,
                 external_enbishan_totals=snap.get('external_enbishan_totals', {}),
                 variance_pending=bool(values['reconciliation_complete'] and values['net_difference_halalas'] and not confirmation))
 
