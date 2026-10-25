@@ -164,7 +164,7 @@ def mutate(c,user,request,operation,body,perform):
 def history_result_access(c,user,oid):
     order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
     if user['role']=='driver':
-        if not order or order['brand_id']!=user['brand_id'] or order['branch_id'] not in user.get('branch_ids',[]) or not c.execute('SELECT 1 FROM driver_tasks WHERE order_id=%s AND driver_id=%s',(oid,user['id'])).fetchone():fail(404,'السجل خارج الصلاحية الحالية')
+        if not order or order['brand_id']!=user['brand_id'] or order['branch_id'] not in user.get('branch_ids',[]) or not c.execute('SELECT 1 FROM effective_driver_tasks WHERE order_id=%s AND driver_id=%s',(oid,user['id'])).fetchone():fail(404,'السجل خارج الصلاحية الحالية')
     else:order_access(c,user,order)
 
 def authorize_replay(c,user,operation,body,result):
@@ -334,7 +334,6 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
         manager = lock_shift(c, body.manager_shift_id)
         if (manager and manager['kind'] == 'manager' and manager['status'] == 'open'
                 and manager['brand_id'] == brand
-                and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
                 and not body.branch_ids):
             # Morning operates only a subset of the normal driver pool.
             # Derive it server-side from two already-authorized scopes.
@@ -402,6 +401,8 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     valid_cash_amount(body.opening_halalas+carried)
     c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
     if body.kind=='driver':
+        from .driver_duty import snapshot as duty_snapshot
+        duty_snapshot(c,target['id'],sid,vehicle_anchor)
         c.execute('UPDATE shifts SET permanent_float=%s WHERE id=%s',(db.json(permanent_float) if permanent_float else None,sid))
         from .fuel_exceptions import consume
         if vehicle_anchor:
@@ -578,9 +579,7 @@ def people_data(c,user):
     managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if unrestricted_owner(user) or (set(s['branch_ids'])<=set(user.get('branch_ids',[])) if user.get('home_brand_id') and user['role']=='owner' else set(s['branch_ids'])&set(user.get('branch_ids',[])))]
     if user['role']=='driver':
-        managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])
-                  or (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
-                  and bool(set(user.get('branch_ids',[]))&set(s['branch_ids']))]
+        managers=[s for s in managers if bool(set(user.get('branch_ids',[]))&set(s['branch_ids']))]
     context = user.get('_morning_manager_context')
     if context:
         from .morning_manager_context import shift_allowed
@@ -670,12 +669,12 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s,capability='shifts_view')
         from .central_workdays import annotate
         annotate(c,[s])
-        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
+        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
         from .shift_reconciliation import closed_shift
         reconciliation = closed_shift(c,s) if user['role'] != 'driver' else None
-        return safe(blind_closure.driver_view(user,{'reconciliation':reconciliation,'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
+        return safe(blind_closure.driver_view(user,{'reconciliation':reconciliation,'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM effective_collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
 
 @router.post('/shifts/{sid}/refuel')
 def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
@@ -971,10 +970,10 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
     with db.tx() as c:
         context = user.get('_morning_manager_context')
         if context:
-            rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id JOIN shifts s ON s.id=t.shift_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.snapshot->>'delivery_period'='morning' AND s.manager_shift_id=%s"+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500', [user['brand_id'],user['branch_ids'],context['shift_id']]+([order_id] if order_id else [])).fetchall()
-        elif user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
+            rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id JOIN shifts s ON s.id=t.shift_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.snapshot->>'delivery_period'='morning' AND s.manager_shift_id=%s"+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500', [user['brand_id'],user['branch_ids'],context['shift_id']]+([order_id] if order_id else [])).fetchall()
+        elif user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
         else:
-            rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))'+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500',
+            rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))'+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500',
                            [user['brand_id'],unrestricted_owner(user),user.get('branch_ids',[])]+([order_id] if order_id else [])).fetchall()
         if user.get('_morning_manager_context'):
             from .morning_manager_context import order_allowed
@@ -992,7 +991,7 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
         if user['role']=='driver':rows=[blind_closure.driver_view(user,r,shift_money=True) if r['status'] in TERMINAL or r['driver_id']!=user['id'] else r for r in rows]
         counts=None
         if user['role']=='driver':
-            counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.test_void IS NULL AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
+            counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM effective_driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.test_void IS NULL AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
         from .complimentary import operational_view
         return safe(operational_view({'tasks':rows, 'counts':counts}))
 
@@ -1397,7 +1396,7 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
                 raise db.error(409,'PROVIDER_REFUND_REQUIRED','استرداد الدفع الإلكتروني يتطلب تأكيد مزود الدفع.')
             if active(c,oid):fail(409,'أكمل مراجعة التعديل قبل الاسترداد')
             if user['role']=='branch_manager' and o['service']=='delivery':fail(403,'تسوية التوصيل من مدير التوصيل')
-            cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()
+            cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM effective_collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()
             cols=[p for p in cols if p['available']>0]
             col=cols[0] if cols else None
             prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']

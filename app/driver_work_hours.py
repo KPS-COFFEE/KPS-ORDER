@@ -123,7 +123,7 @@ def report_completed_orders(c, user, driver_id, shift_ids, allowed, lo, hi, now)
                CASE WHEN d.created_at IS NOT NULL THEN
                  jsonb_build_object('kind',d.details->>'kind','branch_id',d.details->>'branch_id',
                    'declared_at',d.created_at,'source','driver_declared_intent') END next_destination
-        FROM driver_tasks t JOIN orders o ON o.id=t.order_id
+        FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id
         LEFT JOIN LATERAL (
           SELECT w.* FROM driver_work_trips w JOIN driver_work_trip_orders x ON x.trip_id=w.id
           WHERE x.order_id=t.order_id AND w.shift_id=t.shift_id AND w.driver_id=t.driver_id
@@ -289,7 +289,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
                 elif e['details'].get('available') is True and paused is not None:stops.append((paused,e['created_at']));paused=None
             if paused:stops.append((paused,s.get('submitted_at') or s.get('closed_at') or now))
         m=metrics(ss,[(b['started_at'],b['ended_at'] or now) for b in bs],ts,lo,hi,now,stops,unknown)
-        count=c.execute("SELECT count(DISTINCT order_id) n,avg(extract(epoch FROM(delivered_at-picked_up_at))) FILTER(WHERE delivered_at>=picked_up_at) average FROM driver_tasks WHERE shift_id=ANY(%s) AND status='delivered' AND delivered_at>=%s AND delivered_at<%s",(sids,lo,hi)).fetchone()
+        count=c.execute("SELECT count(DISTINCT order_id) n,avg(extract(epoch FROM(delivered_at-picked_up_at))) FILTER(WHERE delivered_at>=picked_up_at) average FROM effective_driver_tasks WHERE shift_id=ANY(%s) AND status='delivered' AND delivered_at>=%s AND delivered_at<%s",(sids,lo,hi)).fetchone()
         activity_tasks=c.execute("SELECT order_id,status,picked_up_at,delivered_at FROM driver_tasks WHERE shift_id=ANY(%s) AND driver_id=%s AND (delivered_at>=%s OR (status IN ('picked_up','problem') AND picked_up_at<%s))",(sids,p['id'],lo,hi)).fetchall()
         activity=order_activity(ss,activity_tasks,[(b['started_at'],b['ended_at'] or now) for b in bs],lo,hi,now,stops)
         evidence=report_completed_orders(c,user,p['id'],sids,allowed,lo,hi,now)

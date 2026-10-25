@@ -25,12 +25,12 @@ from . import auth, db
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
 TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'branch_opening_hours_decisions', 'owner_branch_location_decisions', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'users', 'customer_addresses', 'customer_identity_links', 'assets', 'banners',
-          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'operational_day_reclassifications', 'central_workdays', 'central_workday_legs', 'driver_latest_locations', 'driver_location_health', 'orders', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
+          'driver_float_requests', 'driver_float_decisions', 'order_daily_counters', 'order_branch_counters', 'shifts', 'operational_day_reclassifications', 'central_workdays', 'central_workday_legs', 'driver_latest_locations', 'driver_location_health', 'orders', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'delivery_tracking_links', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'driver_tasks', 'order_driver_attribution_corrections', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents', 'channel_settlement_allocations', 'custody_transfers',
           'first_order_gift_claims', 'custody_events', 'retained_carryovers', 'manager_handovers', 'driver_support_requests', 'central_manager_handovers', 'central_manager_handover_legs', 'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures',
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
           'audit_events', 'recovery_events', 'recovery_state', 'recovery_alerts',
-          'idempotency_keys', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits',
+          'idempotency_keys', 'sessions', 'staff_geo_access_grants', 'owner_phone_challenges', 'otp_challenges', 'rate_limits',
           'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
           'performance_provinces', 'performance_province_branches', 'province_performance_policies',
           'closure_drafts', 'report_renderings', 'report_notifications',
@@ -41,9 +41,9 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'staff_brand_memberships', 'driver_brand_dedications',
           'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
-          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records')
+          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations')
 AUTH_TABLES = {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
-               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
+               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
                          'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations'}
@@ -71,6 +71,8 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand):
+    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations'}:
+        return 'brand_id=%s', (brand,)
     if brand and table in {'prior_delivery_grants', 'prior_delivery_records'}:
         return 'brand_id=%s', (brand,)
     if brand and table == 'prior_delivery_revocations':
@@ -94,7 +96,7 @@ def _scoped_sql(table, brand):
         return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
-    if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
+    if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks','order_driver_attribution_corrections', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
         return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
     if table == 'support_ticket_events':
         return 'ticket_id IN (SELECT id FROM support_tickets WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
@@ -293,6 +295,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     discarded_worker_pulses = 0
     discarded_monitor_states = 0
     discarded_map_runtime = {}
+    revoked_geo_grants = 0
     if destination and (destination.exists() or destination.is_symlink()):
         raise ValueError('Static asset restoration refuses existing destinations.')
     with psycopg.connect(target_url, row_factory=dict_row, connect_timeout=10) as conn:
@@ -365,6 +368,16 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:
                 raise ValueError('Restored counts or monetary totals differ from snapshot.')
             identities, binary_count = _restored_evidence(conn, archive, manifest)
+            # Verify the snapshot before retiring copied staff entry credentials.
+            # The source database is untouched; a restore is no owner approval.
+            if 'staff_geo_access_grants' in actual:
+                revoked_geo_grants = conn.execute(
+                    "UPDATE staff_geo_access_grants SET revoked_at=now(),revoked_by=NULL,"
+                    "revocation_source='restore',revocation_reason='Retired after isolated restore' "
+                    "WHERE revoked_at IS NULL").rowcount
+                if revoked_geo_grants:
+                    db.audit(conn, None, 'restore.staff_geo_grants_revoked', 'runtime', target_schema,
+                             {'grants': revoked_geo_grants})
             # Verify archived counts/identifiers first, then retire only this
             # newly restored schema's ephemeral runtime pulses. Historical
             # provider backup observations and owner alerts stay preserved.
@@ -412,6 +425,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             'ephemeral_worker_observations_discarded': discarded_worker_pulses,
             'ephemeral_monitor_state_discarded': discarded_monitor_states,
             'ephemeral_map_runtime_discarded': discarded_map_runtime,
+            'staff_geo_grants_revoked': revoked_geo_grants,
             'archive_sha256': hashlib.sha256(contents).hexdigest(), 'elapsed_seconds': round(time.monotonic() - started, 3)}
 
 

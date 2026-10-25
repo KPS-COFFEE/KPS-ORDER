@@ -1,0 +1,23 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const context={window:{}};
+vm.runInNewContext(fs.readFileSync('public/assets/legacy-closures.js','utf8'),context);
+const UI=context.window.KPSLegacyClosures;
+const preview={anchor_shift_id:'anchor',operational_date:'2026-10-24',driver_name:'Synthetic driver',orders:[{order_id:'order-1',task_id:'task-1',expected_version:7,order_reference:'SYNTHETIC-1',total_halalas:3400,brand_id:'enbishan'}]};
+const normal={confirmed:'on',reason:'Synthetic historical delivery attestation'};
+let submit,mutationCount=0,result;
+const ctx={api:async p=>{assert.equal(p,'/api/legacy-deliveries/shifts/anchor/preview');return preview;},mutation:async(p,b)=>{mutationCount++;assert.equal(p,'/api/legacy-deliveries/shifts/anchor/complete');result=JSON.parse(JSON.stringify(b));return {id:'attestation'};},tr:ar=>ar,esc:String,money:n=>String(n),modal:(title,html,fn)=>{submit=fn;assert.match(html,/SYNTHETIC-1/);assert.match(html,/وقت التسليم الفعلي غير موثق/);assert.doesNotMatch(html,/name="cash"|name="card"|target:/);},closeModal:()=>{},onChanged:async()=>{}};
+const form=fields=>({get:k=>fields[k]??null,has:k=>Object.hasOwn(fields,k)});
+(async()=>{
+ await UI.open(ctx,'anchor');
+ await submit(form(normal));
+ assert.deepEqual(result,{operational_date:'2026-10-24',orders:[{order_id:'order-1',task_id:'task-1',expected_version:7}],reason:normal.reason,confirmed:true});
+ const before=mutationCount;
+ await assert.rejects(()=>submit(form({...normal,reason:'00'})));
+ const unconfirmed={...normal};delete unconfirmed.confirmed;
+ await assert.rejects(()=>submit(form(unconfirmed)));
+ assert.equal(mutationCount,before,'Unconfirmed delivery must not post');
+ console.log('Legacy delivery UI: exact task versions, explicit attestation, no payment or timing inference passed.');
+})().catch(e=>{console.error(e);process.exitCode=1;});

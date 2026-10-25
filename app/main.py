@@ -27,6 +27,8 @@ PUBLIC = ROOT / 'public'
 async def lifespan(app):
     background_tasks = []
     try:
+        from . import staff_geo
+        staff_geo.validate_configuration()
         app.state.database_configured = bool(os.getenv('DATABASE_URL'))
         if app.state.database_configured:
             # A bad configured migration/database blocks startup; no storage substitute is created.
@@ -136,13 +138,19 @@ app.include_router(branch_payment_reports.router)
 from . import branch_payment_policy
 app.include_router(branch_payment_policy.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'customer_crm'):
+for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'customer_crm'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
 from . import dispatch_map
 from . import prior_deliveries
 app.include_router(prior_deliveries.router)
+from . import legacy_closures
+app.include_router(legacy_closures.router)
+from . import driver_attribution
+app.include_router(driver_attribution.router)
+from . import staff_geo_access
+app.include_router(staff_geo_access.router)
 app.include_router(dispatch_map.router)
 from . import map_services
 app.include_router(map_services.router)
@@ -239,6 +247,14 @@ def campaign_report_page():
                         headers={'Cache-Control': 'private, no-store'})
 
 
+@app.get('/work-access')
+def work_access_page():
+    # Neutral entry exchange only; no account data or administrative shell.
+    # The fragment token never reaches HTTP logs and never authenticates a user.
+    return FileResponse(PUBLIC / 'work-access.html', media_type='text/html',
+                        headers={'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer'})
+
+
 @app.get('/docs/metrics')
 def metric_definitions(user=Depends(auth.current_user)):
     if user['role'] not in {'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}:
@@ -250,7 +266,7 @@ def metric_definitions(user=Depends(auth.current_user)):
 @app.get('/{filename}')
 def frontend_file(filename: str):
     # Never mount the repository, data files, migrations, environment or the legacy executable menu.
-    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js'}:
+    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js', 'work-access.js'}:
         raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
     path = PUBLIC / filename
     if not path.is_file() or path.is_symlink():

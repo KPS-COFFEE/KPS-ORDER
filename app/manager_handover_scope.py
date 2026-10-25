@@ -46,7 +46,7 @@ def accepted_order(c, user, order, *, shift_id=None):
         "AND h.operational_snapshot->'order_ids' ? %s FOR SHARE OF s",
         (user['id'], order['brand_id'], order['id'])).fetchall()
     rows = [s for s in rows if not c.execute(
-        "SELECT 1 FROM driver_tasks t JOIN shifts d ON d.id=t.shift_id WHERE t.order_id=%s "
+        "SELECT 1 FROM effective_driver_tasks t JOIN shifts d ON d.id=t.shift_id WHERE t.order_id=%s "
         "AND t.status NOT IN ('cancelled','transferred','reassigned') AND d.manager_shift_id IS DISTINCT FROM %s LIMIT 1",
         (order['id'], s['id'])).fetchone()]
     return any((shift_id is None or s['id'] == shift_id)
@@ -71,7 +71,7 @@ def snapshot(c, source, children):
         "AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.completed_at IS NULL "
         "AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
         "AND o.delivery_status NOT IN ('cancelled','delivered') AND ("
-        "EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id AND t.shift_id=ANY(%s) "
+        "EXISTS(SELECT 1 FROM effective_driver_tasks t WHERE t.order_id=o.id AND t.shift_id=ANY(%s) "
         "AND t.status NOT IN ('cancelled','transferred','reassigned')) OR "
         "EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND e.event_type='preparation.accepted' "
         "AND e.details->>'manager_shift_id'=%s) OR "
@@ -79,7 +79,7 @@ def snapshot(c, source, children):
         "AND h.operational_snapshot->'order_ids' ? o.id) OR "
         "(%s AND o.snapshot->>'delivery_period'='morning' "
         "AND (o.snapshot->>'manager_shift_id' IS NULL OR o.snapshot->>'manager_shift_id'=%s) "
-        "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
+        "AND NOT EXISTS(SELECT 1 FROM effective_driver_tasks t WHERE t.order_id=o.id "
         "AND t.status NOT IN ('cancelled','transferred','reassigned')))) ORDER BY o.id",
         (source['brand_id'], source['branch_ids'], child_ids, source['id'], source['id'],
          (source.get('delivery_window_snapshot') or {}).get('period') == 'morning', source['id'])).fetchall()
@@ -98,7 +98,7 @@ def guard_received_work(c, shift):
         "AND h.status='accepted' AND o.completed_at IS NULL "
         "AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
         "AND o.delivery_status NOT IN ('cancelled','delivered') "
-        "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
+        "AND NOT EXISTS(SELECT 1 FROM effective_driver_tasks t WHERE t.order_id=o.id "
         "AND t.status NOT IN ('cancelled','transferred','reassigned'))", (shift['id'],)).fetchall()
     if any(not handed_off(c, shift['id'], o) for o in orders):
         raise db.error(409, 'MORNING_ORDERS_AWAITING_DISPATCH',

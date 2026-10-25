@@ -482,7 +482,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         conditions.append("o.customer->>'neighborhood' ILIKE %s")
         params.append('%'+neighborhood.replace('%','\\%').replace('_','\\_')+'%')
     if driver_id:
-        conditions.append("EXISTS(SELECT 1 FROM driver_tasks td WHERE td.order_id=o.id AND td.driver_id=%s AND td.status<>'transferred')")
+        conditions.append("EXISTS(SELECT 1 FROM effective_driver_tasks td WHERE td.order_id=o.id AND td.driver_id=%s AND td.status<>'transferred')")
         params.append(driver_id)
     if phone:
         normalized_phone=search_phone(phone)

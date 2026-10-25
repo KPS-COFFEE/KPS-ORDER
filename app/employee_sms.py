@@ -126,6 +126,10 @@ def request_sms(body: EmployeeSMSRequest, request: Request):
     expires = datetime.now(timezone.utc) + timedelta(minutes=5)
     with db.tx() as conn:
         user = _eligible(conn,body.brand_id,phone)
+        from .staff_geo_access import require_user as require_work_location
+        # A permitted entry link is scoped to one person, including before an
+        # SMS is sent. Unknown numbers get the same foreign-access denial.
+        require_work_location(conn, request, user)
         outcome = 'eligible' if user else 'account_ineligible_or_ambiguous'
         diagnostic_user_id = user['id'] if user else None
         if user and not sms_rollout.employee_sms_enabled(user, conn=conn):
@@ -162,6 +166,7 @@ def request_sms(body: EmployeeSMSRequest, request: Request):
             current = _eligible(conn,body.brand_id,phone,user['id'])
             if not current:
                 raise db.error(403,'EMPLOYEE_LOGIN_UNAVAILABLE','تعذر تسجيل الدخول. / Login unavailable.')
+            require_work_location(conn, request, current)
             conn.execute('INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name,source_user_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(challenge_id,body.brand_id,phone,reference,'sms',expires,provider,current['id']))
             db.audit(conn,current['id'],'employee.sms.requested','user',current['id'])
     # Identical response for unknown/inactive identities; no account is created.
@@ -189,6 +194,8 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
         if not user:
             raise db.error(403,'EMPLOYEE_LOGIN_UNAVAILABLE','تعذر تسجيل الدخول. / Login unavailable.')
         portals.enforce_role(request,user)
+        from .staff_geo_access import require_user as require_work_location
+        require_work_location(conn, request, user)
     with db.tx() as conn:
         account_allowed = db.rate_limit(conn,'employee-sms-verify-account:'+challenge['source_user_id'],3,600)
     if not account_allowed:
@@ -214,6 +221,7 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
         if not user:
             raise db.error(403,'EMPLOYEE_LOGIN_UNAVAILABLE','تعذر تسجيل الدخول. / Login unavailable.')
         portals.enforce_role(request,user)
+        require_work_location(conn, request, user)
         claimed = conn.execute('UPDATE otp_challenges SET verified_at=now() WHERE id=%s AND verified_at IS NULL AND expires_at>now() RETURNING id',(body.challenge_id,)).fetchone()
         if not claimed:
             raise db.error(409,'OTP_ALREADY_USED','تم استخدام الرمز. / Code already used.')
@@ -221,7 +229,7 @@ def verify_sms(body: EmployeeSMSVerify, request: Request, response: Response):
         _diagnostic(body.challenge_id, 'verification_approved', conn=conn, user_id=user['id'])
         db.audit(conn,user['id'],'employee.sms.verified','user',user['id'])
         sms_rollout.record_employee_proof(conn,user,body.challenge_id)
-        return {**auth.establish_session(conn,user,response,employee_sms_challenge=body.challenge_id),'portal_url':portals.home_for_role(user['role'])}
+        return {**auth.establish_session(conn,user,response,request=request,employee_sms_challenge=body.challenge_id),'portal_url':portals.home_for_role(user['role'])}
 
 
 # A sensitive proof belongs to one existing owner session, never to login.

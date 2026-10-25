@@ -79,8 +79,10 @@ DEFINITIONS.append(('driver_support_approve', 'اعتماد أو رفض طلب �
                     'Approve or reject scoped driver support requests', 'shifts', set()))
 DEFINITIONS.append(('complimentary_approve', 'اعتماد وإلغاء أوامر الضيافة والتعويض والاستكمال غير المنفذة',
                     'Authorize and revoke unused courtesy fulfillment commands', 'orders', set()))
+DEFINITIONS.append(('driver_duty_manage', 'تحديد ساعات دوام السائقين', 'Configure driver duty hours', 'staff', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'driver_duty_manage': {'admin', 'delivery_manager'},
     'complimentary_approve': {'admin', 'delivery_manager'},
     'driver_support_approve': {'admin', 'delivery_manager'},
     'branch_availability': {'driver', 'delivery_staff', 'delivery_manager', 'admin'},
@@ -99,6 +101,7 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
+    'driver_duty_manage': {'methods':['GET','PUT'], 'paths':['/api/driver-duty','/api/driver-duty/{identifier}'], 'scope':'current_brand_assigned_driver_branches_next_shift_only_no_financial_authority'},
     'complimentary_approve': {'methods':['GET','POST'], 'paths':['/api/orders/complimentary/quote','/api/orders/complimentary/authorizations','/api/orders/complimentary/authorizations/{identifier}/revoke'], 'scope':'explicit_owner_grant_current_brand_all_original_and_fulfillment_branches_no_refund_or_cash_permission'},
     'driver_support_approve': {'methods':['GET','POST'], 'paths':['/api/driver-support','/api/driver-support/{rid}/accept','/api/driver-support/{rid}/resolve'], 'scope':'owner_granted_staff_identity_all_affected_brand_and_branch_scopes_no_cash_transfer'},
     'staff_catalog_view': {'methods':['GET'], 'paths':['/api/identity/permissions/catalog'], 'scope':'catalog_only_no_personnel_no_grant'},
@@ -222,6 +225,7 @@ ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branc
                                 for name in ('order_output_status','confirm_order_output')})
 
 
+ROUTES['driver_duty'] = {'listing':'driver_duty_manage','configure':'driver_duty_manage'}
 ROUTES['driver_support'] = {'list_requests': ('shifts_view','driver_support_approve'), 'request_support': 'shifts_handover', 'accept_support': 'driver_support_approve', 'resolve_request': ('shifts_handover','driver_support_approve')}
 
 def required_for(endpoint, role, *, user=None):
