@@ -138,13 +138,15 @@ app.include_router(branch_payment_reports.router)
 from . import branch_payment_policy
 app.include_router(branch_payment_policy.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'financial_clarifications', 'customer_crm'):
+for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'aggregate_manager_closure', 'financial_clarifications', 'customer_crm'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
 from . import dispatch_map
 from . import prior_deliveries
 app.include_router(prior_deliveries.router)
+from . import legacy_invoice_imports
+app.include_router(legacy_invoice_imports.router)
 from . import legacy_closures
 app.include_router(legacy_closures.router)
 from . import driver_attribution

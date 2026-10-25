@@ -29,7 +29,7 @@ def closed_shift(c, shift):
             latest = dict(revision=0, bank_halalas=legacy['bank_halalas'],
                           cash_due_halalas=legacy['expected_cash_halalas'], cash_received_halalas=legacy['cash_halalas'])
     snap = report['snapshot']
-    supplements = c.execute('SELECT s.id AS shift_id,r.id AS report_id,r.snapshot FROM shifts s JOIN closure_reports r ON r.shift_id=s.id WHERE s.supplement_of_shift_id=%s AND s.brand_id=%s ORDER BY s.opened_at,s.id', (shift['id'],shift['brand_id'])).fetchall()
+    supplements = c.execute('SELECT s.id AS shift_id,r.id AS report_id,r.snapshot FROM shifts s JOIN closure_reports r ON r.shift_id=s.id WHERE (s.supplement_of_shift_id=%s OR (%s AND s.manager_shift_id=%s AND s.supplement_of_shift_id IS NOT NULL)) AND s.brand_id=%s ORDER BY s.opened_at,s.id', (shift['id'],shift['kind']=='manager',shift['id'],shift['brand_id'])).fetchall()
     supplements = [{'shift_id':r['shift_id'],'report_id':r['report_id'],'label':r['snapshot'].get('closure_label'), 'summary':r['snapshot'].get('summary',{})} for r in supplements]
     values = driver_settlement_values(snap, latest)
     confirmation = variance_confirmation(c, report['id'], values['revision'])

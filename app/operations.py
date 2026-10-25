@@ -372,7 +372,7 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     if multibrand.enabled() and c.execute(
             "SELECT 1 FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id "
             "WHERE s.user_id=%s AND s.status<>'closed' "
-            "AND (s.kind<>'driver' OR s.status<>'submitted' OR " + physical_pending + ") LIMIT 1", (target['id'],)).fetchone():
+            "AND " + physical_pending + " LIMIT 1", (target['id'],)).fetchone():
         # An existing grouped day cannot acquire an independent physical shift.
         from .central_workdays import require_action
         require_action()
@@ -385,7 +385,7 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
             # grouping/adoption paths. Direct driver calls stay physical-global.
             active_sql+=' AND brand_id=%s'
             active_params+=(target['brand_id'],)
-        active_sql += " AND (kind<>'driver' OR status<>'submitted' OR " + staffing_pending_sql('shifts') + ")"
+        active_sql += " AND " + staffing_pending_sql('shifts')
     if c.execute(active_sql,active_params).fetchone():
         raise db.error(409,'SHIFT_ALREADY_OPEN','لديك شفت مفتوح بالفعل. انتقل إلى مهام التوصيل أو الشفتات بدل فتح شفت جديد.')
     brand=target.get('brand_id') or user.get('brand_id')

@@ -44,7 +44,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations',
           'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
           'shared_manager_closure_declarations','shared_manager_closure_receipts','shared_manager_closure_allocations',
-          'financial_case_clarifications','financial_case_clarification_events')
+          'financial_case_clarifications','financial_case_clarification_events','legacy_invoice_imports')
 SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
                           'shared_manager_closure_declarations','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
@@ -84,7 +84,7 @@ def _scoped_sql(table, brand):
         return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
     if brand and table == 'financial_case_clarification_events':
         return 'clarification_id IN (SELECT id FROM financial_case_clarifications WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
-    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations'}:
+    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations','legacy_invoice_imports'}:
         return 'brand_id=%s', (brand,)
     if brand and table in {'prior_delivery_grants','prior_delivery_records'}:
         return 'brand_id=%s', (brand,)
@@ -329,7 +329,8 @@ def _verify_staffing_markers(conn, available):
             JOIN central_workdays w ON w.id=l.workday_id
             JOIN shared_manager_closure_declarations d ON d.workday_id=w.id
             JOIN shared_manager_closure_receipts r ON r.declaration_id=d.id
-            WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at))""")
+            WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at
+              AND r.received_by=d.recipient_user_id))""")
     invalid = conn.execute("SELECT s.id FROM shifts s WHERE s.staffing_ended_at IS NOT NULL "
         "AND (s.status NOT IN ('submitted','closed') OR NOT ("+' OR '.join(proofs)+")) LIMIT 1").fetchone()
     if invalid:

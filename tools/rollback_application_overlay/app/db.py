@@ -282,9 +282,32 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
     return row['hits'] <= maximum
 
 
+# This prior application is intentionally not a writer for the new physical
+# closing, duration or accepted clarification contracts. Reject rollback BEFORE
+# migrations, audit or request workers can touch a database that used them.
+ROLLBACK_UNSUPPORTED_STATE_TABLES = (
+    'driver_duty_profiles',
+    'shared_driver_closure_declarations', 'shared_driver_closure_returns',
+    'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
+    'shared_manager_closure_declarations', 'shared_manager_closure_receipts',
+    'shared_manager_closure_allocations',
+    'financial_case_clarifications', 'financial_case_clarification_events',
+)
+
+
+def guard_rollback_feature_state(conn):
+    available = {row['table_name'] for row in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'").fetchall()}
+    for table in ROLLBACK_UNSUPPORTED_STATE_TABLES:
+        if table in available and conn.execute(sql.SQL('SELECT 1 FROM {} LIMIT 1').format(sql.Identifier(table))).fetchone():
+            raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains ' + table +
+                               '; keep the current-aware application. No database restore or mutation was attempted.')
+
+
 def migrate():
     with tx() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
+        guard_rollback_feature_state(conn)
         baseline = preservation_snapshot(conn)
         apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
         after = preservation_snapshot(conn, baseline)
@@ -306,7 +329,7 @@ PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authoriz
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
                     'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
                     'first_order_gift_claims', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries', 'staff_brand_memberships', 'driver_brand_dedications',
-                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations')
+                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports')
 
 
 def preservation_snapshot(conn, baseline=None):

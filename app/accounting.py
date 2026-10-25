@@ -87,20 +87,24 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     # Fetch qualifying orders once. Lateral task selection prevents split payment,
     # transfers, refunds or multiple tasks from multiplying order/item counts.
     q="""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
-      o.total_halalas,o.snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name
+      o.total_halalas,o.snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name,
+      source.operational_date source_operational_date,source.ledger_shift_id source_ledger_shift_id
       FROM orders o LEFT JOIN LATERAL (SELECT driver_id FROM effective_driver_tasks WHERE order_id=o.id
       ORDER BY (status='delivered') DESC,created_at DESC,id DESC LIMIT 1) t ON true
-      LEFT JOIN users u ON u.id=t.driver_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
-      AND (o.created_at>=%s AND o.created_at<%s OR o.completed_at>=%s AND o.completed_at<%s
-      OR EXISTS(SELECT 1 FROM effective_collections x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)
+      LEFT JOIN users u ON u.id=t.driver_id LEFT JOIN legacy_invoice_imports source ON source.order_id=o.id
+      WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
+      AND ((source.id IS NULL AND (o.created_at>=%s AND o.created_at<%s OR o.completed_at>=%s AND o.completed_at<%s
+      OR EXISTS(SELECT 1 FROM effective_collections x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)))
+      OR source.operational_date BETWEEN %s AND %s
       OR EXISTS(SELECT 1 FROM refunds x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s))"""
-    args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,lo,hi]
+    args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,ds,de,lo,hi]
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
     if group!='items':q+=" AND NOT (o.snapshot ? 'complimentary')"
     if group!='actions':q+=" AND o.test_void IS NULL"
     orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders]
-    cols=c.execute('SELECT * FROM effective_collections WHERE order_id=ANY(%s) AND created_at<%s ORDER BY created_at,id',(ids,hi)).fetchall()
+    source_ids=[o['id'] for o in orders if o['source_operational_date'] and ds<=o['source_operational_date']<=de]
+    cols=c.execute('SELECT * FROM effective_collections WHERE order_id=ANY(%s) AND (created_at<%s OR order_id=ANY(%s)) ORDER BY created_at,id',(ids,hi,source_ids)).fetchall()
     refs=c.execute('SELECT r.*,u.display_name actor_name FROM refunds r JOIN users u ON u.id=r.authorized_by WHERE order_id=ANY(%s) AND r.created_at<%s ORDER BY r.created_at,r.id',(ids,hi)).fetchall()
     tickets=c.execute('SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
     events=c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
@@ -111,6 +115,10 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         else:refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
     from .item_sales import new_item,add_line
     rows={};items={};om={o['id']:o for o in orders}
+    def source_day_boundary(o):
+        # Reporting allocation only: source invoice imports retain NULL actual
+        # delivery/collection time and their true recording timestamps in storage.
+        return datetime.combine(o['source_operational_date'],time(4),TZ) if o['source_operational_date'] else None
     if group=='items':
         products=c.execute('SELECT id,name FROM products WHERE brand_id=%s ORDER BY name,id',(u['brand_id'],)).fetchall()
         items={p['id']:new_item(p['id'],p['name']) for p in products if not product_id or p['id']==product_id}
@@ -122,11 +130,13 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         if key not in rows:rows[key]={**new_row(label),'day':d,'driver_id':o['driver_id']}
         return rows[key]
     for o in orders:
-        if in_period(o['created_at'],lo,hi):
-            b=bucket(o,o['created_at']);b['orders']+=1
+        reported_creation=source_day_boundary(o) or o['created_at']
+        reported_completion=source_day_boundary(o) or o['completed_at']
+        if in_period(reported_creation,lo,hi):
+            b=bucket(o,reported_creation);b['orders']+=1
             if o['preparation_status'] in ('cancelled','rejected'):b['cancelled']+=1
-        if in_period(o['completed_at'],lo,hi) and (group!='items' or (o['preparation_status'] not in ('cancelled','rejected') and o['delivery_status']!='cancelled')):
-            b=bucket(o,o['completed_at']);b['gross']+=o['total_halalas']
+        if in_period(reported_completion,lo,hi) and (group!='items' or (o['preparation_status'] not in ('cancelled','rejected') and o['delivery_status']!='cancelled')):
+            b=bucket(o,reported_completion);b['gross']+=o['total_halalas']
             correct=paid[o['id']]>=o['total_halalas'] and not refunded[o['id']] and o['preparation_status'] not in ('cancelled','rejected') and o['id'] not in treated
             b['correct']+=int(correct);b['processed']+=int(not correct)
             seen=set()
@@ -137,7 +147,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
                 it=items[pid];sold=add_line(it,x,o)
                 if sold and pid not in seen:it['correct']+=int(correct);it['processed']+=int(not correct);seen.add(pid)
     for x in cols:
-        if in_period(x['created_at'],lo,hi):bucket(om[x['order_id']],x['created_at'])[x['method']]+=x['amount_halalas']
+        o=om[x['order_id']]
+        reported_collection=(source_day_boundary(o) if x['shift_id']==o['source_ledger_shift_id'] else None) or x['created_at']
+        if in_period(reported_collection,lo,hi):bucket(o,reported_collection)[x['method']]+=x['amount_halalas']
     for x in refs:
         if not in_period(x['created_at'],lo,hi):continue
         b=bucket(om[x['order_id']],x['created_at']);b['refund_'+x['method']]+=x['amount_halalas'];b['refunds']+=x['amount_halalas']
@@ -184,7 +196,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     pending_shared=pending_financial_rows(c,brand_id=u['brand_id'],branch_ids=bids,before=hi)
     return safe({'pending_shared_closures':pending_shared,'financial_completion_blocked':bool(pending_shared),'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'04:00'},'branches':bs,
       'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات بتاريخ الحركة. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and refunds use transaction time. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
-        (' جميع أصناف البراند ظاهرة حتى بلا مبيعات؛ الكمية المباعة منفصلة عن الهدايا والضيافة والإعلان والتعويض وبقية الأصناف الصفرية. الفروع المختارة هي فروع تنفيذ الطلب.' if lang=='ar' else ' All brand items appear, including items without sales. Sold quantities exclude gifts, hospitality, advertising, compensation and other zero-value items. Selected branches are order fulfilment branches.') if group=='items' else ''),
+        (' جميع أصناف البراند ظاهرة حتى بلا مبيعات؛ الكمية المباعة منفصلة عن الهدايا والضيافة والإعلان والتعويض وبقية الأصناف الصفرية. الفروع المختارة هي فروع تنفيذ الطلب.' if lang=='ar' else ' All brand items appear, including items without sales. Sold quantities exclude gifts, hospitality, advertising, compensation and other zero-value items. Selected branches are order fulfilment branches.') if group=='items' else '')+(' فواتير ساباد المستوردة تُنسب ليوم التشغيل الأصلي الموثق؛ تاريخ التسجيل ليس وقت التسليم أو التحصيل الفعلي.' if lang=='ar' else ' Imported Sabad invoices are allocated to their documented original operational day; recording timestamps are not actual delivery or collection times.'),
       'generated_at':datetime.now(TZ)})
 
 def deficit_rows(c,u,lo,hi,bids,driver_id,lang):

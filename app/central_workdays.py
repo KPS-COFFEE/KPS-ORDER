@@ -129,7 +129,7 @@ def _open(c, user, body):
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الموظف غير متاح.')
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', ('shift:'+target['id'],))
     from .aggregate_driver_closure import staffing_pending_sql
-    if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND (kind<>'driver' OR "+staffing_pending_sql()+")", (target['id'],)).fetchone():
+    if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND "+staffing_pending_sql(), (target['id'],)).fetchone():
         raise db.error(409, 'SHIFT_ALREADY_OPEN', 'للموظف وردية مفتوحة؛ أكملها قبل فتح وردية جديدة.')
     from .central_operations import context
     scopes = context(c, target)['brands']

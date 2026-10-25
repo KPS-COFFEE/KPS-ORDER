@@ -20,6 +20,7 @@ class Body(BaseModel):
 
 class Grant(Body):
     manager_shift_id: str
+    closed_manager_supplement: StrictBool = False
     driver_shift_ids: list[str] = Field(min_length=1, max_length=30)
     minutes: StrictInt = Field(default=120, ge=15, le=240)
     reason: str = Field(min_length=5, max_length=1000)
@@ -66,8 +67,10 @@ def day_of(shift):
     return shift.get('delivery_operational_date') or service_hours.delivery_operational_date(shift['opened_at'])
 
 
-def manager_scope(c, user, shift):
-    if shift['kind'] != 'manager' or shift['status'] != 'open':
+def manager_scope(c, user, shift, *, closed_supplement=False):
+    if closed_supplement and (user['role'] != 'owner' or shift['status'] != 'closed' or not shift.get('closed_at')):
+        raise db.error(403, 'PRIOR_CLOSED_MANAGER_OWNER_ONLY', 'ملحق المناوبة المقفلة متاح للمالك فقط ولمناوبة مقفلة فعليًا.')
+    if shift['kind'] != 'manager' or (not closed_supplement and shift['status'] != 'open'):
         raise db.error(409, 'PRIOR_MANAGER_CLOSED', 'يلزم شفت مدير توصيل مفتوح.')
     from .multibrand import project
     manager = c.execute('SELECT * FROM users WHERE id=%s AND active', (shift['user_id'],)).fetchone()
@@ -82,7 +85,7 @@ def manager_scope(c, user, shift):
 @router.get('/options')
 def options(user=Depends(access)):
     with db.tx() as c:
-        managers = c.execute("SELECT s.id,s.user_id,s.branch_ids,s.delivery_operational_date,s.opened_at,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='manager' AND s.status='open' AND (%s OR s.user_id=%s) ORDER BY s.opened_at DESC", (user['brand_id'],user['role']=='owner',user['id'])).fetchall()
+        managers = c.execute("SELECT s.id,s.user_id,s.branch_ids,s.status,s.delivery_operational_date,s.opened_at,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='manager' AND (s.status='open' OR (%s AND s.status='closed' AND s.closed_at>=now()-interval '30 days')) AND (%s OR s.user_id=%s) ORDER BY s.opened_at DESC", (user['brand_id'],user['role']=='owner',user['role']=='owner',user['id'])).fetchall()
         managers = [s for s in managers if set(s['branch_ids']) <= set(user.get('branch_ids',[])) or ops.unrestricted_owner(user)]
         shifts = c.execute("SELECT s.id,s.user_id,s.manager_shift_id,s.branch_ids,s.status,s.shift_no,s.delivery_operational_date,s.opened_at,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.brand_id=%s AND s.kind='driver' AND s.manager_shift_id=ANY(%s) AND s.supplement_of_shift_id IS NULL ORDER BY u.display_name,s.opened_at DESC", (user['brand_id'],[s['id'] for s in managers])).fetchall()
         shifts = [s for s in shifts if set(s['branch_ids']) <= set(user.get('branch_ids',[])) or ops.unrestricted_owner(user)]
@@ -98,8 +101,10 @@ def grant(body: Grant, user=Depends(access), key: str | None=Header(None, alias=
         from .central_workdays import lock_lanes
         lock_lanes(c)
         manager = shift_scope(c,user,body.manager_shift_id)
-        manager_scope(c,user,manager)
+        manager_scope(c,user,manager,closed_supplement=body.closed_manager_supplement)
         shifts = [shift_scope(c,user,sid) for sid in sorted(set(body.driver_shift_ids))]
+        if body.closed_manager_supplement and any(s['status']!='closed' or not s.get('closed_at') for s in shifts):
+            raise db.error(422, 'PRIOR_CLOSED_DRIVER_REQUIRED', 'اختر وردية سائق أصلية مقفلة لملحق المناوبة المقفلة.')
         operating_day=day_of(shifts[0])
         # A manager can open at 15:45 before the 16:00 operating-day boundary.
         # Keep its original ledger date, but authorize its attached driver day.
@@ -108,7 +113,7 @@ def grant(body: Grant, user=Depends(access), key: str | None=Header(None, alias=
             raise db.error(422, 'PRIOR_SHIFT_SCOPE', 'اختر سائقين تابعين لنفس المدير ويوم التشغيل.')
         def perform():
             gid=db.new_id('prior_grant_')
-            row=c.execute('INSERT INTO prior_delivery_grants(id,brand_id,manager_shift_id,manager_id,driver_shift_ids,operational_date,authorized_by,reason,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,now()+%s) RETURNING *', (gid,user['brand_id'],manager['id'],manager['user_id'],db.json([s['id'] for s in shifts]),operating_day,user['id'],body.reason,timedelta(minutes=body.minutes))).fetchone()
+            row=c.execute('INSERT INTO prior_delivery_grants(id,brand_id,manager_shift_id,manager_id,driver_shift_ids,operational_date,authorized_by,reason,closed_manager_supplement,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,now()+%s) RETURNING *', (gid,user['brand_id'],manager['id'],manager['user_id'],db.json([s['id'] for s in shifts]),operating_day,user['id'],body.reason,body.closed_manager_supplement,timedelta(minutes=body.minutes))).fetchone()
             db.audit(c,user['id'],'prior_delivery.authorized','prior_delivery_grant',gid,body.model_dump())
             return ops.safe({'grant':row})
         return db.idempotent(c,user['id'],key,'prior_delivery.grant',body.model_dump(),perform)
@@ -138,8 +143,11 @@ def authorized(c,user,gid,sid):
     if not g or sid not in g['driver_shift_ids'] or (user['role']!='owner' and user['id']!=g['manager_id']):
         raise db.error(403,'PRIOR_GRANT_UNAVAILABLE','الفتح انتهى أو لا يشمل السائق وحسابك.')
     manager=shift_scope(c,user,g['manager_shift_id'])
-    principal=manager_scope(c,user,manager)
+    closed_supplement=bool(g.get('closed_manager_supplement'))
+    principal=manager_scope(c,user,manager,closed_supplement=closed_supplement)
     shift=shift_scope(c,user,sid)
+    if closed_supplement and (shift['status']!='closed' or not shift.get('closed_at')):
+        raise db.error(409, 'PRIOR_CLOSED_DRIVER_REQUIRED', 'تغيرت حالة وردية السائق الأصلية؛ يلزم مراجعة المالك.')
     if shift['kind']!='driver' or shift['manager_shift_id']!=manager['id'] or day_of(shift)!=g['operational_date']:
         raise db.error(409,'PRIOR_SHIFT_CHANGED','تغير ارتباط الوردية؛ يلزم اعتماد جديد.')
     from .multibrand import project
@@ -231,7 +239,7 @@ def record(gid:str,body:Entry,user=Depends(access),key:str|None=Header(None,alia
         validate(body.prior,g,s,datetime.now(timezone.utc))
         def perform():
             p=body.prior
-            if c.execute('SELECT 1 FROM prior_delivery_records WHERE brand_id=%s AND driver_id=%s AND operational_date=%s AND source_reference=%s',(user['brand_id'],s['user_id'],g['operational_date'],p.source_reference)).fetchone():
+            if (c.execute('SELECT 1 FROM prior_delivery_records WHERE brand_id=%s AND driver_id=%s AND operational_date=%s AND source_reference=%s',(user['brand_id'],s['user_id'],g['operational_date'],p.source_reference)).fetchone() or c.execute('SELECT 1 FROM legacy_invoice_imports WHERE brand_id=%s AND operational_date=%s AND invoice_reference=%s',(user['brand_id'],g['operational_date'],p.source_reference)).fetchone()):
                 raise db.error(409,'PRIOR_DUPLICATE_REFERENCE','هذا المرجع مسجل لهذا السائق واليوم؛ لا تضفه مرة أخرى.')
             if bool(body.order_id)==bool(body.order):raise db.error(422,'PRIOR_SELECT_ONE','اختر طلبًا موجودًا أو أنشئ طلبًا ناقصًا.')
             if body.order_id:

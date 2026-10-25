@@ -19,7 +19,7 @@ def staffing_pending_sql(alias='shifts'):
 
 
 def physical_finished(c,sid):
-    return bool(c.execute("SELECT 1 FROM shifts WHERE id=%s AND kind='driver' AND status IN ('submitted','closed') AND staffing_ended_at IS NOT NULL",(sid,)).fetchone())
+    return bool(c.execute("SELECT 1 FROM shifts WHERE id=%s AND status IN ('submitted','closed') AND staffing_ended_at IS NOT NULL",(sid,)).fetchone())
 
 
 def pending_pool(c,manager_sid):
@@ -281,12 +281,18 @@ def inbox(user=Depends(auth.current_user)):
 
 def pending_financial_rows(c,*,shift_id=None,brand_id=None,branch_ids=None,before=None):
     if not multibrand.enabled():return []
-    clauses=['a.id IS NULL','returned.declaration_id IS NULL'];params=[]
-    if shift_id:clauses.append('(s.id=%s OR s.manager_shift_id=%s)');params.extend([shift_id,shift_id])
-    if brand_id:clauses.append('s.brand_id=%s');params.append(brand_id)
-    if branch_ids is not None:clauses.append('s.branch_ids ?| %s');params.append(list(branch_ids))
-    if before is not None:clauses.append('d.created_at<%s');params.append(before)
-    return c.execute('SELECT DISTINCT d.id declaration_id,w.anchor_shift_id,w.user_id,d.created_at FROM shared_driver_closure_declarations d JOIN central_workdays w ON w.id=d.workday_id JOIN central_workday_legs l ON l.workday_id=w.id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id LEFT JOIN shared_driver_closure_returns returned ON returned.declaration_id=d.id WHERE '+' AND '.join(clauses)+' ORDER BY d.created_at,d.id',params).fetchall()
+    rows=[]
+    for family in ('driver','manager'):
+        clauses=['a.id IS NULL'];params=[]
+        if family=='driver':clauses.append('returned.declaration_id IS NULL')
+        if shift_id:clauses.append('(s.id=%s OR s.manager_shift_id=%s)');params.extend([shift_id,shift_id])
+        if brand_id:clauses.append('s.brand_id=%s');params.append(brand_id)
+        if branch_ids is not None:clauses.append('s.branch_ids ?| %s');params.append(list(branch_ids))
+        if before is not None:clauses.append('d.created_at<%s');params.append(before)
+        returns=' LEFT JOIN shared_driver_closure_returns returned ON returned.declaration_id=d.id' if family=='driver' else ''
+        query=f'SELECT DISTINCT d.id declaration_id,w.anchor_shift_id,w.user_id,d.created_at FROM shared_{family}_closure_declarations d JOIN central_workdays w ON w.id=d.workday_id JOIN central_workday_legs l ON l.workday_id=w.id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_{family}_closure_allocations a ON a.declaration_id=d.id'+returns+' WHERE '+' AND '.join(clauses)+' ORDER BY d.created_at,d.id'
+        rows.extend(dict(row,kind=family) for row in c.execute(query,params).fetchall())
+    return rows
 
 
 def guard_financial_allocation(c,*,shift_id=None,brand_id=None,branch_ids=None,before=None):

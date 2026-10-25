@@ -65,7 +65,8 @@ def create_snapshot(c,sid,approved_by):
         order['snapshot']=safe(order['snapshot']);order['snapshot'].pop('notes',None);order['snapshot'].pop('note',None)
         for item in order['snapshot'].get('items',[]):item.pop('note',None)
     attestations=c.execute('SELECT id,order_id,task_id,shift_id,actor_id,reason,operational_date,recorded_at FROM legacy_delivery_attestations WHERE shift_id=ANY(%s) ORDER BY recorded_at,id',(shift_ids,)).fetchall()
-    attested={a['order_id'] for a in attestations}
+    imports=c.execute('SELECT id,order_id,invoice_reference,invoice_issued_at,recorded_at,original_shift_id,manager_shift_id,total_halalas,tax_halalas,cash_halalas,card_halalas,reason FROM legacy_invoice_imports WHERE ledger_shift_id=ANY(%s) ORDER BY recorded_at,id',(shift_ids,)).fetchall()
+    attested={a['order_id'] for a in attestations} | {r['order_id'] for r in imports}
     fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and (t.get('delivered_at') or t['order_id'] in attested)}
     for o in orders:o['fulfilled_in_report']=not o.get('test_void') and o.get('fulfilled_in_report',o['id'] in fulfilled)
     cash=sum(r['amount_halalas'] for r in collections if r['method']=='cash')-sum(r['amount_halalas'] for r in refunds if r.get('record_kind')=='test_void')
@@ -84,6 +85,7 @@ def create_snapshot(c,sid,approved_by):
         snap['delivery_operational_day_start']='04:00'
     snap['driver_attribution_corrections']=safe(c.execute('SELECT * FROM order_driver_attribution_corrections WHERE source_shift_id=ANY(%s) OR target_shift_id=ANY(%s) ORDER BY created_at,id',(shift_ids,shift_ids)).fetchall())
     snap['legacy_delivery_attestations']=safe(attestations)
+    snap['legacy_invoice_imports']=safe(imports)
     # Display metadata is captured only for this new snapshot, never backfilled.
     snap['schema_version']=2;snap['presentation_template_version']=TEMPLATE_VERSION
     snap['display_users']={k:v for child in children for k,v in child['snapshot'].get('display_users',{}).items()}
@@ -637,6 +639,7 @@ def v5_tables(snap,view='compact'):
          label(o.get('delivery_status'))]
         for o in orders if (o.get('snapshot') or {}).get('complimentary',{}).get('kind') in KINDS])
     cancelled=len({t.get('order_id') for t in tasks if t.get('status')=='cancelled'}|{o['id'] for o in orders if o.get('preparation_status')=='cancelled'})
+    table('legacy-source-invoices','فواتير ساباد الأصلية — ملحق مستقل',['الطلب','فاتورة المصدر','وقت إصدار الفاتورة؛ ليس وقت التسليم','وقت التسجيل','سبب الملحق'],[[order_name(r['order_id']),r['invoice_reference'],v5_stamp(r['invoice_issued_at']),v5_stamp(r['recorded_at']),r['reason']+' — وقت التسليم والتحصيل الفعلي غير معلوم؛ لا يثبت استلام المدير للكاش.'] for r in snap.get('legacy_invoice_imports',[])])
     table('outcomes','نتائج الطلبات',['مكتمل','ملغى','مرتجع/جزئي','قيمة المكتمل (ر.س)'],[[
         summary.get('completed_orders',0),cancelled,len({r.get('order_id') for r in refunds}),v5_money(summary.get('gross_completed_halalas',0))]])
     if snap.get('kind')=='manager':
