@@ -37,8 +37,8 @@
       if(/مشروبات|منعشات|beverage|drink|ماء|water|موهيتو|mojito|ماتشا|matcha|سموذي|smoothie|كركديه|شوكليت|chocolate|ايس\s*تي|ice[d]?\s*tea/.test(both))return 'cold';
       return 'extras';
     }
-    const current=complimentary&&canApprove?{shifts:[]}:await api('/api/shifts/current');
-    const covered=new Set((current.shifts||[]).filter(s=>s.user_id===user.id&&s.kind==='manager'&&s.status==='open').flatMap(s=>s.branch_ids||[]));
+    const current=(ctx.priorDelivery||complimentary&&canApprove)?{shifts:[]}:await api('/api/shifts/current');
+    const covered=new Set(ctx.priorDelivery?ctx.priorBranchIds:(current.shifts||[]).filter(s=>s.user_id===user.id&&s.kind==='manager'&&s.status==='open').flatMap(s=>s.branch_ids||[]));
     const allowed=branches.filter(b=>(complimentary&&canApprove&&(user.role==='owner'||(user.branch_ids||[]).includes(b.id))||covered.has(b.id))&&(!morning||user.delivery_context.branch_ids.includes(b.id)));
     if(!allowed.length)throw new Error(tr('افتح شفت مدير توصيل أولًا.','Open your delivery manager shift first.'));
     let products=[],cart=[],review=null,sequence=0,lookupSequence=0,lookupTimer,selectedContactPhone=null;
@@ -87,6 +87,10 @@
       closeModal();if(complimentary){await ctx.onAuthorized?.(result.authorization);return;}await onCreated(result.order.id);
     });
     const form=document.querySelector('#staff-order-form'),select=form.querySelector('#staff-product'),options=form.querySelector('#staff-options'),add=form.querySelector('#staff-add');
+    if(ctx.priorDelivery){
+      form.querySelector('p.notice').textContent=tr('طلب عنبيشن منفذ سابقًا. أضف الأصناف كما في المرجع الأصلي؛ الحفظ يثبت التسليم والتحصيل السابق ولا يرسل طلب تجهيز جديدًا.','Previously fulfilled Enbishan order. Enter the original items; saving records prior delivery and collection without a new preparation ticket.');
+      form.elements.payment_method.closest('label').hidden=true;
+    }
     if(morning){
       form.querySelector('p.notice').textContent=tr('طلب واتساب — صباحي حفر الباطن، تجهيز فرع 2. يصل للمحضّر كطلب جديد بانتظار القبول. أدخل بيانات العميل وموقعه كما أرسلها؛ الجوال غير موثق بهذه العملية.','WhatsApp order — Hafar morning, prepared at Branch 2. It reaches the preparer as a new order awaiting acceptance. Enter the customer details and location as provided; this does not verify mobile ownership.');
       form.elements.branch_id.disabled=true;

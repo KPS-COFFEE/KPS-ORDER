@@ -352,7 +352,8 @@ PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authoriz
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
                     'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
                     'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
-                    'customer_wallets','benefit_order_states','customer_wallet_entries')
+                    'customer_wallets','benefit_order_states','customer_wallet_entries',
+                    'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records')
 
 
 def preservation_snapshot(conn, baseline=None, *, lock_tables=True):

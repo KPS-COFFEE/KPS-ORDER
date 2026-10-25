@@ -213,7 +213,7 @@ def delivery_city_eligible(branch):
     return city_name in DELIVERY_CITIES
 
 
-def branch_service(branch: dict, service: str, now=None, brand_settings=None, *, delivery_center=False) -> tuple[bool, str | None, str | None]:
+def branch_service(branch: dict, service: str, now=None, brand_settings=None, *, delivery_center=False, prior_delivery=False) -> tuple[bool, str | None, str | None]:
     now = now or service_hours.now_riyadh()
     # One-night owner authorization; never changes public storefront hours.
     late_desk = (delivery_center and service == 'delivery'
@@ -241,7 +241,7 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None, *,
         return False, 'BRANCH_CONFIGURATION_UNVERIFIED', 'بيانات تشغيل هذا الفرع لم تُعتمد بعد.'
     if not settings.get('opening_hours'):
         return False, 'HOURS_UNCONFIGURED', 'ساعات استقبال هذا الفرع غير مهيأة.'
-    if not late_desk and not _hours_open(settings['opening_hours'], now):
+    if not (late_desk or prior_delivery) and not _hours_open(settings['opening_hours'], now):
         return False, 'BRANCH_CLOSED', 'الفرع مغلق الآن لاستقبال الطلبات.'
     if not isinstance(settings.get('payment_methods'), list) or not settings['payment_methods']:
         return False, 'PAYMENT_UNCONFIGURED', 'طرق الدفع لهذا الفرع غير مهيأة.'
@@ -250,7 +250,7 @@ def branch_service(branch: dict, service: str, now=None, brand_settings=None, *,
         delivery_hours = morning_delivery.HOURS if morning_delivery.active(branch, brand_settings, now) else settings.get('delivery_hours')
         if not delivery_hours:
             return False, 'DELIVERY_HOURS_UNCONFIGURED', 'ساعات التوصيل لهذا الفرع غير مهيأة.'
-        if not late_desk and not _hours_open(delivery_hours, now):
+        if not (late_desk or prior_delivery) and not _hours_open(delivery_hours, now):
             return False, 'DELIVERY_CLOSED', closed_delivery_message(delivery_hours, now)
         if not settings.get('coverage') or not location_verified(branch):
             return False, 'COVERAGE_UNCONFIGURED', 'نطاق التوصيل أو موقع الفرع غير مهيأ.'
@@ -760,7 +760,7 @@ def order_request_payload(body):
     return payload
 
 
-def quote_order(conn, body: QuoteBody, for_update=False, *, user=None, order_id=None, complimentary=False, delivery_center=False) -> dict:
+def quote_order(conn, body: QuoteBody, for_update=False, *, user=None, order_id=None, complimentary=False, delivery_center=False, prior_delivery=False) -> dict:
     from .storefront_scope import require_brand
     require_brand(body.brand_id)
     from . import gift_orders
@@ -773,7 +773,7 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, user=None, order_id=
     brand, branch = brand_query.fetchone(), branch_query.fetchone()
     if not brand or not branch:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع أو البراند غير موجود.')
-    available, code, reason = branch_service(branch, body.service, now=now, brand_settings=brand['settings'], delivery_center=delivery_center)
+    available, code, reason = branch_service(branch, body.service, now=now, brand_settings=brand['settings'], delivery_center=delivery_center, prior_delivery=prior_delivery)
     if not available:
         raise db.error(409, code, reason)
     selected_branch = branch
