@@ -1,7 +1,7 @@
 name: Customer message routing acceptance
 on:
   pull_request:
-    branches: [agent/kps-order-emergency-v4]
+    branches: [agent/kps-order-emergency-v4, agent/closed-manager-prior-20261025]
     paths:
       - app/auth.py
       - app/chat.py
@@ -10,6 +10,7 @@ on:
       - public/ops.js
       - public/ops.html
       - tests/test_customer_message_routing*.py
+      - tests/test_chat_compose_read_race.cjs
       - .github/workflows/customer-message-routing.yml
 permissions:
   contents: read
@@ -38,6 +39,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: node --check public/ops.js
+      - run: node tests/test_chat_compose_read_race.cjs
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest -q tests/test_customer_message_routing.py tests/test_customer_message_routing_browser.py tests/test_employee_permissions.py tests/test_chat_attachment_sessions.py tests/test_driver_customer_chat.py --junitxml=test-results/message-routing.xml
       - uses: actions/upload-artifact@v4

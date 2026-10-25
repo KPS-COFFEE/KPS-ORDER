@@ -45,13 +45,22 @@ def test_owner_routes_and_admin_replies_without_role_change(live_app, chromium_b
     context, page, errors = _context(chromium_browser, live_app)
     _owner_login(context, live_app, admin)
     try:
+        # Hold the real read-receipt request, without substituting its response.
+        # The visible reply form must work before that unrelated request finishes.
+        held_reads = []
+        page.route(f'**/api/conversations/{cid}/read', lambda route: held_reads.append(route))
         page.goto(live_app+'/ops')
         page.locator('#navigation [data-page=chat]').click()
-        page.locator(f'.conversation[data-id="{cid}"]').click()
+        with page.expect_request(f'**/api/conversations/{cid}/read'):
+            page.locator(f'.conversation[data-id="{cid}"]').click()
         expect(page.locator('#message-form')).to_be_visible()
+        assert held_reads
         page.locator('#message-form textarea').fill('Synthetic customer care response')
         page.locator('#message-form button[type=submit]').click()
         expect(page.locator('#messages')).to_contain_text('Synthetic customer care response')
+        expect(page).to_have_url(live_app+'/ops')
+        for request in held_reads:
+            request.continue_()
         expect(page.locator('#chat-detail [data-action=transfer-chat]')).to_have_count(0)
         Path('test-artifacts').mkdir(exist_ok=True)
         page.screenshot(path='test-artifacts/customer-message-routing-admin.png', full_page=True)
