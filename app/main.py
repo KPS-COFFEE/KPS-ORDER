@@ -27,6 +27,8 @@ PUBLIC = ROOT / 'public'
 async def lifespan(app):
     background_tasks = []
     try:
+        from . import staff_geo
+        staff_geo.validate_configuration()
         app.state.database_configured = bool(os.getenv('DATABASE_URL'))
         if app.state.database_configured:
             # A bad configured migration/database blocks startup; no storage substitute is created.
@@ -147,6 +149,8 @@ from . import legacy_closures
 app.include_router(legacy_closures.router)
 from . import driver_attribution
 app.include_router(driver_attribution.router)
+from . import staff_geo_access
+app.include_router(staff_geo_access.router)
 app.include_router(dispatch_map.router)
 from . import map_services
 app.include_router(map_services.router)
@@ -243,6 +247,14 @@ def campaign_report_page():
                         headers={'Cache-Control': 'private, no-store'})
 
 
+@app.get('/work-access')
+def work_access_page():
+    # Neutral entry exchange only; no account data or administrative shell.
+    # The fragment token never reaches HTTP logs and never authenticates a user.
+    return FileResponse(PUBLIC / 'work-access.html', media_type='text/html',
+                        headers={'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer'})
+
+
 @app.get('/docs/metrics')
 def metric_definitions(user=Depends(auth.current_user)):
     if user['role'] not in {'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}:
@@ -254,7 +266,7 @@ def metric_definitions(user=Depends(auth.current_user)):
 @app.get('/{filename}')
 def frontend_file(filename: str):
     # Never mount the repository, data files, migrations, environment or the legacy executable menu.
-    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js'}:
+    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js', 'work-access.js'}:
         raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
     path = PUBLIC / filename
     if not path.is_file() or path.is_symlink():

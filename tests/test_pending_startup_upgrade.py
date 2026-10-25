@@ -37,6 +37,7 @@ PENDING = frozenset({
     '103_enbishan_pickup_default_paused.sql', '104_prior_deliveries.sql',
     '105_driver_attribution_corrections.sql',
     '106_legacy_delivery_attestations.sql',
+    '106_staff_geo_access.sql',
 })
 TABLES = ('brands', 'branches', 'users', 'orders', 'collections', 'refunds',
           'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges', 'shifts')

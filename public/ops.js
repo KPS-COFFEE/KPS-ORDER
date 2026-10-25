@@ -355,8 +355,8 @@
     if(!window.confirm(title+'\n'+tr('تأكيد الحفظ والاعتماد؟ يُسجّل الإجراء باسمك.','Confirm saving and approval? This action is recorded under your name.')))
       throw new Error(tr('أُلغي الحفظ؛ بياناتك باقية.','Save cancelled; your entries are retained.'));
   }
-  async function ownerStepUp(password) {
-    if (!state.user?.employee_sms_email_retired) return mutation('/api/identity/step-up', {password:password || ''});
+  async function ownerStepUp(password, smsOnly=false) {
+    if (!smsOnly && !state.user?.employee_sms_email_retired) return mutation('/api/identity/step-up', {password:password || ''});
     let sent=null;
     return new Promise((resolve, reject) => {
       const dialog = document.createElement('dialog');
@@ -2051,6 +2051,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     const button=(action,label,extra='')=>`<button class="quiet small" data-action="${action}" data-id="${esc(u.id)}" ${extra}>${esc(label)}</button>`;
     if(u.invitation_status==='archived')return state.user.role==='owner'?button('manage-staff',tr('استعادة الموظف','Restore employee'),'data-operation="restore"'):'';
     let html=button('edit-staff',tr('البيانات والصلاحيات','Details & permissions'));
+    if(state.user.role==='owner'&&u.active)html+=button('staff-geo-access',tr('دخول من خارج السعودية','Access from abroad'));
     if(state.user.role==='owner'&&u.role==='driver'&&!u.active)html+=button('owner-activate-driver',tr('تفعيل من المالك','Activate by owner'));
     if(['draft','pending_email'].includes(u.invitation_status))html+=button('resend-invite',tr('إعادة الدعوة','Resend invitation'));
     if(state.user.role==='owner'&&u.id!==state.user.id){
@@ -2059,6 +2060,66 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       html+=button('manage-staff',tr('حذف الموظف','Delete employee'),'data-operation="archive"');
     }
     return `<details class="staff-actions"><summary>${esc(tr('الإجراءات','Actions'))}</summary><div class="staff-actions-menu">${html}</div></details>`;
+  }
+  async function staffGeoAccess(id) {
+    if(state.user?.role!=='owner')throw new Error(tr('منح إذن الدخول من خارج السعودية متاح للمالك فقط.','Only the owner can authorize access from abroad.'));
+    const user=state.staff?.find(u=>u.id===id);
+    if(!user||!user.active)throw new Error(tr('اختر حساب موظف مفعل.','Choose an active staff account.'));
+    const data=await api('/api/admin/staff-geo/grants?user_id='+encodeURIComponent(id));
+    const labels={active:tr('ساري','Active'),expired:tr('منتهٍ','Expired'),revoked:tr('ملغى','Revoked'),disabled:tr('متوقف','Disabled')};
+    const grants=data.grants||[];
+    const history=grants.length?table([tr('الحالة','Status'),tr('نهاية السماح','Access ends'),tr('اعتمد بواسطة','Approved by'),tr('السبب','Reason'),tr('الإجراء','Action')],grants.map(g=>[
+      esc(labels[g.status]||tr('غير نشط','Inactive')),esc(datetime(g.expires_at)),esc(g.approved_by_name||'—'),esc(g.reason||'—'),
+      g.status==='active'?`<button type="button" class="quiet small" data-geo-revoke="${esc(g.id)}">${esc(tr('إلغاء الإذن الآن','Revoke now'))}</button>`:esc(g.revocation_reason||'—')
+    ])):empty(tr('لا توجد أذونات سابقة لهذا الحساب.','No previous grants for this account.'));
+    modal(tr('دخول من خارج السعودية','Access from abroad'),`<div class="stack"><p><strong>${esc(user.display_name)}</strong> · ${esc(roleName(user.role))}</p>${notice(tr('الإذن لهذا الحساب فقط، ويظل الدخول برمز SMS مطلوبًا. ينتهي السماح تلقائيًا، ويمكنك إلغاؤه في أي وقت.','This grant is for this account only. Normal SMS sign-in is still required. Access expires automatically and you can revoke it at any time.'))}${data.enabled===false?notice(tr('التقييد الجغرافي لم يُفعّل بعد. الأذونات لا تتجاوز صلاحيات الحساب.','Geographic restriction is not active yet. Grants do not expand account permissions.'),'warn'):''}<form id="staff-geo-grant-form"><label>${esc(tr('مدة السماح من الآن','Access duration from now'))}<select name="hours" required>${[[1,tr('ساعة واحدة','1 hour')],[8,tr('8 ساعات','8 hours')],[24,tr('24 ساعة','24 hours')],[72,tr('3 أيام','3 days')],[168,tr('7 أيام','7 days')]].map(([hours,label])=>`<option value="${hours}" ${hours===24?'selected':''}>${esc(label)}</option>`).join('')}</select></label><label>${esc(tr('سبب السماح','Reason for access'))}<textarea name="reason" required minlength="3" maxlength="500"></textarea></label>${formEnd(tr('تحقق المالك وإنشاء إذن','Verify owner and create grant'))}</form><section><h3>${esc(tr('سجل الأذونات','Access grant history'))}</h3>${history}</section></div>`,async fd=>{
+      const reason=String(fd.get('reason')||'').trim();
+      const hours=Number(fd.get('hours'));
+      if(reason.length<3||reason.length>500||![1,8,24,72,168].includes(hours))throw new Error(tr('اختر مدة السماح وأدخل سببًا واضحًا من 3 إلى 500 حرف.','Select a duration and enter a reason of 3 to 500 characters.'));
+      await ownerStepUp(undefined,true);
+      const created=await api('/api/admin/staff-geo/grants',{method:'POST',body:{user_id:id,hours,reason}});
+      showStaffGeoLink(user,created);
+    });
+    for(const button of $('#modal-body').querySelectorAll('[data-geo-revoke]'))button.addEventListener('click',()=>staffGeoRevoke(user,button.dataset.geoRevoke));
+  }
+  function showStaffGeoLink(user,result) {
+    let entryUrl;
+    try{
+      const url=new URL(result.entry_url,location.origin);
+      const fragment=new URLSearchParams(url.hash.slice(1));
+      if(url.origin!==location.origin||url.pathname!=='/work-access'||url.search||fragment.getAll('token').length!==1||[...fragment.keys()].length!==1||!/^[A-Za-z0-9_-]{43,100}$/.test(fragment.get('token')||''))throw new Error();
+      entryUrl=url.href;
+    }catch{throw new Error(tr('حُفظ الإذن، لكن تعذر عرض رابطه الآمن. راجع سجل الأذونات وألغِه قبل إصدار بديل.','The grant was saved, but its secure link could not be displayed. Review and revoke it before issuing a replacement.'));}
+    modal(tr('تم إنشاء إذن الدخول','Access grant created'),`<div class="stack"><p><strong>${esc(user.display_name)}</strong></p>${notice(tr('انسخ الرابط وأرسله بنفسك إلى صاحب هذا الحساب فقط. يُستخدم الرابط مرة واحدة، ويظهر هنا الآن فقط. يظل رمز SMS مطلوبًا للدخول.','Copy this link and share it yourself only with this account holder. The link can be used once and is shown here only now. An SMS code is still required to sign in.'))}<p>${esc(tr('ينتهي السماح: ','Access ends: '))}<strong>${esc(datetime(result.grant?.expires_at))}</strong></p><label>${esc(tr('رابط إذن الدخول','Access grant link'))}<input id="staff-geo-link" type="text" dir="ltr" readonly autocomplete="off" spellcheck="false"></label><button type="button" id="staff-geo-copy">${esc(tr('نسخ الرابط','Copy link'))}</button><p id="staff-geo-copy-state" class="muted" role="status"></p><button type="button" class="quiet" id="staff-geo-history">${esc(tr('العودة إلى سجل الأذونات','Return to grant history'))}</button></div>`);
+    const input=$('#staff-geo-link'),copy=$('#staff-geo-copy'),status=$('#staff-geo-copy-state');
+    input.value=entryUrl;
+    copy.addEventListener('click',async()=>{
+      copy.disabled=true;
+      try{await navigator.clipboard.writeText(entryUrl);status.textContent=tr('تم نسخ الرابط.','Link copied.');}
+      catch{input.focus();input.select();status.textContent=tr('حدد الرابط وانسخه من الحقل.','Select and copy the link from the field.');}
+      finally{copy.disabled=false;}
+    });
+    $('#staff-geo-history').addEventListener('click',()=>staffGeoAccess(user.id).catch(error=>setStatus(error.message,true)));
+    // Do not retain the bearer link in hidden dialog fields or browser storage.
+    const dialog=$('#modal');
+    const clearLink=()=>{
+      // Replacing an existing dialog queues its previous close event. Do not
+      // mistake that event for closing the newly displayed link.
+      if(dialog.open&&input.isConnected)return;
+      input.value='';entryUrl='';dialog.removeEventListener('close',clearLink);
+    };
+    dialog.addEventListener('close',clearLink);
+  }
+  function staffGeoRevoke(user,grantId) {
+    if(state.user?.role!=='owner')throw new Error(tr('إلغاء الإذن متاح للمالك فقط.','Only the owner can revoke this grant.'));
+    modal(tr('إلغاء إذن الدخول','Revoke access grant'),`<form><p><strong>${esc(user.display_name)}</strong></p>${notice(tr('يتوقف هذا الإذن فور إلغائه، بما في ذلك الجلسات التي تستخدمه من خارج السعودية.','Revocation immediately stops access through this grant, including sessions using it outside Saudi Arabia.'),'warn')}<label>${esc(tr('سبب الإلغاء','Revocation reason'))}<textarea name="reason" required minlength="3" maxlength="500"></textarea></label>${formEnd(tr('تحقق المالك وإلغاء الإذن','Verify owner and revoke'))}</form>`,async fd=>{
+      const reason=String(fd.get('reason')||'').trim();
+      if(reason.length<3||reason.length>500)throw new Error(tr('أدخل سببًا واضحًا من 3 إلى 500 حرف.','Enter a reason of 3 to 500 characters.'));
+      await ownerStepUp(undefined,true);
+      await api('/api/admin/staff-geo/grants/'+encodeURIComponent(grantId)+'/revoke',{method:'POST',body:{reason}});
+      await staffGeoAccess(user.id);
+      setStatus(tr('تم إلغاء إذن الدخول.','Access grant revoked.'));
+    });
   }
   document.addEventListener('submit',e=>{
     if(e.target.id!=='staff-filters')return;
@@ -2242,6 +2303,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
     const button=e.target.closest('[data-action]');if(!button)return;const a=button.dataset.action,id=button.dataset.id;const permission=actionPermission(button);if(permission&&!can(permission))return;const lock=`${a}:${id||''}`;if(state.busy.has(lock))return;state.busy.add(lock);
     try{
       if(a==='manager-work-view'){if(state.user.role!=='delivery_manager')return;const history=button.dataset.history==='1';state.page=button.dataset.target==='orders'?'orders':'shifts';if(state.page==='orders'){state.managerOrdersHistory=history;state.filters={sort:history?'newest':'active_oldest'};}else state.managerShiftsHistory=history;await loadPage();return;}
+      if(a==='staff-geo-access'){await staffGeoAccess(id);return;}
       if(a==='maintenance-create'){await maintenanceCreate();return;}
       if(a==='maintenance-detail'){await maintenanceDetail(id);return;}
       if(a==='maintenance-status'){await maintenanceStatus(id,button.dataset.status);return;}

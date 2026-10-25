@@ -30,7 +30,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'report_corrections', 'conversations', 'chat_attachments',
           'chat_messages', 'conversation_reads', 'conversation_transfers', 'order_events',
           'audit_events', 'recovery_events', 'recovery_state', 'recovery_alerts',
-          'idempotency_keys', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits',
+          'idempotency_keys', 'sessions', 'staff_geo_access_grants', 'owner_phone_challenges', 'otp_challenges', 'rate_limits',
           'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
           'performance_provinces', 'performance_province_branches', 'province_performance_policies',
           'closure_drafts', 'report_renderings', 'report_notifications',
@@ -43,7 +43,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
           'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations')
 AUTH_TABLES = {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
-               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
+               'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
                          'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations'}
@@ -71,7 +71,7 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand):
-    if brand and table == 'legacy_delivery_attestations':
+    if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations'}:
         return 'brand_id=%s', (brand,)
     if brand and table in {'prior_delivery_grants', 'prior_delivery_records'}:
         return 'brand_id=%s', (brand,)
@@ -295,6 +295,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     discarded_worker_pulses = 0
     discarded_monitor_states = 0
     discarded_map_runtime = {}
+    revoked_geo_grants = 0
     if destination and (destination.exists() or destination.is_symlink()):
         raise ValueError('Static asset restoration refuses existing destinations.')
     with psycopg.connect(target_url, row_factory=dict_row, connect_timeout=10) as conn:
@@ -367,6 +368,16 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:
                 raise ValueError('Restored counts or monetary totals differ from snapshot.')
             identities, binary_count = _restored_evidence(conn, archive, manifest)
+            # Verify the snapshot before retiring copied staff entry credentials.
+            # The source database is untouched; a restore is no owner approval.
+            if 'staff_geo_access_grants' in actual:
+                revoked_geo_grants = conn.execute(
+                    "UPDATE staff_geo_access_grants SET revoked_at=now(),revoked_by=NULL,"
+                    "revocation_source='restore',revocation_reason='Retired after isolated restore' "
+                    "WHERE revoked_at IS NULL").rowcount
+                if revoked_geo_grants:
+                    db.audit(conn, None, 'restore.staff_geo_grants_revoked', 'runtime', target_schema,
+                             {'grants': revoked_geo_grants})
             # Verify archived counts/identifiers first, then retire only this
             # newly restored schema's ephemeral runtime pulses. Historical
             # provider backup observations and owner alerts stay preserved.
@@ -414,6 +425,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             'ephemeral_worker_observations_discarded': discarded_worker_pulses,
             'ephemeral_monitor_state_discarded': discarded_monitor_states,
             'ephemeral_map_runtime_discarded': discarded_map_runtime,
+            'staff_geo_grants_revoked': revoked_geo_grants,
             'archive_sha256': hashlib.sha256(contents).hexdigest(), 'elapsed_seconds': round(time.monotonic() - started, 3)}
 
 

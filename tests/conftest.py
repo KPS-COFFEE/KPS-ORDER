@@ -42,6 +42,9 @@ _TEST_DEFAULTS = {
     'REPORT_WORKER_ENABLED': 'false',
     'EMAIL_WORKER_ENABLED': 'false',
     'INITIAL_CATALOG_IMPORT': 'true',
+    'STAFF_GEO_MODE': 'off',
+    'STAFF_GEO_SOURCE': '',
+    'STAFF_GEO_TRUSTED_PROXY_CIDRS': '',
 }
 
 
