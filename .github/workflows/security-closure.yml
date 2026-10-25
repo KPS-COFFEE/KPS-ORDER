@@ -95,6 +95,10 @@ jobs:
         | tee evidence/owner-probe.log
 
         '
+    - name: Completed driver attribution correction regression first
+      env:
+        PYTHONPATH: ci-safety:.
+      run: python -m pytest -q tests/test_driver_attribution_correction.py --junitxml=evidence/driver-attribution.xml
     - name: Focused tests on PostgreSQL18
       env:
         PYTHONPATH: ci-safety:.

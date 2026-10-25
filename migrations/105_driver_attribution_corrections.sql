@@ -45,7 +45,7 @@ BEGIN
      INTO actual_tasks FROM jsonb_array_elements(coalesce(NEW.snapshot->'tasks','[]'::jsonb)) t;
    SELECT coalesce(jsonb_agg(jsonb_build_object('id',p.id,'collector_id',p.collector_id,'shift_id',p.shift_id) ORDER BY p.id),'[]'::jsonb)
      INTO expected_collections FROM effective_collections p WHERE p.shift_id=NEW.shift_id;
-   SELECT coalesce(jsonb_agg(jsonb_build_object('id',p->>'id','collector_id',p->>'collector_id,'shift_id',p->>'shift_id') ORDER BY p->>'id'),'[]'::jsonb)
+   SELECT coalesce(jsonb_agg(jsonb_build_object('id',p->>'id','collector_id',p->>'collector_id','shift_id',p->>'shift_id') ORDER BY p->>'id'),'[]'::jsonb)
      INTO actual_collections FROM jsonb_array_elements(coalesce(NEW.snapshot->'collections','[]'::jsonb)) p;
    IF actual_tasks IS DISTINCT FROM expected_tasks OR actual_collections IS DISTINCT FROM expected_collections THEN
      RAISE EXCEPTION 'Corrected driver attribution requires a compatible closure snapshot';
