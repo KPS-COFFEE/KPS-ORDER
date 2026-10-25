@@ -141,6 +141,8 @@ for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 
     app.include_router(module.router)
 
 from . import dispatch_map
+from . import prior_deliveries
+app.include_router(prior_deliveries.router)
 app.include_router(dispatch_map.router)
 from . import map_services
 app.include_router(map_services.router)

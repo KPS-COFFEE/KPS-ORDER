@@ -40,7 +40,8 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache',
           'staff_brand_memberships', 'driver_brand_dedications',
           'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
-          'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures')
+          'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
+          'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records')
 AUTH_TABLES = {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
@@ -70,6 +71,10 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand):
+    if brand and table in {'prior_delivery_grants','prior_delivery_records'}:
+        return 'brand_id=%s', (brand,)
+    if brand and table == 'prior_delivery_revocations':
+        return 'grant_id IN (SELECT id FROM prior_delivery_grants WHERE brand_id=%s)', (brand,)
     if brand and table == 'driver_work_trips':
         return 'brand_id=%s', (brand,)
     if brand and table in {'driver_work_trip_orders', 'driver_work_trip_events'}:
