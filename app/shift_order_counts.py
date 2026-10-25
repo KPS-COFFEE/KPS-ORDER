@@ -7,7 +7,7 @@ WITH latest AS (
    parent.id AS shift_id, t.order_id, t.status, o.preparation_status
  FROM shifts parent
  JOIN shifts driver ON (driver.id=parent.id OR driver.manager_shift_id=parent.id)
- JOIN driver_tasks t ON t.shift_id=driver.id
+ JOIN effective_driver_tasks t ON t.shift_id=driver.id
  JOIN orders o ON o.id=t.order_id
  WHERE parent.id=ANY(%s) AND parent.brand_id=%s
    AND driver.brand_id=parent.brand_id AND o.brand_id=parent.brand_id

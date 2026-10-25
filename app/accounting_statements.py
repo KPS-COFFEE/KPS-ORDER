@@ -94,7 +94,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     # Delivered order IDs are selected once across all tasks, avoiding duplicate
     # counts when orders were reassigned or split across collection records.
     task_ids=defaultdict(set)
-    for task in c.execute("""SELECT DISTINCT ON (t.order_id) t.order_id,t.shift_id FROM driver_tasks t
+    for task in c.execute("""SELECT DISTINCT ON (t.order_id) t.order_id,t.shift_id FROM effective_driver_tasks t
       JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.test_void IS NULL AND t.status='delivered'
       AND t.shift_id=ANY(%s) ORDER BY t.order_id,t.delivered_at DESC NULLS LAST,t.id DESC""",
       (user['brand_id'],[r['shift_id'] for r in rows])).fetchall():task_ids[task['shift_id']].add(task['order_id'])

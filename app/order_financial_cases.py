@@ -31,7 +31,7 @@ def scoped(c, oid, user, lock=False):
             allowed=o['branch_id'] in user.get('branch_ids',[])
         elif user['role']=='driver':
             # Historical read access, never a new mutation permission.
-            allowed=o['branch_id'] in user.get('branch_ids',[]) and bool(c.execute('SELECT 1 FROM driver_tasks WHERE order_id=%s AND driver_id=%s',(oid,user['id'])).fetchone())
+            allowed=o['branch_id'] in user.get('branch_ids',[]) and bool(c.execute('SELECT 1 FROM effective_driver_tasks WHERE order_id=%s AND driver_id=%s',(oid,user['id'])).fetchone())
         else:
             allowed=auth.can_access_order(user,o,c)
     if not allowed:raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود ضمن صلاحياتك.')
@@ -153,7 +153,7 @@ def inbox(user=Depends(auth.require_roles('owner','admin','delivery_manager','br
 def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_manager','branch_manager','driver'))):
     with db.tx() as c:
         o=scoped(c,oid,user)
-        tasks=c.execute('SELECT t.id,t.driver_id,u.display_name driver_name,t.shift_id,t.status,t.reason,t.created_at,t.accepted_at,t.picked_up_at,t.delivered_at FROM driver_tasks t LEFT JOIN users u ON u.id=t.driver_id WHERE t.order_id=%s'+(' AND t.driver_id=%s' if user['role']=='driver' else '')+' ORDER BY t.created_at,t.id',(oid,user['id']) if user['role']=='driver' else (oid,)).fetchall()
+        tasks=c.execute('SELECT t.id,t.driver_id,u.display_name driver_name,t.shift_id,t.status,t.reason,t.created_at,t.accepted_at,t.picked_up_at,t.delivered_at FROM effective_driver_tasks t LEFT JOIN users u ON u.id=t.driver_id WHERE t.order_id=%s'+(' AND t.driver_id=%s' if user['role']=='driver' else '')+' ORDER BY t.created_at,t.id',(oid,user['id']) if user['role']=='driver' else (oid,)).fetchall()
         events=c.execute('SELECT e.id,e.event_type,e.actor_id,u.display_name actor_name,e.created_at,e.details FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.order_id=%s ORDER BY e.created_at,e.id',(oid,)).fetchall()
         if user['role']!='driver':
             for event in events:
@@ -170,7 +170,7 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
                 event['details']=details
         # Drivers see their retained assignment, not administrative financial notes.
         if user['role']=='driver':events=[{k:v for k,v in e.items() if k!='details'} for e in events if e['event_type'].startswith(('task.','order.operationally_cancelled'))]
-        collections=[] if user['role']=='driver' else c.execute('SELECT id,collector_id,method,amount_halalas,created_at FROM collections WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
+        collections=[] if user['role']=='driver' else c.execute('SELECT id,collector_id,method,amount_halalas,created_at FROM effective_collections WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         refunds=[] if user['role']=='driver' else c.execute('SELECT id,authorized_by,method,amount_halalas,reason,created_at FROM refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         online_collections=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,provider,amount_halalas,disposition,created_at FROM branch_online_receipts WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()
         online_refunds=[] if user['role']=='driver' else c.execute('SELECT id,attempt_id,authorized_by,amount_halalas,reason,status,created_at,verified_at FROM branch_online_refunds WHERE order_id=%s ORDER BY created_at,id',(oid,)).fetchall()

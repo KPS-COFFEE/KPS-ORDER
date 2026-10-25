@@ -35,9 +35,9 @@ def create_snapshot(c,sid,approved_by):
         children=c.execute('SELECT r.id,r.shift_id,r.version,r.snapshot FROM closure_reports r JOIN shifts s ON s.id=r.shift_id WHERE s.manager_shift_id=%s ORDER BY r.created_at',(sid,)).fetchall()
         shift_ids += [r['shift_id'] for r in children]
     manager_user_id=s['user_id'] if s['kind']=='manager' else c.execute('SELECT user_id FROM shifts WHERE id=%s',(s['manager_shift_id'],)).fetchone()['user_id']
-    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.test_void,o.created_at,o.completed_at FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
-    tasks=c.execute('SELECT * FROM driver_tasks WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
-    collections=c.execute('SELECT * FROM collections WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
+    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.test_void,o.created_at,o.completed_at FROM orders o JOIN effective_driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
+    tasks=c.execute('SELECT * FROM effective_driver_tasks WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
+    collections=c.execute('SELECT * FROM effective_collections WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     refunds=c.execute('SELECT * FROM refunds WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     events=c.execute('SELECT * FROM custody_events WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     transfers=c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s) ORDER BY created_at',(shift_ids,shift_ids)).fetchall()
@@ -54,7 +54,7 @@ def create_snapshot(c,sid,approved_by):
                 if o['id'] not in child_orders or o.get('fulfilled_in_report'):child_orders[o['id']]=o
         orders=list(child_orders.values())
         tasks=merge('tasks',[])
-        collections=merge('collections',c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall())
+        collections=merge('collections',c.execute('SELECT * FROM effective_collections WHERE shift_id=%s',(sid,)).fetchall())
         refunds=merge('refunds',c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall())
         events=merge('custody_events',c.execute('SELECT * FROM custody_events WHERE shift_id=%s',(sid,)).fetchall())
         transfers=merge('transfers',c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall())
@@ -80,6 +80,7 @@ def create_snapshot(c,sid,approved_by):
         snap['operational_date']=(s.get('reporting_operational_date') or s['delivery_operational_date']).isoformat()
         snap['delivery_window']=s.get('delivery_window_snapshot')
         snap['delivery_operational_day_start']='04:00'
+    snap['driver_attribution_corrections']=safe(c.execute('SELECT * FROM order_driver_attribution_corrections WHERE source_shift_id=ANY(%s) OR target_shift_id=ANY(%s) ORDER BY created_at,id',(shift_ids,shift_ids)).fetchall())
     # Display metadata is captured only for this new snapshot, never backfilled.
     snap['schema_version']=2;snap['presentation_template_version']=TEMPLATE_VERSION
     snap['display_users']={k:v for child in children for k,v in child['snapshot'].get('display_users',{}).items()}

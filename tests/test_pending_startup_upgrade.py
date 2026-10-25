@@ -35,6 +35,7 @@ PENDING = frozenset({
     '101_complimentary_revocations.sql', '098_enbishan_guest_checkout.sql',
     '102_morning_first_operational_day.sql',
     '103_enbishan_pickup_default_paused.sql', '104_prior_deliveries.sql',
+    '105_driver_attribution_corrections.sql',
 })
 TABLES = ('brands', 'branches', 'users', 'orders', 'collections', 'refunds',
           'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges', 'shifts')
