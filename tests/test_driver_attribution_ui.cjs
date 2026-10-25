@@ -21,3 +21,16 @@ test('blocked or previously corrected orders offer no mutation',async()=>{
  for(const value of [{blocked_reason:'Closed shift'},{existing_correction:{id:'done'}},{target_shifts:[]}]){const {ctx,seen}=setup(value);await ctx.run('o');assert.equal(seen.submit,undefined);assert.equal(seen.calls.length,0);}
 });
 test('non-owner cannot open correction action',async()=>{const {ctx,seen}=setup();ctx.state.user.role='delivery_manager';await assert.rejects(ctx.run('o'),/owner-only/);assert.equal(seen.html,undefined);});
+
+test('uses the order snapshot version and never a conflicting top-level value',async()=>{
+ const {ctx,seen}=setup({version:999});await ctx.run('o');
+ const data=new Map([['target_shift_id','to'],['reason','Owner verified performer'],['confirmed','on']]);
+ await seen.submit(data,null,{});assert.equal(seen.calls[0][1].expected_version,7);
+});
+test('missing or invalid snapshot version cannot submit a correction',async()=>{
+ for(const version of [undefined,null,0,true,'7']){
+  const {ctx,seen}=setup({order:{id:'o',version},version:999});await ctx.run('o');
+  const data=new Map([['target_shift_id','to'],['reason','Owner verified performer'],['confirmed','on']]);
+  await assert.rejects(seen.submit(data,null,{}),/Refresh/);assert.equal(seen.calls.length,0);
+ }
+});

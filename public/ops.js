@@ -2057,7 +2057,8 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       ${check(tr('أؤكد أن السائق المختار نفّذ الطلب وأن التحصيل المسجل يخص شفته','I confirm the selected driver performed the order and the recorded collection belongs to their shift'),'confirmed')}
       ${formEnd(tr('اعتماد التصحيح','Approve correction'))}</form>`,async(fd,form,button)=>{
         if(!fd.has('confirmed'))throw new Error(tr('أكد السائق المنفذ ونسبة التحصيل.','Confirm the performing driver and collection attribution.'));
-        await mutation(path,{source_task_id:d.source_task.id,source_shift_id:d.source_shift.id,target_shift_id:fd.get('target_shift_id'),expected_version:d.version,reason:fd.get('reason'),confirmed:true},button);
+        if(!Number.isInteger(d.order?.version)||d.order.version<1)throw new Error(tr('حدّث معاينة الطلب قبل اعتماد التصحيح.','Refresh the order preview before correction.'));
+        await mutation(path,{source_task_id:d.source_task.id,source_shift_id:d.source_shift.id,target_shift_id:fd.get('target_shift_id'),expected_version:d.order.version,reason:fd.get('reason'),confirmed:true},button);
         closeModal();await loadPage();
       });
   }
