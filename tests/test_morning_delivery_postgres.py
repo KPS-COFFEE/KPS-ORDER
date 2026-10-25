@@ -103,14 +103,17 @@ def test_driver_inherits_only_morning_intersection_and_cannot_edit_scope(ops, mo
         c.execute("UPDATE users SET branch_ids=%s WHERE id='ops-driver'",(db.json(['kps-branch-1','kps-branch-2']),))
     manager=post('manager','/api/shifts',{'kind':'manager','delivery_period':period})['shift']['id']
     available=actor('driver').get('/api/shifts/current').json()['available_manager_shifts']
-    assert any(s['id']==manager for s in available) is (period=='morning')
+    # Any authorized open AM/PM manager is available; the server derives only
+    # the existing manager/driver branch intersection without editing identity.
+    assert any(s['id']==manager for s in available)
     # Explicit self-selected narrower scope remains forbidden in both periods.
     post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager,'branch_ids':['kps-branch-1']},status=403)
-    result=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager},status=200 if period=='morning' else 409)
-    if period=='morning':
-        assert result['shift']['branch_ids']==['kps-branch-1']
-        with db.tx() as c:
-            assert c.execute("SELECT branch_ids FROM users WHERE id='ops-driver'").fetchone()['branch_ids']==['kps-branch-1','kps-branch-2']
+    result=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager})
+    assert result['shift']['branch_ids']==['kps-branch-1']
+    assert result['shift']['manager_shift_id']==manager
+    assert result['shift']['delivery_window_snapshot']['period']==period
+    with db.tx() as c:
+        assert c.execute("SELECT branch_ids FROM users WHERE id='ops-driver'").fetchone()['branch_ids']==['kps-branch-1','kps-branch-2']
 
 
 @pytest.mark.parametrize('ops', ['fiscal-kps'], indirect=True)
