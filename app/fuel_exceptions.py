@@ -53,7 +53,11 @@ def request_exception(body:FuelRequest,request:Request,user=Depends(auth.current
             if body.shift_id:
                 if lock_shift(c,body.shift_id)['status'] not in ('open','closing'):raise db.error(409,'FUEL_SHIFT_CLOSED','الشفت منتهٍ / Shift ended')
                 if body.phase=='activation' and not (lock_shift(c,body.shift_id).get('vehicle_log') or {}).get('awaiting_refuel'):raise db.error(409,'FUEL_ALREADY_READY','تم تأكيد الوقود / Fuel already confirmed')
-            elif c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'",(user['id'],)).fetchone():raise db.error(409,'SHIFT_ALREADY_OPEN','يوجد شفت غير مقفل / Unclosed shift exists')
+            else:
+                from . import multibrand
+                staffing = ' AND staffing_ended_at IS NULL' if multibrand.enabled() else ''
+                if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed'"+staffing,(user['id'],)).fetchone():
+                    raise db.error(409,'SHIFT_ALREADY_OPEN','يوجد شفت غير مقفل / Unclosed shift exists')
             c.execute("UPDATE fuel_exceptions SET status='superseded' WHERE driver_id=%s AND phase=%s AND status IN ('requested','approved')",(user['id'],body.phase))
             eid=uid()
             c.execute('INSERT INTO fuel_exceptions(id,brand_id,driver_id,manager_shift_id,shift_id,phase,reason,fuel_percent,odometer_km,vehicle) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(eid,user['brand_id'],user['id'],body.manager_shift_id,body.shift_id,body.phase,body.reason,body.fuel_percent,body.odometer_km,db.json(vehicle)))

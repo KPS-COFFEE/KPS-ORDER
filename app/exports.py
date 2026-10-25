@@ -330,7 +330,9 @@ def _verify_staffing_markers(conn, available):
             JOIN shared_manager_closure_declarations d ON d.workday_id=w.id
             JOIN shared_manager_closure_receipts r ON r.declaration_id=d.id
             WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at
-              AND r.received_by=d.recipient_user_id))""")
+              AND r.received_by=d.recipient_user_id
+              AND NOT EXISTS (SELECT 1 FROM shared_manager_closure_returns returned
+                              WHERE returned.declaration_id=d.id)))""")
     invalid = conn.execute("SELECT s.id FROM shifts s WHERE s.staffing_ended_at IS NOT NULL "
         "AND (s.status NOT IN ('submitted','closed') OR NOT ("+' OR '.join(proofs)+")) LIMIT 1").fetchone()
     if invalid:

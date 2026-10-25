@@ -106,6 +106,7 @@ BEGIN
     SELECT 1 FROM central_workday_legs l JOIN shared_manager_closure_declarations d ON d.workday_id=l.workday_id
     JOIN shared_manager_closure_receipts r ON r.declaration_id=d.id
     WHERE l.shift_id=NEW.id AND r.created_at=NEW.staffing_ended_at AND r.received_by=d.recipient_user_id
+      AND NOT EXISTS (SELECT 1 FROM shared_manager_closure_returns returned WHERE returned.declaration_id=d.id)
   ) THEN RETURN NEW; END IF;
   RAISE EXCEPTION 'Staffing end requires immutable physical receipt and evidenced retained custody';
  END IF;

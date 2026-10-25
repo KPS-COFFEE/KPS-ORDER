@@ -81,3 +81,57 @@ def test_populated_physical_closure_profile_and_clarification_lossless_restore(c
     finally:
         with psycopg.connect(independent_restore_database,autocommit=True) as c:
             c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))
+
+
+@pytest.mark.postgres
+def test_returned_manager_original_and_owner_receipt_survive_full_restore(central,independent_restore_database):
+    _,actor,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    sid=manager['shift']['id'];path='/api/central-operations/workdays/'+sid
+    first=post('manager',path+'/manager-physical-submit',{'cash_halalas':700,'recipient_user_id':'dual-owner','reference':'Initial original owner bag','confirmed':True})
+    post('owner',path+'/manager-physical-return',{'declaration_id':first['declaration_id'],'reason':'Manager reported typing error before owner receipt'})
+    corrected=post('manager',path+'/manager-physical-submit',{'cash_halalas':650,'recipient_user_id':'dual-owner','reference':'Corrected original owner bag','confirmed':True})
+    accepted=post('owner',path+'/manager-physical-receipt',{'declaration_id':corrected['declaration_id'],'received_halalas':650,'confirmed':True})
+    next_manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    tables=('shared_manager_closure_declarations','shared_manager_closure_returns',
+            'shared_manager_closure_receipts','shared_manager_closure_allocations')
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        contents,manifest=build_archive(c,full=True)
+        original={table:c.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(table))).fetchall() for table in tables}
+        markers=c.execute("SELECT id,status,staffing_ended_at FROM shifts WHERE user_id='dual-manager' ORDER BY id").fetchall()
+    assert [manifest['counts'][table] for table in tables]==[2,1,1,0]
+    assert original['shared_manager_closure_returns'][0]['declaration_id']==first['declaration_id']
+    assert original['shared_manager_closure_receipts'][0]['declaration_id']==corrected['declaration_id']
+    assert original['shared_manager_closure_receipts'][0]['received_by']=='dual-owner'
+    schema='kps_restore_'+uuid4().hex
+    try:
+        restored=restore_archive(contents,target_url=independent_restore_database,target_schema=schema)
+        assert restored['verified'] and restored['counts']==manifest['counts']
+        with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+            for table in tables:
+                data=c.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(table))).fetchall()
+                assert sorted(data,key=str)==sorted(original[table],key=str)
+            assert c.execute("SELECT id,status,staffing_ended_at FROM shifts WHERE user_id='dual-manager' ORDER BY id").fetchall()==markers
+            assert c.execute("SELECT tgenabled FROM pg_trigger WHERE tgrelid='shifts'::regclass AND tgname='guarded_staffing_end'").fetchone()['tgenabled']=='O'
+        with db.tx() as c:
+            assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='submitted'
+            assert c.execute('SELECT status FROM shifts WHERE id=%s',(next_manager['shift']['id'],)).fetchone()['status']=='open'
+    finally:
+        with psycopg.connect(independent_restore_database,autocommit=True) as c:
+            c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))
+
+    # A corrupted archive cannot use a returned declaration as staffing proof.
+    # Create this contradiction directly only in the disposable source fixture;
+    # the public return endpoint rejects any declaration already received.
+    with db.tx() as c:
+        c.execute("INSERT INTO shared_manager_closure_returns(declaration_id,recorded_by,reason) VALUES(%s,'dual-owner','Synthetic corrupt archive witness')",(corrected['declaration_id'],))
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        invalid,_=build_archive(c,full=True)
+    refused_schema='kps_restore_'+uuid4().hex
+    with pytest.raises(ValueError,match='immutable physical receipt'):
+        restore_archive(invalid,target_url=independent_restore_database,target_schema=refused_schema)
+    with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
+        assert c.execute('SELECT 1 FROM information_schema.schemata WHERE schema_name=%s',(refused_schema,)).fetchone() is None
