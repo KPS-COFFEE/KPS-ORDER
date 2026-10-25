@@ -7,7 +7,7 @@ from app.enbishan_catalog_import import prepare_rows
 def test_all_bundled_assets_are_exact_and_untrusted_paths_are_rejected():
     historical={k:v for k,v in assets.MANIFEST.items() if not k.startswith(('owner-20261025','owner-20261026'))}
     assert len(historical)==54
-    assert len(assets.MANIFEST)-len(historical)==29
+    assert len(assets.MANIFEST)-len(historical)==34
     assert len([key for key in historical if not key.startswith('owner-review:20261022:')])==49
     assert {key.rsplit(':',1)[-1] for key in assets.MANIFEST if key.startswith('owner-review:20261022:')} == {'mojito-grape.jpeg','mojito-mahashi.jpeg','mojito-fattah.jpeg','ramadan-box.jpeg','crispy-small.jpeg'}
     assert all(assets.valid_bundled(v['path']) for v in assets.MANIFEST.values())
