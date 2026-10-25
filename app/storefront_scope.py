@@ -146,7 +146,18 @@ def customer_html(source, request):
             if '/assets/kps-gift-creative.' in fragment:
                 return ''
             if 'og:site_name' in fragment:
-                return '<meta property="og:site_name" content="Enbishan"><meta property="og:title" content="عنبيشن | Enbishan"><meta property="og:url" content="https://order.enbishan.com"><meta property="og:image" content="https://order.enbishan.com/assets/enbishan-original.jpeg">'
+                return '''<meta property="og:type" content="website">
+  <meta property="og:site_name" content="Enbishan">
+  <meta property="og:locale" content="ar_SA">
+  <meta property="og:title" content="عنبيشن | Enbishan">
+  <meta property="og:description" content="لذّة عنبيشن صارت أقرب… اطلبها بكل سهولة 💙">
+  <meta property="og:url" content="https://order.enbishan.com">
+  <meta property="og:image" content="https://order.enbishan.com/assets/enbishan-menu/source-6f7efb0f38241172.jpg">
+  <meta property="og:image:secure_url" content="https://order.enbishan.com/assets/enbishan-menu/source-6f7efb0f38241172.jpg">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:width" content="600">
+  <meta property="og:image:height" content="400">
+  <meta property="og:image:alt" content="عنبيشن سيجنتشر — بوكس المحاشي العائلي مع الكبة">'''
             for old, new in [('KPS COFFEE', 'Enbishan'), ('كبز قهوة مختصة', 'عنبيشن'), ('0550472662', '0509895855'), ('966550472662', '966509895855'), ('+966 55 047 2662', '+966 50 989 5855'), ('kps.coffe', 'Enbishan'), ('Kps.cofee', 'Enbishan'), ('data-kps-contact', 'data-enbishan-contact')]:
                 fragment = fragment.replace(old, new)
             return fragment

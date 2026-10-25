@@ -29,7 +29,7 @@ def test_brand_html_never_copies_kps_executable_campaign():
     finally:
         storefront_scope.current_brand.reset(token)
     assert '/assets/kps-gift-creative.' not in rendered
-    assert 'https://order.enbishan.com/assets/enbishan-original.jpeg' in rendered
+    assert 'https://order.enbishan.com/assets/enbishan-menu/source-6f7efb0f38241172.jpg' in rendered
     assert 'property="og:url" content="https://order.enbishan.com"' in rendered
     assert 'KPS COFFEE' not in rendered
     assert 'public-contact-support' in rendered
