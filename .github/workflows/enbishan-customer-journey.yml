@@ -11,6 +11,7 @@ on:
       - app/enbishan_menu_assets.json
       - public/assets/enbishan-menu/**
       - migrations/109_enbishan_family_menu_clarity.sql
+      - migrations/110_enbishan_family_commercial_approval.sql
       - tests/test_enbishan_family_menu_clarity.py
       - tests/test_enbishan_size_clarity_browser.py
       - migrations/103_enbishan_pickup_default_paused.sql
