@@ -47,8 +47,8 @@ def test_photo_taps_quantity_required_choices_and_neighborhood(static_customer, 
         context.route('**/api/**', api)
         page.goto(static_customer + '/?brand_id=' + brand, wait_until='networkidle')
         if brand == 'enbishan':
-            page.locator('#enbishan-location-button').click()
             page.locator('input[name=service][value=pickup]').check()
+            page.locator('#enbishan-location-button').click()
         page.locator('#branch-select').select_option('synthetic-branch')
         if brand == 'enbishan':
             page.locator('#enbishan-location-done').click()
@@ -73,10 +73,8 @@ def test_photo_taps_quantity_required_choices_and_neighborhood(static_customer, 
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
         expect(option_card.locator('.product-card-quantity')).to_have_text('١' if lang == 'ar' else '1')
-        if brand == 'enbishan':
-            page.locator('#enbishan-location-button').click()
         page.locator('input[name=service][value=delivery]').check()
-        assert not page.locator('#neighborhood').evaluate('input=>input.required')
+        expect(page.locator('#neighborhood')).to_have_attribute('required', '')
         assert not page.locator('#address').evaluate('input=>input.required')
         assert 'orders' not in requests and 'auth/otp/request' not in requests
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
