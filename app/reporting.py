@@ -64,7 +64,9 @@ def create_snapshot(c,sid,approved_by):
     for order in orders:
         order['snapshot']=safe(order['snapshot']);order['snapshot'].pop('notes',None);order['snapshot'].pop('note',None)
         for item in order['snapshot'].get('items',[]):item.pop('note',None)
-    fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and t.get('delivered_at')}
+    attestations=c.execute('SELECT id,order_id,task_id,shift_id,actor_id,reason,operational_date,recorded_at FROM legacy_delivery_attestations WHERE shift_id=ANY(%s) ORDER BY recorded_at,id',(shift_ids,)).fetchall()
+    attested={a['order_id'] for a in attestations}
+    fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and (t.get('delivered_at') or t['order_id'] in attested)}
     for o in orders:o['fulfilled_in_report']=not o.get('test_void') and o.get('fulfilled_in_report',o['id'] in fulfilled)
     cash=sum(r['amount_halalas'] for r in collections if r['method']=='cash')-sum(r['amount_halalas'] for r in refunds if r.get('record_kind')=='test_void')
     card=sum(r['amount_halalas'] for r in collections if r['method']=='card')
@@ -81,6 +83,7 @@ def create_snapshot(c,sid,approved_by):
         snap['delivery_window']=s.get('delivery_window_snapshot')
         snap['delivery_operational_day_start']='04:00'
     snap['driver_attribution_corrections']=safe(c.execute('SELECT * FROM order_driver_attribution_corrections WHERE source_shift_id=ANY(%s) OR target_shift_id=ANY(%s) ORDER BY created_at,id',(shift_ids,shift_ids)).fetchall())
+    snap['legacy_delivery_attestations']=safe(attestations)
     # Display metadata is captured only for this new snapshot, never backfilled.
     snap['schema_version']=2;snap['presentation_template_version']=TEMPLATE_VERSION
     snap['display_users']={k:v for child in children for k,v in child['snapshot'].get('display_users',{}).items()}
@@ -694,6 +697,9 @@ def v5_tables(snap,view='compact'):
         table('card-reconciliation','موازنة جهاز الشبكة',['حسب النظام','موازنة الجهاز','فرق الشبكة'],[[
             v5_money(closure.get('expected_card_halalas')),v5_money(closure['terminal_total_halalas']),v5_money(closure.get('card_difference_halalas'))]])
     table('reconciliation','نتيجة المطابقة',['الحالة','الفرق بالريال'],[['عجز' if difference<0 else 'فائض' if difference>0 else 'متوافق',v5_money(difference)]])
+    table('legacy-deliveries','تسليم سابق بإقرار المالك — لا يثبت التحصيل',['الطلب','يوم التشغيل','سبب الإقرار','وقت تسجيل الإقرار؛ وقت التسليم الفعلي غير موثق'],[
+        [order_name(a['order_id']),a.get('operational_date'),a.get('reason'),v5_stamp(a.get('recorded_at'))]
+        for a in snap.get('legacy_delivery_attestations',[])])
     if snap.get('kind')=='driver':
         terminal=closure.get('payment_terminal') or {}
         table('payment-terminal','جهاز الشبكة المسند للسائق',['البيان','القيمة'],[
