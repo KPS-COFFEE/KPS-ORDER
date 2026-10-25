@@ -173,3 +173,19 @@ def test_prior_records_and_supplements_survive_restore_and_brand_export(prior_se
     finally:
         with psycopg.connect(target,autocommit=True) as c:
             c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))
+
+
+@pytest.mark.postgres
+def test_early_manager_day_keeps_original_ledger_and_grants_attached_driver_day(prior_setup):
+    actor,post,g,meta,pending,actual=prior_setup
+    day=service_hours.delivery_operational_date(actual)
+    early=datetime.combine(day,datetime.min.time(),tzinfo=timezone(timedelta(hours=3)))+timedelta(hours=15,minutes=45)
+    with db.tx() as c:
+        c.execute("UPDATE shifts SET opened_at=%s,delivery_operational_date=%s WHERE id='prior-manager'",(early,day-timedelta(days=1)))
+    body={'manager_shift_id':'prior-manager','driver_shift_ids':['prior-driver'],'reason':'Synthetic early opening boundary'}
+    new=post('owner','/api/prior-deliveries/grants',body,brand='enbishan')['grant']
+    assert new['operational_date']==day.isoformat()
+    with db.tx() as c:
+        assert c.execute("SELECT delivery_operational_date FROM shifts WHERE id='prior-manager'").fetchone()['delivery_operational_date']==day-timedelta(days=1)
+        c.execute("UPDATE shifts SET delivery_operational_date=%s WHERE id='prior-driver'",(day+timedelta(days=1),))
+    post('owner','/api/prior-deliveries/grants',body,brand='enbishan',status=422)

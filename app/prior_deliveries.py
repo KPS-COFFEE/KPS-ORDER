@@ -100,11 +100,15 @@ def grant(body: Grant, user=Depends(access), key: str | None=Header(None, alias=
         manager = shift_scope(c,user,body.manager_shift_id)
         manager_scope(c,user,manager)
         shifts = [shift_scope(c,user,sid) for sid in sorted(set(body.driver_shift_ids))]
-        if any(s['kind']!='driver' or s['manager_shift_id']!=manager['id'] or day_of(s)!=day_of(manager) for s in shifts):
+        operating_day=day_of(shifts[0])
+        # A manager can open at 15:45 before the 16:00 operating-day boundary.
+        # Keep its original ledger date, but authorize its attached driver day.
+        manager_days={day_of(manager),manager['opened_at'].astimezone(timezone(timedelta(hours=3))).date()}
+        if operating_day not in manager_days or any(s['kind']!='driver' or s['manager_shift_id']!=manager['id'] or day_of(s)!=operating_day for s in shifts):
             raise db.error(422, 'PRIOR_SHIFT_SCOPE', 'اختر سائقين تابعين لنفس المدير ويوم التشغيل.')
         def perform():
             gid=db.new_id('prior_grant_')
-            row=c.execute('INSERT INTO prior_delivery_grants(id,brand_id,manager_shift_id,manager_id,driver_shift_ids,operational_date,authorized_by,reason,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,now()+%s) RETURNING *', (gid,user['brand_id'],manager['id'],manager['user_id'],db.json([s['id'] for s in shifts]),day_of(manager),user['id'],body.reason,timedelta(minutes=body.minutes))).fetchone()
+            row=c.execute('INSERT INTO prior_delivery_grants(id,brand_id,manager_shift_id,manager_id,driver_shift_ids,operational_date,authorized_by,reason,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,now()+%s) RETURNING *', (gid,user['brand_id'],manager['id'],manager['user_id'],db.json([s['id'] for s in shifts]),operating_day,user['id'],body.reason,timedelta(minutes=body.minutes))).fetchone()
             db.audit(c,user['id'],'prior_delivery.authorized','prior_delivery_grant',gid,body.model_dump())
             return ops.safe({'grant':row})
         return db.idempotent(c,user['id'],key,'prior_delivery.grant',body.model_dump(),perform)
