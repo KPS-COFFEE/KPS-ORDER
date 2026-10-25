@@ -226,7 +226,7 @@ ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branc
 
 
 ROUTES['financial_clarifications'] = {'listing':('support_manage','accounting_review'),'request_clarification':'accounting_review','decide':('support_manage','accounting_review')}
-ROUTES['aggregate_manager_closure'] = {'detail':('shifts_view','accounting_review'),'submit':'shifts_close','receive':'custody_transfer','allocate':'accounting_review','inbox':('shifts_view','accounting_review')}
+ROUTES['aggregate_manager_closure'] = {'return_declaration':'shifts_close','detail':('shifts_view','accounting_review'),'submit':'shifts_close','receive':'custody_transfer','allocate':'accounting_review','inbox':('shifts_view','accounting_review')}
 ROUTES['aggregate_driver_closure'] = {'detail':('shifts_view','accounting_review'),'submit':{'driver':'shifts_close','delivery_manager':'shifts_delegate_close'},'receive':'shifts_delegate_close','return_declaration':'shifts_approve','allocate':'accounting_review','inbox':'accounting_review'}
 ROUTES['driver_duty'] = {'listing':'driver_duty_manage','configure':'driver_duty_manage'}
 ROUTES['driver_support'] = {'list_requests': ('shifts_view','driver_support_approve'), 'request_support': 'shifts_handover', 'accept_support': 'driver_support_approve', 'resolve_request': ('shifts_handover','driver_support_approve')}

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import sys
 import pytest
+from test_enbishan_dual_brand import dual
 from test_operations import ops
 from test_central_workdays import central
 
@@ -118,6 +119,13 @@ def test_real_accepted_clarification_refuses_prior_writer_without_rewriting_fina
             prior.guard_rollback_feature_state(c)
         assert c.execute('SELECT * FROM financial_case_clarifications ORDER BY id').fetchall()==rows
         assert c.execute('SELECT * FROM financial_case_clarification_events ORDER BY id').fetchall()==events
+    assert financial_source(oid)==before
+    db.migrate()
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM financial_case_clarifications ORDER BY id').fetchall()==rows
+        assert c.execute('SELECT * FROM financial_case_clarification_events ORDER BY id').fetchall()==events
+        audit=c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC,id DESC LIMIT 1").fetchone()['details']
+        assert {'financial_case_clarifications','financial_case_clarification_events'}<=audit['checks'].keys()
     assert financial_source(oid)==before
 
 

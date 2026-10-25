@@ -111,3 +111,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$ LANGUAGE plpgsql;
+-- Pre-receipt corrections append a return and a fresh declaration revision.
+CREATE TABLE shared_manager_closure_returns (
+ declaration_id text PRIMARY KEY REFERENCES shared_manager_closure_declarations(id),
+ recorded_by text NOT NULL REFERENCES users(id), reason text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER immutable_shared_manager_return BEFORE UPDATE OR DELETE ON shared_manager_closure_returns FOR EACH ROW EXECUTE FUNCTION prevent_financial_mutation();

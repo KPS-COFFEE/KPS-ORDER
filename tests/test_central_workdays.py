@@ -271,7 +271,10 @@ def test_overnight_adoption_still_revalidates_current_branch_enablement(central,
 @pytest.mark.postgres
 def test_two_legacy_shifts_are_never_silently_merged(central):
     _,_,post,shifts,_=central
-    kps,_=shifts('kps');shifts('enbishan')
+    kps,_=shifts('kps')
+    # Two historical manager shifts remain separate; do not create an invalid
+    # second physical driver shift just to seed this manager-adoption witness.
+    post('manager','/api/shifts',{'kind':'manager'},brand='enbishan')
     post('manager','/api/central-operations/workdays/'+kps+'/adopt',{},status=409)
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
@@ -519,8 +522,10 @@ def test_old_client_evening_standalone_is_not_treated_as_morning(central):
     _, _, post, _, _ = central
     manager = post('manager', '/api/shifts', {'kind': 'manager'})['shift']
     result = post('driver', '/api/central-operations/workdays', {
-        'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()}, status=409)
-    assert result['detail']['code'] == 'MANAGER_SHIFT_SCOPE'
+        'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()})
+    assert result['shift']['manager_shift_id']==manager['id']
+    assert result['shift']['delivery_window_snapshot']['period']=='evening'
+    assert not result.get('workday')
 
 
 def test_morning_compat_delegates_canonical_contract_without_group_action(monkeypatch):

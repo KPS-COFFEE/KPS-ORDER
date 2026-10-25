@@ -199,7 +199,7 @@
         }));
         const output=results.length?merge(results,names,url):Object.fromEntries(names.map(n=>[n,[]]));
         if(['/api/shifts','/api/shifts/current'].includes(url.pathname)&&!url.search&&['delivery_manager','driver'].includes(user.role)){
-          const previous=(output.shifts||[]).filter(s=>s.user_id===user.id&&s.status==='open'&&!s.central_workday_id&&(s.delivery_window_snapshot?.period||'evening')!=='morning');
+          const previous=(output.shifts||[]).filter(s=>s.user_id===user.id&&s.status==='open'&&!s.staffing_ended_at&&!s.central_workday_id&&(s.delivery_window_snapshot?.period||'evening')!=='morning');
           if(previous.length===1){await raw('/api/central-operations/workdays/'+encodeURIComponent(previous[0].id)+'/adopt',{method:'POST',body:{}});return request(path,options,raw,user,page);}
         }
         return output;

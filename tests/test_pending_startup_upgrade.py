@@ -40,6 +40,8 @@ PENDING = frozenset({
     '106_staff_geo_access.sql',
     '107_closed_manager_prior_supplements.sql',
     '108_legacy_invoice_imports.sql',
+    '105_collection_payment_pieces.sql', '107_driver_duty_profiles.sql',
+    '108_financial_case_clarifications.sql',
 })
 TABLES = ('brands', 'branches', 'users', 'orders', 'collections', 'refunds',
           'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges', 'shifts')
@@ -222,7 +224,8 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
                           'customer_marketing_consents', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries',
                           'promotion_report_closures', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests',
                           'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records',
-                          'legacy_delivery_attestations', 'legacy_invoice_imports'):
+                          'legacy_delivery_attestations', 'legacy_invoice_imports',
+                          'driver_duty_profiles', 'financial_case_clarifications', 'financial_case_clarification_events'):
                 assert c.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n'] == 0
             audit = c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC LIMIT 1").fetchone()
             assert audit['details']['verified'] is True
@@ -230,6 +233,7 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
                 assert {'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests'} <= audit['details']['checks'].keys()
                 assert {'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records'} <= audit['details']['checks'].keys()
                 assert {'legacy_delivery_attestations','legacy_invoice_imports'} <= audit['details']['checks'].keys()
+                assert {'driver_duty_profiles','financial_case_clarifications','financial_case_clarification_events'} <= audit['details']['checks'].keys()
     # Newly installed deferred triggers must leave a fresh ordinary cash sale
     # usable. Keep the existing one-collection-per-order/revision/method rule:
     # the retained legacy cash order already has its revision-zero collection.

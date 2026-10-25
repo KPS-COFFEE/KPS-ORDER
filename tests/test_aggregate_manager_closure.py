@@ -1,6 +1,7 @@
 """Manager physical custody may end before accounting without brand invention."""
 from uuid import uuid4
 import pytest
+from test_enbishan_dual_brand import dual
 from fastapi import HTTPException
 from app import db
 from app.aggregate_driver_closure import guard_financial_allocation
@@ -53,3 +54,21 @@ def test_manager_owner_physical_end_next_workday_and_later_accounting(central,mo
         for leg in next_manager['shifts']:
             assert c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM custody_events WHERE shift_id=%s',(leg['id'],)).fetchone()['n']==0
         guard_financial_allocation(c,shift_id=manager['shift']['id'])
+
+
+@pytest.mark.postgres
+def test_manager_pre_receipt_return_appends_new_revision_and_preserves_original(central):
+    _,actor,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    path='/api/central-operations/workdays/'+manager['shift']['id']
+    first=post('manager',path+'/manager-physical-submit',{'cash_halalas':700,'recipient_user_id':'dual-owner','reference':'Initial bag declaration','confirmed':True})
+    returned=post('owner',path+'/manager-physical-return',{'declaration_id':first['declaration_id'],'reason':'Manager typed a wrong actual cash amount'})
+    assert returned['state']=='returned'
+    second=post('manager',path+'/manager-physical-submit',{'cash_halalas':650,'recipient_user_id':'dual-owner','reference':'Corrected actual bag declaration','confirmed':True})
+    assert second['declaration']['revision']==2 and second['declaration_id']!=first['declaration_id']
+    post('owner',path+'/manager-physical-receipt',{'declaration_id':first['declaration_id'],'received_halalas':700,'confirmed':True},status=409)
+    post('owner',path+'/manager-physical-receipt',{'declaration_id':second['declaration_id'],'received_halalas':650,'confirmed':True})
+    post('owner',path+'/manager-physical-return',{'declaration_id':second['declaration_id'],'reason':'Cannot overwrite a received bag'},status=409)
+    with db.tx() as c:
+        originals=c.execute('SELECT cash_halalas FROM shared_manager_closure_declarations ORDER BY revision').fetchall()
+        assert [r['cash_halalas'] for r in originals]==[700,650]

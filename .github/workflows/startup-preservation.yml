@@ -1,7 +1,7 @@
 name: Startup preservation concurrency PostgreSQL18
 on:
   pull_request:
-    branches: [agent/kps-order-emergency-v4]
+    branches: [agent/kps-order-emergency-v4, agent/delivery-workflow-controls-20261025]
     paths:
       - app/db.py
       - tests/test_startup_preservation_concurrency.py

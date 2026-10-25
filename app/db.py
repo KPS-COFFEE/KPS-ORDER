@@ -356,7 +356,7 @@ PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authoriz
                     'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports',
                     'driver_duty_profiles', 'shared_driver_closure_declarations', 'shared_driver_closure_returns',
                     'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
-                    'shared_manager_closure_declarations', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations',
+                    'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations',
                     'financial_case_clarifications', 'financial_case_clarification_events')
 
 

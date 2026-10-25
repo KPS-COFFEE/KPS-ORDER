@@ -2,6 +2,7 @@
 from uuid import uuid4
 import psycopg
 import pytest
+from test_enbishan_dual_brand import dual
 from fastapi import HTTPException
 from psycopg import sql
 from psycopg.rows import dict_row

@@ -284,12 +284,12 @@ def pending_financial_rows(c,*,shift_id=None,brand_id=None,branch_ids=None,befor
     rows=[]
     for family in ('driver','manager'):
         clauses=['a.id IS NULL'];params=[]
-        if family=='driver':clauses.append('returned.declaration_id IS NULL')
+        clauses.append('returned.declaration_id IS NULL')
         if shift_id:clauses.append('(s.id=%s OR s.manager_shift_id=%s)');params.extend([shift_id,shift_id])
         if brand_id:clauses.append('s.brand_id=%s');params.append(brand_id)
         if branch_ids is not None:clauses.append('s.branch_ids ?| %s');params.append(list(branch_ids))
         if before is not None:clauses.append('d.created_at<%s');params.append(before)
-        returns=' LEFT JOIN shared_driver_closure_returns returned ON returned.declaration_id=d.id' if family=='driver' else ''
+        returns=f' LEFT JOIN shared_{family}_closure_returns returned ON returned.declaration_id=d.id'
         query=f'SELECT DISTINCT d.id declaration_id,w.anchor_shift_id,w.user_id,d.created_at FROM shared_{family}_closure_declarations d JOIN central_workdays w ON w.id=d.workday_id JOIN central_workday_legs l ON l.workday_id=w.id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_{family}_closure_allocations a ON a.declaration_id=d.id'+returns+' WHERE '+' AND '.join(clauses)+' ORDER BY d.created_at,d.id'
         rows.extend(dict(row,kind=family) for row in c.execute(query,params).fetchall())
     return rows

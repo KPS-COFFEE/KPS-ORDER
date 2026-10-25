@@ -1,6 +1,7 @@
 """Actual single physical declarations must never manufacture brand actuals."""
 from uuid import uuid4
 import pytest
+from test_enbishan_dual_brand import dual
 from fastapi import HTTPException
 from app import db
 from app.aggregate_driver_closure import AllocationLeg, validate_allocation, guard_financial_allocation

@@ -43,10 +43,10 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
           'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations',
           'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
-          'shared_manager_closure_declarations','shared_manager_closure_receipts','shared_manager_closure_allocations',
+          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations',
           'financial_case_clarifications','financial_case_clarification_events','legacy_invoice_imports')
 SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
-                          'shared_manager_closure_declarations','shared_manager_closure_receipts','shared_manager_closure_allocations'}
+                          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
 # Full private archives retain the whole immutable declaration and its provenance.
 AUTH_TABLES = SHARED_PHYSICAL_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
