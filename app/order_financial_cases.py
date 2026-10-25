@@ -123,6 +123,8 @@ def nonreceipt(oid:str,body:Nonreceipt,request:Request,user=Depends(auth.current
 
 def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None, before=None):
     """A recorded receipt/operational closure may proceed; financial approval may not."""
+    from .aggregate_driver_closure import guard_financial_allocation
+    guard_financial_allocation(c,shift_id=shift_id,brand_id=brand_id,branch_ids=branch_ids,before=before)
     row=c.execute("""SELECT o.id FROM orders o
         WHERE (%s::text IS NULL OR o.brand_id=%s)
           AND (%s::jsonb IS NULL OR %s::jsonb ? o.branch_id)
@@ -209,6 +211,8 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
         def perform():
             o=scoped(c,oid,user,True); pending=case(c,oid)
             if not pending or pending['status']!='pending':raise db.error(409,'FINANCIAL_CASE_NOT_PENDING','لا توجد معالجة مالية معلقة.')
+            from .financial_clarifications import guard_case_resolution
+            guard_case_resolution(c,oid,pending['id'])
             from .order_amendments import balance
             if pending['kind']=='collection_shortfall':
                 if balance(c,o)!=o['total_halalas'] or o['payment_status']!='paid':

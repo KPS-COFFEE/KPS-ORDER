@@ -47,8 +47,9 @@ def view(c,user,day,legs):
     receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration['id'],)).fetchone() if declaration else None
     allocation=c.execute('SELECT * FROM shared_driver_closure_allocations WHERE declaration_id=%s',(declaration['id'],)).fetchone() if declaration else None
     returned=c.execute('SELECT * FROM shared_driver_closure_returns WHERE declaration_id=%s',(declaration['id'],)).fetchone() if declaration else None
-    expected=sum(ops.balance(c,s) for _,s in legs)
+    expected=sum(row['expected_halalas'] for row in declaration['expected_snapshot']) if declaration else sum(ops.balance(c,s) for _,s in legs)
     cards=sum(ops.blind_closure.card_reconciliation(c,s['id'],0,(s.get('external_enbishan') or {}).get('card_halalas',0))['expected_card_halalas'] for _,s in legs)
+    if declaration:cards=sum(row['expected_card_halalas'] for row in declaration['expected_snapshot'])
     output={'driver_id':day['user_id'],'driver_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],'shift':{'id':day['anchor_shift_id'],'kind':'driver','user_id':day['user_id'],'status':legs[0][1]['status']},'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'declaration':declaration,'receipt':receipt,'allocation':allocation,'returned':returned,
       'state':'allocated' if allocation else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_receipt' if declaration else 'awaiting_driver',
       'expected_cash_halalas':expected,'expected_card_halalas':cards,
@@ -114,7 +115,7 @@ def validate_operational(c,user,legs):
         guard_shift_completion(c,s);break_guard(c,s['id'])
         if ops.unresolved(c,s['id']):raise db.error(409,'OPEN_TASKS','أكمل معالجة المهام المعلقة قبل إرسال التقفيلة.')
         if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'RECEIPT_PENDING','أكد أو أعد تسليم النقد المعلق أولًا.')
-        if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'HANDOVER_PENDING','أكمل تسليم مسؤولية المناوبة أولًا.')
+        if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=ANY(%s) OR to_shift_id=ANY(%s)) AND status='pending'",([s['id'],s['manager_shift_id']],[s['id'],s['manager_shift_id']])).fetchone():raise db.error(409,'HANDOVER_PENDING','أكمل تسليم مسؤولية المناوبة أولًا.')
 
 
 @router.post(BASE+'/physical-submit')
@@ -160,6 +161,7 @@ def receive(sid:str,body:PhysicalReceipt,request:Request,user=Depends(auth.curre
         def perform():
             declaration=latest(c,day['id'])
             if not declaration or declaration['id']!=body.declaration_id or c.execute('SELECT 1 FROM shared_driver_closure_returns WHERE declaration_id=%s',(body.declaration_id,)).fetchone():raise db.error(409,'SHARED_DECLARATION_STALE','تغيرت التقفيلة؛ حدّث الشاشة.')
+            if c.execute('SELECT 1 FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RECEIPT_EXISTS','الاستلام محفوظ؛ لا تسجله مرة ثانية.')
             if not body.confirmed or body.received_halalas!=declaration['cash_halalas']-declaration['retained_halalas']:raise db.error(422,'SHARED_RECEIPT_MISMATCH','أكد استلام الكاش الفعلي المطابق لتسليم السائق؛ أعد التقفيلة عند اختلافه.')
             if any(row['manager_user_id']!=user['id'] for row in declaration['expected_snapshot']):raise db.error(403,'SHARED_RECEIPT_RECIPIENT','مدير الوردية المسجل وحده يؤكد استلام النقد.')
             if any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_CLOSURE_STATE','التقفيلة ليست مرسلة.')
@@ -190,6 +192,7 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
             declaration=latest(c,day['id'])
             if not declaration or declaration['id']!=body.declaration_id:raise db.error(409,'SHARED_DECLARATION_STALE','تغيرت التقفيلة.')
             if c.execute('SELECT 1 FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RECEIPT_IMMUTABLE','تم الاستلام؛ المعالجة اللاحقة للمحاسبة مع الحفاظ على الأصل.')
+            if c.execute('SELECT 1 FROM shared_driver_closure_returns WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RETURN_EXISTS','التقفيلة أُعيدت بالفعل.')
             c.execute('INSERT INTO shared_driver_closure_returns(declaration_id,recorded_by,reason) VALUES(%s,%s,%s)',(declaration['id'],user['id'],body.reason))
             for _,s in legs:c.execute("UPDATE shifts SET status='closing',submission=NULL,submitted_at=NULL WHERE id=%s",(s['id'],))
             db.audit(c,user['id'],'shared_driver.returned','central_workday',day['id'],body.model_dump())
@@ -199,6 +202,8 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
 
 
 def validate_allocation(declaration,receipt,rows):
+    from .shift_reconciliation import meaningful_reason
+    if any(not meaningful_reason(row.evidence) for row in rows):raise db.error(422,'SHARED_ALLOCATION_EVIDENCE','أدخل مرجع دليل واضح لكل براند؛ الأرقام وحدها لا تكفي.')
     supplied={row.shift_id:row for row in rows}
     expected={row['shift_id']:row for row in declaration['expected_snapshot']}
     if len(supplied)!=len(rows) or set(supplied)!=set(expected):raise db.error(422,'SHARED_ALLOCATION_LEGS','أدخل سجلات البراندات المعتمدة مرة واحدة.')
@@ -212,12 +217,15 @@ def validate_allocation(declaration,receipt,rows):
 @router.post(BASE+'/physical-allocation')
 def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_user)):
     if not accounting(user):raise db.error(403,'SHARED_ACCOUNTANT_REQUIRED','إسناد المبالغ للبراندات للمحاسبة فقط.')
+    from .shift_reconciliation import meaningful_reason
+    if not meaningful_reason(body.reason):raise db.error(422,'SHARED_ALLOCATION_REASON','اكتب أساس الإسناد المحاسبي بوضوح؛ الأرقام وحدها لا تكفي.')
     with db.tx() as c:
         workdays.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
             declaration=latest(c,day['id'])
             receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE id=%s AND declaration_id=%s',(body.receipt_id,body.declaration_id)).fetchone()
             if not body.confirmed or not declaration or declaration['id']!=body.declaration_id or not receipt:raise db.error(409,'SHARED_ALLOCATION_STALE','راجع أصل التقفيلة والاستلام الفعلي وحدّث الشاشة.')
+            if c.execute('SELECT 1 FROM shared_driver_closure_allocations WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_ALLOCATION_EXISTS','الإسناد المحاسبي محفوظ؛ التصحيح اللاحق بقيد مرتبط.')
             supplied,expected=validate_allocation(declaration,receipt,body.legs)
             validate_operational(c,user,legs)
             identifier=ops.uid();reports=[]

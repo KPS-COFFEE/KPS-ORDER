@@ -350,6 +350,7 @@ def submit(sid: str, body: Submission, request: Request, user=Depends(auth.curre
     require_enabled(user, 'shifts_delegate_close' if user['role']=='admin' and auth.has_permission(user, 'shifts_delegate_close') else 'shifts_close', existing_sid=sid)
     with db.tx() as c:
         def perform(day, legs):
+            if day['kind']=='driver':raise db.error(409,'SHARED_PHYSICAL_SUBMISSION_REQUIRED','السائق يسجل الكاش والشبكة مرة واحدة من التقفيلة الموحدة؛ إسناد البراندات للمحاسبة.')
             supplied = exact_legs(legs, body.legs)
             for principal, shift in legs:
                 value = supplied[shift['id']]
@@ -399,16 +400,7 @@ def driver_close(sid: str, body: Receipt, request: Request, user=Depends(auth.cu
         def perform(day, legs):
             if day['kind'] != 'driver':
                 raise db.error(409, 'CENTRAL_DRIVER_WORKDAY', 'اختر وردية سائق.')
-            if any((s.get('submission') or {}).get('shared_declaration_id') for _,s in legs):
-                raise db.error(409,'SHARED_PHYSICAL_RECEIPT_REQUIRED','استلم النقد من التقفيلة الموحدة؛ إسناد المبالغ للبراندات للمحاسبة.')
-            supplied = exact_legs(legs, body.legs)
-            reports = []
-            for principal, shift in legs:
-                value = supplied[shift['id']]
-                reports.append(ops.simple_driver_close_in_tx(c, principal, shift['id'], ops.DriverClose(
-                    **value.model_dump(exclude={'shift_id'}), confirmed=body.confirmed,
-                    vehicle_inspection=body.vehicle_inspection, exception_reason=body.exception_reason))['report_id'])
-            return {'report_ids': reports}
+            raise db.error(409,'SHARED_PHYSICAL_SUBMISSION_REQUIRED','السائق يسجل الكاش والشبكة مرة واحدة؛ استلمها من التقفيلة الموحدة وأحل الإسناد للمحاسبة.')
         output = change(c, user, sid, 'driver-close', body.model_dump(), request, perform, manager=True)
     from .reporting import generate_files
     for identifier in output['report_ids']:

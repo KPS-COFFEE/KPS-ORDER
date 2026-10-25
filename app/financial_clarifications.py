@@ -26,7 +26,7 @@ class Question(BaseModel):
 class Decision(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
     expected_version:StrictInt=Field(ge=1)
-    action:Literal['accept','respond','return','resolve','reassign']
+    action:Literal['accept','decline','respond','return','resolve','reassign']
     note:str=Field(min_length=3,max_length=2000)
     evidence:list[str]=Field(default_factory=list,max_length=20)
     assignee_id:str|None=Field(None,min_length=1,max_length=150)
@@ -79,6 +79,9 @@ def record(c,row,user,action,note,previous=None,evidence=()):
 def present(c,row,user):
     # No anonymous department or fabricated named handoff: identities are persisted.
     result=dict(row)
+    names={r['id']:r['display_name'] for r in c.execute('SELECT id,display_name FROM users WHERE id=ANY(%s)',([row['requested_by'],row['assignee_id']],)).fetchall()}
+    result['requester_name']=names.get(row['requested_by'])
+    result['assignee_name']=names.get(row['assignee_id'])
     result['responsible_role']='delivery_manager' if row['status']=='accepted' else 'accounting'
     result['responsible_user_id']=row['assignee_id'] if row['status']=='accepted' else row['requested_by']
     result['awaiting_acceptance']=row['status']=='requested'
@@ -86,7 +89,7 @@ def present(c,row,user):
     result['source_records_unchanged']=True
     result['actions']=[]
     if user['id']==row['assignee_id']:
-        if row['status']=='requested':result['actions']=['accept']
+        if row['status']=='requested':result['actions']=['accept','decline']
         elif row['status']=='accepted':result['actions']=['respond']
     if accounting(user) and (user['id']==row['requested_by'] or user['role']=='owner'):
         if row['status']=='responded':result['actions']=['resolve','return','reassign']
@@ -114,8 +117,9 @@ def listing(oid:str,user=Depends(auth.current_user)):
             if user['role']!='delivery_manager':raise db.error(403,'CLARIFICATION_FORBIDDEN','متابعة الاستكمال للمحاسبة والمدير المسند فقط.')
             eligible_manager(c,user,o,user['id'])
             rows=[r for r in rows if r['assignee_id']==user['id']]
+        source_case=case(c,oid) if accounting(user) else None
         assignees=[]
-        if accounting(user):
+        if accounting(user) and source_case:
             from fastapi import HTTPException
             for candidate in c.execute("SELECT id FROM users WHERE active AND role='delivery_manager' ORDER BY display_name,id").fetchall():
                 try:person=eligible_manager(c,user,o,candidate['id'])
@@ -123,7 +127,7 @@ def listing(oid:str,user=Depends(auth.current_user)):
                     if exc.status_code==422:continue
                     raise
                 assignees.append({'id':person['id'],'name':person['display_name']})
-        return {'clarifications':[present(c,r,user) for r in rows],'assignees':assignees,'can_request':accounting(user),'order_version':o['version']}
+        return {'clarifications':[present(c,r,user) for r in rows],'assignees':assignees,'can_request':bool(accounting(user) and source_case),'order_version':o['version']}
 
 
 @router.post('/orders/{oid}')
@@ -155,12 +159,12 @@ def decide(identifier:str,body:Decision,request:Request,user=Depends(auth.curren
             row,_=read(c,user,identifier,True)
             if row['version']!=body.expected_version:raise db.error(409,'CLARIFICATION_VERSION_CONFLICT','تغير طلب الاستكمال؛ حدّث الصفحة.')
             before=row['status'];action=body.action
-            if action in ('accept','respond'):
+            if action in ('accept','decline','respond'):
                 if user['id']!=row['assignee_id']:raise db.error(403,'CLARIFICATION_ASSIGNEE','الإجراء للمدير المسند من حسابه فقط.')
                 eligible_manager(c,user,o,user['id'])
-                expected='requested' if action=='accept' else 'accepted'
+                expected='requested' if action in ('accept','decline') else 'accepted'
                 if before!=expected:raise db.error(409,'CLARIFICATION_STATE','الإجراء لا يطابق حالة الاستكمال الحالية.')
-                status='accepted' if action=='accept' else 'responded'
+                status='accepted' if action=='accept' else 'declined' if action=='decline' else 'responded'
             else:
                 reviewer(user,row)
                 if action=='reassign':
@@ -176,7 +180,7 @@ def decide(identifier:str,body:Decision,request:Request,user=Depends(auth.curren
             if body.assignee_id and action!='reassign':raise db.error(422,'CLARIFICATION_TARGET','تغيير المستلم متاح بإجراء إعادة الإسناد فقط.')
             if body.evidence and action!='respond':raise db.error(422,'CLARIFICATION_EVIDENCE','المراجع ترفق مع الرد فقط.')
             row=c.execute('UPDATE financial_case_clarifications SET status=%s,assignee_id=%s,version=version+1,updated_at=now() WHERE id=%s RETURNING *',(status,row['assignee_id'],identifier)).fetchone()
-            recorded={'accept':'accepted','respond':'responded','return':'returned','resolve':'resolved','reassign':'reassigned'}[action]
+            recorded={'accept':'accepted','decline':'declined','respond':'responded','return':'returned','resolve':'resolved','reassign':'reassigned'}[action]
             record(c,row,user,recorded,body.note,before,body.evidence)
             return {'clarification':present(c,row,user)}
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'financial_clarification.decision:'+identifier,body.model_dump(),perform)

@@ -1945,10 +1945,17 @@ def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_us
 def driver_roster(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff')
     with db.tx() as c:
+        from . import multibrand
+        staffing_filter = ''
+        if multibrand.enabled():
+            from .aggregate_driver_closure import staffing_pending_sql
+            staffing_filter = ' AND ' + staffing_pending_sql('s')
         rows=c.execute("SELECT u.id,u.display_name,u.branch_ids,u.active,u.email,u.phone,u.invitation_status,"
                        "s.id shift_id,s.status shift_status,s.available shift_available,s.manager_shift_id,"
-                       "(SELECT count(*) FROM driver_tasks t WHERE t.driver_id=u.id AND t.status NOT IN ('delivered','cancelled','transferred')) active_tasks "
-                       "FROM users u LEFT JOIN shifts s ON s.user_id=u.id AND s.status<>'closed' "
+                       "(SELECT count(*) FROM driver_tasks t WHERE t.driver_id=u.id AND t.shift_id=s.id "
+                       "AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')) active_tasks "
+                       "FROM users u LEFT JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
+                       "AND s.kind='driver' AND s.status<>'closed'" + staffing_filter + ' '
                        "WHERE u.brand_id=%s AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
         visible=[]
         for row in rows:

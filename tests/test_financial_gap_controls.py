@@ -50,13 +50,16 @@ def test_manager_delivery_recovery_accepts_documented_partial_collection(ops):
 
 @pytest.mark.postgres
 def test_selected_line_cannot_refund_other_line_or_free_gift_value(ops):
-    actor,post,_,_=ops
-    oid,tid,manager,driver=picked_up(ops)
-    with db.tx() as c:
-        c.execute('UPDATE orders SET snapshot=jsonb_set(snapshot,\'{items}\',%s) WHERE id=%s',(db.json([
-            {'product_id':'coffee','quantity':2,'line_total_halalas':2000,'name':'Coffee'},
-            {'product_id':'extra','quantity':1,'line_total_halalas':500,'name':'Other item'},
-            {'product_id':'cookie','quantity':1,'line_total_halalas':0,'name':'Free cookie'}]),oid))
+    actor,post,order,shifts=ops
+    manager,driver=shifts()
+    oid=order(total=2500,items=[
+        {'product_id':'coffee','quantity':2,'unit_price_halalas':1000,'line_total_halalas':2000,'name':'Coffee'},
+        {'product_id':'extra','quantity':1,'unit_price_halalas':500,'line_total_halalas':500,'name':'Other item'},
+        {'product_id':'cookie','quantity':1,'unit_price_halalas':0,'line_total_halalas':0,'name':'Free cookie'}])
+    tid=post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':driver})['task']['id']
+    post('driver',f'/api/tasks/{tid}/transition',{'status':'accepted'})
+    with db.tx() as c:c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(oid,))
+    post('driver',f'/api/tasks/{tid}/transition',{'status':'picked_up'})
     post('driver',f'/api/orders/{oid}/collect',{'method':'cash','amount_halalas':2500,'tendered_halalas':2500})
     result=post('owner',f'/api/orders/{oid}/refund',{'method':'cash','amount_halalas':1500,'reason':'Return one coffee and free cookie','line_quantities':{'coffee':1,'cookie':1}},status=422)
     assert result['detail']['code']=='REFUND_LINE_VALUE_EXCEEDED'

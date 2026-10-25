@@ -106,3 +106,29 @@ def test_allocation_rejects_arbitrary_breakdown_totals_and_duplicate_legs():
     validate_allocation(declaration,receipt,[first,second])
     with pytest.raises(HTTPException):validate_allocation(declaration,receipt,[first,first])
     with pytest.raises(HTTPException):validate_allocation(declaration,receipt,[first,second.model_copy(update={'counted_halalas':101})])
+
+
+def second_manager(central):
+    _,_,post,_,_=central
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('dual-manager2','Second synthetic manager','delivery_manager','kps','[\"kps-branch-1\"]')")
+        c.execute("INSERT INTO staff_brand_memberships(user_id,brand_id,branch_ids,granted_by) VALUES('dual-manager2','enbishan','[\"enbishan-test-1\",\"enbishan-test-2\"]','dual-owner')")
+    return post('manager2','/api/central-operations/workdays',{'kind':'manager'})
+
+
+@pytest.mark.postgres
+def test_pending_shared_declaration_blocks_parent_handover_until_allocation(central,monkeypatch):
+    from app import reporting
+    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
+    _,actor,post,_,_=central
+    manager,driver,path,declared=submit_physical(central)
+    target=second_manager(central)
+    handover='/api/central-operations/workdays/'+manager['shift']['id']+'/handover-manager'
+    payload={'target_manager_shift_id':target['shift']['id'],'reason':'Actual manager responsibility handover'}
+    before=post('manager',handover,payload,status=409)
+    assert before['detail']['code']=='SHARED_DRIVER_ALLOCATION_PENDING'
+    receipt=post('manager',path+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True,'reference':'Actual shared bag'})
+    post('manager',handover,payload,status=409)
+    post('accountant',path+'/physical-allocation',{'declaration_id':declared['declaration_id'],'receipt_id':receipt['receipt_id'],'confirmed':True,'reason':'Verified attribution of actual received amounts','legs':rows(driver['shifts'])})
+    transferred=post('manager',handover,payload)
+    assert transferred['handover_id']

@@ -70,7 +70,7 @@ def order(order, *, financial_case=None, requests=(), amendments=(), viewer_role
             ('تبقى المراجعة المالية معلقة حتى اكتمال التحصيل أو معالجة مالية معتمدة متاحة بالنظام؛ الإقفال التشغيلي مستقل.', 'Financial review remains pending until collection or a supported authorized financial treatment is complete; operational completion is independent.'),
             ('إذا لم يُحصّل الفرق فلا تقفل الحالة بملاحظة أو تخصمه آليًا من السائق؛ مسار عدم الاسترداد المالي العام لم يُعتمد هنا.' if shortfall else 'إذا تعذر الاسترداد تبقى الحالة معلقة؛ لا تسجل ردًا وهميًا أو تعيد كتابة الفاتورة.', 'If the difference cannot be collected, do not close it with a note or automatically charge the driver; no general non-recovery treatment is certified here.' if shortfall else 'If refund cannot proceed, keep the case pending; do not record a fictitious refund or rewrite the invoice.'),
             source_id=financial_case['id'], return_supported=False,
-            limitation=text('طلب استكمال من قسم آخر بعد الإقفال غير متاح من هذه البطاقة.', 'This card does not implement a cross-department clarification request after closure.')))
+            limitation=text('الاستكمال مسار مستقل بين المحاسب والمدير المسند؛ قبول الرد لا يعيد فتح التقفيلة ولا يغيّر المستند المالي.', 'Clarification is a separate path between the requesting accountant and assigned manager; accepting a response does not reopen a closure or change its financial source.')))
     if not stages and not cancelled and not delivered:
         role='driver' if order['delivery_status'] in ('assigned','accepted','picked_up','problem') else reviewer
         stages.append(step('order_execution',role,
