@@ -19,11 +19,16 @@
   ]);
   const kinds={orders:'order',tasks:'task',conversations:'conversation',shifts:'shift',branches:'branch',devices:'printer',transfers:'custody',users:'staff',reports:'report',vehicles:'vehicle'};
   function create(){
-    const records=new Map(),workdays=new Map(),workdayLegs=new Map(),staffScopes=new Map();let signature='';
+    const records=new Map(),workdays=new Map(),workdayLegs=new Map(),staffScopes=new Map(),managerShifts=new Map();let signature='';
     const key=(kind,id)=>kind+':'+id;
     function remember(data,brand){
       if(!data||typeof data!=='object')return data;
       for(const [name,value] of Object.entries(data)){
+        if(['available_manager_shifts','closure_manager_shifts','shifts'].includes(name)){
+          for(const row of Array.isArray(value)?value:[value])if(row?.id&&(name!=='shifts'||row.kind==='manager')){
+            managerShifts.set(row.id,{...row,brand_id:row.brand_id||brand});
+          }
+        }
         for(const row of Array.isArray(value)?value:[value])if(row?.central_workday_id&&row.id){const anchor=row.central_anchor_id||row.id;workdays.set(row.id,anchor);if(!workdayLegs.has(anchor))workdayLegs.set(anchor,new Map());workdayLegs.get(anchor).set(row.brand_id||brand,row.id);}
         if(name==='users')for(const row of Array.isArray(value)?value:[value])if(row?.id&&row.branch_grants)staffScopes.set(row.id,[...row.branch_ids]);
         const kind=kinds[name]||kinds[name+'s'];
@@ -100,7 +105,7 @@
       const context=user?.central_operations;
       if(options.brand||!path.startsWith('/api/')||user?.delivery_context)return raw(path,options);
       const current=user?.id+':'+JSON.stringify([context,user?.central_workday_drain]);
-      if(current!==signature){records.clear();workdays.clear();workdayLegs.clear();staffScopes.clear();signature=current;}
+      if(current!==signature){records.clear();workdays.clear();workdayLegs.clear();staffScopes.clear();managerShifts.clear();signature=current;}
       const url=new URL(path,'https://central.invalid'),method=options.method||'GET';
       for(const day of user?.central_workday_drain||[]){
         const anchor=day.anchor_shift_id;
@@ -134,8 +139,16 @@
       const staffEdit=url.pathname.match(/^\/api\/identity\/staff\/([^/]+)$/);
       if(url.pathname==='/api/identity/staff/invitations'&&method==='POST')return raw('/api/central-operations/staff/invitations',options);
       if(staffEdit&&method==='PATCH'){const expected=staffScopes.get(decodeURIComponent(staffEdit[1]));return raw('/api/central-operations/staff/'+staffEdit[1],{...options,body:{...options.body,...(options.body?.branch_ids&&expected?{expected_branch_ids:expected}:{})}});}
-      if(url.pathname==='/api/shifts'&&method==='POST'&&options.body?.delivery_period!=='morning'){
-        return remember(await raw('/api/central-operations/workdays',options),user.brand_id);
+      if(url.pathname==='/api/shifts'&&method==='POST'){
+        const manager=managerShifts.get(options.body?.manager_shift_id);
+        // Morning managers have a canonical single-brand shift, not a shared
+        // workday. Drivers inherit that shift's period on the server. Preserve
+        // the submitted scope and inspection; canonical checks still apply.
+        if(options.body?.kind==='driver'&&manager?.status==='open'&&!manager.central_workday_id
+            &&manager.delivery_window_snapshot?.period==='morning'){
+          return remember(await raw(path,{...options,brand:manager.brand_id}),manager.brand_id);
+        }
+        if(options.body?.delivery_period!=='morning')return remember(await raw('/api/central-operations/workdays',options),user.brand_id);
       }
       const shiftAction=url.pathname.match(/^\/api\/(shifts|driver-closure)\/([^/]+)(?:\/([^/]+))?$/);
       if(shiftAction){
