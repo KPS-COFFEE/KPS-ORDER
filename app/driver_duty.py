@@ -22,10 +22,20 @@ def authorize(user):
         raise db.error(403, 'DRIVER_DUTY_FORBIDDEN', 'تحديد ساعات الدوام للمالك والمفوض بهذه الصلاحية فقط.')
 
 def driver(c, user, identifier):
-    row = c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active", (identifier,)).fetchone()
-    if multibrand.enabled(): row = multibrand.project(c, row, user['brand_id'])
+    canonical = c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active", (identifier,)).fetchone()
+    row = multibrand.project(c, canonical, user['brand_id']) if multibrand.enabled() else canonical
     if not row or not same_scope(user, row) or (not unrestricted_owner(user) and not set(row['branch_ids']) <= set(user['branch_ids'])):
         raise db.error(404, 'DRIVER_DUTY_SCOPE', 'السائق خارج نطاق الصلاحية.')
+    if multibrand.enabled() and not unrestricted_owner(user):
+        # One identity has one duration across its physical workday. A scoped
+        # delegate cannot change another brand's duty through a shared driver.
+        for brand in multibrand.available(c, canonical):
+            subject = multibrand.project(c, canonical, brand['id'])
+            principal = multibrand.project(c, user, brand['id'])
+            if (not principal or not subject
+                    or not auth.has_permission(principal, 'driver_duty_manage')
+                    or not set(subject['branch_ids']) <= set(principal.get('branch_ids') or [])):
+                raise db.error(404, 'DRIVER_DUTY_SCOPE', 'السائق خارج نطاق الصلاحية.')
     return row
 
 @router.get('')

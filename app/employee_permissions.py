@@ -164,7 +164,7 @@ def catalog():
 
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
-    'order_financial_cases': {'free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':'orders_cancel','journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':'accounting_review'},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
+    'order_financial_cases': {'nonreceipt':'payments_collect','free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':'orders_cancel','journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':'accounting_review'},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
     'task_recovery': {'listing':'tasks_resolve_delivery', 'detail':'tasks_resolve_delivery', 'review_revision':'tasks_resolve_delivery'},
     'driver_float': {'listing':('drivers_view','accounting_review'), 'propose':'custody_transfer', 'decide':'accounting_review'},
     'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':'orders_amend', 'request_amendment':'orders_amend', 'decide':'orders_amend',
@@ -225,6 +225,7 @@ ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branc
                                 for name in ('order_output_status','confirm_order_output')})
 
 
+ROUTES['aggregate_driver_closure'] = {'detail':('shifts_view','accounting_review'),'submit':{'driver':'shifts_close','delivery_manager':'shifts_delegate_close'},'receive':'shifts_delegate_close','return_declaration':'shifts_approve','allocate':'accounting_review','inbox':'accounting_review'}
 ROUTES['driver_duty'] = {'listing':'driver_duty_manage','configure':'driver_duty_manage'}
 ROUTES['driver_support'] = {'list_requests': ('shifts_view','driver_support_approve'), 'request_support': 'shifts_handover', 'accept_support': 'driver_support_approve', 'resolve_request': ('shifts_handover','driver_support_approve')}
 

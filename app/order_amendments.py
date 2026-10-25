@@ -117,7 +117,11 @@ def summary(c, o, u):
     amendments = c.execute('SELECT * FROM order_amendments WHERE order_id=%s ORDER BY created_at DESC LIMIT 30', (o['id'],)).fetchall()
     receipts = c.execute('SELECT kind,actor_id FROM order_revision_receipts WHERE order_id=%s AND revision=%s', (o['id'], o.get('amendment_revision', 0))).fetchall()
     net = balance(c, o)
-    return {'requests': request_rows(c, o['id']), 'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
+    requests=request_rows(c,o['id'])
+    from .administrative_guidance import order as order_guidance
+    from .order_financial_cases import case
+    guidance=order_guidance(o,financial_case=case(c,o['id']),requests=requests,amendments=amendments,viewer_role=u['role']) if u['role'] not in ('driver','customer') else None
+    return {'version':o['version'],'guidance':guidance,'requests': requests, 'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
             'active_id': next((a['id'] for a in amendments if a['status'] in ACTIVE), None), 'revision': o.get('amendment_revision', 0),
             'due_halalas': max(0, o['total_halalas']-net), 'refund_due_halalas': max(0, net-o['total_halalas']),
             'receipts': receipts if u['role'] != 'customer' else []}

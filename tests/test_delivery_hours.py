@@ -158,13 +158,15 @@ def test_manager_fresh_shift_and_customer_quote_boundaries(delivery_ops, stamp, 
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('stamp', ['2026-10-10T04:00:00', '2026-10-10T15:59:00'])
-def test_driver_fresh_shift_cannot_start_outside_window(delivery_ops, stamp):
+def test_driver_can_join_open_manager_outside_customer_window(delivery_ops, stamp):
     _, post, _, _, clock, _ = delivery_ops
     manager = post('manager', '/api/shifts', {'kind': 'manager', 'branch_ids': ['ops-branch']})['shift']['id']
     clock[0] = local(stamp)
-    post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'], 'manager_shift_id': manager}, status=409)
+    opened = post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'], 'manager_shift_id': manager})['shift']
+    assert opened['manager_shift_id'] == manager
+    assert opened['delivery_window_snapshot']['staffing_admission_basis'] == 'open_manager'
     with db.tx() as c:
-        assert c.execute("SELECT count(*) n FROM shifts WHERE user_id='ops-driver'").fetchone()['n'] == 0
+        assert c.execute("SELECT count(*) n FROM shifts WHERE user_id='ops-driver'").fetchone()['n'] == 1
 
 
 @pytest.mark.postgres
@@ -178,13 +180,14 @@ def test_manager_prepares_new_day_without_opening_customer_service(delivery_ops)
     assert snapshot['preparation_start'] == '2026-10-10T15:45:00+03:00'
     assert actor('customer').post('/api/quote', json=body).status_code == 409
     assert post('customer', '/api/orders', body, status=409)['detail']['code'] == 'DELIVERY_CLOSED'
-    post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'],
-                                 'manager_shift_id': manager['id']}, status=409)
+    driver = post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'],
+                                 'manager_shift_id': manager['id']})['shift']
+    assert driver['delivery_operational_date'] == manager['delivery_operational_date']
     post('manager', '/api/shifts', {'kind': 'manager', 'branch_ids': ['ops-branch']}, status=409)
     clock[0] = local('2026-10-10T16:00:00')
     assert actor('customer').post('/api/quote', json=body).status_code == 200
     post('driver', '/api/shifts', {'kind': 'driver', 'branch_ids': ['ops-branch'],
-                                 'manager_shift_id': manager['id']})
+                                 'manager_shift_id': manager['id']}, status=409)
 
 
 @pytest.mark.postgres

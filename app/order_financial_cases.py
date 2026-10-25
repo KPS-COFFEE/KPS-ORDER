@@ -1,7 +1,7 @@
 """Append-only cancellation cases; operational closure never asserts a refund."""
 from typing import Literal
-from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool
 from . import auth, db
 
 router = APIRouter(prefix='/api/order-financial-cases')
@@ -53,12 +53,23 @@ def case(c, oid):
             'reason':row['details']['reason'],'resolution':resolved,'operationally_blocking':False}
 
 
-def open_collection_case(c, order, user, reason, actual, remaining, shift_id):
+
+def actual_payment_method(c, order_id, fallback):
+    rows=c.execute("""SELECT p.method FROM effective_collections p WHERE p.order_id=%s
+        GROUP BY p.method HAVING sum(p.amount_halalas-coalesce((SELECT sum(r.amount_halalas)
+          FROM refunds r WHERE r.collection_id=p.id),0))>0""",(order_id,)).fetchall()
+    methods={row['method'] for row in rows}
+    return 'split' if len(methods)>1 else next(iter(methods),fallback)
+
+def open_collection_case(c, order, user, reason, actual, remaining, shift_id, *, nonreceipt_evidence=None):
     """The order is locked by collection; never rewrite an invoice or assign blame."""
     details={'kind':'collection_shortfall','reason':reason,'actual_collected_halalas':actual,
              'remaining_halalas':remaining,'original_amount_halalas':order['total_halalas'],
              'shift_id':shift_id,'requester_id':user['id'],'responsible_role':'accounting',
              'financial_status':'pending','operationally_blocking':False,'responsibility':'unreviewed'}
+    if nonreceipt_evidence:
+        details['nonreceipt_evidence']=nonreceipt_evidence
+        details['verified_zero_collection']=True
     existing=case(c,order['id'])
     name='financial_case.collection_updated' if existing and existing['status']=='pending' else 'financial_case.opened'
     db.event(c,order['id'],user['id'],name,details)
@@ -68,8 +79,47 @@ def open_collection_case(c, order, user, reason, actual, remaining, shift_id):
 def documented_shortfall(c, order):
     pending=case(c,order['id'])
     return bool(pending and pending['kind']=='collection_shortfall' and pending['status']=='pending'
-                and pending['collected_halalas']>0)
+                and (pending['collected_halalas']>0 or c.execute("SELECT 1 FROM order_events WHERE id=%s AND details->>'verified_zero_collection'='true'",(pending['id'],)).fetchone()))
 
+
+
+class Nonreceipt(Resolution):
+    version: StrictInt = Field(ge=1)
+    evidence: str = Field(min_length=3,max_length=2000,pattern=r'^[^\x00]+$')
+    confirmed_zero_received: StrictBool
+
+
+@router.post('/orders/{oid}/nonreceipt')
+def nonreceipt(oid:str,body:Nonreceipt,request:Request,user=Depends(auth.current_user)):
+    from .operations import mutate,lock_shift,shift_access
+    if user['role'] not in ('driver','owner','delivery_manager') or not auth.has_permission(user,'payments_collect'):
+        raise db.error(403,'NONRECEIPT_FORBIDDEN','توثيق عدم التحصيل للسائق المكلف ومدير مناوبته فقط.')
+    with db.tx() as c:
+        scoped(c,oid,user)
+        def perform():
+            o=scoped(c,oid,user,True)
+            if body.version!=o['version']:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث تفاصيله قبل الإجراء.')
+            from .branch_payments import online_order
+            from .complimentary import is_free
+            from .order_amendments import balance,guard
+            if (not body.confirmed_zero_received or o['service']!='delivery' or online_order(o) or is_free(o)
+                    or o['preparation_status'] in ('cancelled','rejected') or o.get('completed_at') is not None
+                    or o['delivery_status'] in ('delivered','cancelled') or o['payment_status']!='unpaid'
+                    or o['total_halalas']<=0 or balance(c,o)!=0):
+                raise db.error(409,'NONRECEIPT_STATE','وثّق عدم التحصيل فقط عندما لم تستلم أي مبلغ؛ المدفوع الإلكتروني والضيافة لهما مسارهما.')
+            t=c.execute("SELECT * FROM driver_tasks WHERE order_id=%s AND status IN ('picked_up','problem') AND picked_up_at IS NOT NULL FOR UPDATE",(oid,)).fetchone()
+            if not t or user['role']=='driver' and t['driver_id']!=user['id']:
+                raise db.error(409,'NONRECEIPT_PICKUP_REQUIRED','يلزم استلام فعلي مسجل من الفرع ومهمة السائق المكلف.')
+            shift=lock_shift(c,t['shift_id']);shift_access(c,user,shift)
+            if shift['status']!='open':raise db.error(409,'NONRECEIPT_SHIFT_CLOSED','المناوبة ليست مفتوحة؛ احِل الواقعة للمحاسبة دون تعديل التقفيلة.')
+            guard(c,o,driver_id=t['driver_id'],require_branch=True)
+            pending=case(c,oid)
+            if pending and pending['status']=='pending':
+                raise db.error(409,'NONRECEIPT_ALREADY_RECORDED','يوجد ملف مالي معلق؛ أكمل المتابعة داخله.')
+            open_collection_case(c,o,user,body.reason,0,o['total_halalas'],shift['id'],nonreceipt_evidence=body.evidence)
+            c.execute('UPDATE orders SET version=version+1 WHERE id=%s',(oid,))
+            return {'order_id':oid,'actual_collected_halalas':0,'financial_case':case(c,oid)}
+        return mutate(c,user,request,'financial-case.nonreceipt:'+oid,body.model_dump(),perform)
 
 def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None, before=None):
     """A recorded receipt/operational closure may proceed; financial approval may not."""
@@ -266,7 +316,8 @@ def recover(oid:str,body:Recovery,user=Depends(auth.current_user),idempotency_ke
                 (cid,oid,sid,user['id'],body.method,body.amount_halalas,body.reference,o.get('amendment_revision',0),cid))
             if sid:event(c,sid,body.amount_halalas,'collection',cid,user['id'],body.reason+' / '+body.reference)
             paid=body.amount_halalas==pending['pending_amount_halalas']
-            c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',('paid' if paid else 'unpaid',oid))
+            method=actual_payment_method(c,oid,o['payment_method'])
+            c.execute('UPDATE orders SET payment_status=%s,payment_method=%s,version=version+1 WHERE id=%s',('paid' if paid else 'unpaid',method,oid))
             details={**body.model_dump(),'collection_id':cid,'case_id':pending['id'],'responsibility':'unreviewed'}
             db.event(c,oid,user['id'],'financial_case.recovery_recorded',details)
             db.audit(c,user['id'],'financial_case.recovery_recorded','order',oid,details)
@@ -321,9 +372,13 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
                 entry=classify(source)
                 if entry['state']=='pending_review':
                     followups.append({'type':'driver_incentive_review','status':'review_required','responsible_role':'delivery_manager','shift_id':entry['shift_id'],'task_id':entry['task_id'],'order_id':oid,'review_url':'/api/driver-incentives/shifts/'+entry['shift_id']})
-        return {'free_items':[] if user['role']=='driver' else free_items(c,o),'operational_followups':followups,'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
+        from .administrative_guidance import order as order_guidance
+        from .order_requests import rows as request_rows
+        pending_case=case(c,oid) if user['role']!='driver' else None
+        guidance=order_guidance(o,financial_case=pending_case,requests=request_rows(c,oid),amendments=c.execute('SELECT id,status,expires_at FROM order_amendments WHERE order_id=%s ORDER BY created_at DESC',(oid,)).fetchall(),viewer_role=user['role'],events=events) if user['role']!='driver' else None
+        return {'guidance':guidance,'free_items':[] if user['role']=='driver' else free_items(c,o),'operational_followups':followups,'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
                 'payment_status':o['payment_status'],'version':o['version'],'tasks':tasks,'timeline':events,
-                'financial_case':None if user['role']=='driver' else case(c,oid)}
+                'financial_case':pending_case}
 
 
 @router.get('/orders/{oid}/refund-context')

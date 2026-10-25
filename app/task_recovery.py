@@ -68,7 +68,8 @@ def detail(tid: str, user=Depends(auth.current_user)):
         if not task.get('picked_up_at'): blockers.append('pickup_missing')
         if order['payment_status'] != 'paid':
             from .complimentary import is_free
-            if not is_free(order): blockers.append('payment_missing')
+            from .order_financial_cases import documented_shortfall
+            if not is_free(order) and not documented_shortfall(c,order): blockers.append('payment_missing')
         reviews = c.execute("""SELECT e.created_at,e.details,u.display_name AS actor_name
             FROM order_events e LEFT JOIN users u ON u.id=e.actor_id
             WHERE e.order_id=%s AND e.event_type='amendment.administrative_review'

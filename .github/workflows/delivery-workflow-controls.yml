@@ -32,8 +32,8 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
-      - run: node --check public/ops.js && node --check public/assets/order-amendments.js && node tests/test_driver_collection_ui.cjs && node tests/test_collection_exception_ui.cjs
-      - run: python -m pytest -q tests/test_driver_duty.py tests/test_delivery_workflow_controls.py tests/test_split_payment.py tests/test_split_payment_browser.py tests/test_order_financial_cases.py tests/test_operations.py tests/test_accounting.py tests/test_accountant_shift_permissions.py tests/test_driver_accounting_settlements.py tests/test_order_support.py tests/test_order_financial_case_morning.py --junitxml=workflow-controls.xml
+      - run: node --check public/ops.js && node --check public/assets/order-amendments.js && node tests/test_driver_collection_ui.cjs && node tests/test_collection_exception_ui.cjs && node tests/test_administrative_guidance_ui.cjs
+      - run: python -m pytest -q tests/test_aggregate_driver_closure.py tests/test_driver_duty.py tests/test_driver_physical_admission.py tests/test_financial_gap_controls.py tests/test_administrative_guidance.py tests/test_delivery_hours.py tests/test_central_workdays.py tests/test_central_workdays_browser.py tests/test_driver_closure_direct_paths.py tests/test_delivery_workflow_controls.py tests/test_split_payment.py tests/test_split_payment_browser.py tests/test_order_financial_cases.py tests/test_operations.py tests/test_accounting.py tests/test_accountant_shift_permissions.py tests/test_driver_accounting_settlements.py tests/test_order_support.py tests/test_order_financial_case_morning.py --junitxml=workflow-controls.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
