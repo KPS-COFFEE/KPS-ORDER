@@ -6,7 +6,7 @@ class Connection:
         self.user, self.shifts = user, shifts
 
     def execute(self, query, args):
-        self.rows = [self.user] if 'SELECT * FROM users' in query else ([] if 'SELECT 1 FROM driver_tasks' in query else self.shifts)
+        self.rows = [self.user] if 'SELECT * FROM users' in query else ([] if any(table in query for table in ('SELECT 1 FROM driver_tasks', 'SELECT 1 FROM effective_driver_tasks')) else self.shifts)
         return self
 
     def fetchone(self):
