@@ -52,7 +52,7 @@ def test_clarification_accept_response_return_and_accountant_acceptance_preserve
     url='/api/financial-clarifications/orders/'+oid
     context=actor('accountant').get(url)
     assert context.status_code==200,context.text
-    assert {p['id'] for p in context.json()['assignees']}=={'ops-manager'}
+    assert {p['id'] for p in context.json()['assignees']}=={'ops-manager','ops-driver'}
     payload={'version':context.json()['order_version'],'assignee_id':'ops-manager','question':'Confirm why the customer paid 19.50 and provide the receipt reference'}
     post('manager',url,payload,status=403)
     post('accountant',url,{**payload,'version':payload['version']+1},status=409)
@@ -63,6 +63,7 @@ def test_clarification_accept_response_return_and_accountant_acceptance_preserve
     key=uuid4().hex
     created=post('accountant',url,payload,key=key)
     assert post('accountant',url,payload,key=key)==created
+    assert created['clarification']['due_at'] and created['clarification']['deadline_documented']
     row=created['clarification'];path='/api/financial-clarifications/'+row['id']+'/decision'
     assert row['status']=='requested' and row['responsible_user_id']=='ops-accountant' and row['awaiting_acceptance']
     assert actor('other').get(url).status_code==404
@@ -79,6 +80,8 @@ def test_clarification_accept_response_return_and_accountant_acceptance_preserve
     assert blocked['detail']['code']=='FINANCIAL_CLARIFICATION_PENDING'
     row=post('accountant',path,{'expected_version':3,'action':'return','note':'Specify who authorized the deduction; free cookie has zero invoice value'})['clarification']
     assert row['status']=='requested' and row['awaiting_acceptance']
+    assert row['required_correction']=='Specify who authorized the deduction; free cookie has zero invoice value'
+    assert row['history'][-1]['note']==row['required_correction']
     post('manager',path,{'expected_version':4,'action':'accept','note':'I accept the correction request'})
     post('manager',path,{'expected_version':5,'action':'respond','note':'No discount was authorized; the shortfall must remain pending','evidence':['Manager statement 002']})
     row=post('accountant',path,{'expected_version':6,'action':'resolve','note':'Facts accepted; financial difference remains separately pending'})['clarification']
@@ -114,3 +117,46 @@ def test_decline_reassign_revocation_and_case_guard(ops):
         from app.order_financial_cases import case
         with pytest.raises(Exception) as exc:guard_case_resolution(c,oid,case(c,oid)['id'])
         assert exc.value.detail['code']=='FINANCIAL_CLARIFICATION_PENDING'
+
+
+@pytest.mark.postgres
+def test_direct_driver_evidence_request_is_scoped_and_does_not_settle_money(ops):
+    actor,post,_,_=ops
+    oid=setup_case(ops)
+    source=financial_source(oid)
+    url='/api/financial-clarifications/orders/'+oid
+    context=actor('accountant').get(url).json()
+    row=post('accountant',url,{'version':context['order_version'],'assignee_id':'ops-driver','question':'Attach the delivery proof and describe the actual payment received'})['clarification']
+    mine=actor('driver').get('/api/financial-clarifications/mine').json()['clarifications']
+    assert len(mine)==1 and mine[0]['order_id']==oid
+    assert set(mine[0])=={'id','order_id','order_no','question','status','due_at','version'}
+    assert actor('manager').get('/api/financial-clarifications/mine').json()['clarifications']==[]
+    path='/api/financial-clarifications/'+row['id']+'/decision'
+    row=post('driver',path,{'expected_version':1,'action':'accept','note':'I will supply the delivery proof'})['clarification']
+    assert row['responsible_role']=='driver' and row['responsible_user_id']=='ops-driver'
+    row=post('driver',path,{'expected_version':2,'action':'respond','note':'Customer paid the amount I recorded','evidence':['Delivery evidence actual-001']})['clarification']
+    assert row['status']=='responded' and row['responsible_user_id']=='ops-accountant'
+    assert actor('driver').get('/api/financial-clarifications/mine').json()['clarifications']==[]
+    assert financial_source(oid)==source
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-driver'")
+    assert actor('driver').get(url).status_code==404
+
+@pytest.mark.postgres
+def test_inactive_reviewer_has_named_accounting_fallback_and_recorded_takeover(ops):
+    actor,post,_,_=ops
+    oid=setup_case(ops)
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions) VALUES('ops-reviewer2','Accounting alternate','admin','ops-brand','[\"ops-branch\"]','[\"accounting_review\"]')")
+    url='/api/financial-clarifications/orders/'+oid
+    version=actor('accountant').get(url).json()['order_version']
+    row=post('accountant',url,{'version':version,'assignee_id':'ops-manager','question':'Confirm the actual payment reference'})['clarification']
+    assert row['fallback_reviewer_id']=='ops-reviewer2'
+    path='/api/financial-clarifications/'+row['id']+'/decision'
+    post('reviewer2',path,{'expected_version':1,'action':'takeover','note':'Cannot take over an active reviewer'},status=409)
+    with db.tx() as c:c.execute("UPDATE users SET active=false WHERE id='ops-accountant'")
+    row=actor('reviewer2').get(url).json()['clarifications'][0]
+    assert row['responsible_user_id']=='ops-reviewer2' and row['actions']==['takeover']
+    row=post('reviewer2',path,{'expected_version':1,'action':'takeover','note':'Original reviewer unavailable; I accept follow-up responsibility'})['clarification']
+    assert row['requested_by']=='ops-accountant' and row['current_reviewer_id']=='ops-reviewer2'
+    assert row['history'][-1]['action']=='reviewer_taken_over'
+    assert row['response_destination_id']=='ops-reviewer2'

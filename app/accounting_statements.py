@@ -90,7 +90,8 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             daily[identifier,day]=dict(driver_id=identifier,driver=name,day=day,label=name,
                 completed_orders=0,bank=0,cash_due=0,cash_received=0,pending_cash=0,shortage=0,surplus=0,pending_shortage=0,pending_surplus=0,
                 violations=0,traffic=0,notes='',incident_notes='',traffic_notes='',adjustments='',
-                pending_balance=0,pending_receipt=0,closure_count=0,manager='',status='—')
+                pending_balance=0,pending_receipt=0,closure_count=0,manager='',status='—',
+                outstanding_receivable_halalas=0,outstanding_payable_halalas=0,unresolved_channel_count=0)
     # Delivered order IDs are selected once across all tasks, avoiding duplicate
     # counts when orders were reassigned or split across collection records.
     task_ids=defaultdict(set)
@@ -101,15 +102,20 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     from .accounting import variance_confirmation
     details=[]
     for r in rows:
-        history=changes[r['id']];v=driver_settlement_values(r['snapshot'],history[-1] if history else None)
+        history=changes[r['id']]
+        from .financial_treatments import reviewed_values
+        v=reviewed_values(c,r,history[-1] if history else None)
         item=daily[r['user_id'],r['day']]
         item['completed_orders']+=len(task_ids[r['shift_id']])
         item['bank']+=v['bank_halalas'] if v['balance_approved'] else 0
         item['cash_due']+=v['cash_due_halalas']
         item['cash_received']+=v['cash_received_halalas'] or 0
         item['pending_cash']+=v['pending_cash_halalas']
+        item['outstanding_receivable_halalas']+=v['outstanding_receivable_halalas']
+        item['outstanding_payable_halalas']+=v['outstanding_payable_halalas']
+        item['unresolved_channel_count']+=int(v['has_channel_variance'] and not v['period_approval_allowed'])
         confirmation=variance_confirmation(c,r['id'],v['revision']) if v['reconciliation_complete'] and v['net_difference_halalas'] else None
-        pending=bool(v['reconciliation_complete'] and v['net_difference_halalas'] and not confirmation)
+        pending=bool(v['has_channel_variance'] and not v['period_approval_allowed'])
         item['pending_shortage' if pending else 'shortage']+=v['shortage_halalas']
         item['pending_surplus' if pending else 'surplus']+=v['surplus_halalas']
         if confirmation:
@@ -146,17 +152,17 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             f"{'Received' if en else 'المستلم'}: {before} {('—' if e['before_received'] is None else format(e['before_received']/100,'.2f'))} / {after} {('—' if e['after_received'] is None else format(e['after_received']/100,'.2f'))}\n"
     for item in daily.values():
         if item['closure_count']:
-            item['status']=('Pending balance' if en else 'بانتظار الموازنة') if item['pending_balance'] else ('Pending cash' if en else 'بانتظار الكاش') if item['pending_receipt'] else ('Variance pending confirmation' if en else 'فرق بانتظار تأكيد المحاسب') if item['pending_shortage'] or item['pending_surplus'] else ('Approved' if en else 'معتمد')
+            item['status']=('Review approved — outstanding under follow-up' if en else 'المراجعة معتمدة — مبلغ مستحق تحت المتابعة') if item['outstanding_receivable_halalas'] or item['outstanding_payable_halalas'] else ('Channel difference under review' if en else 'فرق الكاش والشبكة تحت المراجعة') if item['unresolved_channel_count'] else ('Pending balance' if en else 'بانتظار الموازنة') if item['pending_balance'] else ('Pending cash' if en else 'بانتظار الكاش') if item['pending_receipt'] else ('Variance pending confirmation' if en else 'فرق بانتظار تأكيد المحاسب') if item['pending_shortage'] or item['pending_surplus'] else ('Approved' if en else 'معتمد')
     output=sorted(daily.values(),key=lambda r:(r['driver'],r['driver_id'],r['day']))
     summaries=[]
-    money=('completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','violations','traffic')
+    money=('completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','violations','traffic','outstanding_receivable_halalas','outstanding_payable_halalas')
     for identifier,name in names.items():
         entries=[r for r in output if r['driver_id']==identifier]
         summaries.append(dict(driver_id=identifier,driver=name,**{k:sum(r[k] for r in entries) for k in money}))
     return safe(dict(group='driver_statement',rows=output,drivers=summaries,settlements=details,adjustment_history=audit,deadline_extensions=deadline_extensions,
         incidents=incidents,branches=bs,period={'start':ds,'end':de,'timezone':'Asia/Riyadh'},generated_at=datetime.now(TZ),
-        definitions=('Each delivered order counts once. Balance papers and physical cash are approved independently. Waiting cash is not a shortage. Final differences combine actual cash and card per driver. Only explicitly accountant-confirmed differences enter the driver record; unconfirmed differences remain pending. Incident values show recorded amounts and responsibility, without payroll deductions.' if en else
-        'كل طلب مسلّم يُعد مرة واحدة. اعتماد ورقة الموازنة مستقل عن استلام الكاش. النقد المنتظر ليس عجزًا. الفرق النهائي يجمع الكاش والشبكة الفعليين لكل سائق مقابل رصيد النظام. لا يثبت العجز أو الفائض في ملف السائق إلا بتأكيد المحاسب؛ وما لم يؤكد يبقى قيد المراجعة. قيم المخالفات مبالغ مسجلة مع حالة المسؤولية ولا تنشئ خصمًا من الراتب.')))
+        definitions=('Each delivered order counts once. Balance papers and physical cash are approved independently. Waiting cash is not a shortage. Cash and card differences remain separate. Notes never settle money or assign employee liability. Independent documented treatments preserve outstanding receivables and payables until actual recovery or payment. Incident values show recorded amounts and responsibility, without payroll deductions.' if en else
+        'كل طلب مسلّم يُعد مرة واحدة. اعتماد ورقة الموازنة مستقل عن استلام الكاش. النقد المنتظر ليس عجزًا. فرق الكاش مستقل عن فرق الشبكة. الملاحظة لا تسوي المبلغ ولا تحمل الموظف مسؤولية. المعالجة المستقلة الموثقة تبقي المستحقات ظاهرة حتى التحصيل أو الرد الفعلي. قيم المخالفات مبالغ مسجلة مع حالة المسؤولية ولا تنشئ خصمًا من الراتب.')))
 
 
 def closure_deadline(row, local, extension=None):
@@ -190,9 +196,11 @@ def manager_cards(c,user,bids):
     approved={r['manager_shift_id']:r for r in c.execute('SELECT id,manager_shift_id,created_at FROM accounting_daily_closures WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
     extensions={r['entity_id']:r for r in c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action='accounting.deadline.extended' AND a.entity_id=ANY(%s)",([r['id'] for r in rows],)).fetchall()}
     for r in rows:
-        history=changes[r['id']];v=driver_settlement_values(r['snapshot'],history[-1] if history else None)
+        history=changes[r['id']]
+        from .financial_treatments import reviewed_values
+        v=reviewed_values(c,r,history[-1] if history else None)
         confirmation=variance_confirmation(c,r['id'],v['revision']) if v['reconciliation_complete'] and v['net_difference_halalas'] else None
-        variance_pending=bool(v['reconciliation_complete'] and v['net_difference_halalas'] and not confirmation)
+        variance_pending=bool(v['has_channel_variance'] and not v['period_approval_allowed'])
         deadline=closure_deadline(r,local,extensions.get(r['id']))
         finished=history[-1]['created_at'] if v['stage']=='cash_received' else None
         deadline['overdue']=bool((finished or datetime.now(TZ))>=deadline['due_at'])
@@ -202,14 +210,19 @@ def manager_cards(c,user,bids):
         may_request=can_request_cash_correction(c,user,r['id'])
         group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,cash_correction_requests=tickets,can_request_cash_correction=may_request,**v,**deadline))
     for group in groups.values():
-        group['completed']=sum(r['stage']=='cash_received' and not r['variance_pending'] for r in group['drivers'])
+        group['completed']=sum(r['financially_complete'] for r in group['drivers'])
+        group['review_completed']=sum(r['period_approval_allowed'] for r in group['drivers'])
+        group['outstanding_receivable_halalas']=sum(r['outstanding_receivable_halalas'] for r in group['drivers'])
+        group['outstanding_payable_halalas']=sum(r['outstanding_payable_halalas'] for r in group['drivers'])
         group['total']=len(group['drivers'])
-        group['ready']=group['completed']==group['total']
+        group['ready']=group['review_completed']==group['total']
         group['balance_completed']=sum(r['balance_approved'] for r in group['drivers'])
         group['cash_completed']=sum(r['cash_recorded'] for r in group['drivers'])
-        variance_count=sum(bool(r['reconciliation_complete'] and r['net_difference_halalas']) for r in group['drivers'])
-        confirmed_count=sum(bool(r['variance_confirmation']) for r in group['drivers'])
+        variance_count=sum(bool(r['has_channel_variance']) for r in group['drivers'])
+        confirmed_count=sum(bool(r['financial_treatment'] and r['financial_treatment']['status']=='approved' and r['period_approval_allowed']) for r in group['drivers'])
         group['completion_percent']=int(100*(group['balance_completed']+group['cash_completed']+confirmed_count)/(2*group['total']+variance_count))
+        group['completion_scope']='accounting_review'
+        group['financial_completion_percent']=int(100*group['completed']/group['total'])
         pending=[r for r in group['drivers'] if r['stage']!='cash_received' or r['variance_pending']]
         group['due_at']=min(r['due_at'] for r in (pending or group['drivers']))
         group['due_on']=group['due_at'].date()
@@ -256,13 +269,19 @@ def approve_day(c,user,manager_shift_id,note):
     if any(driver_settlement_values(r['snapshot'],changes[r['id']][-1] if changes[r['id']] else None)['stage']!='cash_received' for r in rows):
         fail('PENDING_SETTLEMENTS','أكمل الموازنة والكاش لكل سائق أولًا.',409)
     for r in rows:
-        v=driver_settlement_values(r['snapshot'],changes[r['id']][-1])
-        if v['net_difference_halalas'] and not variance_confirmation(c,r['id'],v['revision']):
-            fail('PENDING_VARIANCE_CONFIRMATION','أكد العجز أو الفائض والإجراء المتخذ لكل سائق أولًا.',409)
+        from .financial_integrity import require_verified
+        require_verified(r['snapshot'])
+        from .financial_treatments import reviewed_values
+        v=reviewed_values(c,r,changes[r['id']][-1])
+        if not v['period_approval_allowed']:
+            fail('FINANCIAL_TREATMENT_REQUIRED','أكمل معالجة مستقلة موثقة؛ الملاحظة وحدها لا تسوي الفرق.',409)
     ds=min(r['day'] for r in rows);de=max(r['day'] for r in rows)
     bs=[b for b in branches(c,user) if b['id'] in manager['branch_ids']]
     # Snapshot is generated in the same transaction as approval and never edited.
     report=statement(c,user,ds,de,[b['id'] for b in bs],bs,manager_shift_id=manager_shift_id)
+    report['financial_state']='review_approved_outstanding' if any(r.get('outstanding_receivable_halalas') or r.get('outstanding_payable_halalas') for r in report.get('settlements',[])) else 'matched'
+    report['outstanding_receivable_halalas']=sum(r.get('outstanding_receivable_halalas',0) for r in report.get('settlements',[]))
+    report['outstanding_payable_halalas']=sum(r.get('outstanding_payable_halalas',0) for r in report.get('settlements',[]))
     identifier=db.new_id('acd_')
     row=c.execute("""INSERT INTO accounting_daily_closures(id,manager_shift_id,brand_id,branch_ids,operational_date,snapshot,approved_by,note)
       VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,created_at""",(identifier,manager_shift_id,user['brand_id'],db.json(manager['branch_ids']),ds,db.json(report),user['id'],note)).fetchone()
