@@ -42,10 +42,10 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/assets/operating-reports.js
-      - run: python -m pytest -q --basetemp=.qa/operating-reports tests/test_operating_reports.py tests/test_operating_reports_browser.py tests/test_accounting_deadlines.py tests/test_shift_reconciliation.py tests/test_delivery_manager_operations_only.py
+      - run: python -m pytest -q --basetemp=qa-operating-reports tests/test_operating_reports.py tests/test_operating_reports_browser.py tests/test_accounting_deadlines.py tests/test_shift_reconciliation.py tests/test_delivery_manager_operations_only.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: operating-report-browser
-          path: .qa/operating-reports/**/*.png
+          path: qa-operating-reports/**/*.png
           if-no-files-found: ignore

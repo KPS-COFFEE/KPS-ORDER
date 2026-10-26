@@ -32,7 +32,7 @@ def test_widget_mobile_accounting_status_refresh_and_export_filename(width,tmp_p
             page.evaluate('''async()=>{await window.KPSOperatingReports.mount(document.querySelector('#report'),{api:async url=>await(await fetch(url)).json()});}''')
             assert page.locator('[role="alert"]').inner_text()==''
             assert page.locator('.or-logos img').count()==2
-            assert page.locator('.or-logos img').evaluate_all('(images)=>images.every(img=>img.complete && img.naturalWidth>0)')
+            page.wait_for_function("Array.from(document.querySelectorAll('.or-logos img')).every(img=>img.complete && img.naturalWidth>0)")
             assert page.locator('.or-driver-brands').count()==len(data['rows'])
             page.get_by_text('60٪',exact=True).wait_for()
             assert page.locator('.or-stamp').count()==0
