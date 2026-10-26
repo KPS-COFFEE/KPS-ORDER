@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, time
 from . import db
 
 
-def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
+def source_rows(c,user,bids,ds=None,de=None,manager_shift_id='',manager_shift_ids=None):
     q="""SELECT r.*,s.manager_shift_id,s.submission,s.scheduled_end_at,s.delivery_window_snapshot,
       s.closed_at shift_closed_at,mu.display_name manager_name,
       u.display_name driver_name,
@@ -18,6 +18,7 @@ def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
         q+=" AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) BETWEEN %s AND %s"
         args.extend([ds,de])
     if manager_shift_id:q+=' AND s.manager_shift_id=%s';args.append(manager_shift_id)
+    if manager_shift_ids is not None:q+=' AND s.manager_shift_id=ANY(%s)';args.append(manager_shift_ids)
     rows=c.execute(q+' ORDER BY "day",r.created_at,r.id',args).fetchall()
     allowed=set(user.get('branch_ids',[]))
     return [r for r in rows if (user['role']=='owner' and not user.get('home_brand_id')) or set(r['branch_ids'])<=allowed]
@@ -192,11 +193,11 @@ def closure_deadline(row, local, extension=None):
     return dict(shift_end_at=end,deadline_policy=policy,original_due_at=original,due_at=due,extension=extension)
 
 
-def manager_cards(c,user,bids):
+def manager_cards(c,user,bids,manager_shift_ids=None):
     from .accounting import driver_settlement_values,variance_confirmation,cash_correction_requests,can_request_cash_correction,TZ
     from .catalog import normalize_city
     from .operations import safe
-    rows=source_rows(c,user,bids)
+    rows=source_rows(c,user,bids,manager_shift_ids=manager_shift_ids)
     changes=histories(c,user,rows);groups={}
     local={b['id'] for b in c.execute('SELECT id,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall() if normalize_city(b['city'])=='حفر الباطن'}
     approved={r['manager_shift_id']:r for r in c.execute('SELECT id,manager_shift_id,created_at FROM accounting_daily_closures WHERE brand_id=%s',(user['brand_id'],)).fetchall()}

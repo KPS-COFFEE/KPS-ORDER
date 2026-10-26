@@ -1566,6 +1566,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     if(['owner','delivery_manager'].includes(state.user.role))$('#content').insertAdjacentHTML('afterbegin',`<button data-action="support-daily">${esc(tr('التقرير اليومي لتذاكر المتابعة','Daily support ticket report'))}</button>`);
     if(state.user.role==='owner')window.KPSOwnerAudit?.mount({host:$('#content'),reports:list,api:scopedApi,tr,esc,money,eventDescription:orderEventDescription,user:state.user,lang:state.lang,active:()=>state.user?.role==='owner'&&state.page==='reports'});
     if(isAdmin())await ownerNotifications();
+    if(['owner','delivery_manager'].includes(state.user.role)&&window.KPSOperatingReports){const host=document.createElement('section');host.className='panel';$('#content').prepend(host);await window.KPSOperatingReports.mount(host,{api,morning:morningMode});}
   }
   async function admin() {
     if(!isAdmin())throw new Error(tr('الإدارة متاحة للمالك المخول.','Administration requires owner access.'));
