@@ -17,13 +17,10 @@ SHORT = 'https://maps.app.goo.gl/SyntheticSecurityOnly'
 PIN = 'https://www.google.com/maps?q=28.4,45.9'
 
 
-def _admit_in_bucket(url, cookie=None, bucket=None):
-    if bucket is None:
-        return maps.admit(url, cookie)
-    # Freeze only the minute used for rate accounting. Transactions, advisory
-    # locks, shared counters and cache reads remain real PostgreSQL operations.
-    # Spawning workers near a wall-clock minute boundary must not reset the
-    # seeded admission's budget while this test checks cross-worker sharing.
+@contextmanager
+def _fixed_rate_bucket(bucket):
+    # Pin only the admission minute. Counters, transactions, locking and leases
+    # stay real; a wall-clock minute boundary is not a reset within this test.
     real_tx = db.tx
 
     @contextmanager
@@ -37,6 +34,13 @@ def _admit_in_bucket(url, cookie=None, bucket=None):
             yield FixedBucketConnection()
 
     with patch.object(db, 'tx', fixed_bucket_tx):
+        yield
+
+
+def _admit_in_bucket(url, cookie=None, bucket=None):
+    if bucket is None:
+        return maps.admit(url, cookie)
+    with _fixed_rate_bucket(bucket):
         return maps.admit(url, cookie)
 
 
@@ -265,15 +269,17 @@ def test_failed_links_keep_browser_cookie_and_eventually_block_before_http(clien
         calls.append(url)
         raise db.error(422, 'MAP_SHORT_LINK_UNAVAILABLE', 'Synthetic unavailable')
     monkeypatch.setattr(maps, 'resolve_short_map_url', resolve)
-    cookie = None
-    for _ in range(maps.CLIENT_LIMIT):
-        assert client.post('/api/location/parse-map-url', json={'url': SHORT}).status_code == 422
-        if cookie is None: cookie = client.cookies[maps.COOKIE]
+    bucket = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    with _fixed_rate_bucket(bucket):
+        cookie = None
+        for _ in range(maps.CLIENT_LIMIT):
+            assert client.post('/api/location/parse-map-url', json={'url': SHORT}).status_code == 422
+            if cookie is None: cookie = client.cookies[maps.COOKIE]
+            assert client.cookies[maps.COOKIE] == cookie
+        rejected = client.post('/api/location/parse-map-url', json={'url': SHORT})
+        assert rejected.status_code == 429
         assert client.cookies[maps.COOKIE] == cookie
-    rejected = client.post('/api/location/parse-map-url', json={'url': SHORT})
-    assert rejected.status_code == 429
-    assert client.cookies[maps.COOKIE] == cookie
-    assert len(calls) == maps.CLIENT_LIMIT
+        assert len(calls) == maps.CLIENT_LIMIT
 
 
 def test_map_runtime_private_export_and_isolated_restore_retires_capabilities(database):
