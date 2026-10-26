@@ -4,8 +4,8 @@ const source=fs.readFileSync('public/ops.js','utf8');
 function harness(){
  const from=source.indexOf('  let trackingPlanSelection='),to=source.indexOf('  function dispatchQuery()',from);
  const calls=[],state={user:{id:'manager',brand_id:'kps',branch_ids:['b']},page:'dashboard',branches:[],dispatchDrivers:[{id:'d',shift_id:'s',gps:{updated_at:new Date().toISOString()}}]};
- const context={state,Date,JSON,Number,Math,document:{hidden:false,addEventListener(){}},navigator:{onLine:true},can:()=>true,$:()=>null,mutation:async(url,body)=>{calls.push({url,body});return {status:'ready',stops:[]};},tr:(a,b)=>b,esc:String,datetime:String,num:String,notice:String,dataItem:()=>'',branchLabel:()=>'',renderDispatchRows(){}};
- vm.createContext(context);vm.runInContext(source.slice(from,to)+'\nthis.run=selectTrackingPlan;this.refresh=refreshTrackingPlan;this.health=trackingLocationStatus;this.details=trackingDriverDetails;this.publish=publishTrackingPlan;',context);
+ const context={state,Date,JSON,Number,Math,document:{hidden:false,addEventListener(){}},navigator:{onLine:true},can:()=>true,$:()=>null,mutation:async(url,body)=>{calls.push({url,body});return {status:'ready',calculated_at:new Date().toISOString(),stops:[]};},tr:(a,b)=>b,esc:String,datetime:String,num:String,notice:String,dataItem:(label,value)=>label+': '+value,branchLabel:()=>'',renderDispatchRows(){}};
+ vm.createContext(context);vm.runInContext(source.slice(from,to)+'\nthis.run=selectTrackingPlan;this.refresh=refreshTrackingPlan;this.health=trackingLocationStatus;this.details=trackingDriverDetails;this.publish=publishTrackingPlan;this.setPlan=value=>trackingPlanResult=value;',context);
  return {context,calls,state};
 }
 test('only selected driver requests bounded automatic road ETA',async()=>{const h=harness();await h.context.refresh();assert.equal(h.calls.length,0);await h.context.run('d');assert.equal(h.calls.length,1);await h.context.refresh();assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/api/operations/route-eta');assert.equal(h.calls[0].body.driver_id,'d');});
@@ -27,4 +27,23 @@ test('driver records arrival for published side-brand task without confirming or
 });
 test('driver leaves exactly the open station in its canonical brand',async()=>{
  const h=driverHarness({trip:{id:'trip'},stop:{id:'station',brand_id:'enbishan'}});await h.context.render({status:'open'});const action=h.nodes.find(n=>n.tag==='button');assert.equal(action.textContent,'Leave station');await action.listeners.click();assert.equal(h.calls[0].path,'/api/operations/map-services/trip-stops/station/depart');assert.equal(h.calls[0].options.brand,'enbishan');assert.equal(h.calls.length,2);
+});
+
+function countdownPlan(now){return {status:'ready',calculated_at:new Date(now).toISOString(),next_stop:{arrival_at:new Date(now+240000).toISOString()},delivery_complete_at:new Date(now+900000).toISOString(),return_at:new Date(now+1380000).toISOString(),stops:[{id:'stop',kind:'dropoff',order_id:'o',order_no:'K-1',brand_id:'kps',customer_name:'Ahmed',arrival_at:new Date(now+240000).toISOString()}]};}
+test('manager sees customer countdown and automatic render reduces minutes without declaring arrival',async()=>{
+ const h=harness(),now=Date.now();h.context.Date=class extends Date {static now(){return now;}};await h.context.run('d');h.context.setPlan(countdownPlan(now));
+ let html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,/Ahmed · K-1 · About 4 min remaining/);assert.match(html,/Deliveries complete: About 15 min remaining/);assert.match(html,/Branch return: About 23 min remaining/);
+ h.context.Date=class extends Date {static now(){return now+60000;}};assert.match(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1 · About 3 min remaining/);
+ h.context.setPlan({...countdownPlan(now+60000),stops:[{id:'stop',kind:'dropoff',customer_name:'Ahmed',arrival_at:new Date(now).toISOString()}]});html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,/Expected time reached — awaiting update/);assert.doesNotMatch(html,/delivered|0 min remaining/);
+});
+test('fresh GPS cannot keep an expired or malformed road estimate visible',async()=>{
+ const h=harness(),now=Date.now();await h.context.run('d');for(const stamp of [new Date(now-121000).toISOString(),'invalid',null,new Date(now+60000).toISOString()]){h.context.setPlan({...countdownPlan(now),calculated_at:stamp});const html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,/Road estimate expired/);assert.doesNotMatch(html,/Ahmed · K-1|About 4 min remaining/);}
+});
+test('cooldown preserves an existing fresh estimate only until its freshness expires',async()=>{
+ const h=harness(),now=Date.now();h.context.Date=class extends Date {static now(){return now;}};await h.context.run('d');h.context.setPlan(countdownPlan(now));h.context.mutation=async()=>({status:'unavailable',reason:'route_budget_or_cooldown'});
+ h.context.Date=class extends Date {static now(){return now+61000;}};await h.context.refresh();assert.match(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1 · About 3 min remaining/);
+ h.context.Date=class extends Date {static now(){return now+122000;}};h.state.dispatchDrivers[0].gps.updated_at=new Date(now+122000).toISOString();await h.context.refresh();const html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,/Estimate unavailable/);assert.doesNotMatch(html,/Ahmed · K-1/);
+});
+test('order-page customer fallback respects brand identity',async()=>{
+ const h=harness(),now=Date.now();await h.context.run('d');const plan=countdownPlan(now);delete plan.stops[0].customer_name;h.state.orders=[{id:'o',brand_id:'enbishan',customer_name:'Foreign customer'}];h.context.setPlan(plan);assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Foreign customer/);h.state.orders.push({id:'o',brand_id:'kps',customer_name:'Authorized customer'});assert.match(h.context.details(h.state.dispatchDrivers[0]),/Authorized customer/);
 });

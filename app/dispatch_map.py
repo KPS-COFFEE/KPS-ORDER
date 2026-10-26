@@ -205,7 +205,8 @@ def route_context(c, user, driver_id):
     stops = []
     for task in tasks:
         common = {'task_id': task['id'], 'order_id': task['order_id'], 'brand_id': user['brand_id'],
-                  'shift_id': row['shift_id'], 'order_no': task['order_no']}
+                  'shift_id': row['shift_id'], 'order_no': task['order_no'],
+                  'customer_name': str((task['customer'] or {}).get('name') or '')[:200]}
         prerequisites = []
         if task['status'] != 'picked_up':
             pickup_id = 'pickup:' + task['id']

@@ -14,6 +14,7 @@ on:
       - app/morning_manager_context.py
       - migrations/120_driver_tracking_history.sql
       - migrations/121_route_eta.sql
+      - migrations/122_route_corridor.sql
       - public/ops.js
       - public/assets/dispatch-map.js
       - public/assets/driver-location.js

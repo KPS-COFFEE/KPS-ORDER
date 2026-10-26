@@ -528,6 +528,22 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     const stale=!gps||gps.stale||age===null||age>120;
     return {stale,age,label:!gps?tr('التتبع غير متاح — تحقق من التطبيق والصلاحيات','Tracking unavailable — check app and permissions'):stale?tr('الموقع قديم — تحقق من اتصال السائق','Stale location — check driver connection'):tr('موقع حديث','Fresh location')};
   }
+  function trackingPlanFresh(plan){
+    const stamp=typeof plan?.calculated_at==='string'?Date.parse(plan.calculated_at):NaN,age=Date.now()-stamp;
+    return plan?.status==='ready'&&Number.isFinite(stamp)&&age>=0&&age<=120000;
+  }
+  function trackingRemaining(arrival){
+    const stamp=typeof arrival==='string'?Date.parse(arrival):NaN;
+    if(!Number.isFinite(stamp))return tr('غير متاح','Unavailable');
+    const seconds=(stamp-Date.now())/1000;
+    return seconds<=0?tr('حل الموعد المتوقع — بانتظار التحديث','Expected time reached — awaiting update'):tr('متبقي نحو ','About ')+num(Math.ceil(seconds/60))+tr(' دقيقة',' min remaining');
+  }
+  function trackingStopLabel(stop){
+    const order=(state.orders||[]).find(o=>o.id===stop.order_id&&(!stop.brand_id||o.brand_id===stop.brand_id));
+    const customer=stop.customer_name||order?.customer_name||order?.customer?.name;
+    const reference=stop.order_no||order?.order_no||stop.brand_id||'';
+    return stop.kind==='pickup'||stop.kind==='return'?String(stop.name||reference):[customer,reference].filter(Boolean).join(' · ');
+  }
   function trackingDriverDetails(driver){
     const health=trackingLocationStatus(driver),selected=trackingPlanSelection?.driver_id===driver.id&&trackingPlanSelection.scope===trackingScope(),plan=selected?trackingPlanResult:null;
     const destination=driver.gps?.next_destination||driver.next_destination;
@@ -539,10 +555,12 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     html+=`<label>${esc(tr('فرع العودة','Return branch'))}<select data-tracking-return="${esc(driver.id)}"><option value="">${esc(tr('حدد فرع العودة لاحتساب وقته','Select return branch to estimate return'))}</option>${(state.branches||[]).filter(b=>(driver.branch_ids||[]).includes(b.id)).map(b=>`<option value="${esc(b.id)}" ${trackingPlanSelection.return_branch_id===b.id?'selected':''}>${esc(branchLabel(b))}</option>`).join('')}</select></label>`;
     if(health.stale)return html+notice(tr('التقدير متوقف حتى يصل موقع حديث.','Estimates paused until a fresh location arrives.'),'warn');
     if(!plan||plan.status!=='ready')return html+`<p role="status">${esc(trackingPlanBusy?tr('جاري حساب الرحلة…','Calculating itinerary…'):tr('تعذر التقدير؛ تحقق من الموقع وخدمة الطرق.','Estimate unavailable; check location and road service.'))}</p>`;
+    if(!trackingPlanFresh(plan))return html+notice(tr('تقدير الطريق قديم — بانتظار إعادة الحساب.','Road estimate expired — awaiting recalculation.'),'warn');
     const time=v=>v?datetime(v):tr('غير متاح','Unavailable');
-    html+=`<dl class="data-grid">${dataItem(tr('الوصول للوجهة التالية','Next arrival'),time(plan.next_stop?.arrival_at))}${dataItem(tr('إنهاء التوصيلات','Deliveries complete'),time(plan.delivery_complete_at))}${dataItem(tr('العودة للفرع','Branch return'),time(plan.return_at))}</dl><p class="small-text">${esc(tr('تقدير طرق مع مدد توقف تقديرية؛ يتجدد كل دقيقة أثناء عرض الشاشة.','Road estimate with estimated stop times; refreshes every minute while visible.'))} ${esc(time(plan.calculated_at))}</p>`;
+    const remaining=v=>trackingRemaining(v)+' · '+time(v);
+    html+=`<dl class="data-grid">${dataItem(tr('الوصول للوجهة التالية','Next arrival'),remaining(plan.next_stop?.arrival_at))}${dataItem(tr('إنهاء التوصيلات','Deliveries complete'),remaining(plan.delivery_complete_at))}${dataItem(tr('العودة للفرع','Branch return'),remaining(plan.return_at))}</dl><p class="small-text">${esc(tr('تقدير طرق مع مدد توقف تقديرية؛ يتجدد كل دقيقة أثناء عرض الشاشة.','Road estimate with estimated stop times; refreshes every minute while visible.'))} ${esc(time(plan.calculated_at))}</p>`;
     if(can('delivery_assign'))html+=`<button class="quiet small" data-action="tracking-publish" data-id="${esc(driver.id)}">${esc(tr('اعتماد المسار للسائق','Apply driver route'))}</button>`;
-    html+='<ol>'+ (plan.stops||[]).map((stop,index)=>`<li>${esc(stop.kind==='pickup'?tr('استلام','Pickup'):stop.kind==='return'?tr('عودة','Return'):tr('تسليم','Delivery'))} · ${esc(stop.order_no||stop.brand_id||'')} · ${esc(time(stop.arrival_at))}${index>0&&stop.kind!=='return'?` <button class="quiet small" data-action="tracking-move" data-id="${esc(driver.id)}" data-stop="${esc(stop.id)}">${esc(tr('تقديم المحطة','Move earlier'))}</button>`:''}</li>`).join('')+'</ol>';
+    html+='<ol>'+ (plan.stops||[]).map((stop,index)=>`<li>${esc(stop.kind==='pickup'?tr('استلام','Pickup'):stop.kind==='return'?tr('عودة','Return'):tr('تسليم','Delivery'))} · ${esc(trackingStopLabel(stop))} · ${esc(remaining(stop.arrival_at))}${index>0&&stop.kind!=='return'?` <button class="quiet small" data-action="tracking-move" data-id="${esc(driver.id)}" data-stop="${esc(stop.id)}">${esc(tr('تقديم المحطة','Move earlier'))}</button>`:''}</li>`).join('')+'</ol>';
     return html;
   }
   async function refreshTrackingPlan(force=false){
@@ -551,7 +569,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     if(!driver||trackingLocationStatus(driver).stale){trackingPlanResult=null;return;}
     if(!force&&Date.now()-trackingPlanAttempt<60000)return;
     trackingPlanAttempt=Date.now();trackingPlanBusy=true;const generation=trackingPlanGeneration;
-    try{const result=await mutation('/api/operations/route-eta',{driver_id:selected.driver_id,...(selected.return_branch_id?{return_branch_id:selected.return_branch_id}:{}),...(selected.ordered_stop_ids?{ordered_stop_ids:selected.ordered_stop_ids}:{})});if(generation===trackingPlanGeneration&&selected.scope===trackingScope())trackingPlanResult=result;}
+    try{const result=await mutation('/api/operations/route-eta',{driver_id:selected.driver_id,...(selected.return_branch_id?{return_branch_id:selected.return_branch_id}:{}),...(selected.ordered_stop_ids?{ordered_stop_ids:selected.ordered_stop_ids}:{})});if(generation===trackingPlanGeneration&&selected.scope===trackingScope()){const keepFresh=!force&&result?.reason==='route_budget_or_cooldown'&&trackingPlanFresh(trackingPlanResult)&&!trackingLocationStatus(driver).stale;if(!keepFresh)trackingPlanResult=result;}}
     catch{if(generation===trackingPlanGeneration)trackingPlanResult={status:'unavailable'};}
     finally{trackingPlanBusy=false;if(generation===trackingPlanGeneration&&$('#dispatch-drivers')&&state.page==='dashboard')renderDispatchRows();}
   }
@@ -1636,6 +1654,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     if(['owner','delivery_manager'].includes(state.user.role))$('#content').insertAdjacentHTML('afterbegin',`<button data-action="support-daily">${esc(tr('التقرير اليومي لتذاكر المتابعة','Daily support ticket report'))}</button>`);
     if(state.user.role==='owner')window.KPSOwnerAudit?.mount({host:$('#content'),reports:list,api:scopedApi,tr,esc,money,eventDescription:orderEventDescription,user:state.user,lang:state.lang,active:()=>state.user?.role==='owner'&&state.page==='reports'});
     if(isAdmin())await ownerNotifications();
+    if(['owner','delivery_manager'].includes(state.user.role)&&window.KPSOperatingReports){const host=document.createElement('section');host.className='panel';$('#content').prepend(host);await window.KPSOperatingReports.mount(host,{api,morning:morningMode});}
   }
   async function admin() {
     if(!isAdmin())throw new Error(tr('الإدارة متاحة للمالك المخول.','Administration requires owner access.'));
