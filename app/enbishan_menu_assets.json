@@ -353,22 +353,22 @@
   },
   "owner-20261026-plate-potato": {
     "path": "/assets/enbishan-menu/owner-20261026-plates/potato.webp",
-    "sha256": "8b227a37de3984ebef366fa9370ee8f038350bc49f01cf106cacc6caf8b44eb3"
+    "sha256": "7c06f0e89f954c00dc0b22acffd3fffc8cc99db5a2ead8546db476beb38d879e"
   },
   "owner-20261026-plate-cabbage": {
     "path": "/assets/enbishan-menu/owner-20261026-plates/cabbage.webp",
-    "sha256": "bd3b9d9401d027392950febcfca29effa7ce5600aebd4121ec816c398469db5f"
+    "sha256": "46f689ac772ea76a22f34e421a77f9b6234c5a86870532cc6079d7724e639a07"
   },
   "owner-20261026-plate-onion": {
     "path": "/assets/enbishan-menu/owner-20261026-plates/onion.webp",
-    "sha256": "74d707e3094a60d2e80eb7ce46a86865e8c0a9d765c4036c1718206dd861116f"
+    "sha256": "6b34380330108aef7f6be5034563cb489d2539c7255b14eb24b5dec856fc8a43"
   },
   "owner-20261026-plate-grape": {
     "path": "/assets/enbishan-menu/owner-20261026-plates/grape.webp",
-    "sha256": "e5c508fdb8ffa53840a8d097617a7a53c9b44346546f9b90d02942cafc77bfbc"
+    "sha256": "ccafed7ed6ecc8ff5a282dbeb9e7ec1aed9f32a2b2ad00b364668046c38c5cc7"
   },
   "owner-20261026-plate-mixed": {
     "path": "/assets/enbishan-menu/owner-20261026-plates/mixed.webp",
-    "sha256": "79a7c87bd7699488c6771aec16d7d541da927ddac426c1f8af9c1ffeae233180"
+    "sha256": "c5155e4d49c5bca419f6d41cfa7c14a09f649208bee48378fb774235e5aeb76c"
   }
 }

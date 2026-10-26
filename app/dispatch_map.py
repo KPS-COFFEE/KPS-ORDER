@@ -269,8 +269,9 @@ def merge_route_contexts(values):
     return result
 
 
-def consume_route_budget(c, driver_id, manager_id, units=1):
-    if type(units) is not int or not 1 <= units <= 625:
+def consume_route_budget(c, driver_id, manager_id, units=1, *, purpose='route'):
+    if (purpose not in ('route','corridor') or type(units) is not int or not 1 <= units <= 625
+            or purpose=='corridor' and units!=1):
         raise HTTPException(422, 'Invalid route budget units.')
     # A single existing row locks the budget across ALL brands and workers.
     row = c.execute("SELECT settings,clock_timestamp() AS budget_now FROM app_settings WHERE brand_id='kps' FOR UPDATE").fetchone()
@@ -288,7 +289,8 @@ def consume_route_budget(c, driver_id, manager_id, units=1):
     recent = budget['recent']
     if any(type(v) not in (int, float) or not math.isfinite(v) for v in recent.values()):
         raise HTTPException(503, 'ميزانية المسارات غير صالحة.')
-    keys = ['driver:' + driver_id, 'manager:' + manager_id]
+    prefix = 'corridor:' if purpose=='corridor' else ''
+    keys = [prefix+'driver:' + driver_id, prefix+'manager:' + manager_id]
     if any(now.timestamp() - recent.get(key, 0) < 60 for key in keys):
         raise HTTPException(429, 'انتظر دقيقة قبل طلب مسار جديد.')
     if budget['count'] + units > ROUTE_MONTHLY_LIMIT:

@@ -288,10 +288,23 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         plan_changed = (body.ordered_stop_ids is not None or 'return_branch_id' in body.model_fields_set) and (
             not saved or saved['ordered_stop_ids'] != (ordered_ids or []) or saved['return_branch_id'] != return_id)
         cached = bool(saved and saved['fingerprint']==signature and saved['matrix'] is not None and
-                      saved['calculated_at'] and (now-saved['calculated_at']).total_seconds()<TTL_SECONDS)
+                      saved['calculated_at'] and 0 <= (now-saved['calculated_at']).total_seconds()<TTL_SECONDS)
         matrix = saved['matrix'] if cached else None
         calculated = saved['calculated_at'] if cached else now
         origin_stamp = saved['origin_updated_at'] if cached else stamp
+        if not cached:
+            # Reuse only bounded provider data after this caller's full itinerary
+            # authorization. Never inherit another manager's route intent/grants.
+            shared = c.execute('''SELECT matrix,calculated_at,origin_updated_at
+              FROM driver_route_eta_state WHERE driver_id=%s AND manager_id<>%s
+              AND fingerprint=%s AND matrix IS NOT NULL AND calculated_at<=%s
+              AND calculated_at>%s ORDER BY calculated_at DESC,manager_id LIMIT 1''',
+              (body.driver_id,user['id'],signature,now,now-timedelta(seconds=TTL_SECONDS))).fetchone()
+            if shared:
+                matrix = shared['matrix']
+                calculated = shared['calculated_at']
+                origin_stamp = shared['origin_updated_at']
+                cached = True
         # Preserve the reference corridor across minute ETA refreshes. Rebase only
         # on a changed plan not at every GPS sample. A valid reference stays fixed for the leg.
         corridor = (saved or {}).get('road_corridor')
@@ -300,18 +313,28 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         if not corridor_current(corridor,signature,first,now):
             corridor = None
         wants_publication = body.publish or body.ordered_stop_ids is not None or bool(remaining_saved)
-        fetch_corridor = not cached and wants_publication and corridor is None
+        fetch_corridor = False
+        # Browser-restricted public tokens must never be reused by the server.
+        token = os.getenv('MAPBOX_ROUTING_TOKEN','')
+        token_valid = bool(re.fullmatch(r'(?:pk|sk)\.[A-Za-z0-9_.-]{20,2048}',token))
         if not cached:
-            # Browser-restricted public tokens must never be reused by the server.
-            token = os.getenv('MAPBOX_ROUTING_TOKEN','')
-            if not re.fullmatch(r'(?:pk|sk)\.[A-Za-z0-9_.-]{20,2048}',token):
+            if not token_valid:
                 return unavailable(body.driver_id,'routing_token_unconfigured')
             try:
-                dispatch_map.consume_route_budget(c,body.driver_id,user['id'],units=(len(stops)+1)**2+int(fetch_corridor))
+                dispatch_map.consume_route_budget(c,body.driver_id,user['id'],units=(len(stops)+1)**2)
             except HTTPException as exc:
                 if exc.status_code==429:
                     return unavailable(body.driver_id,'route_budget_or_cooldown')
                 raise
+        if wants_publication and corridor is None and token_valid:
+            # Optional geometry has its own cooldown, but charges the SAME locked
+            # monthly budget. A geometry limit must not discard a valid matrix.
+            try:
+                dispatch_map.consume_route_budget(c,body.driver_id,user['id'],units=1,purpose='corridor')
+                fetch_corridor = True
+            except HTTPException as exc:
+                if exc.status_code!=429:
+                    raise
     # The shared budget row is committed before network I/O, even if provider fails.
     if matrix is None:
         try:
@@ -353,7 +376,8 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
           ordered_stop_ids=EXCLUDED.ordered_stop_ids,return_branch_id=EXCLUDED.return_branch_id''',
           (body.driver_id,user['id'],signature,db.json(matrix),calculated,origin_stamp,db.json(ordered_ids or []),return_id))
         requested_publication = body.publish or body.ordered_stop_ids is not None
-        refreshing_publication = bool(remaining_saved and not cached and saved['source_session_id']==user.get('session_id')
+        refreshing_publication = bool(remaining_saved and (not cached or calculated!=saved.get('published_calculated_at'))
+                                      and saved['source_session_id']==user.get('session_id')
                                       and auth.has_permission(user,'delivery_assign'))
         publishing = requested_publication or refreshing_publication
         if publishing:
@@ -375,7 +399,7 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         if plan_changed:
             db.audit(c,user['id'],'driver.route_plan','driver',body.driver_id,
                      {'ordered_stop_ids':ordered_ids,'return_branch_id':return_id})
-        if not cached or plan_changed:
+        if not cached or plan_changed or refreshing_publication:
             expected = [{'id':r['id'],'task_id':r.get('task_id'),'order_id':r.get('order_id'),
                          'shift_id':r.get('shift_id'),'brand_id':r.get('brand_id'),'task_ids':r.get('task_ids',[]),
                          'kind':r['kind'],'arrival_at':r['arrival_at'].isoformat(),
