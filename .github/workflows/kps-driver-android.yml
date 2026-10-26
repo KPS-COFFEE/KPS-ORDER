@@ -1,7 +1,7 @@
 name: KPS Driver Android pilot
 on:
   push:
-    branches: [agent/kps-driver-android-pilot-20261021]
+    branches: [agent/kps-driver-android-pilot-20261021, agent/maps-android-closure-20261026]
     paths: ['android-driver/**', '.github/workflows/kps-driver-android.yml']
   pull_request:
     paths: ['android-driver/**', '.github/workflows/kps-driver-android.yml']
@@ -34,6 +34,9 @@ jobs:
           java -cp build/policy SoundPolicyTest
           javac -cp build/policy -d build/policy app/src/main/java/sa/kps/driver/BrandBellPolicy.java tests/BrandBellPolicyTest.java
           java -cp build/policy BrandBellPolicyTest
+          javac -cp build/policy -d build/policy app/src/main/java/sa/kps/driver/LocationQueuePolicy.java app/src/main/java/sa/kps/driver/LocationQueueState.java tests/LocationQueuePolicyTest.java tests/LocationQueueStateTest.java
+          java -cp build/policy LocationQueuePolicyTest
+          java -cp build/policy LocationQueueStateTest
       - name: Compile and lint Android variants
         working-directory: android-driver
         run: gradle :app:assembleDebug :app:assembleRelease :app:bundleRelease :app:lintRelease --no-daemon
@@ -51,3 +54,10 @@ jobs:
           retention-days: 7
 
 
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kps-driver-debug-inspection-only
+          path: android-driver/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
