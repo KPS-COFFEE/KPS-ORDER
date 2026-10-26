@@ -288,3 +288,16 @@ test('an empty second brand retains populated dispatch and explicit zero source 
   const empty=await create().request('/api/orders?dispatch_workspace=true',{},async()=>({orders:[],workspace_counts:{all:{total:0,sources:{manager:0,website:0}},current:{total:0,sources:{manager:0,website:0}}}}),user);
   assert.deepEqual(empty.workspace_counts.current,{total:0,sources:{manager:0,website:0}});
 });
+
+test('receipted history remains readable while only the fresh physical shift is adopted',async()=>{
+  const adapter=create(),calls=[];let adopted=false;
+  const old={id:'receipted',user_id:user.id,kind:'manager',status:'submitted',staffing_ended_at:'2026-10-25T08:00:00Z'};
+  const result=await adapter.request('/api/shifts/current',{},async(path,options)=>{
+    calls.push(path);
+    if(path.endsWith('/adopt')){assert.equal(path,'/api/central-operations/workdays/fresh/adopt');adopted=true;return {};}
+    return {shifts:options.brand==='kps'?[old,{id:'fresh',user_id:user.id,kind:'manager',status:'open',staffing_ended_at:null,...(adopted?{central_workday_id:'new-day',central_anchor_id:'fresh'}:{})}]:[]};
+  },user);
+  assert.equal(calls.filter(path=>path.endsWith('/adopt')).length,1);
+  assert.equal(result.shifts.find(s=>s.id==='receipted').staffing_ended_at,old.staffing_ended_at);
+  assert.equal(result.shifts.find(s=>s.id==='fresh').central_workday_id,'new-day');
+});

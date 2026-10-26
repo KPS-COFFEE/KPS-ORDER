@@ -42,7 +42,8 @@ def safe(value):
     def encode(o):
         if isinstance(o,Decimal):return int(o) if o==o.to_integral_value() else float(o)
         return o.isoformat() if hasattr(o,'isoformat') else str(o)
-    return jsonlib.loads(jsonlib.dumps(value,default=encode))
+    from .operational_day_policy import present_dates
+    return present_dates(jsonlib.loads(jsonlib.dumps(value,default=encode)))
 
 def fail(status, message): raise HTTPException(status, message)
 
@@ -72,7 +73,7 @@ def shift_access(c, user, shift, manager=False, capability=None):
     from .morning_manager_context import require_shift
     require_shift(user, shift)
     context = user.get('_morning_manager_context')
-    if context and shift and shift['kind'] == 'manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND (brand_id<>%s OR NOT (branch_ids <@ %s::jsonb) OR COALESCE(delivery_window_snapshot->>'period','evening')<>'morning') LIMIT 1", (shift['id'], user['brand_id'], db.json(user['branch_ids']))).fetchone():
+    if context and shift and shift['kind'] == 'manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND (brand_id<>%s OR NOT (branch_ids <@ %s::jsonb) OR (COALESCE(delivery_window_snapshot->>'period','evening')<>'morning' AND NOT EXISTS(SELECT 1 FROM driver_support_requests r WHERE r.driver_shift_id=shifts.id AND r.to_shift_id=shifts.manager_shift_id AND r.status='accepted'))) LIMIT 1", (shift['id'], user['brand_id'], db.json(user['branch_ids']))).fetchone():
         raise db.error(403, 'MORNING_SHIFT_MIXED_DATA', 'تحتاج المناوبة مراجعة المالك لوجود شفت خارج نطاق الصباح.')
     if context and c.execute("SELECT 1 FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE (t.shift_id=%s OR t.shift_id IN (SELECT id FROM shifts WHERE manager_shift_id=%s)) AND (o.brand_id<>%s OR NOT (o.branch_id=ANY(%s)) OR o.service<>'delivery' OR COALESCE(o.snapshot->>'delivery_period','evening')<>'morning') LIMIT 1", (shift['id'], shift['id'], user['brand_id'], user['branch_ids'])).fetchone():
         raise db.error(403, 'MORNING_SHIFT_MIXED_DATA', 'تحتاج المناوبة مراجعة المالك لوجود طلب خارج نطاق الصباح.')
@@ -82,6 +83,10 @@ def shift_access(c, user, shift, manager=False, capability=None):
             fail(403,'تم سحب صلاحية أحد فروع الشفت')
         return
     if not set(shift['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'تم سحب صلاحية أحد فروع الشفت')
+    if capability == 'driver_duty_manage' and auth.has_permission(user, capability) and shift['kind'] == 'driver':
+        from .driver_duty import driver as duty_driver
+        duty_driver(c, user, shift['user_id'])
+        return
     if capability and delegated_shift(user, capability) and shift['branch_ids']: return
     if shift['user_id']==user['id'] and not manager: return
     if user['role']=='delivery_manager':
@@ -107,58 +112,39 @@ def unresolved(c, sid):
         return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id IN (SELECT shift_id FROM central_workday_legs WHERE workday_id=%s) AND status NOT IN ('delivered','cancelled','transferred')", (day['id'],)).fetchone()['n']
     return c.execute("SELECT count(*) n FROM driver_tasks WHERE shift_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(sid,)).fetchone()['n']
 
-def morning_handover_coverage(c, shift):
-    """Only a real accepted, still-operational successor releases dispatch duty."""
-    from . import morning_delivery
-    covered=set()
-    successors=c.execute("SELECT s.*,h.branch_ids AS handed_branch_ids FROM manager_handovers h "
-        "JOIN shifts s ON s.id=h.to_shift_id WHERE h.from_shift_id=%s AND h.status='accepted' "
-        "AND s.kind='manager' AND s.status='open' AND s.brand_id=%s "
-        "AND s.delivery_window_snapshot->>'period'='morning' FOR SHARE OF s",
-        (shift['id'],shift['brand_id'])).fetchall()
-    for successor in successors:
-        principal=c.execute('SELECT * FROM users WHERE id=%s FOR SHARE',(successor['user_id'],)).fetchone()
-        branches=set(shift['branch_ids']) & set(successor['handed_branch_ids']) & set(successor['branch_ids'])
-        for bid in branches:
-            try:
-                morning_delivery.authorize_order(c,principal,{'brand_id':shift['brand_id'],'branch_id':bid,
-                                                              'snapshot':{'delivery_period':'morning'}})
-            except HTTPException as error:
-                if error.status_code!=403:raise
-                continue
-            covered.add(bid)
-    return covered
-
 def guard_accepted_awaiting_dispatch(c, shift):
     """A separately accepted order cannot be abandoned by closing its manager."""
     if shift['kind'] != 'manager':
         return
+    from .manager_handover_scope import guard_received_work, handed_off
+    guard_received_work(c, shift)
     if (shift.get('delivery_window_snapshot') or {}).get('period') == 'morning':
-        remaining_branches=list(set(shift['branch_ids'])-morning_handover_coverage(c,shift))
+        remaining_branches=shift['branch_ids']
         # Morning preparation acceptance belongs to the branch, not a manager
         # event. Even a newly arrived request must retain an open dispatcher.
         # The manager row is locked by the caller; admission holds that row FOR
         # SHARE until the order commits, so closure cannot race past a new order.
-        morning_pending = c.execute("SELECT 1 FROM orders o WHERE o.brand_id=%s "
+        morning_pending = c.execute("SELECT o.* FROM orders o WHERE o.brand_id=%s "
             "AND o.branch_id=ANY(%s) AND o.service='delivery' "
             "AND o.snapshot->>'delivery_period'='morning' AND o.completed_at IS NULL "
+            "AND o.created_at<=COALESCE((SELECT max(h.accepted_at) FROM manager_handovers h WHERE h.from_shift_id=%s AND h.status='accepted'),'infinity'::timestamptz) "
             "AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
             "AND o.delivery_status NOT IN ('cancelled','delivered') "
             "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
-            "AND t.status NOT IN ('cancelled','reassigned','transferred')) LIMIT 1",
-            (shift['brand_id'], remaining_branches)).fetchone()
-        if morning_pending:
+            "AND t.status NOT IN ('cancelled','reassigned','transferred'))",
+            (shift['brand_id'], remaining_branches, shift['id'])).fetchall()
+        if any(not handed_off(c, shift['id'], order) for order in morning_pending):
             raise db.error(409, 'MORNING_ORDERS_AWAITING_DISPATCH',
                            'توجد طلبات صباحية بانتظار المعالجة أو الإسناد. عالجها قبل تقفيل المناوبة.')
-    pending = c.execute("SELECT 1 FROM order_events e JOIN orders o ON o.id=e.order_id "
+    pending = c.execute("SELECT DISTINCT o.* FROM order_events e JOIN orders o ON o.id=e.order_id "
         "WHERE e.event_type='preparation.accepted' AND e.details->>'manager_shift_id'=%s "
         "AND e.details->>'dispatch_pending'='true' AND o.brand_id=%s "
         "AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected','completed') "
         "AND o.delivery_status NOT IN ('cancelled','delivered') "
         "AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id "
-        "AND t.status NOT IN ('cancelled','reassigned','transferred')) LIMIT 1",
-        (shift['id'],shift['brand_id'])).fetchone()
-    if pending:
+        "AND t.status NOT IN ('cancelled','reassigned','transferred'))",
+        (shift['id'],shift['brand_id'])).fetchall()
+    if any(not handed_off(c, shift['id'], order) for order in pending):
         raise db.error(409, 'ACCEPTED_ORDERS_AWAITING_DISPATCH',
                        'لديك طلبات مقبولة بانتظار إسناد سائق. عالجها قبل تقفيل المناوبة.')
 
@@ -182,7 +168,7 @@ def mutate(c,user,request,operation,body,perform):
 def history_result_access(c,user,oid):
     order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
     if user['role']=='driver':
-        if not order or order['brand_id']!=user['brand_id'] or order['branch_id'] not in user.get('branch_ids',[]) or not c.execute('SELECT 1 FROM driver_tasks WHERE order_id=%s AND driver_id=%s',(oid,user['id'])).fetchone():fail(404,'السجل خارج الصلاحية الحالية')
+        if not order or order['brand_id']!=user['brand_id'] or order['branch_id'] not in user.get('branch_ids',[]) or not c.execute('SELECT 1 FROM effective_driver_tasks WHERE order_id=%s AND driver_id=%s',(oid,user['id'])).fetchone():fail(404,'السجل خارج الصلاحية الحالية')
     else:order_access(c,user,order)
 
 def authorize_replay(c,user,operation,body,result):
@@ -312,8 +298,56 @@ def delivery_shift_window(c, brand, branches, *, manager_preparation=False, deli
         return None, None
     operational_date = preparation_date or service_hours.delivery_operational_date(now)
     return operational_date, {'timezone': 'Asia/Riyadh', 'operational_date': operational_date.isoformat(),
-                              'operational_day_start': '16:00', 'branches': windows,
+                              'operational_day_start': '04:00', 'branches': windows,
                               'period': 'morning' if morning else 'evening'}
+
+def driver_shift_window(c, brand, branches, manager, principal):
+    """An open manager admits staff; customer order clocks remain independent.
+
+    Keep the manager's original operating window as evidence and re-read current
+    enablement, approved morning identity and branch scopes on every admission.
+    A manager staying open never re-opens customer ordering outside its hours.
+    """
+    from copy import deepcopy
+    from . import catalog, morning_delivery
+    settings = c.execute('SELECT settings FROM brands WHERE id=%s', (brand,)).fetchone()['settings']
+    if settings.get('services', {}).get('delivery', True) is not True:
+        fail(409, 'خدمة التوصيل موقوفة من إدارة البراند؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
+    snapshot = deepcopy(manager.get('delivery_window_snapshot') or {})
+    period = snapshot.get('period', 'evening')
+    morning = period == 'morning'
+    approved = morning_delivery.policy(settings) if morning else None
+    if morning and (not approved['enabled'] or not principal or not principal.get('active')
+            or principal['brand_id'] != brand
+            or (not unrestricted_owner(principal) and (principal['role'] != 'delivery_manager'
+                or principal['id'] not in approved['manager_user_ids']))):
+        fail(403, 'مدير الفترة الصباحية غير معتمد.')
+    inherited = snapshot.get('branches') or {}
+    windows = {}
+    for branch in branches:
+        config = branch['settings']
+        hours = morning_delivery.HOURS if morning else config.get('delivery_hours')
+        if morning and (brand != 'kps' or catalog.normalize_city(branch['city']) != 'حفر الباطن'
+                or branch['id'] not in approved['execution_branch_ids']):
+            fail(409, 'الفرع غير معتمد للتنفيذ الصباحي.')
+        if not hours:
+            # Preserve legacy unconfigured brands; no customer window is invented.
+            continue
+        if (catalog.normalize_city(branch['city']) not in catalog.DELIVERY_CITIES
+                or config.get('active', True) is not True or config.get('delivery_enabled') is not True):
+            fail(409, 'التوصيل موقوف لهذا الفرع؛ يمكن إكمال الشفتات القائمة وتقفيلها.')
+        if not service_hours.hours_status(hours)['configured']:
+            fail(503, 'ساعات التوصيل لهذا الفرع غير صحيحة.')
+        windows[branch['id']] = inherited.get(branch['id'], {'hours': hours})
+    operational_date = manager.get('delivery_operational_date')
+    if not snapshot and not windows:
+        return operational_date, None
+    snapshot.update(timezone='Asia/Riyadh', period=period, branches=windows,
+                    staffing_admission_basis='open_manager')
+    if operational_date is not None:
+        snapshot['operational_date'] = operational_date.isoformat()
+    return operational_date, snapshot
+
 
 def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None):
     """Canonical opening checks, reusable by an atomic central workday."""
@@ -331,9 +365,14 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     if body.kind not in ('driver','manager'): fail(422,'نوع الشفت غير صالح')
     if target['role'] != ('driver' if body.kind=='driver' else 'delivery_manager') and target['role']!='owner': fail(403,'الدور غير مطابق للشفت')
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('shift:'+target['id'],))
+    physical_pending = None
+    if multibrand.enabled():
+        from .aggregate_driver_closure import staffing_pending_sql
+        physical_pending = staffing_pending_sql('s')
     if multibrand.enabled() and c.execute(
             "SELECT 1 FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id "
-            "WHERE s.user_id=%s AND s.status<>'closed' LIMIT 1", (target['id'],)).fetchone():
+            "WHERE s.user_id=%s AND s.status<>'closed' "
+            "AND " + physical_pending + " LIMIT 1", (target['id'],)).fetchone():
         # An existing grouped day cannot acquire an independent physical shift.
         from .central_workdays import require_action
         require_action()
@@ -341,8 +380,12 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     active_params=(target['id'],)
     if multibrand.enabled():
         multibrand.isolation_guard()
-        active_sql+=' AND brand_id=%s'
-        active_params+=(target['brand_id'],)
+        if body.kind != 'driver' or vehicle_anchor or adoption_anchor:
+            # Extra brand legs are only admitted by the endpoint-owned atomic
+            # grouping/adoption paths. Direct driver calls stay physical-global.
+            active_sql+=' AND brand_id=%s'
+            active_params+=(target['brand_id'],)
+        active_sql += " AND " + staffing_pending_sql('shifts')
     if c.execute(active_sql,active_params).fetchone():
         raise db.error(409,'SHIFT_ALREADY_OPEN','لديك شفت مفتوح بالفعل. انتقل إلى مهام التوصيل أو الشفتات بدل فتح شفت جديد.')
     brand=target.get('brand_id') or user.get('brand_id')
@@ -352,10 +395,12 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
         manager = lock_shift(c, body.manager_shift_id)
         if (manager and manager['kind'] == 'manager' and manager['status'] == 'open'
                 and manager['brand_id'] == brand
-                and (manager.get('delivery_window_snapshot') or {}).get('period') == 'morning'
-                and not body.branch_ids):
-            # Morning operates only a subset of the normal driver pool.
-            # Derive it server-side from two already-authorized scopes.
+                and (not body.branch_ids or user['role'] == 'driver'
+                     and set(body.branch_ids) == set(target.get('branch_ids') or []))):
+            # Legacy driver clients sent their whole approved branch list. It
+            # is still a request for the manager overlap, never a scope grant.
+            # Use only the overlap of the existing driver and manager scopes.
+            # A driver need not be dedicated to the manager's AM/PM period.
             bids = [bid for bid in target.get('branch_ids', []) if bid in manager['branch_ids']]
     if not brand or not bids: fail(422,'يلزم براند وفروع فعلية للشفت')
     branch_rows=[]
@@ -368,10 +413,10 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
         if not body.reason.strip(): fail(422,'العهدة الافتتاحية تحتاج سبب واعتماد المالك')
     if body.kind=='driver':
         if not body.manager_shift_id:
-            raise db.error(409,'MANAGER_SHIFT_REQUIRED','اختر شفت مدير التوصيل المفتوح. إذا لم يظهر، اطلب من المدير فتح شفت يغطي جميع فروعك المعتمدة.')
+            raise db.error(409,'MANAGER_SHIFT_REQUIRED','اختر شفت مدير توصيل مفتوحًا يغطي فرعًا من فروعك المعتمدة.')
         manager=manager or lock_shift(c,body.manager_shift_id)
         if not manager or manager['kind']!='manager' or manager['status']!='open' or manager['brand_id']!=brand or not set(bids)<=set(manager['branch_ids']):
-            raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي جميع فروعك. مدير التوصيل هو من يعدّل نطاق التغطية.')
+            raise db.error(409,'MANAGER_SHIFT_SCOPE','شفت المدير المحدد مغلق أو لا يغطي الفروع المحددة. اختر مديرًا مفتوحًا ضمن الفروع المعتمدة.')
         manager_user=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
         if multibrand.enabled():manager_user=multibrand.project(c,manager_user,brand)
         if not manager_user or not manager_user['active'] or manager_user['role'] not in ('owner','delivery_manager') or (not unrestricted_owner(manager_user) and not set(bids)<=set(manager_user['branch_ids'])):fail(409,'صلاحية مدير المناوبة غير سارية')
@@ -399,10 +444,13 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
                 or (continuation.get('delivery_window_snapshot') or {}).get('period') == 'morning'
                 or (continuation.get('vehicle_log') or {}).get('receipt_trial')):
             raise db.error(409, 'CENTRAL_ADOPTION_SCOPE', 'مرجع الوردية القائمة غير مطابق.')
-    operational_date, delivery_window = delivery_shift_window(
-        c, brand, branch_rows, manager_preparation=body.kind == 'manager',
-        delivery_period=period, principal=manager_user if body.kind == 'driver' else target,
-        admission_at=continuation['opened_at'] if continuation else None)
+    if body.kind == 'driver':
+        operational_date, delivery_window = driver_shift_window(c, brand, branch_rows, manager, manager_user)
+    else:
+        operational_date, delivery_window = delivery_shift_window(
+            c, brand, branch_rows, manager_preparation=True,
+            delivery_period=period, principal=target,
+            admission_at=continuation['opened_at'] if continuation else None)
     if continuation and continuation.get('delivery_operational_date') is not None:
         operational_date = continuation['delivery_operational_date']
         if delivery_window:
@@ -420,6 +468,8 @@ def open_shift_in_tx(c, user, body, *, vehicle_anchor=None, adoption_anchor=None
     valid_cash_amount(body.opening_halalas+carried)
     c.execute('INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,opening_halalas,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(sid,body.kind,target['id'],brand,db.json(bids),body.manager_shift_id,body.opening_halalas+carried,operational_date,db.json(delivery_window) if delivery_window else None))
     if body.kind=='driver':
+        from .driver_duty import snapshot as duty_snapshot
+        duty_snapshot(c,target['id'],sid,vehicle_anchor)
         c.execute('UPDATE shifts SET permanent_float=%s WHERE id=%s',(db.json(permanent_float) if permanent_float else None,sid))
         from .fuel_exceptions import consume
         if vehicle_anchor:
@@ -533,7 +583,7 @@ def shifts(user=Depends(auth.current_user), order_id: str | None = None, task_id
             if search.strip():
                 where.append('(strpos(lower(u.display_name),lower(%s))>0 OR strpos(lower(s.id),lower(%s))>0)')
                 params.extend([search.strip(),search.strip()])
-            day="COALESCE(s.delivery_operational_date, ((s.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '16 hours')::date)"
+            day="COALESCE(s.reporting_operational_date,s.delivery_operational_date, ((s.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '4 hours')::date)"
             if start:where.append(day+'>=%s');params.append(start)
             if end:where.append(day+'<=%s');params.append(end)
             source=' FROM shifts s JOIN users u ON u.id=s.user_id WHERE '+' AND '.join(where)
@@ -596,9 +646,7 @@ def people_data(c,user):
     managers=c.execute("SELECT s.id,s.shift_no,s.user_id,s.branch_ids,s.status,s.delivery_window_snapshot,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.status IN ('open','closing') AND u.active AND s.brand_id=%s ORDER BY s.opened_at DESC",(user['brand_id'],)).fetchall()
     managers=[s for s in managers if unrestricted_owner(user) or (set(s['branch_ids'])<=set(user.get('branch_ids',[])) if user.get('home_brand_id') and user['role']=='owner' else set(s['branch_ids'])&set(user.get('branch_ids',[])))]
     if user['role']=='driver':
-        managers=[s for s in managers if set(user.get('branch_ids',[]))<=set(s['branch_ids'])
-                  or (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
-                  and bool(set(user.get('branch_ids',[]))&set(s['branch_ids']))]
+        managers=[s for s in managers if bool(set(user.get('branch_ids',[]))&set(s['branch_ids']))]
     context = user.get('_morning_manager_context')
     if context:
         from .morning_manager_context import shift_allowed
@@ -607,9 +655,12 @@ def people_data(c,user):
                  for u in users if u['role']=='owner' or u['id'] == user['id'] or u['role'] == 'driver' and (u['id'] in child_ids or set(u['branch_ids']) & set(user['branch_ids']))]
         from .morning_delivery import policy
         approved=policy((c.execute('SELECT settings FROM brands WHERE id=%s',(user['brand_id'],)).fetchone() or {}).get('settings'))['manager_user_ids']
-        managers = [s for s in managers if (s['id'] == context['shift_id'] or s['user_id'] in approved)
-                    and (s.get('delivery_window_snapshot') or {}).get('period')=='morning'
-                    and set(s['branch_ids'])==set(user['branch_ids'])]
+        from .manager_handover_scope import authorized
+        managers = [s for s in managers if set(user['branch_ids']) <= set(s['branch_ids'])
+                    and ((s.get('delivery_window_snapshot') or {}).get('period') == 'morning'
+                         and (s['id'] == context['shift_id'] or s['user_id'] in approved)
+                         or (s.get('delivery_window_snapshot') or {}).get('period') != 'morning'
+                         and authorized(c, dict(s, brand_id=user['brand_id']), user['branch_ids']))]
     from .central_workdays import annotate
     annotate(c, managers)
     return {'authorized_receivers':users,'available_manager_shifts':[s for s in managers if s['status']=='open'],'closure_manager_shifts':managers,'driver_cash_receipt_policy':driver_cash_policy(c,user['brand_id'])}
@@ -641,6 +692,11 @@ class ExternalEnbishan(OperationBody):
 
 def external_enbishan_eligible(c, s):
     from .catalog import normalize_city
+    from .central_operations import enabled
+    # Existing legacy summaries remain correctable; website-era shifts cannot
+    # add a second manual revenue source once central operations is enabled.
+    if enabled() and not s.get('external_enbishan'):
+        return False
     if s['brand_id'] != 'kps' or s['kind'] != 'driver' or not s['branch_ids']:
         return False
     rows=c.execute('SELECT city FROM branches WHERE brand_id=%s AND id=ANY(%s)',(s['brand_id'],s['branch_ids'])).fetchall()
@@ -680,10 +736,12 @@ def shift_detail(sid:str,user=Depends(auth.current_user)):
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone(); shift_access(c,user,s,capability='shifts_view')
         from .central_workdays import annotate
         annotate(c,[s])
-        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
+        task_rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.test_void,o.total_halalas,o.preparation_status,o.payment_status FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE shift_id=%s ORDER BY t.created_at',(sid,)).fetchall()
         if user['role']=='driver':
             task_rows=[task for task in task_rows if task['status'] not in TERMINAL]
-        return safe(blind_closure.driver_view(user,{'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
+        from .shift_reconciliation import closed_shift
+        reconciliation = closed_shift(c,s) if user['role'] != 'driver' else None
+        return safe(blind_closure.driver_view(user,{'reconciliation':reconciliation,'shift':s,'external_enbishan_eligible':not user.get('_morning_manager_context') and external_enbishan_eligible(c,s),'vehicle_summary':shift_vehicle.summary(s.get('vehicle_log')),'expected_halalas':balance(c,s),'tasks':task_rows, 'collections':c.execute('SELECT * FROM effective_collections WHERE shift_id=%s',(sid,)).fetchall(),'refunds':c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall(),'custody_events':c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY created_at',(sid,)).fetchall(),'transfers':c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall(),'driver_shifts':c.execute('SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.manager_shift_id=%s ORDER BY s.opened_at',(sid,)).fetchall()},shift_money=True))
 
 @router.post('/shifts/{sid}/refuel')
 def refuel_shift(sid:str,body:shift_vehicle.Refuel,request:Request,user=Depends(auth.current_user)):
@@ -841,7 +899,8 @@ def approve_close_in_tx(c,user,sid,body):
     fixed_amount=int((s.get('permanent_float') or {}).get('amount',0))
     unusual_retained=sub['retained_halalas']!=min(sub.get('counted_halalas',0),fixed_amount) or (not s.get('permanent_float') and sub['retained_halalas'])
     if sub['difference_halalas'] or sub.get('card_difference_halalas') or unusual_retained or sub.get('counted_halalas',0)<fixed_amount:
-        if not body.exception_reason or not body.exception_reason.strip(): fail(422,'يلزم سبب ظاهر لفرق النقد أو موازنة الشبكة أو العهدة المحتفظ بها')
+        from .shift_reconciliation import meaningful_reason
+        if not meaningful_reason(body.exception_reason): fail(422,'اكتب تفسيرًا واضحًا لفرق النقد أو الشبكة؛ الصفر والأرقام وحدها لا تكفي')
     if unresolved(c,sid): fail(409,'مهام معلقة')
     if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
     if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'سائق غير مقفل')
@@ -898,8 +957,10 @@ def eligible_driver_shift(c,s,order):
     if order.get('snapshot', {}).get('delivery_period') == 'morning':
         from . import morning_delivery
         morning_delivery.authorize_order(c, principal, order)
-        if (manager.get('delivery_window_snapshot') or {}).get('period') != 'morning':
-            fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية.')
+        from .manager_handover_scope import accepted_order
+        if ((manager.get('delivery_window_snapshot') or {}).get('period') != 'morning'
+                and not accepted_order(c, principal, order, shift_id=manager['id'])):
+            fail(409, 'اختر سائقًا تابعًا لمناوبة صباحية أو مستلمًا للطلب بالتسليم.')
         from . import morning_dispatch
         if morning_dispatch.actual_morning(order):
             branch=c.execute('SELECT branch_no,city FROM branches WHERE id=%s AND brand_id=%s',(order['branch_id'],order['brand_id'])).fetchone()
@@ -976,10 +1037,10 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
     with db.tx() as c:
         context = user.get('_morning_manager_context')
         if context:
-            rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id JOIN shifts s ON s.id=t.shift_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.snapshot->>'delivery_period'='morning' AND s.manager_shift_id=%s"+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500', [user['brand_id'],user['branch_ids'],context['shift_id']]+([order_id] if order_id else [])).fetchall()
-        elif user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
+            rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id JOIN shifts s ON s.id=t.shift_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.snapshot->>'delivery_period'='morning' AND s.manager_shift_id=%s"+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500', [user['brand_id'],user['branch_ids'],context['shift_id']]+([order_id] if order_id else [])).fetchall()
+        elif user['role']=='driver':rows=c.execute("SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.branch_id=ANY(%s) AND t.status NOT IN ('delivered','cancelled','transferred','reassigned') AND (t.driver_id=%s OR t.transfer_shift_id IN (SELECT id FROM shifts WHERE user_id=%s AND status='open')) ORDER BY t.created_at,t.id",(user['brand_id'],user.get('branch_ids',[]),user['id'],user['id'])).fetchall()
         else:
-            rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))'+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500',
+            rows=c.execute('SELECT t.*,o.order_no,o.snapshot,o.customer,o.total_halalas,o.preparation_status,o.payment_status,o.branch_id,o.brand_id FROM effective_driver_tasks t JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))'+(' AND t.order_id=%s' if order_id else '')+' ORDER BY t.created_at DESC LIMIT 500',
                            [user['brand_id'],unrestricted_owner(user),user.get('branch_ids',[])]+([order_id] if order_id else [])).fetchall()
         if user.get('_morning_manager_context'):
             from .morning_manager_context import order_allowed
@@ -997,7 +1058,7 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
         if user['role']=='driver':rows=[blind_closure.driver_view(user,r,shift_money=True) if r['status'] in TERMINAL or r['driver_id']!=user['id'] else r for r in rows]
         counts=None
         if user['role']=='driver':
-            counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.test_void IS NULL AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
+            counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM effective_driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.test_void IS NULL AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
         from .complimentary import operational_view
         return safe(operational_view({'tasks':rows, 'counts':counts}))
 
@@ -1017,7 +1078,7 @@ class DeliveryResolution(OperationBody):
     confirmed: StrictBool
 
 
-def validate_delivery_resolution(body, task, order, now):
+def validate_delivery_resolution(body, task, order, now, *, documented_collection_exception=False):
     if not body.confirmed or body.delivered_at.tzinfo is None:
         raise db.error(422, 'DELIVERY_VERIFICATION_REQUIRED', 'أكد التحقق من التسليم وحدد وقته الفعلي بمنطقة زمنية.')
     if (order['service'] != 'delivery' or order.get('completed_at') or
@@ -1029,7 +1090,7 @@ def validate_delivery_resolution(body, task, order, now):
     if pickup is None or not (order['created_at'] <= pickup <= body.delivered_at <= now):
         raise db.error(422, 'DELIVERY_ACTUAL_TIME_REQUIRED', 'يلزم استلام مسجل ووقت تسليم فعلي بعد الاستلام ولا يتجاوز الوقت الحالي.')
     from .complimentary import is_free
-    if order['payment_status'] != 'paid' and not is_free(order):
+    if order['payment_status'] != 'paid' and not is_free(order) and not documented_collection_exception:
         raise db.error(409, 'DELIVERY_PAYMENT_REQUIRED', 'يلزم استكمال التحصيل الفعلي قبل توثيق التسليم.')
 
 
@@ -1051,7 +1112,9 @@ def resolve_delivery(tid: str, body: DeliveryResolution, request: Request, user=
         def perform():
             if shift['status'] != 'open':
                 raise db.error(409, 'DELIVERY_SHIFT_CLOSED', 'لا يمكن تعديل مهمة في شفت قيد الإقفال أو مقفل.')
-            validate_delivery_resolution(body, task, order, datetime.now(timezone.utc))
+            from .order_financial_cases import documented_shortfall
+            validate_delivery_resolution(body, task, order, datetime.now(timezone.utc),
+                documented_collection_exception=documented_shortfall(c,order))
             from .order_amendments import guard
             guard(c, order, driver_id=task['driver_id'], require_branch=True)
             c.execute("UPDATE driver_tasks SET status='delivered',delivered_at=%s,reason=%s,proof=%s WHERE id=%s",
@@ -1059,7 +1122,9 @@ def resolve_delivery(tid: str, body: DeliveryResolution, request: Request, user=
             c.execute("UPDATE orders SET delivery_status='delivered',completed_at=%s,version=version+1 WHERE id=%s",
                       (body.delivered_at, order['id']))
             from .fiscal_issuance import issue_sale
-            issue_sale(c, order['id'], user)
+            from .complimentary import is_free
+            if order['payment_status']=='paid' or is_free(order):
+                issue_sale(c, order['id'], user)
             details = {'task_id': tid, 'previous': task['status'], 'status': 'delivered',
                        'reason': body.reason, 'evidence': body.evidence,
                        'actual_delivered_at': body.delivered_at.isoformat(),
@@ -1116,15 +1181,28 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status=='picked_up' and morning_pickup and o['preparation_status'] not in {'ready','handed_over'}:
                 raise db.error(409,'MORNING_PREPARATION_REQUIRED','انتظر اكتمال تجهيز الفرع قبل الاستلام الفعلي.')
             if body.status=='picked_up' and o['preparation_status']!='handed_over':
-                if o['snapshot'].get('delivery_workflow')!='manager_dispatch' and not morning_pickup:
-                    fail(409,'يلزم تأكيد تسليم الفرع للسائق')
+                legacy_manager_pickup = False
+                if o['brand_id']=='enbishan' and not morning_pickup and o['snapshot'].get('delivery_workflow')!='manager_dispatch':
+                    # The owner's Enbishan operation has no branch operator.
+                    # Keep the frozen order snapshot; authorize the actual
+                    # assigned driver's photo receipt under today's policy.
+                    from .delivery_workflow import is_legacy_manager_pickup
+                    policy=c.execute('SELECT settings FROM app_settings WHERE brand_id=%s FOR SHARE',(o['brand_id'],)).fetchone()
+                    legacy_manager_pickup=is_legacy_manager_pickup(o,t,s,user,(policy or {}).get('settings',{}))
+                if o['snapshot'].get('delivery_workflow')!='manager_dispatch' and not morning_pickup and not legacy_manager_pickup:
+                    raise db.error(409,'BRANCH_HANDOVER_REQUIRED','بانتظار تأكيد تسليم الفرع للسائق؛ راجع مدير التوصيل إذا كان التشغيل دون مسؤول فرع.')
                 if user['role']!='driver' or t['driver_id']!=user['id']:
                     fail(403,'تأكيد الاستلام الفعلي من السائق المكلف فقط')
                 c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(o['id'],))
                 db.event(c,o['id'],user['id'],'preparation.handed_over',
-                         {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch'})
+                         {'previous':o['preparation_status'],'source':'driver_confirmed_pickup','workflow':'manager_dispatch',
+                          **({'frozen_workflow':o['snapshot'].get('delivery_workflow'),
+                              'policy_source':'owner_approved_enbishan_manager_dispatch',
+                              'policy_scope':'enbishan_unpicked_delivery'} if legacy_manager_pickup else {})})
             from .complimentary import is_free
-            if body.status=='delivered' and o['payment_status']!='paid' and not is_free(o):fail(409,'يلزم تحصيل فعلي ودليل تسليم')
+            if body.status=='delivered' and o['payment_status']!='paid' and not is_free(o):
+                from .order_financial_cases import documented_shortfall
+                if not documented_shortfall(c,o):fail(409,'يلزم تسجيل التحصيل الفعلي أو فرق موثق للمحاسبة ودليل تسليم')
             if body.status in ('picked_up','delivered'):
                 from .order_support import require_photo
                 if resolving_problem and body.status=='picked_up':
@@ -1136,6 +1214,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
+                from .order_financial_cases import invoice_guard
+                invoice_guard(c,o)
                 from .order_amendments import balance as paid_balance
                 if o['payment_status'] in ('paid','partially_refunded') or paid_balance(c,o)>0:fail(409,'يلزم استرداد كامل قبل الإلغاء')
             if t['status']=='problem' and body.status!='problem':
@@ -1147,7 +1227,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
             if body.status=='delivered':
                 from .fiscal_issuance import issue_sale
-                issue_sale(c,t['order_id'],user)
+                if o['payment_status']=='paid' or is_free(o):
+                    issue_sale(c,t['order_id'],user)
             if body.status=='cancelled':
                 from .fiscal_issuance import credit_on_cancellation
                 credit_on_cancellation(c,o,user,body.reason)
@@ -1184,7 +1265,10 @@ def operational_alerts(user=Depends(auth.current_user)):
         from .complimentary import operational_view
         return safe(operational_view({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions}))
 
-class TaskHandover(OperationBody): driver_shift_id:str; reason:str=Field(min_length=1,max_length=2000)
+class TaskHandover(OperationBody):
+    driver_shift_id:str
+    reason:str=Field(min_length=1,max_length=2000)
+    reassign_before_pickup:StrictBool=False
 
 @router.post('/tasks/{tid}/handover')
 def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.current_user)):
@@ -1208,16 +1292,31 @@ def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.cu
             if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(prior['order_id'],)).fetchone():
                 fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
         def perform():
+            prior=c.execute('SELECT order_id FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+            if not prior:fail(404,'المهمة غير موجودة')
+            c.execute('SELECT id FROM orders WHERE id=%s FOR UPDATE',(prior['order_id'],))
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             if not t:fail(404,'المهمة غير موجودة')
             shift_access(c,user,lock_shift(c,t['shift_id']))
             to=lock_shift(c,body.driver_shift_id);o=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone()
+            order_access(c,user,o)
+            if to and not same_scope(user,to):fail(404,'شفت السائق غير متاح ضمن نطاقك')
             if t['status'] in TERMINAL or not to or to['status']!='open' or to['kind']!='driver' or to['brand_id']!=o['brand_id'] or o['branch_id'] not in to['branch_ids'] or to['id']==t['shift_id']:fail(409,'شفت الاستلام غير مؤهل')
             eligible_driver_shift(c,to,o)
             from .driver_receipt_trial import physical_guard
             physical_guard(to,t['status'])
             if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(t['order_id'],)).fetchone():fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
+            if body.reassign_before_pickup and not t.get('picked_up_at') and t['status'] in ('assigned','accepted'):
+                c.execute("UPDATE driver_tasks SET status='transferred',reason=%s,transfer_shift_id=NULL WHERE id=%s",(body.reason,tid))
+                newid=uid()
+                c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) VALUES(%s,%s,%s,%s,'assigned',%s)",(newid,t['order_id'],to['user_id'],to['id'],user['id']))
+                c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(t['order_id'],))
+                details={'previous_task_id':tid,'task_id':newid,'previous_driver_id':t['driver_id'],'driver_id':to['user_id'],'reason':body.reason,'previous':t['status'],'status':'assigned','acceptance_required':False}
+                db.event(c,t['order_id'],user['id'],'task.reassigned',details)
+                db.audit(c,user['id'],'task.reassigned','task',tid,details)
+                return {'task_id':newid,'transfer_shift_id':to['id'],'acceptance_required':False}
             c.execute('UPDATE driver_tasks SET transfer_shift_id=%s,transfer_requested_by=%s,reason=%s WHERE id=%s',(to['id'],user['id'],body.reason,tid))
+            db.event(c,t['order_id'],user['id'],'task.handover.requested',{'task_id':tid,'previous_driver_id':t['driver_id'],'driver_id':to['user_id'],**body.model_dump()})
             db.audit(c,user['id'],'task.handover.request','task',tid,body.model_dump())
             return {'task_id':tid,'transfer_shift_id':to['id'],'acceptance_required':True}
         return mutate(c,user,request,'task.handover:'+tid,body.model_dump(),perform)
@@ -1247,6 +1346,12 @@ def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)
             return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(newid,)).fetchone()}
         return mutate(c,user,request,'task.handover.accept:'+tid,{},perform)
 
+class CardPayment(OperationBody):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    amount_halalas: StrictInt = Field(gt=0, le=MAX_HALALAS)
+    reference: str = Field('', max_length=200)
+
+
 class Collection(OperationBody):
     method:str
     amount_halalas:StrictInt=Field(gt=0,le=MAX_HALALAS)
@@ -1254,6 +1359,8 @@ class Collection(OperationBody):
     reference:str=Field('',max_length=200)
     cash_halalas:StrictInt|None=Field(None,gt=0,le=MAX_HALALAS)
     card_halalas:StrictInt|None=Field(None,gt=0,le=MAX_HALALAS)
+    card_payments:list[CardPayment]|None=Field(None,min_length=1,max_length=20)
+    shortfall_reason:str=Field('',max_length=1000)
 
 @router.post('/orders/{oid}/collect')
 def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_user)):
@@ -1270,7 +1377,12 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             from .order_amendments import guard,balance as paid_balance
             guard(c,o,driver_id=user['id'] if user['role']=='driver' else None)
             due=o['total_halalas']-paid_balance(c,o)
-            if body.method not in ('cash','card','split') or due<=0 or body.amount_halalas!=due:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح؛ حصّل المتبقي فقط')
+            if body.method not in ('cash','card','split') or due<=0 or body.amount_halalas>due:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح؛ حصّل المتبقي فقط')
+            shortfall=body.amount_halalas<due
+            if shortfall and (user['role']!='driver' or o['service']!='delivery' or len(body.shortfall_reason.strip())<3):
+                raise db.error(422,'COLLECTION_SHORTFALL_REASON','سجّل سبب نقص التحصيل؛ يبقى الفرق للمحاسبة ولا يخصم من الفاتورة.')
+            if not shortfall and body.shortfall_reason:
+                fail(422,'لا يوجد فرق تحصيل؛ احذف سبب النقص')
             if body.method=='split':
                 if body.cash_halalas is None or body.card_halalas is None or body.cash_halalas+body.card_halalas!=body.amount_halalas:
                     fail(422,'مجموع الكاش والشبكة يجب أن يساوي قيمة الطلب، وكل جزء أكبر من صفر')
@@ -1279,7 +1391,17 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
                 if body.cash_halalas is not None or body.card_halalas is not None:fail(422,'مبالغ التقسيم مخصصة للكاش والشبكة معًا')
                 parts=[(body.method,body.amount_halalas)]
             cash=next((amount for method,amount in parts if method=='cash'),0)
-            if not (user['role']=='driver' and o['service']=='delivery') and any(method=='card' for method,_ in parts) and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
+            card_total=sum(amount for method,amount in parts if method=='card')
+            if body.card_payments is not None:
+                if not card_total or sum(p.amount_halalas for p in body.card_payments)!=card_total:
+                    fail(422,'مجموع عمليات الشبكة يجب أن يساوي جزء الشبكة')
+                if body.reference:fail(422,'استخدم مرجع كل عملية شبكة بدل المرجع الإجمالي')
+                parts=([('cash',cash)] if cash else [])+[('card',p.amount_halalas) for p in body.card_payments]
+                references=iter(p.reference for p in body.card_payments)
+                if not (user['role']=='driver' and o['service']=='delivery') and any(not p.reference for p in body.card_payments):fail(422,'يلزم مرجع لكل عملية شبكة')
+            else:
+                references=iter([body.reference.strip()])
+                if not (user['role']=='driver' and o['service']=='delivery') and card_total and not body.reference.strip():fail(422,'يلزم مرجع شبكة فعلي')
             if cash and (body.tendered_halalas is None or body.tendered_halalas<cash):fail(422,'المبلغ النقدي المسلم غير كاف')
             sid=None
             if o['service']=='delivery':
@@ -1295,11 +1417,18 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             ids=[]
             for method,amount in parts:
                 cid=uid();ids.append(cid)
-                c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference,amendment_revision) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],method,amount,body.tendered_halalas if method=='cash' else None,change if method=='cash' else 0,body.reference.strip() if method=='card' else '',o.get('amendment_revision',0)))
+                c.execute('INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas,reference,amendment_revision,payment_piece) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(cid,oid,sid,user['id'],method,amount,body.tendered_halalas if method=='cash' else None,change if method=='cash' else 0,next(references) if method=='card' else '',o.get('amendment_revision',0),cid))
                 if sid and method=='cash':event(c,sid,amount,'collection',cid,user['id'],'تحصيل نقدي صافي بعد الباقي')
-            c.execute("UPDATE orders SET payment_status='paid',payment_method=%s,version=version+1 WHERE id=%s",(body.method,oid))
+            payment_status='unpaid' if shortfall else 'paid'
+            if shortfall:
+                from .order_financial_cases import open_collection_case
+                open_collection_case(c,o,user,body.shortfall_reason,body.amount_halalas,due-body.amount_halalas,sid)
+            from .order_financial_cases import actual_payment_method
+            method=actual_payment_method(c,oid,body.method)
+            c.execute("UPDATE orders SET payment_status=%s,payment_method=%s,version=version+1 WHERE id=%s",(payment_status,method,oid))
             db.audit(c,user['id'],'order.collect','order',oid,{'collection_ids':ids,'amount_halalas':body.amount_halalas,'method':body.method,'cash_halalas':cash,'card_halalas':body.amount_halalas-cash,'change_halalas':change})
-            return {'collection_id':ids[0],'collection_ids':ids,'payment_status':'paid','amount_halalas':body.amount_halalas,'change_halalas':change}
+            db.event(c,oid,user['id'],'order.collected',{'collection_ids':ids,'amount_halalas':body.amount_halalas,'method':body.method,'remaining_halalas':due-body.amount_halalas,'shortfall_reason':body.shortfall_reason})
+            return {'collection_id':ids[0],'collection_ids':ids,'payment_status':payment_status,'amount_halalas':body.amount_halalas,'remaining_halalas':due-body.amount_halalas,'change_halalas':change}
         return mutate(c,user,request,'order.collect:'+oid,body.model_dump(),perform)
 
 class TestVoid(OperationBody):
@@ -1330,18 +1459,28 @@ class Refund(OperationBody):
 @router.post('/orders/{oid}/refund')
 def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
     # Check authority before idempotency lookup, including previously successful retries.
-    roles(user,'owner','branch_manager')
+    roles(user,'owner','branch_manager','admin')
+    if user['role']=='admin' and not auth.has_permission(user,'accounting_review'):fail(403,'صلاحية المراجعة المحاسبية مطلوبة')
     if user['role']=='branch_manager' and not body.amendment_id:fail(403,'الاسترداد الاعتيادي يتطلب المدير')
     with db.tx() as c:
+        if user['role']=='admin':
+            from .order_financial_cases import scoped
+            scoped(c,oid,user)
         def perform():
-            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+            if user['role']=='admin':
+                from .order_financial_cases import scoped,case
+                o=scoped(c,oid,user,True)
+                pending=case(c,oid)
+                if not pending or pending['status']!='pending':fail(409,'يلزم ملف معالجة مالية معلق')
+            else:
+                o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             from .order_amendments import active,balance as paid_balance
             from .branch_payments import online_order
             if online_order(o):
                 raise db.error(409,'PROVIDER_REFUND_REQUIRED','استرداد الدفع الإلكتروني يتطلب تأكيد مزود الدفع.')
             if active(c,oid):fail(409,'أكمل مراجعة التعديل قبل الاسترداد')
             if user['role']=='branch_manager' and o['service']=='delivery':fail(403,'تسوية التوصيل من مدير التوصيل')
-            cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()
+            cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM effective_collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()
             cols=[p for p in cols if p['available']>0]
             col=cols[0] if cols else None
             prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']
@@ -1355,10 +1494,28 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             for pid,q in body.line_quantities.items():
                 previous=c.execute("SELECT coalesce(sum((line_quantities->>%s)::int),0) n FROM refunds WHERE order_id=%s",(pid,oid)).fetchone()['n']
                 if q<0 or pid not in lines or q+previous>lines[pid]:fail(422,'كمية استرداد الصنف غير صالحة')
+            returned_products={pid for pid,q in body.line_quantities.items() if q>0}
+            if returned_products and all(x.get('line_total_halalas')==0 for x in o['snapshot']['items'] if x['product_id'] in returned_products):
+                raise db.error(422,'FREE_ITEM_HAS_NO_REFUND','الصنف المجاني قيمته صفر؛ وثّق إرجاعه دون خصم أو استرداد مبلغ.')
+            if returned_products:
+                from .refund_line_values import ceiling
+                previous_quantities={pid:c.execute("SELECT coalesce(sum((line_quantities->>%s)::int),0) n FROM refunds WHERE order_id=%s",(pid,oid)).fetchone()['n'] for pid in body.line_quantities}
+                maximum=ceiling(o,body.line_quantities,previous_quantities)
+                if body.amount_halalas>maximum:
+                    raise db.error(422,'REFUND_LINE_VALUE_EXCEEDED','مبلغ الاسترداد يتجاوز قيمة الكميات المحددة بعد الخصم؛ المجاني ورسوم التوصيل لا يرفعان قيمة الصنف.')
+            elif body.line_quantities:
+                fail(422,'اختر كمية مرتجعة موجبة أو احذف تحديد الأصناف للاسترداد المالي العام')
             sid=body.shift_id or col['shift_id']
             if sid:
-                s=lock_shift(c,sid);shift_access(c,user,s)
-                if s['status'] not in ('open','closing') or s['brand_id']!=o['brand_id']:fail(409,'الاسترداد يحتاج عهدة شفت مفتوح؛ لا يعدل تقفيلة تاريخية')
+                s=lock_shift(c,sid);shift_access(c,user,s,capability='accounting_review')
+                from .order_financial_cases import accounting,case
+                financial_case=case(c,oid)
+                postclose_card=(body.method=='card' and body.shift_id is None and not body.amendment_id
+                    and s['status']=='closed' and accounting(user) and financial_case and financial_case['status']=='pending')
+                if postclose_card:
+                    # No new cash custody exists: retain collection lineage, never reopen the saved shift.
+                    sid=None
+                elif s['status'] not in ('open','closing') or s['brand_id']!=o['brand_id']:fail(409,'الاسترداد يحتاج عهدة شفت مفتوح؛ لا يعدل تقفيلة تاريخية')
                 if body.method=='cash' and available_balance(c,s)<body.amount_halalas:fail(409,'العهدة النقدية غير كافية')
             elif o['service']=='delivery' and body.method=='cash':fail(409,'يلزم شفت عهدة للاسترداد النقدي')
             remaining=body.amount_halalas;refund_ids=[]
@@ -1374,6 +1531,7 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             status=('paid' if net==o['total_halalas'] else 'unpaid') if body.amendment_id else ('refunded' if net==0 else 'partially_refunded')
             c.execute('UPDATE orders SET payment_status=%s,version=version+1 WHERE id=%s',(status,oid))
             db.audit(c,user['id'],'order.refund','order',oid,{'refund_id':rid,**body.model_dump()})
+            db.event(c,oid,user['id'],'order.refund',{'refund_ids':refund_ids,**body.model_dump(),'shift_id':sid,'payment_status':status})
             return {'refund_id':refund_ids[0],'refund_ids':refund_ids,'payment_status':status}
         return mutate(c,user,request,'order.refund:'+oid,body.model_dump(),perform)
 
@@ -1540,33 +1698,10 @@ class DriverAmountReview(OperationBody):
 
 @router.post('/shifts/{sid}/review-amounts')
 def review_driver_amounts(sid:str,body:DriverAmountReview,request:Request,user=Depends(auth.current_user)):
-    """Manager correction before approval; original submission remains in audit."""
-    roles(user,'delivery_manager')
-    if not auth.has_permission(user,'shifts_approve'):fail(403,'صلاحية مراجعة التقفيلة غير متاحة')
-    with db.tx() as c:
-        def perform():
-            s=lock_shift(c,sid);shift_access(c,user,s,manager=True,capability='shifts_approve')
-            if s['kind']!='driver' or s['status']!='submitted':fail(409,'التعديل لتقفيلة سائق مرسلة وقبل اعتمادها فقط')
-            manager=lock_shift(c,s['manager_shift_id'])
-            if not manager or manager['user_id']!=user['id'] or manager['status']!='open':fail(403,'المراجعة لمدير الشفت المسؤول فقط')
-            transfers=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected' FOR UPDATE",(sid,)).fetchall()
-            if any(t['status']=='confirmed' for t in transfers):fail(409,'الاستلام مؤكد؛ التصحيح اللاحق من خلال تسوية المحاسبة')
-            if len(transfers)>1:fail(409,'توجد تسليمات متعددة؛ أعد التقفيلة للتصحيح والمراجعة')
-            from .driver_float import split
-            handover,retained=split(s,body.counted_halalas)
-            original=dict(s['submission']);updated=dict(original)
-            updated.update(counted_halalas=body.counted_halalas,handover_halalas=handover,retained_halalas=retained,
-                           terminal_total_halalas=body.terminal_total_halalas,
-                           difference_halalas=body.counted_halalas-original['expected_halalas'])
-            updated.update(blind_closure.card_reconciliation(c,sid,body.terminal_total_halalas,(s.get('external_enbishan') or {}).get('card_halalas',0)))
-            updated['driver_original_submission']=original.get('driver_original_submission') or {k:v for k,v in original.items() if k!='driver_original_submission'}
-            c.execute('UPDATE shifts SET submission=%s WHERE id=%s',(db.json(updated),sid))
-            for transfer in transfers:
-                c.execute('UPDATE custody_transfers SET amount_halalas=%s WHERE id=%s',(handover,transfer['id']))
-            db.audit(c,user['id'],'shift.manager_amount_review','shift',sid,
-                     {'before':original,'after':updated,'reason':body.reason,'fields':['counted_halalas','terminal_total_halalas']})
-            return {'shift_id':sid,'submission':updated}
-        return mutate(c,user,request,'shift.manager_amount_review:'+sid,body.model_dump(),perform)
+    """Retained URL fails closed for older clients; no submitted values are overwritten."""
+    raise db.error(403,'ACCOUNTING_CORRECTION_REQUIRED',
+                   'لا يغيّر مدير التوصيل أرقام السائق؛ أعد التقفيلة للتصحيح قبل الاستلام، أو أحلها للمحاسبة بعد الاستلام.')
+
 
 def simple_driver_close_in_tx(c, user, sid, body):
     from .central_workdays import guard_component
@@ -1670,13 +1805,14 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         config={**cfg['settings'],**(setting['settings'] if setting else {})}
         minutes,configured=day_start(config)
         # Delivery's day is independent of pickup/car reporting settings.
-        if service=='delivery':minutes,configured=service_hours.DELIVERY_DAY_START_MINUTES,True
+        delivery_period = service=='delivery' or (not service and user['role'] in {'delivery_manager','delivery_staff'})
+        if delivery_period:minutes,configured=service_hours.DELIVERY_DAY_START_MINUTES,True
         now=datetime.now(RIYADH);day=(now-timedelta(minutes=minutes)).date()
         if period=='yesterday':day-=timedelta(days=1)
         try:
-            lo=datetime.fromisoformat(start) if start else datetime.combine(day,datetime.min.time(),RIYADH)+timedelta(minutes=minutes)
+            lo=service_hours.parse_reporting_bound(start,delivery=delivery_period) if start else datetime.combine(day,datetime.min.time(),RIYADH)+timedelta(minutes=minutes)
             lo=lo.replace(tzinfo=RIYADH) if lo.tzinfo is None else lo.astimezone(RIYADH)
-            hi=datetime.fromisoformat(end) if end else lo+timedelta(days=1)
+            hi=service_hours.parse_reporting_bound(end,delivery=delivery_period) if end else lo+timedelta(days=1)
             hi=hi.replace(tzinfo=RIYADH) if hi.tzinfo is None else hi.astimezone(RIYADH)
         except ValueError:fail(422,'تاريخ غير صالح')
         if hi<=lo or hi-lo>timedelta(days=93):fail(422,'الفترة يجب أن تكون بين يوم و93 يوما')
@@ -1693,11 +1829,11 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         clauses.append(morning_clause);params.extend(morning_params)
         where=' AND '.join(clauses)+" AND o.test_void IS NULL"
         summary=c.execute("SELECT count(*) orders,count(*) FILTER(WHERE preparation_status='new') new,count(*) FILTER(WHERE completed_at IS NULL AND preparation_status NOT IN ('cancelled','rejected','new')) active,count(*) FILTER(WHERE completed_at IS NOT NULL) completed,count(*) FILTER(WHERE preparation_status IN ('cancelled','rejected')) cancelled,coalesce(sum(total_halalas) FILTER(WHERE completed_at IS NOT NULL),0) gross_completed_halalas,coalesce(sum(delivery_fee_halalas) FILTER(WHERE completed_at IS NOT NULL),0) delivery_fee_halalas FROM orders o WHERE "+where,params).fetchone()
-        refs=c.execute('SELECT coalesce(sum(r.amount_halalas),0) n FROM refunds r JOIN orders o ON o.id=r.order_id WHERE r.amendment_id IS NULL AND o.completed_at IS NOT NULL AND '+where,params).fetchone()['n']
         late=config.get('late_after_minutes',60)
         if not isinstance(late,int) or not 1<=late<=1440:fail(503,'حد التأخير غير صحيح')
         summary['live_overdue']=c.execute("SELECT count(*) n FROM orders o WHERE o.service='delivery' AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected') AND o.created_at<now()-(%s*interval '1 minute') AND "+where,[late,*params]).fetchone()['n']
-        summary['refund_halalas']=int(refs);summary['net_completed_halalas']=int(summary['gross_completed_halalas'])-int(refs)
+        from .financial_totals import period_totals
+        summary.update(period_totals(c,where,params))
         items=c.execute("WITH lines AS (SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item WHERE o.completed_at IS NOT NULL AND "+where+" GROUP BY o.id,o.total_halalas,item->>'product_id') SELECT product_id,max(name) name,sum(greatest(quantity-coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)) quantity,sum(gross_halalas) gross_halalas,round(sum(gross_halalas::numeric*greatest(total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)/nullif(total_halalas,0))) net_halalas FROM lines GROUP BY product_id ORDER BY quantity DESC LIMIT 10",params).fetchall()
         branch_top=c.execute("SELECT o.branch_id,b.branch_no,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.branch_no,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
         timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
@@ -1726,7 +1862,10 @@ def morning_handover_scope(c, source, target):
     if (source.get('delivery_window_snapshot') or {}).get('period') != 'morning':
         return
     if (target.get('delivery_window_snapshot') or {}).get('period') != 'morning':
-        fail(409, 'المناوبة البديلة للطلبات الصباحية يجب أن تكون صباحية معتمدة.')
+        from .manager_handover_scope import authorized
+        if not authorized(c, target, source['branch_ids']):
+            fail(403, 'مدير المناوبة المستلمة غير مخول على فروع التسليم.')
+        return
     from . import morning_delivery
     principal=c.execute('SELECT * FROM users WHERE id=%s', (target['user_id'],)).fetchone()
     for bid in source['branch_ids']:
@@ -1742,12 +1881,19 @@ def manager_handover_in_tx(c,user,sid,body):
     if user['role']=='admin':shift_access(c,user,target,capability='shifts_handover')
     if not target or src['kind']!='manager' or target['kind']!='manager' or src['id']==target['id'] or src['status'] not in ('open','closing') or target['status']!='open' or src['brand_id']!=target['brand_id'] or not set(src['branch_ids'])<=set(target['branch_ids']):fail(409,'المناوبة البديلة غير مؤهلة')
     morning_handover_scope(c, src, target)
+    from .aggregate_driver_closure import guard_financial_allocation
+    guard_financial_allocation(c, shift_id=src['id'])
     if c.execute("SELECT 1 FROM manager_handovers WHERE from_shift_id=%s AND status='pending'",(sid,)).fetchone():fail(409,'يوجد تسليم مناوبة معلق')
-    children=c.execute("SELECT id FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id",(sid,)).fetchall()
+    children=c.execute("SELECT * FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id FOR UPDATE",(sid,)).fetchall()
     for child in children:guard_component(c,child['id'])
     hid=uid();c.execute('INSERT INTO manager_handovers(id,from_shift_id,to_shift_id,branch_ids,driver_shift_ids,reason,requested_by) VALUES(%s,%s,%s,%s,%s,%s,%s)',(hid,sid,target['id'],db.json(src['branch_ids']),db.json([x['id'] for x in children]),body.reason,user['id']))
+    from .manager_handover_scope import snapshot
+    observed=snapshot(c,src,children)
+    c.execute('UPDATE manager_handovers SET operational_snapshot=%s WHERE id=%s',(db.json(observed),hid))
     c.execute("UPDATE shifts SET status='closing' WHERE id=%s",(sid,))
     db.audit(c,user['id'],'manager.handover.request','shift',sid,{'handover_id':hid,**body.model_dump()})
+    for oid in observed['order_ids']:
+        db.event(c,oid,user['id'],'manager.handover.requested',{'handover_id':hid,'from_shift_id':sid,'to_shift_id':target['id'],'cash_transferred':False,'reason':body.reason})
     return {'handover_id':hid,'status':'pending','driver_shift_ids':[x['id'] for x in children],'cash_handover_requires_separate_confirmation':True}
 
 
@@ -1777,9 +1923,23 @@ def accept_manager_handover_in_tx(c,user,hid):
     shift_access(c,user,target)
     if target['status']!='open' or src['status']!='closing':fail(409,'حالة الشفت غير صالحة')
     morning_handover_scope(c, src, target)
+    from .aggregate_driver_closure import guard_financial_allocation
+    guard_financial_allocation(c, shift_id=src['id'])
+    from .manager_handover_scope import authorized, snapshot
+    if not authorized(c,target,h['branch_ids']):fail(403,'صلاحية المدير المستلم لم تعد سارية')
+    children=c.execute("SELECT * FROM shifts WHERE manager_shift_id=%s AND status<>'closed' ORDER BY id FOR UPDATE",(src['id'],)).fetchall()
+    expected=c.execute("SELECT id FROM shifts WHERE id=ANY(%s) AND status<>'closed' ORDER BY id FOR UPDATE",(h['driver_shift_ids'],)).fetchall()
+    if {s['id'] for s in children} != {s['id'] for s in expected}:
+        fail(409,'تغيرت قائمة السائقين؛ راجع تسليم المناوبة قبل القبول')
+    observed=snapshot(c,src,children)
+    observed['requested_snapshot']=h['operational_snapshot']
+    observed['order_ids']=sorted(set(observed['order_ids']) | set(h['operational_snapshot'].get('order_ids',[])))
+    c.execute('UPDATE manager_handovers SET operational_snapshot=%s WHERE id=%s',(db.json(observed),hid))
     c.execute("UPDATE shifts SET manager_shift_id=%s WHERE id=ANY(%s) AND manager_shift_id=%s AND status<>'closed'",(target['id'],h['driver_shift_ids'],src['id']))
     c.execute("UPDATE manager_handovers SET status='accepted',accepted_by=%s,accepted_at=now() WHERE id=%s",(user['id'],hid))
     db.audit(c,user['id'],'manager.handover.accept','shift',target['id'],{'handover_id':hid,'driver_shift_ids':h['driver_shift_ids'],'cash_transferred':False})
+    for oid in observed['order_ids']:
+        db.event(c,oid,user['id'],'manager.handover.accepted',{'handover_id':hid,'from_shift_id':src['id'],'to_shift_id':target['id'],'cash_transferred':False})
     return {'handover_id':hid,'status':'accepted','cash_transferred':False}
 
 
@@ -1796,10 +1956,17 @@ def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_us
 def driver_roster(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff')
     with db.tx() as c:
+        from . import multibrand
+        staffing_filter = ''
+        if multibrand.enabled():
+            from .aggregate_driver_closure import staffing_pending_sql
+            staffing_filter = ' AND ' + staffing_pending_sql('s')
         rows=c.execute("SELECT u.id,u.display_name,u.branch_ids,u.active,u.email,u.phone,u.invitation_status,"
                        "s.id shift_id,s.status shift_status,s.available shift_available,s.manager_shift_id,"
-                       "(SELECT count(*) FROM driver_tasks t WHERE t.driver_id=u.id AND t.status NOT IN ('delivered','cancelled','transferred')) active_tasks "
-                       "FROM users u LEFT JOIN shifts s ON s.user_id=u.id AND s.status<>'closed' "
+                       "(SELECT count(*) FROM driver_tasks t WHERE t.driver_id=u.id AND t.shift_id=s.id "
+                       "AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')) active_tasks "
+                       "FROM users u LEFT JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
+                       "AND s.kind='driver' AND s.status<>'closed'" + staffing_filter + ' '
                        "WHERE u.brand_id=%s AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
         visible=[]
         for row in rows:
@@ -1809,6 +1976,10 @@ def driver_roster(user=Depends(auth.current_user)):
             context = user.get('_morning_manager_context')
             if context:
                 if row.get('shift_id') and row.get('manager_shift_id') != context['shift_id']:
+                    row.update(active_tasks=0, assignment_eligible=False, availability='support_requires_handover',
+                               readiness_action='request_manager_handover', eligible_branch_ids=[],
+                               support_available=True)
+                    visible.append(row)
                     continue
                 row['active_tasks'] = c.execute("SELECT count(*) AS n FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.manager_shift_id=%s AND o.brand_id=%s AND o.branch_id=ANY(%s) AND o.snapshot->>'delivery_period'='morning' AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')", (row['id'], context['shift_id'], user['brand_id'], user['branch_ids'])).fetchone()['n']
             from .driver_readiness import describe
@@ -1895,3 +2066,4 @@ def set_shift_availability(sid:str,body:AvailabilityUpdate,request:Request,user=
             db.audit(c,user['id'],'shift.availability','shift',sid,{'available':body.available})
             return {'shift_id':sid,'available':body.available}
         return mutate(c,user,request,'shift.availability:'+sid,body.model_dump(),perform)
+

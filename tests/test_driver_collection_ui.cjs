@@ -4,10 +4,10 @@ const fn=source.slice(source.indexOf('  async function collection('),source.inde
 (async()=>{
 for(const language of ['ar','en'])for(const role of ['driver','branch_manager'])for(const method of ['cash','card','split']){
  let html,submit,payload;
- const fields={'select[name=method]':{value:'cash'},'input[name=cash_part]':{value:'4'},'#split-fields':{},'#card-preview':{},'#change-preview':{}};
+ const fields={'select[name=method]':{value:'cash'},'input[name=cash_part]':{value:'4'},'#split-fields':{},'#card-preview':{},'#change-preview':{},'#card-payments':{},'#shortfall-fields':{querySelectorAll:()=>[]},'#card-payment-rows':{querySelectorAll:()=>[],insertAdjacentHTML:()=>{}},'#add-card-payment':{addEventListener:()=>{}},'input[name=shortfall]':{checked:false},'input[name=actual_total]':{value:''}};
  if(role!=='driver'){fields['input[name=tendered]']={value:'12'};fields['input[name=reference]']={};}
  const form={addEventListener:()=>{}};
- const ctx={state:{user:{role}},tr:(a,b)=>language==='ar'?a:b,esc:String,money:x=>(x/100).toFixed(2),cents:x=>Math.round(Number(x)*100),api:async()=>({due_halalas:1200}),modal:(title,h,cb)=>{html=h;submit=cb},amountField:(label,name)=>`<input name="${name}">`,field:(label,name)=>`<input name="${name}">`,check:(label,name)=>`<input name="${name}">`,notice:String,formEnd:label=>`<button>${label}</button>`,$:s=>s==='#modal-body form'?form:fields[s],mutation:async(path,p)=>{payload=p},closeModal:()=>{},loadPage:async()=>{}};
+ const ctx={state:{user:{role}},tr:(a,b)=>language==='ar'?a:b,esc:String,money:x=>(x/100).toFixed(2),cents:x=>Math.round(Number(x)*100),api:async()=>({due_halalas:1200}),modal:(title,h,cb)=>{html=h;submit=cb},amountField:(label,name)=>`<input name="${name}">`,field:(label,name)=>`<input name="${name}">`,textarea:(label,name)=>`<textarea name="${name}"></textarea>`,check:(label,name)=>`<input name="${name}">`,notice:String,formEnd:label=>`<button>${label}</button>`,$:s=>s==='#modal-body form'?form:fields[s],mutation:async(path,p)=>{payload=p},closeModal:()=>{},loadPage:async()=>{}};
  vm.createContext(ctx);vm.runInContext(fn,ctx);await ctx.collection('order',999,method);
  assert.equal(fields['select[name=method]'].value,method);
  for(const name of ['reference','tendered','confirmed'])assert.equal(html.includes(`name="${name}"`),role!=='driver');

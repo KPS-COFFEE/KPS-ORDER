@@ -75,8 +75,16 @@ DEFINITIONS.append(('orders_operational_view', 'عرض حالة الطلبات �
                     'View branch operational order status and history', 'orders', set()))
 DEFINITIONS.append(('driver_hours_reports', 'عرض وتصدير ساعات عمل السائقين ضمن الفروع',
                     'View and export scoped driver work hours', 'reports', {'delivery_manager'}))
+DEFINITIONS.append(('driver_support_approve', 'اعتماد أو رفض طلب دعم سائق',
+                    'Approve or reject scoped driver support requests', 'shifts', set()))
+DEFINITIONS.append(('complimentary_approve', 'اعتماد وإلغاء أوامر الضيافة والتعويض والاستكمال غير المنفذة',
+                    'Authorize and revoke unused courtesy fulfillment commands', 'orders', set()))
+DEFINITIONS.append(('driver_duty_manage', 'تحديد ساعات دوام السائقين', 'Configure driver duty hours', 'staff', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'driver_duty_manage': {'admin', 'delivery_manager'},
+    'complimentary_approve': {'admin', 'delivery_manager'},
+    'driver_support_approve': {'admin', 'delivery_manager'},
     'branch_availability': {'driver', 'delivery_staff', 'delivery_manager', 'admin'},
     'branch_printers_manage': {'driver', 'branch_manager', 'delivery_manager', 'delivery_staff', 'admin'},
     'staff_catalog_view': {'driver', 'branch_manager', 'delivery_staff', 'delivery_manager', 'admin'},
@@ -93,6 +101,9 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
+    'driver_duty_manage': {'methods':['GET','PUT'], 'paths':['/api/driver-duty','/api/driver-duty/{identifier}'], 'scope':'current_brand_assigned_driver_branches_next_shift_only_no_financial_authority'},
+    'complimentary_approve': {'methods':['GET','POST'], 'paths':['/api/orders/complimentary/quote','/api/orders/complimentary/authorizations','/api/orders/complimentary/authorizations/{identifier}/revoke'], 'scope':'explicit_owner_grant_current_brand_all_original_and_fulfillment_branches_no_refund_or_cash_permission'},
+    'driver_support_approve': {'methods':['GET','POST'], 'paths':['/api/driver-support','/api/driver-support/{rid}/accept','/api/driver-support/{rid}/resolve'], 'scope':'owner_granted_staff_identity_all_affected_brand_and_branch_scopes_no_cash_transfer'},
     'staff_catalog_view': {'methods':['GET'], 'paths':['/api/identity/permissions/catalog'], 'scope':'catalog_only_no_personnel_no_grant'},
     'orders_operational_view': {'methods':['GET'], 'paths':['/api/staff/scoped/orders','/api/staff/scoped/orders/{order_id}/history'], 'scope':'current_brand_and_assigned_branches_operational_projection'},
     'driver_hours_reports': {'methods':['GET'], 'paths':['/driver-hours','/api/driver-work-hours/report','/api/driver-work-hours/export.xlsx','/api/driver-work-hours/export.pdf'], 'scope':'current_brand_and_assigned_branches_reports_only'},
@@ -135,7 +146,9 @@ def effective(user):
     if role == 'owner':
         return eligible(role)
     base = set(user.get('permissions') or []) & ADMIN if role == 'admin' else eligible(role)
-    return (base | (set(user.get('extra_permissions') or []) & grantable(role))) - set(user.get('permission_denials') or [])
+    routed = (set(user.get('_message_capabilities') or []) & {'chat_view', 'chat_reply', 'chat_manage'}
+              if role in {'admin', 'delivery_manager', 'delivery_staff'} else set())
+    return (base | routed | (set(user.get('extra_permissions') or []) & grantable(role))) - set(user.get('permission_denials') or [])
 
 
 def catalog():
@@ -151,6 +164,7 @@ def catalog():
 
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
+    'order_financial_cases': {'nonreceipt':'payments_collect','free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':'orders_cancel','journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':'accounting_review'},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
     'task_recovery': {'listing':'tasks_resolve_delivery', 'detail':'tasks_resolve_delivery', 'review_revision':'tasks_resolve_delivery'},
     'driver_float': {'listing':('drivers_view','accounting_review'), 'propose':'custody_transfer', 'decide':'accounting_review'},
     'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':'orders_amend', 'request_amendment':'orders_amend', 'decide':'orders_amend',
@@ -164,7 +178,7 @@ ROUTES = {
         'submit_close': 'shifts_close', 'return_close': 'shifts_approve', 'approve_close': 'shifts_approve', 'review_driver_amounts':'shifts_approve',
         'assign': 'delivery_assign', 'tasks': 'tasks_view', 'task_transition': 'tasks_update', 'resolve_delivery': 'tasks_resolve_delivery',
         'task_handover': 'tasks_transfer', 'accept_task_handover': 'tasks_accept_transfer',
-        'collect': 'payments_collect', 'refund': {'delivery_manager':'refunds_manage','branch_manager':'payments_collect'},
+        'collect': 'payments_collect', 'refund': {'delivery_manager':'refunds_manage','branch_manager':'payments_collect','admin':'accounting_review'},
         'get_payment_terminal': 'driver_terminal_view', 'set_payment_terminal': 'driver_terminal',
         'custody_transfer': 'custody_transfer', 'custody_list': 'custody_view', 'confirm_custody': 'custody_transfer',
         'simple_driver_close': {'driver': 'shifts_close', 'delivery_manager': 'shifts_delegate_close'},
@@ -172,7 +186,7 @@ ROUTES = {
         'accept_manager_handover': 'shifts_handover', 'closure_draft': 'shifts_view',
         'save_closure_draft': 'shifts_close', 'set_shift_availability': 'drivers_availability',
     },
-    'orders': {'create_delivery_center_order': 'orders_create_customer', 'create_complimentary':'orders_create_customer', 'quote_complimentary':'orders_create_customer', 'list_orders': 'orders_view', 'get_order': 'orders_view',
+    'orders': {'create_delivery_center_order': 'orders_create_customer', 'quote_delivery_center_order': 'orders_create_customer', 'create_complimentary':'orders_create_customer', 'quote_complimentary':('orders_create_customer','complimentary_approve'), 'authorize_complimentary':'complimentary_approve', 'revoke_complimentary_authorization':'complimentary_approve', 'list_complimentary_authorizations':('orders_create_customer','complimentary_approve'), 'list_orders': 'orders_view', 'get_order': 'orders_view',
                'preparation': {'delivery_manager': 'orders_cancel', 'branch_manager': 'orders_prepare'}, 'operational_confirmation': 'orders_contact'},
     'reporting': {name: 'reports_view' for name in (
         'report_list', 'report_detail', 'print_report', 'download_pdf', 'download_csv',
@@ -211,6 +225,13 @@ ROUTES['branch_printing'].update({name:{'delivery_manager':'orders_print','branc
                                 for name in ('order_output_status','confirm_order_output')})
 
 
+ROUTES['financial_clarifications'] = {'listing':('support_manage','accounting_review'),'request_clarification':'accounting_review','decide':('support_manage','accounting_review')}
+ROUTES['driver_order_review'] = {'listing': 'orders_view'}
+ROUTES['aggregate_manager_closure'] = {'return_declaration':'shifts_close','detail':('shifts_view','accounting_review'),'submit':'shifts_close','receive':'custody_transfer','allocate':'accounting_review','inbox':('shifts_view','accounting_review')}
+ROUTES['aggregate_driver_closure'] = {'detail':('shifts_view','accounting_review'),'submit':{'driver':'shifts_close','delivery_manager':'shifts_delegate_close'},'receive':'shifts_delegate_close','return_declaration':'shifts_approve','allocate':'accounting_review','inbox':'accounting_review'}
+ROUTES['driver_duty'] = {'listing':'driver_duty_manage','configure':'driver_duty_manage'}
+ROUTES['driver_support'] = {'list_requests': ('shifts_view','driver_support_approve'), 'request_support': 'shifts_handover', 'accept_support': 'driver_support_approve', 'resolve_request': ('shifts_handover','driver_support_approve')}
+
 def required_for(endpoint, role, *, user=None):
     if role in {'owner', 'customer'} or endpoint is None:
         return None
@@ -222,3 +243,4 @@ def required_for(endpoint, role, *, user=None):
         return ('shifts_close', 'shifts_delegate_close')
     value = ROUTES.get(module, {}).get(endpoint.__name__)
     return value.get(role) if isinstance(value, dict) else value
+

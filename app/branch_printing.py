@@ -280,7 +280,7 @@ def receipt(order, branch, kind, language, translations=None):
     add(('مركز التوصيل' if ar else 'Delivery Center') if kind!='preparation' and snap.get('order_source')=='delivery_center' else branch['name'],False,True)
     local=order['created_at'].astimezone(ZoneInfo('Asia/Riyadh'))
     add(('التاريخ: ' if ar else 'Date: ')+local.strftime('%Y-%m-%d'),False,True)
-    add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M:%S' if fiscal else '%H:%M')+(' — الرياض' if ar else ' — Riyadh'),False,True)
+    add(('الوقت: ' if ar else 'Time: ')+local.strftime('%H:%M:%S' if fiscal else '%H:%M'),False,True)
     if order.get('service') == 'car':
         car = (order.get('customer') or {}).get('car') or {}
         for key, arabic, english in [('model', 'السيارة', 'Vehicle'),

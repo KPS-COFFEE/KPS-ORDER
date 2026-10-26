@@ -46,7 +46,12 @@ def test_photo_taps_quantity_required_choices_and_neighborhood(static_customer, 
             route.fulfill(status=200, content_type='application/json', body=json.dumps(responses[path]))
         context.route('**/api/**', api)
         page.goto(static_customer + '/?brand_id=' + brand, wait_until='networkidle')
+        if brand == 'enbishan':
+            page.locator('input[name=service][value=pickup]').check()
+            page.locator('#enbishan-location-button').click()
         page.locator('#branch-select').select_option('synthetic-branch')
+        if brand == 'enbishan':
+            page.locator('#enbishan-location-done').click()
         plain_card = page.locator('[data-product-id=synthetic-plain]')
         expect(plain_card.locator('.product-add-button')).to_be_enabled()
         # Dispatch a burst on the same real image button: re-rendering cannot lose taps.
@@ -61,7 +66,10 @@ def test_photo_taps_quantity_required_choices_and_neighborhood(static_customer, 
         page.locator('#product-add').click()
         expect(page.locator('#product-error')).to_be_visible()
         expect(option_card.locator('.product-card-quantity')).to_have_text('٠' if lang == 'ar' else '0')
-        page.locator('#product-options select').select_option('A')
+        if brand == 'enbishan':
+            page.locator('#product-options').get_by_role('button', name='خيار أ' if lang == 'ar' else 'Option A', exact=True).click()
+        else:
+            page.locator('#product-options select').select_option('A')
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
         expect(option_card.locator('.product-card-quantity')).to_have_text('١' if lang == 'ar' else '1')

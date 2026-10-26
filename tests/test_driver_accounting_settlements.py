@@ -79,7 +79,9 @@ def test_approval_rejects_invalid_money(amount):
 
 
 def make_report(snapshot=None):
-    opened = datetime.now(TZ)-timedelta(days=3)
+    # Use a daytime fixture so calendar-day assertions do not depend on CI running
+    # before the 04:00 operational-day boundary. Boundary behavior has dedicated tests.
+    opened = (datetime.now(TZ)-timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
     snapshot = snapshot or {'shift': {'user_id': 'ops-driver', 'submission': {'terminal_total_halalas': 5000, 'handover_halalas': 10000}}, 'summary': {}}
     with db.tx() as c:
         c.execute("""INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at)
@@ -158,7 +160,7 @@ def test_scope_permissions_and_receipt_requires_balance(ops):
 
 
 @pytest.mark.postgres
-def test_manager_correction_is_scoped_reasoned_and_preserves_driver_original(ops):
+def test_manager_cannot_overwrite_driver_original_and_can_return_before_receipt(ops):
     actor, post, _, _ = ops
     accountant()
     original = {'counted_halalas': 10000, 'handover_halalas': 10000, 'retained_halalas': 0,
@@ -175,15 +177,17 @@ def test_manager_correction_is_scoped_reasoned_and_preserves_driver_original(ops
     post('manager',url,{**body,'reason':' '},status=422)
     post('driver',url,body,status=403)
     post('accountant',url,body,status=403)
-    result=post('manager',url,body,key='manager-correction')
-    assert result['submission']['driver_original_submission'] == original
-    assert result['submission']['handover_halalas'] == 9900
-    assert post('manager',url,body,key='manager-correction') == result
+    post('manager',url,body,key='manager-correction',status=403)
+    post('manager',url,body,key='manager-correction',status=403)
     with db.tx() as c:
-        assert c.execute("SELECT amount_halalas FROM custody_transfers WHERE id='review-transfer'").fetchone()['amount_halalas']==9900
-        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='shift.manager_amount_review'").fetchone()['n']==1
-        c.execute("UPDATE custody_transfers SET status='confirmed' WHERE id='review-transfer'")
-    post('manager',url,{**body,'counted_halalas':9800},status=409)
+        assert c.execute("SELECT submission FROM shifts WHERE id='review-driver'").fetchone()['submission']==original
+        assert c.execute("SELECT amount_halalas FROM custody_transfers WHERE id='review-transfer'").fetchone()['amount_halalas']==10000
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='shift.manager_amount_review'").fetchone()['n']==0
+    post('manager','/api/shifts/review-driver/return',{'reason':'Driver must recount before actual receipt'})
+    with db.tx() as c:
+        assert c.execute("SELECT status FROM shifts WHERE id='review-driver'").fetchone()['status']=='closing'
+        assert c.execute("SELECT status FROM custody_transfers WHERE id='review-transfer'").fetchone()['status']=='rejected'
+
 
 
 @pytest.mark.postgres

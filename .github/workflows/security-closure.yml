@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verification-scope:
-    if: (github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020' || github.ref == 'refs/heads/agent/customer-open-menu-map-20261021' || github.ref == 'refs/heads/agent/dispatch-personal-layout-20261021' || github.ref == 'refs/heads/agent/owner-accountant-shift-permissions-20261021' || github.ref == 'refs/heads/agent/optional-customer-address-20261021' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/enbishan-single-size-order-20261024' || github.head_ref == 'agent/central-dispatch-counts-20261024' || github.head_ref == 'agent/startup-preservation-deadlock-20261024' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023')
+    if: (github.head_ref == 'agent/physical-receipt-unblock-20261026' || github.head_ref == 'agent/driver-order-review-20261026' || github.head_ref == 'agent/amend-guidance-layout-20261025' || github.head_ref == 'agent/enbishan-driver-pickup-20261025' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020' || github.ref == 'refs/heads/agent/customer-open-menu-map-20261021' || github.ref == 'refs/heads/agent/dispatch-personal-layout-20261021' || github.ref == 'refs/heads/agent/owner-accountant-shift-permissions-20261021' || github.ref == 'refs/heads/agent/optional-customer-address-20261021' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024' || github.head_ref == 'agent/enbishan-single-size-order-20261024' || github.head_ref == 'agent/central-dispatch-counts-20261024' || github.head_ref == 'agent/startup-preservation-deadlock-20261024' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023' || github.head_ref == 'agent/unified-financial-reconciliation-20261024' || github.head_ref == 'agent/enbishan-customer-journey-guest-20261024' || github.head_ref == 'agent/enbishan-approved-journey-20261025' || github.head_ref == 'agent/enbishan-menu-clarity-20261025' || github.head_ref == 'agent/morning-operational-day-20261025' || github.head_ref == 'agent/receipt-time-label-20261025' || github.head_ref == 'agent/enbishan-owner-sms-scope-fix-20261024' || github.head_ref == 'agent/staff-branch-sms-20261025' || github.head_ref == 'agent/customer-message-routing-20261025' || github.head_ref == 'agent/enbishan-menu-names-20261025' || github.head_ref == 'agent/enbishan-record-prior-20261025' || github.head_ref == 'agent/morning-driver-shift-fix-20261025' || github.head_ref == 'agent/prior-driver-correction-20261025' || github.head_ref == 'agent/closed-manager-prior-20261025' || github.head_ref == 'agent/saudi-admin-access-20261025' || github.head_ref == 'agent/enbishan-signature-link-preview-20261025' || github.head_ref == 'agent/delivery-workflow-controls-20261025' || github.ref == 'refs/heads/agent/delivery-workflow-controls-20261025')
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
@@ -30,7 +30,7 @@ jobs:
         \ then\n  echo 'final_three=true' >> \"$GITHUB_OUTPUT\"\nelse\n  echo 'final_three=false' >> \"$GITHUB_OUTPUT\"\
         \nfi\n"
   host-security-and-browser:
-    if: (github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020' || github.ref == 'refs/heads/agent/customer-open-menu-map-20261021' || github.ref == 'refs/heads/agent/dispatch-personal-layout-20261021' || github.ref == 'refs/heads/agent/owner-accountant-shift-permissions-20261021' || github.ref == 'refs/heads/agent/optional-customer-address-20261021' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/enbishan-single-size-order-20261024' || github.head_ref == 'agent/central-dispatch-counts-20261024' || github.head_ref == 'agent/startup-preservation-deadlock-20261024' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023') && needs.verification-scope.outputs.final_three
+    if: (github.head_ref == 'agent/physical-receipt-unblock-20261026' || github.head_ref == 'agent/driver-order-review-20261026' || github.head_ref == 'agent/amend-guidance-layout-20261025' || github.head_ref == 'agent/enbishan-driver-pickup-20261025' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020' || github.ref == 'refs/heads/agent/customer-open-menu-map-20261021' || github.ref == 'refs/heads/agent/dispatch-personal-layout-20261021' || github.ref == 'refs/heads/agent/owner-accountant-shift-permissions-20261021' || github.ref == 'refs/heads/agent/optional-customer-address-20261021' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024' || github.head_ref == 'agent/enbishan-single-size-order-20261024' || github.head_ref == 'agent/central-dispatch-counts-20261024' || github.head_ref == 'agent/startup-preservation-deadlock-20261024' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023' || github.head_ref == 'agent/unified-financial-reconciliation-20261024' || github.head_ref == 'agent/enbishan-customer-journey-guest-20261024' || github.head_ref == 'agent/enbishan-approved-journey-20261025' || github.head_ref == 'agent/enbishan-menu-clarity-20261025' || github.head_ref == 'agent/morning-operational-day-20261025' || github.head_ref == 'agent/receipt-time-label-20261025' || github.head_ref == 'agent/enbishan-owner-sms-scope-fix-20261024' || github.head_ref == 'agent/staff-branch-sms-20261025' || github.head_ref == 'agent/customer-message-routing-20261025' || github.head_ref == 'agent/enbishan-menu-names-20261025' || github.head_ref == 'agent/enbishan-record-prior-20261025' || github.head_ref == 'agent/morning-driver-shift-fix-20261025' || github.head_ref == 'agent/prior-driver-correction-20261025' || github.head_ref == 'agent/closed-manager-prior-20261025' || github.head_ref == 'agent/saudi-admin-access-20261025' || github.head_ref == 'agent/enbishan-signature-link-preview-20261025' || github.head_ref == 'agent/delivery-workflow-controls-20261025' || github.ref == 'refs/heads/agent/delivery-workflow-controls-20261025') && needs.verification-scope.outputs.final_three
       != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -41,15 +41,15 @@ jobs:
       postgres:
         image: postgres:18.6
         env:
-          POSTGRES_DB: test_security_closure
+          POSTGRES_DB: test_enbishan_security_closure
           POSTGRES_USER: security_test
           POSTGRES_PASSWORD: isolated-synthetic-only
         ports:
         - 5432:5432
-        options: --health-cmd "pg_isready -U security_test -d test_security_closure" --health-interval 5s --health-timeout
+        options: --health-cmd "pg_isready -U security_test -d test_enbishan_security_closure" --health-interval 5s --health-timeout
           5s --health-retries 12
     env:
-      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_security_closure
+      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_security_closure
       APP_ENV: testing
       OTP_PROVIDER: disabled
       EMAIL_PROVIDER: disabled
@@ -64,6 +64,7 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
         persist-credentials: false
+        fetch-depth: 0
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
@@ -95,21 +96,37 @@ jobs:
         | tee evidence/owner-probe.log
 
         '
+    - name: Verify driver order review scope and interface first
+      env:
+        PYTHONPATH: ci-safety:.
+      run: |
+        python -m pytest -q tests/test_driver_order_review.py --junitxml=evidence/driver-order-review.xml
+        node tests/test_driver_order_review_ui.cjs
+    - name: Completed driver attribution correction regression first
+      env:
+        PYTHONPATH: ci-safety:.
+      run: python -m pytest -q tests/test_driver_attribution_correction.py --junitxml=evidence/driver-attribution.xml
     - name: Focused tests on PostgreSQL18
       env:
         PYTHONPATH: ci-safety:.
-      run: 'mapfile -t suites < <(sed ''/^[[:space:]]*#/d;/^[[:space:]]*$/d'' docs/final-operational-tests.txt)
+      run: 'mapfile -t suites < <(sed ''/^[[:space:]]*#/d;/^[[:space:]]*$/d'' $(python tools/receipt_hotfix_scope.py --output evidence/receipt-hotfix-scope.json))
 
         python -m pytest -q "${suites[@]}" --junitxml=evidence/security-focused.xml | tee evidence/security-focused.log
 
         node tests/test_mandatory_sms_ui.cjs
 
+        node --test tests/test_staff_geo_ui.cjs
+
         node tests/test_driver_collection_ui.cjs
+
+        node --test tests/test_driver_attribution_ui.cjs
 
         node tests/test_driver_simple_ui.cjs
 
 
         node tests/test_driver_trip_ui.cjs
+
+        node tests/test_ops_error_messages.cjs
 
         '
     - name: Two real browser policy cases
@@ -158,7 +175,7 @@ jobs:
         role:
         - candidate
         - rollback
-    if: (github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020' || github.ref == 'refs/heads/agent/customer-open-menu-map-20261021' || github.ref == 'refs/heads/agent/dispatch-personal-layout-20261021' || github.ref == 'refs/heads/agent/owner-accountant-shift-permissions-20261021' || github.ref == 'refs/heads/agent/optional-customer-address-20261021' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/enbishan-single-size-order-20261024' || github.head_ref == 'agent/central-dispatch-counts-20261024' || github.head_ref == 'agent/startup-preservation-deadlock-20261024' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023') && needs.verification-scope.outputs.final_three
+    if: (github.head_ref == 'agent/physical-receipt-unblock-20261026' || github.head_ref == 'agent/driver-order-review-20261026' || github.head_ref == 'agent/amend-guidance-layout-20261025' || github.head_ref == 'agent/enbishan-driver-pickup-20261025' || github.ref == 'refs/heads/agent/enbishan-isolated-development-20261017' || github.ref == 'refs/heads/agent/kps-order-security-closure-20261018' || github.ref == 'refs/heads/agent/print-alert-actions-20261019' || github.ref == 'refs/heads/agent/enbishan-manual-closure-20261019' || github.ref == 'refs/heads/agent/ops-actionable-alerts-20261020' || github.ref == 'refs/heads/agent/staff-operations-room-20261020' || github.ref == 'refs/heads/agent/customer-journey-stage-policy-20261020' || github.ref == 'refs/heads/agent/customer-open-menu-map-20261021' || github.ref == 'refs/heads/agent/dispatch-personal-layout-20261021' || github.ref == 'refs/heads/agent/owner-accountant-shift-permissions-20261021' || github.ref == 'refs/heads/agent/optional-customer-address-20261021' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/customer-map-autosave-20261022' || github.head_ref == 'agent/optional-customer-address-20261021' || github.head_ref == 'agent/accountant-driver-settlement-20261021' || github.head_ref == 'agent/accounting-driver-statements-20261022' || github.head_ref == 'agent/accounting-deadlines-20261022' || github.head_ref == 'agent/owner-test-void-20261022' || github.head_ref == 'agent/morning-manager-ahmed-trial-20261021' || github.head_ref == 'agent/morning-night-trial-20261021' || github.head_ref == 'agent/morning-auto-dispatch-20261022' || github.head_ref == 'agent/morning-live-bells-20261022' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/gift-launch-phone-20261022' || github.head_ref == 'agent/dispatch-order-source-counts-20261021' || github.head_ref == 'agent/phone-paste-edit-fix-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/task-recovery-screen-20261023' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024' || github.head_ref == 'agent/enbishan-single-size-order-20261024' || github.head_ref == 'agent/central-dispatch-counts-20261024' || github.head_ref == 'agent/startup-preservation-deadlock-20261024' || github.head_ref == 'agent/zero-value-accounting-20261023' || github.head_ref == 'agent/driver-settlement-net-20261023' || github.head_ref == 'agent/unified-financial-reconciliation-20261024' || github.head_ref == 'agent/enbishan-customer-journey-guest-20261024' || github.head_ref == 'agent/enbishan-approved-journey-20261025' || github.head_ref == 'agent/enbishan-menu-clarity-20261025' || github.head_ref == 'agent/morning-operational-day-20261025' || github.head_ref == 'agent/receipt-time-label-20261025' || github.head_ref == 'agent/enbishan-owner-sms-scope-fix-20261024' || github.head_ref == 'agent/staff-branch-sms-20261025' || github.head_ref == 'agent/customer-message-routing-20261025' || github.head_ref == 'agent/enbishan-menu-names-20261025' || github.head_ref == 'agent/enbishan-record-prior-20261025' || github.head_ref == 'agent/morning-driver-shift-fix-20261025' || github.head_ref == 'agent/prior-driver-correction-20261025' || github.head_ref == 'agent/closed-manager-prior-20261025' || github.head_ref == 'agent/saudi-admin-access-20261025' || github.head_ref == 'agent/enbishan-signature-link-preview-20261025' || github.head_ref == 'agent/delivery-workflow-controls-20261025' || github.ref == 'refs/heads/agent/delivery-workflow-controls-20261025') && needs.verification-scope.outputs.final_three
       != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -169,15 +186,15 @@ jobs:
       postgres:
         image: postgres:18.6
         env:
-          POSTGRES_DB: test_security_closure
+          POSTGRES_DB: test_enbishan_security_closure
           POSTGRES_USER: security_test
           POSTGRES_PASSWORD: isolated-synthetic-only
         ports:
         - 5432:5432
-        options: --health-cmd "pg_isready -U security_test -d test_security_closure" --health-interval 5s --health-timeout
+        options: --health-cmd "pg_isready -U security_test -d test_enbishan_security_closure" --health-interval 5s --health-timeout
           5s --health-retries 12
     env:
-      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_security_closure
+      TEST_DATABASE_URL: postgresql://security_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_security_closure
       APP_ENV: testing
       OTP_PROVIDER: disabled
       EMAIL_PROVIDER: disabled
@@ -192,6 +209,7 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
         persist-credentials: false
+        fetch-depth: 0
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
@@ -242,7 +260,7 @@ jobs:
     - name: Focused suites inside the same immutable image
       run: "python -m pip install --require-hashes --only-binary=:all: --target \"$RUNNER_TEMP/security-test-tools\"\
         \ -r requirements-security-tests.lock\nchmod 0777 evidence\nmapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d'\
-        \ docs/final-operational-tests.txt)\ndocker run --rm --network host --entrypoint python \\\n  --mount \"\
+        \ $(python tools/receipt_hotfix_scope.py --output evidence/receipt-hotfix-scope.json))\ndocker run --rm --network host --entrypoint python \\\n  --mount \"\
         type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly\" \\\n  --mount \"type=bind,src=$RUNNER_TEMP/security-test-tools,dst=/security-test-tools,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tests,dst=/app/tests,readonly\" \\\n  --mount \"type=bind,src=$PWD/docs,dst=/app/docs,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/Dockerfile,dst=/app/Dockerfile,readonly\" \\\n  --mount \"type=bind,src=$PWD/.dockerignore,dst=/app/.dockerignore,readonly\"\
@@ -466,6 +484,7 @@ jobs:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
+    - agent/delivery-workflow-controls-20261025
     - agent/kps-order-security-closure-20261018
     - agent/enbishan-isolated-development-20261017
     - agent/print-alert-actions-20261019
@@ -478,3 +497,4 @@ jobs:
     - agent/owner-accountant-shift-permissions-20261021
     - agent/optional-customer-address-20261021
   workflow_dispatch: null
+

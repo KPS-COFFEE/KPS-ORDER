@@ -36,3 +36,4 @@ now=305000;ctx.tickAlertSounds();assert.equal(tones.length,beforeNative);
 ctx.syncAlertChannel('messages',['native-chat']);now=310000;ctx.tickAlertSounds();assert.equal(tones.length,beforeNative+2);
 ctx.navigator.userAgent='Android browser';ctx.tickAlertSounds();assert.equal(tones.length,beforeNative+4);
 console.log('PASS: distinct bells, owner-configured timing, independent stop, session safety, no duplicate native driver bell, browser and message tones retained.');
+

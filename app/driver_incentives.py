@@ -11,7 +11,7 @@ from . import auth, db, service_hours
 from .operations import fail, safe, mutate, shift_access
 
 router=APIRouter(prefix='/api/driver-incentives',tags=['driver-incentives'])
-DAY="coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date)"
+DAY="coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)"
 SOURCE="""SELECT o.id order_id,coalesce(o.snapshot->>'order_reference',o.order_no::text) order_reference,
  o.preparation_status,o.payment_status,o.brand_id,o.branch_id,
  t.id task_id,t.status task_status,t.driver_id,t.shift_id,
@@ -21,7 +21,7 @@ SOURCE="""SELECT o.id order_id,coalesce(o.snapshot->>'order_reference',o.order_n
  d.task_id decision_task_id,d.responsibility,d.reason,d.incident_key saved_incident_key,
  d.version decision_version,d.decided_by,d.decided_at
  FROM orders o
- JOIN LATERAL (SELECT * FROM driver_tasks t WHERE t.order_id=o.id
+ JOIN LATERAL (SELECT * FROM effective_driver_tasks t WHERE t.order_id=o.id
    AND t.status NOT IN ('transferred','reassigned')
    ORDER BY (t.status='delivered') DESC,t.created_at DESC,t.id DESC LIMIT 1) t ON true
  JOIN shifts s ON s.id=t.shift_id AND s.brand_id=o.brand_id

@@ -52,9 +52,9 @@ def test_fresh_morning_manager_boundaries(monkeypatch, stamp, allowed):
         return
     day, snapshot = operations.delivery_shift_window(conn, 'kps', [branch], manager_preparation=True,
                                                      delivery_period='morning', principal=principal)
-    assert day == service_hours.delivery_operational_date(now)
+    assert day == now.date()
     assert snapshot['period'] == 'morning'
-    assert snapshot['operational_day_start'] == '16:00'
+    assert snapshot['operational_day_start'] == '04:00'
     lane = snapshot['branches']['branch2']
     expected = '12:30' if now.weekday() == 4 else '04:00'
     assert datetime.fromisoformat(lane['window_start']).strftime('%H:%M') == expected
@@ -107,12 +107,12 @@ def test_early_preparation_retains_authorization_and_enablement(monkeypatch, cha
 
 
 @pytest.mark.parametrize('stamp,manager_open,customer_open,opdate', [
-    ('2026-10-22T15:44:59', False, False, '2026-10-21'),
+    ('2026-10-22T15:44:59', False, False, '2026-10-22'),
     ('2026-10-22T15:45:00', True, False, '2026-10-22'),
     ('2026-10-23T15:45:00', True, False, '2026-10-23'),
     ('2026-10-23T16:00:00', True, True, '2026-10-23'),
     ('2026-10-24T00:00:00', True, True, '2026-10-23'),
-    ('2026-10-24T04:00:00', False, False, '2026-10-23'),
+    ('2026-10-24T04:00:00', False, False, '2026-10-24'),
 ])
 def test_existing_evening_preparation_and_overnight_date_are_unchanged(stamp, manager_open, customer_open, opdate):
     now = service_hours.local_time(datetime.fromisoformat(stamp))

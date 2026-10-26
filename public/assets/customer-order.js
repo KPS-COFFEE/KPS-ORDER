@@ -3,6 +3,8 @@
   'use strict';
   window.KPSCustomerOrder={open:async function(ctx){
     const {api,mutation,tr,esc,money,modal,closeModal,user,branches,onCreated,complimentary=false}=ctx;
+    const canApprove=user.role==='owner'||(user.effective_permissions||[]).includes('complimentary_approve');
+    if(complimentary&&!canApprove)return window.KPSCustomerOrder.approved(ctx);
     const morning=Boolean(user.delivery_context),groupedMenu=['kps','enbishan'].includes(user.brand_id);
     let activeMenuCategory=null;
     let menuCategories=[['sweets','الحلا','Desserts'],['cold','المشروبات الباردة','Cold drinks'],['coffee','القهوة بأنواعها','Coffee'],['boxes','البوكسات','Boxes'],['thermal','المج الحراري','Thermal mugs'],['extras','الإضافات','Extras']];
@@ -35,9 +37,9 @@
       if(/مشروبات|منعشات|beverage|drink|ماء|water|موهيتو|mojito|ماتشا|matcha|سموذي|smoothie|كركديه|شوكليت|chocolate|ايس\s*تي|ice[d]?\s*tea/.test(both))return 'cold';
       return 'extras';
     }
-    const current=await api('/api/shifts/current');
-    const covered=new Set((current.shifts||[]).filter(s=>s.user_id===user.id&&s.kind==='manager'&&s.status==='open').flatMap(s=>s.branch_ids||[]));
-    const allowed=branches.filter(b=>covered.has(b.id)&&(!morning||user.delivery_context.branch_ids.includes(b.id)));
+    const current=(ctx.priorDelivery||complimentary&&canApprove)?{shifts:[]}:await api('/api/shifts/current');
+    const covered=new Set(ctx.priorDelivery?ctx.priorBranchIds:(current.shifts||[]).filter(s=>s.user_id===user.id&&s.kind==='manager'&&s.status==='open').flatMap(s=>s.branch_ids||[]));
+    const allowed=branches.filter(b=>(complimentary&&canApprove&&(user.role==='owner'||(user.branch_ids||[]).includes(b.id))||covered.has(b.id))&&(!morning||user.delivery_context.branch_ids.includes(b.id)));
     if(!allowed.length)throw new Error(tr('افتح شفت مدير توصيل أولًا.','Open your delivery manager shift first.'));
     let products=[],cart=[],review=null,sequence=0,lookupSequence=0,lookupTimer,selectedContactPhone=null;
     const input=(label,name,type='text',extra='')=>`<label>${esc(label)}<input name="${name}" type="${type}" ${extra}></label>`;
@@ -50,7 +52,7 @@
       ${input(tr('الحي','Neighborhood'),'neighborhood','text','required maxlength="120"')}${input(tr('العنوان ووصف المدخل','Address and entrance'),'address','text','required maxlength="500"')}
       <label class="full">${esc(tr('رابط دبوس جوجل ماب — أو أدخل الإحداثيات أدناه','Google Maps pin link — or enter coordinates below'))}<input name="map_url" type="url" dir="ltr" maxlength="2000"></label>
       ${input(tr('خط العرض','Latitude'),'lat','number','step="any" min="-90" max="90" dir="ltr"')}${input(tr('خط الطول','Longitude'),'lng','number','step="any" min="-180" max="180" dir="ltr"')}
-      <fieldset class="full"><legend>${esc(tr('الأصناف','Items'))}</legend><p>${esc(tr('اضغط الصورة لإضافة حبة. أكمل النكهة أو اللون أو المقاس المطلوب أولًا.','Tap the photo to add one. Choose any required flavor, color or size first.'))}</p><div id="staff-menu-categories" class="staff-menu-categories" aria-label="${esc(tr('أقسام المنيو','Menu categories'))}"${groupedMenu?'':' hidden'}></div><div id="staff-menu" class="staff-menu-grid${groupedMenu?' staff-menu-kps-grid':''}"></div><div class="form-columns"><label>${esc(tr('الصنف','Item'))}<select id="staff-product"></select></label>${input(tr('الكمية بنفس الخيارات','Quantity with these options'),'item_quantity','number','value="1" min="1" max="50" step="1"')}</div><div id="staff-options" class="form-columns" tabindex="-1"></div>
+      <fieldset class="full"><legend>${esc(tr('الأصناف','Items'))}</legend><p>${esc(tr('اضغط الصورة لإضافة حبة. أكمل النكهة أو اللون أو المقاس المطلوب أولًا.','Tap the photo to add one. Choose any required flavor, color or size first.'))}</p><div id="staff-menu-categories" class="staff-menu-categories" aria-label="${esc(tr('أقسام المنيو','Menu categories'))}"${groupedMenu?'':' hidden'}></div><div id="staff-menu" class="staff-menu-grid${groupedMenu?' staff-menu-kps-grid':''}"></div><div class="form-columns"><label${groupedMenu?' hidden':''}>${esc(tr('الصنف','Item'))}<select id="staff-product"></select></label>${input(tr('الكمية بنفس الخيارات','Quantity with these options'),'item_quantity','number','value="1" min="1" max="50" step="1"')}</div><p id="staff-selected-product" class="full staff-selected-product" aria-live="polite"></p><div id="staff-options" class="form-columns" tabindex="-1"></div>
       ${input(tr('ملاحظة الصنف','Item note'),'item_note','text','maxlength="300"')}<button type="button" id="staff-add" class="quiet">${esc(tr('إضافة للطلب','Add to order'))}</button><div id="staff-cart" aria-live="polite"></div></fieldset>
       <label class="full">${esc(tr('ملاحظات الطلب','Order notes'))}<textarea name="notes" maxlength="1000"></textarea></label>
       <div id="staff-review" class="full" aria-live="polite"></div><p class="form-error full" role="alert"></p><button type="submit" class="full">${esc(tr('مراجعة الإجمالي','Review total'))}</button></form>`,async(fd,form)=>{
@@ -72,30 +74,36 @@
       const phone=normalizedPhone(fd.get('phone'));
       if(!phone)throw new Error(tr('أدخل رقم جوال سعودي كاملًا.','Enter a complete Saudi mobile number.'));
       const body={brand_id:user.brand_id,branch_id:fd.get('branch_id'),service:'delivery',payment_method:fd.get('payment_method'),customer:{name:fd.get('name').trim()||'عميل',phone,neighborhood:fd.get('neighborhood'),address:fd.get('address'),location},notes:fd.get('notes'),items:cart.map(({label,...item})=>item)};
-      if(complimentary){body.kind=fd.get('kind');body.reason=String(fd.get('notes')||'').trim();body.payment_method='cash';if(!body.reason)throw new Error(tr('اكتب السبب باختصار.','Enter a short reason.'));}
+      if(complimentary){body.kind=fd.get('kind');body.reason=String(fd.get('reason')||'').trim();body.payment_method='cash';if(['compensation','completion'].includes(body.kind)){body.original_order_id=String(fd.get('original_order_id')||'').trim();body.original_invoice_number=String(fd.get('original_invoice_number')||'').trim();if(!body.original_order_id||!body.original_invoice_number)throw new Error(tr('أدخل معرف الطلب الأصلي ورقم فاتورته.','Enter the original order ID and invoice number.'));}if(!body.reason)throw new Error(tr('اكتب السبب باختصار.','Enter a short reason.'));}
       const key=JSON.stringify(body);
       if(!review||review.key!==key){
-        const {quote}=await mutation(complimentary?'/api/orders/complimentary/quote':'/api/quote',body);
+        const {quote}=await mutation(complimentary?'/api/orders/complimentary/quote':'/api/orders/delivery-center/quote',body);
         review={key,total:quote.total_halalas};
         form.querySelector('#staff-review').innerHTML=`<div class="notice"><p>${esc(tr('الأصناف','Subtotal'))}: <b>${esc(money(quote.subtotal_halalas))}</b></p><p>${esc(tr('التوصيل','Delivery'))}: <b>${esc(money(quote.delivery_fee_halalas))}</b></p><p>${esc(tr('الإجمالي','Total'))}: <b>${esc(money(quote.total_halalas))}</b></p><p>${esc(tr('راجع البيانات مع العميل ثم أكد الطلب.','Review with the customer, then confirm.'))}</p></div>`;
         if(complimentary){const kind=form.querySelector('[name=kind]');form.querySelector('#staff-review').textContent=kind.options[kind.selectedIndex].textContent;}
-        form.querySelector('[type=submit]').textContent=complimentary?tr('إرسال للفرع','Send to branch'):tr('تأكيد وإنشاء الطلب','Confirm and create order');return;
+        form.querySelector('[type=submit]').textContent=complimentary?tr('اعتماد أمر التنفيذ','Authorize fulfillment'):tr('تأكيد وإنشاء الطلب','Confirm and create order');return;
       }
-      const result=await mutation(complimentary?'/api/orders/complimentary':'/api/orders/delivery-center',{...body,expected_total_halalas:review.total});
-      closeModal();await onCreated(result.order.id);
+      const result=await mutation(complimentary?'/api/orders/complimentary/authorizations':'/api/orders/delivery-center',{...body,expected_total_halalas:review.total});
+      closeModal();if(complimentary){await ctx.onAuthorized?.(result.authorization);return;}await onCreated(result.order.id);
     });
     const form=document.querySelector('#staff-order-form'),select=form.querySelector('#staff-product'),options=form.querySelector('#staff-options'),add=form.querySelector('#staff-add');
+    if(ctx.priorDelivery){
+      form.querySelector('p.notice').textContent=tr('طلب عنبيشن منفذ سابقًا. أضف الأصناف كما في المرجع الأصلي؛ الحفظ يثبت التسليم والتحصيل السابق ولا يرسل طلب تجهيز جديدًا.','Previously fulfilled Enbishan order. Enter the original items; saving records prior delivery and collection without a new preparation ticket.');
+      form.elements.payment_method.closest('label').hidden=true;
+    }
     if(morning){
       form.querySelector('p.notice').textContent=tr('طلب واتساب — صباحي حفر الباطن، تجهيز فرع 2. يصل للمحضّر كطلب جديد بانتظار القبول. أدخل بيانات العميل وموقعه كما أرسلها؛ الجوال غير موثق بهذه العملية.','WhatsApp order — Hafar morning, prepared at Branch 2. It reaches the preparer as a new order awaiting acceptance. Enter the customer details and location as provided; this does not verify mobile ownership.');
       form.elements.branch_id.disabled=true;
       form.addEventListener('formdata',event=>event.formData.set('branch_id',allowed[0].id));
     }
     if(complimentary){
-      form.querySelector('p.notice').textContent=tr('توصيل ضيافة أو تعويض. اختر الأصناف وأدخل المستلم وموقعه والسبب.','Hospitality or compensation delivery. Select items, recipient, location and reason.');
+      form.querySelector('p.notice').textContent=tr('أمر تنفيذ معتمد من الإدارة. ينفذه مدير التوصيل مرة واحدة؛ لا مبالغ على العميل أو السائق. السبب ورابط الفاتورة للإدارة.','Authorize one fulfillment for the delivery manager. No customer or driver collection; reason and original invoice stay internal.');
       const payment=form.elements.payment_method;payment.value='cash';payment.closest('label').hidden=true;
       const label=document.createElement('label');label.textContent=tr('النوع','Type');const kinds=document.createElement('select');kinds.name='kind';
-      for(const [value,ar,en] of [['hospitality','ضيافة','Hospitality'],['advertising','إعلان','Advertising'],['compensation','تعويض','Compensation']]){const option=document.createElement('option');option.value=value;option.textContent=tr(ar,en);kinds.append(option);}label.append(kinds);payment.closest('label').after(label);
-      form.elements.notes.required=true;form.elements.notes.placeholder=tr('السبب، مثل منتج تالف أو خطأ بالطلب','Reason, e.g. damaged product or order error');
+      for(const [value,ar,en] of [['hospitality','ضيافة','Hospitality'],['advertising','ضيافة إعلانية','Advertising hospitality'],['compensation','تعويض','Compensation'],['completion','استكمال طلب','Order completion']]){const option=document.createElement('option');option.value=value;option.textContent=tr(ar,en);kinds.append(option);}label.append(kinds);payment.closest('label').after(label);
+      const original=document.createElement('div');original.className='full form-columns';original.innerHTML=input(tr('معرف الطلب الأصلي','Original order ID'),'original_order_id')+input(tr('رقم الفاتورة الأصلية','Original invoice number'),'original_invoice_number');label.after(original);const showOriginal=()=>{original.hidden=!['compensation','completion'].includes(kinds.value);for(const field of original.querySelectorAll('input'))field.required=!original.hidden;};kinds.addEventListener('change',showOriginal);showOriginal();
+      const approvals=document.createElement('button');approvals.type='button';approvals.className='quiet full';approvals.textContent=tr('الأوامر المعتمدة / إلغاء أمر غير منفذ','Pending approvals / revoke unused order');approvals.onclick=()=>window.KPSCustomerOrder.approved(ctx).catch(fail);form.prepend(approvals);
+      const reason=document.createElement('label');reason.className='full';reason.textContent=tr('سبب الأمر — للإدارة فقط ولا يطبع للعميل','Authorization reason — internal, never on customer receipt');const reasonInput=document.createElement('textarea');reasonInput.name='reason';reasonInput.required=true;reasonInput.maxLength=1000;reason.append(reasonInput);form.elements.notes.closest('label').before(reason);form.elements.notes.placeholder=tr('ملاحظة تجهيز للفرع أو العميل — اختياري','Preparation or customer note — optional');
     }
     const fail=e=>{form.querySelector('.form-error').textContent=e.message;};
     function invalidate(){review=null;form.querySelector('#staff-review').textContent='';form.querySelector('[type=submit]').textContent=tr('مراجعة الإجمالي','Review total');}
@@ -126,7 +134,7 @@
     });
     async function lookupCustomer(){const seq=++lookupSequence,phone=normalizedPhone(form.elements.phone.value);if(!phone){lookupBox.textContent=tr('أدخل رقم جوال سعودي كاملًا.','Enter a complete Saudi mobile number.');return;}lookupBox.textContent=tr('جارٍ البحث…','Searching…');try{const data=await api('/api/orders/customer-lookup?'+new URLSearchParams({phone,branch_id:form.elements.branch_id.value}));if(seq!==lookupSequence||!form.isConnected)return;const contacts=data.contacts||[];lookupBox.innerHTML=`<p>${esc(contacts.length?data.ambiguous?tr('توجد بيانات متعددة؛ اختر البيانات المناسبة بعد تأكيدها مع العميل. لا يتم دمج الحسابات.','Multiple records found. Confirm with the customer and choose the appropriate details. Accounts are not merged.'):tr('بيانات مسجلة — اختر العنوان بعد تأكيده مع العميل.','Saved details — confirm the address with the customer before selecting.'):tr('رقم جديد؛ تحفظ بيانات العميل عند تأكيد أول طلب.','New number. Customer details are saved when the first order is confirmed.'))}</p><p class="small-text">${esc(tr('الجوال غير موثق بهذه العملية.','This operation does not verify mobile ownership.'))}</p>`;contacts.forEach(contact=>{const addresses=contact.addresses?.length?contact.addresses:[contact];addresses.forEach(address=>{const item={...contact,...address};const button=document.createElement('button');button.type='button';button.className='quiet customer-address-choice';button.textContent=[item.name,item.phone,item.neighborhood,item.address,item.location?`${item.location.lat}, ${item.location.lng}`:''].filter(Boolean).join(' · ');button.addEventListener('click',()=>{if(normalizedPhone(form.elements.phone.value)!==phone)return;selectedContactPhone=phone;for(const key of ['name','address','neighborhood'])form.elements[key].value=item[key]||'';form.elements.lat.value=item.location?.lat??'';form.elements.lng.value=item.location?.lng??'';form.elements.map_url.value='';invalidate();lookupBox.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));});lookupBox.append(button);});});}catch(e){if(seq===lookupSequence)lookupBox.textContent=e.message;}}
     function clearSelectedContact(){if(!selectedContactPhone)return;selectedContactPhone=null;for(const key of ['name','address','neighborhood','lat','lng','map_url'])form.elements[key].value='';invalidate();}
-    if(!morning){
+    if(!morning&&user.role!=='admin'){
       form.elements.phone.addEventListener('input',()=>{if(selectedContactPhone&&normalizedPhone(form.elements.phone.value)!==selectedContactPhone)clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupBox.textContent=tr('أدخل الجوال كاملًا للبحث.','Enter the complete mobile to search.');lookupTimer=setTimeout(lookupCustomer,400);});
       form.elements.branch_id.addEventListener('change',()=>{clearSelectedContact();++lookupSequence;clearTimeout(lookupTimer);lookupCustomer();});
     }
@@ -146,7 +154,7 @@
         &&(/^(فردي|فردية|single)$/i.test(String(values[0].name||'').trim())
           ||/^single$/i.test(String(values[0].name_en||'').trim()));
     }
-    function drawOptions(){const p=products.find(p=>p.id===select.value);options.innerHTML=productGroups(p).map((g,i)=>fixedSingleSize(g)?`<input type="checkbox" hidden checked data-group="${i}" value="${esc(g.values[0].code||g.values[0].id)}">`:`<fieldset><legend>${esc(g.name)} · ${esc(tr('الاختيارات','Selections'))} ${g.min_select??(g.required===false?0:1)}–${g.max_select??1}</legend>${(g.values||[]).filter(v=>v.available!==false&&v.enabled!==false).map(v=>`<label><input type="checkbox" data-group="${i}" value="${esc(v.code||v.id)}">${esc(v.name)} ${Number(v.price_delta_halalas)?`(+${esc(money(v.price_delta_halalas))})`:''}</label>`).join('')}</fieldset>`).join('');add.disabled=!p;}
+    function drawOptions(){const p=products.find(p=>p.id===select.value);form.querySelector('#staff-selected-product').textContent=p?tr('خيارات وملاحظات: ','Options and notes: ')+p.name:'';options.innerHTML=productGroups(p).map((g,i)=>fixedSingleSize(g)?`<input type="checkbox" hidden checked data-group="${i}" value="${esc(g.values[0].code||g.values[0].id)}">`:`<fieldset><legend>${esc(g.name)} · ${esc(tr('الاختيارات','Selections'))} ${g.min_select??(g.required===false?0:1)}–${g.max_select??1}</legend>${(g.values||[]).filter(v=>v.available!==false&&v.enabled!==false).map(v=>`<label><input type="checkbox" data-group="${i}" value="${esc(v.code||v.id)}">${esc(v.name)} ${Number(v.price_delta_halalas)?`(+${esc(money(v.price_delta_halalas))})`:''}</label>`).join('')}</fieldset>`).join('');add.disabled=!p;}
     function photoUrl(value){try{const url=new URL(value||'',location.origin);return value&&(url.protocol==='https:'||url.origin===location.origin)?url.href:null;}catch{return null;}}
     function drawMenu(){
       let visibleProducts=products;
@@ -168,7 +176,7 @@
     function changeQuantity(item,delta){const next=item.quantity+delta;if(next>50)throw new Error(tr('الكمية القصوى لنفس الاختيارات 50.','Maximum quantity for the same options is 50.'));if(next<=0){cart.splice(cart.indexOf(item),1);return;}const choices=item.units[0].options;item.quantity=next;item.units=Array.from({length:next},()=>({options:structuredClone(choices)}));}
     function addSelected(quantity){const candidate=selectedItem(quantity),existing=cart.find(item=>sameVariant(item,candidate));if(existing)changeQuantity(existing,quantity);else{if(cart.length>=50)throw new Error(tr('وصلت للحد الأقصى للأصناف.','Maximum item rows reached.'));cart.push(candidate);}drawCart();form.querySelector('.form-error').textContent='';}
     add.addEventListener('click',()=>{try{addSelected(Number(form.elements.item_quantity.value));}catch(e){fail(e);}});
-    form.querySelector('#staff-menu').addEventListener('click',e=>{const button=e.target.closest('[data-menu-add],[data-menu-minus]');if(!button||select.disabled)return;try{const id=button.dataset.menuAdd||button.dataset.menuMinus;if(select.value!==id){select.value=id;form.elements.item_note.value='';drawOptions();}if(button.dataset.menuAdd)addSelected(1);else{const candidate=selectedItem(1),existing=cart.find(item=>sameVariant(item,candidate));if(existing){changeQuantity(existing,-1);drawCart();}}}catch(error){fail(error);}});
+    form.querySelector('#staff-menu').addEventListener('click',e=>{const button=e.target.closest('[data-menu-add],[data-menu-minus]');if(!button||select.disabled)return;try{const id=button.dataset.menuAdd||button.dataset.menuMinus;if(select.value!==id){select.value=id;form.elements.item_note.value='';drawOptions();}if(button.dataset.menuAdd)addSelected(1);else{const candidate=selectedItem(1),existing=cart.find(item=>sameVariant(item,candidate));if(existing){changeQuantity(existing,-1);drawCart();}}}catch(error){fail(error);options.scrollIntoView({block:'nearest'});options.focus({preventScroll:true});}});
     form.querySelector('#staff-cart').addEventListener('click',e=>{const b=e.target.closest('[data-remove],[data-cart-minus],[data-cart-plus]');if(!b)return;try{if(b.dataset.remove!==undefined)cart.splice(Number(b.dataset.remove),1);else{const index=Number(b.dataset.cartPlus??b.dataset.cartMinus),item=cart[index];if(item)changeQuantity(item,b.dataset.cartPlus!==undefined?1:-1);}drawCart();form.querySelector('.form-error').textContent='';}catch(error){fail(error);}});
     form.querySelector('#staff-menu-categories').addEventListener('click',event=>{
       const button=event.target.closest('[data-menu-category]');if(!groupedMenu||!button||button.disabled||select.disabled)return;
@@ -177,5 +185,28 @@
       form.querySelector('#staff-menu').scrollTop=0;
     });
     select.addEventListener('change',()=>{form.elements.item_note.value='';drawOptions();if(groupedMenu){activeMenuCategory=menuCategory(products.find(p=>p.id===select.value)||{});drawMenu();}});form.elements.branch_id.addEventListener('change',load);await load();
+  },approved:async function(ctx){
+    const {api,mutation,tr,esc,modal,closeModal,branches,onCreated,user}=ctx;
+    const canApprove=user.role==='owner'||(user.effective_permissions||[]).includes('complimentary_approve');
+    const data=await api('/api/orders/complimentary/authorizations');
+    const kinds={hospitality:tr('ضيافة','Hospitality'),advertising:tr('ضيافة إعلانية','Advertising hospitality'),compensation:tr('تعويض','Compensation'),completion:tr('استكمال طلب','Order completion')};
+    const rows=data.authorizations||[];
+    modal(tr('أوامر التنفيذ المعتمدة','Approved fulfillment orders'),`<div id="courtesy-approved"><p>${esc(tr('اختر الأمر المعتمد لإرساله للفرع. لا يلزم تحصيل مبلغ من العميل.','Choose an approved order to send to the branch. No customer collection is required.'))}</p>${rows.length?rows.map((row,index)=>`<section class="notice"><strong>${esc(kinds[row.payload.kind]||row.payload.kind)}</strong><p>${esc(branches.find(b=>b.id===row.branch_id)?.name||row.branch_id)} · ${esc(row.payload.customer.name)} · ${esc(row.payload.customer.phone)}</p><p>${esc(row.payload.customer.address||'')} · ${row.payload.items.reduce((n,item)=>n+item.quantity,0)} ${esc(tr('قطعة','items'))}</p>${user.role==='delivery_manager'?`<button type="button" data-courtesy-index="${index}">${esc(tr('تنفيذ الأمر المعتمد','Execute approved order'))}</button>`:''}${canApprove?`<button type="button" class="quiet" data-courtesy-revoke="${index}">${esc(tr('إلغاء الأمر غير المنفذ','Revoke unused approval'))}</button>`:''}</section>`).join(''):`<p>${esc(tr('لا توجد أوامر معتمدة بانتظار التنفيذ.','No approved orders awaiting execution.'))}</p>`}<p class="form-error" role="alert"></p></div>`);
+    const panel=document.querySelector('#courtesy-approved');
+    panel.addEventListener('click',async event=>{
+      const revokeButton=event.target.closest('[data-courtesy-revoke]');
+      if(revokeButton&&canApprove){
+        const row=rows[Number(revokeButton.dataset.courtesyRevoke)];if(!row)return;
+        modal(tr('إلغاء أمر غير منفذ','Revoke unused approval'),`<form><p>${esc(kinds[row.payload.kind])} · ${esc(row.payload.customer.name)}</p><label>${esc(tr('سبب الإلغاء','Revocation reason'))}<textarea name="reason" required minlength="5" maxlength="1000"></textarea></label><p class="form-error" role="alert"></p><button type="submit">${esc(tr('إلغاء مع حفظ السجل','Revoke and retain history'))}</button></form>`,async fd=>{await mutation('/api/orders/complimentary/authorizations/'+encodeURIComponent(row.id)+'/revoke',{reason:fd.get('reason')});await window.KPSCustomerOrder.approved(ctx);});return;
+      }
+      const button=event.target.closest('[data-courtesy-index]');if(!button||button.disabled)return;
+      const row=rows[Number(button.dataset.courtesyIndex)];if(!row)return;
+      button.disabled=true;
+      try{
+        const body={...row.payload,authorization_id:row.id,expected_total_halalas:0};
+        const result=await mutation('/api/orders/complimentary',body);
+        closeModal();await onCreated(result.order.id);
+      }catch(error){panel.querySelector('.form-error').textContent=error.message;button.disabled=false;}
+    });
   }};
 })();

@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync('public/ops.js','utf8');
 const helpers=source.slice(source.indexOf('  function ownUnclosedDriverShift('),source.indexOf('  async function tasks()'));
-const open=source.split('\n').find(x=>x.startsWith('  async function openShift()'));
+const open=source.split('\n').find(x=>x.startsWith('  async function openShift('));
 (async()=>{
 for(const lang of ['ar','en'])for(const status of ['open','closing','returned','submitted']){
  const shift={id:'my-shift',kind:'driver',user_id:'me',status};let modalCalls=0,peopleCalls=0,loaded=0;

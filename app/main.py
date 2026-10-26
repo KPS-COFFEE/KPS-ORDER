@@ -27,6 +27,8 @@ PUBLIC = ROOT / 'public'
 async def lifespan(app):
     background_tasks = []
     try:
+        from . import staff_geo
+        staff_geo.validate_configuration()
         app.state.database_configured = bool(os.getenv('DATABASE_URL'))
         if app.state.database_configured:
             # A bad configured migration/database blocks startup; no storage substitute is created.
@@ -99,6 +101,8 @@ from . import branch_payments, branch_payment_renewal
 app.include_router(branch_payments.router)
 app.include_router(catalog.router)
 app.include_router(auth.router)
+from . import customer_message_routing
+app.include_router(customer_message_routing.router)
 from . import experience_policy
 app.include_router(experience_policy.router)
 from . import first_order_gift
@@ -116,6 +120,8 @@ from . import multibrand
 app.include_router(multibrand.router)
 from . import central_operations
 app.include_router(central_operations.router)
+from . import driver_order_review
+app.include_router(driver_order_review.router)
 from . import owner_phone
 app.include_router(owner_phone.router)
 from . import employee_sms, sms_rollout, sms_pilot_ui
@@ -134,11 +140,21 @@ app.include_router(branch_payment_reports.router)
 from . import branch_payment_policy
 app.include_router(branch_payment_policy.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'customer_crm'):
+for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'aggregate_manager_closure', 'financial_clarifications', 'customer_crm'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
 from . import dispatch_map
+from . import prior_deliveries
+app.include_router(prior_deliveries.router)
+from . import legacy_invoice_imports
+app.include_router(legacy_invoice_imports.router)
+from . import legacy_closures
+app.include_router(legacy_closures.router)
+from . import driver_attribution
+app.include_router(driver_attribution.router)
+from . import staff_geo_access
+app.include_router(staff_geo_access.router)
 app.include_router(dispatch_map.router)
 from . import driver_order_sounds
 app.include_router(driver_order_sounds.router)
@@ -237,6 +253,14 @@ def campaign_report_page():
                         headers={'Cache-Control': 'private, no-store'})
 
 
+@app.get('/work-access')
+def work_access_page():
+    # Neutral entry exchange only; no account data or administrative shell.
+    # The fragment token never reaches HTTP logs and never authenticates a user.
+    return FileResponse(PUBLIC / 'work-access.html', media_type='text/html',
+                        headers={'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer'})
+
+
 @app.get('/docs/metrics')
 def metric_definitions(user=Depends(auth.current_user)):
     if user['role'] not in {'owner', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver'}:
@@ -248,7 +272,7 @@ def metric_definitions(user=Depends(auth.current_user)):
 @app.get('/{filename}')
 def frontend_file(filename: str):
     # Never mount the repository, data files, migrations, environment or the legacy executable menu.
-    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js'}:
+    if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js', 'work-access.js'}:
         raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
     path = PUBLIC / filename
     if not path.is_file() or path.is_symlink():
@@ -259,4 +283,6 @@ def frontend_file(filename: str):
 if (PUBLIC / 'assets').exists():
     app.include_router(image_previews.router)
     app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')
+
+
 

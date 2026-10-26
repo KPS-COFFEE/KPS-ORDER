@@ -101,3 +101,30 @@ tests/test_dispatch_workspace_counts.py
 tests/test_driver_routes.py
 tests/test_driver_destination.py
 tests/test_driver_completed_evidence.py
+
+tests/test_order_financial_cases.py
+
+tests/test_manager_handover_scope.py
+
+tests/test_complimentary_deliveries.py
+
+tests/test_driver_support_central.py
+
+tests/test_morning_delivery_postgres.py
+
+tests/test_order_financial_case_morning.py
+
+tests/test_operations_lifecycle_backup.py
+
+tests/test_delivery_reporting_boundaries.py
+
+tests/test_driver_attribution_correction.py
+
+# Saudi-only staff access and owner-issued temporary permissions
+tests/test_staff_geo.py
+tests/test_staff_geo_access.py
+tests/test_delivery_workflow_policy.py
+tests/test_enbishan_pickup.py
+
+# Read-only driver review: exact shift scope, brand totals and revoked grants.
+tests/test_driver_order_review.py

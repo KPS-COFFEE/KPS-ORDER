@@ -9,13 +9,13 @@ def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
     q="""SELECT r.*,s.manager_shift_id,s.submission,s.scheduled_end_at,s.delivery_window_snapshot,
       s.closed_at shift_closed_at,mu.display_name manager_name,
       u.display_name driver_name,
-      coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) AS "day"
+      coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day"
       FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=r.user_id
       JOIN shifts m ON m.id=s.manager_shift_id JOIN users mu ON mu.id=m.user_id
       WHERE r.brand_id=%s AND r.kind='driver' AND m.status='closed' AND r.branch_ids ?| %s"""
     args=[user['brand_id'],bids]
     if ds:
-        q+=" AND coalesce(s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '16 hours')::date) BETWEEN %s AND %s"
+        q+=" AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) BETWEEN %s AND %s"
         args.extend([ds,de])
     if manager_shift_id:q+=' AND s.manager_shift_id=%s';args.append(manager_shift_id)
     rows=c.execute(q+' ORDER BY "day",r.created_at,r.id',args).fetchall()
@@ -94,7 +94,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     # Delivered order IDs are selected once across all tasks, avoiding duplicate
     # counts when orders were reassigned or split across collection records.
     task_ids=defaultdict(set)
-    for task in c.execute("""SELECT DISTINCT ON (t.order_id) t.order_id,t.shift_id FROM driver_tasks t
+    for task in c.execute("""SELECT DISTINCT ON (t.order_id) t.order_id,t.shift_id FROM effective_driver_tasks t
       JOIN orders o ON o.id=t.order_id WHERE o.brand_id=%s AND o.test_void IS NULL AND t.status='delivered'
       AND t.shift_id=ANY(%s) ORDER BY t.order_id,t.delivered_at DESC NULLS LAST,t.id DESC""",
       (user['brand_id'],[r['shift_id'] for r in rows])).fetchall():task_ids[task['shift_id']].add(task['order_id'])
@@ -242,6 +242,8 @@ def approve_day(c,user,manager_shift_id,note):
     allowed={b['id'] for b in branches(c,user)}
     if not manager or not set(manager['branch_ids'])<=allowed:fail('DAY_SCOPE','التقفيلة خارج نطاقك.',404)
     if manager['user_id']==user['id']:fail('SELF_SETTLEMENT','الاعتماد من حساب محاسب مستقل.',403)
+    from .order_financial_cases import guard_financial_closure
+    guard_financial_closure(c,shift_id=manager_shift_id,brand_id=user['brand_id'])
     if manager['status']!='closed':fail('OPEN_SHIFTS','أقفل شفت مدير التوصيل أولًا.',409)
     previous=c.execute('SELECT * FROM accounting_daily_closures WHERE manager_shift_id=%s',(manager_shift_id,)).fetchone()
     if previous:fail('DAY_CLOSED','تقفيلة اليوم معتمدة مسبقًا.',409)

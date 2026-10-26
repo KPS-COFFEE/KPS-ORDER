@@ -25,15 +25,29 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = json.loads((Path(__file__).with_name('fixtures') / 'startup-baseline-4e4d781.json').read_text())
 IDENTITY = 'baseline-source-identity.json'
 PENDING = frozenset({
+    '112_enbishan_product_artwork.sql', '113_enbishan_khaliya_offer.sql',
+    '111_enbishan_flavours_and_citrus.sql',
+    '109_enbishan_family_menu_clarity.sql', '110_enbishan_family_commercial_approval.sql',
     '064_branch_checkout_sessions.sql', '065_branch_payment_webhooks.sql',
     '066_branch_online_refunds.sql', '067_branch_payment_reconciliation.sql',
     '068_branch_payment_renewal.sql', '069_branch_refund_reconciliation.sql',
     '070_branch_payment_modes.sql', '071_late_branch_payment_receipts.sql',
     '079_customer_engagement.sql', '096_campaign_report_closures.sql',
     '097_authentica_customer_challenges.sql',
+    '098_complimentary_authorizations.sql', '100_manager_handover_snapshot.sql',
+    '101_complimentary_revocations.sql', '098_enbishan_guest_checkout.sql',
+    '102_morning_first_operational_day.sql',
+    '103_enbishan_pickup_default_paused.sql', '104_prior_deliveries.sql',
+    '105_driver_attribution_corrections.sql',
+    '106_legacy_delivery_attestations.sql',
+    '106_staff_geo_access.sql',
+    '107_closed_manager_prior_supplements.sql',
+    '108_legacy_invoice_imports.sql',
+    '105_collection_payment_pieces.sql', '107_driver_duty_profiles.sql',
+    '108_financial_case_clarifications.sql',
 })
 TABLES = ('brands', 'branches', 'users', 'orders', 'collections', 'refunds',
-          'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges')
+          'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges', 'shifts')
 
 
 def assert_baseline_source(path, manifest=BASELINE):
@@ -119,6 +133,13 @@ def populated_baseline(monkeypatch, safe_test_environment):
             c.execute("INSERT INTO brands(id,name) VALUES('upgrade-brand','Synthetic upgrade brand')")
             c.execute("INSERT INTO branches(id,brand_id,branch_no,source_id,name,city) VALUES('upgrade-branch','upgrade-brand',1,'synthetic-upgrade','TEST','TEST')")
             c.execute("INSERT INTO users(id,brand_id,role,display_name) VALUES('upgrade-owner','upgrade-brand','owner','TEST owner'),('upgrade-customer','upgrade-brand','customer','TEST customer')")
+            for sid, opened, closed, old_day, period in (
+                ('upgrade-friday-morning', '2026-10-23T12:27:00+03:00', '2026-10-23T17:51:00+03:00', '2026-10-22', 'morning'),
+                ('upgrade-friday-evening', '2026-10-23T16:01:00+03:00', '2026-10-24T05:00:00+03:00', '2026-10-23', 'evening'),
+                ('upgrade-saturday-preparation', '2026-10-24T03:45:00+03:00', '2026-10-24T16:00:00+03:00', '2026-10-23', 'morning')):
+                c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,delivery_operational_date,delivery_window_snapshot,submission) "
+                          "VALUES(%s,'manager','upgrade-owner','upgrade-brand','[\"upgrade-branch\"]','closed',%s,%s,%s,%s,%s)",
+                          (sid, opened, closed, old_day, db.json({'period': period}), db.json({'expected_halalas': 10700, 'counted_halalas': 10700})))
             c.execute("INSERT INTO otp_challenges(id,brand_id,phone,provider_reference,delivery_channel,expires_at,provider_name) VALUES('upgrade-legacy-otp','upgrade-brand','+966500001999','synthetic-legacy-reference','sms',now()+interval '5 minutes','tawked')")
             for oid, method, subtotal, fee, paid, preparation in (
                 ('upgrade-cash', 'cash', 1000, 500, 'partial', 'new'),
@@ -181,21 +202,41 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
         db.migrate()
         with db.tx() as c:
             assert original_rows(c, columns)[1] == before
+            days = c.execute("SELECT id,reporting_operational_date::text AS operational_day FROM shifts ORDER BY id").fetchall()
+            assert {r['id']: r['operational_day'] for r in days} == {
+                'upgrade-friday-morning': '2026-10-23', 'upgrade-friday-evening': '2026-10-23',
+                'upgrade-saturday-preparation': '2026-10-24'}
+            corrections = c.execute('SELECT shift_id,original_day::text,corrected_day::text FROM operational_day_reclassifications ORDER BY shift_id').fetchall()
+            assert corrections == [
+                {'shift_id': 'upgrade-friday-morning', 'original_day': '2026-10-22', 'corrected_day': '2026-10-23'},
+                {'shift_id': 'upgrade-saturday-preparation', 'original_day': '2026-10-23', 'corrected_day': '2026-10-24'}]
             assert c.execute(channel_query).fetchall() == before_channels
             assert c.execute("SELECT authentica_contract_hash,authentica_code_length FROM otp_challenges WHERE id='upgrade-legacy-otp'").fetchone() == {
                 'authentica_contract_hash': None, 'authentica_code_length': None}
             after_registry = c.execute('SELECT * FROM schema_migrations ORDER BY version').fetchall()
             assert [r for r in after_registry if r['version'] not in PENDING] == before_registry
             assert {r['version'] for r in after_registry} == {r['version'] for r in before_registry} | PENDING
+            if _ == 0:
+                first_registry = after_registry
+            else:
+                assert after_registry == first_registry  # Repeated startup preserves registration timestamps too.
             assert all(r['sha256'] == hashlib.sha256((ROOT / 'migrations' / r['version']).read_bytes()).hexdigest() for r in after_registry)
             assert c.execute('SELECT count(*) AS n FROM orders WHERE discount_halalas<>0').fetchone()['n'] == 0
             for table in ('branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds',
                           'branch_refund_reconciliation', 'branch_payment_renewals',
                           'customer_marketing_consents', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries',
-                          'promotion_report_closures'):
+                          'promotion_report_closures', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests',
+                          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records',
+                          'legacy_delivery_attestations', 'legacy_invoice_imports',
+                          'driver_duty_profiles', 'financial_case_clarifications', 'financial_case_clarification_events'):
                 assert c.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n'] == 0
             audit = c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC LIMIT 1").fetchone()
             assert audit['details']['verified'] is True
+            if _ == 1:
+                assert {'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests'} <= audit['details']['checks'].keys()
+                assert {'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records'} <= audit['details']['checks'].keys()
+                assert {'legacy_delivery_attestations','legacy_invoice_imports'} <= audit['details']['checks'].keys()
+                assert {'driver_duty_profiles','financial_case_clarifications','financial_case_clarification_events'} <= audit['details']['checks'].keys()
     # Newly installed deferred triggers must leave a fresh ordinary cash sale
     # usable. Keep the existing one-collection-per-order/revision/method rule:
     # the retained legacy cash order already has its revision-zero collection.

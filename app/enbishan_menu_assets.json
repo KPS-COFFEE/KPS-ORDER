@@ -214,5 +214,141 @@
   "owner-review:20261022:crispy-small.jpeg": {
     "path": "/assets/enbishan-menu/owner-review/crispy-small.jpeg",
     "sha256": "36354327119f311c9d2ad77f193e86badae96493665b0e8288eb479207cf61a2"
+  },
+  "owner-20261025-grape-cabbage-family": {
+    "path": "/assets/enbishan-menu/owner-20261025/grape-cabbage-family.webp",
+    "sha256": "58185aea3a6807e102f21819e620a8055016e893eefb27cc5d45882dd462466d"
+  },
+  "owner-20261025:approved-193cf5dc249e0086": {
+    "path": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp",
+    "sha256": "39b495a20758de1368c447c1c22d7dbd0e65dc3c4408646388a3880039c16f56"
+  },
+  "owner-20261025:approved-a403b7e8dc2e6242": {
+    "path": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp",
+    "sha256": "d228e1e90c13bba59b21c91091fa838da4f6f84356e36a79789af2d3b910991d"
+  },
+  "owner-20261025:clean-0591372cd12d8df4": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-0591372cd12d8df4.webp",
+    "sha256": "e8d6715aa337c0b00c7523a4545d99f1360020e0642b6445fad39353d1b04044"
+  },
+  "owner-20261025:clean-1d5c846f506902b7": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-1d5c846f506902b7.webp",
+    "sha256": "01aa3166f80b37f1eb901e6fa30d2804b378f52fb3b2b9451cbbd25fa11e23a6"
+  },
+  "owner-20261025:clean-20b3ac765178214e": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-20b3ac765178214e.webp",
+    "sha256": "19421a3c8e6ea547ec1e96c541ca8e470b54a46f1fe4b7f835cdd05cfe56905a"
+  },
+  "owner-20261025:clean-52333d1391dafeb1": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-52333d1391dafeb1.webp",
+    "sha256": "6ebc5202a27d71b57f0bdf025877ad45e3dcedbfdc52a0dd6400312fecf8f347"
+  },
+  "owner-20261025:clean-66eb1ff184914477": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-66eb1ff184914477.webp",
+    "sha256": "9d4486bdeed360e42d913ae4721a58082d9cf0d42f494b53a04e07828078f9b5"
+  },
+  "owner-20261025:clean-9b941b822c5ea952": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-9b941b822c5ea952.webp",
+    "sha256": "2cd4050cf6e45f8a9b4bfc443f1482e40c794ae77c0806779641e357c484fff7"
+  },
+  "owner-20261025:clean-b73f213d553708c1": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-b73f213d553708c1.webp",
+    "sha256": "c0cfc481d7d0f1a5908e7f7268f71d4e28475ba556a361bfdaf586e0e8a6d75d"
+  },
+  "owner-20261025:clean-d325d61dca922cdc": {
+    "path": "/assets/enbishan-menu/owner-20261025/clean-d325d61dca922cdc.webp",
+    "sha256": "c21abf633584187135d7a961caa5b755254fae3c2b498ab2924ba3b40267b1c7"
+  },
+  "owner-20261025:source-01c3a3ef5c19296b": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-01c3a3ef5c19296b.webp",
+    "sha256": "38e3799d9427df21a70a26daa4b0a68c66c106190d67a3db471fd20ad7724636"
+  },
+  "owner-20261025:source-0311c6434255548e": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-0311c6434255548e.webp",
+    "sha256": "47bf9c6bc5266deea807bb603b562f4537012b2b4cf49f451771748302369eb7"
+  },
+  "owner-20261025:source-062f0b0775d491ab": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-062f0b0775d491ab.webp",
+    "sha256": "3d9a9218a2ef01a8b7a4d02fb6d725acce94f0aaecc0393b20738f47026b8f56"
+  },
+  "owner-20261025:source-3b5898d94e55dee6": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-3b5898d94e55dee6.webp",
+    "sha256": "64383b701aa41a0289fe53c40a5b27ac02628985b55d5db9d09b265e950f4535"
+  },
+  "owner-20261025:source-3b775d191f5928cc": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-3b775d191f5928cc.webp",
+    "sha256": "5310ff5ae666f78d6cfa1a4694b12bd812c18347914194cffea08a307494f2b1"
+  },
+  "owner-20261025:source-66930e12efb98caf": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp",
+    "sha256": "74bd147f08741ef660e5d72299615abe6c7636c2eb1e48309126e6328528d8ea"
+  },
+  "owner-20261025:source-6f7efb0f38241172": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-6f7efb0f38241172.webp",
+    "sha256": "eff369fb63fef1d8803875bd5e03f95c6c4b59442078023fbb0fd817ab7ae087"
+  },
+  "owner-20261025:source-92b471015d554177": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-92b471015d554177.webp",
+    "sha256": "77b5c3bfd860977525f159c024d17565b89d2657890f58173a725a3422b07f64"
+  },
+  "owner-20261025:source-acbdb1bab93fe213": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-acbdb1bab93fe213.webp",
+    "sha256": "7cd6e6ca303bd2dd670cce44742a775cf5d579d9082bd1908f9dc78b106c1e18"
+  },
+  "owner-20261025:source-c5e8f6e25a8ef8fb": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-c5e8f6e25a8ef8fb.webp",
+    "sha256": "56c99546917fde49306fab1e0d8a68d6bb4593b5984c1743b38b38762bbb1e88"
+  },
+  "owner-20261025:source-c6f775eb35653867": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp",
+    "sha256": "774d4c0ee32ce5701e30d06fff8e6dba58463d0753074e706fbcdd36668237f7"
+  },
+  "owner-20261025:source-e378e68d960145ea": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-e378e68d960145ea.webp",
+    "sha256": "4ef9898585bf6227233a7e349671e09f01cd263b5df645416061d6ce736eb17a"
+  },
+  "owner-20261025:source-e85b9e7abbd014c8": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-e85b9e7abbd014c8.webp",
+    "sha256": "dccff9e6adcc1f0728006fe987a897594fc1c1be2882c97bd8bc4920b1f02afe"
+  },
+  "owner-20261025:source-f061268f12edde14": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-f061268f12edde14.webp",
+    "sha256": "c8cca436b16bb51a3905134ce89999e0257658e5ad01b63d8ff5aeebbb7ea1ff"
+  },
+  "owner-20261025:source-f62a1f85346c19c4": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-f62a1f85346c19c4.webp",
+    "sha256": "5db2a862d3bef71b2cdc64726b7fff9aee741df1a9dda0e64833b981ee56af4a"
+  },
+  "owner-20261025:source-f9b87bfb779ac000": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp",
+    "sha256": "6371e3d05df00d4001b7c8d7b0c054b437a8b7665b8bdd33b8bcb10b3f8ffc62"
+  },
+  "owner-20261025:source-ff47b177d47c34cf": {
+    "path": "/assets/enbishan-menu/owner-20261025/source-ff47b177d47c34cf.webp",
+    "sha256": "3972502003b078d4db3ff202da824b374672c2816681231771a0f62a787e684f"
+  },
+  "owner-20261026:citrus": {
+    "path": "/assets/enbishan-menu/citrus-20261026.svg",
+    "sha256": "ebb33dbbb4c2b87b9d469e59d96affc5d86a8e5efdb24bf4f1a5aaa2fd5c12fc"
+  },
+  "owner-20261026:mojito-grape.jpeg": {
+    "path": "/assets/enbishan-menu/owner-20261026/mojito-grape.jpeg",
+    "sha256": "ca11e087eed3e7c9d0f2aaa78548d5b86e3c0a7bcf0d0d2ba5e9f6b4c53538ec"
+  },
+  "owner-20261026:mojito-mahashi.jpeg": {
+    "path": "/assets/enbishan-menu/owner-20261026/mojito-mahashi.jpeg",
+    "sha256": "0bd142644b0ebc6f1cd2199453753e09cb26b23ce55487ff3b18433c9a4ce069"
+  },
+  "owner-20261026:mojito-fattah.jpeg": {
+    "path": "/assets/enbishan-menu/owner-20261026/mojito-fattah.jpeg",
+    "sha256": "9139e64f7b214f00de2c7929d2f168270cb0980b65c24de9c6a6db8ad5f08477"
+  },
+  "owner-20261026:citrus-can.jpg": {
+    "path": "/assets/enbishan-menu/owner-20261026/citrus-can.jpg",
+    "sha256": "e6101f1bf0c4c07e42217d72a316da2fed490c28f53591a11976f91ae3f335a7"
+  },
+  "owner-20261026:grape-cabbage-family.webp": {
+    "path": "/assets/enbishan-menu/owner-20261026/grape-cabbage-family.webp",
+    "sha256": "57ced526538a9d884ee2c731291c413f957d527b6fbfca4cf5c39fba79ab867f"
   }
 }

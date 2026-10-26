@@ -17,7 +17,9 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def dual_http(dual,tmp_path):
+def dual_http(dual,tmp_path,monkeypatch,request):
+    if request.node.name.startswith('test_shared_driver_sees_both_brand_tasks'):
+        monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','true')
     with socket.socket() as reserve:
         reserve.bind(('127.0.0.1',0));port=reserve.getsockname()[1]
     base=f'http://127.0.0.1:{port}'
@@ -95,11 +97,17 @@ def test_same_manager_account_switches_brands_on_mobile(dual_http):
 
 
 @pytest.mark.postgres
-def test_shared_driver_sees_other_brand_task_and_switches_without_new_login(dual_http):
+def test_shared_driver_sees_both_brand_tasks_without_switching_or_new_login(dual_http,monkeypatch):
     base,(_,actor,post,shifts,order)=dual_http
-    ks=shifts('kps');es=shifts('enbishan')
-    post('manager','/api/orders/'+order('kps')+'/assign',{'driver_shift_id':ks[1]})
-    post('manager','/api/orders/'+order('enbishan')+'/assign',{'driver_shift_id':es[1]},'enbishan')
+    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','true')
+    from test_central_workdays import open_days
+    _,driver=open_days(dual_http[1])
+    legs={row['brand_id']:row['id'] for row in driver['shifts']}
+    assert set(legs)=={'kps','enbishan'}
+    ks=(None,legs['kps']);es=(None,legs['enbishan'])
+    ko,eo=order('kps'),order('enbishan')
+    post('manager','/api/orders/'+ko+'/assign',{'driver_shift_id':ks[1]})
+    post('manager','/api/orders/'+eo+'/assign',{'driver_shift_id':es[1]},'enbishan')
     client=actor('driver')
     with sync_playwright() as p:
         browser=p.chromium.launch(executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE'),args=['--no-sandbox'])
@@ -108,11 +116,10 @@ def test_shared_driver_sees_other_brand_task_and_switches_without_new_login(dual
             context.add_cookies([{'name':name,'value':client.cookies.get(name),'url':base} for name in [auth.COOKIE,auth.CSRF_COOKIE]])
             page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
             page.goto(base+'/ops')
-            other=page.locator('a[href="/ops?operations_brand=enbishan"]')
-            expect(other).to_contain_text('ENBISHAN TEST ONLY')
-            other.click()
-            expect(page.locator('#operations-brand-switch select')).to_have_value('enbishan')
-            expect(page.locator('.brand>span')).to_contain_text('ENBISHAN TEST ONLY')
+            expect(page.locator('[data-action=amend-order][data-id="'+ko+'"]')).to_be_visible()
+            expect(page.locator('[data-action=amend-order][data-id="'+eo+'"]')).to_be_visible()
+            expect(page.locator('#operations-brand-switch')).to_be_hidden()
+            expect(page).to_have_url(base+'/ops')
             assert not errors,errors
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
             context.close()

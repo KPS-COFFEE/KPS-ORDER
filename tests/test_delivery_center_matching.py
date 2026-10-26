@@ -12,6 +12,7 @@ from app.branch_printing import receipt
 class Result:
     def __init__(self,row=None):self.row=row
     def fetchone(self):return self.row
+    def fetchall(self):return [] if self.row is None else [self.row]
 
 @pytest.mark.parametrize('value',[{}, {'name':''},{'name':'   '},{'name':'عميل'}])
 def test_optional_customer_name(value):
@@ -60,11 +61,19 @@ def test_financial_scope_and_separate_reviewer(role,uid,branches,ok):
 def test_bank_cash_matching_are_independent_and_revision_protected(monkeypatch,bank,cash,note,revision,previous,status):
     snap={'summary':{'card_collected_halalas':1000,'card_refunded_halalas':100},'shift':{'submission':{'handover_halalas':500}}}
     original=deepcopy(snap)
-    r={'id':'report','brand_id':'brand','kind':'manager','user_id':'manager','branch_ids':['b'],'snapshot':snap}
-    writes=[]
+    r={'id':'report','shift_id':'manager-shift','brand_id':'brand','kind':'manager','user_id':'manager','branch_ids':['b'],'snapshot':snap}
+    writes=[];closure_checks=[]
     class Conn:
         def execute(self,sql,args):
             if sql.startswith('SELECT * FROM closure_reports'):return Result(r)
+            if sql.lstrip().startswith('SELECT o.id FROM orders'):
+                assert args[-3:]==('manager-shift','manager-shift','manager-shift')
+                closure_checks.append('collection_cases')
+                return Result()
+            if sql.startswith('SELECT DISTINCT d.id declaration_id') and 'shared_' in sql:
+                assert args==['manager-shift','manager-shift']
+                closure_checks.append('shared_allocations')
+                return Result()
             if sql.startswith('SELECT * FROM manager_financial'):return Result(previous)
             if sql.lstrip().startswith('INSERT INTO manager_financial'):
                 writes.append(args);return Result({'id':args[0],'status':args[-2]})
@@ -81,15 +90,51 @@ def test_bank_cash_matching_are_independent_and_revision_protected(monkeypatch,b
     else:
         assert accounting.match_manager_closure(*args)['status']==status
         assert writes[0][4:8]==(900,500,bank,cash)
+    assert closure_checks.count('collection_cases')==1
     assert snap==original
 
-@pytest.mark.parametrize('owner,kind,expected',[('manager','manager',True),('other','manager',False),('driver','driver',False)])
-def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owner,kind,expected):
+
+@pytest.mark.parametrize('pending', ['collection_case','shared_allocation'])
+def test_pending_financial_evidence_blocks_matching_before_any_write(monkeypatch,pending):
+    from app import multibrand
+    monkeypatch.setattr(multibrand,'enabled',lambda:pending=='shared_allocation')
+    report={'id':'report','shift_id':'manager-shift','brand_id':'brand','kind':'manager',
+            'user_id':'manager','branch_ids':['b'],'snapshot':{}}
+    checks=[]
+    class Conn:
+        def execute(self,sql,args):
+            if sql.startswith('SELECT * FROM closure_reports'):return Result(report)
+            if sql.startswith('SELECT DISTINCT d.id declaration_id') and 'shared_' in sql:
+                assert args==['manager-shift','manager-shift']
+                checks.append('shared_allocation')
+                return Result({'declaration_id':'pending','anchor_shift_id':'manager-shift','user_id':'manager','created_at':None})
+            if sql.lstrip().startswith('SELECT o.id FROM orders'):
+                assert args[-3:]==('manager-shift','manager-shift','manager-shift')
+                checks.append('collection_case')
+                return Result({'id':'unpaid-order'})
+            raise AssertionError('No matching write is allowed before financial evidence is resolved: '+sql)
+    @contextmanager
+    def tx():yield Conn()
+    monkeypatch.setattr(db,'tx',tx)
+    body=accounting.FinancialMatch(bank_halalas=900,cash_halalas=500,bank_reference='BANK',cash_reference='CASH',expected_revision=0)
+    with pytest.raises(HTTPException) as error:
+        accounting.match_manager_closure('report',body,SimpleNamespace(headers={}),
+            {'id':'accountant','brand_id':'brand','role':'admin','branch_ids':['b']})
+    assert error.value.status_code==409
+    assert error.value.detail['code']==('COLLECTION_CASE_PENDING' if pending=='collection_case' else 'SHARED_DRIVER_ALLOCATION_PENDING')
+    assert pending in checks
+
+@pytest.mark.parametrize('owner,kind,expected,received_work',[('manager','manager',True,False),('other','manager',False,False),('driver','driver',False,False),('manager','manager',False,True)])
+def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owner,kind,expected,received_work):
     s={'id':'s','user_id':owner,'brand_id':'brand','branch_ids':['b'],'kind':kind,'status':'submitted','submission':{'difference_halalas':0,'retained_halalas':0,'handover_halalas':500}}
     captured=[]
     class Conn:
         def execute(self,sql,args):
             if sql.startswith('SELECT user_id'):return Result({'user_id':'manager'} if kind=='driver' else None)
+            if sql.startswith('SELECT DISTINCT o.* FROM manager_handovers'):
+                return Result({'id':'pending-order','brand_id':'brand','branch_id':'b'} if received_work else None)
+            if sql.startswith('SELECT DISTINCT o.* FROM order_events'):return Result()
+            if sql.startswith('SELECT s.*,h.branch_ids AS handed_branches'):return Result()
             if sql.startswith('SELECT coalesce(sum(amount'):return Result({'n':0,'nrows':0})
             if sql.startswith('SELECT 1'):return Result()
             if sql.startswith('UPDATE shifts'):captured.append(args);return Result()
@@ -105,7 +150,9 @@ def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owne
         assert operations.approve_close_in_tx(Conn(),actor,'s',operations.Review())['status']=='closed'
         assert captured[0][2].obj['operational_approved'] is True
     else:
-        with pytest.raises(HTTPException):operations.approve_close_in_tx(Conn(),actor,'s',operations.Review())
+        with pytest.raises(HTTPException) as error:operations.approve_close_in_tx(Conn(),actor,'s',operations.Review())
+        if received_work:
+            assert error.value.detail['code']=='MORNING_ORDERS_AWAITING_DISPATCH'
         assert not captured
 
 

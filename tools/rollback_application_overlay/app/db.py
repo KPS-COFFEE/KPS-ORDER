@@ -282,9 +282,32 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
     return row['hits'] <= maximum
 
 
+# This prior application is intentionally not a writer for the new physical
+# closing, duration or accepted clarification contracts. Reject rollback BEFORE
+# migrations, audit or request workers can touch a database that used them.
+ROLLBACK_UNSUPPORTED_STATE_TABLES = (
+    'driver_duty_profiles',
+    'shared_driver_closure_declarations', 'shared_driver_closure_returns',
+    'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
+    'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts',
+    'shared_manager_closure_allocations',
+    'financial_case_clarifications', 'financial_case_clarification_events',
+)
+
+
+def guard_rollback_feature_state(conn):
+    available = {row['table_name'] for row in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'").fetchall()}
+    for table in ROLLBACK_UNSUPPORTED_STATE_TABLES:
+        if table in available and conn.execute(sql.SQL('SELECT 1 FROM {} LIMIT 1').format(sql.Identifier(table))).fetchone():
+            raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains ' + table +
+                               '; keep the current-aware application. No database restore or mutation was attempted.')
+
+
 def migrate():
     with tx() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
+        guard_rollback_feature_state(conn)
         baseline = preservation_snapshot(conn)
         apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
         after = preservation_snapshot(conn, baseline)
@@ -296,8 +319,8 @@ def migrate():
                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
 
 
-PRESERVED_TABLES = ('central_workdays', 'central_workday_legs', 'central_manager_handovers', 'central_manager_handover_legs', 'promotion_report_closures', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
-                    'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
+PRESERVED_TABLES = ('driver_duty_profiles', 'financial_case_clarification_events', 'financial_case_clarifications', 'shared_driver_closure_allocations', 'shared_driver_closure_declarations', 'shared_driver_closure_receipts', 'shared_driver_closure_returns', 'shared_manager_closure_allocations', 'shared_manager_closure_declarations', 'shared_manager_closure_receipts', 'shared_manager_closure_returns', 'operational_day_reclassifications', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests', 'central_workdays', 'central_workday_legs', 'central_manager_handovers', 'central_manager_handover_legs', 'promotion_report_closures', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
+                    'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'order_driver_attribution_corrections', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
                     'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
                     'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures', 'report_corrections', 'report_renderings', 'report_notifications',
                     'closure_drafts', 'conversations', 'chat_messages', 'chat_attachments',
@@ -305,7 +328,8 @@ PRESERVED_TABLES = ('central_workdays', 'central_workday_legs', 'central_manager
                     'recovery_events', 'recovery_state', 'recovery_alerts',
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
                     'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
-                    'first_order_gift_claims', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries', 'staff_brand_memberships', 'driver_brand_dedications')
+                    'first_order_gift_claims', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries', 'staff_brand_memberships', 'driver_brand_dedications',
+                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports')
 
 
 def preservation_snapshot(conn, baseline=None):

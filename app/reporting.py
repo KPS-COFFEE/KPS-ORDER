@@ -35,9 +35,9 @@ def create_snapshot(c,sid,approved_by):
         children=c.execute('SELECT r.id,r.shift_id,r.version,r.snapshot FROM closure_reports r JOIN shifts s ON s.id=r.shift_id WHERE s.manager_shift_id=%s ORDER BY r.created_at',(sid,)).fetchall()
         shift_ids += [r['shift_id'] for r in children]
     manager_user_id=s['user_id'] if s['kind']=='manager' else c.execute('SELECT user_id FROM shifts WHERE id=%s',(s['manager_shift_id'],)).fetchone()['user_id']
-    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.test_void,o.created_at,o.completed_at FROM orders o JOIN driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
-    tasks=c.execute('SELECT * FROM driver_tasks WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
-    collections=c.execute('SELECT * FROM collections WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
+    orders=c.execute("SELECT DISTINCT o.id,o.order_no,o.performance_snapshot,jsonb_build_object('neighborhood',o.customer->>'neighborhood') customer,o.branch_id,o.service,o.preparation_status,o.delivery_status,o.payment_status,o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.test_void,o.created_at,o.completed_at FROM orders o JOIN effective_driver_tasks t ON t.order_id=o.id WHERE t.shift_id=ANY(%s) ORDER BY o.id",(shift_ids,)).fetchall()
+    tasks=c.execute('SELECT * FROM effective_driver_tasks WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
+    collections=c.execute('SELECT * FROM effective_collections WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     refunds=c.execute('SELECT * FROM refunds WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     events=c.execute('SELECT * FROM custody_events WHERE shift_id=ANY(%s) ORDER BY created_at',(shift_ids,)).fetchall()
     transfers=c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s) ORDER BY created_at',(shift_ids,shift_ids)).fetchall()
@@ -54,7 +54,7 @@ def create_snapshot(c,sid,approved_by):
                 if o['id'] not in child_orders or o.get('fulfilled_in_report'):child_orders[o['id']]=o
         orders=list(child_orders.values())
         tasks=merge('tasks',[])
-        collections=merge('collections',c.execute('SELECT * FROM collections WHERE shift_id=%s',(sid,)).fetchall())
+        collections=merge('collections',c.execute('SELECT * FROM effective_collections WHERE shift_id=%s',(sid,)).fetchall())
         refunds=merge('refunds',c.execute('SELECT * FROM refunds WHERE shift_id=%s',(sid,)).fetchall())
         events=merge('custody_events',c.execute('SELECT * FROM custody_events WHERE shift_id=%s',(sid,)).fetchall())
         transfers=merge('transfers',c.execute('SELECT * FROM custody_transfers WHERE from_shift_id=%s OR to_shift_id=%s',(sid,sid)).fetchall())
@@ -64,7 +64,10 @@ def create_snapshot(c,sid,approved_by):
     for order in orders:
         order['snapshot']=safe(order['snapshot']);order['snapshot'].pop('notes',None);order['snapshot'].pop('note',None)
         for item in order['snapshot'].get('items',[]):item.pop('note',None)
-    fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and t.get('delivered_at')}
+    attestations=c.execute('SELECT id,order_id,task_id,shift_id,actor_id,reason,operational_date,recorded_at FROM legacy_delivery_attestations WHERE shift_id=ANY(%s) ORDER BY recorded_at,id',(shift_ids,)).fetchall()
+    imports=c.execute('SELECT id,order_id,invoice_reference,invoice_issued_at,recorded_at,original_shift_id,manager_shift_id,total_halalas,tax_halalas,cash_halalas,card_halalas,reason FROM legacy_invoice_imports WHERE ledger_shift_id=ANY(%s) ORDER BY recorded_at,id',(shift_ids,)).fetchall()
+    attested={a['order_id'] for a in attestations} | {r['order_id'] for r in imports}
+    fulfilled={t['order_id'] for t in tasks if t['status']=='delivered' and (t.get('delivered_at') or t['order_id'] in attested)}
     for o in orders:o['fulfilled_in_report']=not o.get('test_void') and o.get('fulfilled_in_report',o['id'] in fulfilled)
     cash=sum(r['amount_halalas'] for r in collections if r['method']=='cash')-sum(r['amount_halalas'] for r in refunds if r.get('record_kind')=='test_void')
     card=sum(r['amount_halalas'] for r in collections if r['method']=='card')
@@ -77,9 +80,12 @@ def create_snapshot(c,sid,approved_by):
         configured=True
     snap=safe({'schema_version':1,'brand_name':brand['name'],'reference':sid,'kind':s['kind'],'timezone':'Asia/Riyadh','operational_day_configured':configured,'operational_date':(s['opened_at'].astimezone(ZoneInfo('Asia/Riyadh'))-timedelta(minutes=minutes)).date().isoformat(),'shift':s,'manager_user_id':manager_user_id,'prepared_by':s['user_id'],'approved_by':approved_by,'orders':orders,'tasks':tasks,'collections':collections,'refunds':refunds,'custody_events':events,'transfers':transfers,'linked_corrections':c.execute('SELECT * FROM report_corrections WHERE shift_id=ANY(%s)',(shift_ids,)).fetchall(),'manager_handovers':c.execute('SELECT * FROM manager_handovers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s)',(shift_ids,shift_ids)).fetchall(),'retained_carryovers':c.execute('SELECT * FROM retained_carryovers WHERE from_shift_id=ANY(%s) OR to_shift_id=ANY(%s)',(shift_ids,shift_ids)).fetchall(),'driver_reports':[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'closure':r['snapshot']['shift']['submission']} for r in children], 'summary':{'test_void_halalas':sum(r['amount_halalas'] for r in refunds if r.get('record_kind')=='test_void'),'unique_orders':len(orders),'completed_orders':len(completed),'cash_collected_halalas':cash,'card_collected_halalas':card,'cash_refunded_halalas':sum(r['amount_halalas'] for r in refunds if r['method']=='cash' and r.get('record_kind')!='test_void'),'card_refunded_halalas':sum(r['amount_halalas'] for r in refunds if r['method']=='card' and r.get('record_kind')!='test_void'),'gross_completed_halalas':sum(o['total_halalas'] for o in completed),'delivery_fees_halalas':sum(o['delivery_fee_halalas'] for o in completed),'net_collections_halalas':cash+card-sum(r['amount_halalas'] for r in refunds if r.get('record_kind')!='test_void'),'submission':s['submission']}})
     if s.get('delivery_operational_date'):
-        snap['operational_date']=s['delivery_operational_date'].isoformat()
+        snap['operational_date']=(s.get('reporting_operational_date') or s['delivery_operational_date']).isoformat()
         snap['delivery_window']=s.get('delivery_window_snapshot')
-        snap['delivery_operational_day_start']='16:00'
+        snap['delivery_operational_day_start']='04:00'
+    snap['driver_attribution_corrections']=safe(c.execute('SELECT * FROM order_driver_attribution_corrections WHERE source_shift_id=ANY(%s) OR target_shift_id=ANY(%s) ORDER BY created_at,id',(shift_ids,shift_ids)).fetchall())
+    snap['legacy_delivery_attestations']=safe(attestations)
+    snap['legacy_invoice_imports']=safe(imports)
     # Display metadata is captured only for this new snapshot, never backfilled.
     snap['schema_version']=2;snap['presentation_template_version']=TEMPLATE_VERSION
     snap['display_users']={k:v for child in children for k,v in child['snapshot'].get('display_users',{}).items()}
@@ -90,6 +96,12 @@ def create_snapshot(c,sid,approved_by):
     for row in c.execute('SELECT id,display_name FROM users WHERE id=ANY(%s)',(list(user_ids),)).fetchall():snap['display_users'].setdefault(row['id'],row['display_name'] or row['id'])
     snap['display_branches']={b['id']:{'name':b['name'],'branch_no':b['branch_no'],'city':b['city']} for b in c.execute('SELECT id,name,branch_no,city FROM branches WHERE id=ANY(%s)',(list(set(s['branch_ids'])|{o['branch_id'] for o in orders}),)).fetchall()}
     snap['closure_label']=display_shift_label(s)
+    if s.get('supplement_of_shift_id'):
+        original=c.execute('SELECT * FROM shifts WHERE id=%s',(s['supplement_of_shift_id'],)).fetchone()
+        snap['closure_label']='ملحق / Supplement '+display_shift_label(original)+' · '+display_shift_label(s)
+        snap['supplement_of_shift_id']=original['id']
+        snap['supplement_note']='تسجيل طلبات سابقة؛ استلام المدير للنقد غير مؤكد / Prior deliveries; manager cash receipt not confirmed'
+        snap['shift']['submission']['notes']=(snap['shift']['submission'].get('notes') or '')+' — '+snap['supplement_note']
     snap['driver_reports']=[{'id':r['id'],'shift_id':r['shift_id'],'version':r['version'],'shift_no':r['snapshot']['shift'].get('shift_no'),'closure_label':r['snapshot'].get('closure_label') or display_shift_label(r['snapshot']['shift']),'user_id':r['snapshot']['shift']['user_id'],'summary':r['snapshot']['summary'],'closure':r['snapshot']['shift']['submission']} for r in children]
     if s['kind']=='driver':
         external=s.get('external_enbishan') or {}
@@ -127,6 +139,10 @@ def make_csv(snap):
     for row in snap.get('external_enbishan',[]):
         writer.writerow(['طلبات عنبيشن — ساباد',cell(row.get('driver_id')),row.get('order_count',0),row.get('cash_halalas',0),row.get('card_halalas',0),row.get('total_halalas',0)])
     return ('\ufeff'+out.getvalue()).encode('utf-8')
+
+def corrected_snapshot(c, snap):
+    from .operational_day_policy import report_snapshot
+    return report_snapshot(c, snap)
 
 def brand_title(snap):
     name=snap.get('brand_name')
@@ -504,14 +520,14 @@ def report_list(offset:int=0,user=Depends(auth.current_user)):
         if user.get('_morning_manager_context'):
             clause+=" AND snapshot->'shift'->'delivery_window_snapshot'->>'period'='morning' AND (shift_id=%s OR snapshot->'shift'->>'manager_shift_id'=%s)"
             p.extend([user['_morning_manager_context']['shift_id']]*2)
-        rows=c.execute("SELECT id,shift_id,kind,brand_id,branch_ids,user_id,version,pdf_status,pdf_error,created_at,snapshot->'display_users'->>(snapshot->'shift'->>'user_id') driver_name,coalesce(snapshot->'shift'->>'delivery_operational_date',snapshot->>'operational_date') operational_date,(SELECT shift_no FROM shifts WHERE shifts.id=closure_reports.shift_id) shift_no FROM closure_reports WHERE "+clause+' ORDER BY created_at DESC LIMIT 50 OFFSET %s',[*p,offset]).fetchall()
+        rows=c.execute("SELECT id,shift_id,kind,brand_id,branch_ids,user_id,version,pdf_status,pdf_error,created_at,snapshot->'display_users'->>(snapshot->'shift'->>'user_id') driver_name,coalesce((SELECT reporting_operational_date::text FROM shifts WHERE shifts.id=closure_reports.shift_id),snapshot->>'operational_date') operational_date,(SELECT shift_no FROM shifts WHERE shifts.id=closure_reports.shift_id) shift_no FROM closure_reports WHERE "+clause+' ORDER BY created_at DESC LIMIT 50 OFFSET %s',[*p,offset]).fetchall()
         if user['role']!='owner':rows=[r for r in rows if set(r['branch_ids'])<=set(user.get('branch_ids',[]))]
         return safe({'reports':rows,'offset':offset,'limit':50})
 
 @router.get('/{rid}')
 def report_detail(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
-        r=report(c,user,rid);r.pop('pdf_data');r.pop('csv_data');r['renderings']=c.execute('SELECT template_version,view_kind,status,error,attempts,source_sha256,generated_at FROM report_renderings WHERE report_id=%s ORDER BY template_version,view_kind',(rid,)).fetchall();corrections=c.execute('SELECT x.*,n.id resulting_report_id FROM report_corrections x LEFT JOIN closure_reports n ON n.shift_id=x.shift_id WHERE x.report_id=%s ORDER BY correction_version',(rid,)).fetchall();return safe(operational_view({'report':r,'corrections':corrections}))
+        r=report(c,user,rid);r['snapshot']=corrected_snapshot(c,r['snapshot']);r.pop('pdf_data');r.pop('csv_data');r['renderings']=c.execute('SELECT template_version,view_kind,status,error,attempts,source_sha256,generated_at FROM report_renderings WHERE report_id=%s ORDER BY template_version,view_kind',(rid,)).fetchall();corrections=c.execute('SELECT x.*,n.id resulting_report_id FROM report_corrections x LEFT JOIN closure_reports n ON n.shift_id=x.shift_id WHERE x.report_id=%s ORDER BY correction_version',(rid,)).fetchall();return safe(operational_view({'report':r,'corrections':corrections}))
 
 @router.get('/{rid}/print')
 def print_report(rid:str,user=Depends(auth.current_user)):
@@ -523,6 +539,9 @@ def print_report(rid:str,user=Depends(auth.current_user)):
 def download_pdf(rid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         r=report(c,user,rid)
+        projected=corrected_snapshot(c,r['snapshot'])
+        if projected.get('operational_date_correction'):
+            return Response(make_v5_pdf(projected),media_type='application/pdf',headers={'Cache-Control':'private, no-store'})
         if contains_complimentary(r['snapshot']) and user['role']!='owner':
             return Response(make_v5_pdf(r['snapshot']),media_type='application/pdf',headers={'Cache-Control':'private, no-store'})
         if r['pdf_status']!='ready' or not r['pdf_data']:fail(409,'ملف PDF غير جاهز؛ راجع حالة التوليد وأعد المحاولة')
@@ -605,6 +624,7 @@ def v5_tables(snap,view='compact'):
         tables.append({'key':key,'title':title,'columns':columns,'rows':rows,'total':total})
     table('shift','الشفت والاعتماد',['البيان','القيمة'],[
         ['تقفيلة السائق' if shift.get('kind')=='driver' else 'صاحب الشفت',name(shift.get('user_id'))],['يوم التشغيل',shift.get('delivery_operational_date') or snap.get('operational_date','غير مسجل')],
+        *([['تصحيح يوم التشغيل — التاريخ الأصلي',snap['operational_date_correction'].get('original_day')],['سبب التصحيح','جمع الشفت الصباحي ثم المسائي؛ المبالغ الأصلية محفوظة']] if snap.get('operational_date_correction') else []),
         ['بداية الدوام - الرياض',v5_stamp(shift.get('opened_at'))],
         ['نهاية الدوام - الرياض',v5_stamp((shift.get('vehicle_log') or {}).get('end',{}).get('recorded_at') or shift.get('submitted_at')) if shift.get('kind')=='driver' else v5_stamp(shift.get('closed_at'))],
         ['الفروع', ' / '.join(branch(bid) for bid in shift.get('branch_ids',[])) or 'لا توجد'],
@@ -619,6 +639,7 @@ def v5_tables(snap,view='compact'):
          label(o.get('delivery_status'))]
         for o in orders if (o.get('snapshot') or {}).get('complimentary',{}).get('kind') in KINDS])
     cancelled=len({t.get('order_id') for t in tasks if t.get('status')=='cancelled'}|{o['id'] for o in orders if o.get('preparation_status')=='cancelled'})
+    table('legacy-source-invoices','فواتير ساباد الأصلية — ملحق مستقل',['الطلب','فاتورة المصدر','وقت إصدار الفاتورة؛ ليس وقت التسليم','وقت التسجيل','سبب الملحق'],[[order_name(r['order_id']),r['invoice_reference'],v5_stamp(r['invoice_issued_at']),v5_stamp(r['recorded_at']),r['reason']+' — وقت التسليم والتحصيل الفعلي غير معلوم؛ لا يثبت استلام المدير للكاش.'] for r in snap.get('legacy_invoice_imports',[])])
     table('outcomes','نتائج الطلبات',['مكتمل','ملغى','مرتجع/جزئي','قيمة المكتمل (ر.س)'],[[
         summary.get('completed_orders',0),cancelled,len({r.get('order_id') for r in refunds}),v5_money(summary.get('gross_completed_halalas',0))]])
     if snap.get('kind')=='manager':
@@ -679,6 +700,9 @@ def v5_tables(snap,view='compact'):
         table('card-reconciliation','موازنة جهاز الشبكة',['حسب النظام','موازنة الجهاز','فرق الشبكة'],[[
             v5_money(closure.get('expected_card_halalas')),v5_money(closure['terminal_total_halalas']),v5_money(closure.get('card_difference_halalas'))]])
     table('reconciliation','نتيجة المطابقة',['الحالة','الفرق بالريال'],[['عجز' if difference<0 else 'فائض' if difference>0 else 'متوافق',v5_money(difference)]])
+    table('legacy-deliveries','تسليم سابق بإقرار المالك — لا يثبت التحصيل',['الطلب','يوم التشغيل','سبب الإقرار','وقت تسجيل الإقرار؛ وقت التسليم الفعلي غير موثق'],[
+        [order_name(a['order_id']),a.get('operational_date'),a.get('reason'),v5_stamp(a.get('recorded_at'))]
+        for a in snap.get('legacy_delivery_attestations',[])])
     if snap.get('kind')=='driver':
         terminal=closure.get('payment_terminal') or {}
         table('payment-terminal','جهاز الشبكة المسند للسائق',['البيان','القيمة'],[
@@ -1019,6 +1043,7 @@ def formatted_download(rid:str,format:str,view:str='compact',part:str='main',use
         r=report(c,user,rid)
         if view=='owner' and current_view(user,r)!='owner':fail(403,'التقرير المفصل للمالك فقط')
         variant=view
+        r['snapshot']=corrected_snapshot(c,r['snapshot'])
     data=make_v5_print_html(r['snapshot'],variant,rid,part) if format=='print' else make_v5_pdf(r['snapshot'],variant,part)
     headers={'Cache-Control':'private, no-store'}
     if format=='pdf':headers['Content-Disposition']=f'attachment; filename="KPS-formatted-{rid}.pdf"'
@@ -1027,8 +1052,10 @@ def formatted_download(rid:str,format:str,view:str='compact',part:str='main',use
 @router.get('/{rid}/renderings/v5/{format}')
 def v5_download(rid:str,format:str,user=Depends(auth.current_user)):
     if format not in ('print','pdf','csv'):fail(404,'الملف غير موجود')
-    with db.tx() as c:r,row,variant=saved_rendering(c,user,rid)
-    if contains_complimentary(r['snapshot']):
+    with db.tx() as c:
+        r,row,variant=saved_rendering(c,user,rid)
+        r['snapshot']=corrected_snapshot(c,r['snapshot'])
+    if r['snapshot'].get('operational_date_correction') or contains_complimentary(r['snapshot']):
         value=make_v5_print_html(r['snapshot'],variant,rid) if format=='print' else make_v5_pdf(r['snapshot'],variant) if format=='pdf' else make_v5_csv(r['snapshot'],variant)
         return Response(value,media_type={'print':'text/html','pdf':'application/pdf','csv':'text/csv; charset=utf-8'}[format],headers={'Cache-Control':'private, no-store'})
     if not row or row['status']!='ready':

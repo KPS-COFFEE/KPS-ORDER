@@ -71,7 +71,7 @@ def history(owner_view: Literal['current','review','history'], search: str='',
         if search.strip():
             filters.append('(strpos(lower(v.display_name),lower(%s))>0 OR strpos(lower(v.id),lower(%s))>0)')
             params.extend([search.strip(),search.strip()])
-        day="COALESCE(v.delivery_operational_date, ((v.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '16 hours')::date)"
+        day="COALESCE(v.reporting_operational_date,v.delivery_operational_date, ((v.opened_at AT TIME ZONE 'Asia/Riyadh') - interval '4 hours')::date)"
         if start:
             filters.append(day+'>=%s');params.append(start)
         if end:

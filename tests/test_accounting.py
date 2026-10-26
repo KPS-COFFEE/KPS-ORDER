@@ -11,9 +11,9 @@ from test_operations import ops
 
 def test_operational_boundary_and_export_contract():
     lo,hi,start,end=period('2026-10-01','2026-10-01')
-    assert start.isoformat()=='2026-10-01T16:00:00+03:00'
+    assert start.isoformat()=='2026-10-01T04:00:00+03:00'
     assert (end-start).total_seconds()==86400
-    assert opday(datetime(2026,10,1,12,59,tzinfo=timezone.utc))=='2026-09-30'
+    assert opday(datetime(2026,10,1,0,59,tzinfo=timezone.utc))=='2026-09-30'
     data={'group':'daily','period':{'start':'2026-10-01','end':'2026-10-01'},'definitions':'TEST ONLY','rows':[{'day':'2026-10-01','cash':1250,'card':750,'orders':1,'correct':1,'notes':'=HYPERLINK("evil")'}]}
     model=contract(data,'ar');assert model['totals']['cash']==1250
     with zipfile.ZipFile(io.BytesIO(render(data,'xlsx','ar'))) as z:

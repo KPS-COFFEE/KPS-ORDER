@@ -11,7 +11,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, monitoring, storefront_scope
+from . import auth, monitoring, storefront_scope, staff_geo
 
 LOGGER = logging.getLogger('kps_order')
 MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -78,7 +78,7 @@ class SecurityMiddleware:
                 headers = MutableHeaders(scope=message)
                 headers['X-Request-ID'] = trace
                 headers['X-Content-Type-Options'] = 'nosniff'
-                headers['Referrer-Policy'] = 'no-referrer' if path == '/delivery-track' else 'same-origin'
+                headers['Referrer-Policy'] = 'no-referrer' if path in {'/delivery-track', '/work-access'} else 'same-origin'
                 headers['X-Frame-Options'] = 'DENY'
                 headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
                 headers['Content-Security-Policy'] = (
@@ -121,6 +121,8 @@ class SecurityMiddleware:
                     headers['Cache-Control'] = 'private, no-store' if 'private' in directives else 'no-store'
                 if path.startswith('/assets/') and status in (200, 304):
                     headers['Cache-Control'] = 'public, max-age=86400'
+                for key, value in staff_geo.diagnostic_headers(request).items():
+                    headers[key] = value
                 monitoring.record_response(status)
                 response_started = True
             # Preserve streaming responses, duplicate Set-Cookie headers,
@@ -131,6 +133,15 @@ class SecurityMiddleware:
         operations_token = operation_brand.set(request.headers.get('x-operations-brand'))
         brand_token = storefront_scope.current_brand.set(None)
         try:
+            if staff_geo.configured() and (staff_geo.is_work_entry(request) or staff_geo.is_printer_bridge(request)):
+                staff_geo.observe(request, trace)
+                if staff_geo.is_printer_bridge(request):
+                    # Devices do not carry human sessions or owner entry cookies.
+                    # Keep their existing device authentication and require SA.
+                    staff_geo.require_domestic(request)
+                elif staff_geo.enabled():
+                    from .staff_geo_access import require_entry
+                    await run_in_threadpool(require_entry, request)
             from .multibrand import enabled as multibrand_enabled
             if (multibrand_enabled() and path not in {'/','/index.html'}
                     and auth.session_context(request)=='work' and (not storefront_scope.forced_work_context(request)
@@ -165,7 +176,12 @@ class SecurityMiddleware:
                 # the incomplete response, not silently acknowledge it.
                 raise
             if isinstance(exc, HTTPException):
-                response = JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
+                if (path in staff_geo.WORK_PAGES and exc.status_code == 403
+                        and isinstance(exc.detail, dict)
+                        and str(exc.detail.get('code', '')).startswith('STAFF_GEO_')):
+                    response = staff_geo.denied_page()
+                else:
+                    response = JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
             else:
                 LOGGER.error('request_failed trace=%s method=%s path=%s error_type=%s',
                              trace, method, path, type(exc).__name__)
@@ -176,3 +192,4 @@ class SecurityMiddleware:
         finally:
             storefront_scope.current_brand.reset(brand_token)
             operation_brand.reset(operations_token)
+

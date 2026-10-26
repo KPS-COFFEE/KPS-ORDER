@@ -95,6 +95,28 @@ def dual(request, monkeypatch, safe_test_environment):
     return client, actor, post, shifts, order
 
 
+
+@pytest.fixture
+def shared_dual(dual, monkeypatch):
+    """Current contract: one physical manager/driver day, separate brand legs.
+
+    Keep dual.shifts explicit and standalone for legacy/adoption witnesses.
+    Tests of simultaneous current operations opt into the shared endpoints here.
+    """
+    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED', 'true')
+    _, _, post, _, _ = dual
+    manager = post('manager', '/api/central-operations/workdays', {'kind':'manager'})
+    from app.shift_vehicle import CHECKS
+    driver = post('driver', '/api/central-operations/workdays', {
+        'kind':'driver', 'manager_shift_id':manager['shift']['id'],
+        'vehicle_inspection':{'odometer_km':1000,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}}})
+    by_brand = {s['brand_id']:(next(m['id'] for m in manager['shifts'] if m['brand_id']==s['brand_id']),s['id'])
+                for s in driver['shifts']}
+    assert set(by_brand)=={'kps','enbishan'}
+    assert len({s['central_workday_id'] for s in driver['shifts']})==1
+    return dual, manager, driver, by_brand
+
+
 def test_isolation_blocks_remote_and_runtime_database(monkeypatch):
     monkeypatch.setenv('ENBISHAN_ISOLATED_ENABLED','true')
     for env, url in [('production','postgresql://local@127.0.0.1/test_enbishan_synthetic'),
@@ -185,9 +207,10 @@ def test_both_catalogs_branches_quotes_and_foreign_item_rejection(dual):
 
 
 @pytest.mark.postgres
-def test_simultaneous_shared_driver_dispatch_and_financial_scopes(dual):
-    client, actor, post, shifts, order = dual
-    ks=shifts('kps');es=shifts('enbishan')
+def test_simultaneous_shared_driver_dispatch_and_financial_scopes(shared_dual):
+    dual,_,_,by_brand=shared_dual
+    client, actor, post, _, order = dual
+    ks,es=by_brand['kps'],by_brand['enbishan']
     ko,eo=order('kps'),order('enbishan')
     post('manager','/api/orders/'+ko+'/assign',{'driver_shift_id':ks[1]})
     post('manager','/api/orders/'+eo+'/assign',{'driver_shift_id':es[1]},'enbishan')
@@ -204,9 +227,10 @@ def test_simultaneous_shared_driver_dispatch_and_financial_scopes(dual):
 
 
 @pytest.mark.postgres
-def test_dedication_blocks_other_brand_and_overlapping_periods(dual):
-    _, actor, post, shifts, order = dual
-    ks=shifts('kps');es=shifts('enbishan')
+def test_dedication_blocks_other_brand_and_overlapping_periods(shared_dual):
+    dual,_,_,by_brand=shared_dual
+    _, actor, post, _, order = dual
+    ks,es=by_brand['kps'],by_brand['enbishan']
     now=datetime.now(timezone.utc)
     body={'driver_id':'dual-driver','brand_id':'enbishan','starts_at':(now-timedelta(minutes=1)).isoformat(),
           'ends_at':(now+timedelta(hours=8)).isoformat(),'reason':'SYNTHETIC shift dedication'}
@@ -280,9 +304,9 @@ def test_matching_brand_references_stay_unique_scoped_and_historical_strings_unc
 
 
 @pytest.mark.postgres
-def test_current_verified_checkout_order_history_and_replay_for_both_brands(dual):
-    client, actor, post, shifts, _=dual
-    shifts('kps');shifts('enbishan')
+def test_current_verified_checkout_order_history_and_replay_for_both_brands(shared_dual):
+    dual,_,_,_=shared_dual
+    client, actor, post, _, _=dual
     orders={};parallel=[]
     for brand in ['kps','enbishan']:
         with db.tx() as c:
@@ -319,10 +343,11 @@ def test_current_verified_checkout_order_history_and_replay_for_both_brands(dual
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('method',['cash','card','split'])
-def test_collections_settlements_and_database_reject_cross_brand_cash(dual,method):
+def test_collections_settlements_and_database_reject_cross_brand_cash(shared_dual,method):
     import psycopg
-    _, actor, post, shifts, order=dual
-    ks=shifts('kps');es=shifts('enbishan')
+    dual,_,_,by_brand=shared_dual
+    _, actor, post, _, order=dual
+    ks,es=by_brand['kps'],by_brand['enbishan']
     ko,eo=order('kps'),order('enbishan')
     for brand,oid,shift in [('kps',ko,ks[1]),('enbishan',eo,es[1])]:
         result=post('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':shift},brand)
@@ -413,25 +438,39 @@ def test_persisted_enbishan_tax_invoice_and_foreign_read_are_isolated(dual):
 
 
 @pytest.mark.postgres
-def test_both_brand_driver_closures_and_saved_reports_are_independent(dual):
-    _,actor,post,shifts,_=dual
-    ks=shifts('kps');es=shifts('enbishan')
+def test_both_brand_driver_closures_and_saved_reports_are_independent(shared_dual):
+    dual,manager,driver,by_brand=shared_dual
+    _,actor,post,_,_=dual
+    path='/api/central-operations/workdays/'+driver['shift']['id']
+    # A component cannot be closed independently of the physical workday.
+    for brand,(_,sid) in by_brand.items():
+        post('driver','/api/shifts/'+sid+'/closing',{},brand,status=409)
+    asked=post('driver',path+'/request',{'reason':'SYNTHETIC finished physical workday'})
+    post('manager',path+'/decision',{'decision':'approved',
+        'request_id':asked['shift']['closure_authorization']['id'],'reason':'SYNTHETIC manager approval'})
+    post('driver',path+'/closing',{})
     from app.shift_vehicle import CHECKS
-    for brand,(manager,driver) in [('enbishan',es),('kps',ks)]:
-        post('driver','/api/shifts/'+driver+'/closing',{},brand,status=409)
-        asked=post('driver','/api/driver-closure/'+driver+'/request',{'reason':'SYNTHETIC finished test shift'},brand)
-        post('manager','/api/driver-closure/'+driver+'/decision',{'decision':'approved',
-             'request_id':asked['authorization']['id'],'reason':'SYNTHETIC manager approval'},brand)
-        post('driver','/api/shifts/'+driver+'/closing',{},brand)
-        post('driver','/api/shifts/'+driver+'/submit',{'counted_halalas':0,'handover_halalas':0,'terminal_total_halalas':0,
-             'handover':{'recipient_user_id':'dual-manager','to_shift_id':manager,'reference':'TEST ONLY'},
-             'vehicle_inspection':{'odometer_km':1020,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}}},brand)
-        with db.tx() as c:
-            transfer=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s',(driver,)).fetchone()['id']
-        post('manager','/api/custody/'+transfer+'/confirm',{},brand)
-        result=post('manager','/api/shifts/'+driver+'/approve',{},brand)
-        assert actor('owner',brand).get('/api/reports/'+result['report_id']).status_code==200
-        assert actor('owner','kps' if brand=='enbishan' else 'enbishan').get('/api/reports/'+result['report_id']).status_code==404
+    declaration=post('driver',path+'/physical-submit',{'cash_halalas':0,'card_halalas':0,
+        'vehicle_inspection':{'odometer_km':1020,'fuel_percent':100,'checks':{k:'ok' for k in CHECKS}}})
+    receipt=post('manager',path+'/physical-receipt',{'declaration_id':declaration['declaration_id'],
+        'received_halalas':0,'confirmed':True,'reference':'SYNTHETIC zero-amount physical receipt'})
+    # Actual amounts are still entered once. Accounting attributes the zero
+    # amounts with explicit evidence and creates separate immutable reports.
+    result=post('accountant',path+'/physical-allocation',{
+        'declaration_id':declaration['declaration_id'],'receipt_id':receipt['receipt_id'],
+        'confirmed':True,'reason':'SYNTHETIC verified no collections in either brand',
+        'legs':[{'shift_id':sid,'counted_halalas':0,'received_halalas':0,'retained_halalas':0,
+                 'terminal_total_halalas':0,'evidence':'SYNTHETIC verified empty '+brand+' ledger'}
+                for brand,(_,sid) in by_brand.items()]})
+    assert len(result['report_ids'])==2
+    with db.tx() as c:
+        reports=c.execute('SELECT id,brand_id,shift_id FROM closure_reports WHERE id=ANY(%s)',(result['report_ids'],)).fetchall()
+        assert {r['brand_id'] for r in reports}=={'kps','enbishan'}
+        assert {r['shift_id'] for r in reports}=={leg[1] for leg in by_brand.values()}
+    for report in reports:
+        brand=report['brand_id']
+        assert actor('owner',brand).get('/api/reports/'+report['id']).status_code==200
+        assert actor('owner','kps' if brand=='enbishan' else 'enbishan').get('/api/reports/'+report['id']).status_code==404
 
 
 def test_bad_isolated_startup_never_opens_a_database_connection(monkeypatch):

@@ -1,0 +1,65 @@
+name: Prior delivery accounting acceptance
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/prior_deliveries.py
+      - app/legacy_invoice_imports.py
+      - migrations/108_legacy_invoice_imports.sql
+      - tests/test_closed_manager_invoice_import.py
+      - tests/test_prior_source_invoice_ui.cjs
+      - app/legacy_closures.py
+      - migrations/106_legacy_delivery_attestations.sql
+      - public/assets/legacy-closures.js
+      - tests/test_legacy_deliveries.py
+      - tests/test_legacy_closures_ui.cjs
+      - migrations/104_prior_deliveries.sql
+      - migrations/107_closed_manager_prior_supplements.sql
+      - public/assets/prior-deliveries.js
+      - tests/test_prior_deliveries*.py
+      - .github/workflows/prior-deliveries.yml
+permissions:
+  contents: read
+jobs:
+  prior-delivery-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_enbishan_prior_deliveries
+          POSTGRES_USER: prior_test
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U prior_test -d test_enbishan_prior_deliveries"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://prior_test:isolated-test-only@127.0.0.1:5432/test_enbishan_prior_deliveries
+      TEST_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: |
+          node --check public/ops.js
+          node --check public/assets/prior-deliveries.js
+          node tests/test_prior_source_invoice_ui.cjs
+          node --check public/assets/legacy-closures.js
+          node tests/test_legacy_closures_ui.cjs
+          node --check public/assets/customer-order.js
+          node tests/test_shift_reconciliation_ui.cjs
+          python -m pytest -q tests/test_legacy_deliveries.py tests/test_prior_deliveries.py tests/test_closed_manager_invoice_import.py tests/test_prior_deliveries_browser.py tests/test_shift_reconciliation.py tests/test_driver_accounting_settlements.py tests/test_enbishan_dual_brand.py --junitxml=prior-delivery-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prior-delivery-acceptance
+          path: prior-delivery-results.xml

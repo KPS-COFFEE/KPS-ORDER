@@ -73,10 +73,20 @@ def guard(c, user, shift):
     raise db.error(409, 'EARLY_CLOSURE_APPROVAL_REQUIRED',
                    'اطلب موافقة مدير التوصيل قبل بدء التقفيلة / Request delivery manager approval before closing')
 
+def scheduled_driver_shift(c, user, sid):
+    from .driver_duty import authorize
+    authorize(user)
+    s = lock_shift(c, sid)
+    shift_access(c, user, s, manager=True, capability='driver_duty_manage')
+    if s['kind'] != 'driver' or s['status'] != 'open':
+        raise db.error(409, 'CLOSURE_SHIFT_NOT_OPEN', 'شفت السائق ليس مفتوحاً / Driver shift is not open')
+    return s
+
+
 def schedule_in_tx(c, user, sid, body):
     from .central_workdays import guard_component
     guard_component(c, sid)
-    s = driver_shift(c, user, sid); manager(c, user, s)
+    s = scheduled_driver_shift(c, user, sid)
     if body.scheduled_end_at is not None and body.scheduled_end_at <= s['opened_at']:
         raise db.error(422, 'CLOSURE_SCHEDULE_INVALID', 'وقت النهاية بعد بداية الشفت / End must follow shift start')
     c.execute('UPDATE shifts SET scheduled_end_at=%s,closure_authorization=NULL WHERE id=%s', (body.scheduled_end_at, sid))
@@ -87,7 +97,7 @@ def schedule_in_tx(c, user, sid, body):
 @router.put('/{sid}/schedule')
 def schedule(sid: str, body: Schedule, request: Request, user=Depends(auth.current_user)):
     with db.tx() as c:
-        s = driver_shift(c, user, sid); manager(c, user, s)
+        scheduled_driver_shift(c, user, sid)
         def perform():
             return schedule_in_tx(c, user, sid, body)
         return mutate(c, user, request, 'driver_closure.schedule:'+sid, body.model_dump(mode='json'), perform)

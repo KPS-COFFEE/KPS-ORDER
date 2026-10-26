@@ -112,25 +112,17 @@ def test_closing_rolls_back_all_brands_when_one_has_a_pending_order(central):
 
 
 @pytest.mark.postgres
-def test_driver_close_requires_exact_breakdown_and_is_atomic(central,monkeypatch):
+def test_shared_driver_legacy_perbrand_close_is_rejected_atomically(central):
     _,_,post,_,_=central
-    from app import reporting
-    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
     _,driver=open_days(central)
     path='/api/central-operations/workdays/'+driver['shift']['id']+'/driver-close'
     rows=[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'terminal_total_halalas':0} for s in driver['shifts']]
     body={'legs':rows,'confirmed':True,'exception_reason':'Synthetic delegated end','vehicle_inspection':inspection(1010)}
-    post('manager',path,{**body,'legs':rows[:1]},status=422)
+    result=post('manager',path,body,status=409)
+    assert result['detail']['code']=='SHARED_PHYSICAL_SUBMISSION_REQUIRED'
     with db.tx() as c:
         assert not c.execute("SELECT 1 FROM shifts WHERE user_id='dual-driver' AND status<>'open'").fetchone()
-    done=post('manager',path,body)
-    assert {s['status'] for s in done['shifts']}=={'closed'}
-    assert len(done['report_ids'])==2
-    with db.tx() as c:
-        rows=c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
-        assert sum('end' in s['vehicle_log'] for s in rows)==1
-        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='shift.vehicle.end'").fetchone()['n']==1
-        assert len(c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=ANY(%s) AND status='confirmed'",([s['id'] for s in rows],)).fetchall())==2
+        assert not c.execute('SELECT 1 FROM custody_transfers').fetchone()
 
 
 @pytest.mark.postgres
@@ -279,7 +271,10 @@ def test_overnight_adoption_still_revalidates_current_branch_enablement(central,
 @pytest.mark.postgres
 def test_two_legacy_shifts_are_never_silently_merged(central):
     _,_,post,shifts,_=central
-    kps,_=shifts('kps');shifts('enbishan')
+    kps,_=shifts('kps')
+    # Two historical manager shifts remain separate; do not create an invalid
+    # second physical driver shift just to seed this manager-adoption witness.
+    post('manager','/api/shifts',{'kind':'manager'},brand='enbishan')
     post('manager','/api/central-operations/workdays/'+kps+'/adopt',{},status=409)
     with db.tx() as c:
         assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
@@ -402,10 +397,13 @@ def test_flag_off_drains_existing_group_without_component_bypass(central,monkeyp
         post('driver','/api/shifts/'+leg['id']+'/closing',{},brand=leg['brand_id'],status=409)
     detail=actor('driver').get('/api/central-operations/workdays/'+driver['shift']['id'])
     assert detail.status_code==200,detail.text
-    done=post('manager','/api/central-operations/workdays/'+driver['shift']['id']+'/driver-close',{
-        'legs':[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'terminal_total_halalas':0} for s in driver['shifts']],
-        'confirmed':True,'exception_reason':'Synthetic flag rollback drain','vehicle_inspection':inspection(1010)})
-    assert {s['status'] for s in done['shifts']}=={'closed'}
+    prefix='/api/central-operations/workdays/'+driver['shift']['id']
+    declared=post('manager',prefix+'/physical-submit',{'cash_halalas':0,'card_halalas':0,'reason':'Synthetic flag rollback drain','vehicle_inspection':inspection(1010)})
+    receipt=post('manager',prefix+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':0,'confirmed':True,'reference':'Flag-off physical receipt'})
+    done=post('accountant',prefix+'/physical-allocation',{'declaration_id':declared['declaration_id'],'receipt_id':receipt['receipt_id'],'confirmed':True,'reason':'Verified zero-activity brand allocation',
+        'legs':[{'shift_id':s['id'],'counted_halalas':0,'received_halalas':0,'retained_halalas':0,'terminal_total_halalas':0,'evidence':'No activity verified'} for s in driver['shifts']]})
+    assert done['state']=='allocated'
+
 
 
 @pytest.mark.postgres
@@ -448,3 +446,127 @@ def test_shared_vehicle_opening_respects_audited_meter_correction(central):
     opened=post('driver','/api/central-operations/workdays',{
         'kind':'driver','manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection(950)})
     assert opened['shift']['vehicle_log']['start']['odometer_km']==950
+
+
+@pytest.fixture
+def standalone_morning(central, monkeypatch):
+    from app import service_hours
+    from test_morning_delivery import at
+    monkeypatch.setattr(service_hours, 'now_riyadh', lambda: at('08:00:00'))
+    with db.tx() as c:
+        c.execute("UPDATE brands SET settings=settings||%s WHERE id='kps'", (db.json({'morning_delivery': {
+            'enabled': True, 'version': 1, 'execution_branch_ids': ['kps-branch-1'],
+            'manager_user_ids': ['dual-manager'], 'preparer_user_ids': []}}),))
+        c.execute("UPDATE users SET branch_ids=%s WHERE id='dual-driver'",
+                  (db.json(['kps-branch-1', 'kps-branch-2']),))
+    _, _, post, _, _ = central
+    manager = post('manager', '/api/shifts', {'kind': 'manager', 'delivery_period': 'morning'})['shift']
+    return central, manager
+
+
+@pytest.mark.postgres
+def test_old_client_morning_open_uses_one_canonical_shift_and_replay(standalone_morning):
+    central, manager = standalone_morning
+    _, _, post, _, _ = central
+    body = {'kind': 'driver', 'manager_shift_id': manager['id'], 'branch_ids': [],
+            'vehicle_inspection': inspection()}
+    first = post('driver', '/api/central-operations/workdays', body, key='morning-compat')
+    assert first['shift']['delivery_window_snapshot']['period'] == 'morning'
+    assert first['shift']['branch_ids'] == ['kps-branch-1']
+    assert first['shift']['brand_id'] == 'kps'
+    assert post('driver', '/api/central-operations/workdays', body, key='morning-compat') == first
+    assert post('driver', '/api/shifts', body, key='morning-compat') == first
+    with db.tx() as c:
+        rows = c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
+        assert len(rows) == 1
+        assert rows[0]['vehicle_log']['start']['odometer_km'] == 1000
+        assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
+        c.execute("UPDATE users SET branch_ids='[]' WHERE id='dual-driver'")
+    post('driver', '/api/central-operations/workdays', body, key='morning-compat', status=403)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('change,status', [
+    ('missing_inspection', 422), ('self_scope', 403), ('mismatched_period', 409),
+    ('closed_manager', 409), ('revoked_manager', 409), ('foreign_actor', 404),
+])
+def test_old_client_morning_open_preserves_canonical_guards(standalone_morning, change, status):
+    central, manager = standalone_morning
+    _, _, post, _, _ = central
+    body = {'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()}
+    brand = 'kps'
+    if change == 'missing_inspection':
+        body.pop('vehicle_inspection')
+    elif change == 'self_scope':
+        body['branch_ids'] = ['kps-branch-1']
+    elif change == 'mismatched_period':
+        body['delivery_period'] = 'evening'
+    else:
+        with db.tx() as c:
+            if change == 'closed_manager':
+                c.execute("UPDATE users SET branch_ids='[\"kps-branch-1\"]' WHERE id='dual-driver'")
+                c.execute("UPDATE shifts SET status='closed' WHERE id=%s", (manager['id'],))
+            elif change == 'revoked_manager':
+                c.execute("UPDATE users SET active=false WHERE id='dual-manager'")
+            elif change == 'foreign_actor':
+                c.execute("UPDATE users SET brand_id='enbishan',branch_ids='[\"enbishan-test-1\"]' WHERE id='dual-driver'")
+                brand = 'enbishan'
+    post('driver', '/api/central-operations/workdays', body, brand=brand, status=status)
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM shifts WHERE user_id='dual-driver'").fetchone()
+        assert not c.execute('SELECT 1 FROM central_workdays').fetchone()
+
+
+@pytest.mark.postgres
+def test_old_client_evening_standalone_is_not_treated_as_morning(central):
+    _, _, post, _, _ = central
+    manager = post('manager', '/api/shifts', {'kind': 'manager'})['shift']
+    result = post('driver', '/api/central-operations/workdays', {
+        'kind': 'driver', 'manager_shift_id': manager['id'], 'vehicle_inspection': inspection()})
+    assert result['shift']['manager_shift_id']==manager['id']
+    assert result['shift']['delivery_window_snapshot']['period']=='evening'
+    assert not result.get('workday')
+
+
+def test_morning_compat_delegates_canonical_contract_without_group_action(monkeypatch):
+    """The old central endpoint fails here at the real missing-association guard."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from app import central_workdays as workdays, central_operations, multibrand, operations
+    user = {'id': 'driver', 'role': 'driver', 'active': True, 'brand_id': 'kps', 'branch_ids': ['branch']}
+    manager = {'id': 'morning', 'kind': 'manager', 'status': 'open', 'brand_id': 'kps',
+               'delivery_window_snapshot': {'period': 'morning'}}
+    class Connection:
+        def execute(self, sql, values=()):
+            row = user if 'FROM users' in sql else None
+            return SimpleNamespace(fetchone=lambda: row)
+    c = Connection()
+    @contextmanager
+    def tx():
+        yield c
+    monkeypatch.setattr(db, 'tx', tx)
+    monkeypatch.setattr(workdays, 'require_enabled', lambda *args: None)
+    monkeypatch.setattr(workdays, 'lock_lanes', lambda *args: None)
+    monkeypatch.setattr(workdays, 'association', lambda *args: None)
+    monkeypatch.setattr(operations, 'lock_shift', lambda *args: manager)
+    monkeypatch.setattr(multibrand, 'project', lambda conn, actor, brand: user)
+    monkeypatch.setattr(central_operations, 'context', lambda *args: {'brands': [{'id': 'kps'}]})
+    monkeypatch.setattr(db, 'idempotent', lambda conn, actor, key, op, body, perform: perform())
+    calls = []
+    def canonical(conn, principal, body):
+        assert not workdays._action.get(), 'Canonical grouped-shift protections must remain active'
+        assert multibrand.operation_brand.get() == 'kps'
+        calls.append((principal, body))
+        return {'shift': {'id': 'driver-morning', 'brand_id': 'kps'}}
+    def mutate(conn, principal, request, operation, body, perform):
+        assert operation == 'shift.open'
+        assert request.headers['Idempotency-Key'] == 'same-canonical-key'
+        return perform()
+    monkeypatch.setattr(operations, 'open_shift_in_tx', canonical)
+    monkeypatch.setattr(operations, 'mutate', mutate)
+    body = operations.ShiftOpen(kind='driver', manager_shift_id='morning', vehicle_inspection=inspection())
+    before = multibrand.operation_brand.get()
+    result = workdays.open_workday(body, SimpleNamespace(headers={'Idempotency-Key': 'same-canonical-key'}), user)
+    assert result['shift']['id'] == 'driver-morning'
+    assert calls == [(user, body)]
+    assert multibrand.operation_brand.get() == before
