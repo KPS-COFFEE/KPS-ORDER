@@ -1,12 +1,13 @@
 """Exact-channel independent treatments preserve debt and source records."""
 from copy import deepcopy
-from datetime import date,timedelta
+from datetime import datetime,timedelta
 from types import SimpleNamespace
 from contextlib import nullcontext
 from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException
 from app import financial_treatments as ft, db
+from app.accounting import TZ
 
 
 def values(cash=-550,card=0):
@@ -20,7 +21,7 @@ def proposal(kind='outstanding',cash=-550,card=0):
         evidence_reference='TEST signed receipt REF-123',note='TEST independently documented actual facts')
     if kind=='documented_channel_correction':body['source_correction_ids']=['TEST-source-correction']
     if kind=='outstanding':body.update(liable_party_type='customer',liable_party_name='TEST Customer',
-        followup_user_id='accountant',due_on=date.today()+timedelta(days=7))
+        followup_user_id='accountant',due_on=datetime.now(TZ).date()+timedelta(days=7))
     return ft.Proposal(**body)
 
 
@@ -161,7 +162,7 @@ def test_pending_recovery_does_not_reduce_receivable():
 
 def recovery(**changes):
     body=dict(direction='receivable_recovery',cash_amount_halalas=550,card_amount_halalas=0,
-        cash_custody_event_id='actual-source',occurred_on=date.today(),
+        cash_custody_event_id='actual-source',occurred_on=datetime.now(TZ).date(),
         evidence_reference='TEST actual signed receipt',note='TEST actual later cash receipt')
     body.update(changes);return ft.Recovery(**body)
 
@@ -194,7 +195,7 @@ def prepared(ops,cash=9450,card=5000):
     base='/api/accounting/driver-settlements/settlement-report'
     post('accountant',base+'/approve-balance',dict(expected_revision=0,bank_halalas=card,cash_due_halalas=10000,note='TEST actual terminal paper reviewed'))
     post('accountant',base+'/receive-cash',dict(expected_revision=1,cash_received_halalas=cash,
-        received_on=date.today().isoformat(),receipt_reference='TEST actual physical receipt',note='TEST actual count recorded separately'))
+        received_on=datetime.now(TZ).date().isoformat(),receipt_reference='TEST actual physical receipt',note='TEST actual count recorded separately'))
     return actor,post,base,snapshot
 
 
@@ -241,7 +242,7 @@ def test_opposite_channels_need_documented_independent_canonical_source_correcti
         c.execute("INSERT INTO custody_events(id,shift_id,amount_halalas,kind,reference_id,actor_id,reason) VALUES('test-cash-event','settlement-shift',10000,'collection','test-source-cash','ops-driver','TEST actual original cash source')")
     correction=post('accountant','/api/collections/test-source-card/tender-corrections',dict(expected_order_version=1,
         target_method='cash',target_tendered_halalas=5000,target_reference='',evidence_reference='TEST original signed cash tender proves source error',
-        note='TEST source incorrectly recorded as card',followup_user_id='ops-accountant',due_on=date.today().isoformat()))
+        note='TEST source incorrectly recorded as card',followup_user_id='ops-accountant',due_on=datetime.now(TZ).date().isoformat()))
     source=post('owner','/api/collections/test-source-card/tender-corrections/'+correction['id']+'/approve',dict(expected_order_version=1,
         confirmed=True,evidence_reference='TEST independent original tender evidence',note='TEST whole original collection was actually cash'))
     body=proposal('documented_channel_correction',5000,-5000).model_dump(mode='json')
@@ -360,7 +361,7 @@ def test_financial_treatment_and_evidence_audit_records_are_database_immutable(o
 def test_reversing_recovered_receivable_keeps_actual_money_as_refund_due():
     row=treatment('documented_channel_correction',1000,-1000)
     row['payload'].update(supersedes_treatment_id='prior',liable_party_type='customer',liable_party_name='TEST original payer',
-        followup_user_id='accountant',due_on=date.today().isoformat())
+        followup_user_id='accountant',due_on=datetime.now(TZ).date().isoformat())
     row['recoveries']=[dict(status='approved',payload=dict(direction='receivable_recovery',cash_amount_halalas=0,card_amount_halalas=1000))]
     result=ft.apply(values(1000,-1000),row)
     assert not result['financially_complete']
@@ -400,7 +401,7 @@ def test_card_recovery_requires_registered_unallocated_bank_line(monkeypatch):
     report=dict(created_at=datetime.now(timezone.utc)-timedelta(days=1),brand_id='kps',branch_ids=['b'])
     row=treatment(cash=0,card=-550)
     body=recovery(cash_amount_halalas=0,card_amount_halalas=550,cash_custody_event_id=None,bank_reference='bankline_actual')
-    source=dict(amount_halalas=1000,unallocated_halalas=550,received_on=date.today(),recorded_by='bank-recorder')
+    source=dict(amount_halalas=1000,unallocated_halalas=550,received_on=datetime.now(TZ).date(),recorded_by='bank-recorder')
     monkeypatch.setattr(manual_bank_matching,'bank_line',lambda *args:source,raising=False)
     assert ft.validate_recovery(Mock(),{},report,row,body)==[]
     source['unallocated_halalas']=549
@@ -542,7 +543,7 @@ def test_bank_evidence_approval_does_not_invent_a_personal_cash_custodian(monkey
     from app import manual_bank_matching
     monkeypatch.setattr(manual_bank_matching,'enabled',lambda:True)
     monkeypatch.setattr(manual_bank_matching,'bank_line',lambda *args:dict(amount_halalas=550,unallocated_halalas=550,
-        received_on=date.today(),recorded_by='owner'))
+        received_on=datetime.now(TZ).date(),recorded_by='owner'))
     report=dict(created_at=datetime.now(timezone.utc)-timedelta(days=1),brand_id='kps',branch_ids=['b'])
     body=recovery(cash_amount_halalas=0,card_amount_halalas=550,cash_custody_event_id=None,bank_reference='bankline_actual')
     assert ft.validate_recovery(Mock(),{},report,treatment(cash=0,card=-550),body)==[]
