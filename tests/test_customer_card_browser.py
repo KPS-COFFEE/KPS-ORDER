@@ -46,7 +46,12 @@ def test_photo_taps_quantity_required_choices_and_neighborhood(static_customer, 
             route.fulfill(status=200, content_type='application/json', body=json.dumps(responses[path]))
         context.route('**/api/**', api)
         page.goto(static_customer + '/?brand_id=' + brand, wait_until='networkidle')
+        if brand == 'enbishan':
+            page.locator('input[name=service][value=pickup]').check()
+            page.locator('#enbishan-location-button').click()
         page.locator('#branch-select').select_option('synthetic-branch')
+        if brand == 'enbishan':
+            page.locator('#enbishan-location-done').click()
         plain_card = page.locator('[data-product-id=synthetic-plain]')
         expect(plain_card.locator('.product-add-button')).to_be_enabled()
         # Dispatch a burst on the same real image button: re-rendering cannot lose taps.

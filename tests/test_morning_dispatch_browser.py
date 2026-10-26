@@ -71,7 +71,7 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
                 assert (order['preparation_status'],body['status']) in [('accepted','preparing'),('preparing','ready')]
                 order.update(preparation_status=body['status'],version=order['version']+1);payload={'order':order}
             elif path=='/api/tasks/task/handover':
-                assert request.post_data_json=={'driver_shift_id':'replacement-shift','reason':'سبب نقل المهمة'}
+                assert request.post_data_json=={'driver_shift_id':'replacement-shift','reason':'سبب نقل المهمة','reassign_before_pickup':True}
                 task['transfer_shift_id']='replacement-shift';payload={'task_id':'task','acceptance_required':True}
             elif request.method!='GET':raise AssertionError('Unexpected mutation '+path)
             route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
