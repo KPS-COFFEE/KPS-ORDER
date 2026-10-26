@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.*;
 import android.view.View;
+import android.view.WindowInsets;
 import android.webkit.*;
 import android.widget.*;
 import java.util.concurrent.*;
@@ -24,7 +25,19 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);WebView.setWebContentsDebuggingEnabled(false);
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.HORIZONTAL);bar.setPadding(12,8,12,8);
+        if(Build.VERSION.SDK_INT>=30){
+            // SDK 35 draws below system bars and camera cutouts. Keep both the
+            // readiness control and WebView inside the usable window, including
+            // landscape cutouts and the on-screen keyboard.
+            getWindow().setDecorFitsSystemWindows(false);
+            layout.setOnApplyWindowInsetsListener((view,insets)->{
+                android.graphics.Insets safe=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());
+                view.setPadding(safe.left,safe.top,safe.right,safe.bottom);
+                return WindowInsets.CONSUMED;
+            });
+        }else layout.setFitsSystemWindows(true);
+        int pad=(int)(12*getResources().getDisplayMetrics().density+0.5f);
+        LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.VERTICAL);bar.setPadding(pad,pad/2,pad,pad/2);
         status=new TextView(this);status.setText("افتح شفتك كالمعتاد؛ الموقع يعمل أثناء الشفت فقط");
         retry=new Button(this);retry.setText("فحص الجاهزية / Check readiness");retry.setOnClickListener(v->{
             permissionAsked=false;notificationsAsked=false;
@@ -35,11 +48,14 @@ public final class MainActivity extends Activity {
                 startActivity(settings);
             }else checkShift();
         });
-        bar.addView(status,new LinearLayout.LayoutParams(0,-2,1));bar.addView(retry);layout.addView(bar);
+        bar.addView(status,new LinearLayout.LayoutParams(-1,-2));
+        retry.setMinHeight((int)(48*getResources().getDisplayMetrics().density+0.5f));
+        bar.addView(retry,new LinearLayout.LayoutParams(-1,-2));layout.addView(bar);
         web=new WebView(this);layout.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(layout);
+        layout.requestApplyInsets();
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);
-        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.2 KPSNativeOrderAudio/1");
+        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.3 KPSNativeOrderAudio/1");
         s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setGeolocationEnabled(false); // Native service owns GPS; never a second browser watcher.
         web.setWebViewClient(new WebViewClient(){
