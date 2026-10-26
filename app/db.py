@@ -329,6 +329,8 @@ def migrate():
                             raise RuntimeError('Release aborted: existing operational data changed during migration.')
                         audit(conn, None, 'release.operational_data_preserved', 'runtime', deployed_revision,
                               {'verified': bool(baseline), 'tables_checked': len(baseline),
+                               'audit_events_appended': (conn.execute('SELECT count(*) AS n FROM audit_events').fetchone()['n']
+                                                         - baseline.get('audit_events', {}).get('count', 0)),
                                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
                     break
                 except (psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected) as exc:
@@ -361,6 +363,7 @@ PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authoriz
                     'financial_case_clarifications', 'financial_case_clarification_events', 'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims', 'audit_events')
 
 
+PRESERVED_TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_line_decisions')
 PRESERVED_TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 
 def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
@@ -371,6 +374,9 @@ def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     writes, so legitimate concurrent activity neither blocks nor mismatches.
     Other callers retain the original shared-lock behavior by default.
     Only counts and opaque hashes enter the private audit, never row contents.
+    Audit history is append-only for preservation: compare every original ID and
+    byte while allowing newly documented actions. The private in-memory ID keyset
+    never enters the release audit (which records counts and digests only).
     Catalog/branch edits are separately guarded by their explicit owner decisions.
     """
     if not lock_tables and conn.execute('SHOW transaction_isolation').fetchone()['transaction_isolation'] not in {'repeatable read', 'serializable'}:
@@ -384,10 +390,20 @@ def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     for table in names:
         columns = baseline[table]['columns'] if baseline is not None else [row['column_name'] for row in conn.execute(
             'SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s ORDER BY ordinal_position', (table,)).fetchall()]
+        # Financial and administrative evidence share the canonical audit ledger.
+        # Additions are expected during owner migrations and after a release;
+        # omitting the table would hide rewrites/deletions of original evidence.
+        audit_ids = None
+        if table == 'audit_events':
+            audit_ids = (baseline[table]['row_ids'] if baseline is not None else
+                         [row['id'] for row in conn.execute('SELECT id FROM audit_events ORDER BY id').fetchall()])
+        predicate = sql.SQL(' WHERE id = ANY(%s::text[])') if audit_ids is not None else sql.SQL('')
         statement = sql.SQL("SELECT count(*)::bigint AS count,md5(coalesce(string_agg(h,'' ORDER BY h),'')) AS digest "
-                            "FROM (SELECT md5(row_to_json(r)::text) AS h FROM (SELECT {} FROM {}) r) fingerprints").format(
-            sql.SQL(',').join(map(sql.Identifier, columns)), sql.Identifier(table))
-        result[table] = dict(conn.execute(statement).fetchone(), columns=columns)
+                            "FROM (SELECT md5(row_to_json(r)::text) AS h FROM (SELECT {} FROM {}{}) r) fingerprints").format(
+            sql.SQL(',').join(map(sql.Identifier, columns)), sql.Identifier(table), predicate)
+        result[table] = dict(conn.execute(statement, (audit_ids,) if audit_ids is not None else ()).fetchone(), columns=columns)
+        if audit_ids is not None:
+            result[table]['row_ids'] = audit_ids
     return result
 
 

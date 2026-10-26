@@ -49,10 +49,16 @@ def test_both_release_runs_retain_the_complete_strict_load_gate():
     assert 'isolated-load-recovery:' in workflow and 'isolated-two-worker-capacity:' in workflow
     assert '--workers 2' in workflow
     assert '--profile-cpu --workers 1 --levels 50' in workflow
-    # Neither independent release run overrides the latency, error or workload
-    # defaults. The diagnostic-only level 50 run cannot replace either gate.
-    for option in ('--p95-ms', '--p99-ms', '--max-error-rate', '--rounds'):
+    # Independent unrestricted runs retain their defaults. Actual-resource
+    # certification may tighten the error rate to zero, never increase it or
+    # change latency/workload acceptance. Diagnostics cannot replace either gate.
+    for option in ('--p95-ms', '--p99-ms', '--rounds'):
         assert option not in workflow
+    unrestricted = workflow.split('  proposed-capacity-budget:', 1)[0]
+    assert '--max-error-rate' not in unrestricted
+    import re
+    error_overrides = re.findall(r'--max-error-rate\s+([^\s]+)', workflow)
+    assert error_overrides and all(value == '0' for value in error_overrides)
     assert workflow.count('--levels') == 1
 
 

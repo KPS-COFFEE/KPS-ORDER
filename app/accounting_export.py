@@ -123,7 +123,13 @@ def render(data,format,lang):
     values=[[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k), (int,float)) else r.get(k,'') for k in keys] for r in [*rows,summary]]
     units="" if data['group'].startswith('driver_incentive') else "SAR | "
     meta=f"{data['period']['start']} — {data['period']['end']} | Asia/Riyadh | "+units+('كشف مقفل / Closed statement' if data.get('frozen') else 'تقرير مباشر / Live report')
-    if format=='xlsx':return xlsx([headers,*values],keys,[title,meta,data['definitions']],lang)
+    definitions=data['definitions']
+    if data['group']=='driver_statement':
+        # Present the scope for old frozen statements too, preserving their data.
+        marker='مطابقة البنك نطاق مستقل بالأدلة.' if lang=='ar' else 'Bank matching remains a separate evidence scope.'
+        if marker not in definitions:
+            definitions+=' '+('نطاق هذا الكشف مراجعة الكاش والشبكة المسجلة فقط؛ تحصيل الشبكة المسجل لا يثبت وصوله للبنك. '+marker if lang=='ar' else 'This statement covers closure cash and recorded-card review only; recorded card collection does not establish bank receipt. '+marker)
+    if format=='xlsx':return xlsx([headers,*values],keys,[title,meta,definitions],lang)
     if data['group']=='driver_statement':
         # A separate page per driver and section keeps daily figures readable;
         # long notes/audit entries never compress all columns onto one page.
@@ -143,8 +149,8 @@ def render(data,format,lang):
                     return sum(r.get(key,0) for r in entries) if key=='completed_orders' else ''
                 section_rows.append([('الإجمالي' if lang=='ar' else 'Total') if i==0 else section_total(k) for i,k in enumerate(section_keys)])
                 sections.append(dict(title=entries[0]['driver'],keys=section_keys,rows=section_rows))
-        return pdf([headers,*values],keys,title,meta,data['definitions'],lang,sections=sections or None,compact=True)
-    return pdf([headers,*values],keys,title,meta,data['definitions'],lang)
+        return pdf([headers,*values],keys,title,meta,definitions,lang,sections=sections or None,compact=True)
+    return pdf([headers,*values],keys,title,meta,definitions,lang)
 
 def xlsx(rows,keys,notes,lang):
     def column(n):

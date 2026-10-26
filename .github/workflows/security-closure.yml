@@ -122,6 +122,7 @@ jobs:
         node --test tests/test_driver_attribution_ui.cjs
 
         node tests/test_driver_simple_ui.cjs
+        node tests/test_driver_receipt_lifecycle_ui.cjs
 
 
         node tests/test_driver_trip_ui.cjs

@@ -1,6 +1,7 @@
 import pytest
 from psycopg.errors import RaiseException
 from app import db
+from test_operations import ops
 from test_financial_clarifications import setup_case
 
 @pytest.mark.postgres

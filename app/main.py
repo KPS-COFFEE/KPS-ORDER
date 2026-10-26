@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import psycopg
+from anyio.to_thread import current_default_thread_limiter
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
@@ -21,11 +22,17 @@ from .host_policy import OfficialHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
+# Two request slots per database connection keep the measured small-worker
+# queue bounded while allowing non-database work alongside checked-out reads.
+REQUEST_THREAD_TOKENS = 8
 
 
 @asynccontextmanager
 async def lifespan(app):
     background_tasks = []
+    request_limiter = current_default_thread_limiter()
+    previous_thread_tokens = request_limiter.total_tokens
+    request_limiter.total_tokens = REQUEST_THREAD_TOKENS
     try:
         from . import staff_geo
         staff_geo.validate_configuration()
@@ -66,7 +73,10 @@ async def lifespan(app):
                 with suppress(asyncio.CancelledError):
                     await task
         finally:
-            db.close_pools()
+            try:
+                db.close_pools()
+            finally:
+                request_limiter.total_tokens = previous_thread_tokens
 
 
 app = FastAPI(title='KPS Independent Orders', version='5.0.0', lifespan=lifespan,

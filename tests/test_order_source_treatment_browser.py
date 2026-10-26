@@ -18,6 +18,7 @@ def test_development_price_credit_form_keeps_original_and_actual_collection_visi
         page.on('pageerror',lambda error:errors.append(str(error)))
         page.set_content(f'<html lang="{lang}" dir="{"rtl" if lang=="ar" else "ltr"}"><body><p>ISOLATED DEVELOPMENT DATA — NOT PRODUCTION</p><dialog id="modal"><h2></h2><div id="modal-body"></div></dialog></body></html>')
         page.add_style_tag(content='*{box-sizing:border-box}body{font:15px Arial;padding:12px}.stack{display:grid;gap:12px}label{display:grid;gap:6px}input,select,textarea,button{font:inherit;max-width:100%;padding:9px}dialog{width:min(680px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;border:1px solid #ddd;padding:16px}dialog h2{font-size:18px}.panel{border:1px solid #ddd;padding:12px;border-radius:8px}p,dd{overflow-wrap:anywhere;margin-inline-start:0}dl{display:grid;gap:6px}[hidden]{display:none!important}')
+        page.add_style_tag(path=str(ROOT/'public/assets/accounting.css'))
         page.add_script_tag(path=str(ROOT/'public/assets/order-source-treatment.js'))
         page.evaluate('''async lang=>{
           const data={order_id:'synthetic-order',version:4,case_id:'synthetic-case',original_total_halalas:2500,effective_total_halalas:2500,effective_claim_halalas:2500,price_credit_halalas:0,refund_credit_halalas:0,actual_collected_halalas:1950,pending_amount_halalas:550,amounts_matched:false,financially_complete:false,financial_state:'pending_review',can_propose:true,can_approve:true,treatments:[],followup_users:[{id:'accountant',name:'Synthetic accountant'}]};

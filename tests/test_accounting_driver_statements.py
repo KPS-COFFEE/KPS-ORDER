@@ -102,7 +102,16 @@ def test_manager_card_independent_driver_receipts_day_snapshot_and_audit(ops):
     assert 'مبلغ مستحق تحت المتابعة' in confirmed_second['status']
     cards=actor('accountant').get(path).json()['cards']
     assert cards[0]['review_completed']==2 and cards[0]['ready']
-    assert cards[0]['completed']==0 and cards[0]['financial_completion_percent']==0
+    # The current driver-closure scope reviews actual cash and recorded card.
+    # Bank settlement is a separate, disabled development feature, so the fully
+    # matched first driver is complete while the second payable stays open.
+    assert cards[0]['completed']==1 and cards[0]['financial_completion_percent']==50
+    assert cards[0]['financial_completion_scope']=='closure_cash_and_recorded_card'
+    assert cards[0]['bank_settlement_included'] is False
+    first_closure=next(r for r in cards[0]['drivers'] if r['id']=='settlement-report')
+    second_closure=next(r for r in cards[0]['drivers'] if r['id']=='statement-report2')
+    assert first_closure['financially_complete']
+    assert not second_closure['financially_complete'] and second_closure['outstanding_payable_halalas']==200
     approved=post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST reviewed all drivers'},key='day-final')
     assert post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST reviewed all drivers'},key='day-final')==approved
     saved=actor('accountant').get('/api/accounting/days/'+approved['id']).json()

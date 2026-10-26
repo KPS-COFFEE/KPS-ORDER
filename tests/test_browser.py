@@ -836,10 +836,19 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()
         expect(manager.locator('#modal-body')).to_contain_text('النقد المستلم فعليًا من السائق')
         expect(manager.locator('#modal-body')).to_contain_text('النقد الذي عده السائق')
+        expect(manager.locator('#modal-body [data-saved-actual-receipt]')).to_be_visible()
+        expect(manager.locator('#modal-body input[name=received]')).to_have_count(0)
+        expect(manager.locator('#modal-body [data-action=return-shift]')).to_have_count(0)
         _capture(manager,'delivery-manager-driver-closure-approval')
-        _submit_modal(manager,check=['confirmed'])
+        with manager.expect_response(lambda response:response.request.method=='POST' and response.url.endswith('/api/shifts/'+driver_shift+'/driver-close')) as closed:
+            _submit_modal(manager,check=['confirmed'])
+        assert closed.value.status==200,closed.value.text()
+        assert closed.value.request.post_data_json['received_halalas']==1000
         with db.tx() as conn:
-            assert conn.execute('SELECT status FROM shifts WHERE id=%s',(driver_shift,)).fetchone()['status']=='closed'
+            saved=conn.execute('SELECT status,submission FROM shifts WHERE id=%s',(driver_shift,)).fetchone()
+            assert saved['status']=='closed' and saved['submission']['actual_handover_halalas']==1000
+            assert conn.execute("SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(driver_shift,)).fetchone()['n']==1
+            assert conn.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver_shift,)).fetchone()['n']==1
 
         manager.locator(f'[data-action=start-closing][data-id="{manager_shift}"]').click()
         expect(manager.locator('#closure-form')).to_be_visible()

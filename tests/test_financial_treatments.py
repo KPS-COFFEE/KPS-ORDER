@@ -282,7 +282,8 @@ def test_later_actual_cash_recovery_requires_independent_source_and_prevents_dup
     post('owner',decision,approval,status=409)
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
     assert row['outstanding_receivable_halalas']==0 and row['accounting_review_complete']
-    assert not row['financially_complete'] and row['bank_matching']['state'] in {'pending','unconfigured'}
+    assert row['financially_complete'] and not row['overall_financially_complete']
+    assert row['bank_matching']['state'] in {'pending','unconfigured','undocumented'}
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM custody_events WHERE id='TEST-later-source'").fetchone()['n']==1
         assert c.execute("SELECT count(*) n FROM audit_events WHERE action=%s",(ft.RECOVERY_APPROVED,)).fetchone()['n']==1
@@ -555,3 +556,46 @@ def test_treatment_followup_deadline_cannot_collide_with_cash_closure_deadline()
     assert row['due_on']==cash_deadline and row['followup_due_on']==treatment()['payload']['due_on']
     manager_card=dict(**v,**dict(due_on=cash_deadline,due_at='2026-10-27T16:00:00+03:00'))
     assert manager_card['due_on']==cash_deadline
+
+
+def test_reviewed_read_rechecks_canonical_correction_proof(monkeypatch):
+    from app import accounting
+    monkeypatch.setattr(accounting,'driver_settlement_values',lambda *args:values(1000,-1000))
+    monkeypatch.setattr(ft,'approved',lambda *args:treatment('documented_channel_correction',1000,-1000))
+    def stale(*args):raise db.error(409,'FINANCIAL_SOURCE_CORRECTION_REQUIRED','Source was superseded')
+    monkeypatch.setattr(ft,'require_source_correction',stale)
+    result=ft.reviewed_values(Mock(),dict(id='r',snapshot={}))
+    assert result['financial_state']=='pending_source_correction'
+    assert not result['financially_complete'] and not result['period_approval_allowed']
+    assert not result['accounting_review_complete']
+
+
+def test_reviewed_read_exposes_durable_current_followup_assignment(monkeypatch):
+    from app import accounting
+    monkeypatch.setattr(accounting,'driver_settlement_values',lambda *args:values())
+    monkeypatch.setattr(ft,'approved',lambda *args:treatment(allow=True))
+    monkeypatch.setattr(ft,'followup_assignment',lambda *args:dict(followup_user_id='active-backup',
+        followup_name='Current accountant',followup_due_on='2026-11-01'))
+    result=ft.reviewed_values(Mock(),dict(id='r',snapshot={}))
+    assert result['followup_user_id']=='active-backup' and result['followup_name']=='Current accountant'
+    assert result['followup_due_on']=='2026-11-01' and 'due_on' not in result
+    assert result['outstanding_receivable_halalas']==550 and not result['financially_complete']
+
+
+def test_review_completion_is_explicit_and_does_not_erase_an_outstanding_balance():
+    approved=ft.apply(values(),treatment(allow=True))
+    assert approved['accounting_review_complete'] and not approved['financially_complete']
+    assert approved['outstanding_receivable_halalas']==550
+    pending=ft.apply(values(),None)
+    assert not pending['accounting_review_complete'] and not pending['financially_complete']
+
+
+def test_manual_closure_review_does_not_depend_on_bank_preparation(monkeypatch):
+    from app import accounting,manual_bank_matching
+    raw={**values(),'has_channel_variance':False,'cash_variance_halalas':0,'bank_difference_halalas':0}
+    monkeypatch.setattr(accounting,'driver_settlement_values',lambda *args:raw)
+    monkeypatch.setattr(manual_bank_matching,'closure_bank_status',lambda *args:dict(state='unconfigured',batch_ids=[],pending_source_count=None))
+    result=ft.reviewed_values(Mock(),dict(id='r',snapshot={}))
+    assert result['accounting_review_complete'] and result['financially_complete']
+    assert result['bank_matching']['state']=='unconfigured' and not result['overall_financially_complete']
+    assert not result['bank_settlement_included'] and result['financial_completion_scope']=='closure_cash_and_recorded_card'
