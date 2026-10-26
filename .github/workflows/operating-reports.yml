@@ -1,0 +1,51 @@
+name: Operating report and accounting status
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/operating_reports.py
+      - app/accounting_statements.py
+      - app/morning_manager_context.py
+      - app/employee_permissions.py
+      - app/main.py
+      - public/assets/operating-reports.*
+      - public/assets/operating-report/**
+      - public/ops.js
+      - public/ops.html
+      - tests/test_operating_reports*
+      - .github/workflows/operating-reports.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reporting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_operating_reports
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U kps_test -d test_operating_reports" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_operating_reports
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: node --check public/assets/operating-reports.js
+      - run: python -m pytest -q --basetemp=qa-operating-reports tests/test_operating_reports.py tests/test_operating_reports_browser.py tests/test_accounting_deadlines.py tests/test_shift_reconciliation.py tests/test_delivery_manager_operations_only.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: operating-report-browser
+          path: qa-operating-reports/**/*.png
+          if-no-files-found: ignore

@@ -125,3 +125,31 @@ tests/test_staff_geo.py
 tests/test_staff_geo_access.py
 tests/test_delivery_workflow_policy.py
 tests/test_enbishan_pickup.py
+
+# Read-only driver review: exact shift scope, brand totals and revoked grants.
+tests/test_driver_order_review.py
+
+# Actual custody, independent evidenced treatment and held-development scope.
+# These execute against this exact runtime image; prior-application contracts stay separate.
+tests/test_runtime_revision.py
+tests/test_financial_integrity.py
+tests/test_financial_custody_integrity.py
+tests/test_financial_tender_evidence.py
+tests/test_channel_offset_controls.py
+tests/test_financial_treatments.py
+tests/test_shared_financial_treatments.py
+tests/test_shared_financial_projection_unit.py
+tests/test_manual_bank_matching.py
+tests/test_order_financial_treatments.py
+tests/test_financial_clarification_deadlines.py
+tests/test_financial_clarifications.py
+tests/test_financial_clarifications_morning.py
+tests/test_prepared_financial_features.py
+tests/test_employee_ticket_workflow.py
+tests/test_owner_audit.py
+tests/test_financial_archive_registry.py
+tests/test_financial_followup_history.py
+tests/test_refund_item_allocations.py
+tests/test_refund_prior_evidence.py
+
+tests/test_collection_tender_corrections.py

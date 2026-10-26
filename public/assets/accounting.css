@@ -136,3 +136,10 @@
 .ac-history-received{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px}.ac-history-received dd{font-size:17px;color:#27634e;margin:0}
 .ac-history-note{margin-top:8px;font-size:12px;color:#675246}.ac-history-note>strong{font-size:11px}.ac-history-note p{white-space:pre-wrap;margin:2px 0 0}
 @media(max-width:480px){.ac-settlement-history{font-size:13px;gap:10px}.ac-history-event{padding:9px}.ac-history-event-head{flex-wrap:wrap}.ac-history-amounts th,.ac-history-amounts td{padding:6px 4px;font-size:12px}.ac-history-meta{display:grid;gap:3px}.ac-history-received{align-items:flex-start;flex-wrap:wrap}}
+
+/* Source-treatment dialogs keep native control intrinsic widths inside the modal. */
+.order-source-treatment{min-width:0;max-width:100%;grid-template-columns:minmax(0,1fr);overflow-wrap:anywhere}
+.order-source-treatment *{box-sizing:border-box;min-width:0}
+.order-source-treatment :is(section,label,dl,dt,dd,p,button){max-width:100%}
+.order-source-treatment :is(input:not([type=checkbox]),select,textarea){width:100%;min-width:0;max-width:100%}
+.order-source-treatment button{white-space:normal;overflow-wrap:anywhere}

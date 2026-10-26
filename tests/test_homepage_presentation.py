@@ -100,7 +100,7 @@ def test_owner_settings_public_filtered_quote_and_preservation(owner, monkeypatc
     assert before['products'] == after['products']
     assert before['branches'] == after['branches']
     with db.tx() as conn:
-        assert db.preservation_snapshot(conn) == fingerprint
+        assert db.preservation_snapshot(conn, fingerprint) == fingerprint
     client.post('/api/auth/logout')
     assert mutate('PATCH', '/api/admin/settings',
                   {'homepage_presentation': {'ticker_enabled': True}}).status_code in (401, 403)
@@ -125,7 +125,7 @@ def test_temporary_owner_pause_preserves_phrases_design_and_later_explicit_activ
         actual = conn.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
         assert actual == settings | {'homepage_presentation': saved | {'ticker_enabled': False}}
         assert conn.execute("SELECT settings FROM app_settings WHERE brand_id='other-pause-test'").fetchone()['settings'] == settings
-        assert db.preservation_snapshot(conn) == fingerprint
+        assert db.preservation_snapshot(conn, fingerprint) == fingerprint
         assert conn.execute("SELECT count(*) AS n FROM audit_events WHERE action='presentation.owner_ticker_paused'").fetchone()['n'] == 1
     hidden = client.get('/api/banners').json()['presentation']
     assert not hidden['ticker_enabled'] and hidden['ticker_lines'] == []

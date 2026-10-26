@@ -8,6 +8,8 @@ let html=ctx.reconciliationPanel(pending);
 assert.match(html,/Accounting review pending/);assert.match(html,/197.50/);assert.match(html,/486.00/);assert.match(html,/Final variance:—/);
 html=ctx.reconciliationPanel({...pending,reconciliation_complete:true,balance_approved:true,variance_pending:true,bank_halalas:48550,cash_received_halalas:17550,net_difference_halalas:-2250});
 assert.match(html,/Variance awaiting resolution/);assert.match(html,/-22.50/);assert.match(html,/175.50/);
+html=ctx.reconciliationPanel({...pending,reconciliation_complete:true,balance_approved:true,accounting_review_complete:true,financially_complete:true,overall_financially_complete:false,bank_settlement_included:false,bank_matching:{state:'unconfigured'},bank_halalas:48600,cash_received_halalas:19750,net_difference_halalas:0});
+assert.match(html,/Cash and recorded-card review approved/);assert.match(html,/Bank matching not yet documented/);assert.doesNotMatch(html,/Financially reconciled/);
 assert.match(ctx.reconciliationPanel({state:'missing_snapshot'}),/cannot be confirmed/);
 ctx.state.user.role='driver';assert.equal(ctx.reconciliationPanel(pending),'');
 ctx.state.user.role='delivery_manager';

@@ -350,5 +350,25 @@
   "owner-20261026:grape-cabbage-family.webp": {
     "path": "/assets/enbishan-menu/owner-20261026/grape-cabbage-family.webp",
     "sha256": "57ced526538a9d884ee2c731291c413f957d527b6fbfca4cf5c39fba79ab867f"
+  },
+  "owner-20261026-plate-potato": {
+    "path": "/assets/enbishan-menu/owner-20261026-plates/potato.webp",
+    "sha256": "8b227a37de3984ebef366fa9370ee8f038350bc49f01cf106cacc6caf8b44eb3"
+  },
+  "owner-20261026-plate-cabbage": {
+    "path": "/assets/enbishan-menu/owner-20261026-plates/cabbage.webp",
+    "sha256": "bd3b9d9401d027392950febcfca29effa7ce5600aebd4121ec816c398469db5f"
+  },
+  "owner-20261026-plate-onion": {
+    "path": "/assets/enbishan-menu/owner-20261026-plates/onion.webp",
+    "sha256": "74d707e3094a60d2e80eb7ce46a86865e8c0a9d765c4036c1718206dd861116f"
+  },
+  "owner-20261026-plate-grape": {
+    "path": "/assets/enbishan-menu/owner-20261026-plates/grape.webp",
+    "sha256": "e5c508fdb8ffa53840a8d097617a7a53c9b44346546f9b90d02942cafc77bfbc"
+  },
+  "owner-20261026-plate-mixed": {
+    "path": "/assets/enbishan-menu/owner-20261026-plates/mixed.webp",
+    "sha256": "79a7c87bd7699488c6771aec16d7d541da927ddac426c1f8af9c1ffeae233180"
   }
 }

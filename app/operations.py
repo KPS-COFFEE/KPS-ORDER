@@ -898,18 +898,21 @@ def approve_close_in_tx(c,user,sid,body):
     sub=s['submission']
     fixed_amount=int((s.get('permanent_float') or {}).get('amount',0))
     unusual_retained=sub['retained_halalas']!=min(sub.get('counted_halalas',0),fixed_amount) or (not s.get('permanent_float') and sub['retained_halalas'])
-    if sub['difference_halalas'] or sub.get('card_difference_halalas') or unusual_retained or sub.get('counted_halalas',0)<fixed_amount:
-        from .shift_reconciliation import meaningful_reason
-        if not meaningful_reason(body.exception_reason): fail(422,'اكتب تفسيرًا واضحًا لفرق النقد أو الشبكة؛ الصفر والأرقام وحدها لا تكفي')
     if unresolved(c,sid): fail(409,'مهام معلقة')
     if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(sid,sid)).fetchone():fail(409,'تسليم مناوبة غير مقبول')
     if s['kind']=='manager' and c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed'",(sid,)).fetchone(): fail(409,'سائق غير مقفل')
     if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending' AND NOT (%s AND from_shift_id=%s AND closure AND to_shift_id IS NULL)",(sid,sid,s['kind']=='manager',sid)).fetchone(): fail(409,'استلام غير مؤكد')
     receipts=c.execute("SELECT coalesce(sum(amount_halalas),0) n,count(*) nrows FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchone()
-    if s['kind']=='driver' and (int(receipts['n'])!=sub['handover_halalas'] or not receipts['nrows']):fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
+    if s['kind']=='driver' and not receipts['nrows']:fail(409,'يلزم تأكيد فعلي للتسليم النهائي، ولو كان المبلغ صفرا')
+    receipt_difference=int(receipts['n'])-sub['handover_halalas'] if s['kind']=='driver' else None
+    financial_review=bool(sub.get('difference_halalas') or sub.get('card_difference_halalas') or receipt_difference or unusual_retained or sub.get('counted_halalas',0)<fixed_amount)
+    sub=dict(sub,financial_state='pending_accounting',financial_review_required=financial_review)
+    if s['kind']=='driver':sub.update(actual_handover_halalas=int(receipts['n']),receipt_difference_halalas=receipt_difference)
+
     if s['kind']=='manager':sub=dict(sub,operational_approved=True)
-    if sub['difference_halalas']:event(c,sid,sub['difference_halalas'],'adjustment','closure-difference:'+sid,user['id'],body.exception_reason)
-    if sub['retained_halalas']:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason or 'عهدة دائمة معتمدة من المحاسبة'))
+    # Operational confirmation never posts a financial adjustment. Accounting
+    # reviews the original evidence and uses an independently approved treatment.
+    if sub['retained_halalas'] and not receipt_difference:c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(uid(),sid,s['user_id'],sub['retained_halalas'],user['id'],body.exception_reason or 'عهدة دائمة معتمدة من المحاسبة'))
     exceptional=s['kind']=='driver' and (sub.get('delegated_closure') or sub['difference_halalas'] or sub.get('card_difference_halalas') or unusual_retained or sub.get('counted_halalas',0)<fixed_amount)
     if exceptional:
         sub=dict(sub)
@@ -1048,6 +1051,9 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
             rows = [r for r in rows if order_allowed(user, dict(r, id=r['order_id'], service='delivery'), c)]
         if order_id:
             rows=[r for r in rows if r['order_id']==order_id]
+        from .order_financial_treatments import claim_projections
+        claims=claim_projections(c,[dict(id=r['order_id'],total_halalas=r['total_halalas']) for r in rows])
+        for r in rows:r.update(claims[r['order_id']])
         if user['role']=='driver':
             rows=[r for r in rows if r['branch_id'] in user.get('branch_ids',[])]
             for r in rows:
@@ -1214,6 +1220,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
+                from .delivery_partial_returns import guard as partial_return_guard
+                partial_return_guard(c,o)
                 from .order_financial_cases import invoice_guard
                 invoice_guard(c,o)
                 from .order_amendments import balance as paid_balance
@@ -1300,6 +1308,8 @@ def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.cu
             shift_access(c,user,lock_shift(c,t['shift_id']))
             to=lock_shift(c,body.driver_shift_id);o=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone()
             order_access(c,user,o)
+            from .delivery_partial_returns import guard as partial_return_guard
+            partial_return_guard(c,o)
             if to and not same_scope(user,to):fail(404,'شفت السائق غير متاح ضمن نطاقك')
             if t['status'] in TERMINAL or not to or to['status']!='open' or to['kind']!='driver' or to['brand_id']!=o['brand_id'] or o['branch_id'] not in to['branch_ids'] or to['id']==t['shift_id']:fail(409,'شفت الاستلام غير مؤهل')
             eligible_driver_shift(c,to,o)
@@ -1335,6 +1345,8 @@ def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)
             to=lock_shift(c,t['transfer_shift_id']);shift_access(c,user,to)
             if to['user_id']!=user['id'] or to['status']!='open':fail(409,'الشفت غير متاح')
             order=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone();eligible_driver_shift(c,to,order)
+            from .delivery_partial_returns import guard as partial_return_guard
+            partial_return_guard(c,order)
             from .driver_receipt_trial import physical_guard
             physical_guard(to,t['status'])
             status='picked_up' if t['status']=='picked_up' else 'accepted'
@@ -1376,7 +1388,8 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             if o['payment_status']!='unpaid' or o['preparation_status'] in ('cancelled','rejected'):fail(409,'الطلب غير قابل للتحصيل')
             from .order_amendments import guard,balance as paid_balance
             guard(c,o,driver_id=user['id'] if user['role']=='driver' else None)
-            due=o['total_halalas']-paid_balance(c,o)
+            from .order_financial_treatments import effective_claim
+            due=effective_claim(c,o)-paid_balance(c,o)
             if body.method not in ('cash','card','split') or due<=0 or body.amount_halalas>due:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح؛ حصّل المتبقي فقط')
             shortfall=body.amount_halalas<due
             if shortfall and (user['role']!='driver' or o['service']!='delivery' or len(body.shortfall_reason.strip())<3):
@@ -1479,28 +1492,34 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             if online_order(o):
                 raise db.error(409,'PROVIDER_REFUND_REQUIRED','استرداد الدفع الإلكتروني يتطلب تأكيد مزود الدفع.')
             if active(c,oid):fail(409,'أكمل مراجعة التعديل قبل الاسترداد')
+            from .delivery_partial_returns import guard as partial_return_guard
+            partial_return_guard(c,o)
             if user['role']=='branch_manager' and o['service']=='delivery':fail(403,'تسوية التوصيل من مدير التوصيل')
             cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM effective_collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()
             cols=[p for p in cols if p['available']>0]
             col=cols[0] if cols else None
             prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']
             if not col or body.amount_halalas>sum(p['available'] for p in cols):fail(422,'مبلغ أو وسيلة الاسترداد غير صالح')
+            from .order_financial_treatments import effective_total
             if body.amendment_id:
                 amendment=c.execute("SELECT 1 FROM order_revisions WHERE order_id=%s AND revision=%s AND amendment_id=%s",(oid,o['amendment_revision'],body.amendment_id)).fetchone()
                 if not amendment or body.line_quantities or body.amount_halalas>paid_balance(c,o)-o['total_halalas']:fail(422,'سجل فرق التعديل المستحق فقط بدون كميات مرتجعة')
-            elif paid_balance(c,o)>o['total_halalas']:fail(409,'سوّ فرق التعديل أولًا قبل تسجيل مرتجع جديد')
+            elif paid_balance(c,o)>effective_total(c,o):fail(409,'سوّ فرق التعديل أولًا قبل تسجيل مرتجع جديد')
             lines={}
             for x in o['snapshot']['items']:lines[x['product_id']]=lines.get(x['product_id'],0)+x['quantity']
+            from .refund_line_values import prior_quantities
+            previous_quantities=prior_quantities(c,oid,body.line_quantities)
             for pid,q in body.line_quantities.items():
-                previous=c.execute("SELECT coalesce(sum((line_quantities->>%s)::int),0) n FROM refunds WHERE order_id=%s",(pid,oid)).fetchone()['n']
+                previous=previous_quantities[pid]
                 if q<0 or pid not in lines or q+previous>lines[pid]:fail(422,'كمية استرداد الصنف غير صالحة')
             returned_products={pid for pid,q in body.line_quantities.items() if q>0}
             if returned_products and all(x.get('line_total_halalas')==0 for x in o['snapshot']['items'] if x['product_id'] in returned_products):
                 raise db.error(422,'FREE_ITEM_HAS_NO_REFUND','الصنف المجاني قيمته صفر؛ وثّق إرجاعه دون خصم أو استرداد مبلغ.')
             if returned_products:
-                from .refund_line_values import ceiling
-                previous_quantities={pid:c.execute("SELECT coalesce(sum((line_quantities->>%s)::int),0) n FROM refunds WHERE order_id=%s",(pid,oid)).fetchone()['n'] for pid in body.line_quantities}
-                maximum=ceiling(o,body.line_quantities,previous_quantities)
+                from .refund_line_values import ceiling,require_documented_prior
+                require_documented_prior(c,oid)
+                from .order_financial_treatments import valuation_order
+                maximum=ceiling(valuation_order(c,o),body.line_quantities,previous_quantities)
                 if body.amount_halalas>maximum:
                     raise db.error(422,'REFUND_LINE_VALUE_EXCEEDED','مبلغ الاسترداد يتجاوز قيمة الكميات المحددة بعد الخصم؛ المجاني ورسوم التوصيل لا يرفعان قيمة الصنف.')
             elif body.line_quantities:
@@ -1650,7 +1669,7 @@ def custody_list(user=Depends(auth.current_user)):
         if user['role']=='driver':rows=[r for r in rows if r['status']=='pending' and r['recipient_user_id']==user['id']]
         return safe({'transfers':rows})
 
-def confirm_custody_in_tx(c,user,cid):
+def confirm_custody_in_tx(c,user,cid,actual_amount_halalas=None):
     t=c.execute('SELECT * FROM custody_transfers WHERE id=%s FOR UPDATE',(cid,)).fetchone()
     if not t or t['recipient_user_id']!=user['id']:fail(404,'التسليم غير موجود أو أنت لست المستلم')
     if t['status']!='pending':fail(409,'التسليم غير معلق')
@@ -1666,19 +1685,33 @@ def confirm_custody_in_tx(c,user,cid):
     source_closed=ss[t['from_shift_id']]['status']=='closed'
     operational_receipt=ss[t['from_shift_id']]['kind']=='manager' and (ss[t['from_shift_id']].get('submission') or {}).get('operational_approved') and t['closure'] and not t['to_shift_id']
     if (source_closed and not operational_receipt) or (t['to_shift_id'] and ss[t['to_shift_id']]['status'] not in ('open','closing')):fail(409,'شفت مقفل')
+    requested_amount=t['amount_halalas']
+    if actual_amount_halalas is not None:
+        valid_cash_amount(actual_amount_halalas)
+        if actual_amount_halalas<0 or not t['closure']:fail(422,'تسجيل الاستلام المستقل متاح لتسليم التقفيلة فقط')
+        # The original driver declaration and custody.request audit are preserved.
+        # This pending transfer becomes the receiver's independently witnessed fact.
+        c.execute('UPDATE custody_transfers SET amount_halalas=%s WHERE id=%s',(actual_amount_halalas,cid))
+        t=dict(t,amount_halalas=actual_amount_halalas)
     if t['to_shift_id']:valid_cash_amount(balance(c,ss[t['to_shift_id']])+t['amount_halalas'])
     c.execute("UPDATE custody_transfers SET status='confirmed',confirmed_by=%s,confirmed_at=now() WHERE id=%s",(user['id'],cid))
     event(c,t['from_shift_id'],-t['amount_halalas'],'transfer_out',cid,user['id'],t['reference'])
     if t['to_shift_id']:event(c,t['to_shift_id'],t['amount_halalas'],'transfer_in',cid,user['id'],t['reference'])
-    db.audit(c,user['id'],'custody.confirm','custody',cid,{'actual_recipient':user['id']})
+    db.audit(c,user['id'],'custody.confirm','custody',cid,{'actual_recipient':user['id'],'requested_halalas':requested_amount,'received_halalas':t['amount_halalas'],'receipt_difference_halalas':t['amount_halalas']-requested_amount,'responsible_role':'accounting' if t['amount_halalas']!=requested_amount else None})
     return {'transfer_id':cid,'status':'confirmed'}
 
+class CustodyConfirmation(OperationBody):
+    received_halalas:StrictInt|None=Field(None,ge=0,le=MAX_HALALAS)
+    confirmed:StrictBool|None=None
+
+
 @router.post('/custody/{cid}/confirm')
-def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user)):
+def confirm_custody(cid:str,request:Request,user=Depends(auth.current_user),body:CustodyConfirmation|None=None):
     roles(user,'owner','driver','delivery_manager','branch_manager')
     with db.tx() as c:
-        def perform():return confirm_custody_in_tx(c,user,cid)
-        return mutate(c,user,request,'custody.confirm:'+cid,{},perform)
+        if body and (body.received_halalas is not None or body.confirmed is not None) and (not body.confirmed or body.received_halalas is None):fail(422,'أكد استلام النقد الفعلي فقط')
+        def perform():return confirm_custody_in_tx(c,user,cid,actual_amount_halalas=body.received_halalas if body else None)
+        return mutate(c,user,request,'custody.confirm:'+cid,body.model_dump(exclude_none=True) if body else {},perform)
 
 class DriverClose(OperationBody):
     vehicle_inspection: shift_vehicle.Inspection|None=None
@@ -1730,22 +1763,23 @@ def simple_driver_close_in_tx(c, user, sid, body):
     elif body.counted_halalas is not None:
         fail(422,'المعدود المرسل محفوظ؛ أعد التقفيلة للتصحيح عند الحاجة')
     sub=s['submission']
-    if body.received_halalas!=sub['handover_halalas']:
-        fail(422,'المستلم لا يطابق التسليم المسجل؛ أعد التقفيلة للتصحيح')
     transfers=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected' FOR UPDATE",(sid,)).fetchall()
+    confirmed=[transfer for transfer in transfers if transfer['status']=='confirmed']
+    if confirmed and (len(confirmed)!=len(transfers) or sum(transfer['amount_halalas'] for transfer in confirmed)!=body.received_halalas):
+        raise db.error(409,'RECORDED_RECEIPT_CHANGED','الاستلام الفعلي محفوظ بمبلغ مختلف؛ راجع سجل الاستلام ومسار التصحيح المحاسبي دون إعادة تسجيله أو تغيير الأصل.')
     if not transfers:
         manager=lock_shift(c,s['manager_shift_id'])
         if not manager or manager['user_id']!=user['id']:
             fail(403,'مدير شفت السائق هو من يؤكد الاستلام الفعلي')
         transfer=create_custody(c,user,Custody(from_shift_id=sid,to_shift_id=manager['id'],
-            recipient_user_id=user['id'],amount_halalas=body.received_halalas,
+            recipient_user_id=user['id'],amount_halalas=sub['handover_halalas'],
             reference='Driver closure '+str(s.get('shift_no') or sid),closure=True))['transfer']
         transfers=[transfer]
     for transfer in transfers:
         if transfer['status']=='pending':
             if transfer['recipient_user_id']!=user['id']:
                 raise HTTPException(409,{'code':'DRIVER_RECEIPT_OTHER_RECIPIENT'})
-            confirm_custody_in_tx(c,user,transfer['id'])
+            confirm_custody_in_tx(c,user,transfer['id'],actual_amount_halalas=body.received_halalas)
     return approve_close_in_tx(c,user,sid,Review(exception_reason=body.exception_reason or None))
 
 

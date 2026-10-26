@@ -46,7 +46,7 @@ def participant(user=Depends(auth.current_user)):
 
 def scope(user):
     clauses, params = ['r.brand_id=%s'], [user['brand_id']]
-    if user['role'] != 'owner':
+    if user['role'] != 'owner' or user.get('home_brand_id'):
         clauses.append('r.branch_id=ANY(%s)')
         params.append(user.get('branch_ids') or [])
     if user['role'] == 'driver':
@@ -149,7 +149,9 @@ def report_detail(identifier: str, user=Depends(participant)):
             'SELECT e.id,e.event_type,e.details,e.created_at,u.display_name AS actor_name '
             'FROM vehicle_report_events e JOIN users u ON u.id=e.actor_id WHERE e.report_id=%s '
             'ORDER BY e.created_at,e.id', (identifier,)).fetchall()
-        return {'report': row, 'events': events}
+        from .employee_ticket_workflow import enabled,source_followups
+        followups=source_followups(conn,user,'vehicle_report',identifier)['followups'] if enabled() else None
+    return {'report': row, 'events': events,**({'followups':followups} if followups is not None else {})}
 
 
 @router.post('/reports')
@@ -179,7 +181,12 @@ def create_report(body: ReportCreate, request: Request, user=Depends(auth.requir
             conn.execute('UPDATE vehicle_reports SET shift_id=%s,order_id=%s,evidence_id=%s,department=%s WHERE id=%s',(body.shift_id,body.order_id,body.evidence_id,department,row['id']))
             row.update(shift_id=body.shift_id,order_id=body.order_id,evidence_id=body.evidence_id,department=department)
             record_event(conn, row, user, 'created', {'category': body.category, 'status': 'open'})
-            return {'report': row}
+            from .employee_ticket_workflow import enabled
+            if enabled():
+                from .employee_tickets import create_linked_followup
+                followup=create_linked_followup(conn,user,'vehicle_report',row['id'],body.description)
+                return {'report': row,'followup_ticket_id':followup}
+            return {'report':row}
 
         return db.idempotent(conn, user['id'], request.headers.get('Idempotency-Key'),
                              'vehicle_report.create', body.model_dump(), perform)

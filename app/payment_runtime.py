@@ -14,7 +14,8 @@ def mode():
 def live_blockers(brand_id, seller_id):
     from .payment_gateways import credential_prefix
     prefix = credential_prefix('moyasar', brand_id, seller_id)
-    revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT', '')
+    from .runtime_revision import revision as source_revision
+    revision = source_revision()
     missing = []
     if os.getenv('KPS_BRANCH_PAYMENT_LIVE_ENABLED') != 'true':
         missing.append('live_payments_disabled')

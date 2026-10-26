@@ -185,6 +185,8 @@ def driver_shift(c,user,sid,lock=True):
 
 @router.post('/depart')
 def depart(body:Departure,request:Request,user=Depends(auth.current_user)):
+    roles(user,'driver')
+    if not auth.has_permission(user,'tasks_update'):raise db.error(403,'TRIP_PERMISSION','صلاحية تحديث المهام غير متاحة.')
     with db.tx() as c:
         s=driver_shift(c,user,body.shift_id,lock=False)
         evidence=branch_evidence(c,user,s,body)
@@ -212,20 +214,52 @@ def record_event(c,user,tid,action,bid,evidence):
     db.audit(c,user['id'],'driver.trip.'+action,'driver_work_trip',tid,{'branch_id':bid,**evidence})
 
 
+def return_branch_evidence(c,user,shift,body):
+    if body.branch_id in shift['branch_ids'] and body.branch_id in user.get('branch_ids',[]):
+        return branch_evidence(c,user,shift,body)
+    from .central_workdays import association
+    from . import multibrand
+    group=association(c,shift['id'])
+    if group:
+        legs=c.execute("SELECT s.* FROM shifts s JOIN central_workday_legs l ON l.shift_id=s.id WHERE l.workday_id=%s AND s.user_id=%s AND s.status='open' ORDER BY s.id",(group['id'],user['id'])).fetchall()
+        for leg in legs:
+            projected=multibrand.project(c,user,leg['brand_id'])
+            if projected and body.branch_id in leg['branch_ids'] and body.branch_id in projected.get('branch_ids',[]):
+                shift_access(c,projected,leg)
+                return {**branch_evidence(c,projected,leg,body),'return_brand_id':leg['brand_id']}
+    raise db.error(403,'TRIP_BRANCH_SCOPE','الفرع خارج نطاق السائق أو الشفت.')
+
+
+def lock_return_legs(c,user,shift_id):
+    from .central_workdays import association
+    group=association(c,shift_id)
+    if group:
+        c.execute('SELECT s.id FROM shifts s JOIN central_workday_legs l ON l.shift_id=s.id WHERE l.workday_id=%s AND s.user_id=%s ORDER BY s.id FOR UPDATE OF s',(group['id'],user['id'])).fetchall()
+    else:
+        c.execute('SELECT id FROM shifts WHERE id=%s FOR UPDATE',(shift_id,)).fetchall()
+
+
 @router.post('/{trip_id}/return')
 def return_trip(trip_id:str,body:Movement,request:Request,user=Depends(auth.current_user)):
+    roles(user,'driver')
+    if not auth.has_permission(user,'tasks_update'):raise db.error(403,'TRIP_PERMISSION','صلاحية تحديث المهام غير متاحة.')
     with db.tx() as c:
         t=c.execute('SELECT * FROM driver_work_trips WHERE id=%s AND driver_id=%s AND brand_id=%s',(trip_id,user['id'],user['brand_id'])).fetchone()
         if not t:raise db.error(404,'TRIP_NOT_FOUND','الرحلة غير متاحة.')
-        s=driver_shift(c,user,t['shift_id'],lock=False);evidence=branch_evidence(c,user,s,body)
+        s=driver_shift(c,user,t['shift_id'],lock=False);evidence=return_branch_evidence(c,user,s,body)
         def perform():
+            lock_return_legs(c,user,t['shift_id'])
             s=driver_shift(c,user,t['shift_id'])
-            evidence=branch_evidence(c,user,s,body)
+            evidence=return_branch_evidence(c,user,s,body)
             current=c.execute('SELECT * FROM driver_work_trips WHERE id=%s FOR UPDATE',(trip_id,)).fetchone()
             if current['returned_at']:raise db.error(409,'TRIP_RETURNED','تم تأكيد العودة مسبقًا.')
-            pending=c.execute("SELECT 1 FROM driver_work_trip_orders x JOIN driver_tasks t ON t.order_id=x.order_id WHERE x.trip_id=%s AND t.shift_id=%s AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')",(trip_id,s['id'])).fetchone()
+            pending=c.execute("SELECT 1 FROM driver_work_trip_orders x JOIN driver_tasks t ON t.order_id=x.order_id WHERE x.trip_id=%s AND t.driver_id=%s AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')",(trip_id,user['id'])).fetchone()
             if pending:raise db.error(409,'TRIP_PENDING_ORDERS','أكمل الطلبات أو سلّمها وفق الإجراء المعتمد أولاً.')
+            stop=c.execute('SELECT id,kind FROM driver_trip_stops WHERE trip_id=%s AND departed_at IS NULL FOR UPDATE',(trip_id,)).fetchone()
+            if stop and stop['kind']!='return':
+                raise db.error(409,'TRIP_STOP_OPEN','أكد مغادرة المحطة الحالية قبل العودة.')
             trip=c.execute('UPDATE driver_work_trips SET returned_at=now(),return_branch_id=%s,return_evidence=%s WHERE id=%s RETURNING *',(body.branch_id,db.json(evidence),trip_id)).fetchone()
+            if stop:c.execute('UPDATE driver_trip_stops SET departed_at=%s WHERE id=%s',(trip['returned_at'],stop['id']))
             record_event(c,user,trip_id,'return',body.branch_id,evidence)
             return {'trip':trip,'shift_id':s['id']}
         return mutate(c,user,request,'driver.work.return:'+trip_id,body.model_dump(),perform)
@@ -320,6 +354,7 @@ def report(start:str|None=None,end:str|None=None,driver_id:str|None=None,branch_
 @router.get('/current')
 def current_trip(user=Depends(auth.current_user)):
     roles(user,'driver')
+    if not auth.has_permission(user,'tasks_view'):raise db.error(403,'TRIP_PERMISSION','صلاحية عرض المهام غير متاحة.')
     with db.tx() as c:
         t=c.execute('SELECT * FROM driver_work_trips WHERE driver_id=%s AND brand_id=%s AND returned_at IS NULL',(user['id'],user['brand_id'])).fetchone()
         if t:

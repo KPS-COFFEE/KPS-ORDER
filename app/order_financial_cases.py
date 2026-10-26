@@ -48,7 +48,9 @@ def case(c, oid):
     invoice=original(c,oid)
     kind='cancellation' if order['preparation_status'] in ('cancelled','rejected') else row['details'].get('kind','cancellation')
     collected=balance(c,order)
-    return {'kind':kind,'collected_halalas':collected,'pending_amount_halalas':max(0,order['total_halalas']-collected) if kind=='collection_shortfall' else collected,'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
+    from .order_financial_treatments import state as source_state
+    financial=source_state(c,order,row['id'],collected_halalas=collected,review_resolved=bool(resolved)) if kind=='collection_shortfall' else {}
+    return {**financial,'kind':kind,'collected_halalas':collected,'pending_amount_halalas':financial.get('pending_amount_halalas',max(0,order['total_halalas']-collected)) if kind=='collection_shortfall' else collected,'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
             'responsible_role':'accounting','status':'resolved' if resolved else 'pending',
             'reason':row['details']['reason'],'resolution':resolved,'operationally_blocking':False}
 
@@ -125,7 +127,7 @@ def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None,
     """A recorded receipt/operational closure may proceed; financial approval may not."""
     from .aggregate_driver_closure import guard_financial_allocation
     guard_financial_allocation(c,shift_id=shift_id,brand_id=brand_id,branch_ids=branch_ids,before=before)
-    row=c.execute("""SELECT o.id FROM orders o
+    pending_orders=c.execute("""SELECT o.id FROM orders o
         WHERE (%s::text IS NULL OR o.brand_id=%s)
           AND (%s::jsonb IS NULL OR %s::jsonb ? o.branch_id)
           AND (%s::timestamptz IS NULL OR o.created_at<%s)
@@ -134,9 +136,13 @@ def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None,
           AND EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND e.event_type='financial_case.opened'
                 AND e.details->>'kind'='collection_shortfall'
                 AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='financial_case.resolved' AND r.details->>'case_id'=e.id))
-        LIMIT 1""",(brand_id,brand_id,db.json(branch_ids) if branch_ids is not None else None,
-                     db.json(branch_ids) if branch_ids is not None else None,before,before,shift_id,shift_id,shift_id)).fetchone()
-    if row:raise db.error(409,'COLLECTION_CASE_PENDING','يوجد فرق تحصيل بانتظار المحاسبة؛ أكمل معالجة الطلب قبل الاعتماد المالي. استلام النقد والإقفال التشغيلي متاحان.')
+        """,(brand_id,brand_id,db.json(branch_ids) if branch_ids is not None else None,
+                     db.json(branch_ids) if branch_ids is not None else None,before,before,shift_id,shift_id,shift_id)).fetchall()
+    for pending in pending_orders:
+        order=c.execute('SELECT * FROM orders WHERE id=%s',(pending['id'],)).fetchone()
+        from .order_financial_treatments import state as source_state,current_case
+        if source_state(c,order,current_case(c,order)['id'])['period_approval_allowed']:continue
+        raise db.error(409,'COLLECTION_CASE_PENDING','يوجد فرق تحصيل بانتظار المحاسبة؛ أكمل معالجة الطلب قبل الاعتماد المالي. استلام النقد والإقفال التشغيلي متاحان.')
 
 
 def needs_accounting(c,o):
@@ -151,56 +157,67 @@ def invoice_guard(c,o):
         raise db.error(409,'ACCOUNTING_CANCELLATION_REQUIRED','للطلب فاتورة؛ استخدم إلغاء التشغيل مع إحالة المعالجة للمحاسبة.')
 
 
-@router.post('/orders/{oid}/cancel')
-def cancel(oid:str,body:Cancellation,user=Depends(auth.require_roles('owner','delivery_manager','branch_manager')),idempotency_key:str|None=Header(None)):
+def cancellation_scope(c, oid, user):
+    """Authorize and acquire the morning lane before taking an order lock."""
     if not auth.has_permission(user,'orders_cancel'):
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إلغاء الطلبات متوقفة.')
+    visible=scoped(c,oid,user)
+    from .order_amendments import reviewer
+    if not reviewer(visible,user):raise db.error(403,'CANCELLATION_REVIEWER','الإلغاء من مسؤول الخدمة المختص.')
+    from . import morning_delivery, morning_dispatch
+    morning_delivery.authorize_order(c,user,visible,preparation=user['role']=='branch_manager')
+    if morning_dispatch.actual_morning(visible):morning_dispatch.lock_operations(c)
+
+
+def cancel_locked(c, oid, body, user):
+    """Canonical cancellation within the caller's transaction and lock scope."""
+    o=scoped(c,oid,user,True)
+    if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث الصفحة.')
+    from .delivery_partial_returns import guard as partial_return_guard
+    partial_return_guard(c,o)
+    if o['completed_at'] or o['delivery_status']=='delivered' or o['preparation_status'] in ('cancelled','rejected','completed'):
+        raise db.error(409,'CANCELLATION_TERMINAL','الطلب منتهٍ؛ استخدم معالجة المرتجع المعتمدة.')
+    tasks=c.execute("SELECT * FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','reassigned','transferred','delivered') FOR UPDATE",(oid,)).fetchall()
+    if tasks and user['role']=='branch_manager':
+        raise db.error(403,'DELIVERY_CANCELLATION_MANAGER','إلغاء مهمة السائق من مدير التوصيل.')
+    for sid in sorted({t['shift_id'] for t in tasks}):
+        from .operations import lock_shift,shift_access
+        shift=lock_shift(c,sid);shift_access(c,user,shift)
+        if shift['status'] not in ('open','closing'):raise db.error(409,'CANCELLATION_SHIFT_CLOSED','المهمة ضمن تقفيلة محفوظة؛ تحتاج مراجعة مستقلة.')
+    for t in tasks:
+        if t.get('picked_up_at') and not body.physical_resolution:
+            raise db.error(409,'CANCELLATION_PHYSICAL_RESOLUTION_REQUIRED','الطلب مع السائق؛ وثّق معالجة الاستلام والموجودات عبر بلاغ مدير التوصيل أولًا.')
+    from .branch_payments import online_order
+    if online_order(o) and c.execute("SELECT 1 FROM branch_payment_attempts WHERE order_id=%s AND status IN ('pending','superseded') LIMIT 1",(oid,)).fetchone():
+        raise db.error(409,'PAYMENT_RECONCILIATION_REQUIRED','سوّ محاولة الدفع المعلقة مع مزود الدفع قبل إلغاء التشغيل.')
+    required=needs_accounting(c,o)
+    requests=c.execute("SELECT id,actor_id FROM order_events e WHERE order_id=%s AND event_type='customer_request.opened' AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=e.order_id AND d.event_type='customer_request.decided' AND d.details->>'request_id'=e.id) ORDER BY created_at,id",(oid,)).fetchall()
+    details={'manager_shift_id':(user.get('_morning_manager_context') or {}).get('shift_id'),'customer_requests':requests,'reason':body.reason,'requester_id':user['id'],'executor_id':user['id'],
+             'operational_approver_id':user['id'],'financial_approver_id':None,
+             'previous':{'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],'payment_status':o['payment_status']},
+             'financial_status':'pending' if required else 'not_required','physical_resolution':body.physical_resolution}
+    previous_case=case(c,oid)
+    if required and (not previous_case or previous_case['status']=='resolved'):db.event(c,oid,user['id'],'financial_case.opened',details)
+    for t in tasks:
+        c.execute("UPDATE driver_tasks SET status='cancelled',reason=%s WHERE id=%s",(body.reason,t['id']))
+        db.event(c,oid,user['id'],'task.cancelled',{'task_id':t['id'],'driver_id':t['driver_id'],'shift_id':t['shift_id'],'previous_task_status':t['status'],**details})
+    c.execute("UPDATE orders SET preparation_status='cancelled',delivery_status=CASE WHEN service='delivery' THEN 'cancelled' ELSE delivery_status END,version=version+1 WHERE id=%s",(oid,))
+    db.event(c,oid,user['id'],'order.operationally_cancelled',details)
+    db.audit(c,user['id'],'order.operationally_cancelled','order',oid,details)
+    for request in requests:
+        decision={'request_id':request['id'],'status':'resolved','note':body.reason,'financial_status':details['financial_status'],'resolution_scope':'operational_cancellation'}
+        db.event(c,oid,user['id'],'customer_request.decided',decision)
+        db.audit(c,user['id'],'customer_request.decided','order',oid,decision)
+    followups=[{'type':'driver_incentive_review','status':'review_required','responsible_role':'delivery_manager','shift_id':t['shift_id'],'task_id':t['id'],'order_id':oid,'review_url':'/api/driver-incentives/shifts/'+t['shift_id']} for t in tasks]
+    return {'operational_followups':followups,'order_id':oid,'operational_status':'cancelled','payment_status':o['payment_status'],'financial_case':case(c,oid)}
+
+
+@router.post('/orders/{oid}/cancel')
+def cancel(oid:str,body:Cancellation,user=Depends(auth.require_roles('owner','delivery_manager','branch_manager')),idempotency_key:str|None=Header(None)):
     with db.tx() as c:
-        visible=scoped(c,oid,user)
-        from .order_amendments import reviewer
-        if not reviewer(visible,user):raise db.error(403,'CANCELLATION_REVIEWER','الإلغاء من مسؤول الخدمة المختص.')
-        from . import morning_delivery, morning_dispatch
-        morning_delivery.authorize_order(c,user,visible,preparation=user['role']=='branch_manager')
-        if morning_dispatch.actual_morning(visible):morning_dispatch.lock_operations(c)
-        def perform():
-            o=scoped(c,oid,user,True)
-            if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث الصفحة.')
-            if o['completed_at'] or o['delivery_status']=='delivered' or o['preparation_status'] in ('cancelled','rejected','completed'):
-                raise db.error(409,'CANCELLATION_TERMINAL','الطلب منتهٍ؛ استخدم معالجة المرتجع المعتمدة.')
-            tasks=c.execute("SELECT * FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','reassigned','transferred','delivered') FOR UPDATE",(oid,)).fetchall()
-            if tasks and user['role']=='branch_manager':
-                raise db.error(403,'DELIVERY_CANCELLATION_MANAGER','إلغاء مهمة السائق من مدير التوصيل.')
-            for sid in sorted({t['shift_id'] for t in tasks}):
-                from .operations import lock_shift,shift_access
-                shift=lock_shift(c,sid);shift_access(c,user,shift)
-                if shift['status'] not in ('open','closing'):raise db.error(409,'CANCELLATION_SHIFT_CLOSED','المهمة ضمن تقفيلة محفوظة؛ تحتاج مراجعة مستقلة.')
-            for t in tasks:
-                if t.get('picked_up_at') and not body.physical_resolution:
-                    raise db.error(409,'CANCELLATION_PHYSICAL_RESOLUTION_REQUIRED','الطلب مع السائق؛ وثّق معالجة الاستلام والموجودات عبر بلاغ مدير التوصيل أولًا.')
-            from .branch_payments import online_order
-            if online_order(o) and c.execute("SELECT 1 FROM branch_payment_attempts WHERE order_id=%s AND status IN ('pending','superseded') LIMIT 1",(oid,)).fetchone():
-                raise db.error(409,'PAYMENT_RECONCILIATION_REQUIRED','سوّ محاولة الدفع المعلقة مع مزود الدفع قبل إلغاء التشغيل.')
-            required=needs_accounting(c,o)
-            requests=c.execute("SELECT id,actor_id FROM order_events e WHERE order_id=%s AND event_type='customer_request.opened' AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=e.order_id AND d.event_type='customer_request.decided' AND d.details->>'request_id'=e.id) ORDER BY created_at,id",(oid,)).fetchall()
-            details={'manager_shift_id':(user.get('_morning_manager_context') or {}).get('shift_id'),'customer_requests':requests,'reason':body.reason,'requester_id':user['id'],'executor_id':user['id'],
-                     'operational_approver_id':user['id'],'financial_approver_id':None,
-                     'previous':{'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],'payment_status':o['payment_status']},
-                     'financial_status':'pending' if required else 'not_required','physical_resolution':body.physical_resolution}
-            previous_case=case(c,oid)
-            if required and (not previous_case or previous_case['status']=='resolved'):db.event(c,oid,user['id'],'financial_case.opened',details)
-            for t in tasks:
-                c.execute("UPDATE driver_tasks SET status='cancelled',reason=%s WHERE id=%s",(body.reason,t['id']))
-                db.event(c,oid,user['id'],'task.cancelled',{'task_id':t['id'],'driver_id':t['driver_id'],'shift_id':t['shift_id'],'previous_task_status':t['status'],**details})
-            c.execute("UPDATE orders SET preparation_status='cancelled',delivery_status=CASE WHEN service='delivery' THEN 'cancelled' ELSE delivery_status END,version=version+1 WHERE id=%s",(oid,))
-            db.event(c,oid,user['id'],'order.operationally_cancelled',details)
-            db.audit(c,user['id'],'order.operationally_cancelled','order',oid,details)
-            for request in requests:
-                decision={'request_id':request['id'],'status':'resolved','note':body.reason,'financial_status':details['financial_status'],'resolution_scope':'operational_cancellation'}
-                db.event(c,oid,user['id'],'customer_request.decided',decision)
-                db.audit(c,user['id'],'customer_request.decided','order',oid,decision)
-            followups=[{'type':'driver_incentive_review','status':'review_required','responsible_role':'delivery_manager','shift_id':t['shift_id'],'task_id':t['id'],'order_id':oid,'review_url':'/api/driver-incentives/shifts/'+t['shift_id']} for t in tasks]
-            return {'operational_followups':followups,'order_id':oid,'operational_status':'cancelled','payment_status':o['payment_status'],'financial_case':case(c,oid)}
-        return db.idempotent(c,user['id'],idempotency_key,'financial-case.cancel:'+oid,body.model_dump(),perform)
+        cancellation_scope(c,oid,user)
+        return db.idempotent(c,user['id'],idempotency_key,'financial-case.cancel:'+oid,
+            body.model_dump(),lambda:cancel_locked(c,oid,body,user))
 
 
 @router.post('/orders/{oid}/resolve')
@@ -215,7 +232,8 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
             guard_case_resolution(c,oid,pending['id'])
             from .order_amendments import balance
             if pending['kind']=='collection_shortfall':
-                if balance(c,o)!=o['total_halalas'] or o['payment_status']!='paid':
+                from .order_financial_treatments import effective_claim
+                if balance(c,o)!=effective_claim(c,o) or (o['payment_status']!='paid' and effective_claim(c,o)==o['total_halalas']):
                     raise db.error(409,'ACTUAL_COLLECTION_REQUIRED','فرق التحصيل ما زال قائمًا؛ وثّق تحصيل المتبقي قبل الإقفال. الملاحظة لا تسوّي المبلغ.')
             elif balance(c,o)!=0 or o['payment_status'] not in ('unpaid','refunded'):
                 raise db.error(409,'ACTUAL_REFUND_REQUIRED','أكمل الاسترداد الفعلي بالمسار المعتمد أولًا؛ الإلغاء ليس استردادًا.')
@@ -223,6 +241,9 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
                 from .fiscal_issuance import credit_on_cancellation
                 credit_on_cancellation(c,o,user,body.reason)
             details={'case_id':pending['id'],'reason':body.reason,'approver_id':user['id'],'executor_id':user['id']}
+            if pending['kind']=='collection_shortfall':
+                from .order_financial_treatments import state as source_state
+                details['source_financial_state']=source_state(c,o,pending['id'])
             db.event(c,oid,user['id'],'financial_case.resolved',details)
             db.audit(c,user['id'],'financial_case.resolved','order',oid,details)
             return {'financial_case':case(c,oid)}

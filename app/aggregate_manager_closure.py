@@ -6,7 +6,7 @@ ledgers stay submitted and may receive only those delayed child attributions.
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import Field, StrictBool, StrictInt
 from . import auth, db, multibrand, operations as ops, central_workdays as days
-from .aggregate_driver_closure import accounting, physical_finished
+from .aggregate_driver_closure import accounting, physical_finished, receipt_difference
 router=APIRouter(prefix='/api',tags=['shared-manager-closure'])
 BASE='/central-operations/workdays/{sid}'
 
@@ -29,6 +29,7 @@ class Leg(ops.OperationBody):
     shift_id:str
     cash_halalas:StrictInt=Field(ge=0,le=ops.MAX_HALALAS)
     evidence:str=Field(min_length=3,max_length=1000)
+    receipt_difference_halalas:StrictInt=Field(0,ge=-ops.MAX_HALALAS,le=ops.MAX_HALALAS)
 
 class Allocation(ops.OperationBody):
     declaration_id:str
@@ -53,9 +54,14 @@ def view(c,user,day,legs):
     receipt=c.execute('SELECT * FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     returned=c.execute('SELECT * FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     alloc=c.execute('SELECT * FROM shared_manager_closure_allocations WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
+    handover_difference=receipt_difference(dict(dec,retained_halalas=0),receipt) if dec else None
+    from .shared_financial_treatments import shared_approved,allocated_review
+    review=allocated_review(c,day['id']) if alloc else None
+    treatment=shared_approved(c,day['id'],dec['id'],receipt['id']) if dec and receipt else None
     return ops.safe({'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'manager_id':day['user_id'],'manager_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],
-      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':legs[0][1]['status']},'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user),
-      'state':'allocated' if alloc else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_owner_receipt' if dec else 'awaiting_manager',
+      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':legs[0][1]['status']},'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),
+      'receipt_difference_halalas':handover_difference,'receipt_review_required':bool(handover_difference and not treatment),'receipt_treatment':treatment,'receipt_accounting_review':review,
+      'state':'allocated_amount_settled' if alloc and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if alloc and treatment else 'allocated' if alloc else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_owner_receipt' if dec else 'awaiting_manager',
       'legs':[{'shift_id':s['id'],'brand_id':s['brand_id'],'current_ledger_cash_halalas':ops.balance(c,s)} for _,s in legs]})
 
 
@@ -135,13 +141,13 @@ def receive(sid:str,body:Receipt,request:Request,user=Depends(auth.current_user)
             if c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_DECLARATION_RETURNED','أُعيدت التقفيلة؛ انتظر إعادة إرسال مدير التوصيل للأصل المصحح.')
             if dec['recipient_user_id']!=user['id']:raise db.error(403,'SHARED_MANAGER_ACTUAL_RECIPIENT','المستلم المسجل وحده يؤكد استلام النقد.')
             if c.execute('SELECT 1 FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_RECEIPT_EXISTS','الاستلام محفوظ بالفعل.')
-            if not body.confirmed or body.received_halalas!=dec['cash_halalas']:raise db.error(422,'SHARED_MANAGER_RECEIPT_MISMATCH','أكد استلام النقد الفعلي المطابق للتصريح؛ الاختلاف يحتاج معالجة مرتبطة قبل الاستلام.')
+            if not body.confirmed:raise db.error(422,'SHARED_MANAGER_RECEIPT_CONFIRMATION','أكد النقد الذي استلمته فعليًا؛ يبقى تصريح المدير محفوظًا مستقلاً.')
             if any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_MANAGER_CLOSURE_STATE','الوردية غير مرسلة.')
             identifier=ops.uid()
             c.execute('INSERT INTO shared_manager_closure_receipts(id,declaration_id,received_halalas,received_by) VALUES(%s,%s,%s,%s)',(identifier,dec['id'],body.received_halalas,user['id']))
             at=c.execute('SELECT created_at FROM shared_manager_closure_receipts WHERE id=%s',(identifier,)).fetchone()['created_at']
             for _,s in legs:c.execute('UPDATE shifts SET staffing_ended_at=%s,submission=submission||%s::jsonb WHERE id=%s',(at,db.json({'physical_state':'received','physical_receipt_id':identifier}),s['id']))
-            db.audit(c,user['id'],'shared_manager.physical_received','central_workday',day['id'],{'receipt_id':identifier,'declaration_id':dec['id'],'received_halalas':body.received_halalas,'financial_state':'awaiting_accounting'})
+            db.audit(c,user['id'],'shared_manager.physical_received','central_workday',day['id'],{'receipt_id':identifier,'declaration_id':dec['id'],'received_halalas':body.received_halalas,'receipt_difference_halalas':body.received_halalas-dec['cash_halalas'],'responsible_role':'accounting','financial_state':'receipt_difference_review' if body.received_halalas!=dec['cash_halalas'] else 'awaiting_accounting'})
             return {'receipt_id':identifier}
         value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_manager.receipt:'+day['id'],body.model_dump(),perform)
         return {**value,**view(c,user,day,legs)}
@@ -177,9 +183,14 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
         def perform():
             dec=latest(c,day['id']);receipt=c.execute('SELECT * FROM shared_manager_closure_receipts WHERE id=%s AND declaration_id=%s',(body.receipt_id,body.declaration_id)).fetchone()
             if not body.confirmed or not dec or dec['id']!=body.declaration_id or not receipt:raise db.error(409,'SHARED_ALLOCATION_STALE','راجع أصل التقفيلة والاستلام الفعلي.')
+            if user['id'] in {day['user_id'],receipt['received_by']}:raise db.error(403,'SHARED_CUSTODY_SELF_APPROVAL','لا يعتمد صاحب العهدة أو مستلمها إسنادها ومعالجتها المالية بنفسه؛ يلزم محاسب أو معتمد مستقل مخول.')
             if c.execute('SELECT 1 FROM shared_manager_closure_allocations WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_ALLOCATION_EXISTS','الإسناد محفوظ؛ التصحيح بقيد مرتبط.')
+            from .shared_financial_treatments import shared_approved
+            treatment=shared_approved(c,day['id'],dec['id'],receipt['id'])
+            discrepancy=receipt['received_halalas']-dec['cash_halalas']
+            if discrepancy and (not treatment or treatment['status']!='approved' or treatment['payload']['cash_variance_halalas']!=discrepancy):raise db.error(409,'SHARED_RECEIPT_REVIEW_REQUIRED','تصريح المدير والاستلام الفعلي مختلفان؛ يلزم حسم محاسبي معتمد مرتبط بالأصل قبل الإسناد دون تغيير المبلغين لإظهار التطابق.')
             supplied={r.shift_id:r for r in body.legs};expected={r['shift_id']:r for r in dec['expected_snapshot']}
-            if len(supplied)!=len(body.legs) or set(supplied)!=set(expected) or sum(r.cash_halalas for r in body.legs)!=dec['cash_halalas']:raise db.error(422,'SHARED_ALLOCATION_TOTAL','أسند سجلات البراندات مرة واحدة بمجموع يطابق الكاش المستلم كاملًا.')
+            if len(supplied)!=len(body.legs) or set(supplied)!=set(expected) or sum(r.cash_halalas for r in body.legs)!=receipt['received_halalas'] or sum(r.receipt_difference_halalas for r in body.legs)!=-discrepancy:raise db.error(422,'SHARED_ALLOCATION_TOTAL','أسند سجلات البراندات مرة واحدة بمجموع يطابق الكاش المستلم كاملًا.')
             identifier=ops.uid();reports=[]
             c.execute('INSERT INTO shared_manager_closure_allocations(id,declaration_id,receipt_id,legs,recorded_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(identifier,dec['id'],receipt['id'],db.json([r.model_dump() for r in body.legs]),user['id'],body.reason))
             for principal,s in legs:
@@ -197,11 +208,12 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
                 amount=supplied[s['id']].cash_halalas
                 child_card=c.execute("SELECT coalesce(sum((submission->>'terminal_total_halalas')::bigint),0) n FROM shifts WHERE manager_shift_id=%s AND kind='driver' AND status='closed'",(s['id'],)).fetchone()['n']
                 own_card=ops.blind_closure.card_reconciliation(c,s['id'],0)['expected_card_halalas']
-                values={'expected_halalas':ledger,'counted_halalas':amount,'handover_halalas':amount,'retained_halalas':0,'difference_halalas':amount-ledger,'terminal_total_halalas':int(child_card)+own_card,'provenance':'accounting_allocation','operational_approved':True,'shared_manager_declaration_id':dec['id'],'shared_manager_receipt_id':receipt['id'],'shared_manager_allocation_id':identifier,'allocation_evidence':supplied[s['id']].evidence,'allocated_by':user['id'],'financial_state':'allocated_pending_reconciliation','physical_state':'received','physical_receipt_id':receipt['id']}
+                values={'expected_halalas':ledger,'counted_halalas':amount,'handover_halalas':amount,'retained_halalas':0,'difference_halalas':amount-ledger,'terminal_total_halalas':int(child_card)+own_card,'provenance':'accounting_allocation','operational_approved':True,'shared_manager_declaration_id':dec['id'],'shared_manager_receipt_id':receipt['id'],'shared_manager_allocation_id':identifier,'allocation_evidence':supplied[s['id']].evidence,'allocated_by':user['id'],'financial_state':'allocated_pending_reconciliation','receipt_difference_halalas':supplied[s['id']].receipt_difference_halalas,'shared_treatment_id':treatment['id'] if treatment else None,'shared_workday_id':day['id'],'shared_declaration_id':dec['id'],'shared_receipt_id':receipt['id'],'declared_handover_halalas':amount+supplied[s['id']].receipt_difference_halalas,'financial_review_required':bool(amount-ledger or supplied[s['id']].receipt_difference_halalas),'physical_state':'received','physical_receipt_id':receipt['id']}
                 transfer=ops.uid()
                 c.execute("INSERT INTO custody_transfers(id,from_shift_id,recipient_user_id,amount_halalas,reference,closure,status,created_by,confirmed_by,confirmed_at) VALUES(%s,%s,%s,%s,%s,true,'confirmed',%s,%s,%s)",(transfer,s['id'],receipt['received_by'],amount,'Allocation of shared manager receipt '+receipt['id'],user['id'],receipt['received_by'],receipt['created_at']))
                 ops.event(c,s['id'],-amount,'transfer_out',transfer,user['id'],'Accounting attribution of owner cash receipt '+receipt['id'])
-                if amount!=ledger:ops.event(c,s['id'],amount-ledger,'adjustment','closure-difference:'+s['id'],user['id'],body.reason)
+                # Preserve the residual for the independently approved review;
+                # attribution never creates an unapproved financial adjustment.
                 c.execute("UPDATE shifts SET status='closed',closed_at=%s,approved_by=%s,exception_reason=%s,submission=%s WHERE id=%s",(receipt['created_at'],user['id'],body.reason,db.json(values),s['id']))
                 from .reporting import create_snapshot
                 reports.append(create_snapshot(c,s['id'],user['id']))
@@ -219,12 +231,14 @@ def inbox(user=Depends(auth.current_user)):
     if user['role']!='owner' and not accounting(user):raise db.error(403,'SHARED_ACCOUNTANT_REQUIRED','متابعة إقفال المدير للمالك والمحاسبة.')
     with db.tx() as c:
         if not multibrand.enabled():return {'workdays':[]}
-        candidates=c.execute('SELECT w.anchor_shift_id FROM central_workdays w JOIN shared_manager_closure_declarations d ON d.workday_id=w.id LEFT JOIN shared_manager_closure_allocations a ON a.declaration_id=d.id LEFT JOIN shared_manager_closure_returns r ON r.declaration_id=d.id WHERE a.id IS NULL AND r.declaration_id IS NULL ORDER BY d.created_at,d.id').fetchall()
+        candidates=c.execute("SELECT w.anchor_shift_id FROM central_workdays w JOIN shared_manager_closure_declarations d ON d.workday_id=w.id LEFT JOIN shared_manager_closure_allocations a ON a.declaration_id=d.id LEFT JOIN shared_manager_closure_returns r ON r.declaration_id=d.id WHERE r.declaration_id IS NULL AND (a.id IS NULL OR EXISTS (SELECT 1 FROM audit_events t WHERE t.entity_type='central_workday' AND t.entity_id=w.id AND t.action='accounting.financial_treatment.approved' AND t.details->>'declaration_id'=d.id AND t.details->>'kind'='outstanding')) ORDER BY d.created_at,d.id").fetchall()
         rows=[]
         for row in candidates:
             try:day,legs=authorize(c,user,row['anchor_shift_id'])
             except HTTPException as error:
                 if error.status_code in {403,404}:continue
                 raise
-            rows.append(view(c,user,day,legs))
+            item=view(c,user,day,legs)
+            if item.get('allocation') and (item.get('receipt_accounting_review') or {}).get('financially_complete'):continue
+            rows.append(item)
         return {'workdays':rows}

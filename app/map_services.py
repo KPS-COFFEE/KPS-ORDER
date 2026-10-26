@@ -24,7 +24,7 @@ def quality(row, now=None):
             'accuracy_m': accuracy, 'updated_at': stamp}
 
 
-def record_sample(c, user, shift, body, previous, stamp):
+def record_sample(c, user, shift, body, previous, stamp, near_customer=True):
     """Minute buckets contain timings/accuracy only, never a position history.
 
     Gaps prove absence of received samples, not an app crash or its cause.
@@ -38,7 +38,7 @@ def record_sample(c, user, shift, body, previous, stamp):
       (user['brand_id'], user['id'], shift['id'], stamp, round(gap), body.accuracy_m))
 
 
-    if body.accuracy_m <= 50:
+    if near_customer and body.accuracy_m <= 50:
         tasks=c.execute("SELECT t.id,t.order_id,o.customer FROM driver_tasks t JOIN orders o ON o.id=t.order_id AND o.brand_id=%s WHERE t.shift_id=%s AND t.status='picked_up' AND o.completed_at IS NULL",(user['brand_id'],shift['id'])).fetchall()
         for task in tasks:
             destination=(task['customer'] or {}).get('location')
@@ -103,22 +103,50 @@ def health(shift_id: str = Query(min_length=1,max_length=200), user=Depends(auth
                      'cause':'unknown','evidence':'server_received_samples','history_complete':False})
 
 
+def gps_join_predicate():
+    # A single-brand schema deliberately has no central_workday_legs table.
+    # Do not reference an optional relation even inside a false SQL OR branch:
+    # PostgreSQL resolves every relation when it parses the statement.
+    from .multibrand import enabled
+    same_shift="g.shift_id=s.id AND g.brand_id=s.brand_id"
+    same_day=(" OR EXISTS (SELECT 1 FROM central_workday_legs a "
+              "JOIN central_workday_legs b ON b.workday_id=a.workday_id "
+              "WHERE a.shift_id=g.shift_id AND b.shift_id=s.id)") if enabled() else ''
+    return "g.driver_id=u.id AND ("+same_shift+same_day+")"
+
+
 @router.get('/alerts')
 def alerts(user=Depends(auth.require_roles(*STAFF))):
     require(user)
+    if user.get('central_operations') and not user.get('_map_brand_scoped') and not user.get('_morning_manager_context'):
+        from . import multibrand
+        result=[]
+        with db.tx() as c:
+            principals=[(scope['id'],multibrand.project(c,user,scope['id'])) for scope in user['central_operations']['brands']]
+        # Do not hold an outer pool slot while canonical reads acquire theirs.
+        for brand_id,principal in principals:
+            if principal and auth.has_permission(principal,'drivers_view'):
+                value=alerts(dict(principal,_map_brand_scoped=True,_map_route_viewer=user))
+                result.extend(dict(item,brand_id=brand_id) for item in value['alerts'])
+        return safe({'alerts':result})
     with db.tx() as c:
-        rows=c.execute('''SELECT s.id shift_id,u.id driver_id,u.display_name,s.branch_ids,g.updated_at,g.accuracy_m,
+        rows=c.execute('''SELECT s.id shift_id,u.id driver_id,u.display_name,s.branch_ids,u.brand_id driver_brand_id,u.branch_ids driver_branches,g.updated_at,g.accuracy_m,
           min(t.picked_up_at) departed_at,count(t.id) active_tasks
-          FROM shifts s JOIN users u ON u.id=s.user_id AND u.brand_id=s.brand_id
+          FROM shifts s JOIN users u ON u.id=s.user_id
           JOIN driver_tasks t ON t.shift_id=s.id AND t.status='picked_up'
           JOIN orders o ON o.id=t.order_id AND o.brand_id=s.brand_id
-          LEFT JOIN driver_latest_locations g ON g.shift_id=s.id AND g.driver_id=u.id AND g.brand_id=s.brand_id
-          WHERE s.brand_id=%s AND s.kind='driver' AND s.status='open' AND u.active
+          LEFT JOIN driver_latest_locations g ON _GPS_SCOPE_
+          WHERE s.brand_id=%s AND s.kind='driver' AND s.status='open' AND u.active AND u.role='driver'
           AND (%s OR o.branch_id=ANY(%s)) AND o.completed_at IS NULL
-          GROUP BY s.id,u.id,g.updated_at,g.accuracy_m''',(user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
+          GROUP BY s.id,u.id,g.updated_at,g.accuracy_m'''.replace('_GPS_SCOPE_',gps_join_predicate()),(user['brand_id'],user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
         result=[]
+        visible_driver_ids=set()
         now=datetime.now(timezone.utc)
         for row in rows:
+            from .multibrand import project
+            target=project(c,{'id':row['driver_id'],'role':'driver','active':True,'brand_id':row['driver_brand_id'],'branch_ids':row['driver_branches']},user['brand_id'])
+            if not target or not set(row['branch_ids'])<=set(target['branch_ids']):continue
+            visible_driver_ids.add(row['driver_id'])
             gps=quality(row,now)
             # Give first departure two minutes to acquire a fix.
             if gps['state']=='missing' and row['departed_at'] and (now-row['departed_at']).total_seconds()<120:
@@ -129,25 +157,38 @@ def alerts(user=Depends(auth.require_roles(*STAFF))):
         near=c.execute('''SELECT DISTINCT u.id driver_id,u.display_name,s.id shift_id
           FROM order_events e JOIN driver_tasks t ON t.id=e.details->>'task_id' AND t.order_id=e.order_id AND t.status='picked_up'
           JOIN orders o ON o.id=t.order_id AND o.brand_id=%s AND o.completed_at IS NULL
-          JOIN users u ON u.id=t.driver_id AND u.brand_id=o.brand_id AND u.active
+          JOIN users u ON u.id=t.driver_id AND u.active AND u.role='driver'
           JOIN shifts s ON s.id=t.shift_id AND s.brand_id=o.brand_id AND s.status='open'
-          JOIN driver_latest_locations g ON g.driver_id=u.id AND g.shift_id=s.id AND g.brand_id=s.brand_id
+          JOIN driver_latest_locations g ON _GPS_SCOPE_
           WHERE e.event_type='order.gps_near_customer' AND e.created_at>now()-interval '2 minutes'
-          AND g.updated_at>now()-interval '120 seconds' AND (%s OR o.branch_id=ANY(%s))''',
-          (user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
-        result.extend({**r,'kind':'near_customer','confirmed_delivery':False} for r in near)
+          AND g.updated_at>now()-interval '120 seconds' AND (%s OR o.branch_id=ANY(%s))'''.replace('_GPS_SCOPE_',gps_join_predicate()),
+          (user['brand_id'],user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
+        result.extend({**r,'kind':'near_customer','confirmed_delivery':False} for r in near if r['driver_id'] in visible_driver_ids)
         if user.get('_morning_manager_context'):
             from .morning_manager_context import shift_allowed
             result=[r for r in result if shift_allowed(user,c.execute('SELECT * FROM shifts WHERE id=%s',(r['shift_id'],)).fetchone())]
+        from .tracking_alerts import for_scope
+        result.extend(for_scope(c,user))
         return safe({'alerts':result})
 
 
 @router.get('/zones')
 def zones(user=Depends(auth.require_roles(*STAFF))):
     require(user,'orders_view')
+    if user.get('central_operations') and not user.get('_map_brand_scoped') and not user.get('_morning_manager_context'):
+        from . import multibrand
+        result=[]
+        with db.tx() as c:
+            principals=[(scope['id'],multibrand.project(c,user,scope['id'])) for scope in user['central_operations']['brands']]
+        # Do not hold an outer pool slot while canonical reads acquire theirs.
+        for brand_id,principal in principals:
+            if principal and auth.has_permission(principal,'orders_view'):
+                value=zones(dict(principal,_map_brand_scoped=True))
+                result.extend(dict(item,brand_id=brand_id) for item in value['zones'])
+        return {'zones':result}
     with db.tx() as c:
         rows=c.execute('SELECT id,name,settings FROM branches WHERE brand_id=%s AND (%s OR id=ANY(%s)) ORDER BY branch_no',
-                       (user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
+                       (user['brand_id'],user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
         return {'zones':[{'branch_id':r['id'],'name':r['name'],'coverage':r['settings'].get('coverage'),
                           'delivery_fee_halalas':r['settings'].get('delivery_fee_halalas')}
                          for r in rows if catalog.coverage_configured(r['settings'].get('coverage'))]}
@@ -177,11 +218,13 @@ class PlanRequest(BaseModel):
 def plan(body:PlanRequest,user=Depends(auth.require_roles(*STAFF))):
     require(user)
     with db.tx() as c:
-        context=dispatch_map.route_context(c,user,body.driver_id)
+        context=(dispatch_map.central_route_context(c,user,body.driver_id)
+                 if user.get('central_operations') and not user.get('_morning_manager_context')
+                 else dispatch_map.route_context(c,user,body.driver_id))
         if not 2 <= len(context['tasks']) <= 8:
             raise HTTPException(409,'ترتيب المسار متاح من طلبين إلى ثمانية طلبات مستلمة.')
-        gps=c.execute('SELECT accuracy_m FROM driver_latest_locations WHERE driver_id=%s AND brand_id=%s',
-                      (body.driver_id,user['brand_id'])).fetchone()
+        gps=c.execute('SELECT accuracy_m FROM driver_latest_locations WHERE driver_id=%s',
+                      (body.driver_id,)).fetchone()
         if not gps or gps['accuracy_m']>100:
             raise HTTPException(409,'يلزم موقع أدق لحساب المسار.')
         issued=dispatch_map.consume_route_budget(c,body.driver_id,user['id'])
@@ -204,7 +247,7 @@ def trips(shift_id:str=Query(min_length=1,max_length=200),user=Depends(auth.requ
           FROM driver_tasks t JOIN orders o ON o.id=t.order_id AND o.brand_id=%s
           JOIN branches b ON b.id=o.branch_id AND b.brand_id=o.brand_id
           WHERE t.shift_id=%s AND (%s OR o.branch_id=ANY(%s)) ORDER BY t.created_at,t.id LIMIT 500''',
-          (user['brand_id'],shift_id,user['role']=='owner',user.get('branch_ids',[]))).fetchall()
+          (user['brand_id'],shift_id,user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
         result=[]
         for row in rows:
             settings=row.pop('branch_settings')

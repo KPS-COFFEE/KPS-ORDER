@@ -4,6 +4,8 @@ on:
     branches: [agent/kps-order-emergency-v4, agent/delivery-workflow-controls-20261025]
     paths:
       - app/db.py
+      - migrations/**
+      - app/multibrand_migrations/**
       - tests/test_startup_preservation_concurrency.py
       - tests/test_final_release.py
       - tests/test_pending_startup_upgrade.py

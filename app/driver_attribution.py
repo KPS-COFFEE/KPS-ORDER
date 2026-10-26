@@ -65,6 +65,8 @@ def untouched(c, sids):
 
 
 def source(c, user, o, lock=False):
+    if c.execute('SELECT 1 FROM collection_tender_corrections WHERE order_id=%s',(o['id'],)).fetchone():
+        fail('تم تصحيح وسيلة تحصيل الطلب؛ يلزم تصحيح محاسبي مرتبط قبل تغيير نسبته لسائق آخر.')
     if c.execute('SELECT 1 FROM order_driver_attribution_corrections WHERE order_id=%s', (o['id'],)).fetchone():
         fail('تم تصحيح نسبة هذا الطلب مسبقًا؛ راجع سجل التصحيح.')
     if (o['service'] != 'delivery' or o['delivery_status'] != 'delivered' or

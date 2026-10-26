@@ -9,6 +9,7 @@ def test_shared_declaration_hides_ledger_expectations_at_every_depth():
             'expected_snapshot': [{'expected_halalas': 2000, 'brand_id': 'kps'}]},
         'expected_cash_halalas': 2000, 'cash_difference_halalas': -100,
         'receipt': {'received_halalas': 1700},
+        'receipt_difference_halalas': -200, 'receipt_review_required': True,
         'pending': [{'expected_cash_halalas': 2000, 'cash_difference_halalas': -100,
                      'financial_state': 'awaiting_allocation'}],
     }

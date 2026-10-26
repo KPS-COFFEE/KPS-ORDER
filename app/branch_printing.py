@@ -358,6 +358,8 @@ def enqueue_morning_preparer_receipt(conn, user, order, branch, *, source='morni
     Queueing does not assert physical paper output. An ambiguous or unapproved
     destination fails acceptance atomically instead of choosing another branch.
     """
+    from .order_duplicates import guard as duplicate_guard
+    duplicate_guard(conn, order)
     previous = conn.execute("SELECT id FROM branch_print_jobs WHERE order_id=%s "
                             "AND kind='order' AND status<>'cancelled' LIMIT 1",
                             (order['id'],)).fetchone()
@@ -394,6 +396,8 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         order=conn.execute('SELECT * FROM orders WHERE id=%s AND brand_id=%s FOR UPDATE',(order_id,user['brand_id'])).fetchone()
         if not order or not auth.can_access_order(user,order,conn):
             raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود ضمن صلاحياتك.')
+        from .order_duplicates import guard as duplicate_guard
+        duplicate_guard(conn, order)
         branch=scope(conn,user,order['branch_id'])
         device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(body.device_id,user['brand_id'])).fetchone()
         if not device:raise db.error(409,'PRINT_NOT_PAIRED','اربط طابعة هذا الفرع أولًا.')
@@ -520,6 +524,9 @@ def resolve_print_alert(identifier: str, body: AlertAction, user=Depends(operato
             result = {'action': body.action, 'reason': body.reason.strip(), 'actor_id': user['id'],
                       'actor_name': user.get('display_name', ''), 'at': datetime.now(timezone.utc).isoformat()}
             if body.action == 'reprint':
+                if order:
+                    from .order_duplicates import guard as duplicate_guard
+                    duplicate_guard(conn,order)
                 if current['status'] == 'claimed':
                     raise db.error(409, 'PRINT_JOB_IN_FLIGHT', 'المهمة ما زالت لدى برنامج الطباعة؛ تحقق من انتهائها قبل إعادة الطباعة.')
                 if not order or order['completed_at'] or order['preparation_status'] in ('cancelled','rejected','completed') or order['delivery_status'] in ('cancelled','delivered'):
@@ -536,6 +543,10 @@ def resolve_print_alert(identifier: str, body: AlertAction, user=Depends(operato
                 result['replacement_id'] = replacement
             if body.action in ('confirmed','reprint') and current['status'] == 'queued':
                 conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE id=%s", (identifier,))
+            from .employee_ticket_workflow import enabled as factual_workflow_enabled
+            if body.action=='escalated' and factual_workflow_enabled():
+                from .employee_tickets import create_linked_followup
+                result['followup_ticket_id']=create_linked_followup(conn,user,'print_job',identifier,body.reason.strip())
             conn.execute('UPDATE branch_print_jobs SET alert_resolution=%s WHERE id=%s', (db.json(result),identifier))
             db.audit(conn,user['id'],'printer.alert.'+body.action,'print_job',identifier,result)
             if order:
@@ -573,10 +584,20 @@ def claim(request: Request = None, device=Depends(bridge)):
         if not live:raise db.error(401,'PRINT_DEVICE_AUTH','ألغي ربط الجهاز.')
         conn.execute('UPDATE branch_print_devices SET last_seen_at=now(),last_api_host=coalesce(%s,last_api_host),bridge_version=coalesce(%s,bridge_version) WHERE id=%s',
                      (request.url.hostname if request else None,request.headers.get('X-KPS-Bridge-Version','')[:60] if request else None,device['id']))
-        row=conn.execute("SELECT * FROM branch_print_jobs WHERE device_id=%s AND status='queued' AND (kind='test' OR %s) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",(device['id'],bool(live['approved_at']))).fetchone()
-        if not row:return {'job':None}
-        conn.execute("UPDATE branch_print_jobs SET status='claimed',claimed_at=now() WHERE id=%s",(row['id'],))
-        return {'job':{'id':row['id'],'payload':{**row['payload'],'brand_id':row['brand_id']},'paper_mm':device['paper_mm']}}
+        rows=conn.execute("SELECT * FROM branch_print_jobs WHERE device_id=%s AND status='queued' AND (kind='test' OR %s) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 100",(device['id'],bool(live['approved_at']))).fetchall()
+        for row in rows:
+            if row['order_id']:
+                # Enqueue locks order before device. Skip an occupied order here
+                # rather than invert that lock order and wait on it.
+                order=conn.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE SKIP LOCKED',(row['order_id'],)).fetchone()
+                if not order or order['preparation_status'] in ('cancelled','rejected'):
+                    continue
+                from .order_duplicates import review as duplicate_review
+                if duplicate_review(conn,order)['status']=='pending':
+                    continue
+            conn.execute("UPDATE branch_print_jobs SET status='claimed',claimed_at=now() WHERE id=%s",(row['id'],))
+            return {'job':{'id':row['id'],'payload':{**row['payload'],'brand_id':row['brand_id']},'paper_mm':device['paper_mm']}}
+        return {'job':None}
 
 
 class AckBody(BaseModel):

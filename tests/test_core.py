@@ -123,7 +123,7 @@ def _make_user(role='customer', brand='kps', branches=None, username=None, passw
     with db.tx() as conn:
         conn.execute('INSERT INTO users(id,role,brand_id,branch_ids,username,phone,password_hash,display_name) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',
                      (identifier, role, brand, db.json(branches or []), username,
-                      '+9665' + secrets.token_hex(4) if role == 'customer' else None,
+                      '+9665' + f'{secrets.randbelow(100_000_000):08d}' if role == 'customer' else None,
                       auth.hash_password(password) if password else None, 'بيانات اختبار'))
         return conn.execute('SELECT * FROM users WHERE id=%s', (identifier,)).fetchone()
 

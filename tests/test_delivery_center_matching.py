@@ -59,7 +59,17 @@ def test_financial_scope_and_separate_reviewer(role,uid,branches,ok):
     (800,600,'',0,None,422),(900,500,'',0,{'revision':1,'status':'difference'},409),
     (900,500,'',1,{'revision':1,'status':'matched'},409)])
 def test_bank_cash_matching_are_independent_and_revision_protected(monkeypatch,bank,cash,note,revision,previous,status):
-    snap={'summary':{'card_collected_halalas':1000,'card_refunded_halalas':100},'shift':{'submission':{'handover_halalas':500}}}
+    # Real source evidence, rather than a summary-only total, is required before approval.
+    snap={'orders':[],
+        'collections':[{'id':'card-source','method':'card','amount_halalas':1000}],
+        'refunds':[{'id':'card-refund','method':'card','amount_halalas':100}],
+        'custody_events':[{'id':'cash-source','shift_id':'manager-shift','kind':'direct_receipt','reference_id':'cash-document','amount_halalas':500}],
+        'transfers':[],
+        'summary':{'unique_orders':0,'completed_orders':0,'gross_completed_halalas':0,
+            'cash_collected_halalas':0,'card_collected_halalas':1000,
+            'cash_refunded_halalas':0,'card_refunded_halalas':100,'net_collections_halalas':900},
+        'shift':{'id':'manager-shift','opening_halalas':0,'submission':{'handover_halalas':500,
+            'expected_halalas':500,'counted_halalas':500,'difference_halalas':0}}}
     original=deepcopy(snap)
     r={'id':'report','shift_id':'manager-shift','brand_id':'brand','kind':'manager','user_id':'manager','branch_ids':['b'],'snapshot':snap}
     writes=[];closure_checks=[]
@@ -98,16 +108,35 @@ def test_bank_cash_matching_are_independent_and_revision_protected(monkeypatch,b
 def test_pending_financial_evidence_blocks_matching_before_any_write(monkeypatch,pending):
     from app import multibrand
     monkeypatch.setattr(multibrand,'enabled',lambda:pending=='shared_allocation')
+    from app import shared_financial_treatments
+    monkeypatch.setattr(shared_financial_treatments,'allocated_review',lambda c,workday_id:None)
     report={'id':'report','shift_id':'manager-shift','brand_id':'brand','kind':'manager',
             'user_id':'manager','branch_ids':['b'],'snapshot':{}}
     checks=[]
+    unpaid_order={'id':'unpaid-order','brand_id':'brand','branch_id':'b','service':'delivery',
+        'total_halalas':2500,'payment_status':'unpaid','snapshot':{}}
     class Conn:
         def execute(self,sql,args):
             if sql.startswith('SELECT * FROM closure_reports'):return Result(report)
+            if sql=='SELECT * FROM orders WHERE id=%s':
+                assert args==('unpaid-order',)
+                checks.append('original_order')
+                return Result(unpaid_order)
+            if sql.startswith('SELECT id,details FROM order_events e WHERE order_id=%s'):
+                assert args==('unpaid-order',)
+                return Result({'id':'shortfall-case','details':{'kind':'collection_shortfall'}})
+            if sql.startswith('SELECT (SELECT coalesce(sum(amount_halalas),0) FROM collections'):
+                assert args==('unpaid-order','unpaid-order')
+                checks.append('actual_collection')
+                return Result({'net':1950})
+            if 'FROM audit_events a' in sql and "a.entity_type='order'" in sql:
+                # No approved source credit or documented outstanding treatment:
+                # the real 5.50 SAR remainder must still block financial matching.
+                return Result()
             if sql.startswith('SELECT DISTINCT d.id declaration_id') and 'shared_' in sql:
                 assert args==['manager-shift','manager-shift']
                 checks.append('shared_allocation')
-                return Result({'declaration_id':'pending','anchor_shift_id':'manager-shift','user_id':'manager','created_at':None})
+                return Result({'declaration_id':'pending','workday_id':'physical-day','anchor_shift_id':'manager-shift','user_id':'manager','created_at':None})
             if sql.lstrip().startswith('SELECT o.id FROM orders'):
                 assert args[-3:]==('manager-shift','manager-shift','manager-shift')
                 checks.append('collection_case')
@@ -123,6 +152,8 @@ def test_pending_financial_evidence_blocks_matching_before_any_write(monkeypatch
     assert error.value.status_code==409
     assert error.value.detail['code']==('COLLECTION_CASE_PENDING' if pending=='collection_case' else 'SHARED_DRIVER_ALLOCATION_PENDING')
     assert pending in checks
+    if pending=='collection_case':
+        assert 'original_order' in checks and 'actual_collection' in checks
 
 @pytest.mark.parametrize('owner,kind,expected,received_work',[('manager','manager',True,False),('other','manager',False,False),('driver','driver',False,False),('manager','manager',False,True)])
 def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owner,kind,expected,received_work):
@@ -158,15 +189,20 @@ def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owne
 
 def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(monkeypatch):
     import hashlib
-    inserted=[];contact_locks=[]
+    inserted=[];contact_locks=[];duplicate_locks=[]
     expected_id='customer_contact_'+hashlib.sha256('brand\0+966501234567'.encode()).hexdigest()
     expected_lock='operational-contact:brand:'+expected_id
     class Conn:
         def execute(self,sql,args):
             if sql=='SELECT pg_advisory_xact_lock(hashtextextended(%s,0))':
+                if args==('duplicate-contact:brand:+966501234567',):
+                    duplicate_locks.append(args[0]);return Result()
                 assert args==(expected_lock,)
                 assert not inserted, 'Serialize the opaque contact before inserting it'
                 contact_locks.append(args[0]);return Result()
+            if sql.startswith('SELECT id,snapshot,created_at,branch_id FROM orders'):
+                assert args==['brand','+966501234567']
+                return Result()
             if sql.startswith('SELECT settings'):return Result({'settings':{}})
             if sql.startswith('SELECT id FROM shifts'):return Result({'id':'manager-shift'})
             if sql.startswith('INSERT INTO users'):
@@ -194,6 +230,8 @@ def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(m
     snap=result.params[13].obj
     assert snap['order_source']=='delivery_center' and snap['manager_shift_id']=='manager-shift'
     assert snap['receipt_profile']=={'seller':'ORIGINAL'}
+    assert duplicate_locks==['duplicate-contact:brand:+966501234567']
+    assert snap['duplicate_review']['status']=='clear'
     assert result.params[15].obj['phone_verified'] is False
     body.expected_total_halalas=1
     with pytest.raises(HTTPException) as e:orders.create_delivery_center_order(body,None,actor,'other-key')

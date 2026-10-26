@@ -1,0 +1,63 @@
+name: Checkout duplicate and partial return acceptance
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+concurrency:
+  group: order-safety-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+jobs:
+  postgres-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_order_safety
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U kps_test -d test_enbishan_order_safety" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_order_safety
+      TEST_BROWSER: '1'
+      APP_ENV: testing
+      OTP_PROVIDER: disabled
+      EMAIL_PROVIDER: disabled
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Locked tools and browser
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-security-tests.lock
+          python -m playwright install --with-deps chromium
+      - name: Focused safety acceptance with PostgreSQL 18
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source-sha.txt
+          node --check public/ops.js
+          node --check public/customer.js
+          node --test tests/test_checkout_attempts.cjs
+          python -m pytest -q tests/test_order_duplicates.py tests/test_delivery_partial_returns.py tests/test_checkout_attempts_browser.py tests/test_order_safety_ui.py tests/test_rollback_shared_state_guard.py tests/test_security_audit_local.py tests/test_browser.py::test_real_customer_car_order_chat_images_and_owner_operations tests/test_order_amendments.py tests/test_order_financial_cases.py tests/test_first_order_gift_postgres.py tests/test_customer_gift_pricing_identity.py --junitxml=evidence/order-safety.xml | tee evidence/order-safety.log
+          python - <<'PY'
+          import xml.etree.ElementTree as E
+          cases=list(E.parse('evidence/order-safety.xml').getroot().iter('testcase'))
+          assert cases and not any(c.find(t) is not None for c in cases for t in ('failure','error','skipped'))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: order-safety-${{ github.event.pull_request.head.sha }}
+          path: evidence/

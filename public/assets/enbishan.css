@@ -97,3 +97,11 @@ html[dir=rtl] .enbishan-journey .mobile-basket{transform:translateX(50%)}
 .cart-line:has(.enbishan-cart-image)::after{content:"";display:block;clear:both}
 
 .grape-flavour-choices .button[aria-pressed=true]{outline:0;font-weight:500}.grape-flavour-choices .button:focus-visible{outline:2px solid #267481}
+
+/* Consistent catalog cards with readable selected category state. */
+.enbishan-journey .category-tab[aria-current=true]{background:#267481;color:#fff;border-color:#267481}
+.enbishan-journey .product-content{display:flex;flex-direction:column;flex:1}
+.enbishan-journey .product-content h3{min-height:3em;line-height:1.5}
+.enbishan-journey .product-card-bottom{margin-top:auto}
+.enbishan-journey .enbishan-size-summary{min-height:2.8em;line-height:1.4;margin-bottom:10px}
+@media(max-width:550px){.enbishan-journey .product-content h3{min-height:0}}
