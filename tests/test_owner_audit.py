@@ -6,7 +6,7 @@ from copy import deepcopy
 import pytest
 from fastapi import HTTPException
 from app import db
-from app.owner_audit import clean,require_owner,export_data,bounded,MAX_ROWS
+from app.owner_audit import clean,require_owner,export_data,bounded,MAX_ROWS,documented_review
 from test_operations import ops
 from test_financial_clarifications import setup_case
 
@@ -91,3 +91,43 @@ def test_overlapping_driver_manager_closures_are_deduplicated_and_mixed_scope_de
     assert denied.status_code==404 and 'audit-driver' not in denied.text
     assert actor('owner').get('/api/owner-audit').status_code==422
     assert actor('owner').get('/api/owner-audit?order_query=unknown').status_code==404
+
+
+
+def test_missing_financial_evidence_never_turns_into_a_zero_balance():
+    original={'integrity':{'verified':False,'issues':[{'code':'EVIDENCE_MISSING'}]},'system_cash_halalas':0,'bank_halalas':0,'cash_received_halalas':None,'financially_complete':True}
+    result=documented_review(original)
+    assert result['system_cash_halalas'] is None and result['bank_halalas'] is None
+    assert result['financial_state']=='undocumented' and not result['financially_complete']
+    documented_zero=documented_review(original,{'bank_halalas':0,'cash_due_halalas':0,'cash_received_halalas':0})
+    assert documented_zero['bank_halalas']==0 and documented_zero['cash_received_halalas']==0
+    assert documented_zero['system_cash_halalas'] is None
+    assert original['system_cash_halalas']==0
+
+
+@pytest.mark.postgres
+def test_owner_audit_keeps_bank_fees_timing_and_receipts_separate_from_customer_collections(ops):
+    from test_delivery_workflow_controls import picked_up
+    from datetime import date
+    actor,post,_,_=ops
+    from test_accounting import accountant
+    accountant()
+    oid,_,_,_=picked_up(ops,total=2500)
+    post('driver',f'/api/orders/{oid}/collect',{'method':'card','amount_halalas':2500,'reference':'POS-AUDIT-001'})
+    with db.tx() as c:
+        collection=c.execute('SELECT * FROM collections WHERE order_id=%s',(oid,)).fetchone()
+        snapshot={'collections':[dict(id=collection['id'],order_id=oid,shift_id=collection['shift_id'],amount_halalas=2500,method='card',brand_id='ops-brand',branch_id='ops-branch')],'refunds':[]}
+        c.execute("INSERT INTO bank_reconciliation_batches(id,brand_id,branch_ids,batch_reference,source_snapshot,gross_halalas,refund_halalas,fees_halalas,expected_net_halalas,evidence_reference,note,proposed_by) VALUES('audit-bank-batch','ops-brand',%s,'POS-AUDIT-BATCH',%s,2500,0,50,2450,'POS evidence','Actual POS batch evidence','ops-owner')",(db.json(['ops-branch']),db.json(snapshot)))
+        c.execute("INSERT INTO bank_reconciliation_bank_lines(id,received_on,bank_account_reference,statement_reference,line_reference,amount_halalas,evidence_reference,recorded_by) VALUES('audit-bank-line',%s,'audit-account','audit-statement','audit-line',1000,'Actual bank statement','ops-accountant')",(date.today(),))
+        c.execute("INSERT INTO bank_reconciliation_receipts(id,batch_id,bank_account_reference,statement_reference,line_reference,amount_halalas,statement_amount_halalas,received_on,evidence_reference,note,proposed_by) VALUES('audit-bank-receipt','audit-bank-batch','audit-account','audit-statement','audit-line',1000,1000,%s,'Bank evidence','Only part of the POS batch arrived','ops-owner')",(date.today(),))
+        c.execute("INSERT INTO bank_reconciliation_decisions(id,batch_id,receipt_id,decision,evidence_reference,note,decided_by) VALUES('audit-batch-approval','audit-bank-batch',NULL,'approved','Batch independently checked','Independent batch approval','ops-accountant'),('audit-receipt-approval','audit-bank-batch','audit-bank-receipt','approved','Statement independently checked','Independent bank receipt approval','ops-accountant')")
+        c.execute("INSERT INTO bank_reconciliation_bank_claims(id,consumer_kind,consumer_id,receipt_id,bank_account_reference,statement_reference,line_reference,amount_halalas) VALUES('audit-bank-claim','pos_batch','audit-bank-receipt','audit-bank-receipt','audit-account','audit-statement','audit-line',1000)")
+    response=actor('owner').get('/api/owner-audit?order_query='+oid)
+    assert response.status_code==200,response.text
+    data=response.json();batch=data['bank_reconciliations'][0]
+    assert batch['gross_halalas']==2500 and batch['fees_halalas']==50 and batch['expected_net_halalas']==2450
+    assert batch['bank_received_halalas']==1000 and batch['timing_pending_halalas']==1450
+    assert batch['state']=='partially_received' and not batch['financially_matched']
+    assert sum(r['amount_halalas'] for r in data['collections'])==2500
+    assert len(data['bank_statement_lines'])==1 and len(data['bank_statement_allocations'])==1
+    assert actor('other').get('/api/owner-audit?order_query='+oid).status_code==404

@@ -140,7 +140,7 @@ app.include_router(branch_payment_reports.router)
 from . import branch_payment_policy
 app.include_router(branch_payment_policy.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'aggregate_manager_closure', 'financial_clarifications', 'customer_crm', 'owner_audit'):
+for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'aggregate_manager_closure', 'financial_clarifications', 'customer_crm', 'owner_audit', 'employee_ticket_workflow'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
@@ -177,7 +177,8 @@ app.include_router(enbishan_catalog_import.router)
 
 
 def revision():
-    return os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
+    from .runtime_revision import revision as source_revision
+    return source_revision('local-unversioned')
 
 
 @app.get('/health')
@@ -293,3 +294,8 @@ app.include_router(refund_item_allocations.router)
 from . import shared_financial_treatments, manual_bank_matching
 app.include_router(shared_financial_treatments.router)
 app.include_router(manual_bank_matching.router)
+from . import order_financial_treatments
+app.include_router(order_financial_treatments.router)
+
+from . import collection_tender_corrections
+app.include_router(collection_tender_corrections.router)

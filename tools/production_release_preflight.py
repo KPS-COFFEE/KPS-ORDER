@@ -122,7 +122,10 @@ def collect(conn, catalog, staff_phone=None):
     if source['database_name'] != DATABASE_NAME or source['schema_name'] != DATABASE_SCHEMA:
         raise ValueError('Unexpected source identity.')
     registry = conn.execute('SELECT version,sha256,applied_at FROM schema_migrations ORDER BY version').fetchall()
-    revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or ''
+    revision_spec = importlib.util.spec_from_file_location('release_source_identity', ROOT / 'app' / 'runtime_revision.py')
+    revision_module = importlib.util.module_from_spec(revision_spec)
+    revision_spec.loader.exec_module(revision_module)
+    revision = revision_module.revision()
     report = {'generated_at': datetime.now(timezone.utc).isoformat(), 'mode': 'READ_ONLY_METADATA',
               'database_id': DATABASE_ID, 'source': source,
               'runtime_revision': revision if re.fullmatch(r'[a-f0-9]{40}', revision) else None,

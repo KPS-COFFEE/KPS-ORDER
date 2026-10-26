@@ -23,11 +23,18 @@ def test_shared_driver_float_listing_keeps_approvals_in_their_brand(dual):
         else:
             assert data['drivers'][0]['current'] is None
             assert data['requests'] == []
-    enb = post('manager', '/api/driver-floats', {**proposal, 'amount_halalas': 10000}, 'enbishan')['id']
-    post('accountant', '/api/driver-floats/' + enb + '/decision',
-         {'approved': True, 'confirmed': True, 'reference': 'SYNTHETIC approval'}, status=404)
-    post('accountant', '/api/driver-floats/' + enb + '/decision',
-         {'approved': True, 'confirmed': True, 'reference': 'SYNTHETIC approval'}, 'enbishan')
+    # New issuance is fixed at SAR 200 once per person, never per brand.
+    post('manager','/api/driver-floats',{**proposal,'amount_halalas':10000},'enbishan',status=422)
+    post('manager','/api/driver-floats',proposal,'enbishan',status=409)
+    # Explicit synthetic historical evidence predates that policy. Preserve its
+    # original denomination and seller rather than approving a new duplicate.
+    enb='synthetic-historical-enbishan-float'
+    with db.tx() as c:
+        c.execute("INSERT INTO driver_float_requests(id,brand_id,driver_id,branch_ids,amount_halalas,reference,reason,requested_by) VALUES(%s,'enbishan','dual-driver','[\"enbishan-test-1\",\"enbishan-test-2\"]',10000,'SYNTHETIC historical original','Historical record only, no new issuance','dual-manager')",(enb,))
+        c.execute("INSERT INTO driver_float_decisions(request_id,brand_id,approved,reviewed_by,reference) VALUES(%s,'enbishan',true,'dual-accountant','SYNTHETIC historical independent certification')",(enb,))
+    post('accountant','/api/driver-floats/'+enb+'/decision',{'approved':True,'confirmed':True,'reference':'SYNTHETIC replay denied'},status=404)
+    post('accountant','/api/driver-floats/'+enb+'/decision',{'approved':True,'confirmed':True,'reference':'SYNTHETIC replay denied'},'enbishan',status=409)
+    assert actor('manager','enbishan').get('/api/driver-floats').json()['drivers'][0]['current']=={'request_id':enb,'amount':10000}
     with db.tx() as c:
         rows = c.execute('SELECT brand_id,amount_halalas FROM driver_float_requests ORDER BY brand_id').fetchall()
         assert rows == [{'brand_id': 'enbishan', 'amount_halalas': 10000}, {'brand_id': 'kps', 'amount_halalas': 20000}]

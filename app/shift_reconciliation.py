@@ -10,7 +10,7 @@ def closed_shift(c, shift):
     if shift['status'] != 'closed':
         return None
     report = c.execute(
-        'SELECT id,snapshot FROM closure_reports WHERE shift_id=%s AND brand_id=%s '
+        'SELECT * FROM closure_reports WHERE shift_id=%s AND brand_id=%s '
         'ORDER BY version DESC,created_at DESC LIMIT 1',
         (shift['id'], shift['brand_id']),
     ).fetchone()

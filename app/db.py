@@ -306,6 +306,8 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
 
 
 def migrate():
+    from .runtime_revision import revision as source_revision
+    deployed_revision = source_revision('local-unversioned')
     from . import multibrand
     if multibrand.enabled():
         # Reject a bad test DSN before opening a connection or acquiring locks.
@@ -325,8 +327,7 @@ def migrate():
                         after = preservation_snapshot(conn, baseline, lock_tables=False)
                         if baseline != after:
                             raise RuntimeError('Release aborted: existing operational data changed during migration.')
-                        revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
-                        audit(conn, None, 'release.operational_data_preserved', 'runtime', revision,
+                        audit(conn, None, 'release.operational_data_preserved', 'runtime', deployed_revision,
                               {'verified': bool(baseline), 'tables_checked': len(baseline),
                                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
                     break
@@ -357,8 +358,10 @@ PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authoriz
                     'driver_duty_profiles', 'shared_driver_closure_declarations', 'shared_driver_closure_returns',
                     'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
                     'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations',
-                    'financial_case_clarifications', 'financial_case_clarification_events')
+                    'financial_case_clarifications', 'financial_case_clarification_events', 'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims', 'audit_events')
 
+
+PRESERVED_TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 
 def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     """Compare existing columns/bytes in the same bounded migration transaction.

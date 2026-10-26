@@ -121,6 +121,11 @@ def test_variance_requires_evidenced_independent_treatment(live_app,chromium_bro
             _owner_login(independent,live_app,reviewer)
             review_page.set_viewport_size({'width':width,'height':1000});review_page.goto(live_app+'/ops')
             if lang=='en':review_page.get_by_role('button',name='English',exact=True).click()
+            if width<=650:
+                # The owner's mobile delivery workspace uses the existing menu;
+                # follow its visible control rather than clicking a hidden item.
+                expect(review_page.locator('.dispatch-nav-toggle')).to_be_visible()
+                review_page.locator('.dispatch-nav-toggle').click()
             review_page.locator('#navigation [data-page=accounting]').click()
             review_page.locator('[data-ac=settlements]').click()
             review_card=review_page.locator('[data-manager-card=browser-variance-manager]')

@@ -469,7 +469,9 @@ def test_ticket_owner_approval_appends_recount_without_rewriting_originals(ops):
     post('owner',path,approval,status=409)
     post('owner',path,{**approval,'note':'TEST different payload'},key='cash-ticket-approve',status=409)
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
-    assert row['revision']==3 and row['actual_total_halalas']==44600 and not row['variance_pending']
+    assert row['revision']==3 and row['actual_total_halalas']==44600 and row['variance_pending']
+    assert row['cash_variance_halalas']==2250 and row['bank_difference_halalas']==-2250
+    assert not row['financially_complete'] and not row['period_approval_allowed']
     assert row['history'][-1]['action_type']=='cash_receipt_correction'
     assert row['cash_correction_requests'][0]['status']=='approved' and row['variance_confirmation'] is None
     card=actor('accountant').get('/api/accounting/manager-cards').json()['cards'][0]['drivers'][0]

@@ -18,6 +18,7 @@ def values(cash=-550,card=0):
 def proposal(kind='outstanding',cash=-550,card=0):
     body=dict(expected_revision=2,kind=kind,cash_variance_halalas=cash,card_variance_halalas=card,
         evidence_reference='TEST signed receipt REF-123',note='TEST independently documented actual facts')
+    if kind=='documented_channel_correction':body['source_correction_ids']=['TEST-source-correction']
     if kind=='outstanding':body.update(liable_party_type='customer',liable_party_name='TEST Customer',
         followup_user_id='accountant',due_on=date.today()+timedelta(days=7))
     return ft.Proposal(**body)
@@ -36,7 +37,7 @@ def test_receivable_approval_never_becomes_receipt_or_fully_paid():
     assert result['outstanding_receivable_halalas']==550
     assert result['outstanding_payable_halalas']==0
     assert result['period_approval_allowed'] and not result['financially_complete']
-    assert result['followup_user_id']=='accountant' and result['due_on']
+    assert result['followup_user_id']=='accountant' and result['followup_due_on']
     assert original==before
 
 
@@ -86,7 +87,7 @@ def test_outstanding_requires_party_followup_and_due():
 
 
 def mock_approval(monkeypatch,user_id='owner',role='owner',party='customer',allow=True):
-    c=Mock();v=values();row=treatment();row['status']='pending';row['payload']['liable_party_type']=party
+    c=Mock();c.execute.return_value.fetchall.return_value=[];v=values();row=treatment();row['status']='pending';row['payload']['liable_party_type']=party
     report=dict(id='r',shift_id='s',user_id='driver',brand_id='kps',branch_ids=['b'],snapshot={})
     monkeypatch.setattr(db,'tx',lambda:nullcontext(c))
     monkeypatch.setattr(db,'idempotent',lambda conn,uid,key,scope,payload,fn:fn())
@@ -128,7 +129,7 @@ def test_owner_approval_records_exact_independent_evidence_without_money_write(m
     assert record['approved_by']=='owner' and record['requested_by']=='accountant'
     assert record['cash_variance_halalas']==-550 and record['card_variance_halalas']==0
     assert record['no_money_posted'] and record['no_payroll_deduction']
-    c.execute.assert_not_called()
+    assert all(call.args[0].lstrip().upper().startswith('SELECT') for call in c.execute.call_args_list)
 
 
 def test_actual_cash_custodian_cannot_approve_even_when_not_proposer(monkeypatch):
@@ -230,16 +231,34 @@ def test_independent_outstanding_treatment_preserves_sources_and_is_not_paid(ops
 
 
 @pytest.mark.postgres
-def test_opposite_channels_need_documented_independent_correction(ops):
-    actor,post,base,_=prepared(ops,cash=11000,card=4000)
-    created,_=actual_proposal(base,post,cash=1000,card=-1000,kind='documented_channel_correction')
-    path=base+'/treatments/'+created['id']+'/approve'
-    post('owner',path,dict(expected_revision=2,confirmed=True,evidence_reference='TEST actual terminal receipt proves correction',note='TEST cash payment incorrectly classified card',allow_period_approval_with_outstanding=False))
+def test_opposite_channels_need_documented_independent_canonical_source_correction(ops,monkeypatch):
+    monkeypatch.setenv('KPS_ORDER_SOURCE_TREATMENTS_ENABLED','true')
+    actor,post,base,_=prepared(ops,cash=15000,card=0)
+    _,_,order,_=ops
+    oid=order(total=15000,name='test-source-order')
+    with db.tx() as c:
+        c.execute("INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas) VALUES('test-source-cash',%s,'settlement-shift','ops-driver','cash',10000,10000),('test-source-card',%s,'settlement-shift','ops-driver','card',5000,NULL)",(oid,oid))
+        c.execute("INSERT INTO custody_events(id,shift_id,amount_halalas,kind,reference_id,actor_id,reason) VALUES('test-cash-event','settlement-shift',10000,'collection','test-source-cash','ops-driver','TEST actual original cash source')")
+    correction=post('accountant','/api/collections/test-source-card/tender-corrections',dict(expected_order_version=1,
+        target_method='cash',target_tendered_halalas=5000,target_reference='',evidence_reference='TEST original signed cash tender proves source error',
+        note='TEST source incorrectly recorded as card',followup_user_id='ops-accountant',due_on=date.today().isoformat()))
+    source=post('owner','/api/collections/test-source-card/tender-corrections/'+correction['id']+'/approve',dict(expected_order_version=1,
+        confirmed=True,evidence_reference='TEST independent original tender evidence',note='TEST whole original collection was actually cash'))
+    body=proposal('documented_channel_correction',5000,-5000).model_dump(mode='json')
+    post('accountant',base+'/treatments',body,status=409)
+    body['source_correction_ids']=[source['id']]
+    created=post('accountant',base+'/treatments',body)
+    post('owner',base+'/treatments/'+created['id']+'/approve',dict(expected_revision=2,confirmed=True,
+        evidence_reference='TEST canonical source correction independently linked',note='TEST exact original source and receipt channels reconciled',allow_period_approval_with_outstanding=False))
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
-    assert row['cash_variance_halalas']==1000 and row['bank_difference_halalas']==-1000
-    assert row['channel_reclassification']['cash_halalas']==1000
-    assert row['financially_complete'] and row['financial_state']=='corrected_by_approved_document'
-    assert row['net_difference_halalas']==0
+    assert row['cash_variance_halalas']==5000 and row['bank_difference_halalas']==-5000
+    assert row['channel_reclassification']['cash_halalas']==5000
+    assert row['accounting_review_complete'] and row['financially_complete']
+    assert row['bank_matching']['state']=='no_card_operations'
+    with db.tx() as c:
+        assert c.execute("SELECT method FROM collections WHERE id='test-source-card'").fetchone()['method']=='card'
+        assert c.execute("SELECT method FROM effective_collections WHERE id='test-source-card'").fetchone()['method']=='cash'
+        assert c.execute('SELECT count(*) n FROM collections').fetchone()['n']==2
 
 
 @pytest.mark.postgres
@@ -262,8 +281,8 @@ def test_later_actual_cash_recovery_requires_independent_source_and_prevents_dup
     assert post('owner',decision,approval,key='TEST-recovery-approved')==result
     post('owner',decision,approval,status=409)
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
-    assert row['outstanding_receivable_halalas']==0 and row['financially_complete']
-    assert row['financial_state']=='settled_by_actual_recovery'
+    assert row['outstanding_receivable_halalas']==0 and row['accounting_review_complete']
+    assert not row['financially_complete'] and row['bank_matching']['state'] in {'pending','unconfigured'}
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM custody_events WHERE id='TEST-later-source'").fetchone()['n']==1
         assert c.execute("SELECT count(*) n FROM audit_events WHERE action=%s",(ft.RECOVERY_APPROVED,)).fetchone()['n']==1
@@ -297,7 +316,7 @@ def test_receiving_custodian_is_identified_separately_from_cash_recorder():
 def test_shared_receipt_treatment_is_attributed_once_with_exact_leg_evidence(monkeypatch):
     import sys
     parent=treatment(cash=-1000)
-    parent['payload'].update(workday_id='w',declaration_id='decl',receipt_id='receipt')
+    parent['payload'].update(workday_id='w',declaration_id='decl',receipt_id='receipt',original_declared_cash_halalas=20000)
     monkeypatch.setitem(sys.modules,'app.shared_financial_treatments',SimpleNamespace(shared_approved=lambda *args:parent))
     monkeypatch.setattr(ft,'recovery_history',lambda *args:[])
     report=dict(id='r',shift_id='leg1',snapshot={'shift':{'submission':dict(shared_workday_id='w',shared_treatment_id='ft',
@@ -306,7 +325,10 @@ def test_shared_receipt_treatment_is_attributed_once_with_exact_leg_evidence(mon
         dict(shift_id='leg2',receipt_difference_halalas=450)])
     projected=ft.shared_for_report(c,report,values(-550,0))
     assert projected['payload']['cash_variance_halalas']==-550
-    assert projected['payload']['source_shared_cash_variance_halalas']==-1000
+    assert projected['payload']['shared_source_total_verified']
+    assert 'source_shared_cash_variance_halalas' not in projected['payload']
+    assert 'original_declared_cash_halalas' not in projected['payload']
+    assert projected['approval']['cash_variance_halalas']==-550
     assert ft.apply(values(-550,0),projected)['outstanding_receivable_halalas']==550
     c.execute.return_value.fetchone.return_value['legs'][1]['receipt_difference_halalas']=449
     assert ft.shared_for_report(c,report,values(-550,0)) is None
@@ -332,3 +354,204 @@ def test_financial_treatment_and_evidence_audit_records_are_database_immutable(o
         with pytest.raises(Exception):
             with db.tx() as c:c.execute('DELETE FROM audit_events WHERE id=%s',(identifier,))
         with db.tx() as c:assert c.execute('SELECT details FROM audit_events WHERE id=%s',(identifier,)).fetchone()['details']=={'treatment_id':'TEST-immutable'}
+
+
+def test_reversing_recovered_receivable_keeps_actual_money_as_refund_due():
+    row=treatment('documented_channel_correction',1000,-1000)
+    row['payload'].update(supersedes_treatment_id='prior',liable_party_type='customer',liable_party_name='TEST original payer',
+        followup_user_id='accountant',due_on=date.today().isoformat())
+    row['recoveries']=[dict(status='approved',payload=dict(direction='receivable_recovery',cash_amount_halalas=0,card_amount_halalas=1000))]
+    result=ft.apply(values(1000,-1000),row)
+    assert not result['financially_complete']
+    assert result['outstanding_receivable_halalas']==0 and result['outstanding_payable_halalas']==1000
+    assert result['remaining_by_direction']['payable_settlement']['card']==1000
+    row['recoveries'].append(dict(status='approved',payload=dict(direction='payable_settlement',cash_amount_halalas=0,card_amount_halalas=1000)))
+    assert ft.apply(values(1000,-1000),row)['financially_complete']
+
+
+def test_recovered_then_refunded_money_does_not_satisfy_reinstated_receivable():
+    row=treatment(cash=-550)
+    row['recoveries']=[dict(status='approved',payload=dict(direction='receivable_recovery',cash_amount_halalas=550,card_amount_halalas=0)),
+        dict(status='approved',payload=dict(direction='payable_settlement',cash_amount_halalas=550,card_amount_halalas=0))]
+    assert ft.apply(values(-550),row)['outstanding_receivable_halalas']==550
+
+
+def test_pending_supersession_never_replaces_an_approved_effect(monkeypatch):
+    c=Mock();c.execute.return_value.fetchall.return_value=[
+        dict(id='e1',action=ft.PROPOSED,actor_id='accountant',actor_name='Accountant',created_at='first',
+            details={**proposal().model_dump(mode='json'),'treatment_id':'first'}),
+        dict(id='e2',action=ft.APPROVED,actor_id='owner',actor_name='Owner',created_at='approved',details=dict(treatment_id='first')),
+        dict(id='e3',action=ft.PROPOSED,actor_id='accountant',actor_name='Accountant',created_at='second',
+            details={**proposal().model_dump(mode='json'),'treatment_id':'second','supersedes_treatment_id':'first'})]
+    rows=ft.history(c,'report')
+    assert rows[0]['status']=='approved' and rows[1]['status']=='pending'
+    c.execute.return_value.fetchall.return_value.append(dict(id='e4',action=ft.APPROVED,actor_id='owner',actor_name='Owner',
+        created_at='new-approved',details=dict(treatment_id='second')))
+    rows=ft.history(c,'report')
+    assert rows[0]['status']=='superseded' and rows[0]['superseded_by']=='second'
+    assert rows[1]['status']=='approved'
+
+
+def test_card_recovery_requires_registered_unallocated_bank_line(monkeypatch):
+    from datetime import datetime,timezone
+    from app import manual_bank_matching
+    monkeypatch.setattr(manual_bank_matching,'enabled',lambda:True)
+    report=dict(created_at=datetime.now(timezone.utc)-timedelta(days=1),brand_id='kps',branch_ids=['b'])
+    row=treatment(cash=0,card=-550)
+    body=recovery(cash_amount_halalas=0,card_amount_halalas=550,cash_custody_event_id=None,bank_reference='bankline_actual')
+    source=dict(amount_halalas=1000,unallocated_halalas=550,received_on=date.today(),recorded_by='bank-recorder')
+    monkeypatch.setattr(manual_bank_matching,'bank_line',lambda *args:source,raising=False)
+    assert ft.validate_recovery(Mock(),{},report,row,body)==[]
+    source['unallocated_halalas']=549
+    with pytest.raises(HTTPException) as error:ft.validate_recovery(Mock(),{},report,row,body)
+    assert error.value.detail['code']=='RECOVERY_BANK_SOURCE_MISMATCH'
+    source['unallocated_halalas']=-550
+    with pytest.raises(HTTPException):ft.validate_recovery(Mock(),{},report,row,body)
+
+
+def test_arbitrary_bank_reference_does_not_create_a_receipt(monkeypatch):
+    from datetime import datetime,timezone
+    from app import manual_bank_matching
+    monkeypatch.setattr(manual_bank_matching,'enabled',lambda:True)
+    def missing(*args):raise db.error(404,'BANK_LINE_SCOPE','Missing registered bank evidence')
+    monkeypatch.setattr(manual_bank_matching,'bank_line',missing,raising=False)
+    report=dict(created_at=datetime.now(timezone.utc)-timedelta(days=1),brand_id='kps',branch_ids=['b'])
+    body=recovery(cash_amount_halalas=0,card_amount_halalas=550,cash_custody_event_id=None,bank_reference='invented-reference')
+    c=Mock()
+    with pytest.raises(HTTPException) as error:ft.validate_recovery(c,{},report,treatment(cash=0,card=-550),body)
+    assert error.value.status_code==404
+    c.execute.assert_not_called()
+
+
+def test_disabled_bank_preparation_cannot_be_used_for_later_bank_recovery(monkeypatch):
+    from datetime import datetime,timezone
+    from app import manual_bank_matching
+    monkeypatch.setattr(manual_bank_matching,'enabled',lambda:False)
+    line=Mock();monkeypatch.setattr(manual_bank_matching,'bank_line',line)
+    report=dict(created_at=datetime.now(timezone.utc)-timedelta(days=1),brand_id='kps',branch_ids=['b'])
+    body=recovery(cash_amount_halalas=0,card_amount_halalas=550,cash_custody_event_id=None,bank_reference='bankline_existing')
+    with pytest.raises(HTTPException) as error:ft.validate_recovery(Mock(),{},report,treatment(cash=0,card=-550),body)
+    assert error.value.detail['code']=='MANUAL_BANK_MATCHING_DISABLED'
+    line.assert_not_called()
+
+
+def test_unavailable_followup_routes_to_named_accounting_backup_with_saved_reason(monkeypatch):
+    report=dict(id='r',shift_id='s',brand_id='kps',branch_ids=['b'],user_id='driver')
+    row=treatment();c=Mock();c.execute.return_value.fetchone.return_value=None
+    c.execute.return_value.fetchall.return_value=[dict(id='backup')]
+    def eligible(conn,user,source,identifier):
+        if identifier=='accountant':raise db.error(422,'FINANCIAL_FOLLOWUP_SCOPE','inactive')
+        return dict(id='backup',display_name='Active accountant')
+    monkeypatch.setattr(ft,'eligible_followup',eligible)
+    audit=Mock();monkeypatch.setattr(db,'audit',audit)
+    result=ft.followup_assignment(c,report,row)
+    assert result['followup_user_id']=='backup' and result['automatic_fallback']
+    saved=audit.call_args.args[-1]
+    assert saved['previous_followup_user_id']=='accountant' and saved['followup_user_id']=='backup'
+    assert saved['due_on']==row['payload']['due_on'] and saved['no_money_posted']
+
+
+def test_active_named_followup_is_preserved_without_new_assignment(monkeypatch):
+    c=Mock();c.execute.return_value.fetchone.return_value=None
+    monkeypatch.setattr(ft,'eligible_followup',lambda *args:dict(id='accountant',display_name='Current accountant'))
+    audit=Mock();monkeypatch.setattr(db,'audit',audit)
+    result=ft.followup_assignment(c,dict(id='r',shift_id='s',brand_id='kps',branch_ids=['b'],user_id='driver'),treatment())
+    assert result['followup_user_id']=='accountant' and result['followup_name']=='Current accountant'
+    audit.assert_not_called()
+
+
+def test_price_credit_reduces_sales_at_approval_time_without_second_money_effect():
+    from app.financial_totals import period_totals
+    c=Mock()
+    def execute(query,params):
+        result=Mock()
+        if 'FROM audit_events a' in query:
+            assert 'a.created_at>=' in query and 'a.created_at<' in query
+            result.fetchone.return_value={'amount':550}
+        elif 'FROM refunds r' in query:result.fetchone.return_value={'refunded':0,'amendments':0}
+        elif 'FROM collections p' in query:result.fetchall.return_value=[dict(method='cash',amount_halalas=1950)]
+        else:result.fetchone.return_value={'gross':2500}
+        return result
+    c.execute.side_effect=execute
+    result=period_totals(c,'o.created_at>=%s AND o.created_at<%s',('start','end'))
+    assert result['gross_completed_halalas']==2500 and result['price_credit_halalas']==550
+    assert result['net_completed_halalas']==1950 and result['net_receipts_halalas']==1950
+
+
+@pytest.mark.postgres
+def test_post_period_supersession_appends_reversal_and_preserves_original_snapshots(ops):
+    actor,post,base,original=prepared(ops)
+    created,body=actual_proposal(base,post)
+    approval=dict(expected_revision=2,confirmed=True,evidence_reference='TEST original independent approval evidence',
+        note='TEST original receivable approved for follow-up',allow_period_approval_with_outstanding=True)
+    post('owner',base+'/treatments/'+created['id']+'/approve',approval)
+    with db.tx() as c:
+        c.execute("INSERT INTO accounting_daily_closures(id,manager_shift_id,brand_id,branch_ids,operational_date,snapshot,approved_by,note) VALUES('TEST-frozen-day','settlement-manager','ops-brand','[\"ops-branch\"]',current_date,%s,'ops-owner','TEST originally reviewed period')",(db.json({'marker':'original-day-snapshot'}),))
+        c.execute("INSERT INTO accounting_months(id,brand_id,month,branch_ids,scope_hash,snapshot,closed_by,reason) VALUES('TEST-frozen-month','ops-brand',date_trunc('month',current_date)::date,'[\"ops-branch\"]','TEST-scope',%s,'ops-owner','TEST originally frozen month')",(db.json({'marker':'original-month-snapshot'}),))
+        old=c.execute('SELECT details FROM audit_events WHERE action=%s AND details->>\'treatment_id\'=%s',(ft.PROPOSED,created['id'])).fetchone()['details']
+    revised={**body,'supersedes_treatment_id':created['id'],'reversal_evidence_reference':'TEST new evidence explaining prior responsibility error',
+        'liable_party_type':'bank','liable_party_name':'TEST actual responsible bank','note':'TEST linked post-period correction preserves source and frozen month'}
+    replacement=post('accountant',base+'/treatments',revised,key='TEST-post-period-supersession')
+    before=actor('accountant').get(base+'/treatments').json()
+    assert before['financial_treatment']['id']==created['id']
+    post('owner',base+'/treatments/'+replacement['id']+'/approve',{**approval,'note':'TEST independent post-period reversal approval'})
+    after=actor('accountant').get(base+'/treatments').json()
+    rows={r['id']:r for r in after['treatments']}
+    assert rows[created['id']]['status']=='superseded' and rows[created['id']]['superseded_by']==replacement['id']
+    assert after['financial_treatment']['id']==replacement['id'] and after['outstanding_receivable_halalas']==550
+    assert not after['financially_complete']
+    with db.tx() as c:
+        assert c.execute("SELECT snapshot FROM accounting_daily_closures WHERE id='TEST-frozen-day'").fetchone()['snapshot']=={'marker':'original-day-snapshot'}
+        assert c.execute("SELECT snapshot FROM accounting_months WHERE id='TEST-frozen-month'").fetchone()['snapshot']=={'marker':'original-month-snapshot'}
+        assert c.execute("SELECT snapshot FROM closure_reports WHERE id='settlement-report'").fetchone()['snapshot']==original
+        assert c.execute('SELECT details FROM audit_events WHERE action=%s AND details->>\'treatment_id\'=%s',(ft.PROPOSED,created['id'])).fetchone()['details']==old
+        assert c.execute('SELECT count(*) n FROM audit_events WHERE action=%s',(ft.REVERSED,)).fetchone()['n']==1
+        assert c.execute('SELECT count(*) n FROM collections').fetchone()['n']==0
+
+
+def test_legacy_frozen_export_does_not_invent_zero_price_credits_or_receivables():
+    from app.accounting_export import presentation
+    data=dict(group='driver_statement',rows=[dict(driver='Old driver',day='2026-10-01')])
+    _,rows,totals=presentation(data,'en')
+    assert rows[0]['outstanding_receivable_halalas']=='Not recorded'
+    assert rows[0]['outstanding_payable_halalas']=='Not recorded'
+    assert totals['outstanding_receivable_halalas']=='Not recorded'
+    assert totals['outstanding_payable_halalas']=='Not recorded'
+    _,rows,totals=presentation(dict(group='daily',period={},rows=[dict(day='2026-10-01')]),'en')
+    assert rows[0]['price_credits']=='Not recorded' and totals['price_credits']=='Not recorded'
+
+
+def test_projected_owner_cannot_read_a_report_spanning_ungranted_branches():
+    from app.accounting import driver_settlement_scope
+    c=Mock();c.execute.return_value.fetchone.return_value=dict(id='r',brand_id='kps',branch_ids=['granted','other'],user_id='driver')
+    with pytest.raises(HTTPException) as error:
+        driver_settlement_scope(c,dict(id='owner',role='owner',brand_id='kps',home_brand_id='home',branch_ids=['granted']),'r')
+    assert error.value.status_code==404
+
+
+def test_projected_owner_statements_preserve_complete_report_branch_scope():
+    from app.accounting_statements import source_rows
+    c=Mock();c.execute.return_value.fetchall.return_value=[dict(id='ok',branch_ids=['granted']),dict(id='mixed',branch_ids=['granted','other'])]
+    rows=source_rows(c,dict(role='owner',brand_id='kps',home_brand_id='home',branch_ids=['granted']),['granted'])
+    assert [r['id'] for r in rows]==['ok']
+
+
+def test_bank_evidence_approval_does_not_invent_a_personal_cash_custodian(monkeypatch):
+    from datetime import datetime,timezone
+    from app import manual_bank_matching
+    monkeypatch.setattr(manual_bank_matching,'enabled',lambda:True)
+    monkeypatch.setattr(manual_bank_matching,'bank_line',lambda *args:dict(amount_halalas=550,unallocated_halalas=550,
+        received_on=date.today(),recorded_by='owner'))
+    report=dict(created_at=datetime.now(timezone.utc)-timedelta(days=1),brand_id='kps',branch_ids=['b'])
+    body=recovery(cash_amount_halalas=0,card_amount_halalas=550,cash_custody_event_id=None,bank_reference='bankline_actual')
+    assert ft.validate_recovery(Mock(),{},report,treatment(cash=0,card=-550),body)==[]
+
+
+def test_treatment_followup_deadline_cannot_collide_with_cash_closure_deadline():
+    v=ft.apply(values(),treatment(allow=True))
+    assert 'due_on' not in v and v['followup_due_on']
+    cash_deadline='2026-10-27'
+    row=dict(due_on=cash_deadline,**v)
+    assert row['due_on']==cash_deadline and row['followup_due_on']==treatment()['payload']['due_on']
+    manager_card=dict(**v,**dict(due_on=cash_deadline,due_at='2026-10-27T16:00:00+03:00'))
+    assert manager_card['due_on']==cash_deadline

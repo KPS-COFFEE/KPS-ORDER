@@ -325,7 +325,12 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _submit_modal(driver, check=['confirm_closure'], driver_end=True)
         manager.locator('[data-page=custody]').click()
         manager.locator('[data-action=confirm-custody]').click()
-        _submit_modal(manager, check=['received'])
+        expect(manager.locator('#modal-body input[name=received]')).to_have_attribute('type','number')
+        expect(manager.locator('#modal-body input[name=confirmed]')).to_have_attribute('type','checkbox')
+        with manager.expect_response(lambda response:response.request.method=='POST' and '/api/custody/' in response.url and response.url.endswith('/confirm')) as receipt:
+            _submit_modal(manager, {'received':f'{total/100:.2f}'}, check=['confirmed'])
+        assert receipt.value.status==200,receipt.value.text()
+        assert receipt.value.request.post_data_json=={'received_halalas':total,'confirmed':True}
         manager.locator('#navigation [data-page=shifts]').click()
         manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
         manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()

@@ -57,7 +57,7 @@ def period(start,end):
 def opday(value):return service_hours.delivery_operational_date(value).isoformat()
 def in_period(value,lo,hi):return bool(value and lo<=value<hi)
 def new_row(label):
-    return dict(label=label,orders=0,correct=0,processed=0,cancelled=0,gross=0,cash=0,card=0,refund_cash=0,refund_card=0,refunds=0,total=0,net_sales=0,notes='')
+    return dict(label=label,orders=0,correct=0,processed=0,cancelled=0,gross=0,cash=0,card=0,refund_cash=0,refund_card=0,refunds=0,price_credits=0,total=0,net_sales=0,notes='')
 
 def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar'):
     ds,de,lo,hi=period(start,end);bs=branches(c,u,branch_ids);bids=[b['id'] for b in bs];bn={b['id']:b['name'] for b in bs}
@@ -96,8 +96,11 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
       AND ((source.id IS NULL AND (o.created_at>=%s AND o.created_at<%s OR o.completed_at>=%s AND o.completed_at<%s
       OR EXISTS(SELECT 1 FROM effective_collections x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)))
       OR source.operational_date BETWEEN %s AND %s
-      OR EXISTS(SELECT 1 FROM refunds x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s))"""
-    args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,ds,de,lo,hi]
+      OR EXISTS(SELECT 1 FROM refunds x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)
+      OR EXISTS(SELECT 1 FROM audit_events a WHERE a.entity_type='order' AND a.entity_id=o.id
+          AND a.action='accounting.order_financial_treatment.approved' AND a.details->>'kind'='price_correction'
+          AND a.created_at>=%s AND a.created_at<%s))"""
+    args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,ds,de,lo,hi,lo,hi]
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
     if group!='items':q+=" AND NOT (o.snapshot ? 'complimentary')"
@@ -110,7 +113,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     refs=with_allocated_quantities(c,refs)
     tickets=c.execute('SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
     events=c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
-    paid=defaultdict(int);refunded=defaultdict(int);treated={t['order_id'] for t in tickets}
+    from .order_financial_treatments import price_credit_rows
+    credits=[r for r in price_credit_rows(c,ids) if r['created_at']<hi]
+    paid=defaultdict(int);refunded=defaultdict(int);treated={t['order_id'] for t in tickets}|{r['order_id'] for r in credits}
     for x in cols:paid[x['order_id']]+=x['amount_halalas']
     for x in refs:
         if x.get('amendment_id'):paid[x['order_id']]-=x['amount_halalas']
@@ -162,8 +167,12 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
                 name=next((i.get('name',pid) for i in om[x['order_id']]['snapshot'].get('items',[]) if i['product_id']==pid),pid)
                 items[pid]=new_item(pid,name)
             items[pid]['returned_quantity']+=qty
+    for credit in credits:
+        if in_period(credit['created_at'],lo,hi):bucket(om[credit['order_id']],credit['created_at'])['price_credits']+=credit['credit_halalas']
     from .financial_totals import net_sales
-    for b in rows.values():b['total']=b['cash']+b['card']-b['refunds'];b['net_sales']=net_sales(b['gross'],b['refunds'],b.get('amendment_refunds',0))
+    for b in rows.values():
+        b['total']=b['cash']+b['card']-b['refunds']
+        b['net_sales']=net_sales(b['gross'],b['refunds'],b.get('amendment_refunds',0))-b['price_credits']
     if group=='daily':
         for n in range((de-ds).days+1):
             day=(ds+timedelta(days=n)).isoformat()
@@ -179,6 +188,15 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         counts=defaultdict(int)
         for b in result:counts[b['driver_id']]+=b['correct'];b['cumulative']=counts[b['driver_id']]
     actions=[]
+    for credit in credits:
+        if not in_period(credit['created_at'],lo,hi):continue
+        order=om[credit['order_id']]
+        actions.append({'label':str(order['snapshot'].get('order_reference') or order['order_no']),
+            'day':opday(credit['created_at']),'kind':'تصحيح قيمة فاتورة / Invoice price credit',
+            'amount':credit['credit_halalas'],'method':'لا تحصيل أو صرف / No cash movement',
+            'reason':credit['reason'],'actor':credit.get('actor_name') or credit['actor_id'],
+            'action':'مستند مرتبط بالأصل — دون تغيير التحصيل / Linked document; receipts unchanged',
+            'order_id':order['id']})
     for r in refs:
         if in_period(r['created_at'],lo,hi):
             o=om[r['order_id']];test_void=r.get('record_kind')=='test_void'
@@ -207,12 +225,12 @@ def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
     output=[]
     for r in rows:
         subject=r['snapshot']['shift']['user_id']
-        if not set(r['branch_ids'])&set(bids) or (u['role']!='owner' and not set(r['branch_ids'])<=set(u.get('branch_ids',[]))) or driver_id and subject!=driver_id:continue
+        if not set(r['branch_ids'])&set(bids) or ((u['role']!='owner' or u.get('home_brand_id')) and not set(r['branch_ids'])<=set(u.get('branch_ids',[]))) or driver_id and subject!=driver_id:continue
         sub=r['snapshot']['shift'].get('submission') or {};difference=int(sub.get('difference_halalas',0))
         event=latest.get(r['id'])
         if event:
             from .financial_treatments import reviewed_values
-            values=reviewed_values(c,r,event)
+            values=reviewed_values(c,r,event,user=u)
             shortage,surplus=values['shortage_halalas'],values['surplus_halalas']
             confirmation=variance_confirmation(c,r['id'],event['revision'])
             treatment=values.get('financial_treatment')
@@ -267,10 +285,11 @@ def complimentary_report(c,u,ds,de,lo,hi,bids,bs,driver_id,product_id,lang):
 
 @router.get('/options')
 def options(user=Depends(case_access)):
+    from . import order_financial_treatments,manual_bank_matching
     with db.tx() as c:
         bs=branches(c,user);bids={b['id'] for b in bs}
         people=c.execute("SELECT id,display_name,role,branch_ids,vehicle FROM users WHERE brand_id=%s AND role IN ('driver','delivery_manager') ORDER BY display_name",(user['brand_id'],)).fetchall()
-        return {'branches':bs,'people':[p for p in people if set(p['branch_ids'])&bids],'products':c.execute('SELECT id,name FROM products WHERE brand_id=%s ORDER BY name',(user['brand_id'],)).fetchall(),'today':service_hours.delivery_operational_date(),'can_review':auth.has_permission(user,REVIEW),'can_report':auth.has_permission(user,READ),'can_follow':can_follow(c,user),'categories':KINDS,'states':STATES,'responsibilities':RESP,'manager_followup':(c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(user['brand_id'],)).fetchone() or {}).get('settings',{}).get('accounting_manager_followup',True)}
+        return {'source_treatments_enabled':order_financial_treatments.enabled(),'bank_matching_enabled':manual_bank_matching.enabled(),'branches':bs,'people':[p for p in people if set(p['branch_ids'])&bids],'products':c.execute('SELECT id,name FROM products WHERE brand_id=%s ORDER BY name',(user['brand_id'],)).fetchall(),'today':service_hours.delivery_operational_date(),'can_review':auth.has_permission(user,REVIEW),'can_report':auth.has_permission(user,READ),'can_follow':can_follow(c,user),'categories':KINDS,'states':STATES,'responsibilities':RESP,'manager_followup':(c.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(user['brand_id'],)).fetchone() or {}).get('settings',{}).get('accounting_manager_followup',True)}
 
 Group=Literal['daily','branch','items','driver','driver_daily','driver_incentives','driver_incentive_details','deficits','actions','complimentary','driver_statement']
 @router.get('/reports')
@@ -295,7 +314,7 @@ class Note(BaseModel):
 def review(report_id:str,body:Note,request:Request,user=Depends(auth.require_permission(REVIEW))):
     with db.tx() as c:
         r=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind='driver' FOR UPDATE",(report_id,user['brand_id'])).fetchone()
-        if not r or (user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[]))):fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
+        if not r or ((user['role']!='owner' or user.get('home_brand_id')) and not set(r['branch_ids'])<=set(user.get('branch_ids',[]))):fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
         if c.execute('SELECT 1 FROM driver_accounting_settlements WHERE report_id=%s',(report_id,)).fetchone():
             fail('USE_VARIANCE_CONFIRMATION','اعتمد فرق التسوية من إجراء تأكيد العجز أو الفائض بعد مراجعة التحصيل.',409)
         from .order_financial_cases import guard_financial_closure
@@ -446,7 +465,7 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
             require_verified(report['snapshot'])
             entries=driver_events[report['id']]
             from .financial_treatments import reviewed_values
-            values=reviewed_values(c,report,entries[-1] if entries else None)
+            values=reviewed_values(c,report,entries[-1] if entries else None,user=user)
             if not values['period_approval_allowed']:
                 fail('FINANCIAL_TREATMENT_REQUIRED','يلزم إكمال المطابقة أو اعتماد معالجة مستقلة؛ الذمة المتبقية لا تصبح سدادًا.',409)
         for report in c.execute("SELECT * FROM closure_reports WHERE brand_id=%s AND kind='manager' AND created_at>=%s AND created_at<%s AND branch_ids ?| %s",(user['brand_id'],lo,hi,bids)).fetchall():
@@ -454,7 +473,7 @@ def close_month(body:MonthBody,request:Request,user=Depends(auth.require_permiss
             latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report['id'],)).fetchone()
             if latest:
                 from .financial_treatments import reviewed_values
-                if not reviewed_values(c,report,latest)['period_approval_allowed']:
+                if not reviewed_values(c,report,latest,user=user)['period_approval_allowed']:
                     fail('FINANCIAL_TREATMENT_REQUIRED','فرق تقفيلة المدير يحتاج معالجة مستقلة قبل إقفال الشهر.',409)
         from .driver_incentives import report_data
         entitlements=report_data(c,user,ds,de,branch_ids=bids)
@@ -506,7 +525,7 @@ def matching_expected(snapshot):
 def matching_report_scope(user,row):
     if not row or row['brand_id']!=user['brand_id'] or row['kind']!='manager':
         fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
-    if user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):
+    if (user['role']!='owner' or user.get('home_brand_id')) and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):
         fail('REPORT_SCOPE','التقفيلة غير متاحة.',404)
     if row['user_id']==user['id']:fail('SELF_MATCH','المطابقة المالية من حساب محاسب مستقل.',403)
 
@@ -523,7 +542,7 @@ def manager_closures(user=Depends(access)):
           ORDER BY CASE WHEN m.status='matched' THEN 1 ELSE 0 END,r.created_at DESC LIMIT 500""",(user['brand_id'],)).fetchall()
         result=[]
         for r in rows:
-            if user['role']!='owner' and not set(r['branch_ids'])<=set(user.get('branch_ids',[])):continue
+            if (user['role']!='owner' or user.get('home_brand_id')) and not set(r['branch_ids'])<=set(user.get('branch_ids',[])):continue
             snap=r.pop('snapshot');bank,cash=matching_expected(snap)
             r.update(expected_bank_halalas=bank,expected_cash_halalas=cash,
                      label=snap.get('closure_label') or snap.get('shift',{}).get('closure_label') or snap.get('reference') or r['id'],day=r['accounting_day'] or snap.get('operational_date'),original_operational_date=snap.get('operational_date'),revision=r['revision'] or 0)
@@ -695,7 +714,7 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
                 'SELECT city FROM branches WHERE id=ANY(%s)', (row['branch_ids'],)).fetchall())
             due_on = row['accounting_day'] + timedelta(days=1) if local else None
             from .financial_treatments import reviewed_values
-            values=reviewed_values(c,row,latest)
+            values=reviewed_values(c,row,latest,user=user)
             confirmation=variance_confirmation(c,row['id'],values['revision'])
             variance_pending=bool(values['has_channel_variance'] and not values['period_approval_allowed'])
             result.append(dict(id=row['id'], user_id=row['user_id'], driver_name=row['driver_name'],kind=row['kind'],
@@ -824,7 +843,7 @@ def protected_shift_months(shift):
 def can_request_cash_correction(c,user,report_id):
     if not auth.has_permission(user,REVIEW):return False
     row=c.execute("SELECT * FROM closure_reports WHERE id=%s AND brand_id=%s AND kind='driver'",(report_id,user['brand_id'])).fetchone()
-    if not row or row['user_id']==user['id'] or (user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[]))):return False
+    if not row or row['user_id']==user['id'] or ((user['role']!='owner' or user.get('home_brand_id')) and not set(row['branch_ids'])<=set(user.get('branch_ids',[]))):return False
     previous=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report_id,)).fetchone()
     if not previous or not driver_settlement_values(row['snapshot'],previous)['reconciliation_complete']:return False
     if any(t['status']=='pending' for t in cash_correction_requests(c,user,report_id)):return False

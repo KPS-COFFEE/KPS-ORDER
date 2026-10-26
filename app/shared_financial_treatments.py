@@ -54,6 +54,31 @@ def shared_approved(c,workday_id,declaration_id,receipt_id):
     return next((r for r in history(c,workday_id) if r['status']=='approved' and r['payload'].get('declaration_id')==declaration_id and r['payload'].get('receipt_id')==receipt_id),None)
 
 
+def allocated_review(c,workday_id):
+    """Project canonical per-report reviews/recoveries without rewriting the bag.
+
+    ft.shared_for_report consumes shared_approved only, so this projection does
+    not recurse through itself. Missing report/review evidence remains pending.
+    """
+    day=c.execute('SELECT kind FROM central_workdays WHERE id=%s',(workday_id,)).fetchone()
+    if not day:return None
+    family=day['kind']
+    allocation=c.execute(f'SELECT a.legs FROM shared_{family}_closure_allocations a JOIN shared_{family}_closure_declarations d ON d.id=a.declaration_id WHERE d.workday_id=%s ORDER BY d.revision DESC LIMIT 1',(workday_id,)).fetchone()
+    if not allocation:return None
+    values=[]
+    for leg in allocation['legs']:
+        report=c.execute('SELECT * FROM closure_reports WHERE shift_id=%s ORDER BY version DESC,created_at DESC,id DESC LIMIT 1',(leg['shift_id'],)).fetchone()
+        if not report:return {'financially_complete':False,'period_approval_allowed':False,'verified':False,'outstanding_receivable_halalas':None,'outstanding_payable_halalas':None}
+        latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(report['id'],)).fetchone()
+        values.append(dict(ft.reviewed_values(c,report,latest),report_id=report['id']))
+    verified=bool(values) and all(v.get('reconciliation_complete') and v.get('financial_approval_allowed') for v in values)
+    return {'financially_complete':bool(values) and all(v.get('financially_complete') for v in values),
+        'period_approval_allowed':bool(values) and all(v.get('period_approval_allowed') for v in values),'verified':verified,
+        'outstanding_receivable_halalas':sum(v['outstanding_receivable_halalas'] for v in values) if verified else None,
+        'outstanding_payable_halalas':sum(v['outstanding_payable_halalas'] for v in values) if verified else None,
+        'reports':[{'report_id':v.get('report_id'),'financial_state':v.get('financial_state'),'financially_complete':v.get('financially_complete')} for v in values]}
+
+
 def followup(c,user,legs,identifier):
     person=None
     for _,shift in legs:
@@ -81,10 +106,14 @@ def listing(sid:str,user=Depends(auth.current_user)):
         # This adapter compares custody handover only, never terminal/bank or
         # invoice completeness. A matched bag cannot certify the entire closure.
         review['financially_complete']=False
+        projection=allocated_review(c,day['id'])
+        if projection and projection['verified']:
+            review.update(outstanding_receivable_halalas=projection['outstanding_receivable_halalas'],outstanding_payable_halalas=projection['outstanding_payable_halalas'],period_approval_allowed=projection['period_approval_allowed'])
+            if projection['financially_complete']:review['financial_state']='shared_amount_settled'
         if not values['has_channel_variance']:
             review.update(financial_state='receipt_matched_pending_accounting',period_approval_allowed=False)
         return ops.safe({'treatments':history(c,day['id']),'followup_users':users,'can_propose':bool(values['has_channel_variance'] and not approved),'can_approve':user['id'] not in {day['user_id'],receipt['received_by']},
-            'expected_revision':dec['revision'],'declaration_id':dec['id'],'receipt_id':receipt['id'],'scope':'cash_handover_only','source':{'cash_variance_halalas':values['cash_variance_halalas'],'card_variance_halalas':0},**review})
+            'expected_revision':dec['revision'],'declaration_id':dec['id'],'receipt_id':receipt['id'],'scope':'cash_handover_only','accounting_projection':projection,'source':{'cash_variance_halalas':values['cash_variance_halalas'],'card_variance_halalas':0},**review})
 
 
 @router.post('/{sid}/financial-treatments')

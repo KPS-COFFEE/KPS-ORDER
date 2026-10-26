@@ -2,8 +2,9 @@
 
 Bank deposits are never confused with gross POS collections. Fees, refunds and
 unreceived timing amounts remain separate. No route posts money or rewrites a
-closure, and no operation/statement line can be matched twice.
+closure, and no source operation or bank amount can be counted twice.
 """
+import os
 from datetime import date,datetime
 from zoneinfo import ZoneInfo
 from typing import Literal
@@ -14,6 +15,11 @@ from .operations import safe
 
 router=APIRouter(prefix='/api/accounting/bank-reconciliation',tags=['manual-bank-matching'])
 LIMIT=300
+
+def enabled():
+    return (os.getenv('KPS_MANUAL_BANK_MATCHING_ENABLED','').strip().lower() in {'1','true','yes'}
+        and os.getenv('APP_ENV','production') in {'testing','development'})
+
 
 class Command(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
@@ -51,12 +57,21 @@ class Receipt(Command):
             raise ValueError('The explicit allocation must fit the actual statement movement.')
         return self
 
+class StatementLine(Receipt):
+    @model_validator(mode='after')
+    def original_only(self):
+        if self.amount_halalas!=self.statement_amount_halalas:
+            raise ValueError('Register the full actual statement line without allocation.')
+        return self
+
+
 class Decision(Command):
     decision:Literal['approved','rejected']
     confirmed:StrictBool
 
 
 def access(user=Depends(auth.current_user)):
+    if not enabled():raise db.error(404,'MANUAL_BANK_MATCHING_DISABLED','مطابقة دفعات البنك تجهيز غير مفعل تشغيليًا.')
     if (not user.get('active',True) or user['role'] not in {'owner','admin'} or
             not auth.has_permission(user,'accounting_reports') or not auth.has_permission(user,'accounting_review')):
         raise db.error(403,'BANK_MATCHING_FORBIDDEN','مطابقة الشبكة والبنك للمحاسبة المخولة فقط.')
@@ -121,8 +136,14 @@ def assert_independent(c,user,record):
     # No one approves the settlement of card cash-custody they collected.
     collector_ids=c.execute('SELECT DISTINCT collector_id FROM effective_collections WHERE id=ANY(%s)',
         ([r['id'] for r in record.get('source_snapshot',{}).get('collections',[])],)).fetchall()
-    if any(r['collector_id']==user['id'] for r in collector_ids):
-        raise db.error(403,'BANK_OWN_CUSTODY_APPROVAL','لا يعتمد صاحب العهدة مطابقة تحصيلاته بنفسه.')
+    sources=record.get('source_snapshot',{})
+    shift_ids=[r['shift_id'] for rows in (sources.get('collections',[]),sources.get('refunds',[])) for r in rows if r.get('shift_id')]
+    shift_owners=c.execute('SELECT user_id FROM shifts WHERE id=ANY(%s)',(shift_ids,)).fetchall()
+    refund_actors=c.execute('SELECT authorized_by FROM refunds WHERE id=ANY(%s)',
+        ([r['id'] for r in sources.get('refunds',[])],)).fetchall()
+    if (any(r['collector_id']==user['id'] for r in collector_ids) or any(r['user_id']==user['id'] for r in shift_owners)
+            or any(r['authorized_by']==user['id'] for r in refund_actors)):
+        raise db.error(403,'BANK_OWN_CUSTODY_APPROVAL','لا يعتمد منفذ التحصيل أو المرتجع أو صاحب عهدة الشفت مطابقته بنفسه.')
 
 
 @router.get('/sources')
@@ -224,17 +245,188 @@ def decide_receipt(bid:str,rid:str,body:Decision,request:Request,user=Depends(ac
                 check_remaining(row['expected_net_halalas'],data['bank_received_halalas'],receipt['amount_halalas'])
                 refs=(receipt['bank_account_reference'],receipt['statement_reference'],receipt['line_reference'])
                 line=c.execute('SELECT * FROM bank_reconciliation_bank_lines WHERE bank_account_reference=%s AND statement_reference=%s AND line_reference=%s FOR UPDATE',refs).fetchone()
-                if line and line['amount_halalas']!=receipt['statement_amount_halalas']:
+                if line and (line['amount_halalas']!=receipt['statement_amount_halalas'] or line['received_on']!=receipt['received_on']):
                     raise db.error(409,'BANK_STATEMENT_AMOUNT_CHANGED','أصل حركة البنك مسجل بمبلغ مختلف؛ لا تعدّل الأصل لتغطية الفرق.')
                 if not line:
-                    c.execute('''INSERT INTO bank_reconciliation_bank_lines(bank_account_reference,statement_reference,line_reference,amount_halalas,evidence_reference,recorded_by)
-                        VALUES(%s,%s,%s,%s,%s,%s)''',(*refs,receipt['statement_amount_halalas'],receipt['evidence_reference'],user['id']))
-                allocated=c.execute('SELECT coalesce(sum(amount_halalas),0) amount FROM bank_reconciliation_bank_claims WHERE bank_account_reference=%s AND statement_reference=%s AND line_reference=%s',refs).fetchone()['amount']
-                check_remaining(receipt['statement_amount_halalas'],allocated,receipt['amount_halalas'])
-                c.execute('''INSERT INTO bank_reconciliation_bank_claims(receipt_id,bank_account_reference,statement_reference,line_reference,amount_halalas)
-                    VALUES(%s,%s,%s,%s,%s)''',(rid,*refs,receipt['amount_halalas']))
+                    c.execute('''INSERT INTO bank_reconciliation_bank_lines(id,received_on,bank_account_reference,statement_reference,line_reference,amount_halalas,evidence_reference,recorded_by)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',(db.new_id('bankline_'),receipt['received_on'],*refs,receipt['statement_amount_halalas'],receipt['evidence_reference'],user['id']))
+                line=c.execute('SELECT * FROM bank_reconciliation_bank_lines WHERE bank_account_reference=%s AND statement_reference=%s AND line_reference=%s',refs).fetchone()
+                claim_bank_line(c,user,line['id'],receipt['amount_halalas'],'pos_batch',rid,receipt_id=rid)
             c.execute('''INSERT INTO bank_reconciliation_decisions(id,batch_id,receipt_id,decision,evidence_reference,note,decided_by)
                 VALUES(%s,%s,%s,%s,%s,%s,%s)''',(db.new_id('bankdecision_'),bid,rid,body.decision,body.evidence_reference,body.note,user['id']))
             db.audit(c,user['id'],'accounting.bank_receipt_'+body.decision,'bank_batch',bid,{'receipt_id':rid,**body.model_dump(mode='json')})
             return safe(project(c,row))
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.bank_receipt.decision:'+rid,body.model_dump(mode='json'),perform)
+
+
+def closure_bank_status(c,user,report):
+    """Evidence state only; never prorate a partial bank batch over its orders.
+
+    A batch may contain multiple closures/days. Until its full documented net
+    arrives, each source stays pending without inventing a per-driver amount.
+    """
+    snap=report.get('snapshot')
+    undocumented={'state':'undocumented','batch_ids':[],'pending_source_count':None}
+    if not isinstance(snap,dict) or any(not isinstance(snap.get(k),list) for k in ('collections','refunds')):
+        return undocumented
+    required=[]
+    for kind,key in (('collection','collections'),('refund','refunds')):
+        for row in snap[key]:
+            if not isinstance(row,dict) or row.get('method') not in ('cash','card') or type(row.get('amount_halalas')) is not int:
+                return undocumented
+            if row['method']=='card' and row['amount_halalas']>0:
+                if not isinstance(row.get('id'),str):return undocumented
+                required.append((kind,row['id']))
+    summary=snap.get('summary',{})
+    if not isinstance(summary,dict):return undocumented
+    for source,amount_key in (('collections','card_collected_halalas'),('refunds','card_refunded_halalas')):
+        if (type(summary.get(amount_key)) is not int or summary[amount_key]!=sum(
+                r['amount_halalas'] for r in snap[source] if r['method']=='card')):
+            return undocumented
+    external=snap.get('external_enbishan',[])
+    if not isinstance(external,list) or any(not isinstance(r,dict) or r.get('card_halalas') for r in external):
+        return undocumented
+    # Tender corrections change the current canonical channel while the
+    # original immutable snapshot remains evidence of what was first recorded.
+    ids=[r.get('id') for r in snap['collections']]
+    if any(not isinstance(identifier,str) for identifier in ids) or len(set(ids))!=len(ids):return undocumented
+    current=c.execute('SELECT id,method,amount_halalas FROM effective_collections WHERE id=ANY(%s)',(ids,)).fetchall() if ids else []
+    if len(current)!=len(ids) or any(r['method'] not in ('cash','card') or type(r['amount_halalas']) is not int for r in current):
+        return undocumented
+    required=[('collection',r['id']) for r in current if r['method']=='card' and r['amount_halalas']>0]+[
+        ('refund',r['id']) for r in snap['refunds'] if r['method']=='card' and r['amount_halalas']>0]
+    if not required:return {'state':'no_card_operations','batch_ids':[],'pending_source_count':0}
+    if not enabled():return {'state':'unconfigured','batch_ids':[],'pending_source_count':None}
+    required=set(required);batch_ids=set();pending=0;cache={}
+    from fastapi import HTTPException
+    for kind,sid in required:
+        claim=c.execute('SELECT batch_id FROM bank_reconciliation_source_claims WHERE source_kind=%s AND source_id=%s',(kind,sid)).fetchone()
+        if not claim:pending+=1;continue
+        bid=claim['batch_id']
+        if bid not in cache:
+            try:cache[bid]=project(c,view(c,user,bid))
+            except HTTPException as exc:
+                if exc.status_code==404:return undocumented
+                raise
+        batch_ids.add(bid)
+        if not cache[bid]['financially_matched']:pending+=1
+    return {'state':'pending' if pending else 'matched','batch_ids':sorted(batch_ids),'pending_source_count':pending}
+
+
+def bank_line_scope(c,user,line):
+    # Only one's own approved batch/registration exposes this physical movement.
+    # Other brands' allocations never reveal their customers or batch details.
+    if not line:raise db.error(404,'BANK_LINE_SCOPE','حركة البنك المسجلة غير متاحة ضمن صلاحياتك.')
+    refs=(line['bank_account_reference'],line['statement_reference'],line['line_reference'])
+    permitted=c.execute("""SELECT 1 FROM bank_reconciliation_receipts r JOIN bank_reconciliation_batches b ON b.id=r.batch_id
+      JOIN bank_reconciliation_decisions d ON d.receipt_id=r.id AND d.decision='approved'
+      WHERE r.bank_account_reference=%s AND r.statement_reference=%s AND r.line_reference=%s
+      AND b.brand_id=%s AND (%s OR b.branch_ids <@ %s::jsonb) LIMIT 1""",(*refs,user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])))).fetchone()
+    if not permitted:
+        permitted=c.execute("""SELECT 1 FROM bank_reconciliation_line_proposals p JOIN bank_reconciliation_line_decisions d ON d.proposal_id=p.id
+          WHERE d.bank_line_id=%s AND d.decision='approved' AND p.brand_id=%s AND (%s OR p.branch_ids <@ %s::jsonb) LIMIT 1""",
+          (line['id'],user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])))).fetchone()
+    if not permitted:raise db.error(404,'BANK_LINE_SCOPE','حركة البنك المسجلة غير متاحة ضمن صلاحياتك.')
+    return line
+
+
+def bank_line(c,user,bank_line_id):
+    if not enabled():raise db.error(404,'MANUAL_BANK_MATCHING_DISABLED','مصادر مطابقة البنك غير مفعلة تشغيليًا.')
+    line=bank_line_scope(c,user,c.execute('SELECT * FROM bank_reconciliation_bank_lines WHERE id=%s',(bank_line_id,)).fetchone())
+    allocated=c.execute('SELECT coalesce(sum(amount_halalas),0) amount FROM bank_reconciliation_bank_claims WHERE bank_account_reference=%s AND statement_reference=%s AND line_reference=%s',
+        (line['bank_account_reference'],line['statement_reference'],line['line_reference'])).fetchone()['amount']
+    return dict(line,unallocated_halalas=line['amount_halalas']-allocated)
+
+
+def claim_bank_line(c,user,bank_line_id,amount_halalas,consumer_kind,consumer_id,receipt_id=None):
+    """Consume one actual source inside its independent approval transaction.
+
+    The claim is evidence allocation only. It never posts customer money, changes
+    an invoice, or generates a cash-custody event.
+    """
+    if not enabled():raise db.error(404,'MANUAL_BANK_MATCHING_DISABLED','مصادر مطابقة البنك غير مفعلة تشغيليًا.')
+    if consumer_kind not in ('pos_batch','financial_recovery') or type(amount_halalas) is not int:
+        raise db.error(422,'BANK_CLAIM_INVALID','نوع أو مبلغ الإسناد غير صالح.')
+    c.execute("SELECT pg_advisory_xact_lock(hashtext('bank-reconciliation-statements'))")
+    line=c.execute('SELECT * FROM bank_reconciliation_bank_lines WHERE id=%s FOR UPDATE',(bank_line_id,)).fetchone()
+    if consumer_kind=='financial_recovery':bank_line_scope(c,user,line)
+    elif not line:raise db.error(404,'BANK_LINE_SCOPE','حركة البنك غير موجودة.')
+    if c.execute('SELECT 1 FROM bank_reconciliation_bank_claims WHERE consumer_kind=%s AND consumer_id=%s',(consumer_kind,consumer_id)).fetchone():
+        raise db.error(409,'BANK_CLAIM_ALREADY_USED','سبق إسناد حركة البنك لهذه المعاملة.')
+    allocated=c.execute('SELECT coalesce(sum(amount_halalas),0) amount FROM bank_reconciliation_bank_claims WHERE bank_account_reference=%s AND statement_reference=%s AND line_reference=%s',
+        (line['bank_account_reference'],line['statement_reference'],line['line_reference'])).fetchone()['amount']
+    check_remaining(line['amount_halalas'],allocated,amount_halalas)
+    claim_id=db.new_id('bankclaim_')
+    c.execute("""INSERT INTO bank_reconciliation_bank_claims(id,consumer_kind,consumer_id,receipt_id,bank_account_reference,statement_reference,line_reference,amount_halalas)
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",(claim_id,consumer_kind,consumer_id,receipt_id,line['bank_account_reference'],line['statement_reference'],line['line_reference'],amount_halalas))
+    return dict(claim_id=claim_id,bank_line_id=bank_line_id,amount_halalas=amount_halalas,remaining_halalas=line['amount_halalas']-allocated-amount_halalas)
+
+
+@router.get('/bank-lines')
+def bank_line_listing(user=Depends(access)):
+    with db.tx() as c:
+        proposals=c.execute("""SELECT p.*,u.display_name proposer_name,d.decision,d.bank_line_id,d.note decision_note,
+          d.decided_by,d.evidence_reference decision_evidence FROM bank_reconciliation_line_proposals p
+          JOIN users u ON u.id=p.proposed_by LEFT JOIN bank_reconciliation_line_decisions d ON d.proposal_id=p.id
+          WHERE p.brand_id=%s AND (%s OR p.branch_ids <@ %s::jsonb) ORDER BY p.created_at DESC,p.id LIMIT 301""",
+          (user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])))).fetchall()
+        if len(proposals)>LIMIT:raise db.error(413,'BANK_LINE_LIST_TOO_LARGE','عدد مصادر البنك كبير؛ يلزم تضييق نطاق التقرير.')
+        permitted=[]
+        # Select only lines exposed by a currently authorized approved record;
+        # scope applies before LIMIT so unrelated brands never hide older sources.
+        lines=c.execute("""SELECT l.* FROM bank_reconciliation_bank_lines l WHERE EXISTS(
+            SELECT 1 FROM bank_reconciliation_line_proposals p JOIN bank_reconciliation_line_decisions d ON d.proposal_id=p.id
+            WHERE d.bank_line_id=l.id AND d.decision='approved' AND p.brand_id=%s AND (%s OR p.branch_ids <@ %s::jsonb))
+          OR EXISTS(SELECT 1 FROM bank_reconciliation_receipts r JOIN bank_reconciliation_batches b ON b.id=r.batch_id
+            JOIN bank_reconciliation_decisions d ON d.receipt_id=r.id AND d.decision='approved'
+            WHERE r.bank_account_reference=l.bank_account_reference AND r.statement_reference=l.statement_reference AND r.line_reference=l.line_reference
+            AND b.brand_id=%s AND (%s OR b.branch_ids <@ %s::jsonb))
+          ORDER BY l.created_at DESC,l.id LIMIT 301""",(user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])),user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])))).fetchall()
+        if len(lines)>LIMIT:raise db.error(413,'BANK_LINE_LIST_TOO_LARGE','اختر نطاقًا أصغر لمصادر البنك.')
+        for line in lines:permitted.append(bank_line(c,user,line['id']))
+        return safe({'proposals':proposals,'bank_lines':permitted})
+
+
+@router.post('/bank-lines')
+def propose_bank_line(body:StatementLine,request:Request,user=Depends(access)):
+    from .accounting import branches
+    with db.tx() as c:
+        def perform():
+            if body.received_on>datetime.now(ZoneInfo('Asia/Riyadh')).date():raise db.error(422,'BANK_RECEIPT_FUTURE','تاريخ الحركة الفعلية لا يكون مستقبلًا.')
+            bids=[b['id'] for b in branches(c,user) if unrestricted(user) or b['id'] in user.get('branch_ids',[])]
+            if not bids:raise db.error(403,'BANK_LINE_SCOPE','لا توجد فروع مخولة لهذا التسجيل.')
+            identifier=db.new_id('banklineproposal_')
+            c.execute("""INSERT INTO bank_reconciliation_line_proposals(id,brand_id,branch_ids,bank_account_reference,statement_reference,line_reference,amount_halalas,received_on,evidence_reference,note,proposed_by)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",(identifier,user['brand_id'],db.json(bids),body.bank_account_reference,body.statement_reference,body.line_reference,body.amount_halalas,body.received_on,body.evidence_reference,body.note,user['id']))
+            db.audit(c,user['id'],'accounting.bank_line_proposed','bank_line_proposal',identifier,body.model_dump(mode='json'))
+            return {'id':identifier,'decision':None,'bank_line_id':None}
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.bank_line.propose',body.model_dump(mode='json'),perform)
+
+
+@router.post('/bank-lines/{pid}/decision')
+def decide_bank_line(pid:str,body:Decision,request:Request,user=Depends(access)):
+    with db.tx() as c:
+        def perform():
+            c.execute("SELECT pg_advisory_xact_lock(hashtext('bank-reconciliation-statements'))")
+            row=c.execute('SELECT * FROM bank_reconciliation_line_proposals WHERE id=%s FOR UPDATE',(pid,)).fetchone()
+            if not row or row['brand_id']!=user['brand_id'] or not unrestricted(user) and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):
+                raise db.error(404,'BANK_LINE_SCOPE','اقتراح حركة البنك غير متاح.')
+            if row['proposed_by']==user['id']:raise db.error(403,'BANK_SELF_APPROVAL','راجع الحركة من حساب محاسب مستقل.')
+            if not body.confirmed:raise db.error(422,'BANK_CONFIRMATION_REQUIRED','أكد مراجعة أصل كشف البنك والمبلغ الفعلي.')
+            if c.execute('SELECT 1 FROM bank_reconciliation_line_decisions WHERE proposal_id=%s',(pid,)).fetchone():
+                raise db.error(409,'BANK_LINE_ALREADY_REVIEWED','سبق اتخاذ قرار لهذه الحركة.')
+            line_id=None
+            if body.decision=='approved':
+                refs=(row['bank_account_reference'],row['statement_reference'],row['line_reference'])
+                line=c.execute('SELECT * FROM bank_reconciliation_bank_lines WHERE bank_account_reference=%s AND statement_reference=%s AND line_reference=%s FOR UPDATE',refs).fetchone()
+                if line and (line['amount_halalas']!=row['amount_halalas'] or line['received_on']!=row['received_on']):
+                    raise db.error(409,'BANK_STATEMENT_AMOUNT_CHANGED','المبلغ أو التاريخ يخالف أصل الحركة المسجلة؛ استكمل الإثبات دون تغييره.')
+                line_id=line['id'] if line else db.new_id('bankline_')
+                if not line:
+                    c.execute("""INSERT INTO bank_reconciliation_bank_lines(id,received_on,bank_account_reference,statement_reference,line_reference,amount_halalas,evidence_reference,recorded_by)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",(line_id,row['received_on'],*refs,row['amount_halalas'],row['evidence_reference'],user['id']))
+            c.execute("""INSERT INTO bank_reconciliation_line_decisions(id,proposal_id,bank_line_id,decision,evidence_reference,note,decided_by)
+                VALUES(%s,%s,%s,%s,%s,%s,%s)""",(db.new_id('banklinedecision_'),pid,line_id,body.decision,body.evidence_reference,body.note,user['id']))
+            db.audit(c,user['id'],'accounting.bank_line_'+body.decision,'bank_line_proposal',pid,{'bank_line_id':line_id,**body.model_dump(mode='json')})
+            return safe({'id':pid,'decision':body.decision,'bank_line_id':line_id})
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'accounting.bank_line.decision:'+pid,body.model_dump(mode='json'),perform)

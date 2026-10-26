@@ -204,5 +204,40 @@ def test_short_declared_float_ends_operations_with_assigned_review_and_no_topup(
         assert c.execute('SELECT sum(amount_halalas) n FROM retained_carryovers WHERE from_shift_id=ANY(%s)',([s['id'] for s in driver['shifts']],)).fetchone()['n']==700
         assert c.execute("SELECT 1 FROM custody_events WHERE kind='adjustment'").fetchone() is None
     next_driver=post('driver','/api/central-operations/workdays',{'kind':'driver','manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection(1010)})
-    assert sum(s['opening_halalas'] for s in next_driver['shifts'])==700
-    assert sum((s['permanent_float'] or {}).get('amount',0) for s in next_driver['shifts'])==20000
+    assert all('opening_halalas' not in s for s in next_driver['shifts'])
+    # Verify the actual carryover through the isolated canonical ledger. The
+    # driver's blind response must not expose the expected opening balance.
+    with db.tx() as c:
+        source=c.execute('SELECT opening_halalas,permanent_float FROM shifts WHERE id=ANY(%s)',
+            ([s['id'] for s in next_driver['shifts']],)).fetchall()
+        assert sum(s['opening_halalas'] for s in source)==700
+        assert sum((s['permanent_float'] or {}).get('amount',0) for s in source)==20000
+
+def test_physical_receipt_preserves_pending_incentive_review_for_accounting(central, monkeypatch):
+    """Physical receipt must not depend on resolving financial entitlement."""
+    from app import driver_incentives
+    _, actor, post, _, _ = central
+    _, driver, path, declared = submit_physical(central)
+    calls = []
+
+    def pending_review(c, user, shift):
+        calls.append(shift['id'])
+        raise HTTPException(409, 'حدد سبب ومسؤولية الطلبات الملغية والمرتجعة')
+
+    monkeypatch.setattr(driver_incentives, 'require_decisions', pending_review)
+    body = {'declaration_id': declared['declaration_id'], 'received_halalas': 700,
+            'confirmed': True, 'reference': 'Physical cash received; review pending'}
+    receipt = post('manager', path + '/physical-receipt', body)
+    assert receipt['state'] == 'awaiting_accounting'
+    assert calls == []
+    allocation = {'declaration_id': declared['declaration_id'],
+                  'receipt_id': receipt['receipt_id'], 'legs': rows(driver['shifts']),
+                  'reason': 'Verified brand source documents for allocation', 'confirmed': True}
+    post('accountant', path + '/physical-allocation', allocation, status=409)
+    assert calls
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM shared_driver_closure_receipts').fetchone()['n'] == 1
+        assert not c.execute('SELECT 1 FROM shared_driver_closure_allocations').fetchone()
+        original = c.execute('SELECT cash_halalas,card_halalas FROM shared_driver_closure_declarations WHERE id=%s',
+                             (declared['declaration_id'],)).fetchone()
+        assert original == {'cash_halalas': 700, 'card_halalas': 900}

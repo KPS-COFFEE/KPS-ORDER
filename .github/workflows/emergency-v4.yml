@@ -218,7 +218,7 @@ jobs:
         run: node --test tests/test_owner_operational_confirmation.cjs
       - name: Verify evidenced accounting treatment UI and bilingual clarification actions
         if: matrix.shard == 0
-        run: node tests/test_accounting_treatment_ui.cjs && node tests/test_financial_clarifications_ui.cjs && node tests/test_owner_audit_ui.cjs && node tests/test_financial_treatment_recovery_ui.cjs && node tests/test_refund_item_allocation_ui.cjs && node tests/test_bank_matching_ui.cjs
+        run: node tests/test_accounting_treatment_ui.cjs && node tests/test_financial_clarifications_ui.cjs && node tests/test_owner_audit_ui.cjs && node tests/test_financial_treatment_recovery_ui.cjs && node tests/test_refund_item_allocation_ui.cjs && node tests/test_bank_matching_ui.cjs && node tests/test_employee_ticket_workflow_ui.cjs && node tests/test_order_source_treatment_ui.cjs
       - name: Verify fiscal issuance, refunds and actual thermal QR decoding
         # Full mode runs every pytest node once in the disjoint shards below.
         # Preserve focused preflights without spending the full worker's budget

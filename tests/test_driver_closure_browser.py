@@ -120,18 +120,34 @@ def test_simple_driver_end_then_manager_receipt_and_final_result(live_app,chromi
             page.locator('[data-action=simple-driver-close][data-id="'+sid+'"]').click()
             form=page.locator('#simple-driver-close-form');expect(form).to_be_visible()
             expect(form.locator('[name=counted]')).to_have_count(0)
-            expect(form.locator('[name=received]')).to_have_value('10.00')
+            # The manager enters the independent amount actually counted; the
+            # sender's10.00 declaration is not copied and zero is not assumed.
+            expect(form.locator('[name=received]')).to_have_value('')
+            expect(form.locator('[name=exception_reason]')).to_have_count(0)
+            form.locator('[name=received]').fill('10.00')
         form.locator('[name=confirmed]').check()
         form.locator('button[type=submit]').click()
         expect(page.locator('#modal')).not_to_be_visible(timeout=20000)
         with db.tx() as c:
-            assert c.execute('SELECT status FROM shifts WHERE id=%s',(sid,)).fetchone()['status']=='closed'
-            assert c.execute("SELECT count(*) n FROM custody_events WHERE shift_id=%s AND kind='transfer_in'",(mid,)).fetchone()['n']==1
+            closed=c.execute('SELECT status,submission FROM shifts WHERE id=%s',(sid,)).fetchone()
+            assert closed['status']=='closed'
+            assert closed['submission']['counted_halalas']==1000
+            assert closed['submission']['terminal_total_halalas']==0
+            assert closed['submission']['actual_handover_halalas']==1000
+            assert closed['submission']['receipt_difference_halalas']==0
+            assert closed['submission']['financial_state']=='pending_accounting'
+            confirmed=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(sid,)).fetchall()
+            assert len(confirmed)==1 and confirmed[0]['amount_halalas']==1000
+            assert confirmed[0]['recipient_user_id']==manager['id']
+            assert c.execute("SELECT count(*) n FROM custody_events WHERE shift_id=%s AND kind='transfer_in' AND amount_halalas=1000",(mid,)).fetchone()['n']==1
+            assert c.execute("SELECT count(*) n FROM custody_events WHERE shift_id=%s AND kind='adjustment'",(sid,)).fetchone()['n']==0
             assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(sid,)).fetchone()['n']==1
         expect(page.locator('.shift-card [data-action=shift-detail][data-id="'+sid+'"]')).to_have_count(0)
         page.locator('[data-action=manager-work-view][data-target=shifts][data-history="1"]').click()
         card=page.locator('article').filter(has=page.locator('[data-action=shift-detail][data-id="'+sid+'"]'))
-        expect(card).to_contain_text('متوافق')
+        expect(card).to_contain_text('انتهت تشغيليًا — بانتظار المراجعة المحاسبية')
+        expect(card).not_to_contain_text('متوافق')
+        expect(card).not_to_contain_text('مكتمل ماليًا')
         _capture(page,'TEST_ONLY_manager_driver_closure_'+str(delegated)+'_remote_'+str(remote))
         if delegated:
             _owner_login(ctx,live_app,owner);page.reload()

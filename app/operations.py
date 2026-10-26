@@ -1379,7 +1379,8 @@ def collect(oid:str,body:Collection,request:Request,user=Depends(auth.current_us
             if o['payment_status']!='unpaid' or o['preparation_status'] in ('cancelled','rejected'):fail(409,'الطلب غير قابل للتحصيل')
             from .order_amendments import guard,balance as paid_balance
             guard(c,o,driver_id=user['id'] if user['role']=='driver' else None)
-            due=o['total_halalas']-paid_balance(c,o)
+            from .order_financial_treatments import effective_claim
+            due=effective_claim(c,o)-paid_balance(c,o)
             if body.method not in ('cash','card','split') or due<=0 or body.amount_halalas>due:fail(422,'وسيلة أو مبلغ التحصيل غير صحيح؛ حصّل المتبقي فقط')
             shortfall=body.amount_halalas<due
             if shortfall and (user['role']!='driver' or o['service']!='delivery' or len(body.shortfall_reason.strip())<3):
@@ -1488,10 +1489,11 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             col=cols[0] if cols else None
             prior=c.execute('SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']
             if not col or body.amount_halalas>sum(p['available'] for p in cols):fail(422,'مبلغ أو وسيلة الاسترداد غير صالح')
+            from .order_financial_treatments import effective_total
             if body.amendment_id:
                 amendment=c.execute("SELECT 1 FROM order_revisions WHERE order_id=%s AND revision=%s AND amendment_id=%s",(oid,o['amendment_revision'],body.amendment_id)).fetchone()
                 if not amendment or body.line_quantities or body.amount_halalas>paid_balance(c,o)-o['total_halalas']:fail(422,'سجل فرق التعديل المستحق فقط بدون كميات مرتجعة')
-            elif paid_balance(c,o)>o['total_halalas']:fail(409,'سوّ فرق التعديل أولًا قبل تسجيل مرتجع جديد')
+            elif paid_balance(c,o)>effective_total(c,o):fail(409,'سوّ فرق التعديل أولًا قبل تسجيل مرتجع جديد')
             lines={}
             for x in o['snapshot']['items']:lines[x['product_id']]=lines.get(x['product_id'],0)+x['quantity']
             from .refund_line_values import prior_quantities
@@ -1505,7 +1507,8 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             if returned_products:
                 from .refund_line_values import ceiling,require_documented_prior
                 require_documented_prior(c,oid)
-                maximum=ceiling(o,body.line_quantities,previous_quantities)
+                from .order_financial_treatments import valuation_order
+                maximum=ceiling(valuation_order(c,o),body.line_quantities,previous_quantities)
                 if body.amount_halalas>maximum:
                     raise db.error(422,'REFUND_LINE_VALUE_EXCEEDED','مبلغ الاسترداد يتجاوز قيمة الكميات المحددة بعد الخصم؛ المجاني ورسوم التوصيل لا يرفعان قيمة الصنف.')
             elif body.line_quantities:
@@ -1750,6 +1753,9 @@ def simple_driver_close_in_tx(c, user, sid, body):
         fail(422,'المعدود المرسل محفوظ؛ أعد التقفيلة للتصحيح عند الحاجة')
     sub=s['submission']
     transfers=c.execute("SELECT * FROM custody_transfers WHERE from_shift_id=%s AND closure AND status<>'rejected' FOR UPDATE",(sid,)).fetchall()
+    confirmed=[transfer for transfer in transfers if transfer['status']=='confirmed']
+    if confirmed and (len(confirmed)!=len(transfers) or sum(transfer['amount_halalas'] for transfer in confirmed)!=body.received_halalas):
+        raise db.error(409,'RECORDED_RECEIPT_CHANGED','الاستلام الفعلي محفوظ بمبلغ مختلف؛ راجع سجل الاستلام ومسار التصحيح المحاسبي دون إعادة تسجيله أو تغيير الأصل.')
     if not transfers:
         manager=lock_shift(c,s['manager_shift_id'])
         if not manager or manager['user_id']!=user['id']:

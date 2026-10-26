@@ -20,7 +20,7 @@ def source_rows(c,user,bids,ds=None,de=None,manager_shift_id=''):
     if manager_shift_id:q+=' AND s.manager_shift_id=%s';args.append(manager_shift_id)
     rows=c.execute(q+' ORDER BY "day",r.created_at,r.id',args).fetchall()
     allowed=set(user.get('branch_ids',[]))
-    return [r for r in rows if user['role']=='owner' or set(r['branch_ids'])<=allowed]
+    return [r for r in rows if (user['role']=='owner' and not user.get('home_brand_id')) or set(r['branch_ids'])<=allowed]
 
 
 def histories(c,user,rows):
@@ -104,7 +104,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     for r in rows:
         history=changes[r['id']]
         from .financial_treatments import reviewed_values
-        v=reviewed_values(c,r,history[-1] if history else None)
+        v=reviewed_values(c,r,history[-1] if history else None,user=user)
         item=daily[r['user_id'],r['day']]
         item['completed_orders']+=len(task_ids[r['shift_id']])
         item['bank']+=v['bank_halalas'] if v['balance_approved'] else 0
@@ -118,6 +118,12 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
         pending=bool(v['has_channel_variance'] and not v['period_approval_allowed'])
         item['pending_shortage' if pending else 'shortage']+=v['shortage_halalas']
         item['pending_surplus' if pending else 'surplus']+=v['surplus_halalas']
+        treatment=v.get('financial_treatment')
+        if treatment:
+            approved=treatment.get('approval') or {}
+            item['adjustments']+=f"{treatment.get('requester_name','')} → {approved.get('approver_name','')} · {treatment['payload'].get('note','')} · {approved.get('evidence_reference','')}\n"
+            if v['outstanding_receivable_halalas'] or v['outstanding_payable_halalas']:
+                item['adjustments']+=f"{'Outstanding under follow-up' if en else 'مبلغ مستحق تحت المتابعة'} · {treatment['payload'].get('liable_party_name','')} · {treatment['payload'].get('followup_user_id','')} · {treatment['payload'].get('due_on','')}\n"
         if confirmation:
             item['adjustments']+=f"{confirmation['actor_name']} · {confirmation['created_at'].astimezone(TZ).strftime('%Y/%m/%d %H:%M')} · {confirmation['details'].get('action_taken','')} · {confirmation['details'].get('reason','')}\n"
         item['pending_balance']+=int(not v['balance_approved']);item['pending_receipt']+=int(not v['cash_recorded'])
@@ -198,7 +204,7 @@ def manager_cards(c,user,bids):
     for r in rows:
         history=changes[r['id']]
         from .financial_treatments import reviewed_values
-        v=reviewed_values(c,r,history[-1] if history else None)
+        v=reviewed_values(c,r,history[-1] if history else None,user=user)
         confirmation=variance_confirmation(c,r['id'],v['revision']) if v['reconciliation_complete'] and v['net_difference_halalas'] else None
         variance_pending=bool(v['has_channel_variance'] and not v['period_approval_allowed'])
         deadline=closure_deadline(r,local,extensions.get(r['id']))
@@ -272,7 +278,7 @@ def approve_day(c,user,manager_shift_id,note):
         from .financial_integrity import require_verified
         require_verified(r['snapshot'])
         from .financial_treatments import reviewed_values
-        v=reviewed_values(c,r,changes[r['id']][-1])
+        v=reviewed_values(c,r,changes[r['id']][-1],user=user)
         if not v['period_approval_allowed']:
             fail('FINANCIAL_TREATMENT_REQUIRED','أكمل معالجة مستقلة موثقة؛ الملاحظة وحدها لا تسوي الفرق.',409)
     ds=min(r['day'] for r in rows);de=max(r['day'] for r in rows)

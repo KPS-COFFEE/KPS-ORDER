@@ -291,7 +291,9 @@ ROLLBACK_UNSUPPORTED_STATE_TABLES = (
     'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
     'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts',
     'shared_manager_closure_allocations',
+    'collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections',
     'financial_case_clarifications', 'financial_case_clarification_events',
+    'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims',
 )
 
 
@@ -303,8 +305,16 @@ def guard_rollback_feature_state(conn):
             raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains ' + table +
                                '; keep the current-aware application. No database restore or mutation was attempted.')
 
+    if 'audit_events' in available and conn.execute(
+        "SELECT 1 FROM audit_events WHERE action LIKE 'accounting.financial_treatment.%' "
+        "OR action LIKE 'accounting.refund_item_allocation.%' OR action LIKE 'accounting.order_financial_treatment.%' "
+        "OR action='employee.ticket.followup' LIMIT 1").fetchone():
+        raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains new financial or administrative review contracts; keep the current-aware application. No database mutation was attempted.')
+
 
 def migrate():
+    from .runtime_revision import revision as source_revision
+    deployed_revision = source_revision('local-unversioned')
     with tx() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
         guard_rollback_feature_state(conn)
@@ -313,8 +323,7 @@ def migrate():
         after = preservation_snapshot(conn, baseline)
         if baseline != after:
             raise RuntimeError('Release aborted: existing operational data changed during migration.')
-        revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
-        audit(conn, None, 'release.operational_data_preserved', 'runtime', revision,
+        audit(conn, None, 'release.operational_data_preserved', 'runtime', deployed_revision,
               {'verified': bool(baseline), 'tables_checked': len(baseline),
                'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
 
@@ -329,8 +338,10 @@ PRESERVED_TABLES = ('driver_duty_profiles', 'financial_case_clarification_events
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
                     'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
                     'first_order_gift_claims', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries', 'staff_brand_memberships', 'driver_brand_dedications',
-                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports')
+                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports', 'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims', 'audit_events')
 
+
+PRESERVED_TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 
 def preservation_snapshot(conn, baseline=None):
     """Compare existing columns/bytes in the same bounded migration transaction.

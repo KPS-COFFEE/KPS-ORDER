@@ -14,6 +14,8 @@ def inspect_snapshot(snapshot):
         return {'verified': False, 'issues': [{'code': 'INVALID_RECORD'}]}
     if any(type(row.get('total_halalas')) is not int or row['total_halalas'] < 0 for row in snapshot['orders']):
         return {'verified': False, 'issues': [{'code': 'INVALID_ORDER_MONEY'}]}
+    if any(type(row.get('fulfilled_in_report')) is not bool for row in snapshot['orders']):
+        return {'verified':False,'issues':[{'code':'INVALID_ORDER_STATE'}]}
     external = snapshot.get('external_enbishan', [])
     if (not isinstance(external, list) or not isinstance(snapshot.get('external_enbishan_totals', {}), dict)
             or any(not isinstance(row, dict) or not isinstance(row.get('shift_id'), str)
@@ -34,7 +36,9 @@ def inspect_snapshot(snapshot):
     collections, refunds = snapshot['collections'], snapshot['refunds']
     for name, rows in (('collections', collections), ('refunds', refunds)):
         for row in rows:
-            if type(row.get('amount_halalas')) is not int or row['amount_halalas'] < 0 or row.get('method') not in ('cash', 'card'):
+            if (type(row.get('amount_halalas')) is not int or row['amount_halalas'] < 0
+                    or row.get('method') not in ('cash', 'card')
+                    or any(row.get(key) is not None and not isinstance(row[key],str) for key in ('shift_id','order_id'))):
                 issues.append({'code': 'INVALID_MONEY', 'source': name, 'id': row.get('id')})
     if any(issue['code'] == 'INVALID_MONEY' for issue in issues):
         return {'verified': False, 'issues': issues}
@@ -58,7 +62,7 @@ def inspect_snapshot(snapshot):
     for row in external:
         check('external_payment_total', row.get('total_halalas'), row.get('cash_halalas', 0)+row.get('card_halalas', 0))
     for key in ('order_count', 'cash_halalas', 'card_halalas', 'total_halalas'):
-        check('external_'+key, snapshot.get('external_enbishan_totals', {}).get(key, 0), sum(r.get(key, 0) for r in external))
+        check('external_'+key, snapshot.get('external_enbishan_totals', {}).get(key, None if external else 0), sum(r.get(key, 0) for r in external))
     issues.extend(inspect_custody(snapshot))
     return {'verified': not issues, 'issues': issues}
 
@@ -146,11 +150,12 @@ def inspect_custody(snapshot):
             if (not effect or effect['amount_halalas']!=amount or sum(r['amount_halalas'] for r in source_rows)!=amount
                     or any(r.get('shift_id')!=target for r in source_rows)):
                 issues.append({'code':'ATTRIBUTION_CASH_EFFECT_MISMATCH','id':correction['id']})
+    corrected_tenders=inspect_tender_corrections(snapshot,events,issues)
     for name, kind in (('collections','collection'),('refunds','refund')):
         for source in snapshot.get(name,[]):
             if source.get('method') != 'cash' or not source.get('shift_id'):
                 continue
-            if name=='collections' and source.get('order_id') in corrected_orders:
+            if name=='collections' and (source.get('order_id') in corrected_orders or source['id'] in corrected_tenders):
                 continue
             # Test voids reverse cash through a linked adjustment, without a payout.
             effect='adjustment' if source.get('record_kind')=='test_void' else kind
@@ -177,3 +182,65 @@ def inspect_custody(snapshot):
         if type(sub['actual_handover_halalas']) is not int or not closing or sub['actual_handover_halalas'] != received:
             issues.append({'code':'CUSTODY_ACTUAL_RECEIPT_MISMATCH'})
     return issues
+
+
+def inspect_tender_corrections(snapshot,events,issues):
+    """Verify the complete approved reclassification chain and cash effects.
+
+    A changed effective payment method is not another receipt. It is accepted
+    only with the original tender, approved linked document chain, and exact
+    signed adjustments already present in this immutable snapshot.
+    """
+    rows=snapshot.get('collection_tender_corrections',[])
+    if not isinstance(rows,list):
+        issues.append({'code':'TENDER_CORRECTION_EVIDENCE_INVALID'});return set()
+    sources={r['id']:r for r in snapshot.get('collections',[])}
+    by_event={r['id']:r for r in events};grouped={};identifiers=set()
+    required=('id','collection_id','effective_shift_id','original_shift_id','custody_event_id','approved_by','original_collector_id','proposal_id','evidence_reference')
+    for row in rows:
+        if (not isinstance(row,dict) or any(not isinstance(row.get(k),str) or not row[k] for k in required)
+                or row.get('source_method') not in ('cash','card') or row.get('target_method') not in ('cash','card')
+                or row.get('raw_method') not in ('cash','card') or row['source_method']==row['target_method']
+                or type(row.get('revision')) is not int or row['revision']<1
+                or type(row.get('amount_halalas')) is not int or row['amount_halalas']<=0
+                or type(row.get('cash_delta_halalas')) is not int
+                or row['id'] in identifiers or row['collection_id'] not in sources):
+            issues.append({'code':'TENDER_CORRECTION_EVIDENCE_INVALID'});continue
+        cash_target=row['target_method']=='cash'
+        if ((cash_target and (type(row.get('target_tendered_halalas')) is not int
+                or row['target_tendered_halalas']<row['amount_halalas']
+                or type(row.get('target_change_halalas')) is not int
+                or row['target_change_halalas']!=row['target_tendered_halalas']-row['amount_halalas']))
+                or (not cash_target and (row.get('target_tendered_halalas') is not None
+                    or type(row.get('target_change_halalas')) is not int or row['target_change_halalas']!=0
+                    or not isinstance(row.get('target_reference'),str) or not row['target_reference'].strip()))):
+            issues.append({'code':'TENDER_CORRECTION_EVIDENCE_INVALID'});continue
+        identifiers.add(row['id']);grouped.setdefault(row['collection_id'],[]).append(row)
+    valid=set()
+    for cid,chain in grouped.items():
+        chain=sorted(chain,key=lambda r:r['revision']);source=sources[cid];previous=None;okay=True
+        for index,row in enumerate(chain,1):
+            event=by_event.get(row['custody_event_id'])
+            delta=row['amount_halalas'] if row['target_method']=='cash' else -row['amount_halalas']
+            if (row['revision']!=index or row.get('source_correction_id')!=(previous['id'] if previous else None)
+                    or row['source_method']!=(previous['target_method'] if previous else row['raw_method'])
+                    or row['amount_halalas']!=source['amount_halalas']
+                    or row['effective_shift_id']!=source.get('shift_id')
+                    or row['original_shift_id']!=row['effective_shift_id']
+                    or row['cash_delta_halalas']!=delta
+                    or row['approved_by']==row['original_collector_id']
+                    or not event or event['kind']!='adjustment' or event['shift_id']!=row['effective_shift_id']
+                    or event['reference_id']!=row['id'] or event['amount_halalas']!=delta
+                    or event.get('actor_id')!=row['approved_by']):
+                okay=False
+            previous=row
+        last=chain[-1];first=chain[0]
+        if last['target_method']!=source.get('method'):okay=False
+        for key,target in (('tendered_halalas','target_tendered_halalas'),('change_halalas','target_change_halalas'),('reference','target_reference')):
+            if source.get(key)!=last.get(target):okay=False
+        if first['raw_method']=='cash':
+            original=[r for r in events if r['shift_id']==first['original_shift_id'] and r['kind']=='collection' and r['reference_id']==cid]
+            if len(original)!=1 or original[0]['amount_halalas']!=source['amount_halalas']:okay=False
+        if okay:valid.add(cid)
+        else:issues.append({'code':'TENDER_CORRECTION_EFFECT_MISMATCH','id':cid})
+    return valid

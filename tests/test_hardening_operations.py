@@ -191,7 +191,7 @@ def test_delegated_closure_concurrent_replay_notifies_owner_once_and_is_immutabl
         assert conn.execute('SELECT count(*) n,sum(amount_halalas) amount FROM retained_carryovers WHERE from_shift_id=%s', (driver,)).fetchone() == {'n': 1, 'amount': 100}
         assert conn.execute("SELECT count(*) n,sum(amount_halalas) amount FROM custody_events WHERE reference_id=%s AND kind='transfer_out'", (tid,)).fetchone() == {'n': 1, 'amount': -800}
         assert conn.execute("SELECT count(*) n,sum(amount_halalas) amount FROM custody_events WHERE reference_id=%s AND kind='transfer_in'", (tid,)).fetchone() == {'n': 1, 'amount': 800}
-        assert conn.execute("SELECT count(*) n,sum(amount_halalas) amount FROM custody_events WHERE shift_id=%s AND kind='adjustment'", (driver,)).fetchone() == {'n': 1, 'amount': -100}
+        assert conn.execute("SELECT count(*) n,sum(amount_halalas) amount FROM custody_events WHERE shift_id=%s AND kind='adjustment'", (driver,)).fetchone() == {'n': 0, 'amount': None}
         shift = conn.execute('SELECT * FROM shifts WHERE id=%s', (driver,)).fetchone()
         assert shift['status'] == 'closed' and shift['vehicle_log']['end_exception']['recorded_by'] == user['id']
         snapshot = conn.execute('SELECT snapshot FROM closure_reports WHERE id=%s', (report_id,)).fetchone()['snapshot']

@@ -152,8 +152,24 @@ def test_owner_approved_mahashi_distinct_choices_and_identity(dual_http, languag
             expect(page.locator('#product-price')).to_have_attribute('data-variant-price', '2000')
             expect(page.locator('#product-add')).to_be_enabled()
             choice2 = next(i for i,g in enumerate(product['settings']['option_groups']) if g['code']=='CHOICE_2')
-            choose_visible_option(selects.nth(choice2), options['CHOICE_1'])
-            expect(page.locator('#product-add')).to_be_disabled()
-            expect(page.locator('#product-error')).to_be_visible()
+            # Current controls remove choices already selected in another
+            # slot, so a customer cannot submit the old duplicate-choice path.
+            # Verify that constraint through the visible controls in both languages.
+            duplicate=options['CHOICE_1']
+            label=selects.nth(choice2-1).locator('option[value="'+duplicate+'"]').text_content()
+            expect(selects.nth(choice2).locator('option[value="'+duplicate+'"]')).to_have_count(0)
+            expect(selects.nth(choice2).locator('..').get_by_role('button',name=re.compile('^'+re.escape(label)+'$'))).to_have_count(0)
+            expect(selects.nth(choice2)).to_have_value(options['CHOICE_2'])
+            expect(page.locator('#product-add')).to_be_enabled()
+            # Moving the first selection releases the old value for the second
+            # slot, while all three chosen vegetables remain distinct.
+            first=next(i for i,g in enumerate(product['settings']['option_groups']) if g['code']=='CHOICE_1')
+            replacement=next(v['code'] for v in product['settings']['option_groups'][first]['values']
+                             if v['code'] not in {options['CHOICE_1'],options['CHOICE_2'],options['CHOICE_3']})
+            choose_visible_option(selects.nth(first),replacement)
+            expect(selects.nth(choice2).locator('option[value="'+duplicate+'"]')).to_have_count(1)
+            choose_visible_option(selects.nth(choice2),duplicate)
+            expect(page.locator('#product-add')).to_be_enabled()
+            expect(page.locator('#product-price')).to_have_attribute('data-variant-price','2000')
         finally:
             browser.close()

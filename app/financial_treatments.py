@@ -14,6 +14,7 @@ router=APIRouter(prefix='/api/accounting/driver-settlements',tags=['financial-tr
 PROPOSED='accounting.financial_treatment.proposed'
 APPROVED='accounting.financial_treatment.approved'
 REJECTED='accounting.financial_treatment.rejected'
+REVERSED='accounting.financial_treatment.reversed'
 
 class Proposal(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
@@ -27,6 +28,9 @@ class Proposal(BaseModel):
     liable_party_name:str|None=Field(None,min_length=2,max_length=200,pattern=r'^[^\x00]+$')
     followup_user_id:str|None=Field(None,min_length=1,max_length=150)
     due_on:date|None=None
+    source_correction_ids:list[str]=Field(default_factory=list,max_length=300)
+    supersedes_treatment_id:str|None=Field(None,min_length=1,max_length=150)
+    reversal_evidence_reference:str|None=Field(None,min_length=5,max_length=2000,pattern=r'^[^\x00]+$')
 
 class Approval(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
@@ -86,13 +90,16 @@ def history(c,rid):
             'status':'approved' if decision and decision['action']==APPROVED else 'rejected' if decision else 'pending',
             'approval':{'approved_by':decision['actor_id'],'approver_name':decision['actor_name'],
                         'created_at':decision['created_at'],**decision['details']} if decision else None})
+    superseded={r['payload'].get('supersedes_treatment_id'):r['id'] for r in rows if r['status']=='approved' and r['payload'].get('supersedes_treatment_id')}
+    for row in rows:
+        if row['id'] in superseded:row.update(status='superseded',superseded_by=superseded[row['id']])
     return rows
 
 
 def approved(c,rid,revision):
     rows=history(c,rid)
     row=next((r for r in rows if r['status']=='approved' and r['payload']['expected_revision']==revision),None)
-    if row and row['payload']['kind']=='outstanding':row['recoveries']=recovery_history(c,rid,row['id'])
+    if row:row['recoveries']=treatment_recoveries(c,rid,row)
     return row
 
 
@@ -110,25 +117,24 @@ def apply(values,treatment):
     if (d.get('cash_variance_halalas')!=values['cash_variance_halalas']
             or d.get('card_variance_halalas')!=values['bank_difference_halalas']):return result
     if not values.get('financial_approval_allowed',True):return result
+    balances=remaining_by_direction(treatment)
+    receivable=sum(balances['receivable_recovery'].values())
+    payable=sum(balances['payable_settlement'].values())
+    resolved=not receivable and not payable
     if d['kind']=='documented_channel_correction':
-        # The immutable adjustment records precisely which expected channel was
-        # wrong. Original source amounts and actual receipts remain separately visible.
-        result.update(financial_state='corrected_by_approved_document',financially_complete=True,
-            period_approval_allowed=True,reviewed_cash_variance_halalas=0,reviewed_card_variance_halalas=0,
-            channel_reclassification={'cash_halalas':d['cash_variance_halalas'],
-                                      'card_halalas':d['card_variance_halalas'],
-                                      'treatment_id':treatment['id']})
-    else:
-        left=remaining(treatment)
-        cash=d['cash_variance_halalas'];card=d['card_variance_halalas']
-        resolved=not any(left.values())
-        result.update(financial_state='settled_by_actual_recovery' if resolved else 'review_approved_outstanding',
-            financially_complete=resolved,remaining_cash_halalas=left['cash'],remaining_card_halalas=left['card'],
-            outstanding_receivable_halalas=sum(left[channel] for channel,v in [('cash',cash),('card',card)] if v<0),
-            outstanding_payable_halalas=sum(left[channel] for channel,v in [('cash',cash),('card',card)] if v>0),
-            liable_party_type=d['liable_party_type'],liable_party_name=d['liable_party_name'],
-            followup_user_id=d['followup_user_id'],due_on=d['due_on'],
-            period_approval_allowed=resolved or bool(treatment['approval'].get('allow_period_approval_with_outstanding')))
+        result['channel_reclassification']={'cash_halalas':d['cash_variance_halalas'],
+            'card_halalas':d['card_variance_halalas'],'treatment_id':treatment['id']}
+    result.update(financial_state=('corrected_by_approved_document' if d['kind']=='documented_channel_correction' else 'settled_by_actual_recovery') if resolved else 'review_approved_outstanding',
+        financially_complete=resolved,outstanding_receivable_halalas=receivable,outstanding_payable_halalas=payable,
+        remaining_cash_halalas=balances['receivable_recovery']['cash']+balances['payable_settlement']['cash'],
+        remaining_card_halalas=balances['receivable_recovery']['card']+balances['payable_settlement']['card'],
+        remaining_by_direction=balances,
+        period_approval_allowed=resolved or bool(treatment['approval'].get('allow_period_approval_with_outstanding')))
+    if d['kind']=='documented_channel_correction':result.update(reviewed_cash_variance_halalas=0,reviewed_card_variance_halalas=0)
+    if not resolved:
+        for field in ('liable_party_type','liable_party_name','followup_user_id'):
+            result[field]=d.get(field)
+        result['followup_due_on']=d.get('due_on')
     return result
 
 
@@ -148,20 +154,60 @@ def shared_for_report(c,report,values):
     leg=next((r for r in allocation['legs'] if r['shift_id']==report['shift_id']),None)
     if not leg or leg.get('receipt_difference_halalas')!=difference:return None
     if sum(r.get('receipt_difference_halalas',0) for r in allocation['legs'])!=-treatment['payload']['cash_variance_halalas']:return None
-    payload={**treatment['payload'],'source_shared_cash_variance_halalas':treatment['payload']['cash_variance_halalas'],
-        'cash_variance_halalas':-difference,'card_variance_halalas':0,'expected_revision':values['revision']}
-    result={**treatment,'origin':'shared_receipt','payload':payload}
+    # The shared physical source may cover another brand. Verify its full sum
+    # internally, then expose only this report's evidenced allocation.
+    payload={k:v for k,v in treatment['payload'].items() if k in Proposal.model_fields}
+    payload.update(cash_variance_halalas=-difference,card_variance_halalas=0,expected_revision=values['revision'],
+        treatment_id=treatment['id'],report_id=report['id'],brand_id=report.get('brand_id'),branch_ids=report.get('branch_ids',[]),
+        shared_workday_id=sub['shared_workday_id'],shared_declaration_id=sub['shared_declaration_id'],shared_receipt_id=sub['shared_receipt_id'],
+        shared_source_total_verified=True,no_money_posted=True,no_payroll_deduction=True)
+    approval={**treatment['approval'],'cash_variance_halalas':-difference,'card_variance_halalas':0}
+    result={**treatment,'origin':'shared_receipt','payload':payload,'approval':approval}
     result['recoveries']=recovery_history(c,report['id'],result['id'])
     return result
 
 
-def reviewed_values(c,report,latest=None):
+def reviewed_values(c,report,latest=None,user=None):
     from .accounting import driver_settlement_values
     values=driver_settlement_values(report['snapshot'],latest)
     treatment=approved(c,report['id'],values['revision']) if values['has_channel_variance'] else None
     if not treatment and values['has_channel_variance']:treatment=shared_for_report(c,report,values)
     return apply(values,treatment)
 
+
+
+def followup_assignment(c,report,treatment,user=None):
+    d=treatment['payload']
+    latest=c.execute("SELECT * FROM audit_events WHERE action='accounting.financial_treatment.followup_assigned' AND entity_type='report' AND entity_id=%s AND details->>'treatment_id'=%s ORDER BY created_at DESC,id DESC LIMIT 1",(report['id'],treatment['id'])).fetchone()
+    current=(latest['details'] if latest else {})
+    identifier=current.get('followup_user_id') or d.get('followup_user_id')
+    due=current.get('due_on') or d.get('due_on')
+    if not identifier:return {}
+    if not all(k in report for k in ('brand_id','branch_ids','user_id','shift_id')):
+        report=c.execute('SELECT * FROM closure_reports WHERE id=%s',(report['id'],)).fetchone()
+    try:
+        person=eligible_followup(c,user,report,identifier)
+        return {'followup_user_id':person['id'],'followup_name':person['display_name'],'followup_due_on':due}
+    except Exception as exc:
+        from fastapi import HTTPException
+        if not isinstance(exc,HTTPException) or exc.status_code!=422:raise
+    # The current read is already report-scoped. Prefer the ordinary accounting
+    # department; reserve owner fallback for lack of another authorized employee.
+    for row in c.execute("SELECT id FROM users WHERE active AND role IN ('admin','owner') ORDER BY CASE WHEN role='admin' THEN 0 ELSE 1 END,display_name,id").fetchall():
+        try:person=eligible_followup(c,user,report,row['id'])
+        except Exception as exc:
+            from fastapi import HTTPException
+            if isinstance(exc,HTTPException) and exc.status_code==422:continue
+            raise
+        detail={'treatment_id':treatment['id'],'previous_followup_user_id':identifier,
+            'followup_user_id':person['id'],'due_on':due,'reason':'Assigned employee unavailable or scope revoked',
+            'automatic_fallback':True,'no_money_posted':True}
+        db.audit(c,None,'accounting.financial_treatment.followup_assigned','report',report['id'],detail)
+        return {'followup_user_id':person['id'],'followup_name':person['display_name'],'followup_due_on':due,'automatic_fallback':True}
+    # Never invent an assignee; retain the last named responsibility and surface
+    # explicit escalation if no authorized active accountant/owner exists.
+    return {'followup_user_id':identifier,'followup_name':None,'followup_due_on':due,'escalation_required':True,
+        'required_action':'Activate an authorized accounting replacement'}
 
 
 def eligible_followup(c,user,report,identifier):
@@ -175,6 +221,14 @@ def eligible_followup(c,user,report,identifier):
     return target
 
 
+def require_source_correction(c,report,body):
+    from .collection_tender_corrections import matching_channel_correction
+    proof=matching_channel_correction(c,report,body.cash_variance_halalas,body.card_variance_halalas,correction_ids=body.source_correction_ids)
+    if not proof:
+        raise db.error(409,'FINANCIAL_SOURCE_CORRECTION_REQUIRED','تصحيح مصدر التحصيل لا يطابق الأصل وقيم الكاش والشبكة؛ أكمل التصحيح المعتمد أولًا.')
+    return proof
+
+
 def validate_proposal(body,values):
     if (body.expected_revision!=values['revision'] or not values['reconciliation_complete']
             or not values['has_channel_variance']):
@@ -185,7 +239,9 @@ def validate_proposal(body,values):
     if body.kind=='documented_channel_correction':
         if not body.cash_variance_halalas or body.cash_variance_halalas+body.card_variance_halalas!=0:
             raise db.error(422,'FINANCIAL_CORRECTION_UNBALANCED','تصحيح وسيلة الدفع يتطلب قيمتين متعاكستين متساويتين ودليلًا محددًا.')
-        if any((body.liable_party_type,body.liable_party_name,body.followup_user_id,body.due_on)):
+        if not body.source_correction_ids or len(body.source_correction_ids)!=len(set(body.source_correction_ids)) or any(not x.strip() for x in body.source_correction_ids):
+            raise db.error(422,'FINANCIAL_SOURCE_CORRECTION_REQUIRED','اربط تصحيح وسيلة الدفع المعتمد على أصل التحصيل؛ الملاحظة وحدها لا تغير مصادر الشبكة والكاش.')
+        if not body.supersedes_treatment_id and any((body.liable_party_type,body.liable_party_name,body.followup_user_id,body.due_on)):
             raise db.error(422,'FINANCIAL_CORRECTION_SCOPE','تصحيح وسيلة الدفع لا ينشئ ذمة على شخص.')
     elif not all((body.liable_party_type,body.liable_party_name,body.followup_user_id,body.due_on)):
         raise db.error(422,'FINANCIAL_RECEIVABLE_DETAILS_REQUIRED','حدد الجهة المستحقة عليها أو لها، والمتابع والموعد والدليل.')
@@ -204,13 +260,19 @@ def listing(rid:str,user=Depends(auth.current_user)):
                 if isinstance(exc,HTTPException) and exc.status_code==422:continue
                 raise
             users.append({'id':person['id'],'name':person['display_name']})
+        from . import collection_tender_corrections
+        channel_corrections=collection_tender_corrections.corrections_for_report(c,report['id'])
         treatments=history(c,rid)
         inherited=shared_for_report(c,report,values)
-        if inherited and not any(r['id']==inherited['id'] for r in treatments):treatments.append(inherited)
+        if inherited and not any(r['id']==inherited['id'] for r in treatments):
+            replaced=next((r['id'] for r in treatments if r['status']=='approved' and r['payload'].get('supersedes_treatment_id')==inherited['id']),None)
+            if replaced:inherited.update(status='superseded',superseded_by=replaced)
+            treatments.append(inherited)
         for row in treatments:
-            if row['status']=='approved' and row['payload']['kind']=='outstanding':
-                row['recoveries']=recovery_history(c,rid,row['id']);row['remaining']=remaining(row)
-        return safe({'treatments':treatments,'followup_users':users,'can_propose':bool(values['has_channel_variance'] and not any(r['status'] in {'pending','approved'} and r['payload']['expected_revision']==values['revision'] for r in treatments)),
+            if row['status']=='approved':
+                row['recoveries']=treatment_recoveries(c,rid,row);row['remaining']=remaining(row);row['remaining_by_direction']=remaining_by_direction(row)
+        return safe({'treatments':treatments,'channel_corrections':channel_corrections,'followup_users':users,'can_propose':bool(values['has_channel_variance'] and not any(r['status']=='pending' and r['payload']['expected_revision']==values['revision'] for r in treatments)),
+            'supersession_source_id':next((r['id'] for r in treatments if r['status']=='approved' and r['payload']['expected_revision']==values['revision']),None),
             'can_approve':user['id'] not in custody_actors(c,report),'expected_revision':values['revision'],'source':{'cash_variance_halalas':values['cash_variance_halalas'],
             'card_variance_halalas':values['bank_difference_halalas']},**apply(values,approved(c,rid,values['revision']) or inherited)})
 
@@ -223,9 +285,23 @@ def propose(rid:str,body:Proposal,request:Request,user=Depends(auth.current_user
         def perform():
             from .financial_integrity import require_verified
             require_verified(report['snapshot']);validate_proposal(body,values)
-            if any(r['status'] in {'pending','approved'} and r['payload']['expected_revision']==values['revision'] for r in history(c,rid)):
-                raise db.error(409,'FINANCIAL_TREATMENT_EXISTS','توجد معالجة معلقة أو معتمدة لهذه النسخة؛ راجعها أولًا.')
-            if body.kind=='outstanding':
+            if body.kind=='documented_channel_correction':require_source_correction(c,report,body)
+            prior_rows=history(c,rid)
+            active=next((r for r in prior_rows if r['status']=='approved' and r['payload']['expected_revision']==values['revision']),None)
+            if not active:active=shared_for_report(c,report,values)
+            if any(r['status']=='pending' and r['payload']['expected_revision']==values['revision'] for r in prior_rows):
+                raise db.error(409,'FINANCIAL_TREATMENT_EXISTS','توجد معالجة معلقة لهذه النسخة؛ راجعها أولًا.')
+            reversal={}
+            if active:
+                if body.supersedes_treatment_id!=active['id'] or not body.reversal_evidence_reference:
+                    raise db.error(409,'FINANCIAL_SUPERSESSION_REQUIRED','التصحيح اللاحق يحتاج ربط المعالجة السابقة ودليل عكسها مع حفظ الأصل.')
+                reversal=supersession_obligations(c,rid,active,body.kind)
+            elif body.supersedes_treatment_id or body.reversal_evidence_reference:
+                raise db.error(409,'FINANCIAL_SUPERSESSION_SOURCE','المعالجة السابقة ليست الأصل المعتمد الحالي.')
+            needs_followup=body.kind=='outstanding' or any(sum(v.values()) for v in reversal.values())
+            if needs_followup:
+                if not all((body.liable_party_type,body.liable_party_name,body.followup_user_id,body.due_on)):
+                    raise db.error(422,'FINANCIAL_REVERSAL_FOLLOWUP_REQUIRED','عكس التحصيل أو الرد السابق يبقي ذمة عكسية؛ حدد الجهة والمتابع والموعد.')
                 from .accounting import TZ
                 if body.due_on<datetime.now(TZ).date():raise db.error(422,'FINANCIAL_TREATMENT_DUE','اختر مهلة متابعة اليوم أو لاحقًا.')
                 eligible_followup(c,user,report,body.followup_user_id)
@@ -235,7 +311,8 @@ def propose(rid:str,body:Proposal,request:Request,user=Depends(auth.current_user
                 'custodian_id':report['user_id'],'source_settlement_id':latest['id'],
                 'original_system_cash_halalas':values['system_cash_halalas'],'original_system_card_halalas':values['system_bank_halalas'],
                 'actual_cash_halalas':values['cash_received_halalas'],'actual_card_halalas':values['bank_halalas'],
-                'no_payroll_deduction':True,'no_money_posted':True}
+                'no_payroll_deduction':True,'no_money_posted':True,'reversal_obligations':reversal,
+                'carry_recoveries_from':active['id'] if active and body.kind==active['payload']['kind']=='outstanding' else None}
             db.audit(c,user['id'],PROPOSED,'report',rid,payload)
             return safe({'id':identifier,'status':'pending','payload':payload})
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'financial_treatment.propose:'+rid,body.model_dump(mode='json'),perform)
@@ -260,23 +337,37 @@ def approve(rid:str,tid:str,body:Approval,request:Request,user=Depends(auth.curr
                 raise db.error(409,'FINANCIAL_TREATMENT_STALE','أكد مراجعة الدليل وحدّث نسخة التسوية.')
             row=selected(c,rid,tid,values['revision']);proposal=Proposal(**{k:v for k,v in row['payload'].items() if k in Proposal.model_fields})
             validate_proposal(proposal,values)
+            if proposal.kind=='documented_channel_correction':require_source_correction(c,report,proposal)
             if row['requested_by']==user['id'] or user['id'] in custody_actors(c,report):
                 raise db.error(403,'FINANCIAL_TREATMENT_SELF_APPROVAL','اعتماد المعالجة من موظف مستقل عن مقدمها وصاحب العهدة.')
             if ((proposal.liable_party_type=='employee' or body.allow_period_approval_with_outstanding)
                     and user['role']!='owner'):
                 raise db.error(403,'FINANCIAL_TREATMENT_OWNER_REQUIRED','إثبات ذمة موظف أو اعتماد فترة بذمة متبقية قرار محفوظ للمالك.')
-            if proposal.kind=='outstanding':eligible_followup(c,user,report,proposal.followup_user_id)
-            elif body.allow_period_approval_with_outstanding:
+            if proposal.kind=='outstanding' or any(sum(v.values()) for v in row['payload'].get('reversal_obligations',{}).values()):
+                eligible_followup(c,user,report,proposal.followup_user_id)
+            elif body.allow_period_approval_with_outstanding and not any(sum(v.values()) for v in row['payload'].get('reversal_obligations',{}).values()):
                 raise db.error(422,'FINANCIAL_TREATMENT_ALLOWANCE_SCOPE','استثناء اعتماد الفترة خاص بالذمة المثبتة فقط.')
+            if proposal.supersedes_treatment_id:
+                prior=next((r for r in history(c,rid) if r['id']==proposal.supersedes_treatment_id and r['status']=='approved'),None)
+                if not prior:
+                    inherited=shared_for_report(c,report,values)
+                    if inherited and inherited['id']==proposal.supersedes_treatment_id:prior=inherited
+                if not prior or supersession_obligations(c,rid,prior,proposal.kind)!=row['payload'].get('reversal_obligations',{}):
+                    raise db.error(409,'FINANCIAL_SUPERSESSION_CHANGED','تغيرت التحصيلات أو المعالجة السابقة؛ أعد تقديم العكس بالأرقام الحالية.')
+                db.audit(c,user['id'],REVERSED,'report',rid,{'treatment_id':prior['id'],'replaced_by':tid,
+                    'reason':proposal.note,'evidence_reference':proposal.reversal_evidence_reference,
+                    'original_effect':prior['payload'],'reversal_obligations':row['payload'].get('reversal_obligations',{}),'no_money_posted':True})
             detail={'treatment_id':tid,'expected_revision':values['revision'],**body.model_dump(mode='json'),
                 'requested_by':row['requested_by'],'approved_by':user['id'],'kind':proposal.kind,
                 'cash_variance_halalas':proposal.cash_variance_halalas,'card_variance_halalas':proposal.card_variance_halalas,
                 'no_payroll_deduction':True,'no_money_posted':True}
             db.audit(c,user['id'],APPROVED,'report',rid,detail)
             from .operations import safe
-            return safe({'id':tid,'status':'approved','financial_state':'corrected_by_approved_document' if proposal.kind=='documented_channel_correction' else 'review_approved_outstanding',
-                'outstanding_receivable_halalas':sum(max(0,-v) for v in (proposal.cash_variance_halalas,proposal.card_variance_halalas)) if proposal.kind=='outstanding' else 0,
-                'outstanding_payable_halalas':sum(max(0,v) for v in (proposal.cash_variance_halalas,proposal.card_variance_halalas)) if proposal.kind=='outstanding' else 0})
+            projected={**row,'status':'approved','approval':detail,'recoveries':treatment_recoveries(c,rid,row)}
+            result=apply(values,projected)
+            return safe({'id':tid,'status':'approved','financial_state':result['financial_state'],
+                'outstanding_receivable_halalas':result['outstanding_receivable_halalas'],
+                'outstanding_payable_halalas':result['outstanding_payable_halalas']})
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'financial_treatment.approve:'+rid+':'+tid,body.model_dump(mode='json'),perform)
 
 
@@ -328,14 +419,50 @@ def recovery_history(c,rid,tid):
     return result
 
 
-def remaining(treatment):
-    d=treatment['payload'];amounts={}
+def treatment_recoveries(c,rid,treatment):
+    if not treatment['payload'].get('supersedes_treatment_id'):
+        return recovery_history(c,rid,treatment['id'])
+    rows={r['id']:r for r in history(c,rid)}
+    result={};current=treatment;seen=set()
+    while current and current['id'] not in seen:
+        seen.add(current['id'])
+        for recovery in recovery_history(c,rid,current['id']):
+            if current['id']==treatment['id'] or recovery['status']=='approved':
+                result[recovery['id']]=dict(recovery,source_treatment_id=current['id'])
+        parent_id=current['payload'].get('supersedes_treatment_id')
+        current=rows.get(parent_id)
+        if not current and parent_id:
+            report=c.execute('SELECT * FROM closure_reports WHERE id=%s',(rid,)).fetchone()
+            if report:
+                from .accounting import driver_settlement_values
+                latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(rid,)).fetchone()
+                inherited=shared_for_report(c,report,driver_settlement_values(report['snapshot'],latest))
+                if inherited and inherited['id']==parent_id:current=inherited
+    return list(result.values())
+
+
+def remaining_by_direction(treatment):
+    d=treatment['payload']
+    result={'receivable_recovery':{'cash':0,'card':0},'payable_settlement':{'cash':0,'card':0}}
     for channel,key in [('cash','cash_variance_halalas'),('card','card_variance_halalas')]:
-        variance=d[key]
-        received=sum(r['payload'][channel+'_amount_halalas'] for r in treatment.get('recoveries',[])
-            if r['status']=='approved' and r['payload']['direction']==('receivable_recovery' if variance<0 else 'payable_settlement'))
-        amounts[channel]=max(0,abs(variance)-received)
-    return amounts
+        target=-d[key] if d['kind']=='outstanding' else 0
+        actual=sum(r['payload'][channel+'_amount_halalas']*(1 if r['payload']['direction']=='receivable_recovery' else -1)
+            for r in treatment.get('recoveries',[]) if r['status']=='approved')
+        balance=target-actual
+        result['receivable_recovery'][channel]=max(0,balance)
+        result['payable_settlement'][channel]=max(0,-balance)
+    return result
+
+
+def remaining(treatment):
+    balances=remaining_by_direction(treatment)
+    return {channel:balances['receivable_recovery'][channel]+balances['payable_settlement'][channel] for channel in ('cash','card')}
+
+
+def supersession_obligations(c,rid,prior,new_kind):
+    recoveries=treatment_recoveries(c,rid,prior)
+    candidate={'payload':{**prior['payload'],'kind':new_kind},'recoveries':recoveries}
+    return remaining_by_direction(candidate)
 
 
 def outstanding_source(c,rid,tid,current_values=None):
@@ -344,24 +471,24 @@ def outstanding_source(c,rid,tid,current_values=None):
         report=c.execute('SELECT * FROM closure_reports WHERE id=%s',(rid,)).fetchone()
         if report:row=shared_for_report(c,report,current_values)
         if row and row['id']!=tid:row=None
-    if not row or row['status']!='approved' or row['payload']['kind']!='outstanding':
+    if not row or row['status']!='approved':
         raise db.error(409,'FINANCIAL_OUTSTANDING_REQUIRED','اختر ذمة معتمدة لم تُسدد بالكامل بعد.')
     if current_values is not None and (row['payload']['expected_revision']!=current_values['revision']
             or row['payload']['cash_variance_halalas']!=current_values['cash_variance_halalas']
             or row['payload']['card_variance_halalas']!=current_values['bank_difference_halalas']):
         raise db.error(409,'FINANCIAL_TREATMENT_STALE','تغير أصل التسوية؛ يلزم معالجة مستقلة مرتبطة بالنسخة الحالية قبل تحصيل ذمة قديمة.')
-    row['recoveries']=recovery_history(c,rid,tid)
+    row['recoveries']=treatment_recoveries(c,rid,row)
     return row
 
 
 def validate_recovery(c,user,report,treatment,body):
     from .accounting import TZ
-    left=remaining(treatment);d=treatment['payload']
+    left=remaining_by_direction(treatment)[body.direction];d=treatment['payload']
     if body.cash_amount_halalas+body.card_amount_halalas<=0:
         raise db.error(422,'RECOVERY_POSITIVE_AMOUNT','سجل مبلغًا فعليًا موجبًا.')
     for channel,key in [('cash','cash_variance_halalas'),('card','card_variance_halalas')]:
-        amount=getattr(body,channel+'_amount_halalas');variance=d[key]
-        if amount and (amount>left[channel] or (variance<0)!=(body.direction=='receivable_recovery') or not variance):
+        amount=getattr(body,channel+'_amount_halalas')
+        if amount>left[channel]:
             raise db.error(422,'RECOVERY_OUTSTANDING_LIMIT','المبلغ ووسيلته واتجاهه يجب أن تطابق الذمة المتبقية دون مقاصة.')
     if body.occurred_on>datetime.now(TZ).date() or body.occurred_on<report['created_at'].astimezone(TZ).date():
         raise db.error(422,'RECOVERY_ACTUAL_DATE','تاريخ التحصيل أو الرد الفعلي بين أصل التقفيلة واليوم.')
@@ -382,6 +509,17 @@ def validate_recovery(c,user,report,treatment,body):
         raise db.error(422,'RECOVERY_BANK_REFERENCE_REQUIRED','أدخل مرجع عملية البنك الفعلية ودليلها للمراجعة المستقلة.')
     if not body.card_amount_halalas and body.bank_reference:
         raise db.error(422,'RECOVERY_BANK_REFERENCE_SCOPE','مرجع البنك خاص بمبلغ الشبكة فقط.')
+    if body.card_amount_halalas:
+        from .manual_bank_matching import bank_line,enabled as bank_enabled
+        if not bank_enabled():raise db.error(404,'MANUAL_BANK_MATCHING_DISABLED','توثيق بنك الذمة قيد التجهيز؛ التحصيل اليدوي للسائق وإقفال التشغيل مستمران.')
+        line=bank_line(c,user,body.bank_reference)
+        signed=body.card_amount_halalas*(1 if body.direction=='receivable_recovery' else -1)
+        available=line['unallocated_halalas']
+        if (signed*line['amount_halalas']<=0 or abs(signed)>abs(available)
+                or signed*available<=0 or line['received_on']!=body.occurred_on):
+            raise db.error(422,'RECOVERY_BANK_SOURCE_MISMATCH','تخصيص البنك يجب أن يطابق اتجاه وتاريخ وحد المبلغ الفعلي غير المستخدم.')
+        # A bank-evidence reviewer is not an individual cash custodian.
+        # Independence remains against this recovery's proposer and actual custody.
     return cash_actor
 
 
@@ -416,10 +554,13 @@ def approve_recovery(rid:str,tid:str,recovery_id:str,body:RecoveryApproval,reque
                 raise db.error(403,'RECOVERY_SELF_APPROVAL','الاعتماد من موظف مستقل عن المسجل وصاحب العهدة وحركة النقد.')
             if recovery.cash_custody_event_id:
                 c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('financial-recovery-cash:'+recovery.cash_custody_event_id,))
-            if recovery.bank_reference:
-                c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('financial-recovery-bank:'+report['brand_id']+':'+recovery.bank_reference.strip().lower(),))
-            used=c.execute("SELECT 1 FROM audit_events WHERE action=%s AND (details->>'cash_custody_event_id'=%s OR (details->>'brand_id'=%s AND lower(details->>'bank_reference')=%s)) LIMIT 1",(RECOVERY_APPROVED,recovery.cash_custody_event_id,report['brand_id'],recovery.bank_reference.strip().lower() if recovery.bank_reference else None)).fetchone()
-            if used:raise db.error(409,'RECOVERY_SOURCE_ALREADY_USED','حركة النقد أو مرجع البنك مرتبطان بمعالجة محفوظة؛ يمنع احتسابهما مرتين.')
+            if recovery.cash_custody_event_id:
+                used=c.execute("SELECT 1 FROM audit_events WHERE action=%s AND details->>'cash_custody_event_id'=%s LIMIT 1",(RECOVERY_APPROVED,recovery.cash_custody_event_id)).fetchone()
+                if used:raise db.error(409,'RECOVERY_SOURCE_ALREADY_USED','حركة النقد مرتبطة بمعالجة محفوظة؛ يمنع احتسابها مرتين.')
+            if recovery.card_amount_halalas:
+                from .manual_bank_matching import claim_bank_line
+                amount=recovery.card_amount_halalas*(1 if recovery.direction=='receivable_recovery' else -1)
+                claim_bank_line(c,user,recovery.bank_reference,amount,'financial_recovery',recovery_id)
             detail={**row['payload'],**body.model_dump(),'requested_by':row['requested_by'],'approved_by':user['id']}
             db.audit(c,user['id'],RECOVERY_APPROVED,'report',rid,detail)
             return {'id':recovery_id,'status':'approved','treatment_id':tid,'no_money_posted':True}
@@ -449,9 +590,8 @@ def recovery_sources(rid:str,tid:str,direction:Literal['receivable_recovery','pa
     from .operations import safe
     with db.tx() as c:
         report,latest,values=source(c,user,rid)
-        treatment=outstanding_source(c,rid,tid,values);left=remaining(treatment)
+        treatment=outstanding_source(c,rid,tid,values);left=remaining_by_direction(treatment)[direction]
         sign=1 if direction=='receivable_recovery' else -1
-        if (treatment['payload']['cash_variance_halalas']<0)!=(sign==1):return {'sources':[]}
         rows=c.execute("""SELECT e.*,u.display_name actor_name,p.display_name custodian_name,s.branch_ids,s.brand_id
             FROM custody_events e JOIN shifts s ON s.id=e.shift_id JOIN users u ON u.id=e.actor_id JOIN users p ON p.id=s.user_id
             WHERE s.brand_id=%s AND e.created_at>=%s AND e.amount_halalas*%s>0
@@ -459,5 +599,31 @@ def recovery_sources(rid:str,tid:str,direction:Literal['receivable_recovery','pa
             AND NOT EXISTS(SELECT 1 FROM audit_events a WHERE a.action=%s AND a.details->>'cash_custody_event_id'=e.id)
             ORDER BY e.created_at DESC,e.id DESC LIMIT 500""",(report['brand_id'],report['created_at'],sign,sign,left['cash'],
             ['collection','direct_receipt'] if sign==1 else ['refund','expense'],RECOVERY_APPROVED)).fetchall()
-        return safe({'sources':[{k:r[k] for k in ('id','amount_halalas','created_at','actor_name','custodian_name','reference_id','kind')}
+        from .manual_bank_matching import enabled as bank_enabled
+        return safe({'bank_matching_enabled':bank_enabled(),'sources':[{k:r[k] for k in ('id','amount_halalas','created_at','actor_name','custodian_name','reference_id','kind')}
             for r in rows if set(r['branch_ids'])<=set(report['branch_ids'])]})
+
+class FollowupAssignment(BaseModel):
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    followup_user_id:str=Field(min_length=1,max_length=150)
+    due_on:date
+    note:str=Field(min_length=5,max_length=2000,pattern=r'^[^\x00]+$')
+
+
+@router.post('/{rid}/treatments/{tid}/followup')
+def reassign_followup(rid:str,tid:str,body:FollowupAssignment,request:Request,user=Depends(auth.current_user)):
+    with db.tx() as c:
+        report,latest,values=source(c,user,rid)
+        def perform():
+            treatment=outstanding_source(c,rid,tid,values)
+            if not any(remaining(treatment).values()):raise db.error(409,'NO_OUTSTANDING_FOLLOWUP','المعالجة مسددة ولا توجد ذمة لإعادة إسنادها.')
+            person=eligible_followup(c,user,report,body.followup_user_id)
+            from .accounting import TZ
+            if body.due_on<datetime.now(TZ).date():raise db.error(422,'FINANCIAL_TREATMENT_DUE','حدد مهلة متابعة اليوم أو لاحقًا.')
+            previous=followup_assignment(c,report,treatment,user)
+            detail={'treatment_id':tid,'previous_followup_user_id':previous.get('followup_user_id'),
+                'followup_user_id':person['id'],'due_on':body.due_on.isoformat(),'reason':body.note,
+                'automatic_fallback':False,'no_money_posted':True}
+            db.audit(c,user['id'],'accounting.financial_treatment.followup_assigned','report',rid,detail)
+            return detail
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'financial_treatment.followup:'+rid+':'+tid,body.model_dump(mode='json'),perform)

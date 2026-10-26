@@ -13,6 +13,10 @@ from .order_financial_cases import scoped, accounting, case
 
 router=APIRouter(prefix='/api/financial-clarifications',tags=['financial-clarifications'])
 
+def assignments_enabled():
+    from .employee_ticket_workflow import enabled
+    return enabled()
+
 class Question(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
     version:StrictInt=Field(ge=1)
@@ -158,7 +162,7 @@ def present(c,row,user):
     if accounting(user) and (user['id']==active_reviewer or user['role']=='owner'):
         if row['status']=='responded':result['actions']=['resolve','return','reassign']
         elif row['status']!='resolved':result['actions']=['reassign']
-    if row['status']!='resolved' and not reviewer_active and (user['id']==row.get('fallback_reviewer_id') or user['role']=='owner'):
+    if assignments_enabled() and row['status']!='resolved' and not reviewer_active and (user['id']==row.get('fallback_reviewer_id') or user['role']=='owner'):
         result['actions']=['takeover']
     result['history']=c.execute('SELECT e.*,u.display_name actor_name FROM financial_case_clarification_events e JOIN users u ON u.id=e.actor_id WHERE e.clarification_id=%s ORDER BY e.version',(row['id'],)).fetchall()
     result.update(followup({**row,'requested_by':result['response_destination_id']},result['history']))
@@ -192,6 +196,15 @@ def read(c,user,identifier,lock=False):
         raise db.error(404,'CLARIFICATION_NOT_FOUND','طلب الاستكمال غير متاح.')
     if user['id']==row['assignee_id'] and not accounting(user):eligible_assignee(c,user,o,user['id'])
     return row,o
+
+
+@router.get('/features')
+def preparation_features(user=Depends(auth.current_user)):
+    available=assignments_enabled()
+    if user['role']=='driver' and not available:
+        with db.tx() as c:
+            available=bool(c.execute("SELECT 1 FROM financial_case_clarifications q JOIN orders o ON o.id=q.order_id WHERE q.assignee_id=%s AND o.brand_id=%s AND q.status IN ('requested','accepted') LIMIT 1",(user['id'],user['brand_id'])).fetchone())
+    return {'driver_followup_available':available,'new_assignments_enabled':assignments_enabled()}
 
 
 @router.get('/mine')
@@ -229,7 +242,8 @@ def listing(oid:str,user=Depends(auth.current_user)):
         assignees=[]
         if accounting(user) and source_case:
             from fastapi import HTTPException
-            for candidate in c.execute("SELECT id FROM users WHERE active AND role IN ('delivery_manager','driver') ORDER BY display_name,id").fetchall():
+            roles=['delivery_manager','driver'] if assignments_enabled() else ['delivery_manager']
+            for candidate in c.execute("SELECT id FROM users WHERE active AND role=ANY(%s) ORDER BY display_name,id",(roles,)).fetchall():
                 try:person=eligible_assignee(c,user,o,candidate['id'])
                 except HTTPException as exc:
                     if exc.status_code==422:continue
@@ -248,9 +262,11 @@ def request_clarification(oid:str,body:Question,request:Request,user=Depends(aut
             if body.version!=o['version']:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث الصفحة قبل إرسال الاستكمال.')
             pending=case(c,oid)
             if not pending:raise db.error(409,'FINANCIAL_CASE_REQUIRED','طلب الاستكمال يجب أن يرتبط بمعالجة مالية مسجلة.')
-            eligible_assignee(c,user,o,body.assignee_id)
+            target=eligible_assignee(c,user,o,body.assignee_id)
+            if target['role']=='driver' and not assignments_enabled():
+                raise db.error(404,'ADMIN_WORKFLOW_NOT_ENABLED','مسار الإسناد الجديد مجهز تطويريًا وغير مفعل حاليًا.')
             row=c.execute("INSERT INTO financial_case_clarifications(id,order_id,case_event_id,requested_by,assignee_id,question,source_order_version,status,due_at,current_reviewer_id,fallback_reviewer_id) VALUES(%s,%s,%s,%s,%s,%s,%s,'requested',%s,%s,%s) RETURNING *",
-                (db.new_id('fcq_'),oid,pending['id'],user['id'],body.assignee_id,body.question,o['version'],datetime.now(timezone.utc)+timedelta(hours=body.due_hours),user['id'],fallback_reviewer(c,o,user['id']))).fetchone()
+                (db.new_id('fcq_'),oid,pending['id'],user['id'],body.assignee_id,body.question,o['version'],datetime.now(timezone.utc)+timedelta(hours=body.due_hours),user['id'],fallback_reviewer(c,o,user['id']) if assignments_enabled() else None)).fetchone()
             record(c,row,user,'requested',body.question)
             return {'clarification':present(c,row,user)}
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'financial_clarification.request:'+oid,command_payload(body),perform)
@@ -268,6 +284,7 @@ def decide(identifier:str,body:Decision,request:Request,user=Depends(auth.curren
             if row['version']!=body.expected_version:raise db.error(409,'CLARIFICATION_VERSION_CONFLICT','تغير طلب الاستكمال؛ حدّث الصفحة.')
             before=row['status'];action=body.action
             if action=='takeover':
+                if not assignments_enabled():raise db.error(404,'ADMIN_WORKFLOW_NOT_ENABLED','مسار الإسناد الجديد مجهز تطويريًا وغير مفعل حاليًا.')
                 require_accounting(user)
                 if before=='resolved' or eligible_reviewer(c,o,reviewer_identifier(row)):
                     raise db.error(409,'CLARIFICATION_REVIEWER_ACTIVE','المراجع الأصلي متاح؛ لا تُنقل المتابعة دون سبب وصلاحية.')
@@ -286,7 +303,9 @@ def decide(identifier:str,body:Decision,request:Request,user=Depends(auth.curren
                 reviewer(user,row)
                 if action=='reassign':
                     if before=='resolved' or not body.assignee_id:raise db.error(409,'CLARIFICATION_STATE','حدد مديرًا بديلًا لطلب غير مقفل.')
-                    eligible_assignee(c,user,o,body.assignee_id)
+                    target=eligible_assignee(c,user,o,body.assignee_id)
+                    if target['role']=='driver' and not assignments_enabled():
+                        raise db.error(404,'ADMIN_WORKFLOW_NOT_ENABLED','مسار الإسناد الجديد مجهز تطويريًا وغير مفعل حاليًا.')
                     if body.assignee_id==row['assignee_id']:raise db.error(422,'CLARIFICATION_SAME_ASSIGNEE','اختر مديرًا بديلًا مختلفًا.')
                     row['assignee_id']=body.assignee_id;status='requested'
                 else:

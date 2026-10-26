@@ -48,7 +48,9 @@ def case(c, oid):
     invoice=original(c,oid)
     kind='cancellation' if order['preparation_status'] in ('cancelled','rejected') else row['details'].get('kind','cancellation')
     collected=balance(c,order)
-    return {'kind':kind,'collected_halalas':collected,'pending_amount_halalas':max(0,order['total_halalas']-collected) if kind=='collection_shortfall' else collected,'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
+    from .order_financial_treatments import state as source_state
+    financial=source_state(c,order,row['id'],collected_halalas=collected,review_resolved=bool(resolved)) if kind=='collection_shortfall' else {}
+    return {**financial,'kind':kind,'collected_halalas':collected,'pending_amount_halalas':financial.get('pending_amount_halalas',max(0,order['total_halalas']-collected)) if kind=='collection_shortfall' else collected,'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
             'responsible_role':'accounting','status':'resolved' if resolved else 'pending',
             'reason':row['details']['reason'],'resolution':resolved,'operationally_blocking':False}
 
@@ -125,7 +127,7 @@ def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None,
     """A recorded receipt/operational closure may proceed; financial approval may not."""
     from .aggregate_driver_closure import guard_financial_allocation
     guard_financial_allocation(c,shift_id=shift_id,brand_id=brand_id,branch_ids=branch_ids,before=before)
-    row=c.execute("""SELECT o.id FROM orders o
+    pending_orders=c.execute("""SELECT o.id FROM orders o
         WHERE (%s::text IS NULL OR o.brand_id=%s)
           AND (%s::jsonb IS NULL OR %s::jsonb ? o.branch_id)
           AND (%s::timestamptz IS NULL OR o.created_at<%s)
@@ -134,9 +136,13 @@ def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None,
           AND EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND e.event_type='financial_case.opened'
                 AND e.details->>'kind'='collection_shortfall'
                 AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='financial_case.resolved' AND r.details->>'case_id'=e.id))
-        LIMIT 1""",(brand_id,brand_id,db.json(branch_ids) if branch_ids is not None else None,
-                     db.json(branch_ids) if branch_ids is not None else None,before,before,shift_id,shift_id,shift_id)).fetchone()
-    if row:raise db.error(409,'COLLECTION_CASE_PENDING','يوجد فرق تحصيل بانتظار المحاسبة؛ أكمل معالجة الطلب قبل الاعتماد المالي. استلام النقد والإقفال التشغيلي متاحان.')
+        """,(brand_id,brand_id,db.json(branch_ids) if branch_ids is not None else None,
+                     db.json(branch_ids) if branch_ids is not None else None,before,before,shift_id,shift_id,shift_id)).fetchall()
+    for pending in pending_orders:
+        order=c.execute('SELECT * FROM orders WHERE id=%s',(pending['id'],)).fetchone()
+        from .order_financial_treatments import state as source_state,current_case
+        if source_state(c,order,current_case(c,order)['id'])['period_approval_allowed']:continue
+        raise db.error(409,'COLLECTION_CASE_PENDING','يوجد فرق تحصيل بانتظار المحاسبة؛ أكمل معالجة الطلب قبل الاعتماد المالي. استلام النقد والإقفال التشغيلي متاحان.')
 
 
 def needs_accounting(c,o):
@@ -215,7 +221,8 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
             guard_case_resolution(c,oid,pending['id'])
             from .order_amendments import balance
             if pending['kind']=='collection_shortfall':
-                if balance(c,o)!=o['total_halalas'] or o['payment_status']!='paid':
+                from .order_financial_treatments import effective_claim
+                if balance(c,o)!=effective_claim(c,o) or (o['payment_status']!='paid' and effective_claim(c,o)==o['total_halalas']):
                     raise db.error(409,'ACTUAL_COLLECTION_REQUIRED','فرق التحصيل ما زال قائمًا؛ وثّق تحصيل المتبقي قبل الإقفال. الملاحظة لا تسوّي المبلغ.')
             elif balance(c,o)!=0 or o['payment_status'] not in ('unpaid','refunded'):
                 raise db.error(409,'ACTUAL_REFUND_REQUIRED','أكمل الاسترداد الفعلي بالمسار المعتمد أولًا؛ الإلغاء ليس استردادًا.')
@@ -223,6 +230,9 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
                 from .fiscal_issuance import credit_on_cancellation
                 credit_on_cancellation(c,o,user,body.reason)
             details={'case_id':pending['id'],'reason':body.reason,'approver_id':user['id'],'executor_id':user['id']}
+            if pending['kind']=='collection_shortfall':
+                from .order_financial_treatments import state as source_state
+                details['source_financial_state']=source_state(c,o,pending['id'])
             db.event(c,oid,user['id'],'financial_case.resolved',details)
             db.audit(c,user['id'],'financial_case.resolved','order',oid,details)
             return {'financial_case':case(c,oid)}

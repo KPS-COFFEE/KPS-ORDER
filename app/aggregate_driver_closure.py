@@ -67,22 +67,23 @@ def view(c,user,day,legs):
     allocation=c.execute('SELECT * FROM shared_driver_closure_allocations WHERE declaration_id=%s',(declaration['id'],)).fetchone() if declaration else None
     returned=c.execute('SELECT * FROM shared_driver_closure_returns WHERE declaration_id=%s',(declaration['id'],)).fetchone() if declaration else None
     handover_difference=receipt_difference(declaration,receipt)
-    from .shared_financial_treatments import shared_approved
+    from .shared_financial_treatments import shared_approved,allocated_review
+    review=allocated_review(c,day['id']) if allocation else None
     treatment=shared_approved(c,day['id'],declaration['id'],receipt['id']) if declaration and receipt else None
     expected=sum(row['expected_halalas'] for row in declaration['expected_snapshot']) if declaration else sum(ops.balance(c,s) for _,s in legs)
     cards=sum(ops.blind_closure.card_reconciliation(c,s['id'],0,(s.get('external_enbishan') or {}).get('card_halalas',0))['expected_card_halalas'] for _,s in legs)
     if declaration:cards=sum(row['expected_card_halalas'] for row in declaration['expected_snapshot'])
     output={'driver_id':day['user_id'],'driver_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],'shift':{'id':day['anchor_shift_id'],'kind':'driver','user_id':day['user_id'],'status':legs[0][1]['status']},'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'declaration':declaration,'receipt':receipt,'allocation':allocation,'returned':returned,
-      'state':'allocated_with_outstanding' if allocation and treatment else 'allocated' if allocation else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_receipt' if declaration else 'awaiting_driver',
+      'state':'allocated_amount_settled' if allocation and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if allocation and treatment else 'allocated' if allocation else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_receipt' if declaration else 'awaiting_driver',
       'expected_cash_halalas':expected,'expected_card_halalas':cards,
       'receipt_difference_halalas':handover_difference,
-      'receipt_review_required':bool(handover_difference and not treatment),'receipt_treatment':treatment,
+      'receipt_review_required':bool(handover_difference and not treatment),'receipt_treatment':treatment,'receipt_accounting_review':review,
       'cash_difference_halalas':declaration['cash_halalas']-sum(x['expected_halalas'] for x in declaration['expected_snapshot']) if declaration else None,
       'card_difference_halalas':declaration['card_halalas']-sum(x['expected_card_halalas'] for x in declaration['expected_snapshot']) if declaration else None,
       'legs':[{'shift_id':s['id'],'brand_id':s['brand_id'],'expected_cash_halalas':ops.balance(c,s),'permanent_float_halalas':(s.get('permanent_float') or {}).get('amount',0)} for _,s in legs],
       'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),'staffing_finished':all(physical_finished(c,s['id']) for _,s in legs),'staffing_block_reason':'retained_float_attribution' if receipt and not all(physical_finished(c,s['id']) for _,s in legs) else None}
     if user['role']=='driver':
-        for key in ['expected_cash_halalas','expected_card_halalas','cash_difference_halalas','card_difference_halalas','receipt_difference_halalas','receipt_review_required','receipt_treatment','legs']:output.pop(key,None)
+        for key in ['expected_cash_halalas','expected_card_halalas','cash_difference_halalas','card_difference_halalas','receipt_difference_halalas','receipt_review_required','receipt_treatment','receipt_accounting_review','legs']:output.pop(key,None)
         if declaration:output['declaration']={k:v for k,v in declaration.items() if k not in {'expected_snapshot'}}
         output['allocation']=None
     return ops.safe(output)
@@ -191,8 +192,8 @@ def receive(sid:str,body:PhysicalReceipt,request:Request,user=Depends(auth.curre
             if any(row['manager_user_id']!=user['id'] for row in declaration['expected_snapshot']):raise db.error(403,'SHARED_RECEIPT_RECIPIENT','مدير الوردية المسجل وحده يؤكد استلام النقد.')
             if any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_CLOSURE_STATE','التقفيلة ليست مرسلة.')
             validate_operational(c,user,legs)
-            from .driver_incentives import require_decisions
-            for principal,s in legs:require_decisions(c,principal,s)
+            # Witnessing physical cash is independent of entitlement decisions.
+            # Those remain mandatory at accounting allocation below.
             identifier=ops.uid()
             c.execute('INSERT INTO shared_driver_closure_receipts(id,declaration_id,received_halalas,received_by,manager_shift_ids,reference) VALUES(%s,%s,%s,%s,%s,%s)',(identifier,declaration['id'],body.received_halalas,user['id'],db.json([s['manager_shift_id'] for _,s in legs]),body.reference))
             for _,s in legs:
@@ -325,7 +326,9 @@ def inbox(user=Depends(auth.current_user)):
             except HTTPException as error:
                 if error.status_code in {403,404}:continue
                 raise
-            output.append(view(c,user,day,legs))
+            item=view(c,user,day,legs)
+            if item.get('allocation') and (item.get('receipt_accounting_review') or {}).get('financially_complete'):continue
+            output.append(item)
         return {'workdays':output}
 
 
@@ -333,15 +336,19 @@ def pending_financial_rows(c,*,shift_id=None,brand_id=None,branch_ids=None,befor
     if not multibrand.enabled():return []
     rows=[]
     for family in ('driver','manager'):
-        clauses=["(a.id IS NULL OR EXISTS (SELECT 1 FROM audit_events treatment WHERE treatment.entity_type='central_workday' AND treatment.entity_id=w.id AND treatment.action='accounting.financial_treatment.approved' AND treatment.details->>'declaration_id'=d.id AND treatment.details->>'kind'='outstanding' AND treatment.details->>'allow_period_approval_with_outstanding' IS DISTINCT FROM 'true'))"];params=[]
+        clauses=["(a.id IS NULL OR EXISTS (SELECT 1 FROM audit_events treatment WHERE treatment.entity_type='central_workday' AND treatment.entity_id=w.id AND treatment.action='accounting.financial_treatment.approved' AND treatment.details->>'declaration_id'=d.id AND treatment.details->>'kind'='outstanding'))"];params=[]
         clauses.append('returned.declaration_id IS NULL')
         if shift_id:clauses.append('(s.id=%s OR s.manager_shift_id=%s)');params.extend([shift_id,shift_id])
         if brand_id:clauses.append('s.brand_id=%s');params.append(brand_id)
         if branch_ids is not None:clauses.append('s.branch_ids ?| %s');params.append(list(branch_ids))
         if before is not None:clauses.append('d.created_at<%s');params.append(before)
         returns=f' LEFT JOIN shared_{family}_closure_returns returned ON returned.declaration_id=d.id'
-        query=f'SELECT DISTINCT d.id declaration_id,w.anchor_shift_id,w.user_id,d.created_at FROM shared_{family}_closure_declarations d JOIN central_workdays w ON w.id=d.workday_id JOIN central_workday_legs l ON l.workday_id=w.id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_{family}_closure_allocations a ON a.declaration_id=d.id'+returns+' WHERE '+' AND '.join(clauses)+' ORDER BY d.created_at,d.id'
-        rows.extend(dict(row,kind=family) for row in c.execute(query,params).fetchall())
+        query=f'SELECT DISTINCT d.id declaration_id,d.workday_id,w.anchor_shift_id,w.user_id,d.created_at FROM shared_{family}_closure_declarations d JOIN central_workdays w ON w.id=d.workday_id JOIN central_workday_legs l ON l.workday_id=w.id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_{family}_closure_allocations a ON a.declaration_id=d.id'+returns+' WHERE '+' AND '.join(clauses)+' ORDER BY d.created_at,d.id'
+        from .shared_financial_treatments import allocated_review
+        for row in c.execute(query,params).fetchall():
+            review=allocated_review(c,row['workday_id'])
+            if review and review['period_approval_allowed']:continue
+            rows.append(dict(row,kind=family))
     return rows
 
 

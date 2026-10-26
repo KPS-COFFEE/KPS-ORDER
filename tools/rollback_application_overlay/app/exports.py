@@ -21,6 +21,7 @@ from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 from . import auth, db
+from .runtime_revision import revision as source_revision
 
 router = APIRouter(prefix='/api/admin')
 FORMAT = 'kps-portable-v2'
@@ -41,9 +42,13 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'staff_brand_memberships', 'driver_brand_dedications',
           'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
-          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations', 'shared_driver_closure_declarations', 'shared_driver_closure_returns', 'shared_driver_closure_receipts', 'shared_driver_closure_allocations', 'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations', 'financial_case_clarifications', 'financial_case_clarification_events','legacy_invoice_imports')
+          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations', 'shared_driver_closure_declarations', 'shared_driver_closure_returns', 'shared_driver_closure_receipts', 'shared_driver_closure_allocations', 'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations', 'financial_case_clarifications', 'financial_case_clarification_events','legacy_invoice_imports',
+          'bank_reconciliation_batches','bank_reconciliation_receipts','bank_reconciliation_decisions','bank_reconciliation_source_claims','bank_reconciliation_bank_lines','bank_reconciliation_bank_claims')
+TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations','shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
-AUTH_TABLES = SHARED_PHYSICAL_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+# Global bank statement originals can span sellers; private full archives retain them.
+SHARED_BANK_TABLES = {'bank_reconciliation_bank_lines'}
+AUTH_TABLES = SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',
@@ -71,7 +76,17 @@ def _encode(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), default=_plain).encode()
 
 
-def _scoped_sql(table, brand):
+def _scoped_sql(table, brand, *, bank_table_available=True):
+    if brand and table in {'collection_tender_correction_proposals','collection_tender_corrections'}:
+        return 'brand_id=%s', (brand,)
+    if brand and table == 'collection_tender_correction_rejections':
+        return 'proposal_id IN (SELECT id FROM collection_tender_correction_proposals WHERE brand_id=%s)', (brand,)
+    if brand and table == 'bank_reconciliation_batches':
+        return 'brand_id=%s', (brand,)
+    if brand and table in {'bank_reconciliation_receipts','bank_reconciliation_decisions','bank_reconciliation_source_claims'}:
+        return 'batch_id IN (SELECT id FROM bank_reconciliation_batches WHERE brand_id=%s)', (brand,)
+    if brand and table == 'bank_reconciliation_bank_claims':
+        return 'receipt_id IN (SELECT r.id FROM bank_reconciliation_receipts r JOIN bank_reconciliation_batches b ON b.id=r.batch_id WHERE b.brand_id=%s)', (brand,)
     if brand and table == 'driver_duty_profiles':
         return 'driver_id IN (SELECT id FROM users WHERE brand_id=%s)', (brand,)
     if brand and table == 'financial_case_clarifications':
@@ -124,7 +139,19 @@ def _scoped_sql(table, brand):
     if table in {'chat_attachments', 'chat_messages', 'conversation_reads', 'conversation_transfers'}:
         return 'conversation_id IN (SELECT id FROM conversations WHERE brand_id=%s)', (brand,)
     if table == 'audit_events':
-        return 'actor_id IN (SELECT id FROM users WHERE brand_id=%s)', (brand,)
+        # Shared staff can act for another seller. Financial evidence follows
+        # its canonical source, never the employee's home-brand identity.
+        bank_scope = "entity_type='bank_batch' AND entity_id IN (SELECT id FROM bank_reconciliation_batches WHERE brand_id=%s)" if bank_table_available else "FALSE AND %s::text IS NOT NULL"
+        return ("CASE WHEN action LIKE 'collection_tender.%%' THEN "
+                "entity_type='order' AND entity_id IN (SELECT id FROM orders WHERE brand_id=%s) "
+                "WHEN action LIKE 'accounting.financial_treatment.%%' THEN "
+                "entity_type='report' AND entity_id IN (SELECT id FROM closure_reports WHERE brand_id=%s) "
+                "WHEN action LIKE 'accounting.refund_item_allocation.%%' OR action LIKE 'accounting.order_financial_treatment.%%' THEN "
+                "entity_type='order' AND entity_id IN (SELECT id FROM orders WHERE brand_id=%s) "
+                "WHEN action LIKE 'accounting.bank_%%' THEN "
+                +bank_scope+" "
+                "WHEN action LIKE 'employee.ticket.%%' THEN details->>'brand_id'=%s "
+                "ELSE actor_id IN (SELECT id FROM users WHERE brand_id=%s) END", (brand,brand,brand,brand,brand,brand))
     if table in {'sessions', 'idempotency_keys'}:
         return 'user_id IN (SELECT id FROM users WHERE brand_id=%s)', (brand,)
     raise ValueError('An unscoped table cannot enter a brand business export.')
@@ -162,7 +189,8 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
             files[name] = {'sha256': hashlib.sha256(content).hexdigest(), 'size_bytes': len(content)}
 
         for table in selected:
-            clause, params = _scoped_sql(table, None if full else brand_id)
+            clause, params = _scoped_sql(table, None if full else brand_id,
+                                         bank_table_available='bank_reconciliation_batches' in available)
             ordering = ' ORDER BY kind DESC,opened_at,id' if table == 'shifts' else ''
             rows = conn.execute(sql.SQL('SELECT * FROM {} WHERE ' + clause + ordering).format(sql.Identifier(table)), params).fetchall()
             counts[table] = len(rows)
@@ -189,7 +217,7 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                 if full or brand_id == 'kps':
                     add('static/assets/' + path.name, path.read_bytes())
         manifest = {'format': FORMAT, 'mode': 'database' if full else 'business', 'created_at': datetime.now(timezone.utc).isoformat(),
-                    'source_revision': os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned',
+                    'source_revision': source_revision('local-unversioned'),
                     'scope': {'brand_id': None if full else brand_id}, 'migrations': migrations,
                     'table_order': selected, 'counts': counts, 'totals': _totals(conn, None if full else brand_id),
                     'files': files, 'timezone': 'Asia/Riyadh', 'currency': 'SAR',

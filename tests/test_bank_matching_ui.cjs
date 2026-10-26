@@ -1,13 +1,13 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 (async()=>{
   for(const lang of ['ar','en']){
-    let rendered='',submit,create=null,actions={},mutations=[];
+    let rendered='',submit,create=null,register=null,actions={},mutations=[],registry={proposals:[],bank_lines:[]};
     const batch={id:'batch /1',batch_reference:'Actual <provider>',gross_halalas:10000,refund_halalas:1000,fees_halalas:100,expected_net_halalas:8900,bank_received_halalas:5000,timing_pending_halalas:3900,state:'partially_received',proposed_by:'preparer',source_snapshot:{},approval:{decision:'approved',reviewer_name:'Independent accountant',note:'Actual reviewed fee evidence'},receipts:[]};
     const cols=[{id:'card-001',order_no:25,amount_halalas:10000,created_at:'2026-10-26'}],refs=[{id:'refund-001',order_no:25,amount_halalas:1000,created_at:'2026-10-26'}];
     const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const context={window:{},document:{querySelector:q=>q==='[data-bank-new]'?create:null,querySelectorAll:q=>actions[q]||[]},URLSearchParams};
+    const context={window:{},document:{querySelector:q=>q==='[data-bank-new]'?create:q==='[data-bank-register-line]'?register:null,querySelectorAll:q=>actions[q]||[]},URLSearchParams};
     vm.createContext(context);vm.runInContext(fs.readFileSync('public/assets/bank-matching.js','utf8'),context);
-    const ctx={user:{id:'reviewer',role:'admin'},start:'2026-10-25',end:'2026-10-26',tr:(ar,en)=>lang==='en'?en:ar,esc,money:v=>(v/100).toFixed(2),cents:v=>Math.round(Number(v)*100),closeModal:()=>{},modal:(title,html,fn)=>{rendered=html;submit=fn;create=html.includes('data-bank-new')?{addEventListener:(e,fn)=>create.click=fn}:null;},api:async path=>path.includes('/sources?')?{collections:cols,refunds:refs}:{batches:[batch]},mutation:async(path,body)=>mutations.push({path,body:JSON.parse(JSON.stringify(body))})};
+    const ctx={user:{id:'reviewer',role:'admin'},start:'2026-10-25',end:'2026-10-26',tr:(ar,en)=>lang==='en'?en:ar,esc,money:v=>(v/100).toFixed(2),cents:v=>Math.round(Number(v)*100),closeModal:()=>{},modal:(title,html,fn)=>{rendered=html;submit=fn;create=html.includes('data-bank-new')?{addEventListener:(e,fn)=>create.click=fn}:null;register=html.includes('data-bank-register-line')?{addEventListener:(e,fn)=>register.click=fn}:null;},api:async path=>path.endsWith('/bank-lines')?registry:path.includes('/sources?')?{collections:cols,refunds:refs}:{batches:[batch]},mutation:async(path,body)=>mutations.push({path,body:JSON.parse(JSON.stringify(body))})};
     await context.window.KPSBankMatching.open(ctx);
     assert(rendered.includes('Actual &lt;provider&gt;')&&!rendered.includes('Actual <provider>'));
     for(const amount of ['100.00','10.00','1.00','89.00','50.00','39.00'])assert(rendered.includes(amount));
@@ -36,6 +36,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
     assert.deepEqual(mutations[3].body,{decision:'approved',confirmed:true,evidence_reference:'Actual evidence',note:'Independent review'});
     ctx.user.id='preparer';actions={};await context.window.KPSBankMatching.open(ctx);
     assert(!rendered.includes('data-bank-decision='),'Preparer must not see self approval action');
+    register.click();assert(rendered.includes('name="direction"')&&rendered.includes('name="received_on"'));
+    await submit(new Map([['direction','credit'],['amount','12.50'],['bank_account_reference','ACTUAL ACCOUNT 1234'],['statement_reference','ACTUAL BANK PERIOD 001'],['line_reference','LINE 15'],['received_on','2026-10-26'],['evidence_reference','Actual standalone recovery movement'],['note','Record actual original movement without posting money']]));
+    assert.equal(mutations[4].path,'/api/accounting/bank-reconciliation/bank-lines');assert.equal(mutations[4].body.amount_halalas,1250);assert.equal(mutations[4].body.statement_amount_halalas,1250);
+    registry.proposals=[{id:'original-source',proposed_by:'other',bank_account_reference:'ACCOUNT',statement_reference:'STATEMENT',line_reference:'15',amount_halalas:1250,evidence_reference:'Actual source evidence',note:'Independent source'}];
+    const sourceDecision={dataset:{bankLineDecision:'original-source',decision:'approved'}};actions={'[data-bank-line-decision]':[sourceDecision]};await context.window.KPSBankMatching.open(ctx);sourceDecision.onclick();
+    await submit(new Map([['confirmed','on'],['evidence_reference','Independent bank original document'],['note','Checked actual amount and date']]));
+    assert.equal(mutations[5].path,'/api/accounting/bank-reconciliation/bank-lines/original-source/decision');assert.equal(mutations[5].body.confirmed,true);
     assert(mutations.every(m=>!m.path.includes('/collect')&&!m.path.includes('/refund')),'Matching must never post a customer collection/refund');
   }
   console.log('PASS: AR/EN source-linked POS batch forms separate fees, refunds, actual bank receipts/debits and independent decisions');

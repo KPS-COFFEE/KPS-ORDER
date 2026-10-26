@@ -75,3 +75,16 @@ def test_summary_values_require_documented_integer_not_missing_or_coerced_zero(v
 def test_malformed_order_evidence_fails_closed_without_crashing(value):
     snap=evidence();snap['orders']=value
     assert not inspect_snapshot(snap)['verified']
+
+
+@pytest.mark.parametrize('key,value',[('shift_id',[]),('order_id',{}),('shift_id',False)])
+def test_malformed_cash_lineage_fails_closed_without_hash_or_type_crash(key,value):
+    snap=evidence();snap['collections'][0][key]=value
+    result=inspect_snapshot(snap)
+    assert not result['verified'] and 'INVALID_MONEY' in {r['code'] for r in result['issues']}
+
+
+def test_missing_fulfilment_evidence_cannot_be_inferred_as_zero_completed():
+    snap=evidence();snap['orders'][0].pop('fulfilled_in_report')
+    snap['summary'].update(completed_orders=0,gross_completed_halalas=0)
+    assert not inspect_snapshot(snap)['verified']

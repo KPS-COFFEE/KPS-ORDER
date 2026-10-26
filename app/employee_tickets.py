@@ -2,7 +2,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from . import auth, db
 from .operations import safe
@@ -73,10 +73,12 @@ def catalog(user):
 
 @router.get('/options')
 def options(user=Depends(staff)):
+    from .employee_ticket_workflow import enabled
     profile='accounting' if user['role']!='owner' and auth.has_permission(user,'accounting_review') else user['role']
     ar,en=ROLE_LABELS[profile]
     return dict(types=catalog(user),role_profile=option(profile,ar,en),can_review=user['role']=='owner',
-        cash_correction_requires_accounting_ticket=True,review_only=True)
+        cash_correction_requires_accounting_ticket=True,review_only=True,
+        factual_workflow_enabled=enabled())
 
 
 class TicketBody(BaseModel):
@@ -85,6 +87,13 @@ class TicketBody(BaseModel):
     issue:str=Field(min_length=1,max_length=80)
     reason:str=Field(min_length=1,max_length=80)
     description:str=Field(default='',max_length=2000)
+    source_type:Literal['order','vehicle_report','print_job']|None=None
+    source_id:str|None=Field(default=None,min_length=1,max_length=150)
+    @field_validator('description','source_id')
+    @classmethod
+    def valid_text(cls,value):
+        if value and '\x00' in value:raise ValueError('Invalid text')
+        return value
 
 
 class TicketReview(BaseModel):
@@ -101,8 +110,10 @@ def ticket_events(c,user,identifier,lock=False):
     created=c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id
       WHERE a.action=%s AND a.entity_type='employee_ticket' AND a.entity_id=%s AND a.details->>'brand_id'=%s""",
       (CREATED,identifier,user['brand_id'])).fetchone()
-    if not created or (user['role']!='owner' and created['actor_id']!=user['id']):
-        fail('TICKET_SCOPE','التذكرة غير متاحة.',404)
+    if not created:fail('TICKET_SCOPE','التذكرة غير متاحة.',404)
+    from .employee_ticket_workflow import enabled,visible
+    if enabled():visible(c,created,user)
+    elif user['role']!='owner' and created['actor_id']!=user['id']:fail('TICKET_SCOPE','التذكرة غير متاحة.',404)
     changes=c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id
       WHERE a.action=%s AND a.entity_type='employee_ticket' AND a.entity_id=%s
       AND a.details->>'brand_id'=%s ORDER BY (a.details->>'version')::int""",
@@ -116,6 +127,8 @@ def render_ticket(created,changes):
         description=d['description'],type_label=d['type_label'],issue_label=d['issue_label'],reason_label=d['reason_label'],requested_by=created['actor_id'],requester_name=created['actor_name'],
         requester_role=d['requester_role'],created_at=created['created_at'],status=last['status'],version=last['version']))
     from .administrative_guidance import employee_ticket
+    from .employee_ticket_workflow import enabled
+    if enabled():result['source']=d.get('source')
     return dict(result,guidance=employee_ticket(result))
 
 
@@ -129,24 +142,37 @@ def create_ticket(body:TicketBody,request:Request,user=Depends(staff)):
     if 'other' in {body.type,body.issue,body.reason} and len(body.description)<3:
         fail('OTHER_DESCRIPTION_REQUIRED','وضّح المشكلة أو السبب الآخر في الوصف.')
     with db.tx() as c:
+        from .employee_ticket_workflow import enabled,source,initial,require_enabled
+        if body.source_type or body.source_id:require_enabled()
+        linked=source(c,user,body.source_type,body.source_id) if enabled() else None
+        payload=body.model_dump(exclude={'source_type','source_id'} if not body.source_type and not body.source_id else set())
         def perform():
             identifier=db.new_id('et_')
             db.audit(c,user['id'],CREATED,'employee_ticket',identifier,
                 dict(brand_id=user['brand_id'],requester_role=user['role'],reference='ET-'+identifier.removeprefix('et_')[:12].upper(),
                      status='open',version=1,type_label={k:selected[k] for k in ('ar','en')},
-                     issue_label={k:issue[k] for k in ('ar','en')},reason_label={k:reason[k] for k in ('ar','en')},**body.model_dump()))
-            return render_ticket(*ticket_events(c,user,identifier))
-        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'employee.ticket.create:'+user['brand_id'],body.model_dump(),perform)
+                     issue_label={k:issue[k] for k in ('ar','en')},reason_label={k:reason[k] for k in ('ar','en')},**({'branch_ids':linked['branch_ids'] if linked else user.get('branch_ids',[]),'source':linked} if enabled() else {}),**payload))
+            created,changes=ticket_events(c,user,identifier)
+            if enabled():initial(c,created,user)
+            return render_ticket(created,changes)
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'employee.ticket.create:'+user['brand_id'],payload,perform)
 
 
 @router.get('')
 def list_tickets(user=Depends(staff)):
     with db.tx() as c:
+        from .employee_ticket_workflow import enabled
         created=c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id
           WHERE a.action=%s AND a.entity_type='employee_ticket' AND a.details->>'brand_id'=%s
-          AND (%s OR a.actor_id=%s) ORDER BY a.created_at DESC,a.id DESC LIMIT 200""",
-          (CREATED,user['brand_id'],user['role']=='owner',user['id'])).fetchall()
-        return {'tickets':[render_ticket(*ticket_events(c,user,t['entity_id'])) for t in created]}
+          AND (%s OR a.actor_id=%s OR (%s AND EXISTS(SELECT 1 FROM audit_events f WHERE f.action='employee.ticket.followup' AND f.entity_id=a.entity_id AND (f.details->>'assignee_id'=%s OR f.details->>'dispatcher_id'=%s)))) ORDER BY a.created_at DESC,a.id DESC LIMIT 200""",
+          (CREATED,user['brand_id'],user['role']=='owner',user['id'],enabled(),user['id'],user['id'])).fetchall()
+        result=[]
+        from fastapi import HTTPException
+        for ticket in created:
+            try:result.append(render_ticket(*ticket_events(c,user,ticket['entity_id'])))
+            except HTTPException as exc:
+                if exc.status_code!=404:raise
+        return {'tickets':result}
 
 
 @router.get('/{identifier}')
@@ -155,7 +181,8 @@ def detail(identifier:str,user=Depends(staff)):
         created,changes=ticket_events(c,user,identifier)
         history=[dict(status='open',note=created['details']['description'],actor_name=created['actor_name'],created_at=created['created_at'],version=1)]
         history.extend(dict(status=e['details']['status'],note=e['details']['note'],actor_name=e['actor_name'],created_at=e['created_at'],version=e['details']['version']) for e in changes)
-        return safe(dict(ticket=render_ticket(created,changes),history=history))
+        from .employee_ticket_workflow import enabled,presentation
+        return safe(dict(ticket=render_ticket(created,changes),history=history,**({'workflow':presentation(c,created,user)} if enabled() else {})))
 
 
 @router.post('/{identifier}/review')
@@ -171,3 +198,18 @@ def review_ticket(identifier:str,body:TicketReview,request:Request,user=Depends(
                      previous_status=current['status'],review_only=True,no_permission_grant=True,no_cash_movement=True))
             return render_ticket(*ticket_events(c,user,identifier))
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'employee.ticket.review:'+identifier,body.model_dump(),perform)
+
+
+
+def create_linked_followup(c,user,kind,identifier,description):
+    """Attach one factual follow-up to a canonical source inside its transaction."""
+    from .employee_ticket_workflow import source,initial,require_enabled
+    require_enabled()
+    linked=source(c,user,kind,identifier)
+    existing=c.execute("SELECT entity_id FROM audit_events WHERE action=%s AND entity_type='employee_ticket' AND details->>'brand_id'=%s AND details->'source'->>'type'=%s AND details->'source'->>'id'=%s ORDER BY created_at DESC,id DESC LIMIT 1",(CREATED,user['brand_id'],kind,identifier)).fetchone()
+    if existing:return existing['entity_id']
+    ticket_id=db.new_id('et_')
+    db.audit(c,user['id'],CREATED,'employee_ticket',ticket_id,dict(brand_id=user['brand_id'],requester_role=user['role'],reference='ET-'+ticket_id.removeprefix('et_')[:12].upper(),status='open',version=1,type='other',issue='other',reason='other',description=description,branch_ids=linked['branch_ids'],source=linked,type_label={'ar':'متابعة مرتبطة بمصدر','en':'Linked source follow-up'},issue_label={'ar':'استكمال الإجراء المختص','en':'Complete the responsible department action'},reason_label={'ar':'تعثر يستلزم متابعة مسندة','en':'Incident requiring accountable follow-up'}))
+    created=c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action=%s AND a.entity_type='employee_ticket' AND a.entity_id=%s",(CREATED,ticket_id)).fetchone()
+    initial(c,created,user)
+    return ticket_id

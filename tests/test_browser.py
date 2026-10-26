@@ -679,7 +679,7 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
     duplicated=context.request.post(matching_url,headers={**headers,'idempotency-key':secrets.token_hex(16)},data=request.post_data_json)
     assert duplicated.status==409,duplicated.text()
     assert duplicated.json()['detail']['code']=='SETTLEMENT_FINAL'
-    expect(page.locator('#ac-results')).to_contain_text('تم استلام الكاش واعتماد التسوية')
+    expect(page.locator('#ac-results')).to_contain_text('تم استلام الكاش — مراجعة الموازنة معتمدة')
     expect(page.locator(f'[data-driver-balance="{report_id}"]')).to_have_count(0)
     expect(page.locator(f'[data-driver-receipt="{report_id}"]')).to_have_count(0)
     rows=context.request.get(base+'/api/accounting/driver-settlements?kind=driver').json()['settlements']
@@ -825,7 +825,11 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         expect(manager.locator('[data-action=confirm-custody]')).to_have_count(1)
         _capture(manager,'delivery-manager-pending-driver-receipt')
         manager.locator('[data-action=confirm-custody]').click()
-        _submit_modal(manager,check=['received'])
+        expect(manager.locator('#modal-body input[name=received]')).to_have_attribute('type','number')
+        with manager.expect_response(lambda response:response.request.method=='POST' and '/api/custody/' in response.url and response.url.endswith('/confirm')) as receipt:
+            _submit_modal(manager,{'received':'10.00'},check=['confirmed'])
+        assert receipt.value.status==200,receipt.value.text()
+        assert receipt.value.request.post_data_json=={'received_halalas':1000,'confirmed':True}
         manager.locator('#navigation [data-page=shifts]').click()
         manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
         expect(manager.locator('#modal-body')).to_contain_text('التسليم النهائي المستلم المؤكد')

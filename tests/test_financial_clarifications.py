@@ -52,7 +52,7 @@ def test_clarification_accept_response_return_and_accountant_acceptance_preserve
     url='/api/financial-clarifications/orders/'+oid
     context=actor('accountant').get(url)
     assert context.status_code==200,context.text
-    assert {p['id'] for p in context.json()['assignees']}=={'ops-manager','ops-driver'}
+    assert {p['id'] for p in context.json()['assignees']}=={'ops-manager'}
     payload={'version':context.json()['order_version'],'assignee_id':'ops-manager','question':'Confirm why the customer paid 19.50 and provide the receipt reference'}
     post('manager',url,payload,status=403)
     post('accountant',url,{**payload,'version':payload['version']+1},status=409)
@@ -120,7 +120,8 @@ def test_decline_reassign_revocation_and_case_guard(ops):
 
 
 @pytest.mark.postgres
-def test_direct_driver_evidence_request_is_scoped_and_does_not_settle_money(ops):
+def test_direct_driver_evidence_request_is_scoped_and_does_not_settle_money(ops,monkeypatch):
+    monkeypatch.setenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','true')
     actor,post,_,_=ops
     oid=setup_case(ops)
     source=financial_source(oid)
@@ -142,7 +143,8 @@ def test_direct_driver_evidence_request_is_scoped_and_does_not_settle_money(ops)
     assert actor('driver').get(url).status_code==404
 
 @pytest.mark.postgres
-def test_inactive_reviewer_has_named_accounting_fallback_and_recorded_takeover(ops):
+def test_inactive_reviewer_has_named_accounting_fallback_and_recorded_takeover(ops,monkeypatch):
+    monkeypatch.setenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','true')
     actor,post,_,_=ops
     oid=setup_case(ops)
     with db.tx() as c:

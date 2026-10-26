@@ -291,15 +291,15 @@ def test_discrepancy_partial_handover_retained_carryover(ops):
     assert sub['submission']['expected_halalas']==600 and sub['submission']['difference_halalas']==-100
     tid=post('driver','/api/custody',{'from_shift_id':driver,'to_shift_id':manager,'amount_halalas':400,'reference':'FINAL','closure':True})['transfer']['id']
     post('manager','/api/custody/'+tid+'/confirm')
-    post('manager','/api/shifts/'+driver+'/approve',status=422)
-    post('owner','/api/shifts/'+driver+'/approve',{'exception_reason':'TEST: نقص معتمد مع إبقاء عهدة 1 ريال'})
+    post('manager','/api/shifts/'+driver+'/approve')
     nxt=post('driver','/api/shifts',{'kind':'driver','manager_shift_id':manager,'branch_ids':['ops-branch']})['shift']
     assert 'opening_halalas' not in nxt
     assert actor('manager').get('/api/shifts/'+nxt['id']).json()['shift']['opening_halalas']==100
     with db.tx() as c:
         carry=c.execute('SELECT * FROM retained_carryovers WHERE from_shift_id=%s',(driver,)).fetchone()
         assert carry['to_shift_id']==nxt['id']
-        assert c.execute("SELECT amount_halalas FROM custody_events WHERE shift_id=%s AND kind='adjustment'",(driver,)).fetchone()['amount_halalas']==-100
+        assert c.execute("SELECT amount_halalas FROM custody_events WHERE shift_id=%s AND kind='adjustment'",(driver,)).fetchone() is None
+        assert c.execute('SELECT submission FROM shifts WHERE id=%s',(driver,)).fetchone()['submission']['financial_review_required'] is True
 
 
 @pytest.mark.postgres

@@ -14,6 +14,11 @@ from test_operations import ops
 from test_accounting import accountant
 
 
+@pytest.fixture(autouse=True)
+def explicit_test_bank_preparation(monkeypatch):
+    monkeypatch.setenv('KPS_MANUAL_BANK_MATCHING_ENABLED','true')
+
+
 @pytest.mark.parametrize('payload',[
     {'collection_ids':[],'refund_ids':[],'fees_halalas':0},
     {'collection_ids':['same','same'],'fees_halalas':0},
@@ -36,6 +41,7 @@ def test_partial_bank_movements_and_debits_are_supported_without_netting():
 
 def setup_sources(ops,refund=True):
     actor,post,order,_=ops;accountant();oid=order('pickup')
+    with db.tx() as c:c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions) VALUES('ops-bankreviewer','Independent bank reviewer','admin','ops-brand','[\"ops-branch\"]','[\"accounting_reports\",\"accounting_review\"]')")
     post('branch',f'/api/orders/{oid}/collect',{'method':'card','amount_halalas':1000,'reference':'ACTUAL POS OPERATION'})
     if refund:post('owner',f'/api/orders/{oid}/refund',{'method':'card','amount_halalas':200,'reason':'ACTUAL CARD REFUND','line_quantities':{}})
     with db.tx() as c:
@@ -71,26 +77,26 @@ def test_bank_batch_separates_fees_refunds_timing_and_preserves_sources(ops):
     assert actor('driver').get(base).status_code==403
     post('accountant',base+'/'+bid+'/decision',decision(),status=403)
     post('accountant',base+'/'+bid+'/receipts',receipt(),status=409)
-    batch=post('owner',base+'/'+bid+'/decision',decision(),key='batch-independent-approval')
+    batch=post('bankreviewer',base+'/'+bid+'/decision',decision(),key='batch-independent-approval')
     assert batch['state']=='awaiting_bank' and batch['operational_work_may_continue']
     assert actor('accountant').get(base+'/sources').json()=={'collections':[],'refunds':[]}
     other_batch=post('accountant',base,{**body,'batch_reference':'DUPLICATE SOURCE BATCH'})
-    post('owner',base+'/'+other_batch['id']+'/decision',decision(),status=409)
+    post('bankreviewer',base+'/'+other_batch['id']+'/decision',decision(),status=409)
     first=post('accountant',base+'/'+bid+'/receipts',receipt(),key='actual-bank-arrival-1')
     rid=first['receipts'][0]['id']
     assert first['bank_received_halalas']==0,'Unapproved evidence is not a bank receipt'
     post('accountant',base+'/'+bid+'/receipts/'+rid+'/decision',decision(),status=403)
-    partial=post('owner',base+'/'+bid+'/receipts/'+rid+'/decision',decision(),key='actual-bank-independent-1')
+    partial=post('bankreviewer',base+'/'+bid+'/receipts/'+rid+'/decision',decision(),key='actual-bank-independent-1')
     assert partial['state']=='partially_received' and partial['bank_received_halalas']==500 and partial['timing_pending_halalas']==280
     duplicate=post('accountant',base+'/'+bid+'/receipts',receipt(280,'1'))
     duplicate_id=duplicate['receipts'][-1]['id']
-    post('owner',base+'/'+bid+'/receipts/'+duplicate_id+'/decision',decision(),status=409)
-    post('owner',base+'/'+bid+'/receipts/'+duplicate_id+'/decision',decision('rejected'))
+    post('bankreviewer',base+'/'+bid+'/receipts/'+duplicate_id+'/decision',decision(),status=409)
+    post('bankreviewer',base+'/'+bid+'/receipts/'+duplicate_id+'/decision',decision('rejected'))
     second=post('accountant',base+'/'+bid+'/receipts',receipt(280,'2'))
     second_id=second['receipts'][-1]['id']
-    final=post('owner',base+'/'+bid+'/receipts/'+second_id+'/decision',decision(),key='actual-bank-independent-2')
+    final=post('bankreviewer',base+'/'+bid+'/receipts/'+second_id+'/decision',decision(),key='actual-bank-independent-2')
     assert final['state']=='matched' and final['timing_pending_halalas']==0 and final['bank_received_halalas']==780
-    assert post('owner',base+'/'+bid+'/receipts/'+second_id+'/decision',decision(),key='actual-bank-independent-2')==final
+    assert post('bankreviewer',base+'/'+bid+'/receipts/'+second_id+'/decision',decision(),key='actual-bank-independent-2')==final
     with db.tx() as c:
         assert c.execute('SELECT * FROM collections WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==original_collections
         assert c.execute('SELECT * FROM refunds WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==original_refunds
@@ -108,10 +114,10 @@ def test_refund_only_bank_debit_and_scope_rejections(ops):
     bid=made['id'];assert made['expected_net_halalas']==-210
     post('other',base+'/'+bid+'/decision',decision(),status=404)
     post('other',base,{**body,'collection_ids':[]},status=404)
-    post('owner',base+'/'+bid+'/decision',decision())
+    post('bankreviewer',base+'/'+bid+'/decision',decision())
     post('accountant',base+'/'+bid+'/receipts',receipt(210),status=409)
     data=post('accountant',base+'/'+bid+'/receipts',receipt(-210));rid=data['receipts'][0]['id']
-    result=post('owner',base+'/'+bid+'/receipts/'+rid+'/decision',decision())
+    result=post('bankreviewer',base+'/'+bid+'/receipts/'+rid+'/decision',decision())
     assert result['state']=='matched' and result['bank_received_halalas']==-210
     assert actor('other').get(base).json()['batches']==[]
 
@@ -121,7 +127,7 @@ def test_concurrent_batch_approval_claims_source_once(ops):
     actor,post,_,_=ops;_,body,_,_=setup_sources(ops,refund=False)
     base='/api/accounting/bank-reconciliation'
     first=post('accountant',base,body);second=post('accountant',base,{**body,'batch_reference':'SAME OPERATION OTHER BATCH'})
-    with db.tx() as c:owner=c.execute("SELECT * FROM users WHERE id='ops-owner'").fetchone()
+    with db.tx() as c:owner=c.execute("SELECT * FROM users WHERE id='ops-bankreviewer'").fetchone()
     def approve(bid):
         try:
             decide_batch(bid,Decision(**decision()),SimpleNamespace(headers={'Idempotency-Key':uuid4().hex}),owner)
@@ -139,10 +145,10 @@ def test_one_physical_bank_line_is_explicitly_allocated_across_brands_once(ops):
     actor,post,_,_=ops;_,body,_,_=setup_sources(ops)
     base='/api/accounting/bank-reconciliation'
     first=post('accountant',base,body);bid=first['id']
-    post('owner',base+'/'+bid+'/decision',decision())
+    post('bankreviewer',base+'/'+bid+'/decision',decision())
     declared=receipt(780,'shared-line');declared['statement_amount_halalas']=1000
     first=post('accountant',base+'/'+bid+'/receipts',declared);rid=first['receipts'][0]['id']
-    first=post('owner',base+'/'+bid+'/receipts/'+rid+'/decision',decision())
+    first=post('bankreviewer',base+'/'+bid+'/receipts/'+rid+'/decision',decision())
     assert first['receipts'][0]['bank_line_unallocated_halalas']==220
     # Synthetic canonical sources belong to a separate seller/branch. Neither
     # accountant can read the other seller's batch, even while the physical bank
@@ -173,3 +179,86 @@ def test_one_physical_bank_line_is_explicitly_allocated_across_brands_once(ops):
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM bank_reconciliation_bank_lines').fetchone()['n']==1
         assert c.execute('SELECT sum(amount_halalas) amount FROM bank_reconciliation_bank_claims').fetchone()['amount']==1000
+
+
+def test_bank_closure_status_does_not_invent_missing_evidence_or_allocate_partial_batch():
+    from unittest.mock import patch
+    from app.manual_bank_matching import closure_bank_status
+    user={'id':'accountant','role':'admin','brand_id':'test','branch_ids':['branch']}
+    assert closure_bank_status(None,user,{'snapshot':{}})['state']=='undocumented'
+    zero={'collections':[],'refunds':[],'summary':{'card_collected_halalas':0,'card_refunded_halalas':0}}
+    assert closure_bank_status(None,user,{'snapshot':zero})['state']=='no_card_operations'
+    assert closure_bank_status(None,user,{'snapshot':{**zero,'summary':{'card_collected_halalas':None,'card_refunded_halalas':0}}})['state']=='undocumented'
+    snapshot={'collections':[{'id':'col','method':'card','amount_halalas':1000}],
+        'refunds':[],'summary':{'card_collected_halalas':1000,'card_refunded_halalas':0}}
+    class Cursor:
+        def fetchone(self):return {'batch_id':'batch'}
+        def fetchall(self):return [{'id':'col','method':'card','amount_halalas':1000}]
+    class Connection:
+        def execute(self,*args):return Cursor()
+    with patch('app.manual_bank_matching.view',return_value={'id':'batch'}),patch('app.manual_bank_matching.project',return_value={'financially_matched':False}):
+        result=closure_bank_status(Connection(),user,{'snapshot':snapshot})
+        assert result=={'state':'pending','batch_ids':['batch'],'pending_source_count':1}
+        assert 'bank_received_halalas' not in result,'Never infer a per-driver bank amount from partial batch arrival'
+    with patch('app.manual_bank_matching.view',return_value={'id':'batch'}),patch('app.manual_bank_matching.project',return_value={'financially_matched':True}):
+        assert closure_bank_status(Connection(),user,{'snapshot':snapshot})['state']=='matched'
+
+
+def test_refund_only_source_cannot_be_approved_by_refund_actor_or_shift_custodian():
+    from app.manual_bank_matching import assert_independent
+    class Cursor:
+        def __init__(self,rows):self.rows=rows
+        def fetchall(self):return self.rows
+    class Connection:
+        def __init__(self,shift_actor,refund_actor):self.shift_actor,self.refund_actor=shift_actor,refund_actor
+        def execute(self,query,args):
+            return Cursor([{'user_id':self.shift_actor}] if 'FROM shifts' in query else
+                [{'authorized_by':self.refund_actor}] if 'FROM refunds' in query else [])
+    source={'proposed_by':'other','source_snapshot':{'collections':[],'refunds':[{'id':'refund','shift_id':'refund-shift'}]}}
+    for shift_actor,refund_actor in [('reviewer','other'),('other','reviewer')]:
+        with pytest.raises(HTTPException) as error:assert_independent(Connection(shift_actor,refund_actor),{'id':'reviewer'},source)
+        assert error.value.status_code==403
+    assert_independent(Connection('custodian','refund-authorizer'),{'id':'reviewer'},source)
+
+
+@pytest.mark.postgres
+def test_registered_actual_bank_source_is_shared_by_pos_and_later_recovery_without_double_use(ops):
+    from app.manual_bank_matching import bank_line,claim_bank_line
+    actor,post,_,_=ops;_,body,_,_=setup_sources(ops)
+    base='/api/accounting/bank-reconciliation'
+    proposal=post('accountant',base+'/bank-lines',receipt(1000,'standalone-line'),key='standalone-bank-registration')
+    assert proposal['bank_line_id'] is None
+    post('accountant',base+'/bank-lines/'+proposal['id']+'/decision',decision(),status=403)
+    approved=post('bankreviewer',base+'/bank-lines/'+proposal['id']+'/decision',decision())
+    identifier=approved['bank_line_id']
+    assert actor('accountant').get(base+'/bank-lines').json()['bank_lines'][0]['unallocated_halalas']==1000
+    with db.tx() as c:
+        owner=c.execute("SELECT * FROM users WHERE id='ops-owner'").fetchone()
+        assert bank_line(c,owner,identifier)['unallocated_halalas']==1000
+        claim=claim_bank_line(c,owner,identifier,600,'financial_recovery','actual-debtor-payment')
+        assert claim['remaining_halalas']==400
+    with pytest.raises(HTTPException),db.tx() as c:
+        claim_bank_line(c,owner,identifier,600,'financial_recovery','actual-debtor-payment')
+    batch=post('accountant',base,body);bid=batch['id']
+    post('bankreviewer',base+'/'+bid+'/decision',decision())
+    declared=receipt(780,'standalone-line');declared['statement_amount_halalas']=1000
+    proposed=post('accountant',base+'/'+bid+'/receipts',declared)
+    post('bankreviewer',base+'/'+bid+'/receipts/'+proposed['receipts'][0]['id']+'/decision',decision(),status=409)
+    declared=receipt(400,'standalone-line');declared['statement_amount_halalas']=1000
+    proposed=post('accountant',base+'/'+bid+'/receipts',declared)
+    actual=post('bankreviewer',base+'/'+bid+'/receipts/'+proposed['receipts'][-1]['id']+'/decision',decision())
+    assert actual['bank_received_halalas']==400 and actual['timing_pending_halalas']==380
+    with db.tx() as c:
+        assert c.execute('SELECT sum(amount_halalas) amount FROM bank_reconciliation_bank_claims').fetchone()['amount']==1000
+        assert bank_line(c,owner,identifier)['unallocated_halalas']==0
+
+
+def test_manual_bank_preparation_is_disabled_by_default(monkeypatch):
+    from app.manual_bank_matching import enabled,access,closure_bank_status
+    monkeypatch.delenv('KPS_MANUAL_BANK_MATCHING_ENABLED',raising=False)
+    assert not enabled()
+    with pytest.raises(HTTPException) as error:access({'role':'owner','id':'owner'})
+    assert error.value.status_code==404
+    assert closure_bank_status(None,{},{} )=={'state':'undocumented','batch_ids':[],'pending_source_count':None}
+    zero={'snapshot':{'collections':[],'refunds':[],'summary':{'card_collected_halalas':0,'card_refunded_halalas':0}}}
+    assert closure_bank_status(None,{},zero)['state']=='no_card_operations'

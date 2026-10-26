@@ -30,6 +30,7 @@ CREATE TABLE bank_reconciliation_source_claims (
 );
 -- One actual bank line, with explicit accountant allocations across batches/brands.
 CREATE TABLE bank_reconciliation_bank_lines (
+ id text NOT NULL UNIQUE, received_on date NOT NULL,
  bank_account_reference text NOT NULL, statement_reference text NOT NULL, line_reference text NOT NULL,
  amount_halalas bigint NOT NULL CHECK(amount_halalas<>0),
  evidence_reference text NOT NULL, recorded_by text NOT NULL REFERENCES users(id),
@@ -37,7 +38,9 @@ CREATE TABLE bank_reconciliation_bank_lines (
  PRIMARY KEY(bank_account_reference,statement_reference,line_reference)
 );
 CREATE TABLE bank_reconciliation_bank_claims (
- receipt_id text PRIMARY KEY REFERENCES bank_reconciliation_receipts(id),
+ id text PRIMARY KEY, consumer_kind text NOT NULL CHECK(consumer_kind IN ('pos_batch','financial_recovery')),
+ consumer_id text NOT NULL, receipt_id text UNIQUE REFERENCES bank_reconciliation_receipts(id),
+ UNIQUE(consumer_kind,consumer_id),
  bank_account_reference text NOT NULL, statement_reference text NOT NULL, line_reference text NOT NULL,
  amount_halalas bigint NOT NULL CHECK(amount_halalas<>0),
  FOREIGN KEY(bank_account_reference,statement_reference,line_reference)
@@ -51,3 +54,20 @@ CREATE TRIGGER bank_decisions_immutable BEFORE UPDATE OR DELETE ON bank_reconcil
 CREATE TRIGGER bank_sources_immutable BEFORE UPDATE OR DELETE ON bank_reconciliation_source_claims FOR EACH ROW EXECUTE FUNCTION prevent_financial_mutation();
 CREATE TRIGGER bank_lines_immutable BEFORE UPDATE OR DELETE ON bank_reconciliation_bank_claims FOR EACH ROW EXECUTE FUNCTION prevent_financial_mutation();
 CREATE TRIGGER bank_original_lines_immutable BEFORE UPDATE OR DELETE ON bank_reconciliation_bank_lines FOR EACH ROW EXECUTE FUNCTION prevent_financial_mutation();
+
+-- Register actual movements independently for later debt payments. No monetary posting.
+CREATE TABLE bank_reconciliation_line_proposals (
+ id text PRIMARY KEY,brand_id text NOT NULL REFERENCES brands(id),branch_ids jsonb NOT NULL,
+ bank_account_reference text NOT NULL,statement_reference text NOT NULL,line_reference text NOT NULL,
+ amount_halalas bigint NOT NULL CHECK(amount_halalas<>0),received_on date NOT NULL,
+ evidence_reference text NOT NULL,note text NOT NULL,proposed_by text NOT NULL REFERENCES users(id),
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE bank_reconciliation_line_decisions (
+ id text PRIMARY KEY,proposal_id text NOT NULL UNIQUE REFERENCES bank_reconciliation_line_proposals(id),
+ bank_line_id text REFERENCES bank_reconciliation_bank_lines(id),decision text NOT NULL CHECK(decision IN ('approved','rejected')),
+ evidence_reference text NOT NULL,note text NOT NULL,decided_by text NOT NULL REFERENCES users(id),
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER bank_line_proposals_immutable BEFORE UPDATE OR DELETE ON bank_reconciliation_line_proposals FOR EACH ROW EXECUTE FUNCTION prevent_financial_mutation();
+CREATE TRIGGER bank_line_decisions_immutable BEFORE UPDATE OR DELETE ON bank_reconciliation_line_decisions FOR EACH ROW EXECUTE FUNCTION prevent_financial_mutation();

@@ -536,6 +536,10 @@ def resolve_print_alert(identifier: str, body: AlertAction, user=Depends(operato
                 result['replacement_id'] = replacement
             if body.action in ('confirmed','reprint') and current['status'] == 'queued':
                 conn.execute("UPDATE branch_print_jobs SET status='cancelled',finished_at=now() WHERE id=%s", (identifier,))
+            from .employee_ticket_workflow import enabled as factual_workflow_enabled
+            if body.action=='escalated' and factual_workflow_enabled():
+                from .employee_tickets import create_linked_followup
+                result['followup_ticket_id']=create_linked_followup(conn,user,'print_job',identifier,body.reason.strip())
             conn.execute('UPDATE branch_print_jobs SET alert_resolution=%s WHERE id=%s', (db.json(result),identifier))
             db.audit(conn,user['id'],'printer.alert.'+body.action,'print_job',identifier,result)
             if order:
