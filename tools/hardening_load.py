@@ -145,8 +145,12 @@ def resource_helper():
     elif command == '--join-application-cgroup':
         uid, gid = int(sys.argv[3]), int(sys.argv[4])
         executable = sys.argv[6]
+        diagnostic = os.getenv('KPS_DIAGNOSTIC_THREAD_TOKENS')
+        if diagnostic is not None and diagnostic not in {'8', '40'}:
+            raise ValueError('Only the declared thread diagnostic is allowed.')
+        module = 'tools.thread_capacity_diagnostic:app' if diagnostic else 'app.main:app'
         if (uid <= 0 or gid <= 0 or sys.argv[5] != '--' or executable != sys.executable
-                or sys.argv[7:10] != ['-m', 'uvicorn', 'app.main:app']):
+                or sys.argv[7:10] != ['-m', 'uvicorn', module]):
             raise ValueError('The resource helper may only exec the existing Uvicorn application.')
         safe_url(os.environ['TEST_DATABASE_URL'])
         if os.getenv('APP_ENV') != 'testing':
@@ -820,7 +824,8 @@ def start_app(env, port, log_path, workers=RELEASE_WORKERS, application_cgroup=N
         preserve = ('TEST_DATABASE_URL', 'DATABASE_URL', 'APP_ENV', 'PUBLIC_BASE_URL', 'APP_ALLOWED_HOSTS',
                     'SESSION_COOKIE_SECURE', 'OTP_PROVIDER', 'EMAIL_PROVIDER', 'EMAIL_WORKER_ENABLED',
                     'REPORT_WORKER_ENABLED', 'INITIAL_CATALOG_IMPORT', 'RUNTIME_REVISION', 'GITHUB_ACTIONS',
-                    'PYTHONDONTWRITEBYTECODE', 'PATH', 'LD_LIBRARY_PATH', 'KPS_LOAD_RESOURCE_PROFILE')
+                    'PYTHONDONTWRITEBYTECODE', 'PATH', 'LD_LIBRARY_PATH', 'KPS_LOAD_RESOURCE_PROFILE',
+                    'KPS_DIAGNOSTIC_THREAD_TOKENS')
         command = ['sudo', '-n', '--preserve-env=' + ','.join(preserve), sys.executable, str(Path(__file__).resolve()),
                    '--join-application-cgroup', str(application_cgroup), str(os.getuid()), str(os.getgid()), '--', *command]
     process = subprocess.Popen(command, cwd=ROOT, env=env,
