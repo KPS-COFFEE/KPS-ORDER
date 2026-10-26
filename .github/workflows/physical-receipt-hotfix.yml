@@ -28,4 +28,4 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt pytest
       - run: node --check public/ops.js && node tests/test_ops_error_messages.cjs && node tests/test_manager_preparation_ui.cjs
-      - run: python -m pytest -q tests/test_enbishan_physical_receipt_boundary.py tests/test_driver_incentives_unit.py tests/test_aggregate_driver_closure.py tests/test_aggregate_manager_closure.py
+      - run: python -m pytest -q tests/test_physical_receipt_boundary.py tests/test_driver_incentives_unit.py tests/test_aggregate_driver_closure.py tests/test_aggregate_manager_closure.py
