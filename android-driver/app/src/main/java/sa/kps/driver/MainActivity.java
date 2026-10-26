@@ -55,7 +55,7 @@ public final class MainActivity extends Activity {
         layout.requestApplyInsets();
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);
-        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.3 KPSNativeOrderAudio/1");
+        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.4 KPSNativeOrderAudio/1");
         s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setGeolocationEnabled(false); // Native service owns GPS; never a second browser watcher.
         web.setWebViewClient(new WebViewClient(){
@@ -96,7 +96,10 @@ public final class MainActivity extends Activity {
             main.post(()->{
                 checking=false;if(!visible)return;
                 if(!authorized){
-                    if(revoked)stopService(new Intent(this,ShiftLocationService.class));
+                    if(revoked){
+                        if(ShiftLocationService.running)startService(new Intent(this,ShiftLocationService.class).setAction("STOP"));
+                        else new OfflineLocationQueue(this).clear();
+                    }
                     status.setText(revoked?"الموقع متوقف — سجّل الدخول وافتح شفتك":"تعذر التحقق من الاتصال؛ جارٍ المحاولة");return;
                 }
                 if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
@@ -113,7 +116,7 @@ public final class MainActivity extends Activity {
                     try{startForegroundService(new Intent(this,ShiftLocationService.class).setAction("START"));}
                     catch(RuntimeException e){status.setText("افتح التطبيق لإعادة تشغيل الموقع");return;}
                 }
-                status.setText(alertsAudible()?"الموقع وجرس الطلبات أثناء الشفت / Shift location and order alerts":"تنبيهات الطلبات قد لا تُسمع؛ راجع إعدادات الجهاز / Check device sound and notification settings");
+                status.setText(alertsAudible()?ShiftLocationService.trackingStatus:"تنبيهات الطلبات قد لا تُسمع؛ راجع إعدادات الجهاز / Check device sound and notification settings");
             });
         });
     }
