@@ -288,10 +288,23 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         plan_changed = (body.ordered_stop_ids is not None or 'return_branch_id' in body.model_fields_set) and (
             not saved or saved['ordered_stop_ids'] != (ordered_ids or []) or saved['return_branch_id'] != return_id)
         cached = bool(saved and saved['fingerprint']==signature and saved['matrix'] is not None and
-                      saved['calculated_at'] and (now-saved['calculated_at']).total_seconds()<TTL_SECONDS)
+                      saved['calculated_at'] and 0 <= (now-saved['calculated_at']).total_seconds()<TTL_SECONDS)
         matrix = saved['matrix'] if cached else None
         calculated = saved['calculated_at'] if cached else now
         origin_stamp = saved['origin_updated_at'] if cached else stamp
+        if not cached:
+            # Reuse only bounded provider data after this caller's full itinerary
+            # authorization. Never inherit another manager's route intent/grants.
+            shared = c.execute('''SELECT matrix,calculated_at,origin_updated_at
+              FROM driver_route_eta_state WHERE driver_id=%s AND manager_id<>%s
+              AND fingerprint=%s AND matrix IS NOT NULL AND calculated_at<=%s
+              AND calculated_at>%s ORDER BY calculated_at DESC,manager_id LIMIT 1''',
+              (body.driver_id,user['id'],signature,now,now-timedelta(seconds=TTL_SECONDS))).fetchone()
+            if shared:
+                matrix = shared['matrix']
+                calculated = shared['calculated_at']
+                origin_stamp = shared['origin_updated_at']
+                cached = True
         # Preserve the reference corridor across minute ETA refreshes. Rebase only
         # on a changed plan not at every GPS sample. A valid reference stays fixed for the leg.
         corridor = (saved or {}).get('road_corridor')

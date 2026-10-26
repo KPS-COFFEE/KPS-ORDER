@@ -211,3 +211,77 @@ def test_provider_race_rechecks_live_caller_authority_before_cache_or_publicatio
         assert c.execute('SELECT count(*) n FROM driver_route_eta_expectations').fetchone()['n']==0
         # Three matrix coordinates squared plus the reserved Directions reference.
         assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==10
+
+
+def second_manager(user):
+    with db.tx() as c:
+        c.execute("""INSERT INTO users(id,display_name,role,brand_id,branch_ids)
+          VALUES('eta-second-manager','Second manager','owner','kps','[\"gps-branch\"]')""")
+        c.execute("""INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at)
+          VALUES('eta-second-session','eta-second-token','eta-second-csrf','eta-second-manager',now()+interval '1 hour')""")
+    user.update(id='eta-second-manager',role='owner',session_id='eta-second-session',
+                brand_id='kps',branch_ids=['gps-branch'])
+
+
+@pytest.mark.postgres
+def test_second_manager_reuses_recent_matrix_without_inheriting_publication(eta_service):
+    client,user,calls=eta_service
+    first=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','publish':True,
+        'ordered_stop_ids':['dropoff:map-task-2','dropoff:map-task-1']})
+    assert first.status_code==200 and first.json()['status']=='ready',first.text
+    second_manager(user)
+    second=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'})
+    assert second.status_code==200,second.text
+    result=second.json()
+    assert result['status']=='ready' and result['cached'] is True,result
+    assert result['ordering']=='road_duration' and result['published'] is False
+    assert [s['id'] for s in result['stops']]==['dropoff:map-task-1','dropoff:map-task-2']
+    assert result['return_at'] is None and result['calculated_at']==first.json()['calculated_at']
+    assert len(calls)==1
+    with db.tx() as c:
+        assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==10
+        own=c.execute("SELECT * FROM driver_route_eta_state WHERE manager_id='eta-second-manager'").fetchone()
+        assert own['published_at'] is None and own['source_session_id'] is None
+        assert own['ordered_stop_ids']==[] and own['return_branch_id'] is None
+
+
+@pytest.mark.postgres
+def test_shared_recent_matrix_does_not_match_changed_itinerary(eta_service):
+    client,user,calls=eta_service
+    assert client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'}).json()['status']=='ready'
+    second_manager(user)
+    with db.tx() as c:
+        c.execute("UPDATE driver_tasks SET status='delivered',delivered_at=now() WHERE id='map-task-2'")
+        c.execute("UPDATE orders SET delivery_status='delivered',completed_at=now() WHERE id='map-order-2'")
+    result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'})
+    assert result.status_code==200,result.text
+    assert result.json()['reason']=='route_budget_or_cooldown'
+    assert result.json()['stops']==[] and len(calls)==1
+
+
+@pytest.mark.postgres
+def test_shared_matrix_cannot_override_second_manager_branch_scope(eta_service):
+    client,user,calls=eta_service
+    assert client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'}).json()['status']=='ready'
+    second_manager(user)
+    user.update(role='delivery_staff',branch_ids=['foreign'])
+    response=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'})
+    assert response.status_code in (403,404,409),response.text
+    assert len(calls)==1
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM driver_route_eta_state WHERE manager_id='eta-second-manager'").fetchone()
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('age_seconds',[61,-30])
+def test_shared_matrix_rejects_expired_and_future_timestamps(eta_service,age_seconds):
+    from datetime import timedelta
+    client,user,calls=eta_service
+    assert client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'}).json()['status']=='ready'
+    second_manager(user)
+    with db.tx() as c:
+        c.execute("UPDATE driver_route_eta_state SET calculated_at=%s WHERE manager_id='map-owner'",
+                  (datetime.now(timezone.utc)-timedelta(seconds=age_seconds),))
+    result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'})
+    assert result.status_code==200,result.text
+    assert result.json()['reason']=='route_budget_or_cooldown' and len(calls)==1
