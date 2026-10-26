@@ -11,3 +11,6 @@ for(const p of products){const cover=ctx.menuCover(p);assert.ok(cover.image_url)
 assert.equal(ctx.menuSection({brand_id:'kps',name:'بوكس',category:'Coffee'}),'Coffee');
 assert.equal(ctx.menuCover({brand_id:'kps',image_url:'/assets/kps.jpg'}).image_url,'/assets/kps.jpg');
 console.log('PASS: large covers, actual size photo mappings, stable sections and KPS isolation.');
+const overview=[...products].sort((a,b)=>ctx.menuRank(a,true)-ctx.menuRank(b,true));
+assert.equal(overview[0].name,'عنبيشن سيجنتشر');
+assert.ok(overview.slice(0,6).every(p=>ctx.menuCover(p).label),'The first six overview cards show named box sizes');
