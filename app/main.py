@@ -122,6 +122,8 @@ from . import central_operations
 app.include_router(central_operations.router)
 from . import driver_order_review
 app.include_router(driver_order_review.router)
+from . import operating_reports
+app.include_router(operating_reports.router)
 from . import owner_phone
 app.include_router(owner_phone.router)
 from . import employee_sms, sms_rollout, sms_pilot_ui

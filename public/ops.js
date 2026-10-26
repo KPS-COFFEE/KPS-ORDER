@@ -1503,6 +1503,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     }).join('')}</div>`:empty(tr('يظهر التقرير بعد تقفيلة معتمدة. لا توجد تقارير محفوظة ضمن نطاقك.','Reports appear after approved closure. No saved reports in your scope.'));
     if(['owner','delivery_manager'].includes(state.user.role))$('#content').insertAdjacentHTML('afterbegin',`<button data-action="support-daily">${esc(tr('التقرير اليومي لتذاكر المتابعة','Daily support ticket report'))}</button>`);
     if(isAdmin())await ownerNotifications();
+    if(['owner','delivery_manager'].includes(state.user.role)&&window.KPSOperatingReports){const host=document.createElement('section');host.className='panel';$('#content').prepend(host);await window.KPSOperatingReports.mount(host,{api,morning:morningMode});}
   }
   async function admin() {
     if(!isAdmin())throw new Error(tr('الإدارة متاحة للمالك المخول.','Administration requires owner access.'));
