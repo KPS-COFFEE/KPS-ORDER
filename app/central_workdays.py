@@ -129,6 +129,16 @@ def _open(c, user, body):
         raise db.error(404, 'CENTRAL_WORKDAY_UNAVAILABLE', 'الموظف غير متاح.')
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', ('shift:'+target['id'],))
     from .aggregate_driver_closure import staffing_pending_sql
+    # Opening the next manager duty must not depend on a pending treasury receipt.
+    # Release only an already submitted own workday after rechecking all live tasks.
+    if body.kind=='manager' and target['id']==user['id'] and auth.has_permission(user,'shifts_close'):
+        from .aggregate_manager_closure import latest, end_operationally
+        pending=c.execute("SELECT DISTINCT w.anchor_shift_id FROM central_workdays w JOIN central_workday_legs l ON l.workday_id=w.id JOIN shifts s ON s.id=l.shift_id WHERE w.user_id=%s AND w.kind='manager' AND s.status='submitted' AND s.staffing_ended_at IS NULL",(user['id'],)).fetchall()
+        for item in pending:
+            day,legs=authorized(c,user,item['anchor_shift_id'])
+            declaration=latest(c,day['id'])
+            if declaration and all(s['status']=='submitted' for _,s in legs) and not c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(declaration['id'],)).fetchone():
+                end_operationally(c,user,day,legs,declaration['id'])
     if c.execute("SELECT 1 FROM shifts WHERE user_id=%s AND status<>'closed' AND "+staffing_pending_sql(), (target['id'],)).fetchone():
         raise db.error(409, 'SHIFT_ALREADY_OPEN', 'للموظف وردية مفتوحة؛ أكملها قبل فتح وردية جديدة.')
     from .central_operations import context

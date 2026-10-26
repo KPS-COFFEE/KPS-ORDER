@@ -44,13 +44,13 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
           'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations',
           'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
-          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations',
+          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations','manager_operational_releases',
           'financial_case_clarifications','financial_case_clarification_events','legacy_invoice_imports',
           'bank_reconciliation_batches','bank_reconciliation_receipts','bank_reconciliation_decisions','bank_reconciliation_source_claims','bank_reconciliation_bank_lines','bank_reconciliation_bank_claims')
 TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_line_decisions')
 TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
-                          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
+                          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations','manager_operational_releases'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
 # Full private archives retain the whole immutable declaration and its provenance.
 # Global bank statement originals can span sellers; private full archives retain them.
@@ -347,6 +347,8 @@ def migration_manifest():
 
 def _verify_staffing_markers(conn, available):
     """Validate imported physical completion against immutable full-archive evidence."""
+    if 'shared_manager_closure_receipts' in available and conn.execute("SELECT 1 FROM shared_manager_closure_receipts r JOIN shared_manager_closure_returns t ON t.declaration_id=r.declaration_id LIMIT 1").fetchone():
+        raise ValueError('Restored staffing completion contradicts its immutable physical receipt.')
     proofs = ["""(s.kind='driver' AND EXISTS (
         SELECT 1 FROM central_workday_legs l
         JOIN central_workdays w ON w.id=l.workday_id
@@ -373,6 +375,13 @@ def _verify_staffing_markers(conn, available):
               AND r.received_by=d.recipient_user_id
               AND NOT EXISTS (SELECT 1 FROM shared_manager_closure_returns returned
                               WHERE returned.declaration_id=d.id)))""")
+    if 'manager_operational_releases' in available:
+        proofs.append("""(s.kind='manager' AND EXISTS (
+            SELECT 1 FROM central_workday_legs l JOIN central_workdays w ON w.id=l.workday_id
+            JOIN manager_operational_releases e ON e.workday_id=w.id
+            JOIN shared_manager_closure_declarations d ON d.id=e.declaration_id AND d.workday_id=w.id
+            WHERE l.shift_id=s.id AND w.user_id=s.user_id AND e.recorded_by=w.user_id
+              AND e.created_at=s.staffing_ended_at))""")
     invalid = conn.execute("SELECT s.id FROM shifts s WHERE s.staffing_ended_at IS NOT NULL "
         "AND (s.status NOT IN ('submitted','closed') OR NOT ("+' OR '.join(proofs)+")) LIMIT 1").fetchone()
     if invalid:

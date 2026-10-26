@@ -24,7 +24,7 @@ def test_manager_owner_physical_end_next_workday_and_later_accounting(central,mo
     with db.tx() as c:
         for leg in manager['shifts']:
             row=c.execute('SELECT status,submission,staffing_ended_at FROM shifts WHERE id=%s',(leg['id'],)).fetchone()
-            assert row['status']=='submitted' and row['staffing_ended_at'] is None
+            assert row['status']=='submitted' and row['staffing_ended_at'] is not None
             assert 'counted_halalas' not in row['submission']
     owner_receipt={'declaration_id':manager_decl['declaration_id'],'received_halalas':700,'confirmed':True}
     post('manager',manager_path+'/manager-physical-receipt',owner_receipt,status=403)
@@ -100,3 +100,86 @@ def test_manager_independent_actual_receipt_preserves_difference_and_allows_next
         assert c.execute('SELECT count(*) n FROM shared_manager_closure_receipts').fetchone()['n']==1
         assert c.execute('SELECT 1 FROM custody_transfers').fetchone() is None
         assert c.execute('SELECT 1 FROM shared_manager_closure_allocations').fetchone() is None
+
+
+@pytest.mark.postgres
+def test_manager_opens_next_workday_before_cash_receipt_and_corrects_old_bag(central):
+    _,actor,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    path='/api/central-operations/workdays/'+manager['shift']['id']
+    declaration={'cash_halalas':700,'recipient_user_id':'dual-owner','reference':'Cash held pending actual treasury receipt','confirmed':True}
+    first=post('manager',path+'/manager-physical-submit',declaration)
+    assert first['operational_release'] and first['receipt'] is None
+    assert first['recipient']['display_name']
+    next_day=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    assert next_day['shift']['id']!=manager['shift']['id']
+    post('manager','/api/central-operations/workdays',{'kind':'manager'},status=409)
+    post('manager',path+'/manager-physical-return',{'declaration_id':first['declaration_id'],'reason':'Correct mistyped bag amount without resuming duty'})
+    corrected=post('manager',path+'/manager-physical-submit',{**declaration,'cash_halalas':650})
+    assert corrected['declaration']['revision']==2
+    assert corrected['operational_release']==first['operational_release']
+    assert corrected['receipt'] is None
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM shared_manager_closure_receipts').fetchone()['n']==0
+        assert c.execute('SELECT count(*) n FROM manager_operational_releases').fetchone()['n']==1
+        assert c.execute('SELECT count(*) n FROM custody_events').fetchone()['n']==0
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(next_day['shift']['id'],)).fetchone()['status']=='open'
+    received=post('owner',path+'/manager-physical-receipt',{'declaration_id':corrected['declaration_id'],'received_halalas':650,'confirmed':True})
+    assert received['state']=='awaiting_accounting'
+    assert received['operational_release']==first['operational_release']
+
+
+@pytest.mark.postgres
+def test_only_explicitly_authorized_treasury_recipient_receives_without_owner(central):
+    _,actor,post,_,_=central
+    with db.tx() as c:
+        c.execute("UPDATE users SET permissions=%s WHERE id='dual-accountant'",(db.json(['accounting_review','custody_view','custody_transfer']),))
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    path='/api/central-operations/workdays/'+manager['shift']['id']
+    declared=post('manager',path+'/manager-physical-submit',{'cash_halalas':700,'recipient_user_id':'dual-accountant','reference':'Authorized treasury receives independently','confirmed':True})
+    next_day=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    assert next_day['shift']['id']!=manager['shift']['id']
+    body={'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True}
+    post('owner',path+'/manager-physical-receipt',body,status=403)
+    received=post('accountant',path+'/manager-physical-receipt',body)
+    assert received['receipt']['received_by']=='dual-accountant'
+    # Receipt does not approve accounting; the same custodian cannot allocate.
+    assert not received['can_allocate']
+
+
+@pytest.mark.postgres
+def test_ungranted_accountant_cannot_be_named_cash_recipient(central):
+    _,actor,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    path='/api/central-operations/workdays/'+manager['shift']['id']
+    post('manager',path+'/manager-physical-submit',{'cash_halalas':700,'recipient_user_id':'dual-accountant','reference':'No treasury permission granted','confirmed':True},status=422)
+
+
+@pytest.mark.postgres
+def test_missing_treasury_recipient_does_not_block_operational_closure(central):
+    _,actor,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    path='/api/central-operations/workdays/'+manager['shift']['id']
+    declared=post('manager',path+'/manager-physical-submit',{'cash_halalas':700,'reference':'Cash remains in manager custody until treasury assignment','confirmed':True})
+    assert declared['recipient'] is None and declared['receipt'] is None
+    assert declared['operational_release']
+    post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    post('owner',path+'/manager-physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True},status=403)
+
+
+@pytest.mark.postgres
+def test_open_next_shift_releases_legacy_submitted_bag_without_cash_receipt(central):
+    _,actor,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    with db.tx() as c:
+        day=c.execute('SELECT workday_id FROM central_workday_legs WHERE shift_id=%s',(manager['shift']['id'],)).fetchone()['workday_id']
+        identifier=uuid4().hex
+        c.execute("INSERT INTO shared_manager_closure_declarations(id,workday_id,revision,cash_halalas,expected_snapshot,recorded_by,recipient_user_id,reference) VALUES(%s,%s,1,1,'[]','dual-manager','dual-owner','Legacy pre-upgrade pending bag')",(identifier,day))
+        for leg in manager['shifts']:
+            c.execute("UPDATE shifts SET status='submitted',submission=%s WHERE id=%s",(db.json({'shared_manager_declaration_id':identifier,'physical_state':'awaiting_owner_receipt','financial_state':'awaiting_allocation'}),leg['id']))
+    next_day=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    assert next_day['shift']['id']!=manager['shift']['id']
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM manager_operational_releases').fetchone()['n']==1
+        assert c.execute('SELECT count(*) n FROM shared_manager_closure_receipts').fetchone()['n']==0
+        assert c.execute('SELECT cash_halalas FROM shared_manager_closure_declarations WHERE id=%s',(identifier,)).fetchone()['cash_halalas']==1

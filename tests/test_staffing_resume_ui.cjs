@@ -24,6 +24,10 @@ const manager=source.split('\n').find(x=>x.startsWith('  function ownManagerShif
   assert.equal(context.pick([old,live]).id,'next');
   assert.equal(context.manager([{...old,kind:'manager'}]),undefined);
   assert.equal(context.manager([{...old,kind:'manager'},{...live,kind:'manager'}]).id,'next');
+  const pendingManager={...old,kind:'manager',staffing_ended_at:null,submission:{shared_manager_declaration_id:'bag-001'}};
+  assert.equal(context.manager([pendingManager]),undefined,'legacy submitted cash cannot hide the new manager shift form');
+  assert.equal(context.manager([pendingManager,{...live,kind:'manager'}]).id,'next');
+  assert.equal(context.manager([{...live,kind:'manager',status:'closing'}]).id,'next','unsubmitted operational work still blocks duplicate duty');
   context.state.driverCurrentShift=old;rows=[old,live];requests=[];
   await context.vehicle();
   assert.deepEqual(requests,['/api/shifts/current','/api/shifts/next']);

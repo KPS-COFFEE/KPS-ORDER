@@ -1,4 +1,4 @@
-"""One immutable manager cash bag; owner receipt ends physical staffing only.
+"""One immutable manager cash bag; operational release is independent of cash receipt.
 
 Accounting attributes the witnessed bag after driver brand allocations. Financial
 ledgers stay submitted and may receive only those delayed child attributions.
@@ -12,7 +12,7 @@ BASE='/central-operations/workdays/{sid}'
 
 class Declaration(ops.OperationBody):
     cash_halalas:StrictInt=Field(ge=0,le=ops.MAX_HALALAS)
-    recipient_user_id:str
+    recipient_user_id:str|None=None
     reference:str=Field(min_length=1,max_length=200)
     confirmed:StrictBool
 
@@ -20,6 +20,11 @@ class Receipt(ops.OperationBody):
     declaration_id:str
     received_halalas:StrictInt=Field(ge=0,le=ops.MAX_HALALAS)
     confirmed:StrictBool
+
+class OperationalEnd(ops.OperationBody):
+    declaration_id:str
+    confirmed:StrictBool
+
 
 class Return(ops.OperationBody):
     declaration_id:str
@@ -40,8 +45,9 @@ class Allocation(ops.OperationBody):
 
 
 def authorize(c,user,sid):
-    days.require_enabled(user,'accounting_review' if accounting(user) else 'shifts_view',existing_sid=sid)
-    day,legs=days.authorized(c,user,sid,capability='accounting_review' if accounting(user) else None)
+    permission='accounting_review' if accounting(user) else 'custody_view' if user['role']=='admin' else 'shifts_view'
+    days.require_enabled(user,permission,existing_sid=sid)
+    day,legs=days.authorized(c,user,sid,capability=permission if user['role']=='admin' or accounting(user) else None)
     if day['kind']!='manager':raise db.error(409,'SHARED_MANAGER_REQUIRED','اختر وردية مدير توصيل.')
     return day,days.ordered(legs,day['anchor_shift_id'])
 
@@ -54,20 +60,23 @@ def view(c,user,day,legs):
     receipt=c.execute('SELECT * FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     returned=c.execute('SELECT * FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     alloc=c.execute('SELECT * FROM shared_manager_closure_allocations WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
+    release=c.execute('SELECT * FROM manager_operational_releases WHERE workday_id=%s',(day['id'],)).fetchone()
+    receiver=c.execute('SELECT id,display_name FROM users WHERE id=%s',(dec['recipient_user_id'],)).fetchone() if dec else None
     handover_difference=receipt_difference(dict(dec,retained_halalas=0),receipt) if dec else None
     from .shared_financial_treatments import shared_approved,allocated_review
     review=allocated_review(c,day['id']) if alloc else None
     treatment=shared_approved(c,day['id'],dec['id'],receipt['id']) if dec and receipt else None
     return ops.safe({'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'manager_id':day['user_id'],'manager_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],
-      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':legs[0][1]['status']},'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),
+      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':legs[0][1]['status']},'can_receive':bool(dec and user['id']==dec['recipient_user_id'] and user['id']!=day['user_id'] and user.get('active',True) and auth.has_permission(user,'custody_transfer')),'operational_release':release,'recipient':receiver,'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),
       'receipt_difference_halalas':handover_difference,'receipt_review_required':bool(handover_difference and not treatment),'receipt_treatment':treatment,'receipt_accounting_review':review,
+      'can_end_operationally':day['user_id']==user['id'] and not release and not receipt and bool(dec) and not returned,
       'state':'allocated_amount_settled' if alloc and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if alloc and treatment else 'allocated' if alloc else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_owner_receipt' if dec else 'awaiting_manager',
       'legs':[{'shift_id':s['id'],'brand_id':s['brand_id'],'current_ledger_cash_halalas':ops.balance(c,s)} for _,s in legs]})
 
 
 def recipient(c,user,identifier,legs):
-    target=c.execute("SELECT * FROM users WHERE id=%s AND active AND role='owner'",(identifier,)).fetchone()
-    if not target or target['id']==user['id']:raise db.error(422,'SHARED_MANAGER_RECIPIENT','اختر مالكًا مستقلًا يؤكد استلام النقد من حسابه.')
+    target=c.execute("SELECT * FROM users WHERE id=%s AND active AND role IN ('owner','admin')",(identifier,)).fetchone()
+    if not target or target['id']==user['id'] or not auth.has_permission(target,'custody_transfer') or (target['role']=='admin' and not auth.has_permission(target,'custody_view')):raise db.error(422,'SHARED_MANAGER_RECIPIENT','اختر مستلم نقد مخولًا غير المدير المرسل؛ يؤكد الاستلام من حسابه.')
     for _,s in legs:
         principal=multibrand.project(c,target,s['brand_id'])
         if not principal or not ops.unrestricted_owner(principal) and not set(s['branch_ids'])<=set(principal.get('branch_ids',[])):raise db.error(403,'SHARED_MANAGER_RECIPIENT_SCOPE','المستلم غير مخول لجميع فروع الوردية.')
@@ -94,7 +103,7 @@ def detail(sid:str,user=Depends(auth.current_user)):
         day,legs=authorize(c,user,sid)
         output=view(c,user,day,legs)
         if day['user_id']==user['id']:
-            candidates=c.execute("SELECT * FROM users WHERE active AND role='owner' AND id<>%s ORDER BY display_name",(user['id'],)).fetchall()
+            candidates=c.execute("SELECT * FROM users WHERE active AND role IN ('owner','admin') AND id<>%s ORDER BY display_name",(user['id'],)).fetchall()
             allowed=[]
             for target in candidates:
                 try:recipient(c,user,target['id'],legs)
@@ -104,6 +113,34 @@ def detail(sid:str,user=Depends(auth.current_user)):
         return output
 
 
+def end_operationally(c,user,day,legs,declaration_id):
+    existing=c.execute('SELECT * FROM manager_operational_releases WHERE workday_id=%s',(day['id'],)).fetchone()
+    if existing:return existing
+    operational_ready(c,legs)
+    release=c.execute('INSERT INTO manager_operational_releases(workday_id,declaration_id,recorded_by) VALUES(%s,%s,%s) RETURNING *',(day['id'],declaration_id,user['id'])).fetchone()
+    for _,s in legs:
+        c.execute('UPDATE shifts SET staffing_ended_at=%s WHERE id=%s AND staffing_ended_at IS NULL',(release['created_at'],s['id']))
+    db.audit(c,user['id'],'shared_manager.operational_ended','central_workday',day['id'],{'declaration_id':declaration_id,'cash_receipt_confirmed':False,'cash_custodian_user_id':day['user_id']})
+    return release
+
+
+@router.post(BASE+'/manager-operational-end')
+def operational_end(sid:str,body:OperationalEnd,request:Request,user=Depends(auth.current_user)):
+    ops.roles(user,'delivery_manager','owner')
+    if not auth.has_permission(user,'shifts_close'):raise db.error(403,'SHARED_MANAGER_CLOSURE_FORBIDDEN','غير مخول لإنهاء الوردية.')
+    with db.tx() as c:
+        days.lock_lanes(c);day,legs=authorize(c,user,sid)
+        if day['user_id']!=user['id']:raise db.error(403,'SHARED_MANAGER_OWN_ONLY','المدير ينهي ورديته من حسابه.')
+        def perform():
+            dec=latest(c,day['id'])
+            if not body.confirmed or not dec or dec['id']!=body.declaration_id or any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_MANAGER_CLOSURE_STATE','أكد إنهاء التشغيل واختر التقفيلة المرسلة الحالية.')
+            if c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_DECLARATION_RETURNED','صحح التقفيلة المعادة أولًا.')
+            if not c.execute('SELECT 1 FROM manager_operational_releases WHERE workday_id=%s',(day['id'],)).fetchone() and any(s.get('staffing_ended_at') for _,s in legs):raise db.error(409,'SHARED_MANAGER_CLOSURE_STATE','انتهت الوردية بالفعل باستلام موثق.')
+            return end_operationally(c,user,day,legs,dec['id'])
+        db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_manager.operational_end:'+day['id'],body.model_dump(),perform)
+        return view(c,user,day,legs)
+
+
 @router.post(BASE+'/manager-physical-submit')
 def submit(sid:str,body:Declaration,request:Request,user=Depends(auth.current_user)):
     ops.roles(user,'delivery_manager','owner')
@@ -111,9 +148,11 @@ def submit(sid:str,body:Declaration,request:Request,user=Depends(auth.current_us
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         if day['user_id']!=user['id']:raise db.error(403,'SHARED_MANAGER_OWN_ONLY','مدير التوصيل يرسل تقفيلة ورديته من حسابه.')
-        recipient(c,user,body.recipient_user_id,legs)
+        if body.recipient_user_id:recipient(c,user,body.recipient_user_id,legs)
         def perform():
-            if not body.confirmed or any(s['status'] not in {'open','closing'} for _,s in legs):raise db.error(409,'SHARED_MANAGER_CLOSURE_STATE','أكد المبلغ الفعلي واختر وردية غير مرسلة.')
+            previous=latest(c,day['id'])
+            correcting=previous and c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(previous['id'],)).fetchone()
+            if not body.confirmed or any(s['status'] not in ({'open','closing','submitted'} if correcting else {'open','closing'}) for _,s in legs):raise db.error(409,'SHARED_MANAGER_CLOSURE_STATE','أكد المبلغ الفعلي واختر وردية غير مرسلة.')
             previous=latest(c,day['id'])
             if previous and not c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(previous['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_DECLARATION_EXISTS','الأصل محفوظ؛ أعد التقفيلة قبل تصحيحها، وبعد الاستلام التصحيح بمعالجة مرتبطة من المحاسبة.')
             operational_ready(c,legs)
@@ -124,6 +163,7 @@ def submit(sid:str,body:Declaration,request:Request,user=Depends(auth.current_us
             identifier=ops.uid()
             c.execute('INSERT INTO shared_manager_closure_declarations(id,workday_id,revision,cash_halalas,expected_snapshot,recorded_by,recipient_user_id,reference) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(identifier,day['id'],previous['revision']+1 if previous else 1,body.cash_halalas,db.json(snapshot),user['id'],body.recipient_user_id,body.reference))
             for _,s in legs:c.execute("UPDATE shifts SET status='submitted',submitted_at=now(),submission=%s WHERE id=%s",(db.json({'shared_manager_declaration_id':identifier,'physical_state':'awaiting_owner_receipt','financial_state':'awaiting_allocation'}),s['id']))
+            end_operationally(c,user,day,legs,identifier)
             db.audit(c,user['id'],'shared_manager.declared','central_workday',day['id'],{'declaration_id':identifier,**body.model_dump()})
             return {'declaration_id':identifier}
         value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_manager.declare:'+day['id'],body.model_dump(),perform)
@@ -132,7 +172,8 @@ def submit(sid:str,body:Declaration,request:Request,user=Depends(auth.current_us
 
 @router.post(BASE+'/manager-physical-receipt')
 def receive(sid:str,body:Receipt,request:Request,user=Depends(auth.current_user)):
-    ops.roles(user,'owner')
+    ops.roles(user,'owner','admin')
+    if not auth.has_permission(user,'custody_transfer'):raise db.error(403,'SHARED_MANAGER_RECIPIENT','غير مخول لاستلام النقد.')
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
@@ -140,13 +181,14 @@ def receive(sid:str,body:Receipt,request:Request,user=Depends(auth.current_user)
             if not dec or dec['id']!=body.declaration_id:raise db.error(409,'SHARED_MANAGER_DECLARATION_STALE','تغير أصل التقفيلة.')
             if c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_DECLARATION_RETURNED','أُعيدت التقفيلة؛ انتظر إعادة إرسال مدير التوصيل للأصل المصحح.')
             if dec['recipient_user_id']!=user['id']:raise db.error(403,'SHARED_MANAGER_ACTUAL_RECIPIENT','المستلم المسجل وحده يؤكد استلام النقد.')
+            recipient(c,{'id':day['user_id']},user['id'],legs)
             if c.execute('SELECT 1 FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_RECEIPT_EXISTS','الاستلام محفوظ بالفعل.')
             if not body.confirmed:raise db.error(422,'SHARED_MANAGER_RECEIPT_CONFIRMATION','أكد النقد الذي استلمته فعليًا؛ يبقى تصريح المدير محفوظًا مستقلاً.')
             if any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_MANAGER_CLOSURE_STATE','الوردية غير مرسلة.')
             identifier=ops.uid()
             c.execute('INSERT INTO shared_manager_closure_receipts(id,declaration_id,received_halalas,received_by) VALUES(%s,%s,%s,%s)',(identifier,dec['id'],body.received_halalas,user['id']))
             at=c.execute('SELECT created_at FROM shared_manager_closure_receipts WHERE id=%s',(identifier,)).fetchone()['created_at']
-            for _,s in legs:c.execute('UPDATE shifts SET staffing_ended_at=%s,submission=submission||%s::jsonb WHERE id=%s',(at,db.json({'physical_state':'received','physical_receipt_id':identifier}),s['id']))
+            for _,s in legs:c.execute('UPDATE shifts SET staffing_ended_at=coalesce(staffing_ended_at,%s),submission=submission||%s::jsonb WHERE id=%s',(at,db.json({'physical_state':'received','physical_receipt_id':identifier}),s['id']))
             db.audit(c,user['id'],'shared_manager.physical_received','central_workday',day['id'],{'receipt_id':identifier,'declaration_id':dec['id'],'received_halalas':body.received_halalas,'receipt_difference_halalas':body.received_halalas-dec['cash_halalas'],'responsible_role':'accounting','financial_state':'receipt_difference_review' if body.received_halalas!=dec['cash_halalas'] else 'awaiting_accounting'})
             return {'receipt_id':identifier}
         value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_manager.receipt:'+day['id'],body.model_dump(),perform)
@@ -166,7 +208,11 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
             if c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_RETURN_EXISTS','التقفيلة أعيدت بالفعل.')
             if any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_MANAGER_CLOSURE_STATE','الوردية ليست مرسلة.')
             c.execute('INSERT INTO shared_manager_closure_returns(declaration_id,recorded_by,reason) VALUES(%s,%s,%s)',(dec['id'],user['id'],body.reason))
-            for _,s in legs:c.execute("UPDATE shifts SET status='closing',submission=NULL,submitted_at=NULL WHERE id=%s",(s['id'],))
+            for _,s in legs:
+                if s.get('staffing_ended_at'):
+                    c.execute("UPDATE shifts SET submission=submission||%s::jsonb WHERE id=%s",(db.json({'physical_state':'returned_for_correction'}),s['id']))
+                else:
+                    c.execute("UPDATE shifts SET status='closing',submission=NULL,submitted_at=NULL WHERE id=%s",(s['id'],))
             db.audit(c,user['id'],'shared_manager.returned','central_workday',day['id'],body.model_dump())
             return {'status':'returned'}
         value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_manager.return:'+day['id'],body.model_dump(),perform)
@@ -228,7 +274,7 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
 
 @router.get('/shared-manager-closures')
 def inbox(user=Depends(auth.current_user)):
-    if user['role']!='owner' and not accounting(user):raise db.error(403,'SHARED_ACCOUNTANT_REQUIRED','متابعة إقفال المدير للمالك والمحاسبة.')
+    if user['role']!='owner' and not accounting(user) and not (user['role']=='admin' and auth.has_permission(user,'custody_view')):raise db.error(403,'SHARED_ACCOUNTANT_REQUIRED','متابعة التقفيلة للمحاسبة ومستلم النقد المخول.')
     with db.tx() as c:
         if not multibrand.enabled():return {'workdays':[]}
         candidates=c.execute("SELECT w.anchor_shift_id FROM central_workdays w JOIN shared_manager_closure_declarations d ON d.workday_id=w.id LEFT JOIN shared_manager_closure_allocations a ON a.declaration_id=d.id LEFT JOIN shared_manager_closure_returns r ON r.declaration_id=d.id WHERE r.declaration_id IS NULL AND (a.id IS NULL OR EXISTS (SELECT 1 FROM audit_events t WHERE t.entity_type='central_workday' AND t.entity_id=w.id AND t.action='accounting.financial_treatment.approved' AND t.details->>'declaration_id'=d.id AND t.details->>'kind'='outstanding')) ORDER BY d.created_at,d.id").fetchall()
