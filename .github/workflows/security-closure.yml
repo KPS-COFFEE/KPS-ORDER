@@ -64,6 +64,7 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
         persist-credentials: false
+        fetch-depth: 0
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
@@ -108,7 +109,7 @@ jobs:
     - name: Focused tests on PostgreSQL18
       env:
         PYTHONPATH: ci-safety:.
-      run: 'mapfile -t suites < <(sed ''/^[[:space:]]*#/d;/^[[:space:]]*$/d'' docs/final-operational-tests.txt)
+      run: 'mapfile -t suites < <(sed ''/^[[:space:]]*#/d;/^[[:space:]]*$/d'' $(python tools/receipt_hotfix_scope.py --output evidence/receipt-hotfix-scope.json))
 
         python -m pytest -q "${suites[@]}" --junitxml=evidence/security-focused.xml | tee evidence/security-focused.log
 
@@ -124,6 +125,8 @@ jobs:
 
 
         node tests/test_driver_trip_ui.cjs
+
+        node tests/test_ops_error_messages.cjs
 
         '
     - name: Two real browser policy cases
@@ -206,6 +209,7 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
         persist-credentials: false
+        fetch-depth: 0
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
@@ -256,7 +260,7 @@ jobs:
     - name: Focused suites inside the same immutable image
       run: "python -m pip install --require-hashes --only-binary=:all: --target \"$RUNNER_TEMP/security-test-tools\"\
         \ -r requirements-security-tests.lock\nchmod 0777 evidence\nmapfile -t suites < <(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d'\
-        \ docs/final-operational-tests.txt)\ndocker run --rm --network host --entrypoint python \\\n  --mount \"\
+        \ $(python tools/receipt_hotfix_scope.py --output evidence/receipt-hotfix-scope.json))\ndocker run --rm --network host --entrypoint python \\\n  --mount \"\
         type=bind,src=$PWD/ci-safety,dst=/security-safety,readonly\" \\\n  --mount \"type=bind,src=$RUNNER_TEMP/security-test-tools,dst=/security-test-tools,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/tests,dst=/app/tests,readonly\" \\\n  --mount \"type=bind,src=$PWD/docs,dst=/app/docs,readonly\"\
         \ \\\n  --mount \"type=bind,src=$PWD/Dockerfile,dst=/app/Dockerfile,readonly\" \\\n  --mount \"type=bind,src=$PWD/.dockerignore,dst=/app/.dockerignore,readonly\"\
