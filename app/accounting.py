@@ -169,6 +169,13 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
             items[pid]['returned_quantity']+=qty
     for credit in credits:
         if in_period(credit['created_at'],lo,hi):bucket(om[credit['order_id']],credit['created_at'])['price_credits']+=credit['credit_halalas']
+        if in_period(credit['created_at'],lo,hi) and credit['details'].get('source')=='delivery_partial_return':
+            order=om[credit['order_id']]
+            for line in credit['details']['lines']:
+                original=order['snapshot']['items'][line['line_index']];pid=original['product_id']
+                if product_id and pid!=product_id:continue
+                if pid not in items:items[pid]=new_item(pid,original.get('name') or pid)
+                items[pid]['returned_quantity']+=line['quantity']
     from .financial_totals import net_sales
     for b in rows.values():
         b['total']=b['cash']+b['card']-b['refunds']

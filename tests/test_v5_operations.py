@@ -353,7 +353,14 @@ def test_guest_risk_markers_rate_limit_and_operational_call_do_not_verify_phone(
     assert staff['customer']['phone_verified'] is False
     assert call('owner','POST','/api/orders/'+oid+'/preparation',{'status':'accepted','version':staff['version']}).status_code==409
     assert call('owner','POST','/api/orders/'+oid+'/operational-confirmation',{'result':'reached','reason':'TEST actual phone call'}).json()['phone_verified'] is False
-    accepted=call('owner','POST','/api/orders/'+oid+'/preparation',{'status':'accepted','version':staff['version']});assert accepted.status_code==200,accepted.text
+    # Contact confirmation cannot itself release a suspected duplicate. The
+    # owner explicitly confirms this second order without verifying the phone.
+    held=call('owner','POST','/api/orders/'+oid+'/preparation',{'status':'accepted','version':staff['version']})
+    assert held.status_code==409 and held.json()['detail']['code']=='DUPLICATE_REVIEW_REQUIRED'
+    confirmed=call('owner','POST','/api/orders/'+oid+'/duplicate-review',
+        {'action':'confirm_additional','version':staff['version'],'reason':'TEST customer confirms an additional order'})
+    assert confirmed.status_code==200,confirmed.text
+    accepted=call('owner','POST','/api/orders/'+oid+'/preparation',{'status':'accepted','version':confirmed.json()['order']['version']});assert accepted.status_code==200,accepted.text
     for _ in range(8):assert call('customer','POST','/api/orders',body()).status_code==200
     assert call('customer','POST','/api/orders',body()).status_code==429
     assert call('customer','POST','/api/orders',body(),key='TEST-guest-first').json()==first.json()

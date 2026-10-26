@@ -38,7 +38,11 @@ def scoped_order(conn, order_id, user, lock=False):
 def customer_order_view(row):
     result=dict(row)
     result.pop('performance_snapshot',None)
+    if result.get('duplicate_review'):
+        result['duplicate_review']={'status':result['duplicate_review']['status']}
     result['snapshot'] = operational_view(catalog.customer_quote_view(row['snapshot']))
+    if result['snapshot'].get('duplicate_review'):
+        result['snapshot']['duplicate_review'] = {'status': result['snapshot']['duplicate_review']['status']}
     if row['snapshot'].get('internal_routing'):
         result['branch_id'] = result['snapshot']['branch_id']
         if 'branch_name' in result:
@@ -328,6 +332,8 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 customer['risk_alert']=bool(recent)
                 customer['risk_reasons']=['similar_recent_unverified_contact_order'] if recent else []
                 customer['requires_operational_confirmation']=type(threshold) is int and quote['total_halalas']>=threshold
+            from .order_duplicates import capture as capture_duplicate_review
+            capture_duplicate_review(conn, body.brand_id, customer['phone'], quote)
             quote['receipt_occasion_style'] = (config or {}).get('settings', {}).get('receipt_occasion_style', {})
             quote['receipt_occasion_text'] = (config or {}).get('settings', {}).get('receipt_occasion_text', '')
             from .delivery_workflow import configured_workflow
@@ -569,6 +575,8 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                             (*params, limit + 1, offset)).fetchall()
         from .branch_payments import enrich_orders as enrich_payments
         enrich_payments(conn, rows[:limit])
+        from .order_duplicates import enrich as enrich_duplicate_reviews
+        enrich_duplicate_reviews(conn,rows[:limit])
         if user['role']!='customer':
             performance.enrich_orders(conn,rows[:limit])
             from . import morning_dispatch
@@ -771,6 +779,8 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
                                   'WHERE e.order_id=%s ORDER BY e.created_at,e.id', (order_id,)).fetchall()
         from .branch_payments import enrich_orders as enrich_payments
         enrich_payments(conn, [row])
+        from .order_duplicates import enrich as enrich_duplicate_reviews
+        enrich_duplicate_reviews(conn,[row])
         if user['role']!='customer':
             performance.enrich_orders(conn,[row])
             from . import morning_dispatch
@@ -788,7 +798,7 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
             row=customer_order_view(row)
             for event in events:
                 event['details'] = {key: value for key, value in (event.get('details') or {}).items()
-                                    if key not in {'actor_name', 'actor_id', 'actor_role'}}
+                                    if key not in {'actor_name', 'actor_id', 'actor_role', 'related_order_ids'}}
     result = operational_view({'order': row, 'events': events})
     return DatabaseJSONResponse(result) if request is not None else result
 
@@ -1010,3 +1020,8 @@ def operational_confirmation(order_id:str,body:ContactConfirmationBody,
 
 
 
+
+
+from . import order_duplicates
+router.add_api_route('/{oid}/duplicate-review', order_duplicates.detail, methods=['GET'])
+router.add_api_route('/{oid}/duplicate-review', order_duplicates.decide, methods=['POST'])

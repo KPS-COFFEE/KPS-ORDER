@@ -414,12 +414,17 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
             assert conn.execute('SELECT count(*) AS n FROM chat_attachments WHERE conversation_id=%s', (conversation['id'],)).fetchone()['n'] == 1
         page.keyboard.press('Escape')
         page.reload()
-        # Click immediately after reload: restored identity must be ready before
-        # this control can send a signed-in customer into the guest dialog.
-        page.locator('#orders-button').click()
+        # Durable checkout recovery restores this saved order automatically.
+        # Its modal must keep the restored customer out of the account dialog,
+        # preserve the selected units and reopen the same persisted chat.
         expect(page.locator('#orders-dialog')).to_be_visible()
         expect(page.locator('#account-dialog')).not_to_be_visible()
-        page.get_by_role('button', name='عرض الطلب ومحادثته', exact=True).click()
+        expect(page.locator('#order-detail')).to_contain_text('أسود')
+        expect(page.locator('#order-detail')).to_contain_text('أزرق')
+        expect(page.locator('#order-detail')).to_contain_text(saved['snapshot']['order_reference'])
+        with db.tx() as conn:
+            recovered=conn.execute('SELECT id FROM orders WHERE customer_id=%s',(customer_id,)).fetchall()
+            assert recovered==[{'id':saved['id']}], 'Reload must recover the saved order without creating another'
         page.get_by_role('button', name='محادثة الطلب', exact=True).click()
         expect(page.locator('.chat-bubble')).to_have_count(2)
         expect(page.locator('.chat-bubble img')).to_have_count(1)

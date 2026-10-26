@@ -247,3 +247,54 @@ def test_concurrent_owner_invoice_approvals_create_one_credit(ops,monkeypatch):
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM audit_events WHERE entity_id=%s AND action=%s",(oid,treatment.APPROVED)).fetchone()['n']==1
         assert treatment.effective_total(c,before['order'])==1950
+
+
+def test_invoice_approval_is_an_explicit_owner_grant_not_an_admin_default():
+    from app import employee_permissions as permissions
+    from app.order_financial_treatments import can_decide,independent_owner
+    code='invoice_price_corrections_approve'
+    admin=dict(id='delegate',role='admin',active=True,permissions=['accounting_review'])
+    assert not can_decide(admin)
+    # Putting a named extra capability in the legacy admin list is not a grant.
+    assert not can_decide({**admin,'permissions':['accounting_review',code]})
+    delegated={**admin,'extra_permissions':[code]}
+    assert can_decide(delegated)
+    independent_owner(delegated,dict(requested_by='accountant',payload=dict(kind='price_correction')),set())
+    assert not can_decide({**delegated,'extra_permissions':[]})
+    assert not can_decide({**delegated,'permission_denials':['accounting_review']})
+    assert not can_decide({**delegated,'active':False})
+    assert code not in permissions.eligible('admin')
+    assert code in permissions.grantable('admin')
+    assert all(code not in permissions.grantable(role) for role in ('driver','delivery_manager','branch_manager'))
+    assert next(row for row in permissions.catalog() if row['code']==code)['owner_approval_required']
+    for row,actors in [(dict(requested_by='delegate',payload=dict(kind='price_correction')),set()),
+                       (dict(requested_by='accountant',payload=dict(kind='price_correction')),{'delegate'}),
+                       (dict(requested_by='accountant',payload=dict(kind='outstanding')),set())]:
+        with pytest.raises(HTTPException) as denied:independent_owner(delegated,row,actors)
+        assert denied.value.status_code==403
+
+
+@pytest.mark.postgres
+def test_invoice_delegate_is_revocable_and_order_scoped_without_self_approval(ops,monkeypatch):
+    monkeypatch.setenv('KPS_INVOICE_PRICE_CORRECTIONS_ENABLED','true')
+    actor,post,_,_=ops;oid,_,_=shortfall(ops)
+    url='/api/accounting/order-financial-treatments/orders/'+oid
+    context=actor('owner').get(url).json()
+    body=dict(expected_version=context['version'],case_id=context['case_id'],kind='price_correction',expected_collected_halalas=1950,
+        corrected_total_halalas=1950,evidence_reference='TEST approved original price record',note='TEST original price confirmed19.50')
+    pending=post('owner',url,body)
+    decision=url+'/'+pending['id']+'/approve'
+    approval=dict(confirmed=True,evidence_reference='TEST delegated reviewer evidence',note='TEST independent delegated approval')
+    post('accountant',decision,approval,status=403)
+    with db.tx() as c:c.execute("UPDATE users SET extra_permissions=%s WHERE id='ops-accountant'",(db.json(['invoice_price_corrections_approve']),))
+    assert actor('accountant').get(url).json()['can_approve']
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids='[]' WHERE id='ops-accountant'")
+    post('accountant',decision,approval,status=404)
+    with db.tx() as c:c.execute("UPDATE users SET branch_ids=%s,brand_id='ops-other' WHERE id='ops-accountant'",(db.json(['ops-branch']),))
+    post('accountant',decision,approval,status=404)
+    with db.tx() as c:c.execute("UPDATE users SET brand_id='ops-brand',extra_permissions='[]' WHERE id='ops-accountant'")
+    post('accountant',decision,approval,status=403)
+    with db.tx() as c:c.execute("UPDATE users SET extra_permissions=%s WHERE id='ops-accountant'",(db.json(['invoice_price_corrections_approve']),))
+    before=source(oid)
+    approved=post('accountant',decision,approval)
+    assert approved['price_credit_halalas']==550 and source(oid)==before

@@ -63,11 +63,19 @@ def require_kind(kind):
         raise db.error(404,'ORDER_TREATMENT_KIND_DISABLED','هذا النوع من المعالجة غير مفعل؛ تصحيح الفاتورة لا يفعّل الذمم أو تصحيح وسيلة الدفع.')
 
 
+def can_decide(user):
+    return bool(user.get('active',True) and (user.get('role')=='owner' or
+        user.get('role')=='admin' and auth.has_permission(user,'accounting_review')
+        and auth.has_permission(user,'invoice_price_corrections_approve')))
+
+
 def independent_owner(user, row, actors):
-    if user.get('role')!='owner':
-        raise db.error(403,'ORDER_TREATMENT_OWNER_REQUIRED','الاعتماد والإرجاع والرفض للمالك المخول فقط.')
+    # Only the named invoice delegation is transferable. Owner-reserved debt or
+    # period decisions retain their separate owner requirement.
+    if not can_decide(user) or (user.get('role')!='owner' and row.get('payload',{}).get('kind')!='price_correction'):
+        raise db.error(403,'ORDER_TREATMENT_OWNER_REQUIRED','القرار للمالك أو الموظف المفوض صراحةً باعتماد تصحيح الفاتورة.')
     if user['id']==row['requested_by'] or user['id'] in actors:
-        raise db.error(403,'ORDER_TREATMENT_SELF_APPROVAL','القرار لمالك مستقل عن معد الطلب وصاحب العهدة ومستلمها.')
+        raise db.error(403,'ORDER_TREATMENT_SELF_APPROVAL','القرار لمخول مستقل عن معد الطلب وصاحب العهدة ومستلمها.')
 
 
 def scoped(c,user,oid,lock=False):
@@ -105,6 +113,26 @@ def credited_total(order,records):
     return original-credits
 
 
+def claim_projections(c, orders):
+    """Two bounded reads for task cards; no per-task financial query loop."""
+    if not orders:return {}
+    ids=[o['id'] for o in orders]
+    rows=c.execute("SELECT entity_id order_id,details FROM audit_events WHERE entity_type='order' AND entity_id=ANY(%s) AND action=%s",(ids,APPROVED)).fetchall()
+    approvals={};credits={}
+    for row in rows:
+        oid=row['order_id'];approvals[oid]=True
+        if row['details'].get('kind')=='price_correction':credits.setdefault(oid,[]).append(row)
+    refunds={}
+    if approvals:
+        refunds={r['order_id']:int(r['amount_halalas']) for r in c.execute("SELECT order_id,coalesce(sum(amount_halalas),0) amount_halalas FROM refunds WHERE order_id=ANY(%s) AND amendment_id IS NULL AND record_kind<>'test_void' GROUP BY order_id",(list(approvals),)).fetchall()}
+    result={}
+    for order in orders:
+        effective=credited_total(order,credits.get(order['id'],[]))
+        result[order['id']]=dict(original_total_halalas=order['total_halalas'],effective_total_halalas=effective,
+            effective_claim_halalas=max(0,effective-refunds.get(order['id'],0)))
+    return result
+
+
 def effective_total(c,order):
     return credited_total(order,price_credit_rows(c,[order['id']]))
 
@@ -123,7 +151,14 @@ def effective_claim(c,order):
 
 
 def valuation_order(c,order):
-    return {**order,'original_total_halalas':order['total_halalas'],'total_halalas':effective_total(c,order)}
+    # A physical return consumes specific quantities, not the price of the
+    # remaining items. prior_quantities excludes those already returned units.
+    # Restore only their source credit while valuing future selected units;
+    # other source price corrections still reduce the conservative ceiling.
+    from .delivery_partial_returns import approved
+    physical_credits=sum(r['credit_halalas'] for r in approved(c,order['id']))
+    return {**order,'original_total_halalas':order['total_halalas'],
+        'total_halalas':min(order['total_halalas'],effective_total(c,order)+physical_credits)}
 
 
 def state(c,order,case_id=None,*,collected_halalas=None,review_resolved=False):
@@ -205,7 +240,7 @@ def listing(oid:str,user=Depends(auth.current_user)):
                 raise
             followup.append(dict(id=person['id'],name=person['display_name']))
         return safe(dict(order_id=oid,version=order['version'],case_id=case['id'] if case else None,treatments=history(c,oid),
-            followup_users=followup,allowed_kinds=(["price_correction"] if enabled() else [])+(["outstanding"] if development_enabled() else []),can_propose=bool(case),can_approve=user['role']=='owner' and user['id'] not in custody_actors(c,oid),**state(c,order,case['id'] if case else None)))
+            followup_users=followup,allowed_kinds=(["price_correction"] if enabled() else [])+(["outstanding"] if development_enabled() else []),can_propose=bool(case),can_approve=can_decide(user) and user['id'] not in custody_actors(c,oid),**state(c,order,case['id'] if case else None)))
 
 
 @router.post('/{oid}')

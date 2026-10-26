@@ -21,11 +21,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
     assert.equal(mutations[2].body.allow_period_approval_with_outstanding,true);assert.equal(mutations[2].body.confirmed,true);
     assert.equal(data.original_total_halalas,2500);assert.equal(data.actual_collected_halalas,1950);
     data.allowed_kinds=['price_correction'];data.treatments[0].payload.kind='price_correction';
-    await module.open({...ctx,user:{id:'accountant',role:'admin',invoice_price_corrections_enabled:true}});
+    data.can_approve=false;await module.open({...ctx,user:{id:'accountant',role:'admin',invoice_price_corrections_enabled:true}});
     assert(!rendered.includes('data-source-treatment-approve='));assert(!rendered.includes('data-source-treatment-reject='));assert(!rendered.includes('data-source-treatment-return='));
     newButton.onclick();assert(!rendered.includes('<option value="outstanding">'));
     await assert.rejects(()=>submit(new Map([['kind','outstanding']])));
-    data.treatments[0].status='returned';data.treatments[0].payload.case_id='case1';
+    data.can_approve=true;await module.open({...ctx,user:{id:'delegate',role:'admin',invoice_price_corrections_enabled:true}});assert(rendered.includes('data-source-treatment-approve='));assert(rendered.includes('data-source-treatment-return='));assert(rendered.includes('data-source-treatment-reject='));
+    data.can_approve=false;await module.open({...ctx,user:{id:'delegate',role:'admin',invoice_price_corrections_enabled:true}});assert(!rendered.includes('data-source-treatment-approve='));
+    data.can_approve=true;data.treatments[0].status='returned';data.treatments[0].payload.case_id='case1';
     await module.open(ctx);newButton.onclick();
     await submit(new Map([['kind','price_correction'],['corrected_total','19.50'],['evidence_reference','REVISED-PRICE-001'],['note','Additional supporting evidence attached as requested']]));
     assert.equal(mutations[3].body.resubmits_treatment_id,'t1');
@@ -36,7 +38,11 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
     assert(mutations[5].path.endsWith('/t1/reject'));
     data.treatments[0].requested_by='owner';
     await module.open(ctx);assert(!rendered.includes('data-source-treatment-approve='));assert(!rendered.includes('data-source-treatment-return='));
+    const delegateCtx={...ctx,user:{id:'delegate',role:'admin',invoice_price_corrections_enabled:true}};
+    await module.open(delegateCtx);approve[0].onclick();await submit(new Map([['confirmed','on'],['evidence_reference','DELEGATE-REVIEW-001'],['note','Independent scoped delegate reviewed original evidence']]));assert(mutations[6].path.endsWith('/t1/approve'));assert.equal(mutations[6].body.confirmed,true);
+    data.treatments[0].requested_by='delegate';await module.open(delegateCtx);assert(!rendered.includes('data-source-treatment-approve='));
+    data.treatments[0].requested_by='other';data.treatments[0].payload.kind='outstanding';await module.open(delegateCtx);assert(!rendered.includes('data-source-treatment-approve='));assert(!rendered.includes('data-source-treatment-return='));
 
   }
-  console.log('PASS: AR/EN invoice correction gating, owner-only decisions, linked resubmission and preserved original claim');
+  console.log('PASS: AR/EN invoice correction gating, scoped owner or explicitly delegated decisions, linked resubmission and preserved original claim');
 })().catch(e=>{console.error(e);process.exitCode=1;});

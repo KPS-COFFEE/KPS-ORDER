@@ -27,7 +27,9 @@ def population(client, monkeypatch):
            'task': db.new_id('audit_')}
     with db.tx() as c:
         for key, service in [('pickup','pickup'), ('delivery','delivery')]:
-            snap = {'items': [{'product_id':'audit','name':'Synthetic','quantity':1,
+            # Independent pickup and delivery audit scenarios use different
+            # purchased selections; duplicate review has its own concurrency tests.
+            snap = {'items': [{'product_id':'audit-'+service,'name':'Synthetic','quantity':1,
                               'unit_price_halalas':1000,'line_total_halalas':1000,'units':[]}],
                     'branch_name':'Synthetic branch','notes':''}
             c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,%s,'handed_over',%s,'cash',1000,0,1000,%s,%s)",
