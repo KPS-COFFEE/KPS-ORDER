@@ -219,7 +219,9 @@ def test_actual_refund_after_partial_return_does_not_recreate_due_amount(ops):
     post('driver',f'/api/orders/{oid}/collect',dict(method='cash',amount_halalas=1500,tendered_halalas=1500))
     post('driver',f'/api/tasks/{tid}/transition',dict(status='delivered',proof='Actual accepted items delivered'))
     post('owner',f'/api/orders/{oid}/refund',dict(method='cash',amount_halalas=750,line_quantities={'coffee':1},reason='Actual returned one remaining coffee and cash paid back'))
-    summary=actor('driver').get(f'/api/order-amendments/orders/{oid}').json()
+    response=actor('owner').get(f'/api/order-amendments/orders/{oid}')
+    assert response.status_code==200,response.text
+    summary=response.json()
     assert summary['original_total_halalas']==2500 and summary['effective_total_halalas']==1500
     assert summary['effective_claim_halalas']==750 and summary['actual_collected_halalas']==750
     assert summary['due_halalas']==summary['refund_due_halalas']==0
