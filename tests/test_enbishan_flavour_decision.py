@@ -32,3 +32,22 @@ def test_owner_flavour_pairs_preserve_prices_and_approval(database):
         before=conn.execute("SELECT id,settings FROM products WHERE brand_id='enbishan' ORDER BY id").fetchall()
         conn.execute(sql)
         assert conn.execute("SELECT id,settings FROM products WHERE brand_id='enbishan' ORDER BY id").fetchall()==before
+
+
+def test_khaliya_offer_keeps_approval_and_all_flavour_prices(database):
+    f=json.loads((ROOT/'tests/fixtures/enbishan-khaliya-offer.json').read_text())
+    p=f['before'];settings={k:p[k] for k in ('source_id','option_groups','variants','variant_price_matrix')}
+    settings.update(source_verified=True,owner_approved_digest=db.digest(p))
+    with db.tx() as conn:
+        conn.execute("INSERT INTO brands(id,name) VALUES('enbishan','Synthetic') ON CONFLICT DO NOTHING")
+        conn.execute('INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET settings=EXCLUDED.settings',tuple(p[k] for k in ('id','brand_id','name','category','price_halalas'))+(db.json(settings),))
+        sql=(ROOT/'migrations/113_enbishan_khaliya_offer.sql').read_text()
+        conn.execute(sql)
+        updated=conn.execute('SELECT * FROM products WHERE id=%s',(p['id'],)).fetchone()
+        assert source_approved(updated)
+        assert updated['settings']['variant_price_matrix']==f['after']['variant_price_matrix']
+        for row in menu_variants.validated(updated):
+            assert row.price_halalas==1950
+            assert menu_variants.selected_price(updated,row.options)['price_halalas']==1950
+        conn.execute(sql)
+        assert conn.execute('SELECT * FROM products WHERE id=%s',(p['id'],)).fetchone()==updated

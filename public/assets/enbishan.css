@@ -82,3 +82,7 @@ html[dir=rtl] .enbishan-journey .mobile-basket{transform:translateX(50%)}
 .enbishan-journey .enbishan-size-price{width:100%;white-space:nowrap}
 
 @media(max-width:550px){.enbishan-journey .customer-option-choices:has(.enbishan-size-price){grid-template-columns:minmax(0,1fr)}}
+
+.grape-flavour-field{margin:0;padding:0;border:0;min-width:0}.grape-flavour-field legend{font-weight:700;margin-bottom:8px}.grape-flavour-field .small{margin:0 0 10px}.grape-flavour-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+/* Match the visible can height to the existing 7Up photograph, retaining each product image. */
+.product-image-button img[src$="/citrus-can.jpg"]{transform:scale(1.02);object-position:center 43%}

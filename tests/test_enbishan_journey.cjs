@@ -23,3 +23,28 @@ buttons[1].listeners.click();assert.equal(ctx.state.optionValues[0].SIZE,'twelve
 fields['product-qty'].value='2';ctx.renderOptions();buttons=fields['product-options'].querySelectorAll('button');buttons[3].listeners.click();assert.equal(ctx.state.optionValues[0].SIZE,'twelve');assert.equal(ctx.state.optionValues[1].SIZE,'six');
 ctx.requestedBrandId='kps';ctx.renderOptions();assert.equal(fields['product-options'].querySelectorAll('button').length,0);
 console.log('PASS: direct Enbishan choices preserve disabled options, independent unit selections, pricing refresh and KPS controls.');
+
+// The four visible choices are independent flavours; only complete selections
+// map to an existing approved server variant, never to a partial order.
+vm.runInContext(source.slice(source.indexOf('  const grapeFlavourDrafts='),source.indexOf('  function renderOptions()')),ctx);
+ctx.requestedBrandId='enbishan';
+const flavour={code:'FLAVOUR',values:[
+ {code:'pair-ps',name:'دبس رمان + سبايسي',name_en:'Pomegranate molasses + Spicy'},
+ {code:'pair-pl',name:'دبس رمان + ليمون',name_en:'Pomegranate molasses + Lemon'},
+ {code:'pair-sl',name:'سبايسي + ليمون',name_en:'Spicy + Lemon'},
+ {code:'mixed',name:'مشكل',name_en:'Mixed'}]};
+ctx.state.optionValues=[{},{}];
+let picker=ctx.renderGrapeFlavours(p,flavour,0),flavours=picker.querySelectorAll('button');
+assert.deepEqual(flavours.map(b=>b.textContent),['Pomegranate molasses','Spicy','Lemon','Mixed']);
+flavours[0].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,undefined);
+flavours[1].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'pair-ps');assert.equal(flavours[2].disabled,true);
+flavours[3].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'mixed');assert.deepEqual(flavours.map(b=>b.attributes['aria-pressed']),['false','false','false','true']);
+flavours[2].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,undefined);assert.equal(flavours[3].attributes['aria-pressed'],'false');
+flavours[0].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'pair-pl');
+flavours[0].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,undefined);
+flavours[1].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'pair-sl');
+assert.equal(ctx.state.optionValues[1].FLAVOUR,undefined);
+picker=ctx.renderGrapeFlavours(p,flavour,0);assert.equal(picker.querySelectorAll('button')[2].attributes['aria-pressed'],'true');
+ctx.state.optionValues[1]={...ctx.state.optionValues[0]};picker=ctx.renderGrapeFlavours(p,flavour,1);assert.equal(picker.querySelectorAll('button')[1].attributes['aria-pressed'],'true');
+ctx.requestedBrandId='kps';assert.equal(ctx.renderGrapeFlavours(p,flavour,0),null);
+console.log('PASS: four individual flavours, two-pick limit, mixed exclusivity, partial picks and independent units.');
