@@ -1,0 +1,45 @@
+name: KPS isolated CPU diagnosis (not acceptance)
+on:
+  push:
+    branches: [agent/financial-cpu-diagnostic-20261026]
+permissions:
+  contents: read
+jobs:
+  synthetic-cpu-profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hardening_cpu
+          POSTGRES_USER: hardening_test
+          POSTGRES_PASSWORD: isolated-load-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hardening_test -d test_hardening_cpu"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_cpu
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install existing pinned dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Profile existing synthetic source at 50 users with one worker
+        run: >-
+          python tools/hardening_load.py --profile-cpu --workers 1 --levels 50
+          --database-container '${{ job.services.postgres.id }}'
+          --output test-artifacts/diagnostic/load.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: financial-cpu-diagnostic-not-release-evidence
+          path: test-artifacts/diagnostic/
