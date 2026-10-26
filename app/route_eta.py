@@ -212,6 +212,33 @@ def unavailable(driver_id, reason, status='unavailable'):
             'return_at':None,'return_seconds':None,'refresh_after_seconds':TTL_SECONDS}
 
 
+def refreshed_caller(c, user, *, assignment=False):
+    """Provider I/O releases our transaction; revoke stale caller authority after it."""
+    from . import multibrand, central_operations
+    actor = c.execute("SELECT u.* FROM users u JOIN brands b ON b.id=u.brand_id AND b.active WHERE u.id=%s AND u.active",
+                      (user['id'],)).fetchone()
+    session = c.execute("SELECT id FROM sessions WHERE id=%s AND user_id=%s AND revoked_at IS NULL AND expires_at>now() FOR SHARE",
+                        (user.get('session_id'),user['id'])).fetchone()
+    if not session:
+        raise HTTPException(401,'انتهت الجلسة أثناء حساب المسار. سجل الدخول مجددًا.')
+    if not actor or actor['role'] not in STAFF:
+        raise HTTPException(403,'تغيرت صلاحيات حساب التشغيل. أعد فتح الشاشة.')
+    actor = multibrand.project(c,actor,user['brand_id'])
+    if not actor:
+        raise HTTPException(403,'تم سحب صلاحية البراند أثناء حساب المسار.')
+    if user.get('_morning_manager_context'):
+        from .morning_manager_context import resolve
+        actor = resolve(c,actor,shift_id=user['_morning_manager_context']['shift_id'])
+    if not auth.has_permission(actor,'drivers_view') or assignment and not auth.has_permission(actor,'delivery_assign'):
+        raise HTTPException(403,'تم سحب صلاحية المسار أثناء الحساب.')
+    if user.get('central_operations') and not user.get('_morning_manager_context'):
+        actor['central_operations'] = central_operations.context(c,actor)
+        if not actor['central_operations']:
+            raise HTTPException(403,'نطاق الإدارة الموحدة لم يعد متاحًا.')
+    actor['session_id'] = user['session_id']
+    return actor
+
+
 @router.post('/route-eta')
 def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
     if not auth.has_permission(user,'drivers_view'):
@@ -278,6 +305,7 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
     except ValueError:
         return unavailable(body.driver_id,'road_route_unavailable')
     with db.tx() as c:
+        user = refreshed_caller(c,user,assignment=body.publish or body.ordered_stop_ids is not None)
         # A task can be completed/reassigned while the provider responds.
         try:
             current = context_for(c,user,body.driver_id)

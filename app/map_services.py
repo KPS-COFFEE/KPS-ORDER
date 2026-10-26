@@ -103,6 +103,18 @@ def health(shift_id: str = Query(min_length=1,max_length=200), user=Depends(auth
                      'cause':'unknown','evidence':'server_received_samples','history_complete':False})
 
 
+def gps_join_predicate():
+    # A single-brand schema deliberately has no central_workday_legs table.
+    # Do not reference an optional relation even inside a false SQL OR branch:
+    # PostgreSQL resolves every relation when it parses the statement.
+    from .multibrand import enabled
+    same_shift="g.shift_id=s.id AND g.brand_id=s.brand_id"
+    same_day=(" OR EXISTS (SELECT 1 FROM central_workday_legs a "
+              "JOIN central_workday_legs b ON b.workday_id=a.workday_id "
+              "WHERE a.shift_id=g.shift_id AND b.shift_id=s.id)") if enabled() else ''
+    return "g.driver_id=u.id AND ("+same_shift+same_day+")"
+
+
 @router.get('/alerts')
 def alerts(user=Depends(auth.require_roles(*STAFF))):
     require(user)
@@ -123,10 +135,10 @@ def alerts(user=Depends(auth.require_roles(*STAFF))):
           FROM shifts s JOIN users u ON u.id=s.user_id
           JOIN driver_tasks t ON t.shift_id=s.id AND t.status='picked_up'
           JOIN orders o ON o.id=t.order_id AND o.brand_id=s.brand_id
-          LEFT JOIN driver_latest_locations g ON g.driver_id=u.id AND (g.shift_id=s.id AND g.brand_id=s.brand_id OR EXISTS (SELECT 1 FROM central_workday_legs a JOIN central_workday_legs b ON b.workday_id=a.workday_id WHERE a.shift_id=g.shift_id AND b.shift_id=s.id))
+          LEFT JOIN driver_latest_locations g ON _GPS_SCOPE_
           WHERE s.brand_id=%s AND s.kind='driver' AND s.status='open' AND u.active AND u.role='driver'
           AND (%s OR o.branch_id=ANY(%s)) AND o.completed_at IS NULL
-          GROUP BY s.id,u.id,g.updated_at,g.accuracy_m''',(user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
+          GROUP BY s.id,u.id,g.updated_at,g.accuracy_m'''.replace('_GPS_SCOPE_',gps_join_predicate()),(user['brand_id'],user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
         result=[]
         visible_driver_ids=set()
         now=datetime.now(timezone.utc)
@@ -147,10 +159,10 @@ def alerts(user=Depends(auth.require_roles(*STAFF))):
           JOIN orders o ON o.id=t.order_id AND o.brand_id=%s AND o.completed_at IS NULL
           JOIN users u ON u.id=t.driver_id AND u.active AND u.role='driver'
           JOIN shifts s ON s.id=t.shift_id AND s.brand_id=o.brand_id AND s.status='open'
-          JOIN driver_latest_locations g ON g.driver_id=u.id AND (g.shift_id=s.id AND g.brand_id=s.brand_id OR EXISTS (SELECT 1 FROM central_workday_legs a JOIN central_workday_legs b ON b.workday_id=a.workday_id WHERE a.shift_id=g.shift_id AND b.shift_id=s.id))
+          JOIN driver_latest_locations g ON _GPS_SCOPE_
           WHERE e.event_type='order.gps_near_customer' AND e.created_at>now()-interval '2 minutes'
-          AND g.updated_at>now()-interval '120 seconds' AND (%s OR o.branch_id=ANY(%s))''',
-          (user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
+          AND g.updated_at>now()-interval '120 seconds' AND (%s OR o.branch_id=ANY(%s))'''.replace('_GPS_SCOPE_',gps_join_predicate()),
+          (user['brand_id'],user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
         result.extend({**r,'kind':'near_customer','confirmed_delivery':False} for r in near if r['driver_id'] in visible_driver_ids)
         if user.get('_morning_manager_context'):
             from .morning_manager_context import shift_allowed
@@ -176,7 +188,7 @@ def zones(user=Depends(auth.require_roles(*STAFF))):
         return {'zones':result}
     with db.tx() as c:
         rows=c.execute('SELECT id,name,settings FROM branches WHERE brand_id=%s AND (%s OR id=ANY(%s)) ORDER BY branch_no',
-                       (user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
+                       (user['brand_id'],user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
         return {'zones':[{'branch_id':r['id'],'name':r['name'],'coverage':r['settings'].get('coverage'),
                           'delivery_fee_halalas':r['settings'].get('delivery_fee_halalas')}
                          for r in rows if catalog.coverage_configured(r['settings'].get('coverage'))]}
@@ -235,7 +247,7 @@ def trips(shift_id:str=Query(min_length=1,max_length=200),user=Depends(auth.requ
           FROM driver_tasks t JOIN orders o ON o.id=t.order_id AND o.brand_id=%s
           JOIN branches b ON b.id=o.branch_id AND b.brand_id=o.brand_id
           WHERE t.shift_id=%s AND (%s OR o.branch_id=ANY(%s)) ORDER BY t.created_at,t.id LIMIT 500''',
-          (user['brand_id'],shift_id,user['role']=='owner',user.get('branch_ids',[]))).fetchall()
+          (user['brand_id'],shift_id,user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
         result=[]
         for row in rows:
             settings=row.pop('branch_settings')

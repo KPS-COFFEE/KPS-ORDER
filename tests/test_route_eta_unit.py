@@ -209,3 +209,41 @@ def test_own_route_denied_tasks_capability_before_database_or_history_read():
     user={'id':'d','role':'driver','brand_id':'kps','permission_denials':['tasks_view']}
     with pytest.raises(HTTPException) as exc:eta.driver_route_plan(user)
     assert exc.value.status_code==403
+
+
+@pytest.mark.parametrize('revocation',['session','role','permission','brand'])
+def test_provider_return_rejects_revoked_live_actor_authority(monkeypatch,revocation):
+    from app import multibrand
+    user={'id':'m','role':'delivery_manager','brand_id':'kps','branch_ids':['b'],'session_id':'sess','active':True}
+    actor=dict(user)
+    if revocation=='role':actor['role']='driver'
+    if revocation=='permission':actor['permission_denials']=['drivers_view']
+    class Connection:
+        def execute(self,sql,args):
+            self.session_query='FROM sessions' in sql
+            return self
+        def fetchone(self):
+            return (None if revocation=='session' else {'id':'sess'}) if self.session_query else actor
+    monkeypatch.setattr(multibrand,'project',lambda c,u,b:None if revocation=='brand' else u)
+    with pytest.raises(HTTPException) as exc:eta.refreshed_caller(Connection(),user)
+    assert exc.value.status_code==(401 if revocation=='session' else 403)
+
+
+def test_provider_return_reconstructs_current_morning_duty_without_stored_capabilities(monkeypatch):
+    from app import multibrand,morning_manager_context
+    user={'id':'m','role':'delivery_manager','brand_id':'kps','branch_ids':['b'],'session_id':'sess','active':True,
+          '_morning_manager_context':{'shift_id':'morning-duty','period':'morning','branch_ids':['b']}}
+    actor={k:v for k,v in user.items() if not k.startswith('_')}
+    class Connection:
+        def execute(self,sql,args):
+            self.session_query='FROM sessions' in sql
+            return self
+        def fetchone(self):return {'id':'sess'} if self.session_query else actor
+    monkeypatch.setattr(multibrand,'project',lambda c,u,b:u)
+    calls=[]
+    def resolve(c,u,shift_id):
+        calls.append(shift_id)
+        return dict(u,_morning_manager_context={'period':'morning','shift_id':shift_id,'branch_ids':['b']})
+    monkeypatch.setattr(morning_manager_context,'resolve',resolve)
+    result=eta.refreshed_caller(Connection(),user,assignment=True)
+    assert result['session_id']=='sess' and calls==['morning-duty']

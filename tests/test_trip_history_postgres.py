@@ -39,3 +39,15 @@ def test_second_pickup_mixed_customers_and_other_brand_return(shared_dual):
     assert history.status_code==200,history.text
     assert len(history.json()['trip_stops'])==4
     assert set(history.json()['physical_shift_ids'])=={by_brand['kps'][1],by_brand['enbishan'][1]}
+
+
+@pytest.mark.postgres
+def test_projected_owner_zone_inventory_keeps_current_membership_branch_scope(shared_dual):
+    (client,actor,post,_,order),_,_,_=shared_dual
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids='[\"enbishan-test-2\"]'::jsonb WHERE user_id='dual-owner' AND brand_id='enbishan'")
+    response=actor('owner','enbishan').get('/api/operations/map-services/zones')
+    assert response.status_code==200,response.text
+    branches={row['branch_id'] for row in response.json()['zones']}
+    assert 'enbishan-test-2' in branches
+    assert 'enbishan-test-1' not in branches

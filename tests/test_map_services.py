@@ -208,3 +208,15 @@ def test_customer_tracking_disabled_without_explicit_opt_in(monkeypatch,setting)
         assert client.post('/api/operations/orders/example/tracking-link',json={}).status_code==404
         assert client.post('/api/delivery-tracking/view',json={'token':'a'*43,'route':True}).status_code==404
         assert client.get('/delivery-track').status_code==404
+
+
+def test_single_brand_alert_sql_never_parses_uninstalled_workday_table(monkeypatch):
+    from app import multibrand
+    monkeypatch.setattr(multibrand,'enabled',lambda:False)
+    single=map_services.gps_join_predicate()
+    assert 'g.shift_id=s.id AND g.brand_id=s.brand_id' in single
+    assert 'central_workday_legs' not in single
+    monkeypatch.setattr(multibrand,'enabled',lambda:True)
+    shared=map_services.gps_join_predicate()
+    assert 'central_workday_legs' in shared
+    assert 'a.shift_id=g.shift_id AND b.shift_id=s.id' in shared

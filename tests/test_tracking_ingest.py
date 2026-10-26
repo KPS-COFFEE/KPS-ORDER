@@ -198,3 +198,45 @@ def test_explicit_driver_denial_blocks_stations_before_database(monkeypatch,meth
     response=getattr(TestClient(app),method)(path,**({'json':payload} if payload is not None else {}))
     assert response.status_code==403,response.text
     assert response.json()['detail']['code']=='TRACKING_TASK_PERMISSION'
+
+
+@pytest.mark.postgres
+def test_batch_is_atomic_and_new_session_cannot_rebind_saved_points(tracking_data):
+    from app import db
+    client,user=tracking_data
+    endpoint='/api/operations/driver-location-batch'
+    body=batch_body(30,'first')
+    body['points'].append(batch_body(7200,'outside')['points'][0])
+    assert client.post(endpoint,json=body).status_code==409
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM driver_tracking_points').fetchone()['n']==0
+        assert c.execute('SELECT count(*) n FROM driver_latest_locations').fetchone()['n']==0
+    original=batch_body(30,'first')
+    assert client.post(endpoint,json=original).status_code==200
+    with db.tx() as c:
+        c.execute("INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at) VALUES('track-replacement','track-new-token','track-new-csrf','tracking-driver',now()+interval '1 hour')")
+    user['session_id']='track-replacement'
+    response=client.post(endpoint,json=original)
+    assert response.status_code==409
+    assert response.json()['detail']['code']=='TRACKING_POINT_CONFLICT'
+    with db.tx() as c:
+        assert c.execute("SELECT session_id FROM driver_tracking_points WHERE id='first'").fetchone()['session_id']=='track-session'
+
+
+@pytest.mark.postgres
+def test_exact_saved_replay_remains_acknowledged_across_history_age_boundary(tracking_data):
+    from app import db
+    client,user=tracking_data
+    captured=datetime.now(timezone.utc)-timedelta(hours=26)
+    body={'shift_id':'track-shift','points':[{'id':'accepted-old','captured_at':captured.isoformat(),'lat':28.4,'lng':45.9,'accuracy_m':10}]}
+    with db.tx() as c:
+        c.execute("UPDATE shifts SET opened_at=now()-interval '2 days' WHERE id='track-shift'")
+        c.execute("UPDATE sessions SET created_at=now()-interval '2 days' WHERE id='track-session'")
+        c.execute("INSERT INTO driver_tracking_points(id,driver_id,brand_id,shift_id,session_id,lat,lng,accuracy_m,captured_at,received_at) VALUES('accepted-old','tracking-driver','kps','track-shift','track-session',28.4,45.9,10,%s,%s)",
+                  (captured,captured+timedelta(seconds=30)))
+    response=client.post('/api/operations/driver-location-batch',json=body)
+    assert response.status_code==200,response.text
+    assert response.json()['accepted_ids']==['accepted-old']
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM driver_tracking_points').fetchone()['n']==1
+        assert c.execute('SELECT count(*) n FROM driver_latest_locations').fetchone()['n']==0

@@ -119,13 +119,21 @@ def test_partial_manager_scope_cannot_claim_whole_trip_eta(eta_service):
           FROM branches WHERE id='gps-branch'""")
         c.execute("UPDATE users SET branch_ids='[\"gps-branch\",\"hidden-branch\"]' WHERE id='gps-driver'")
         c.execute("UPDATE shifts SET branch_ids='[\"gps-branch\",\"hidden-branch\"]' WHERE id='gps-shift'")
-        c.execute("UPDATE orders SET branch_id='hidden-branch' WHERE id='map-order-2'")
+        # A confirmed order cannot change fulfillment branch. Create the
+        # hidden branch's own order/task instead of bypassing that invariant.
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,
+          subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+          SELECT 'map-order-hidden',brand_id,'hidden-branch',customer_id,service,delivery_status,payment_method,
+          subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer
+          FROM orders WHERE id='map-order-2'""")
+        c.execute("""INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at)
+          VALUES('map-task-hidden','map-order-hidden','gps-driver','gps-shift','picked_up','map-owner',now())""")
     user.update(role='delivery_staff',branch_ids=['gps-branch'])
     response=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'})
     assert response.status_code==200,response.text
     assert response.json()['reason']=='itinerary_scope_incomplete'
     assert not calls
-    assert 'map-order-2' not in response.text and 'hidden-branch' not in response.text
+    assert 'map-order-hidden' not in response.text and 'hidden-branch' not in response.text
 
 
 def as_driver(user):
@@ -179,3 +187,25 @@ def test_driver_cannot_fetch_plan_after_own_session_or_shift_ends(eta_service):
         c.execute("UPDATE sessions SET revoked_at=NULL WHERE id='eta-driver-session'")
         c.execute("UPDATE shifts SET status='closed' WHERE id='gps-shift'")
     assert client.get('/api/operations/driver-route-plan').status_code==409
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('revocation',['session','permission'])
+def test_provider_race_rechecks_live_caller_authority_before_cache_or_publication(eta_service,monkeypatch,revocation):
+    client,user,calls=eta_service
+    user['role']='delivery_manager'
+    with db.tx() as c:c.execute("UPDATE users SET role='delivery_manager' WHERE id='map-owner'")
+    def revoke(points,token):
+        with db.tx() as c:
+            if revocation=='session':
+                c.execute("UPDATE sessions SET revoked_at=now() WHERE id='eta-manager-session'")
+            else:
+                c.execute("UPDATE users SET permission_denials='[\"drivers_view\"]' WHERE id='map-owner'")
+        return [[0 if i==j else 60 for j in range(len(points))] for i in range(len(points))]
+    monkeypatch.setattr(eta,'fetch_matrix',revoke)
+    result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','publish':True})
+    assert result.status_code==(401 if revocation=='session' else 403),result.text
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM driver_route_eta_state').fetchone()['n']==0
+        assert c.execute('SELECT count(*) n FROM driver_route_eta_expectations').fetchone()['n']==0
+        assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==9

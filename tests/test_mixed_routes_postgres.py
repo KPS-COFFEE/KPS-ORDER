@@ -4,6 +4,7 @@ Requires TEST_DATABASE_URL to an explicitly named local test database. These
 witnesses use actual grants, sessions, shift groups, tasks, GPS and budget rows.
 """
 import pytest
+from uuid import uuid4
 from app import db, route_eta, dispatch_map
 from test_central_workdays import central, open_days
 from test_enbishan_dual_brand import dual
@@ -30,11 +31,20 @@ def mixed_day(central,monkeypatch):
         return [[0 if i==j else 60 for j in range(len(points))] for i in range(len(points))]
     monkeypatch.setattr(route_eta,'fetch_matrix',matrix)
     def add(brand,index,status='picked_up'):
-        oid=order(brand)
+        # The location belongs to the original confirmed customer snapshot.
+        # Never mutate that immutable snapshot after assignment/confirmation.
+        oid=uuid4().hex
+        branch='kps-branch-1' if brand=='kps' else 'enbishan-test-1'
+        with db.tx() as c:
+            c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,
+              preparation_status,delivery_status,payment_method,subtotal_halalas,
+              delivery_fee_halalas,total_halalas,snapshot,customer)
+              VALUES(%s,%s,%s,%s,'delivery','ready','pending','cash',1000,0,1000,%s,%s)""",
+              (oid,brand,branch,'dual-'+brand+'-customer',
+               db.json({'items':[],'branch_name':branch,'delivery_workflow':'manager_dispatch'}),
+               db.json({'name':'SYNTHETIC','location':{'lat':28.41+index*.001,'lng':45.91}})))
         task=post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':legs[brand]},brand)['task']
         with db.tx() as c:
-            c.execute('UPDATE orders SET customer=customer||%s WHERE id=%s',
-                      (db.json({'location':{'lat':28.41+index*.001,'lng':45.91}}),oid))
             c.execute("UPDATE driver_tasks SET status=%s,picked_up_at=CASE WHEN %s='picked_up' THEN now() ELSE NULL END WHERE id=%s",(status,status,task['id']))
         return task['id']
     return actor,post,legs,calls,add
