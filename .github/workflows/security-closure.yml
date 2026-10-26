@@ -95,6 +95,12 @@ jobs:
         | tee evidence/owner-probe.log
 
         '
+    - name: Verify driver order review scope and interface first
+      env:
+        PYTHONPATH: ci-safety:.
+      run: |
+        python -m pytest -q tests/test_driver_order_review.py --junitxml=evidence/driver-order-review.xml
+        node tests/test_driver_order_review_ui.cjs
     - name: Completed driver attribution correction regression first
       env:
         PYTHONPATH: ci-safety:.
@@ -105,8 +111,6 @@ jobs:
       run: 'mapfile -t suites < <(sed ''/^[[:space:]]*#/d;/^[[:space:]]*$/d'' docs/final-operational-tests.txt)
 
         python -m pytest -q "${suites[@]}" --junitxml=evidence/security-focused.xml | tee evidence/security-focused.log
-
-        node tests/test_driver_order_review_ui.cjs
 
         node tests/test_mandatory_sms_ui.cjs
 
