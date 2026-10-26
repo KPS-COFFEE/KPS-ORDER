@@ -302,6 +302,10 @@ def driver_reviewed(c, o, driver_id):
 
 def guard(c, o, *, driver_id=None, require_branch=True):
     """Called with the order lock, before preparation/collection/driver transitions."""
+    from .order_duplicates import guard as duplicate_guard
+    duplicate_guard(c, o)
+    from .delivery_partial_returns import guard as partial_return_guard
+    partial_return_guard(c, o)
     if active(c,o['id']): raise db.error(409,'AMENDMENT_PENDING','يوجد تعديل قيد المراجعة؛ وافق عليه أو ارفضه أو اسحبه قبل متابعة التنفيذ.')
     rev=o.get('amendment_revision',0)
     if not rev:return

@@ -101,7 +101,14 @@ def effective_claim(c,order):
 
 
 def valuation_order(c,order):
-    return {**order,'original_total_halalas':order['total_halalas'],'total_halalas':effective_total(c,order)}
+    # A physical return consumes specific quantities, not the price of the
+    # remaining items. prior_quantities excludes those already returned units.
+    # Restore only their source credit while valuing future selected units;
+    # other source price corrections still reduce the conservative ceiling.
+    from .delivery_partial_returns import approved
+    physical_credits=sum(r['credit_halalas'] for r in approved(c,order['id']))
+    return {**order,'original_total_halalas':order['total_halalas'],
+        'total_halalas':min(order['total_halalas'],effective_total(c,order)+physical_credits)}
 
 
 def state(c,order,case_id=None,*,collected_halalas=None,review_resolved=False):
