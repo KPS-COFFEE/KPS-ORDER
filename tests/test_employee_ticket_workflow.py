@@ -180,7 +180,7 @@ def test_backup_scope_distinctness_revocation_and_real_reassignment_are_enforced
     post('owner',path,{**body,'fallback_id':'ops-other'},status=422)
     post('owner',path,{**body,'fallback_id':'ops-driver'},status=422)
     post('owner',path,{**body,'fallback_id':'ops-backup'})
-    changed=post('backup',path,dict(expected_version=2,action='assign',assignee_id='ops-manager',department='delivery',note='Cover the unavailable dispatcher and keep the actual task'))['workflow']
+    changed=post('backup',path,dict(expected_version=2,action='assign',assignee_id='ops-manager',department='delivery',fallback_id='ops-owner',note='Cover the unavailable dispatcher and keep the actual task'))['workflow']
     assert changed['dispatcher_id']=='ops-backup' and changed['responsible_user_id']=='ops-backup'
     assert changed['history'][-1]['details']['from_responsible_user_id']=='ops-owner'
     assert changed['fallback_user_id']=='ops-owner'
