@@ -156,6 +156,8 @@ app.include_router(driver_attribution.router)
 from . import staff_geo_access
 app.include_router(staff_geo_access.router)
 app.include_router(dispatch_map.router)
+from . import driver_order_sounds
+app.include_router(driver_order_sounds.router)
 from . import map_services
 app.include_router(map_services.router)
 from . import delivery_tracking
@@ -281,5 +283,6 @@ def frontend_file(filename: str):
 if (PUBLIC / 'assets').exists():
     app.include_router(image_previews.router)
     app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')
+
 
 
