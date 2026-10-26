@@ -134,7 +134,8 @@
       if(url.pathname==='/api/fleet/vehicles'&&method==='GET')return remember(await raw('/api/central-operations/fleet/vehicles'+url.search,options),user.brand_id);
       if(url.pathname==='/api/dashboard'&&method==='GET')return raw('/api/central-operations/dashboard'+url.search,options);
       if(url.pathname==='/api/operations/driver-locations'&&method==='GET')return raw('/api/central-operations/driver-locations',options);
-      if(url.pathname==='/api/operations/driver-route-context'&&method==='GET')return raw('/api/central-operations/driver-route-context'+url.search,options);
+      if(url.pathname==='/api/operations/driver-route-context'&&['GET','POST'].includes(method))return raw('/api/central-operations/driver-route-context'+url.search,options);
+      if(['/api/operations/route-eta','/api/operations/driver-route-plan','/api/operations/map-services/trip-stops/current'].includes(url.pathname))return raw(path,options);
       if(url.pathname==='/api/identity/staff'&&method==='GET')return remember(await raw('/api/central-operations/staff',options),user.brand_id);
       const staffEdit=url.pathname.match(/^\/api\/identity\/staff\/([^/]+)$/);
       if(url.pathname==='/api/identity/staff/invitations'&&method==='POST')return raw('/api/central-operations/staff/invitations',options);

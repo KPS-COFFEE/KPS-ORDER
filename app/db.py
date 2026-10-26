@@ -366,6 +366,8 @@ PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authoriz
 PRESERVED_TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_line_decisions')
 PRESERVED_TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 
+PRESERVED_TABLES += ('driver_tracking_points','driver_trip_stops','driver_route_eta_state','driver_route_eta_expectations')
+
 def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     """Compare existing columns/bytes in the same bounded migration transaction.
 

@@ -170,6 +170,9 @@ app.include_router(staff_geo_access.router)
 app.include_router(dispatch_map.router)
 from . import map_services
 app.include_router(map_services.router)
+from . import tracking_ingest, route_eta
+app.include_router(tracking_ingest.router)
+app.include_router(route_eta.router)
 from . import delivery_tracking
 app.include_router(delivery_tracking.router)
 
