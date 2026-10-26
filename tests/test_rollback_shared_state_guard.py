@@ -146,3 +146,44 @@ def test_financial_review_state_also_refuses_older_writer_without_mutation():
     with pytest.raises(RuntimeError,match='new financial or administrative review'):
         prior.guard_rollback_feature_state(c)
     assert all(query.startswith('SELECT ') for query in c.queries)
+
+
+@pytest.mark.parametrize('state',['pending_duplicate','duplicate_decision','partial_return'])
+def test_order_safety_contract_refuses_prior_writer_without_any_write(state):
+    class OrderSafetyCatalog(Catalog):
+        def execute(self,statement):
+            query=statement.as_string() if hasattr(statement,'as_string') else statement
+            if (state=='pending_duplicate' and "snapshot->'duplicate_review'" in query
+                    or state!='pending_duplicate' and "event_type='order.duplicate_decided'" in query):
+                self.queries.append(query)
+                return Read([{'exists':1}])
+            return super().execute(statement)
+    c=OrderSafetyCatalog(available={'orders','order_events'})
+    with pytest.raises(RuntimeError,match='ROLLBACK_FEATURE_STATE_UNSUPPORTED'):
+        prior.guard_rollback_feature_state(c)
+    assert all(query.startswith('SELECT ') for query in c.queries)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('state',['pending_duplicate','duplicate_decision','partial_return'])
+def test_real_order_safety_state_blocks_prior_writer_and_keeps_current_source_usable(ops,state):
+    from app import db
+    from uuid import uuid4
+    oid='rollback-order-safety-'+uuid4().hex
+    snapshot={'items':[],'branch_name':'Synthetic'}
+    if state=='pending_duplicate':snapshot['duplicate_review']={'status':'pending','related_order_ids':[]}
+    with db.tx() as c:
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','cash',1000,0,1000,%s,%s)",
+                  (oid,db.json(snapshot),db.json({'name':'Synthetic','phone':'+966500000001'})))
+        if state!='pending_duplicate':
+            db.event(c,oid,'ops-manager','order.duplicate_decided' if state=='duplicate_decision' else 'delivery.partial_return.requested',{'reason':'Synthetic rollback witness'})
+        before=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        evidence=c.execute('SELECT * FROM order_events WHERE order_id=%s ORDER BY id',(oid,)).fetchall()
+        with pytest.raises(RuntimeError,match='ROLLBACK_FEATURE_STATE_UNSUPPORTED'):
+            prior.guard_rollback_feature_state(c)
+        assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==before
+        assert c.execute('SELECT * FROM order_events WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==evidence
+    db.migrate()
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==before
+        assert c.execute('SELECT * FROM order_events WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==evidence

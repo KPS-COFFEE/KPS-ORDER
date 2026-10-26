@@ -83,6 +83,26 @@ def credited_total(order,records):
     return original-credits
 
 
+def claim_projections(c, orders):
+    """Two bounded reads for task cards; no per-task financial query loop."""
+    if not orders:return {}
+    ids=[o['id'] for o in orders]
+    rows=c.execute("SELECT entity_id order_id,details FROM audit_events WHERE entity_type='order' AND entity_id=ANY(%s) AND action=%s",(ids,APPROVED)).fetchall()
+    approvals={};credits={}
+    for row in rows:
+        oid=row['order_id'];approvals[oid]=True
+        if row['details'].get('kind')=='price_correction':credits.setdefault(oid,[]).append(row)
+    refunds={}
+    if approvals:
+        refunds={r['order_id']:int(r['amount_halalas']) for r in c.execute("SELECT order_id,coalesce(sum(amount_halalas),0) amount_halalas FROM refunds WHERE order_id=ANY(%s) AND amendment_id IS NULL AND record_kind<>'test_void' GROUP BY order_id",(list(approvals),)).fetchall()}
+    result={}
+    for order in orders:
+        effective=credited_total(order,credits.get(order['id'],[]))
+        result[order['id']]=dict(original_total_halalas=order['total_halalas'],effective_total_halalas=effective,
+            effective_claim_halalas=max(0,effective-refunds.get(order['id'],0)))
+    return result
+
+
 def effective_total(c,order):
     return credited_total(order,price_credit_rows(c,[order['id']]))
 

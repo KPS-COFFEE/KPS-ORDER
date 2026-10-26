@@ -1051,6 +1051,9 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
             rows = [r for r in rows if order_allowed(user, dict(r, id=r['order_id'], service='delivery'), c)]
         if order_id:
             rows=[r for r in rows if r['order_id']==order_id]
+        from .order_financial_treatments import claim_projections
+        claims=claim_projections(c,[dict(id=r['order_id'],total_halalas=r['total_halalas']) for r in rows])
+        for r in rows:r.update(claims[r['order_id']])
         if user['role']=='driver':
             rows=[r for r in rows if r['branch_id'] in user.get('branch_ids',[])]
             for r in rows:

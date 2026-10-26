@@ -57,9 +57,10 @@ def matches(c, brand_id, phone, snapshot, *, before=None):
 def capture(c, brand_id, phone, quote):
     contact_lock(c, brand_id, phone)
     related = matches(c, brand_id, phone, quote)
-    quote['duplicate_review'] = {'status':'pending' if related else 'clear',
+    quote['duplicate_review'] = ({'status':'pending',
         'related_order_ids':[r['id'] for r in related],
         'reason':'same_contact_and_purchased_selections', 'window_minutes':30}
+        if related else {'status':'clear'})
 
 
 def review(c, order):
@@ -98,7 +99,7 @@ def enrich(c, orders):
         public={k:v for k,v in state.items() if k!='related_order_ids'}
         order['duplicate_review']=public
         if 'duplicate_review' in order['snapshot']:
-            order['snapshot']={**order['snapshot'],'duplicate_review':public}
+            order['snapshot']={**order['snapshot'],'duplicate_review':{'status':state['status']}}
 
 
 def guard(c, order):

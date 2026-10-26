@@ -44,6 +44,12 @@ def test_temporary_delivery_without_branch_actions_and_full_mode_preserved(v5):
     assert call('driver','POST',f'/api/tasks/{tid}/transition',{'status':'delivered','proof':'TEST ONLY','photo_id':delivery}).status_code==200
     full=call('customer','POST','/api/orders',body('delivery')).json()['order']
     assert full['snapshot']['delivery_workflow']=='branch_fulfillment'
+    # This is an intentional second order for the same customer and selections.
+    # Confirm it through the manager gate before testing the other workflow.
+    assert full['snapshot']['duplicate_review']['status']=='pending'
+    confirmed=call('manager','POST',f"/api/orders/{full['id']}/duplicate-review",
+        {'action':'confirm_additional','version':full['version'],'reason':'Synthetic confirmed additional order for branch workflow'})
+    assert confirmed.status_code==200,confirmed.text
     task=call('manager','POST',f"/api/orders/{full['id']}/assign",{'driver_shift_id':sid}).json()['task']['id']
     assert call('driver','POST',f'/api/tasks/{task}/transition',{'status':'accepted'}).status_code==200
     assert call('driver','POST',f'/api/tasks/{task}/transition',{'status':'picked_up'}).status_code==409

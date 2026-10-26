@@ -306,6 +306,14 @@ def guard_rollback_feature_state(conn):
             raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains ' + table +
                                '; keep the current-aware application. No database restore or mutation was attempted.')
 
+    if 'orders' in available and conn.execute(
+        "SELECT 1 FROM orders WHERE snapshot->'duplicate_review'->>'status'='pending' LIMIT 1").fetchone():
+        raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains pending duplicate review; keep the current-aware application. No database mutation was attempted.')
+    if 'order_events' in available and conn.execute(
+        "SELECT 1 FROM order_events WHERE event_type='order.duplicate_decided' "
+        "OR event_type LIKE 'delivery.partial_return.%' LIMIT 1").fetchone():
+        raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains duplicate decisions or partial returns; keep the current-aware application. No database mutation was attempted.')
+
     if 'audit_events' in available and conn.execute(
         "SELECT 1 FROM audit_events WHERE action LIKE 'accounting.financial_treatment.%' "
         "OR action LIKE 'accounting.refund_item_allocation.%' OR action LIKE 'accounting.order_financial_treatment.%' "

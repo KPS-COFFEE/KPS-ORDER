@@ -8,8 +8,9 @@ from test_operations import ops
 
 
 def purchased(product='coffee',quantity=1,options=None):
-    return {'product_id':product,'quantity':quantity,
-            'units':[{'options':options or {}} for _ in range(quantity)]}
+    return {'product_id':product,'name':'قهوة تجربة' if product=='coffee' else product,
+            'quantity':quantity,'unit_price_halalas':1000,'line_total_halalas':1000*quantity,
+            'units':[{'options':options or {},'price_halalas':1000,'option_snapshot':{}} for _ in range(quantity)]}
 
 
 def make_order(items, *, source=None, phone='+966500000001', status='new',service='delivery'):
@@ -200,7 +201,9 @@ def test_branch_manager_resolves_own_service_duplicate(ops,service):
     state=result.json();assert state['review']['status']=='pending'
     post('branch','/api/orders/'+oid+'/duplicate-review',
         {'action':'confirm_additional','version':state['version'],'reason':'أكد العميل طلب استلام إضافي'})
-    saved=actor('branch').get('/api/orders/'+oid).json()['order']
+    response=actor('branch').get('/api/orders/'+oid)
+    assert response.status_code==200,response.text
+    saved=response.json()['order']
     assert saved['duplicate_review']['status']=='confirmed_additional'
 
 
@@ -238,10 +241,13 @@ def test_failed_duplicate_decision_rolls_back_operational_cancellation(ops,monke
         if event_type=='order.duplicate_decided':raise RuntimeError('synthetic decision write failure')
         return original_event(c,order_id,actor_id,event_type,details)
     monkeypatch.setattr(db,'event',fault)
-    with pytest.raises(RuntimeError,match='synthetic decision write failure'):
-        actor('manager').post('/api/orders/'+oid+'/duplicate-review',
-            json={'action':'cancel_duplicate','version':1,'reason':'اختبار فشل كتابة القرار'},
-            headers={'Idempotency-Key':uuid4().hex})
+    result=actor('manager').post('/api/orders/'+oid+'/duplicate-review',
+        json={'action':'cancel_duplicate','version':1,'reason':'اختبار فشل كتابة القرار'},
+        headers={'Idempotency-Key':uuid4().hex})
+    # The production security boundary masks internal exceptions; the rollback
+    # assertions below prove atomicity independently of the HTTP error wording.
+    assert result.status_code==503,result.text
+    assert result.json()['detail']['code']=='SERVICE_UNAVAILABLE'
     with db.tx() as c:
         saved=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
         assert saved['preparation_status']=='new' and saved['version']==1

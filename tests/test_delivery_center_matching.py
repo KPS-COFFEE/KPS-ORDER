@@ -189,15 +189,20 @@ def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owne
 
 def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(monkeypatch):
     import hashlib
-    inserted=[];contact_locks=[]
+    inserted=[];contact_locks=[];duplicate_locks=[]
     expected_id='customer_contact_'+hashlib.sha256('brand\0+966501234567'.encode()).hexdigest()
     expected_lock='operational-contact:brand:'+expected_id
     class Conn:
         def execute(self,sql,args):
             if sql=='SELECT pg_advisory_xact_lock(hashtextextended(%s,0))':
+                if args==('duplicate-contact:brand:+966501234567',):
+                    duplicate_locks.append(args[0]);return Result()
                 assert args==(expected_lock,)
                 assert not inserted, 'Serialize the opaque contact before inserting it'
                 contact_locks.append(args[0]);return Result()
+            if sql.startswith('SELECT id,snapshot,created_at,branch_id FROM orders'):
+                assert args==['brand','+966501234567']
+                return Result()
             if sql.startswith('SELECT settings'):return Result({'settings':{}})
             if sql.startswith('SELECT id FROM shifts'):return Result({'id':'manager-shift'})
             if sql.startswith('INSERT INTO users'):
@@ -225,6 +230,8 @@ def test_staff_order_preserves_actor_but_uses_opaque_customer_and_server_price(m
     snap=result.params[13].obj
     assert snap['order_source']=='delivery_center' and snap['manager_shift_id']=='manager-shift'
     assert snap['receipt_profile']=={'seller':'ORIGINAL'}
+    assert duplicate_locks==['duplicate-contact:brand:+966501234567']
+    assert snap['duplicate_review']['status']=='clear'
     assert result.params[15].obj['phone_verified'] is False
     body.expected_total_halalas=1
     with pytest.raises(HTTPException) as e:orders.create_delivery_center_order(body,None,actor,'other-key')

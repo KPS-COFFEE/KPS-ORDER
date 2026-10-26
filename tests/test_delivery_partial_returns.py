@@ -7,7 +7,6 @@ from pydantic import ValidationError
 from app import db
 from app.delivery_partial_returns import Line, Proposal, value
 from test_operations import ops,close_driver
-from test_delivery_workflow_controls import picked_up
 
 
 def sale():
@@ -36,12 +35,15 @@ def test_discount_allocation_and_fees_do_not_become_return_value():
 
 
 def setup(ops):
-    actor,post,_,_=ops;oid,tid,manager,driver=picked_up(ops)
+    actor,post,order,shifts=ops
+    manager,driver=shifts()
+    oid=order(total=2500,items=sale()['snapshot']['items'])
     with db.tx() as c:
-        o=c.execute('SELECT snapshot FROM orders WHERE id=%s',(oid,)).fetchone()
-        snapshot={**o['snapshot'],'items':sale()['snapshot']['items']}
-        c.execute('UPDATE orders SET snapshot=%s WHERE id=%s',(db.json(snapshot),oid))
         c.execute("UPDATE branches SET settings=jsonb_set(settings,'{minimum_order_halalas}','2000') WHERE id=(SELECT branch_id FROM orders WHERE id=%s)",(oid,))
+    tid=post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':driver})['task']['id']
+    post('driver',f'/api/tasks/{tid}/transition',{'status':'accepted'})
+    with db.tx() as c:c.execute("UPDATE orders SET preparation_status='handed_over' WHERE id=%s",(oid,))
+    post('driver',f'/api/tasks/{tid}/transition',{'status':'picked_up'})
     return oid,tid,manager,driver
 
 
@@ -70,8 +72,15 @@ def test_manager_approved_below_minimum_return_preserves_sale_and_actual_cash(op
     assert post('manager',path,body,key=key)==result
     assert result['credit_halalas']==1000 and result['corrected_total_halalas']==1500 and result['below_minimum']
     post('manager',path,body,status=409)
+    summary=actor('driver').get(f'/api/order-amendments/orders/{oid}').json()
+    assert summary['original_total_halalas']==2500 and summary['effective_claim_halalas']==1500
+    assert summary['due_halalas']==1500 and summary['refund_due_halalas']==0
+    task=next(t for t in actor('driver').get('/api/tasks').json()['tasks'] if t['id']==tid)
+    assert task['original_total_halalas']==2500 and task['effective_claim_halalas']==1500
     collected=post('driver',f'/api/orders/{oid}/collect',dict(method='cash',amount_halalas=1500,tendered_halalas=1500))
     assert collected['remaining_halalas']==0 and collected['payment_status']=='paid'
+    summary=actor('driver').get(f'/api/order-amendments/orders/{oid}').json()
+    assert summary['actual_collected_halalas']==1500 and summary['due_halalas']==summary['refund_due_halalas']==0
     post('driver',f'/api/tasks/{tid}/transition',dict(status='delivered',proof='Actual remaining items delivered'))
     with db.tx() as c:
         assert c.execute('SELECT snapshot,total_halalas FROM orders WHERE id=%s',(oid,)).fetchone()==before
@@ -87,6 +96,11 @@ def test_manager_approved_below_minimum_return_preserves_sale_and_actual_cash(op
         guard_financial_closure(c,shift_id=driver)
         from app.refund_line_values import prior_quantities
         assert prior_quantities(c,oid,{'cake':1})=={'cake':1}
+    close_driver(post,driver,manager,counted=1500)
+    with db.tx() as c:
+        closed=c.execute('SELECT submission FROM shifts WHERE id=%s',(driver,)).fetchone()['submission']
+        assert closed['expected_halalas']==1500 and closed['counted_halalas']==1500
+        assert closed['difference_halalas']==0 and not closed['financial_review_required']
 
 
 @pytest.mark.postgres
@@ -180,3 +194,45 @@ def test_simultaneous_partial_return_decisions_post_one_credit_and_block_double_
         assert c.execute("SELECT count(*) n FROM order_events WHERE order_id=%s AND event_type='delivery.partial_return.approved'",(oid,)).fetchone()['n']==1
     context=actor('driver').get('/api/delivery-partial-returns/tasks/'+tid).json()
     post('driver','/api/delivery-partial-returns/tasks/'+tid,dict(version=context['version'],lines=[dict(line_index=1,quantity=1)],cause='customer_reduction',reason='Attempt to return already returned item'),status=422)
+
+
+@pytest.mark.parametrize('net,claim,due,refund',[(0,1500,1500,0),(1500,1500,0,0),(750,750,0,0),(1600,1500,0,100)])
+def test_collection_summary_uses_effective_claim_and_actual_net(monkeypatch,net,claim,due,refund):
+    from unittest.mock import Mock
+    from app import order_amendments,order_financial_treatments,order_requests
+    monkeypatch.setattr(order_amendments,'balance',lambda *args:net)
+    monkeypatch.setattr(order_financial_treatments,'effective_claim',lambda *args:claim)
+    monkeypatch.setattr(order_financial_treatments,'effective_total',lambda *args:1500)
+    monkeypatch.setattr(order_requests,'rows',lambda *args:[])
+    c=Mock();c.execute.return_value.fetchall.return_value=[]
+    result=order_amendments.summary(c,dict(id='order',version=1,total_halalas=2500),dict(role='driver'))
+    assert result['original_total_halalas']==2500 and result['effective_total_halalas']==1500
+    assert result['actual_collected_halalas']==net and result['effective_claim_halalas']==claim
+    assert result['due_halalas']==due and result['refund_due_halalas']==refund
+
+
+@pytest.mark.postgres
+def test_actual_refund_after_partial_return_does_not_recreate_due_amount(ops):
+    actor,post,_,_=ops;oid,tid,_,_=setup(ops)
+    pending=request(ops,tid)
+    post('manager','/api/delivery-partial-returns/'+pending['id']+'/decision',dict(action='approve',reason='Partial return confirmed with accepted paid items remaining',approve_below_minimum=True,physical_resolution='received_by_branch'))
+    post('driver',f'/api/orders/{oid}/collect',dict(method='cash',amount_halalas=1500,tendered_halalas=1500))
+    post('driver',f'/api/tasks/{tid}/transition',dict(status='delivered',proof='Actual accepted items delivered'))
+    post('owner',f'/api/orders/{oid}/refund',dict(method='cash',amount_halalas=750,line_quantities={'coffee':1},reason='Actual returned one remaining coffee and cash paid back'))
+    summary=actor('driver').get(f'/api/order-amendments/orders/{oid}').json()
+    assert summary['original_total_halalas']==2500 and summary['effective_total_halalas']==1500
+    assert summary['effective_claim_halalas']==750 and summary['actual_collected_halalas']==750
+    assert summary['due_halalas']==summary['refund_due_halalas']==0
+
+
+def test_task_claim_projection_batches_source_credits_and_returns():
+    from unittest.mock import Mock
+    from app.order_financial_treatments import claim_projections
+    c=Mock()
+    c.execute.return_value.fetchall.side_effect=[
+        [dict(order_id='approved',details=dict(kind='price_correction',credit_halalas=1000,original_total_halalas=2500))],
+        [dict(order_id='approved',amount_halalas=750)]]
+    result=claim_projections(c,[dict(id='approved',total_halalas=2500),dict(id='original',total_halalas=3000)])
+    assert result['approved']==dict(original_total_halalas=2500,effective_total_halalas=1500,effective_claim_halalas=750)
+    assert result['original']==dict(original_total_halalas=3000,effective_total_halalas=3000,effective_claim_halalas=3000)
+    assert c.execute.call_count==2
