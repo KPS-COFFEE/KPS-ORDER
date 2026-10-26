@@ -24,9 +24,12 @@ def _fixed_rate_bucket(bucket):
     real_tx = db.tx
 
     @contextmanager
-    def fixed_bucket_tx():
-        with real_tx() as conn:
+    def fixed_bucket_tx(*args, **kwargs):
+        with real_tx(*args, **kwargs) as conn:
             class FixedBucketConnection:
+                def __getattr__(self, name):
+                    return getattr(conn, name)
+
                 def execute(self, query, *args, **kwargs):
                     if query == "SELECT date_trunc('minute',clock_timestamp()) AS bucket":
                         return conn.execute('SELECT %s::timestamptz AS bucket', (bucket,))
