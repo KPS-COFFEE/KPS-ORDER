@@ -1094,6 +1094,9 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   }
   async function renderDriverDestinationPanel(shift){
     if(state.user?.role!=='driver'||shift?.status!=='open')return;
+    // Canonical morning/single-brand shifts keep their own destination API.
+    // Shared workdays continue through the guarded central adapter.
+    const destinationScope=shift.central_workday_id?{}:{brand:shift.brand_id||state.user.brand_id};
     const owner=state.user.id,host=document.createElement('section');host.className='panel driver-destination-panel';$('#content').append(host);
     const alive=()=>host.isConnected&&state.user?.id===owner&&state.page==='tasks';
     function render(data){
@@ -1103,9 +1106,9 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       if(!data.hafar)return;
       const form=document.createElement('form'),label=document.createElement('label'),select=document.createElement('select'),save=document.createElement('button');label.textContent=tr('اختر الوجهة التالية','Choose next destination');select.required=true;label.append(select);
       const option=(value,text)=>{const o=document.createElement('option');o.value=value;o.textContent=text;select.append(o);};option('',tr('اختر الوجهة','Choose destination'));for(const b of data.branches||[])option('branch:'+b.id,b.name);if(data.external_enbishan_allowed)option('external_enbishan',tr('عنبيشان — إفادة يدوية','Enbishan — manual declaration'));save.type='submit';save.textContent=tr('تأكيد وجهتي','Confirm my destination');form.append(label,save);host.append(form);
-      form.addEventListener('submit',async e=>{e.preventDefault();if(!select.value||save.disabled)return;save.disabled=true;try{const body=select.value==='external_enbishan'?{kind:'external_enbishan'}:{kind:'branch',branch_id:select.value.slice(7)};render(await api('/api/operations/driver-destination',{method:'PUT',body}));}catch(error){if(alive())status.textContent=error.status===409?tr('أكمل الطلبات المفتوحة قبل تغيير الوجهة.','Complete open deliveries before changing destination.'):error.message;}finally{save.disabled=false;}});
+      form.addEventListener('submit',async e=>{e.preventDefault();if(!select.value||save.disabled)return;save.disabled=true;try{const body=select.value==='external_enbishan'?{kind:'external_enbishan'}:{kind:'branch',branch_id:select.value.slice(7)};render(await api('/api/operations/driver-destination',{...destinationScope,method:'PUT',body}));}catch(error){if(alive())status.textContent=error.status===409?tr('أكمل الطلبات المفتوحة قبل تغيير الوجهة.','Complete open deliveries before changing destination.'):error.message;}finally{save.disabled=false;}});
     }
-    try{render(await api('/api/operations/driver-destination'));}catch{if(alive())host.textContent=tr('تعذر تحميل الوجهة التالية. حدّث الصفحة للمحاولة.','Could not load next destination. Refresh to retry.');}
+    try{render(await api('/api/operations/driver-destination',destinationScope));}catch{if(alive())host.textContent=tr('تعذر تحميل الوجهة التالية. حدّث الصفحة للمحاولة.','Could not load next destination. Refresh to retry.');}
   }
   async function renderDriverClarifications(){
     const person=state.user?.id,content=$('#content');
