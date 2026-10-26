@@ -3,6 +3,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,8 +20,14 @@ spec.loader.exec_module(compat)
 
 def preserved_tables():
     tree = ast.parse((OVERLAY/'app/db.py').read_text())
-    node = next(n for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == 'PRESERVED_TABLES')
-    return ast.literal_eval(node.value)
+    tables = ()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'PRESERVED_TABLES':
+            tables = ast.literal_eval(node.value)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == 'PRESERVED_TABLES':
+            assert isinstance(node.op, ast.Add)
+            tables += ast.literal_eval(node.value)
+    return tables
 
 
 def overlay_preservation(conn, baseline=None):
@@ -45,7 +52,8 @@ def test_new_business_tables_have_explicit_brand_scope_and_auth_grants_are_exclu
     for table in set(exports.TABLES) - set(compat.AUTH_TABLES):
         # No blanket TRUE clause is allowed for a brand business archive.
         clause, params = compat._scoped_sql(table, 'enbishan')
-        assert clause != 'TRUE' and params == ('enbishan',)
+        assert clause != 'TRUE' and params and all(value == 'enbishan' for value in params)
+        assert clause.count('%s') == len(params)
     assert {'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions',
             'branch_payment_webhooks', 'branch_refund_reconciliation'} <= compat.AUTH_TABLES
 
@@ -97,3 +105,42 @@ def test_prior_export_preserves_populated_brand_ledgers_and_private_grants(dual)
             rows = json.loads(business_archive.read('data/'+table+'.json'))
             assert len(rows) == 1 and rows[0]['brand_id'] == 'enbishan'
         assert overlay_preservation(c, before) == before
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('change', ['append', 'update', 'delete', 'replace'])
+def test_prior_startup_preserves_original_audit_bytes_and_allows_additions(database, monkeypatch, change):
+    spec = importlib.util.spec_from_file_location('app._rollback_audit_db', OVERLAY/'app/db.py')
+    prior = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, prior)
+    spec.loader.exec_module(prior)
+    with db.tx() as conn:
+        db.audit(conn, None, 'test.prior.original', 'runtime', 'audit-preservation', {'value': 1})
+        original = conn.execute("SELECT id FROM audit_events WHERE action='test.prior.original'").fetchone()['id']
+        before = prior.preservation_snapshot(conn)
+
+    def migration(conn, **kwargs):
+        db.audit(conn, None, 'test.prior.appended', 'runtime', 'new-evidence', {'value': 2})
+        if change == 'update':
+            conn.execute("UPDATE audit_events SET details='{}'::jsonb WHERE id=%s", (original,))
+        elif change in {'delete', 'replace'}:
+            conn.execute('DELETE FROM audit_events WHERE id=%s', (original,))
+            if change == 'replace':
+                conn.execute("INSERT INTO audit_events(id,action,entity_type,entity_id) VALUES(%s,'test.prior.replaced','runtime','replacement')", (original,))
+
+    monkeypatch.setattr(prior, 'tx', db.tx)
+    monkeypatch.setattr(prior, 'apply_migrations', migration)
+    if change == 'append':
+        prior.migrate()
+        with db.tx() as conn:
+            assert prior.preservation_snapshot(conn, before) == before
+            assert db.preservation_snapshot(conn, before) == before
+            proof = conn.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC LIMIT 1").fetchone()['details']
+            assert proof['audit_events_appended'] == 1
+            assert 'row_ids' not in str(proof) and original not in str(proof)
+    else:
+        with pytest.raises(RuntimeError, match='operational data changed'):
+            prior.migrate()
+        with db.tx() as conn:
+            assert prior.preservation_snapshot(conn, before) == before
+            assert not conn.execute("SELECT 1 FROM audit_events WHERE action='test.prior.appended'").fetchone()

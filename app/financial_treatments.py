@@ -104,13 +104,14 @@ def approved(c,rid,revision):
 
 
 def apply(values,treatment):
-    result=dict(values,financial_state='pending_review',financially_complete=False,
+    result=dict(values,financial_state='pending_review',financially_complete=False,accounting_review_complete=False,
         period_approval_allowed=False,outstanding_receivable_halalas=0,outstanding_payable_halalas=0,
         financial_treatment=treatment)
     if not values['reconciliation_complete']:return result
     if not values['has_channel_variance']:
         result.update(financial_state='matched' if values.get('financial_approval_allowed',True) else 'undocumented',
-            financially_complete=values.get('financial_approval_allowed',True),period_approval_allowed=values.get('financial_approval_allowed',True))
+            financially_complete=values.get('financial_approval_allowed',True),period_approval_allowed=values.get('financial_approval_allowed',True),
+            accounting_review_complete=values.get('financial_approval_allowed',True))
         return result
     if not treatment or treatment['status']!='approved':return result
     d=treatment['payload']
@@ -135,6 +136,7 @@ def apply(values,treatment):
         for field in ('liable_party_type','liable_party_name','followup_user_id'):
             result[field]=d.get(field)
         result['followup_due_on']=d.get('due_on')
+    result['accounting_review_complete']=result['period_approval_allowed']
     return result
 
 
@@ -172,7 +174,30 @@ def reviewed_values(c,report,latest=None,user=None):
     values=driver_settlement_values(report['snapshot'],latest)
     treatment=approved(c,report['id'],values['revision']) if values['has_channel_variance'] else None
     if not treatment and values['has_channel_variance']:treatment=shared_for_report(c,report,values)
-    return apply(values,treatment)
+    result=apply(values,treatment)
+    if treatment and treatment['payload']['kind']=='documented_channel_correction':
+        try:
+            body=Proposal(**{k:v for k,v in treatment['payload'].items() if k in Proposal.model_fields})
+            require_source_correction(c,report,body)
+        except Exception as exc:
+            from fastapi import HTTPException
+            if not isinstance(exc,HTTPException):raise
+            result.update(financial_state='pending_source_correction',financially_complete=False,period_approval_allowed=False)
+    if treatment and (result['outstanding_receivable_halalas'] or result['outstanding_payable_halalas']):
+        result.update(followup_assignment(c,report,treatment,user))
+    # Manual driver card receipts remain part of the current closure review.
+    # Later bank evidence is a distinct read-only scope, never an operational
+    # prerequisite or an implicit website-payment gateway activation.
+    from .manual_bank_matching import closure_bank_status
+    shift=(report.get('snapshot') or {}).get('shift') or {}
+    viewer=user or {'role':'viewer','brand_id':report.get('brand_id') or shift.get('brand_id'),
+        'branch_ids':report.get('branch_ids') or shift.get('branch_ids',[])}
+    bank=closure_bank_status(c,viewer,report)
+    result.update(bank_matching=bank,bank_settlement_included=False,
+        financial_completion_scope='closure_cash_and_recorded_card',
+        overall_financially_complete=bool(result['financially_complete'] and bank['state'] in {'matched','no_card_operations'}))
+    result['accounting_review_complete']=result['period_approval_allowed']
+    return result
 
 
 

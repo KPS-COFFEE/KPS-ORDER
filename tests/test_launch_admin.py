@@ -250,7 +250,7 @@ def test_city_scoped_banner_asset_schedule_speed_and_owner_edits_persist_without
     after = client.get('/api/admin/config').json()
     assert before['products'] == after['products'] and before['branches'] == after['branches']
     with db.tx() as conn:
-        assert db.preservation_snapshot(conn) == fingerprint
+        assert db.preservation_snapshot(conn, fingerprint) == fingerprint
     assert mutate('PATCH', '/api/admin/banners/' + banner_id, {'starts_at': '2099-01-01T00:00:00+03:00'}).status_code == 200
     assert client.get('/api/banners?city=حفرالباطن').json()['banners'] == []
     assert client.get(image_url).status_code == 404

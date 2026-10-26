@@ -42,7 +42,7 @@ def test_closed_source_corrects_once_and_preserves_collection_invoice_and_snapsh
     post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':0,'confirmed':True})
     with db.tx() as c:
         report=c.execute('SELECT * FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()
-        fiscal=c.execute('SELECT * FROM fiscal_documents WHERE order_id=%s ORDER BY id',(oid,)).fetchall()
+        fiscal=c.execute('SELECT * FROM fiscal_documents WHERE order_id=%s ORDER BY number',(oid,)).fetchall()
     source=actor('accountant').get(path).json();request_body=body(source)
     post('manager',path,request_body,status=403)
     post('other',path,request_body,status=404)
@@ -58,7 +58,7 @@ def test_closed_source_corrects_once_and_preserves_collection_invoice_and_snapsh
         assert effective['method']=='card' and effective['amount_halalas']==1000
         assert effective['tendered_halalas'] is None and effective['change_halalas']==0
         assert c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',(report['id'],)).fetchone()['snapshot']==report['snapshot']
-        assert c.execute('SELECT * FROM fiscal_documents WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==fiscal
+        assert c.execute('SELECT * FROM fiscal_documents WHERE order_id=%s ORDER BY number',(oid,)).fetchall()==fiscal
         assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==1
         events=c.execute('SELECT * FROM custody_events WHERE reference_id=%s',(corrected['id'],)).fetchall()
         assert len(events)==1 and events[0]['kind']=='adjustment' and events[0]['amount_halalas']==-1000
@@ -125,6 +125,21 @@ def test_tender_target_keeps_net_amount_and_rejects_fictitious_card_cash_details
     assert target_values(proposal,effective)==(1500,500,'')
     with pytest.raises(HTTPException):target_values(proposal.model_copy(update={'target_tendered_halalas':999}),effective)
     with pytest.raises(HTTPException):target_values(proposal.model_copy(update={'target_method':'card'}),effective)
+
+
+@pytest.mark.parametrize('environment,allowed',[
+    ('production',False),('staging',False),('testing',True),('development',True),
+])
+def test_tender_preparation_cannot_activate_in_production(monkeypatch,environment,allowed):
+    from app.collection_tender_corrections import enabled,accountant,capabilities
+    monkeypatch.setenv('APP_ENV',environment)
+    monkeypatch.setenv('KPS_ORDER_SOURCE_TREATMENTS_ENABLED','true')
+    assert enabled() is allowed
+    if not allowed:
+        assert capabilities({'role':'owner','active':True})=={'enabled':False}
+        with pytest.raises(HTTPException) as failure:
+            accountant({'role':'owner','active':True})
+        assert failure.value.status_code==404
 
 
 @pytest.mark.parametrize('target',[

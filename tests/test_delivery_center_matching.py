@@ -113,9 +113,26 @@ def test_pending_financial_evidence_blocks_matching_before_any_write(monkeypatch
     report={'id':'report','shift_id':'manager-shift','brand_id':'brand','kind':'manager',
             'user_id':'manager','branch_ids':['b'],'snapshot':{}}
     checks=[]
+    unpaid_order={'id':'unpaid-order','brand_id':'brand','branch_id':'b','service':'delivery',
+        'total_halalas':2500,'payment_status':'unpaid','snapshot':{}}
     class Conn:
         def execute(self,sql,args):
             if sql.startswith('SELECT * FROM closure_reports'):return Result(report)
+            if sql=='SELECT * FROM orders WHERE id=%s':
+                assert args==('unpaid-order',)
+                checks.append('original_order')
+                return Result(unpaid_order)
+            if sql.startswith('SELECT id,details FROM order_events e WHERE order_id=%s'):
+                assert args==('unpaid-order',)
+                return Result({'id':'shortfall-case','details':{'kind':'collection_shortfall'}})
+            if sql.startswith('SELECT (SELECT coalesce(sum(amount_halalas),0) FROM collections'):
+                assert args==('unpaid-order','unpaid-order')
+                checks.append('actual_collection')
+                return Result({'net':1950})
+            if 'FROM audit_events a' in sql and "a.entity_type='order'" in sql:
+                # No approved source credit or documented outstanding treatment:
+                # the real 5.50 SAR remainder must still block financial matching.
+                return Result()
             if sql.startswith('SELECT DISTINCT d.id declaration_id') and 'shared_' in sql:
                 assert args==['manager-shift','manager-shift']
                 checks.append('shared_allocation')
@@ -135,6 +152,8 @@ def test_pending_financial_evidence_blocks_matching_before_any_write(monkeypatch
     assert error.value.status_code==409
     assert error.value.detail['code']==('COLLECTION_CASE_PENDING' if pending=='collection_case' else 'SHARED_DRIVER_ALLOCATION_PENDING')
     assert pending in checks
+    if pending=='collection_case':
+        assert 'original_order' in checks and 'actual_collection' in checks
 
 @pytest.mark.parametrize('owner,kind,expected,received_work',[('manager','manager',True,False),('other','manager',False,False),('driver','driver',False,False),('manager','manager',False,True)])
 def test_manager_own_operational_approval_not_fake_cash_receipt(monkeypatch,owner,kind,expected,received_work):

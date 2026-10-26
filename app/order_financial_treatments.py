@@ -150,7 +150,8 @@ def eligible_followup(c,user,order,identifier):
     if multibrand.enabled():target=multibrand.project(c,target,order['brand_id'])
     from .order_financial_cases import accounting
     if (not target or not target.get('active') or target.get('brand_id')!=order['brand_id'] or not accounting(target)
-            or not auth.can_access_order(target,order,c)):
+            or not (target.get('role')=='owner' and not target.get('home_brand_id')
+                    or order['branch_id'] in (target.get('branch_ids') or []))):
         raise db.error(422,'ORDER_TREATMENT_FOLLOWUP_SCOPE','اختر موظف محاسبة فعالًا ومخولًا بالفرع لمتابعة الذمة.')
     return target
 

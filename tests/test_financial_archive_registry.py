@@ -15,7 +15,8 @@ from test_central_workdays import central
 from test_backup import independent_restore_database
 
 BANK_TABLES=('bank_reconciliation_batches','bank_reconciliation_receipts','bank_reconciliation_decisions',
-             'bank_reconciliation_source_claims','bank_reconciliation_bank_lines','bank_reconciliation_bank_claims')
+             'bank_reconciliation_source_claims','bank_reconciliation_bank_lines','bank_reconciliation_bank_claims',
+             'bank_reconciliation_line_proposals','bank_reconciliation_line_decisions')
 
 
 def test_private_archive_registers_financial_sources_in_dependency_order():
@@ -31,7 +32,7 @@ def test_private_archive_registers_financial_sources_in_dependency_order():
 
 def test_cross_brand_staff_financial_audit_follows_source_scope():
     clause,params=_scoped_sql('audit_events','seller-b')
-    assert params==('seller-b',)*6
+    assert params==('seller-b',)*7
     assert 'accounting.order_financial_treatment.%%' in clause
     assert "WHEN action LIKE 'employee.ticket.%%' THEN details->>'brand_id'=%s" in clause
     assert 'closure_reports WHERE brand_id=%s' in clause
@@ -49,9 +50,12 @@ def test_actual_bank_evidence_private_restore_and_brand_export_scope(ops,monkeyp
     _,body,_,_=setup_sources(ops)
     base='/api/accounting/bank-reconciliation'
     batch=post('accountant',base,body);bid=batch['id']
-    post('owner',base+'/'+bid+'/decision',decision())
+    post('bankreviewer',base+'/'+bid+'/decision',decision())
     staged=post('accountant',base+'/'+bid+'/receipts',receipt(780));rid=staged['receipts'][0]['id']
-    post('owner',base+'/'+bid+'/receipts/'+rid+'/decision',decision())
+    post('bankreviewer',base+'/'+bid+'/receipts/'+rid+'/decision',decision())
+    movement=receipt(150,'standalone-archive')
+    proposed=post('accountant',base+'/bank-lines',movement)
+    post('bankreviewer',base+'/bank-lines/'+proposed['id']+'/decision',decision())
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         archive,manifest=build_archive(c,full=True)
@@ -117,3 +121,18 @@ def test_tender_documents_are_preserved_and_exports_follow_source_brand():
         assert table in TABLES and table in db.PRESERVED_TABLES
         clause,params=_scoped_sql(table,'seller-b')
         assert 'brand_id=%s' in clause and params==('seller-b',)
+
+
+def test_all_declared_persistent_tables_have_explicit_archive_inventory():
+    # Catch a late additive migration before any real backup can reject the
+    # schema. The runtime unknown-table guard remains strict and unchanged.
+    import re
+    declared=set()
+    for directory in ('migrations','app/multibrand_migrations'):
+        for path in (db.ROOT/directory).glob('*.sql'):
+            declared.update(re.findall(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w]+)',path.read_text(),re.I))
+    assert declared-{'schema_migrations'}<=set(TABLES), sorted(declared-set(TABLES)-{'schema_migrations'})
+    for name in ('bank_reconciliation_line_proposals','bank_reconciliation_line_decisions'):
+        assert name in db.PRESERVED_TABLES
+    assert TABLES.index('bank_reconciliation_line_proposals')<TABLES.index('bank_reconciliation_line_decisions')
+    assert TABLES.index('bank_reconciliation_bank_lines')<TABLES.index('bank_reconciliation_line_decisions')

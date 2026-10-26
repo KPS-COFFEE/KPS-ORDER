@@ -4,7 +4,6 @@ Original receipts, invoices and closed snapshots stay immutable. Only an
 independently approved source document changes the effective tender projection.
 """
 from datetime import date, datetime
-import os
 from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -39,7 +38,8 @@ class Rejection(BaseModel):
 
 
 def enabled():
-    return os.getenv('KPS_ORDER_SOURCE_TREATMENTS_ENABLED','false').strip().lower()=='true'
+    from .order_financial_treatments import enabled as source_treatments_enabled
+    return source_treatments_enabled()
 
 
 @router.get('/tender-correction-capabilities')

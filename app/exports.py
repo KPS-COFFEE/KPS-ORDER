@@ -47,6 +47,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations',
           'financial_case_clarifications','financial_case_clarification_events','legacy_invoice_imports',
           'bank_reconciliation_batches','bank_reconciliation_receipts','bank_reconciliation_decisions','bank_reconciliation_source_claims','bank_reconciliation_bank_lines','bank_reconciliation_bank_claims')
+TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_line_decisions')
 TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
                           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
@@ -87,6 +88,10 @@ def _scoped_sql(table, brand, *, bank_table_available=True):
         return 'brand_id=%s', (brand,)
     if brand and table == 'collection_tender_correction_rejections':
         return 'proposal_id IN (SELECT id FROM collection_tender_correction_proposals WHERE brand_id=%s)', (brand,)
+    if brand and table == 'bank_reconciliation_line_proposals':
+        return 'brand_id=%s', (brand,)
+    if brand and table == 'bank_reconciliation_line_decisions':
+        return 'proposal_id IN (SELECT id FROM bank_reconciliation_line_proposals WHERE brand_id=%s)', (brand,)
     if brand and table == 'bank_reconciliation_batches':
         return 'brand_id=%s', (brand,)
     if brand and table in {'bank_reconciliation_receipts','bank_reconciliation_decisions','bank_reconciliation_source_claims'}:
@@ -148,7 +153,8 @@ def _scoped_sql(table, brand, *, bank_table_available=True):
     if table == 'audit_events':
         # Shared staff can act for another seller. Financial evidence follows
         # its canonical source, never the employee's home-brand identity.
-        bank_scope = "entity_type='bank_batch' AND entity_id IN (SELECT id FROM bank_reconciliation_batches WHERE brand_id=%s)" if bank_table_available else "FALSE AND %s::text IS NOT NULL"
+        bank_scope = ("(entity_type='bank_batch' AND entity_id IN (SELECT id FROM bank_reconciliation_batches WHERE brand_id=%s) "
+                      "OR entity_type='bank_line_proposal' AND entity_id IN (SELECT id FROM bank_reconciliation_line_proposals WHERE brand_id=%s))") if bank_table_available else "FALSE AND %s::text IS NOT NULL AND %s::text IS NOT NULL"
         return ("CASE WHEN action LIKE 'collection_tender.%%' THEN "
                 "entity_type='order' AND entity_id IN (SELECT id FROM orders WHERE brand_id=%s) "
                 "WHEN action LIKE 'accounting.financial_treatment.%%' THEN "
@@ -158,7 +164,7 @@ def _scoped_sql(table, brand, *, bank_table_available=True):
                 "WHEN action LIKE 'accounting.bank_%%' THEN "
                 +bank_scope+" "
                 "WHEN action LIKE 'employee.ticket.%%' THEN details->>'brand_id'=%s "
-                "ELSE actor_id IN (SELECT id FROM users WHERE brand_id=%s) END", (brand,brand,brand,brand,brand,brand))
+                "ELSE actor_id IN (SELECT id FROM users WHERE brand_id=%s) END", (brand,brand,brand,brand,brand,brand,brand))
     if table in {'sessions', 'idempotency_keys'}:
         return 'user_id IN (SELECT id FROM users WHERE brand_id=%s)', (brand,)
     raise ValueError('An unscoped table cannot enter a brand business export.')

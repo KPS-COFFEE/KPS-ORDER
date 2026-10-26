@@ -158,7 +158,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             f"{'Received' if en else 'المستلم'}: {before} {('—' if e['before_received'] is None else format(e['before_received']/100,'.2f'))} / {after} {('—' if e['after_received'] is None else format(e['after_received']/100,'.2f'))}\n"
     for item in daily.values():
         if item['closure_count']:
-            item['status']=('Review approved — outstanding under follow-up' if en else 'المراجعة معتمدة — مبلغ مستحق تحت المتابعة') if item['outstanding_receivable_halalas'] or item['outstanding_payable_halalas'] else ('Channel difference under review' if en else 'فرق الكاش والشبكة تحت المراجعة') if item['unresolved_channel_count'] else ('Pending balance' if en else 'بانتظار الموازنة') if item['pending_balance'] else ('Pending cash' if en else 'بانتظار الكاش') if item['pending_receipt'] else ('Variance pending confirmation' if en else 'فرق بانتظار تأكيد المحاسب') if item['pending_shortage'] or item['pending_surplus'] else ('Approved' if en else 'معتمد')
+            item['status']=('Review approved — outstanding under follow-up' if en else 'المراجعة معتمدة — مبلغ مستحق تحت المتابعة') if item['outstanding_receivable_halalas'] or item['outstanding_payable_halalas'] else ('Channel difference under review' if en else 'فرق الكاش والشبكة تحت المراجعة') if item['unresolved_channel_count'] else ('Pending balance' if en else 'بانتظار الموازنة') if item['pending_balance'] else ('Pending cash' if en else 'بانتظار الكاش') if item['pending_receipt'] else ('Variance pending confirmation' if en else 'فرق بانتظار تأكيد المحاسب') if item['pending_shortage'] or item['pending_surplus'] else ('Cash and recorded-card review approved' if en else 'مراجعة الكاش والشبكة المسجلة معتمدة')
     output=sorted(daily.values(),key=lambda r:(r['driver'],r['driver_id'],r['day']))
     summaries=[]
     money=('completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','violations','traffic','outstanding_receivable_halalas','outstanding_payable_halalas')
@@ -167,8 +167,8 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
         summaries.append(dict(driver_id=identifier,driver=name,**{k:sum(r[k] for r in entries) for k in money}))
     return safe(dict(group='driver_statement',rows=output,drivers=summaries,settlements=details,adjustment_history=audit,deadline_extensions=deadline_extensions,
         incidents=incidents,branches=bs,period={'start':ds,'end':de,'timezone':'Asia/Riyadh'},generated_at=datetime.now(TZ),
-        definitions=('Each delivered order counts once. Balance papers and physical cash are approved independently. Waiting cash is not a shortage. Cash and card differences remain separate. Notes never settle money or assign employee liability. Independent documented treatments preserve outstanding receivables and payables until actual recovery or payment. Incident values show recorded amounts and responsibility, without payroll deductions.' if en else
-        'كل طلب مسلّم يُعد مرة واحدة. اعتماد ورقة الموازنة مستقل عن استلام الكاش. النقد المنتظر ليس عجزًا. فرق الكاش مستقل عن فرق الشبكة. الملاحظة لا تسوي المبلغ ولا تحمل الموظف مسؤولية. المعالجة المستقلة الموثقة تبقي المستحقات ظاهرة حتى التحصيل أو الرد الفعلي. قيم المخالفات مبالغ مسجلة مع حالة المسؤولية ولا تنشئ خصمًا من الراتب.')))
+        definitions=('Each delivered order counts once. Balance papers and physical cash are approved independently. Waiting cash is not a shortage. Cash and card differences remain separate. Notes never settle money or assign employee liability. Independent documented treatments preserve outstanding receivables and payables until actual recovery or payment. Incident values show recorded amounts and responsibility, without payroll deductions. This is closure cash and recorded-card review only; recorded card collection does not establish receipt at the bank. Bank matching remains a separate evidence scope.' if en else
+        'كل طلب مسلّم يُعد مرة واحدة. اعتماد ورقة الموازنة مستقل عن استلام الكاش. النقد المنتظر ليس عجزًا. فرق الكاش مستقل عن فرق الشبكة. الملاحظة لا تسوي المبلغ ولا تحمل الموظف مسؤولية. المعالجة المستقلة الموثقة تبقي المستحقات ظاهرة حتى التحصيل أو الرد الفعلي. قيم المخالفات مبالغ مسجلة مع حالة المسؤولية ولا تنشئ خصمًا من الراتب. نطاق هذا الكشف مراجعة الكاش والشبكة المسجلة فقط؛ تحصيل الشبكة المسجل لا يثبت وصوله للبنك، ومطابقة البنك نطاق مستقل بالأدلة.')))
 
 
 def closure_deadline(row, local, extension=None):
@@ -228,6 +228,8 @@ def manager_cards(c,user,bids):
         confirmed_count=sum(bool(r['financial_treatment'] and r['financial_treatment']['status']=='approved' and r['period_approval_allowed']) for r in group['drivers'])
         group['completion_percent']=int(100*(group['balance_completed']+group['cash_completed']+confirmed_count)/(2*group['total']+variance_count))
         group['completion_scope']='accounting_review'
+        group['financial_completion_scope']='closure_cash_and_recorded_card'
+        group['bank_settlement_included']=False
         group['financial_completion_percent']=int(100*group['completed']/group['total'])
         pending=[r for r in group['drivers'] if r['stage']!='cash_received' or r['variance_pending']]
         group['due_at']=min(r['due_at'] for r in (pending or group['drivers']))

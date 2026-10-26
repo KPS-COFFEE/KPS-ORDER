@@ -811,7 +811,8 @@ def reconcile(db_url, workload):
 def start_app(env, port, log_path, workers=RELEASE_WORKERS, application_cgroup=None):
     log = log_path.open('a')
     offset = log_path.stat().st_size
-    module = 'tools.profile_checkout:app' if env.get('KPS_LOAD_PROFILE_OUTPUT') else 'app.main:app'
+    module = ('tools.thread_capacity_diagnostic:app' if env.get('KPS_DIAGNOSTIC_THREAD_TOKENS')
+              else 'tools.profile_checkout:app' if env.get('KPS_LOAD_PROFILE_OUTPUT') else 'app.main:app')
     command = [sys.executable, '-m', 'uvicorn', module, '--host', '127.0.0.1',
                '--port', str(port), '--workers', str(workers),
                '--timeout-keep-alive', str(RELEASE_KEEPALIVE_SECONDS), '--no-access-log']
@@ -1289,6 +1290,10 @@ def main():
         if args.profile_cpu:
             env['KPS_LOAD_PROFILE_OUTPUT'] = str(args.output.parent.resolve() / 'checkout-cpu-profile.json')
             report['methodology']['diagnostic_profile_not_release_evidence'] = True
+        if env.get('KPS_DIAGNOSTIC_THREAD_TOKENS'):
+            if env['KPS_DIAGNOSTIC_THREAD_TOKENS'] not in {'8', '40'} or args.profile_cpu:
+                raise ValueError('Thread diagnosis permits only 40 or 8 tokens without CPU profiling.')
+            report['methodology']['diagnostic_thread_tokens_not_release_evidence'] = int(env['KPS_DIAGNOSTIC_THREAD_TOKENS'])
         env.update({'DATABASE_URL': isolated, 'APP_ENV': 'testing', 'PUBLIC_BASE_URL': f'http://127.0.0.1:{port}',
             'APP_ALLOWED_HOSTS': 'localhost,127.0.0.1', 'SESSION_COOKIE_SECURE': 'false',
             'OTP_PROVIDER': 'disabled', 'EMAIL_PROVIDER': 'disabled', 'EMAIL_WORKER_ENABLED': 'false',

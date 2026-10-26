@@ -1,0 +1,77 @@
+name: KPS actual resource thread diagnosis (not acceptance)
+on:
+  push:
+    branches: [agent/financial-thread-diagnostic-20261026]
+permissions:
+  contents: read
+jobs:
+  synthetic-thread-scheduling-diagnostic:
+    name: diagnostic only - thread tokens ${{ matrix.tokens }}
+    runs-on: ubuntu-latest
+    # Match verified live Render: app 1 CPU/2 GiB, PostgreSQL 0.5 CPU/1 GiB.
+    # Historical 512 MiB/0.1 CPU DB failures remain recorded; thresholds are unchanged.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        tokens: [40, 8]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_hardening_render_budget
+          POSTGRES_USER: hardening_test
+          POSTGRES_PASSWORD: isolated-load-only
+        ports: ['5432:5432']
+        options: >-
+          --cpus 0.5 --memory 1g --memory-swap 1g
+          --health-cmd "pg_isready -U hardening_test -d test_hardening_render_budget"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_render_budget
+      KPS_LOAD_RESOURCE_PROFILE: economy
+      KPS_DIAGNOSTIC_THREAD_TOKENS: ${{ matrix.tokens }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install the same pinned application and test dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Verify resource ownership and strict latency gate guards
+        run: python -m pytest tests/test_resource_load_profile.py -q
+      - name: Prepare a real run-owned 1 CPU and 2 GiB application cgroup
+        shell: bash
+        run: |
+          mkdir -p test-artifacts
+          KPS_LOAD_CGROUP_PATH="/sys/fs/cgroup/kps_order_load_$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+          printf 'KPS_LOAD_CGROUP_PATH=%s\n' "$KPS_LOAD_CGROUP_PATH" >> "$GITHUB_ENV"
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py \
+            --prepare-application-cgroup "$KPS_LOAD_CGROUP_PATH" "$(id -u)" "$(id -g)" \
+            2>&1 | tee test-artifacts/resource-setup.log
+      - name: Complete the unchanged 50 100 250 500 workload and all recovery drills
+        run: >-
+          python tools/hardening_load.py
+          --max-error-rate 0
+          --application-cgroup "$KPS_LOAD_CGROUP_PATH"
+          --database-container '${{ job.services.postgres.id }}'
+          --output test-artifacts/diagnostic-thread-tokens-${{ matrix.tokens }}.json
+      - name: Remove only the empty run-owned application cgroup
+        if: always() && env.KPS_LOAD_CGROUP_PATH != ''
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE "$(command -v python)" tools/hardening_load.py
+          --cleanup-application-cgroup "$KPS_LOAD_CGROUP_PATH"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostic-thread-tokens-${{ matrix.tokens }}-not-release-evidence
+          path: |
+            test-artifacts/diagnostic-thread-tokens-${{ matrix.tokens }}.json
+            test-artifacts/load-app.log
+            test-artifacts/resource-setup.log
