@@ -29,3 +29,6 @@ CREATE TABLE IF NOT EXISTS driver_route_eta_expectations (
  duration_basis TEXT NOT NULL CHECK(duration_basis='road_time_plus_explicit_stop_estimates')
 );
 CREATE INDEX IF NOT EXISTS driver_route_eta_expected_driver ON driver_route_eta_expectations(driver_id,calculated_at);
+
+-- Optional staff-only reference corridor; retired with the route cache on restore.
+ALTER TABLE driver_route_eta_state ADD COLUMN IF NOT EXISTS road_corridor JSONB;

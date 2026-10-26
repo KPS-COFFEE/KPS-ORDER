@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from . import auth, db, dispatch_map
 from .operations import safe
+from . import route_corridor
 
 router = APIRouter(prefix='/api/operations', tags=['operations'])
 TTL_SECONDS = 60
@@ -202,6 +203,16 @@ def fetch_matrix(points, token, transport=None):
         return validate_matrix(value.get('durations'),len(points))
 
 
+def corridor_current(corridor, signature, first, now):
+    try:
+        age = (now-datetime.fromisoformat(corridor['calculated_at'])).total_seconds()
+        return bool(first and corridor['stop_id']==first['id'] and
+                    corridor['fingerprint']==signature and 0 <= age <= 86400 and
+                    route_corridor.validate_geometry(corridor['geometry']))
+    except (ValueError,TypeError,KeyError):
+        return False
+
+
 def fingerprint(stops):
     return hashlib.sha256(json.dumps(stops, sort_keys=True, separators=(',',':'), default=str).encode()).hexdigest()
 
@@ -281,13 +292,22 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         matrix = saved['matrix'] if cached else None
         calculated = saved['calculated_at'] if cached else now
         origin_stamp = saved['origin_updated_at'] if cached else stamp
+        # Preserve the reference corridor across minute ETA refreshes. Rebase only
+        # on a changed plan not at every GPS sample. A valid reference stays fixed for the leg.
+        corridor = (saved or {}).get('road_corridor')
+        first = (validate_order(stops,ordered_ids) if ordered_ids is not None else
+                 road_order(stops,matrix) if matrix is not None else [None])[0]
+        if not corridor_current(corridor,signature,first,now):
+            corridor = None
+        wants_publication = body.publish or body.ordered_stop_ids is not None or bool(remaining_saved)
+        fetch_corridor = not cached and wants_publication and corridor is None
         if not cached:
             # Browser-restricted public tokens must never be reused by the server.
             token = os.getenv('MAPBOX_ROUTING_TOKEN','')
             if not re.fullmatch(r'(?:pk|sk)\.[A-Za-z0-9_.-]{20,2048}',token):
                 return unavailable(body.driver_id,'routing_token_unconfigured')
             try:
-                dispatch_map.consume_route_budget(c,body.driver_id,user['id'],units=(len(stops)+1)**2)
+                dispatch_map.consume_route_budget(c,body.driver_id,user['id'],units=(len(stops)+1)**2+int(fetch_corridor))
             except HTTPException as exc:
                 if exc.status_code==429:
                     return unavailable(body.driver_id,'route_budget_or_cooldown')
@@ -304,6 +324,15 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         output = timeline(stops,ordered,matrix,calculated,now)
     except ValueError:
         return unavailable(body.driver_id,'road_route_unavailable')
+    if fetch_corridor:
+        try:
+            geometry = route_corridor.fetch_geometry(context['origin'],ordered[0]['location'],token)
+            corridor = {'geometry':geometry,'calculated_at':now.isoformat(),
+                        'fingerprint':signature,'stop_id':ordered[0]['id']}
+        except (ValueError,httpx.HTTPError):
+            corridor = None  # ETA remains usable; never invent a straight-line corridor.
+    if not corridor_current(corridor,signature,ordered[0],now):
+        corridor = None
     with db.tx() as c:
         user = refreshed_caller(c,user,assignment=body.publish or body.ordered_stop_ids is not None)
         # A task can be completed/reassigned while the provider responds.
@@ -335,12 +364,12 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
             shift_ids = sorted({s['shift_id'] for s in stops if s.get('shift_id')})
             c.execute('''UPDATE driver_route_eta_state SET published_at=now(),published_stop_ids=%s,
               published_shift_ids=%s,source_session_id=%s,manager_brand_id=%s,central_scope=%s,morning_shift_id=%s,
-              published_stops=%s,published_matrix=%s,published_calculated_at=%s
+              published_stops=%s,published_matrix=%s,published_calculated_at=%s,road_corridor=%s
               WHERE driver_id=%s AND manager_id=%s''',
               (db.json([s['id'] for s in ordered]),db.json(shift_ids),user['session_id'],user['brand_id'],
                bool(user.get('central_operations') and not user.get('_morning_manager_context')),
                (user.get('_morning_manager_context') or {}).get('shift_id'),
-               db.json(stops),db.json(matrix),calculated,body.driver_id,user['id']))
+               db.json(stops),db.json(matrix),calculated,db.json(corridor),body.driver_id,user['id']))
             db.audit(c,user['id'],'driver.route_published' if requested_publication else 'driver.route_refreshed','driver',body.driver_id,
                      {'stop_ids':[s['id'] for s in ordered],'return_branch_id':return_id,'shift_ids':shift_ids})
         if plan_changed:
@@ -359,6 +388,7 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
                  'location_updated_at':current['updated_at'],'route_origin_updated_at':origin_stamp,
                  'refresh_after_seconds':TTL_SECONDS,'duration_basis':'road_time_plus_explicit_stop_estimates',
                  'traffic_included':False,'ordering':'manager' if ordered_ids is not None else 'road_duration',
+                 'corridor_status':'ready' if corridor else 'unavailable',
                  'cached':cached,'published':publishing,**output})
 
 
@@ -476,7 +506,11 @@ def published_plan_for(c, user, driver_id):
                 continue
             validated = validated_publication(c,saved,driver_id)
             if validated:
-                return {**validated[3],'calculated_at':saved['published_calculated_at'],'published_at':saved['published_at']}
+                view = validated[3]
+                corridor = saved.get('road_corridor')
+                if corridor_current(corridor,fingerprint(stops),view.get('next_stop'),datetime.now(timezone.utc)):
+                    view['road_corridor'] = corridor
+                return {**view,'calculated_at':saved['published_calculated_at'],'published_at':saved['published_at']}
     except (HTTPException,ValueError,TypeError,KeyError):
         pass
     return None

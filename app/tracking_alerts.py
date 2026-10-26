@@ -1,4 +1,4 @@
-"""Evidence-based staff alerts; progress drift is not a road-corridor claim."""
+"""Evidence-based staff alerts with a validated road reference corridor."""
 from datetime import timedelta
 from . import catalog
 
@@ -65,8 +65,6 @@ def for_scope(c, user):
                           "AND (%s OR o.branch_id=ANY(%s)) AND o.completed_at IS NULL "
                           "AND o.delivery_status NOT IN ('delivered','cancelled')",
                           (shift['id'],user['brand_id'],user['role']=='owner',user.get('branch_ids',[]))).fetchall()
-        if not tasks:
-            continue
         tids = {t['id'] for t in tasks}
         forecasts = c.execute('SELECT stops,calculated_at FROM driver_route_eta_expectations '
                               'WHERE driver_id=%s AND calculated_at>=%s ORDER BY calculated_at LIMIT 2000',
@@ -85,13 +83,22 @@ def for_scope(c, user):
                 if expected is None or arrival < expected:
                     expected = arrival
         from .route_eta import published_plan_for
-        ordered_points=sorted(points,key=lambda p:p['captured_at'])
-        moved=(len(ordered_points)>1 and catalog.direct_distance(ordered_points[0],ordered_points[-1])>1000)
-        published = published_plan_for(c,user,shift['user_id']) if moved else None
+        published = published_plan_for(c,user,shift['user_id'])
         next_stop = (published or {}).get('next_stop')
         if next_stop and next_stop.get('brand_id') == user['brand_id']:
             target = next_stop.get('location')
-        for alert in movement_alerts(points,target,expected,now):
+        if not tasks and not target:
+            continue
+        alerts = movement_alerts(points,None,expected,now)
+        corridor = (published or {}).get('road_corridor')
+        if target and corridor:
+            from .route_corridor import corridor_alert
+            from datetime import datetime
+            alert = corridor_alert(points,corridor['geometry'],
+                                   datetime.fromisoformat(corridor['calculated_at']),now)
+            if alert:
+                alerts.append(alert)
+        for alert in alerts:
             result.append(dict(alert,driver_id=shift['user_id'],display_name=shift['display_name'],
                                shift_id=shift['id'],brand_id=user['brand_id']))
     return result

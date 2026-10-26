@@ -28,6 +28,7 @@ def eta_service(database,services,monkeypatch):
         calls.append(points)
         return [[0 if i==j else 60 for j in range(len(points))] for i in range(len(points))]
     monkeypatch.setattr(eta,'fetch_matrix',matrix)
+    monkeypatch.setattr(eta.route_corridor,'fetch_geometry',lambda origin,target,token: {'type':'LineString','coordinates':[[origin['lng'],origin['lat']],[target['lng'],target['lat']]]})
     return TestClient(app),user,calls
 
 
