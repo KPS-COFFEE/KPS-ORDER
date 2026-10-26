@@ -108,4 +108,6 @@ def test_revoked_brand_cannot_be_hidden_while_claiming_complete_eta(mixed_day):
     assert result['status']=='unavailable'
     assert result['reason']=='itinerary_scope_incomplete'
     assert calls==[]
-    assert 'stops' not in result
+    assert result['stops']==[]
+    assert result['next_stop'] is None
+    assert 'mixed-order-enbishan' not in str(result)
