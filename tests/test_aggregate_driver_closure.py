@@ -133,3 +133,34 @@ def test_pending_shared_declaration_blocks_parent_handover_until_allocation(cent
     post('accountant',path+'/physical-allocation',{'declaration_id':declared['declaration_id'],'receipt_id':receipt['receipt_id'],'confirmed':True,'reason':'Verified attribution of actual received amounts','legs':rows(driver['shifts'])})
     transferred=post('manager',handover,payload)
     assert transferred['handover_id']
+
+
+@pytest.mark.postgres
+def test_physical_receipt_preserves_pending_incentive_review_for_accounting(central, monkeypatch):
+    """Physical receipt must not depend on resolving financial entitlement."""
+    from app import driver_incentives
+    _, actor, post, _, _ = central
+    _, driver, path, declared = submit_physical(central)
+    calls = []
+
+    def pending_review(c, user, shift):
+        calls.append(shift['id'])
+        raise HTTPException(409, 'حدد سبب ومسؤولية الطلبات الملغية والمرتجعة')
+
+    monkeypatch.setattr(driver_incentives, 'require_decisions', pending_review)
+    body = {'declaration_id': declared['declaration_id'], 'received_halalas': 700,
+            'confirmed': True, 'reference': 'Physical cash received; review pending'}
+    receipt = post('manager', path + '/physical-receipt', body)
+    assert receipt['state'] == 'awaiting_accounting'
+    assert calls == []
+    allocation = {'declaration_id': declared['declaration_id'],
+                  'receipt_id': receipt['receipt_id'], 'legs': rows(driver['shifts']),
+                  'reason': 'Verified brand source documents for allocation', 'confirmed': True}
+    post('accountant', path + '/physical-allocation', allocation, status=409)
+    assert calls
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM shared_driver_closure_receipts').fetchone()['n'] == 1
+        assert not c.execute('SELECT 1 FROM shared_driver_closure_allocations').fetchone()
+        original = c.execute('SELECT cash_halalas,card_halalas FROM shared_driver_closure_declarations WHERE id=%s',
+                             (declared['declaration_id'],)).fetchone()
+        assert original == {'cash_halalas': 700, 'card_halalas': 900}
