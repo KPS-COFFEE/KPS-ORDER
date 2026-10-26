@@ -28,7 +28,7 @@ def test_manager_owner_physical_end_next_workday_and_later_accounting(central,mo
             assert 'counted_halalas' not in row['submission']
     owner_receipt={'declaration_id':manager_decl['declaration_id'],'received_halalas':700,'confirmed':True}
     post('manager',manager_path+'/manager-physical-receipt',owner_receipt,status=403)
-    post('owner',manager_path+'/manager-physical-receipt',{**owner_receipt,'received_halalas':699},status=422)
+    post('owner',manager_path+'/manager-physical-receipt',{**owner_receipt,'confirmed':False},status=422)
     received=post('owner',manager_path+'/manager-physical-receipt',owner_receipt)
     assert received['state']=='awaiting_accounting'
     next_manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
@@ -42,6 +42,8 @@ def test_manager_owner_physical_end_next_workday_and_later_accounting(central,mo
     allocation={'declaration_id':manager_decl['declaration_id'],'receipt_id':received['receipt_id'],'confirmed':True,'reason':'Verified owner bag attributed by original brand documents',
         'legs':[{'shift_id':s['id'],'cash_halalas':amounts[s['brand_id']],'evidence':'Verified owner bag brand evidence'} for s in manager['shifts']]}
     post('manager',manager_path+'/manager-physical-allocation',allocation,status=403)
+    denied=post('owner',manager_path+'/manager-physical-allocation',allocation,status=403)
+    assert denied['detail']['code']=='SHARED_CUSTODY_SELF_APPROVAL'
     post('accountant',manager_path+'/manager-physical-allocation',allocation,status=409)
     post('accountant',driver_path+'/physical-allocation',{'declaration_id':driver_decl['declaration_id'],'receipt_id':driver_receipt['receipt_id'],'confirmed':True,'reason':'Verified allocation of actual driver cash and card','legs':rows(driver['shifts'])})
     done=post('accountant',manager_path+'/manager-physical-allocation',allocation)
@@ -72,3 +74,29 @@ def test_manager_pre_receipt_return_appends_new_revision_and_preserves_original(
     with db.tx() as c:
         originals=c.execute('SELECT cash_halalas FROM shared_manager_closure_declarations ORDER BY revision').fetchall()
         assert [r['cash_halalas'] for r in originals]==[700,650]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('actual',[0,650,750])
+def test_manager_independent_actual_receipt_preserves_difference_and_allows_next_workday(central,actual):
+    _,actor,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    path='/api/central-operations/workdays/'+manager['shift']['id']
+    declared=post('manager',path+'/manager-physical-submit',{'cash_halalas':700,'recipient_user_id':'dual-owner','reference':'Independent bag declaration','confirmed':True})
+    body={'declaration_id':declared['declaration_id'],'received_halalas':actual,'confirmed':True}
+    key=uuid4().hex
+    receipt=post('owner',path+'/manager-physical-receipt',body,key=key)
+    assert receipt['state']=='receipt_difference_review'
+    assert receipt['declaration']['cash_halalas']==700
+    assert receipt['receipt']['received_halalas']==actual
+    assert receipt['receipt_difference_halalas']==actual-700
+    assert post('owner',path+'/manager-physical-receipt',body,key=key)['receipt_id']==receipt['receipt_id']
+    next_manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    assert next_manager['shift']['id']!=manager['shift']['id']
+    legs=[{'shift_id':s['id'],'cash_halalas':700 if i==0 else 0,'evidence':'Verified original bag evidence'} for i,s in enumerate(manager['shifts'])]
+    blocked=post('accountant',path+'/manager-physical-allocation',{'declaration_id':declared['declaration_id'],'receipt_id':receipt['receipt_id'],'legs':legs,'reason':'Cannot conceal independent receipt difference','confirmed':True},status=409)
+    assert blocked['detail']['code']=='SHARED_RECEIPT_REVIEW_REQUIRED'
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM shared_manager_closure_receipts').fetchone()['n']==1
+        assert c.execute('SELECT 1 FROM custody_transfers').fetchone() is None
+        assert c.execute('SELECT 1 FROM shared_manager_closure_allocations').fetchone() is None

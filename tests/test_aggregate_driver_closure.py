@@ -4,7 +4,7 @@ import pytest
 from test_enbishan_dual_brand import dual
 from fastapi import HTTPException
 from app import db
-from app.aggregate_driver_closure import AllocationLeg, validate_allocation, guard_financial_allocation
+from app.aggregate_driver_closure import AllocationLeg, validate_allocation, guard_financial_allocation, receipt_difference
 from test_central_workdays import central, open_days, inspection
 
 
@@ -43,7 +43,7 @@ def test_aggregate_original_receipt_allocation_preserved_and_accountant_only(cen
         assert not c.execute('SELECT 1 FROM custody_transfers WHERE from_shift_id=ANY(%s)',([s['id'] for s in driver['shifts']],)).fetchone()
     receipt_body={'declaration_id':dec['id'],'received_halalas':700,'confirmed':True,'reference':'Actual shared bag 001'}
     post('driver',path+'/physical-receipt',receipt_body,status=403)
-    post('manager',path+'/physical-receipt',{**receipt_body,'received_halalas':699},status=422)
+    post('manager',path+'/physical-receipt',{**receipt_body,'confirmed':False},status=422)
     key=uuid4().hex
     receipt=post('manager',path+'/physical-receipt',receipt_body,key=key)
     assert post('manager',path+'/physical-receipt',receipt_body,key=key)['receipt_id']==receipt['receipt_id']
@@ -136,6 +136,83 @@ def test_pending_shared_declaration_blocks_parent_handover_until_allocation(cent
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('actual',[0,650,750])
+def test_actual_receipt_difference_preserves_both_facts_and_operational_end(central,actual):
+    _,actor,post,_,_=central
+    manager,driver,path,declared=submit_physical(central)
+    body={'declaration_id':declared['declaration_id'],'received_halalas':actual,'confirmed':True,'reference':'Witnessed independent actual count'}
+    key=uuid4().hex
+    received=post('manager',path+'/physical-receipt',body,key=key)
+    assert received['state']=='receipt_difference_review'
+    assert received['declaration']['cash_halalas']==700
+    assert received['receipt']['received_halalas']==actual
+    assert received['receipt_difference_halalas']==actual-700
+    assert received['staffing_finished'] is True
+    assert post('manager',path+'/physical-receipt',body,key=key)['receipt_id']==received['receipt_id']
+    visible=actor('driver').get(path+'/physical-closure').json()
+    assert 'receipt_difference_halalas' not in visible
+    assert 'expected_cash_halalas' not in visible
+    inbox=actor('accountant').get('/api/shared-driver-closures').json()['workdays']
+    assert len(inbox)==1 and inbox[0]['receipt_review_required'] is True
+    allocation={'declaration_id':declared['declaration_id'],'receipt_id':received['receipt_id'],'legs':rows(driver['shifts']),'reason':'Attempted attribution with unresolved receipt discrepancy','confirmed':True}
+    error=post('accountant',path+'/physical-allocation',allocation,status=409)
+    assert error['detail']['code']=='SHARED_RECEIPT_REVIEW_REQUIRED'
+    with db.tx() as c:
+        assert c.execute('SELECT count(*) n FROM shared_driver_closure_receipts').fetchone()['n']==1
+        assert c.execute('SELECT 1 FROM custody_transfers').fetchone() is None
+        assert c.execute('SELECT 1 FROM shared_driver_closure_allocations').fetchone() is None
+        assert c.execute('SELECT cash_halalas FROM shared_driver_closure_declarations WHERE id=%s',(declared['declaration_id'],)).fetchone()['cash_halalas']==700
+        guard_financial_allocation_pending=False
+        try:guard_financial_allocation(c,shift_id=manager['shift']['id'])
+        except HTTPException:guard_financial_allocation_pending=True
+        assert guard_financial_allocation_pending
+
+
+def test_receipt_difference_uses_declared_handover_after_retained_float():
+    declaration={'cash_halalas':20700,'retained_halalas':20000}
+    assert receipt_difference(declaration,None) is None
+    assert receipt_difference(declaration,{'received_halalas':700})==0
+    assert receipt_difference(declaration,{'received_halalas':650})==-50
+    assert receipt_difference(declaration,{'received_halalas':750})==50
+
+
+def test_receipt_residual_allocation_requires_exact_independently_approved_source():
+    declaration={'cash_halalas':700,'card_halalas':900,'retained_halalas':0,'expected_snapshot':[{'shift_id':'k','permanent_float_halalas':0},{'shift_id':'e','permanent_float_halalas':0}]}
+    receipt={'received_halalas':650}
+    first=AllocationLeg(shift_id='k',counted_halalas=600,received_halalas=550,retained_halalas=0,terminal_total_halalas=400,evidence='Original KPS bag evidence',receipt_difference_halalas=50)
+    second=AllocationLeg(shift_id='e',counted_halalas=100,received_halalas=100,retained_halalas=0,terminal_total_halalas=500,evidence='Original Enbishan bag evidence')
+    with pytest.raises(HTTPException):validate_allocation(declaration,receipt,[first,second])
+    treatment={'status':'approved','payload':{'cash_variance_halalas':-50}}
+    validate_allocation(declaration,receipt,[first,second],treatment)
+    with pytest.raises(HTTPException):validate_allocation(declaration,receipt,[first,second],{'status':'approved','payload':{'cash_variance_halalas':-49}})
+    with pytest.raises(HTTPException):validate_allocation(declaration,receipt,[first.model_copy(update={'receipt_difference_halalas':49}),second],treatment)
+
+
+@pytest.mark.postgres
+def test_short_declared_float_ends_operations_with_assigned_review_and_no_topup(central):
+    _,actor,post,_,_=central
+    request=post('manager','/api/driver-floats',{'driver_id':'dual-driver','amount_halalas':20000,'reference':'Actual approved original float','reason':'Standing float handed once and documented'})
+    post('accountant','/api/driver-floats/'+request['id']+'/decision',{'approved':True,'confirmed':True,'reference':'Independent original float certification'})
+    manager,driver,path,declared=submit_physical(central)
+    assert declared['declaration']['retained_halalas']==700
+    receipt=post('manager',path+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':0,'confirmed':True,'reference':'Zero bag, only actual 700 retained by driver'})
+    assert receipt['staffing_finished'] is True
+    with db.tx() as c:
+        task=c.execute("SELECT details FROM audit_events WHERE action='shared_driver.float_followup' AND entity_id=%s",(receipt['workday_id'],)).fetchone()['details']
+        assert task['shortfall_halalas']==19300 and task['responsible_user_id']=='dual-accountant'
+        assert task['due_at'] and task['no_employee_liability_assumed'] is True
+        assert c.execute('SELECT sum(amount_halalas) n FROM retained_carryovers WHERE from_shift_id=ANY(%s)',([s['id'] for s in driver['shifts']],)).fetchone()['n']==700
+        assert c.execute("SELECT 1 FROM custody_events WHERE kind='adjustment'").fetchone() is None
+    next_driver=post('driver','/api/central-operations/workdays',{'kind':'driver','manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection(1010)})
+    assert all('opening_halalas' not in s for s in next_driver['shifts'])
+    # Verify the actual carryover through the isolated canonical ledger. The
+    # driver's blind response must not expose the expected opening balance.
+    with db.tx() as c:
+        source=c.execute('SELECT opening_halalas,permanent_float FROM shifts WHERE id=ANY(%s)',
+            ([s['id'] for s in next_driver['shifts']],)).fetchall()
+        assert sum(s['opening_halalas'] for s in source)==700
+        assert sum((s['permanent_float'] or {}).get('amount',0) for s in source)==20000
+
 def test_physical_receipt_preserves_pending_incentive_review_for_accounting(central, monkeypatch):
     """Physical receipt must not depend on resolving financial entitlement."""
     from app import driver_incentives

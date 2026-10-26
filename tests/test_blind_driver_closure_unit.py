@@ -56,14 +56,18 @@ class BlindClosureTests(unittest.TestCase):
             with self.subTest(args=args),self.assertRaises(HTTPException) as error:self.run_submit(**args)
             self.assertEqual(error.exception.status_code,422)
 
-    def test_card_discrepancy_requires_manager_reason_even_with_balanced_cash(self):
+    def test_card_discrepancy_keeps_actual_receipt_requirement_without_manager_financial_decision(self):
         s={**self.shift,'status':'submitted','submission':{'difference_halalas':0,'card_difference_halalas':100,'retained_halalas':0}}
         c=Mock()
-        # This case has no pending trip; exercise the original financial guard.
-        c.execute.return_value.fetchone.return_value=None
-        with patch('app.driver_incentives.require_decisions'),patch.object(op,'lock_shift',return_value=s),patch.object(op,'shift_access'),self.assertRaises(HTTPException) as error:
+        def execute(sql,params=None):
+            result=Mock()
+            result.fetchone.return_value={'n':0,'nrows':0} if 'count(*) nrows' in sql else None
+            return result
+        c.execute.side_effect=execute
+        with patch('app.driver_incentives.require_decisions'),patch.object(op,'lock_shift',return_value=s),patch.object(op,'shift_access'),patch.object(op,'unresolved',return_value=0),self.assertRaises(HTTPException) as error:
             op.approve_close_in_tx(c,self.manager,'shift',op.Review())
-        self.assertEqual(error.exception.status_code,422)
+        self.assertEqual(error.exception.status_code,409)
+        self.assertIn('تأكيد فعلي',error.exception.detail)
 
     def test_open_trip_blocks_approval_before_financial_review(self):
         s={**self.shift,'status':'submitted','submission':{'difference_halalas':0,'card_difference_halalas':0,'retained_halalas':0}}

@@ -29,6 +29,9 @@ LABELS={
  'gross':('المبيعات الإجمالية','Gross sales'),'cash':('التحصيل النقدي','Cash collected'),
  'card':('تحصيل الشبكة','Card collected'),'refund_cash':('مرتجع نقدي','Cash refunded'),
  'refund_card':('مرتجع شبكة','Card refunded'),'refunds':('إجمالي المرتجعات','Total refunded'),
+ 'price_credits':('تصحيحات قيمة الفواتير','Invoice price credits'),
+ 'outstanding_receivable_halalas':('مبالغ مستحقة تحت المتابعة','Outstanding receivables'),
+ 'outstanding_payable_halalas':('مبالغ واجبة الرد تحت المتابعة','Outstanding payables'),
  'total':('صافي التحصيل','Net collected'),'net_sales':('صافي المبيعات','Net sales'),
  'notes':('ملاحظات','Notes'),'quantity':('كمية مباعة','Sold quantity'),
  'returned_quantity':('كمية مرتجعة محددة','Specified returned quantity'),
@@ -45,10 +48,10 @@ LABELS={
  'advertising_quantity':('كمية الإعلان','Advertising quantity'),'compensation_quantity':('كمية التعويض','Compensation quantity'),
  'zero_value_quantity':('كمية صفرية أخرى','Other zero-value quantity'),
  'weekday':('اليوم','Day'),'period':('الفترة بتوقيت الرياض','Period, Riyadh')}
-MONEY={'bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','pending_shortage','pending_surplus','approved_shortage','amount','delivery_value','payable'}
-COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','net_sales','notes']
+MONEY={'price_credits','outstanding_receivable_halalas','outstanding_payable_halalas','bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','pending_shortage','pending_surplus','approved_shortage','amount','delivery_value','payable'}
+COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','price_credits','net_sales','notes']
 COLUMNS={
- 'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
+ 'driver_statement':['driver','day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','outstanding_receivable_halalas','outstanding_payable_halalas','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
  'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','treatment','reason','authorized_name','authorized_at','original_invoice_number','original_order_id','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
@@ -63,6 +66,8 @@ def presentation(data,lang='ar'):
     keys=COLUMNS[data['group']];rows=[]
     for source in data['rows']:
         r=dict(source)
+        for key in ('price_credits','outstanding_receivable_halalas','outstanding_payable_halalas'):
+            if key in keys:r.setdefault(key,('غير موثقة','Not recorded')[lang=='en'])
         if data['group']=='complimentary':
             r['authorized_name']=r.get('authorized_name') or r.get('authorized_by') or ('غير موثق','Not recorded')[lang=='en']
             for key in ('authorized_at','original_invoice_number','original_order_id'):
@@ -79,6 +84,9 @@ def presentation(data,lang='ar'):
             r['period']=f'{clock} → {clock} (+1)'
         rows.append(r)
     totals={k:sum(r.get(k,0) for r in rows if isinstance(r.get(k), (int,float))) for k in keys if k in MONEY or k.endswith('_quantity') or k in ('completed_orders','eligible','excluded','pending_review','awaiting_approval','tier_1','tier_2','tier_3','tier_4','orders','correct','processed','cancelled','quantity','returned_quantity')}
+    for key in ('price_credits','outstanding_receivable_halalas','outstanding_payable_halalas'):
+        if key in keys and any(type(row.get(key)) is not int for row in rows):
+            totals[key]=('غير موثقة','Not recorded')[lang=='en']
     # Item counts overlap between items; financial action amounts overlap across
     # cancellation/refund records. Neither may be presented as a grand sales sum.
     if data['group']=='items':
@@ -115,7 +123,13 @@ def render(data,format,lang):
     values=[[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k), (int,float)) else r.get(k,'') for k in keys] for r in [*rows,summary]]
     units="" if data['group'].startswith('driver_incentive') else "SAR | "
     meta=f"{data['period']['start']} — {data['period']['end']} | Asia/Riyadh | "+units+('كشف مقفل / Closed statement' if data.get('frozen') else 'تقرير مباشر / Live report')
-    if format=='xlsx':return xlsx([headers,*values],keys,[title,meta,data['definitions']],lang)
+    definitions=data['definitions']
+    if data['group']=='driver_statement':
+        # Present the scope for old frozen statements too, preserving their data.
+        marker='مطابقة البنك نطاق مستقل بالأدلة.' if lang=='ar' else 'Bank matching remains a separate evidence scope.'
+        if marker not in definitions:
+            definitions+=' '+('نطاق هذا الكشف مراجعة الكاش والشبكة المسجلة فقط؛ تحصيل الشبكة المسجل لا يثبت وصوله للبنك. '+marker if lang=='ar' else 'This statement covers closure cash and recorded-card review only; recorded card collection does not establish bank receipt. '+marker)
+    if format=='xlsx':return xlsx([headers,*values],keys,[title,meta,definitions],lang)
     if data['group']=='driver_statement':
         # A separate page per driver and section keeps daily figures readable;
         # long notes/audit entries never compress all columns onto one page.
@@ -123,13 +137,20 @@ def render(data,format,lang):
         for driver in dict.fromkeys(r['driver_id'] for r in rows):
             entries=[r for r in rows if r['driver_id']==driver]
             for section_keys in (['day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status'],
+                                 ['day','outstanding_receivable_halalas','outstanding_payable_halalas','status'],
                                  ['day','notes','incident_notes','violations','traffic_notes','traffic'],['day','adjustments']):
                 section_rows=[[LABELS[k][lang=='en'] for k in section_keys]]
                 section_rows += [[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k),(int,float)) else r.get(k,'') for k in section_keys] for r in entries]
-                section_rows.append([('الإجمالي' if lang=='ar' else 'Total') if i==0 else sum(r.get(k,0) for r in entries)/100 if k in MONEY else sum(r.get(k,0) for r in entries) if k=='completed_orders' else '' for i,k in enumerate(section_keys)])
+                def section_total(key):
+                    if key in MONEY:
+                        values=[r.get(key) for r in entries]
+                        if any(type(value) not in (int,float) for value in values):return ('غير موثقة','Not recorded')[lang=='en']
+                        return sum(values)/100
+                    return sum(r.get(key,0) for r in entries) if key=='completed_orders' else ''
+                section_rows.append([('الإجمالي' if lang=='ar' else 'Total') if i==0 else section_total(k) for i,k in enumerate(section_keys)])
                 sections.append(dict(title=entries[0]['driver'],keys=section_keys,rows=section_rows))
-        return pdf([headers,*values],keys,title,meta,data['definitions'],lang,sections=sections or None,compact=True)
-    return pdf([headers,*values],keys,title,meta,data['definitions'],lang)
+        return pdf([headers,*values],keys,title,meta,definitions,lang,sections=sections or None,compact=True)
+    return pdf([headers,*values],keys,title,meta,definitions,lang)
 
 def xlsx(rows,keys,notes,lang):
     def column(n):

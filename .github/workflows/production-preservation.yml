@@ -1,6 +1,9 @@
 name: Production preservation focused acceptance
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [agent/kps-order-security-closure-20261018]
     paths:
@@ -17,6 +20,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   crm-browser:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/financial-administrative-completion-20261026'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     services:
@@ -70,6 +74,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   focused:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/financial-administrative-completion-20261026'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
@@ -133,6 +138,7 @@ jobs:
             test-artifacts/permissions-*.png
           retention-days: 14
   windows:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/financial-administrative-completion-20261026'
     runs-on: windows-latest
     timeout-minutes: 8
     steps:

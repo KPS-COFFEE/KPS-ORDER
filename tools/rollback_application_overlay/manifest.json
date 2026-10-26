@@ -26,7 +26,9 @@
     "Prior application reports recognize immutable historical delivery attestations without fabricating delivery timestamps or payment",
     "Explicit staff geographic grant inventory and brand scope; excluded from business exports and retired after isolated restore verification; foreign staff enforcement requires a geo-aware application build",
     "Explicit new-table export registry for empty new schema only; prior writer refuses startup after any duty/shared physical/clarification contract use",
-    "Immutable legacy source invoice import records preserved/exported; prior reports recognize unknown-time delivery proof without importing new invoices"
+    "Immutable legacy source invoice import records preserved/exported; prior reports recognize unknown-time delivery proof without importing new invoices",
+    "Explicit bank reconciliation archive and preservation registry; prior writer refuses any new bank rows or independent financial treatment evidence",
+    "Source-price and factual administrative workflow evidence uses existing audit ledger; prior writer refuses these new contracts after use"
   ],
   "fallbacks": [
     "80a prior operations UI",
@@ -35,12 +37,12 @@
   ],
   "files": {
     "app/admin.py": "b4870d67c8aa12b32ac23ff6b2622efd161ef89a4cd4fa1e77d9186f2ffb8dc2",
-    "app/db.py": "bb1a06084ba01d578fe3243785f9ec7e61520815c83ddb83b7b523664fd3e896",
+    "app/db.py": "1058c2b5fb7f552e0602e4683c8a999db644c1e63a826c4aa20f0ceddfc27ca3",
     "app/driver_work_hours.py": "4490cd9ab275b78a8b9be3ac2bc387537f3383b6b51aadf88bc4faf0f2e78ad5",
     "app/employee_permissions.py": "605843c9677bbf0d7c86c55fcd199ba4959ea9b73e3700b17d4622c80b3121e5",
-    "app/exports.py": "f36091e418a10197e4a8bd163bdae551e43163b3284282fd109f55d0bfa802b9",
+    "app/exports.py": "766d94e730abc0a05776a96e6b142167150a47675fce7dc65e594c324f50afd4",
     "app/http_security.py": "7d449b91f1f6c69c1a1d97473a6bf047f9915419cfb187f22bc51f910665158a",
-    "app/main.py": "7e87ce7ac0d74c486425e60906ae58d2e629639b0543e9e7930823c940ccf6f1",
+    "app/main.py": "7e9bda6b289ff60d956d17dda0718e371f8368403fa10f5fc4e41ae907a6da3a",
     "app/operations.py": "b85a442aefbe54dd7f90c7eabfb68714be2fb2d86ff3bde788a1220c279169d9",
     "app/orders.py": "11cffe1a1c77cf170a3682e32afc041b08de5b4bdca5decf6fa0a7a851fba8f0",
     "migrations/081_driver_work_hours.sql": "698f1717097745bffa4162a69d515fbedbdf48fab4e2983aaafe241139af33a1",
@@ -51,7 +53,7 @@
   "rollback_feature_policy": {
     "operational_after_feature_use": false,
     "current_aware_image_certified": false,
-    "behavior": "Fail before migrations or request workers if duty, shared physical closure or accepted clarification rows exist. Preserve database; keep a current-aware application.",
+    "behavior": "Fail before migrations or request workers if duty, shared physical closure, financial clarification, manual bank or independent financial treatment records exist. Preserve database; keep a current-aware application.",
     "certification": "Source guard and isolated PostgreSQL witnesses must pass on candidate; no prior image operational support claimed for these states."
   }
 }

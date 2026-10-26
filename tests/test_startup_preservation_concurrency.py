@@ -148,3 +148,37 @@ def test_unlocked_guard_rejects_statement_only_snapshot(database):
     with db.tx() as conn:
         with pytest.raises(RuntimeError, match='transaction-wide stable snapshot'):
             db.preservation_snapshot(conn, lock_tables=False)
+
+
+@pytest.mark.parametrize('change', ['append', 'update', 'delete', 'replace'])
+def test_startup_preserves_original_audit_bytes_and_allows_only_additions(database, monkeypatch, change):
+    """New evidence cannot mask an update, deletion or same-ID replacement."""
+    with db.tx() as conn:
+        db.audit(conn, None, 'test.original', 'runtime', 'audit-preservation', {'value': 1})
+        original = conn.execute("SELECT id FROM audit_events WHERE action='test.original'").fetchone()['id']
+        before = db.preservation_snapshot(conn)
+
+    def migration(conn, **kwargs):
+        db.audit(conn, None, 'test.appended', 'runtime', 'new-evidence', {'value': 2})
+        if change == 'update':
+            conn.execute("UPDATE audit_events SET details='{}'::jsonb WHERE id=%s", (original,))
+        elif change in {'delete', 'replace'}:
+            conn.execute('DELETE FROM audit_events WHERE id=%s', (original,))
+            if change == 'replace':
+                conn.execute("INSERT INTO audit_events(id,action,entity_type,entity_id) VALUES(%s,'test.replaced','runtime','replacement')", (original,))
+
+    monkeypatch.setattr(db, 'apply_migrations', migration)
+    if change == 'append':
+        db.migrate()
+        with db.tx() as conn:
+            assert db.preservation_snapshot(conn, before) == before
+            proof = conn.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC LIMIT 1").fetchone()['details']
+            assert proof['audit_events_appended'] == 1
+            assert 'row_ids' not in str(proof)
+            assert original not in str(proof)
+    else:
+        with pytest.raises(RuntimeError, match='operational data changed'):
+            db.migrate()
+        with db.tx() as conn:
+            assert db.preservation_snapshot(conn, before) == before
+            assert not conn.execute("SELECT 1 FROM audit_events WHERE action='test.appended'").fetchone()

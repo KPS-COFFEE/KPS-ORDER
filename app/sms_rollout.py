@@ -69,11 +69,16 @@ def context_cookies_enabled(conn=None):
     override = os.getenv('SESSION_CONTEXT_COOKIES_ENABLED')
     if override is not None:
         return override == 'true'
+    # Mandatory work SMS already requires separate credential contexts. The
+    # pilot setting cannot turn that requirement off, so do not read a policy
+    # whose value cannot affect this result on every authenticated request.
+    if work_sms_required():
+        return True
     # Authentication already owns a pooled connection. Reuse that transaction
     # instead of holding one slot while waiting for a second policy connection.
     # The policy remains a fresh database read, never a process-wide cache.
     policy = _policy(conn) if conn is not None else _read_policy()
-    return work_sms_required() or policy.get('mode') in {'pilot', 'active'}
+    return policy.get('mode') in {'pilot', 'active'}
 
 
 def record_employee_proof(conn, user, challenge_id):

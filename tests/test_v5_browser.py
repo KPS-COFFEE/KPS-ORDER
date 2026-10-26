@@ -325,11 +325,49 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         _submit_modal(driver, check=['confirm_closure'], driver_end=True)
         manager.locator('[data-page=custody]').click()
         manager.locator('[data-action=confirm-custody]').click()
-        _submit_modal(manager, check=['received'])
+        expect(manager.locator('#modal-body input[name=received]')).to_have_attribute('type','number')
+        expect(manager.locator('#modal-body input[name=confirmed]')).to_have_attribute('type','checkbox')
+        with manager.expect_response(lambda response:response.request.method=='POST' and '/api/custody/' in response.url and response.url.endswith('/confirm')) as receipt:
+            _submit_modal(manager, {'received':f'{total/100:.2f}'}, check=['confirmed'])
+        assert receipt.value.status==200,receipt.value.text()
+        assert receipt.value.request.post_data_json=={'received_halalas':total,'confirmed':True}
+        with db.tx() as conn:
+            assert conn.execute('SELECT status FROM shifts WHERE id=%s',(driver_shift,)).fetchone()['status']=='submitted'
+            received=conn.execute("SELECT id,amount_halalas FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(driver_shift,)).fetchall()
+            assert len(received)==1 and received[0]['amount_halalas']==total
+            assert conn.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver_shift,)).fetchone()['n']==0
         manager.locator('#navigation [data-page=shifts]').click()
         manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
+        stale_approval=manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').evaluate('(button)=>button.outerHTML')
         manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()
-        _submit_modal(manager, check=['confirmed'])
+        expect(manager.locator('#modal-body [data-saved-actual-receipt]')).to_be_visible()
+        expect(manager.locator('#modal-body input[name=received]')).to_have_count(0)
+        expect(manager.locator('#modal-body [data-action=return-shift]')).to_have_count(0)
+        with manager.expect_response(lambda response:response.request.method=='POST' and response.url.endswith('/api/shifts/'+driver_shift+'/driver-close')) as closed:
+            _submit_modal(manager, check=['confirmed'])
+        assert closed.value.status==200,closed.value.text()
+        assert closed.value.request.post_data_json['received_halalas']==total
+        with db.tx() as conn:
+            saved=conn.execute('SELECT status,submission FROM shifts WHERE id=%s',(driver_shift,)).fetchone()
+            assert saved['status']=='closed' and saved['submission']['actual_handover_halalas']==total
+            assert conn.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver_shift,)).fetchone()['n']==1
+            assert conn.execute("SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(driver_shift,)).fetchone()['n']==1
+        # A stale rendered action from before closure must read current state,
+        # show the immutable detail and never offer another receipt/submission.
+        expect(manager.locator(f'[data-action=start-closing][data-id="{manager_shift}"]')).to_be_visible()
+        stale_writes=[]
+        def stale_request(request):
+            if request.method=='POST' and request.url.endswith(('/api/shifts/'+driver_shift+'/driver-close','/api/shifts/'+driver_shift+'/approve')):stale_writes.append(request.url)
+        manager.on('request',stale_request)
+        manager.evaluate("html=>{const host=document.createElement('div');host.id='stale-approved-action';host.innerHTML=html;document.querySelector('#content').append(host);}",stale_approval)
+        manager.locator('#stale-approved-action [data-action=approve-shift]').click()
+        expect(manager.locator('#modal')).to_be_visible()
+        expect(manager.locator('#modal-body #simple-driver-close-form')).to_have_count(0)
+        expect(manager.locator('#modal-body #closure-form')).to_have_count(0)
+        expect(manager.locator('#modal-body [data-action=approve-shift]')).to_have_count(0)
+        assert stale_writes==[]
+        manager.remove_listener('request',stale_request)
+        _close_detail(manager)
         manager.locator(f'[data-action=start-closing][data-id="{manager_shift}"]').click()
         manager.locator('#closure-form [name=counted]').fill(f'{total/100:.2f}')
         manager.locator('#closure-form [name=handover]').fill(f'{total/100:.2f}')

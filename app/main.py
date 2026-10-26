@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import psycopg
+from anyio.to_thread import current_default_thread_limiter
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
@@ -21,11 +22,17 @@ from .host_policy import OfficialHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC = ROOT / 'public'
+# Two request slots per database connection keep the measured small-worker
+# queue bounded while allowing non-database work alongside checked-out reads.
+REQUEST_THREAD_TOKENS = 8
 
 
 @asynccontextmanager
 async def lifespan(app):
     background_tasks = []
+    request_limiter = current_default_thread_limiter()
+    previous_thread_tokens = request_limiter.total_tokens
+    request_limiter.total_tokens = REQUEST_THREAD_TOKENS
     try:
         from . import staff_geo
         staff_geo.validate_configuration()
@@ -66,7 +73,10 @@ async def lifespan(app):
                 with suppress(asyncio.CancelledError):
                     await task
         finally:
-            db.close_pools()
+            try:
+                db.close_pools()
+            finally:
+                request_limiter.total_tokens = previous_thread_tokens
 
 
 app = FastAPI(title='KPS Independent Orders', version='5.0.0', lifespan=lifespan,
@@ -140,7 +150,7 @@ app.include_router(branch_payment_reports.router)
 from . import branch_payment_policy
 app.include_router(branch_payment_policy.router)
 # Components are separate files within this one service and share canonical tables.
-for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'aggregate_manager_closure', 'financial_clarifications', 'customer_crm'):
+for name in ('operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'aggregate_manager_closure', 'financial_clarifications', 'customer_crm', 'owner_audit', 'employee_ticket_workflow'):
     module = importlib.import_module('.' + name, __package__)
     app.include_router(module.router)
 
@@ -177,7 +187,8 @@ app.include_router(enbishan_catalog_import.router)
 
 
 def revision():
-    return os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
+    from .runtime_revision import revision as source_revision
+    return source_revision('local-unversioned')
 
 
 @app.get('/health')
@@ -283,3 +294,18 @@ if (PUBLIC / 'assets').exists():
     app.mount('/assets', StaticFiles(directory=PUBLIC / 'assets', follow_symlink=False), name='assets')
 
 
+
+from . import financial_treatments
+app.include_router(financial_treatments.router)
+
+from . import refund_item_allocations
+app.include_router(refund_item_allocations.router)
+
+from . import shared_financial_treatments, manual_bank_matching
+app.include_router(shared_financial_treatments.router)
+app.include_router(manual_bank_matching.router)
+from . import order_financial_treatments
+app.include_router(order_financial_treatments.router)
+
+from . import collection_tender_corrections
+app.include_router(collection_tender_corrections.router)

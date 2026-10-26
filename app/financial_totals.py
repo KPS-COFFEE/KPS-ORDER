@@ -19,7 +19,10 @@ def period_totals(c, where, params):
     refunds=c.execute("SELECT coalesce(sum(r.amount_halalas),0) refunded,coalesce(sum(r.amount_halalas) FILTER(WHERE r.amendment_id IS NOT NULL),0) amendments FROM refunds r JOIN orders o ON o.id=r.order_id WHERE "+refund_scope,params).fetchone()
     collection_scope=scope.replace('o.created_at>=','p.created_at>=').replace('o.created_at<','p.created_at<')
     payments=c.execute('SELECT p.method,coalesce(sum(p.amount_halalas),0) amount_halalas FROM collections p JOIN orders o ON o.id=p.order_id WHERE '+collection_scope+' GROUP BY p.method',params).fetchall()
+    credit_scope=scope.replace('o.created_at>=','a.created_at>=').replace('o.created_at<','a.created_at<')
+    credits=c.execute("SELECT coalesce(sum((a.details->>'credit_halalas')::bigint),0) amount FROM audit_events a JOIN orders o ON o.id=a.entity_id WHERE a.entity_type='order' AND a.action='accounting.order_financial_treatment.approved' AND a.details->>'kind'='price_correction' AND "+credit_scope,params).fetchone()
     return {'gross_completed_halalas':int(sales['gross']),
+            'price_credit_halalas':int(credits['amount']),
             'refund_halalas':int(refunds['refunded']),
-            'net_completed_halalas':net_sales(sales['gross'],refunds['refunded'],refunds['amendments']),
+            'net_completed_halalas':net_sales(sales['gross'],refunds['refunded'],refunds['amendments'])-int(credits['amount']),
             'net_receipts_halalas':sum(int(p['amount_halalas']) for p in payments)-int(refunds['refunded'])}

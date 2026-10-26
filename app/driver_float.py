@@ -25,6 +25,29 @@ def current(c, driver_id, brand_id=None):
     return c.execute('SELECT r.* FROM driver_float_requests r JOIN driver_float_decisions d ON d.request_id=r.id WHERE r.driver_id=%s AND (%s::text IS NULL OR r.brand_id=%s) AND d.approved ORDER BY d.created_at DESC,r.id DESC LIMIT 1',(driver_id,brand_id,brand_id)).fetchone()
 
 
+def lock_driver(c,driver_id):
+    # One physical float per person: brand-specific locks permit double issuance.
+    c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('driver_float:'+driver_id,))
+
+
+def validate_standing_amount(amount):
+    # Closing an entitlement is supported; recording a new entitlement never
+    # invents a different allowance or changes an existing historical balance.
+    if type(amount) is not int or amount not in (0,20000):
+        fail(422,'العهدة الثابتة المعتمدة 200 ريال للسائق مرة واحدة؛ أي سجل تاريخي مختلف يحتاج مراجعة محاسبية دون تغييره تلقائيًا / The standing driver float is SAR 200 once per driver; differing historical records require accounting review')
+
+
+def guard_other_brand_float(c,driver_id,brand_id,amount):
+    if not amount:return
+    other=c.execute("""SELECT 1 FROM (
+        SELECT DISTINCT ON (r.brand_id) r.brand_id,r.amount_halalas
+        FROM driver_float_requests r JOIN driver_float_decisions d ON d.request_id=r.id
+        WHERE r.driver_id=%s AND d.approved
+        ORDER BY r.brand_id,d.created_at DESC,r.id DESC
+    ) current_float WHERE brand_id<>%s AND amount_halalas>0 LIMIT 1""",(driver_id,brand_id)).fetchone()
+    if other:fail(409,'للسائق عهدة دائمة معتمدة بالفعل لبراند آخر؛ لا تصدرها مرة أخرى. على المحاسبة مراجعة أصل العهدة وإسنادها دون تكرارها / Driver already has an approved standing float in another brand; accounting must review its original attribution without issuing it again')
+
+
 def opening(c, target, carried):
     row = current(c,target['id'],target['brand_id'])
     if not row:return carried,None
@@ -86,8 +109,11 @@ def propose(body:FloatRequest,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('operations:'+user['brand_id'],))
         target=driver(c,user,body.driver_id)
+        lock_driver(c,target['id'])
         def perform():
             require_closed(c,target['id'])
+            validate_standing_amount(body.amount_halalas)
+            guard_other_brand_float(c,target['id'],user['brand_id'],body.amount_halalas)
             latest=current(c,target['id'],user['brand_id'])
             if body.base_request_id!=(latest['id'] if latest else None):fail(409,'تغيرت العهدة؛ حدّث الشاشة')
             if c.execute('SELECT 1 FROM driver_float_requests r LEFT JOIN driver_float_decisions d ON d.request_id=r.id WHERE r.driver_id=%s AND d.request_id IS NULL',(target['id'],)).fetchone():fail(409,'توجد عهدة بانتظار قرار المحاسب')
@@ -107,12 +133,15 @@ def decide(identifier:str,body:Decision,request:Request,user=Depends(auth.curren
         row=c.execute('SELECT * FROM driver_float_requests WHERE id=%s AND brand_id=%s',(identifier,user['brand_id'])).fetchone()
         if not row:fail(404,'العهدة غير موجودة')
         driver(c,user,row['driver_id'])
+        lock_driver(c,row['driver_id'])
         if user['role']!='owner' and not set(row['branch_ids'])<=set(user.get('branch_ids',[])):fail(403,'العهدة خارج نطاقك')
         if row['requested_by']==user['id']:fail(403,'لا يعتمد مسجل العهدة طلبه بنفسه')
         def perform():
             if c.execute('SELECT 1 FROM driver_float_decisions WHERE request_id=%s',(identifier,)).fetchone():fail(409,'تم اتخاذ قرار لهذه العهدة')
             if body.approved:
+                validate_standing_amount(row['amount_halalas'])
                 require_closed(c,row['driver_id'])
+                guard_other_brand_float(c,row['driver_id'],user['brand_id'],row['amount_halalas'])
                 latest=current(c,row['driver_id'],user['brand_id'])
                 if row['base_request_id']!=(latest['id'] if latest else None):fail(409,'تغيرت العهدة؛ يلزم طلب جديد')
             c.execute('INSERT INTO driver_float_decisions(request_id,brand_id,approved,reviewed_by,reference) VALUES(%s,%s,%s,%s,%s)',(identifier,user['brand_id'],body.approved,user['id'],body.reference))

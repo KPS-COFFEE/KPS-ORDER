@@ -19,8 +19,6 @@ def test_submitted_receipt_and_approval_once(ops,counted,transfer_exists):
         post('manager',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':counted,'handover_halalas':counted,'exception_reason':'TEST manager counted before receipt'})
     body={'received_halalas':counted,'confirmed':True,'exception_reason':'TEST actual discrepancy' if counted!=1000 else ''}
     url=f'/api/shifts/{driver}/driver-close'
-    if counted!=1000:post('manager',url,{**body,'exception_reason':''},status=422)
-    post('manager',url,{**body,'received_halalas':counted+100},status=422)
     result=post('manager',url,body,key='TEST-single-close')
     assert post('manager',url,body,key='TEST-single-close')==result
     post('manager',url,body,status=409)
@@ -78,32 +76,34 @@ def test_different_keys_race_cannot_repeat_financial_effects(ops):
         assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==1
         assert c.execute("SELECT count(*) n FROM custody_events WHERE shift_id=%s AND kind='transfer_in'",(manager,)).fetchone()['n']==1
 
-def test_failed_approval_does_not_confirm_or_move_cash(ops):
+def test_failed_operational_approval_does_not_confirm_or_move_cash(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
     begin_driver_closure(post,driver)
     _,tid=submit_cash(post,driver,manager,900,reference='TEST atomic receipt')
-    post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':900,'confirmed':True},status=422)
+    late_order=order()
+    with db.tx() as c:c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) VALUES('late-synthetic-task',%s,'ops-driver',%s,'assigned','ops-manager')",(late_order,driver))
+    post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':900,'confirmed':True},status=409)
     with db.tx() as c:
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='submitted'
         t=c.execute('SELECT * FROM custody_transfers WHERE id=%s',(tid,)).fetchone()
         assert t['status']=='pending' and t['confirmed_by'] is None
         assert c.execute('SELECT count(*) n FROM custody_events WHERE reference_id=%s',(tid,)).fetchone()['n']==0
 
-def test_retained_cash_requires_explicit_reason_and_keeps_count(ops):
+def test_retained_actual_cash_preserved_and_financial_treatment_is_deferred(ops):
     actor,post,order,shifts=ops
     manager,driver=shifts();delivered(post,order,driver)
     begin_driver_closure(post,driver)
     post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200},status=422)
     post('manager',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':0,'counted_halalas':1000,'handover_halalas':800,'retained_halalas':200,'exception_reason':'TEST authorized manager retained count'})
     url=f'/api/shifts/{driver}/driver-close'
-    post('manager',url,{'received_halalas':800,'confirmed':True},status=422)
     post('manager',url,{'received_halalas':800,'counted_halalas':800,'confirmed':True,'exception_reason':'TEST retained'},status=422)
-    post('manager',url,{'received_halalas':800,'confirmed':True,'exception_reason':'TEST authorized retained cash'})
+    post('manager',url,{'received_halalas':800,'confirmed':True})
     with db.tx() as c:
         s=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
         assert s['submission']['counted_halalas']==1000
         assert s['submission']['retained_halalas']==200
+        assert s['submission']['financial_review_required'] is True
         assert c.execute('SELECT amount_halalas FROM retained_carryovers WHERE from_shift_id=%s',(driver,)).fetchone()['amount_halalas']==200
 
 def test_another_manager_cannot_close_or_claim_receipt(ops):
@@ -145,3 +145,18 @@ def test_legacy_other_recipient_is_explained_without_moving_cash(ops):
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='submitted'
         assert c.execute('SELECT status,confirmed_by,recipient_user_id FROM custody_transfers WHERE id=%s',(tid,)).fetchone()=={'status':'pending','confirmed_by':None,'recipient_user_id':'ops-owner'}
         assert c.execute('SELECT count(*) n FROM custody_events WHERE reference_id=%s',(tid,)).fetchone()['n']==0
+
+
+def test_close_cannot_silently_ignore_a_conflicting_already_witnessed_receipt(ops):
+    actor,post,order,shifts=ops
+    manager,driver=shifts();delivered(post,order,driver)
+    begin_driver_closure(post,driver)
+    _,tid=submit_cash(post,driver,manager,1000)
+    post('manager',f'/api/custody/{tid}/confirm',{'received_halalas':900,'confirmed':True})
+    blocked=post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':1000,'confirmed':True},status=409)
+    assert blocked['detail']['code']=='RECORDED_RECEIPT_CHANGED'
+    with db.tx() as c:
+        assert c.execute('SELECT amount_halalas FROM custody_transfers WHERE id=%s',(tid,)).fetchone()['amount_halalas']==900
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='submitted'
+        assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==0
+    post('manager',f'/api/shifts/{driver}/driver-close',{'received_halalas':900,'confirmed':True})

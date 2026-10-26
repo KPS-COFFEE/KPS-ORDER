@@ -58,7 +58,7 @@ def test_appearance_owner_merge_validation_scope_and_operational_preservation(ow
     after = client.get('/api/admin/config').json()
     assert before['products'] == after['products'] and before['branches'] == after['branches']
     with db.tx() as conn:
-        assert db.preservation_snapshot(conn) == fingerprint
+        assert db.preservation_snapshot(conn, fingerprint) == fingerprint
     client.post('/api/auth/logout')
     assert mutate('PATCH','/api/admin/settings',{'theme':{'profile':'CHARCOAL'}}).status_code in (401,403)
 
