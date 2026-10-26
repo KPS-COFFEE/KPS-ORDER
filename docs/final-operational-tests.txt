@@ -125,3 +125,6 @@ tests/test_staff_geo.py
 tests/test_staff_geo_access.py
 tests/test_delivery_workflow_policy.py
 tests/test_enbishan_pickup.py
+
+# Read-only driver review: exact shift scope, brand totals and revoked grants.
+tests/test_driver_order_review.py
