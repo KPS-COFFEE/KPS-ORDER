@@ -238,3 +238,34 @@ def test_task_claim_projection_batches_source_credits_and_returns():
     assert result['approved']==dict(original_total_halalas=2500,effective_total_halalas=1500,effective_claim_halalas=750)
     assert result['original']==dict(original_total_halalas=3000,effective_total_halalas=3000,effective_claim_halalas=3000)
     assert c.execute.call_count==2
+
+
+@pytest.mark.postgres
+def test_pending_partial_return_must_be_rejected_before_canonical_cancellation(ops):
+    actor,post,_,_=ops;oid,tid,_,_=setup(ops)
+    pending=request(ops,tid)
+    with db.tx() as c:
+        before=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        task_before=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+    path=f'/api/order-financial-cases/orders/{oid}/cancel'
+    payload=dict(version=before['version'],reason='Customer wants full cancellation instead of partial receipt',physical_resolution='returned_to_branch')
+    response=post('manager',path,payload,status=409)
+    assert 'PARTIAL_RETURN_PENDING' in str(response)
+    task_cancel=post('manager',f'/api/tasks/{tid}/transition',dict(status='cancelled',reason='Attempt cancellation with partial return pending'),status=409)
+    assert 'PARTIAL_RETURN_PENDING' in str(task_cancel)
+    handover=post('manager',f'/api/tasks/{tid}/handover',dict(driver_shift_id=task_before['shift_id'],reason='Pending return cannot move to another task'),status=409)
+    assert 'PARTIAL_RETURN_PENDING' in str(handover)
+    refund=post('owner',f'/api/orders/{oid}/refund',dict(method='cash',amount_halalas=100,line_quantities={},reason='Attempt refund with partial return pending'),status=409)
+    assert 'PARTIAL_RETURN_PENDING' in str(refund)
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==before
+        assert c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()==task_before
+        assert not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='delivery.partial_return.approved'",(oid,)).fetchone()
+    post('manager','/api/delivery-partial-returns/'+pending['id']+'/decision',dict(action='reject',reason='Partial request rejected because customer wants full cancellation'))
+    current=actor('manager').get(f'/api/order-amendments/orders/{oid}').json()
+    cancelled=post('manager',path,{**payload,'version':current['version']})
+    assert cancelled['operational_status']=='cancelled'
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM audit_events WHERE entity_id=%s AND action='accounting.order_financial_treatment.approved'",(oid,)).fetchone()
+        assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==0
+        assert c.execute('SELECT count(*) n FROM refunds WHERE order_id=%s',(oid,)).fetchone()['n']==0

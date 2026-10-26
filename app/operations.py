@@ -1220,6 +1220,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
                 roles(user,'owner','delivery_manager')
+                from .delivery_partial_returns import guard as partial_return_guard
+                partial_return_guard(c,o)
                 from .order_financial_cases import invoice_guard
                 invoice_guard(c,o)
                 from .order_amendments import balance as paid_balance
@@ -1306,6 +1308,8 @@ def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.cu
             shift_access(c,user,lock_shift(c,t['shift_id']))
             to=lock_shift(c,body.driver_shift_id);o=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone()
             order_access(c,user,o)
+            from .delivery_partial_returns import guard as partial_return_guard
+            partial_return_guard(c,o)
             if to and not same_scope(user,to):fail(404,'شفت السائق غير متاح ضمن نطاقك')
             if t['status'] in TERMINAL or not to or to['status']!='open' or to['kind']!='driver' or to['brand_id']!=o['brand_id'] or o['branch_id'] not in to['branch_ids'] or to['id']==t['shift_id']:fail(409,'شفت الاستلام غير مؤهل')
             eligible_driver_shift(c,to,o)
@@ -1341,6 +1345,8 @@ def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)
             to=lock_shift(c,t['transfer_shift_id']);shift_access(c,user,to)
             if to['user_id']!=user['id'] or to['status']!='open':fail(409,'الشفت غير متاح')
             order=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone();eligible_driver_shift(c,to,order)
+            from .delivery_partial_returns import guard as partial_return_guard
+            partial_return_guard(c,order)
             from .driver_receipt_trial import physical_guard
             physical_guard(to,t['status'])
             status='picked_up' if t['status']=='picked_up' else 'accepted'
@@ -1486,6 +1492,8 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
             if online_order(o):
                 raise db.error(409,'PROVIDER_REFUND_REQUIRED','استرداد الدفع الإلكتروني يتطلب تأكيد مزود الدفع.')
             if active(c,oid):fail(409,'أكمل مراجعة التعديل قبل الاسترداد')
+            from .delivery_partial_returns import guard as partial_return_guard
+            partial_return_guard(c,o)
             if user['role']=='branch_manager' and o['service']=='delivery':fail(403,'تسوية التوصيل من مدير التوصيل')
             cols=c.execute('SELECT p.*,p.amount_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.collection_id=p.id),0) available FROM effective_collections p WHERE p.order_id=%s AND p.method=%s ORDER BY p.created_at,p.id',(oid,body.method)).fetchall()
             cols=[p for p in cols if p['available']>0]

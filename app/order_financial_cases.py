@@ -173,6 +173,8 @@ def cancel_locked(c, oid, body, user):
     """Canonical cancellation within the caller's transaction and lock scope."""
     o=scoped(c,oid,user,True)
     if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث الصفحة.')
+    from .delivery_partial_returns import guard as partial_return_guard
+    partial_return_guard(c,o)
     if o['completed_at'] or o['delivery_status']=='delivered' or o['preparation_status'] in ('cancelled','rejected','completed'):
         raise db.error(409,'CANCELLATION_TERMINAL','الطلب منتهٍ؛ استخدم معالجة المرتجع المعتمدة.')
     tasks=c.execute("SELECT * FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','reassigned','transferred','delivered') FOR UPDATE",(oid,)).fetchall()
