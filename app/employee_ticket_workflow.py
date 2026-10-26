@@ -17,8 +17,7 @@ DEPARTMENTS={'delivery','accounting','maintenance','printing','administration','
 
 
 def enabled():
-    return (os.getenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','false')=='true'
-        and os.getenv('APP_ENV','production') in {'testing','development'})
+    return os.getenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','false').strip().lower() in {'1','true','yes'}
 
 
 def require_enabled():
@@ -92,6 +91,47 @@ def target(c,user,created,identifier,requested_department=None):
     return row,dept
 
 
+def fallback_target(c,user,created,department_name,excluded=(),preferred=None):
+    """Choose an actual scoped backup; assignment never grants source authority."""
+    if preferred:
+        if preferred in excluded:raise db.error(422,'TICKET_FALLBACK_DISTINCT','اختر بديلًا مختلفًا عن الموظف المسؤول.')
+        candidate=c.execute('SELECT role FROM users WHERE id=%s',(preferred,)).fetchone()
+        return target(c,user,created,preferred,'owner' if candidate and candidate['role']=='owner' else department_name)
+    from fastapi import HTTPException
+    candidates=c.execute("SELECT id,role FROM users WHERE active AND role IN ('admin','owner','delivery_manager') ORDER BY CASE role WHEN 'owner' THEN 1 ELSE 0 END,id").fetchall()
+    for candidate in candidates:
+        if candidate['id'] in excluded:continue
+        try:return target(c,user,created,candidate['id'],'owner' if candidate['role']=='owner' else department_name)
+        except HTTPException as exc:
+            if exc.status_code!=422:raise
+    return None,None
+
+
+def recorded_fallback(c,user,created,current):
+    identifier=current.get('fallback_user_id')
+    if not identifier:return None,None
+    from fastapi import HTTPException
+    try:return target(c,user,created,identifier,current.get('fallback_department'))
+    except HTTPException as exc:
+        if exc.status_code!=422:raise
+        return None,None
+
+
+def reply_receiver(c,user,created,current):
+    """An unavailable dispatcher cannot receive a reply or strand its task."""
+    from fastapi import HTTPException
+    try:
+        person,dept=target(c,user,created,current['dispatcher_id'],current.get('dispatcher_department'))
+        return person,dept,False
+    except HTTPException as exc:
+        if exc.status_code!=422:raise
+    person,dept=recorded_fallback(c,user,created,current)
+    if not person or person['id']==user['id']:
+        person,dept=fallback_target(c,user,created,current['dispatcher_department'],excluded=(user['id'],current['dispatcher_id']))
+    if not person:raise db.error(409,'TICKET_REASSIGNMENT_REQUIRED','المتابع غير متاح؛ يلزم البديل أو المالك المخول إعادة الإسناد قبل إرسال الرد.')
+    return person,dept,True
+
+
 def append(c,created,user,current,action,**changes):
     current=dict(current or {})
     previous={k:current.get(k) for k in ('status','assignee_id','responsible_user_id')}
@@ -131,6 +171,7 @@ def initial(c,created,user):
                 if isinstance(exc,HTTPException) and exc.status_code==422:continue
                 raise
             receiver=person;receiver_department=dept;break
+    backup,backup_department=fallback_target(c,user,created,receiver_department,excluded=(receiver['id'],user['id']))
     same=receiver['id']==user['id'];now=datetime.now(timezone.utc)
     return append(c,created,user,None,'created',status='accepted' if same else 'requested',
         dispatcher_id=user['id'],dispatcher_department=department(user),assignee_id=receiver['id'],department=receiver_department,
@@ -139,7 +180,7 @@ def initial(c,created,user):
         question=created['details'].get('description') or created['details'].get('issue_label',{}).get('ar') or 'Review recorded request',
         evidence_required='',due_at=(now+timedelta(hours=24)).isoformat(),return_reason=None,
         next_recipient_id=receiver['id'] if not same else user['id'],
-        fallback_department='owner',no_source_mutation=True)
+        fallback_user_id=backup['id'] if backup else None,fallback_department=backup_department or 'owner',no_source_mutation=True)
 
 
 def visible(c,created,user):
@@ -147,7 +188,7 @@ def visible(c,created,user):
     events=history(c,created['entity_id']);current=state(events)
     if user.get('home_brand_id') and not set(branch_scope(c,created))<=set(user.get('branch_ids') or []):
         raise db.error(404,'TICKET_SCOPE','التذكرة غير متاحة.')
-    if user['role']!='owner' and user['id']!=created['actor_id'] and (not current or user['id'] not in {current.get('assignee_id'),current.get('dispatcher_id')}):
+    if user['role']!='owner' and user['id']!=created['actor_id'] and (not current or user['id'] not in {current.get('assignee_id'),current.get('dispatcher_id'),current.get('fallback_user_id')}):
         raise db.error(404,'TICKET_SCOPE','التذكرة غير متاحة.')
     # Current grants are checked for an assigned employee every time.
     if user['role']!='owner' and current and user['id']==current.get('assignee_id') and user['id']!=created['actor_id']:
@@ -157,6 +198,9 @@ def visible(c,created,user):
             if isinstance(exc,HTTPException) and exc.status_code==422:
                 raise db.error(404,'TICKET_SCOPE','التذكرة غير متاحة بعد تغيير صلاحياتك.') from exc
             raise
+    if current and user['id']==current.get('fallback_user_id') and user['role']!='owner':
+        person,_=recorded_fallback(c,user,created,current)
+        if not person:raise db.error(404,'TICKET_SCOPE','التذكرة غير متاحة بعد تغيير صلاحيات البديل.')
     return events,current
 
 
@@ -165,22 +209,24 @@ def presentation(c,created,user,observer=False):
         events=history(c,created['entity_id']);current=state(events)
     else:events,current=visible(c,created,user)
     if not current:return dict(status='historical_unassigned',assignment_recorded=False,actions=['assign'] if user['role']=='owner' or user['id']==created['actor_id'] else [],history=[],no_source_mutation=True)
-    participant=user['role']=='owner' or user['id']==created['actor_id'] or user['id'] in {current['assignee_id'],current['dispatcher_id']}
+    participant=user['role']=='owner' or user['id']==created['actor_id'] or user['id'] in {current['assignee_id'],current['dispatcher_id'],current.get('fallback_user_id')}
     result=dict(current,history=events if participant else [],assignment_recorded=True,actions=[],can_open=participant)
     result['overdue']=current['status']!='completed' and datetime.fromisoformat(current['due_at'])<datetime.now(timezone.utc)
-    names={r['id']:r['display_name'] for r in c.execute('SELECT id,display_name FROM users WHERE id=ANY(%s)',([current['assignee_id'],current['dispatcher_id'],current['responsible_user_id']],)).fetchall()}
+    names={r['id']:r['display_name'] for r in c.execute('SELECT id,display_name FROM users WHERE id=ANY(%s)',([current['assignee_id'],current['dispatcher_id'],current['responsible_user_id'],current.get('fallback_user_id')],)).fetchall()}
     result['names']=names
-    result['fallback_users']=[]
+    backup,backup_dept=recorded_fallback(c,user,created,current)
+    result['fallback_users']=[dict(id=backup['id'],name=backup['display_name'],department=backup_dept)] if backup else []
     for owner in c.execute("SELECT id FROM users WHERE active AND role='owner' ORDER BY id").fetchall():
         try:person,_=target(c,user,created,owner['id'],'owner')
         except Exception as exc:
             from fastapi import HTTPException
             if isinstance(exc,HTTPException) and exc.status_code==422:continue
             raise
-        result['fallback_users'].append(dict(id=person['id'],name=person['display_name']))
+        if not any(p['id']==person['id'] for p in result['fallback_users']):result['fallback_users'].append(dict(id=person['id'],name=person['display_name'],department='owner'))
     if user['role']=='owner' or user['id']==current['dispatcher_id']:
         result['actions'].append('assign')
         if current['status']=='responded':result['actions']+=['return','complete']
+    if backup and user['id']==backup['id'] and 'assign' not in result['actions']:result['actions'].append('assign')
     if user['id']==current['assignee_id']:
         if current['status']=='requested':result['actions']+=['accept','decline']
         elif current['status']=='accepted':result['actions']+=['respond','decline']
@@ -194,10 +240,11 @@ class Command(BaseModel):
     note:str=Field(min_length=3,max_length=2000)
     assignee_id:str|None=Field(default=None,min_length=1,max_length=150)
     department:str|None=None
+    fallback_id:str|None=Field(default=None,min_length=1,max_length=150)
     evidence_required:str=Field(default='',max_length=2000)
     evidence:list[str]=Field(default_factory=list,max_length=20)
     due_hours:StrictInt|None=Field(default=None,ge=1,le=720)
-    @field_validator('note','evidence_required','department','assignee_id')
+    @field_validator('note','evidence_required','department','assignee_id','fallback_id')
     @classmethod
     def text(cls,v):
         if v and '\x00' in v:raise ValueError('Invalid text')
@@ -225,7 +272,7 @@ def detail(identifier:str,user=Depends(auth.current_user)):
                     if isinstance(exc,HTTPException) and exc.status_code==422:continue
                     raise
                 assignees.append(dict(id=person['id'],name=person['display_name'],department=dept))
-        return dict(workflow=workflow,assignees=assignees,review_only=True,no_source_mutation=True)
+        return dict(workflow=workflow,assignees=assignees,fallbacks=assignees,review_only=True,no_source_mutation=True)
 
 
 @router.post('/{identifier}/followup')
@@ -244,19 +291,25 @@ def command(identifier:str,body:Command,request:Request,user=Depends(auth.curren
             if body.action=='assign':
                 if not body.assignee_id:raise db.error(422,'TICKET_ASSIGNEE_REQUIRED','حدد الموظف المسؤول.')
                 person,dept=target(c,user,created,body.assignee_id,body.department)
+                if user['role']!='owner' and current and user['id']==current.get('fallback_user_id') and dept!=current['department']:
+                    raise db.error(403,'TICKET_FALLBACK_DEPARTMENT','البديل يعيد الإسناد ضمن القسم المسجل؛ تغيير القسم للمتابع أو المالك المخول.')
+                backup,backup_department=fallback_target(c,user,created,dept,excluded=(person['id'],),preferred=body.fallback_id)
                 changes.update(dispatcher_id=user['id'],dispatcher_department=department(user),assignee_id=person['id'],department=dept,status='requested',
                     responsible_user_id=user['id'],responsible_department=department(user),next_recipient_id=person['id'],
                     question=body.note,evidence_required=body.evidence_required,required_action='accept_and_complete_request',
-                    return_reason=None,due_at=(now+timedelta(hours=body.due_hours or 24)).isoformat(),fallback_department='owner',no_source_mutation=True)
+                    return_reason=None,due_at=(now+timedelta(hours=body.due_hours or 24)).isoformat(),fallback_user_id=backup['id'] if backup else None,fallback_department=backup_department or 'owner',no_source_mutation=True)
             else:
-                if body.assignee_id or body.department or body.due_hours is not None and body.action!='return':raise db.error(422,'TICKET_FOLLOWUP_TARGET','تغيير الموظف والقسم متاح بإعادة الإسناد فقط.')
+                if body.assignee_id or body.department or body.fallback_id or body.due_hours is not None and body.action!='return':raise db.error(422,'TICKET_FOLLOWUP_TARGET','تغيير الموظف والقسم متاح بإعادة الإسناد فقط.')
                 if body.action=='accept':
                     target(c,user,created,user['id'],current['department'])
                     changes.update(status='accepted',responsible_user_id=user['id'],responsible_department=current['department'],next_recipient_id=current['dispatcher_id'],required_action='complete_requested_facts')
                 elif body.action in {'decline','respond'}:
                     if body.action=='respond' and current.get('evidence_required') and not body.evidence:raise db.error(422,'TICKET_EVIDENCE_REQUIRED','أرفق مرجع الإثبات المطلوب أو اطلب إعادة الإسناد عند التعذر.')
-                    changes.update(status='declined' if body.action=='decline' else 'responded',responsible_user_id=current['dispatcher_id'],responsible_department=department(c.execute('SELECT * FROM users WHERE id=%s',(current['dispatcher_id'],)).fetchone()),next_recipient_id=current['dispatcher_id'],required_action='assign_authorized_replacement' if body.action=='decline' else 'review_response',due_at=(now+timedelta(hours=24)).isoformat())
+                    receiver,receiver_department,transferred=reply_receiver(c,user,created,current)
+                    if transferred:changes.update(dispatcher_id=receiver['id'],dispatcher_department=receiver_department,handoff_reason='dispatcher_unavailable',previous_dispatcher_id=current['dispatcher_id'])
+                    changes.update(status='declined' if body.action=='decline' else 'responded',responsible_user_id=receiver['id'],responsible_department=receiver_department,next_recipient_id=receiver['id'],required_action='assign_authorized_replacement' if body.action=='decline' else 'review_response',due_at=(now+timedelta(hours=24)).isoformat())
                 elif body.action=='return':
+                    target(c,user,created,current['assignee_id'],current['department'])
                     changes.update(status='requested',responsible_user_id=user['id'],responsible_department=department(user),question=body.note,return_reason=body.note,evidence_required=body.evidence_required or current.get('evidence_required',''),next_recipient_id=current['assignee_id'],required_action='accept_required_correction',due_at=(now+timedelta(hours=body.due_hours or 24)).isoformat())
                 elif body.action=='complete':changes.update(status='completed',responsible_user_id=user['id'],next_recipient_id=None,required_action='factual_followup_complete_source_action_independent')
             append(c,created,user,current,body.action,note=body.note,**changes)
