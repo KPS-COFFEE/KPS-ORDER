@@ -25,11 +25,12 @@ def test_widget_mobile_accounting_status_refresh_and_export_filename(width,tmp_p
         with sync_playwright() as p:
             browser=p.chromium.launch(args=['--no-sandbox'])
             page=browser.new_page(viewport={'width':width,'height':950},accept_downloads=True)
-            page.route('**/qa-report',lambda route:route.fulfill(content_type='text/html',body='''<!doctype html><html lang="ar" dir="rtl"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/operating-reports.css"><main id="report"></main><script src="/assets/operating-reports.js"></script></html>'''))
+            page.route('**/qa-report',lambda route:route.fulfill(content_type='text/html; charset=utf-8',body='''<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/operating-reports.css"><main id="report"></main><script src="/assets/operating-reports.js"></script></html>'''))
             page.route('**/api/operating-reports?*',lambda route:route.fulfill(content_type='application/json',body=json.dumps(data)))
             page.route('**/api/operating-reports/export/pdf?*',lambda route:route.fulfill(content_type='application/pdf',body=source))
             page.goto(f'http://127.0.0.1:{server.server_port}/qa-report')
             page.evaluate('''async()=>{await window.KPSOperatingReports.mount(document.querySelector('#report'),{api:async url=>await(await fetch(url)).json()});}''')
+            assert page.locator('[role="alert"]').inner_text()==''
             page.get_by_text('60٪',exact=True).wait_for()
             assert page.locator('.or-stamp').count()==0
             assert page.locator('.or-late').count()==1
