@@ -166,8 +166,8 @@ def receive(sid:str,body:PhysicalReceipt,request:Request,user=Depends(auth.curre
             if any(row['manager_user_id']!=user['id'] for row in declaration['expected_snapshot']):raise db.error(403,'SHARED_RECEIPT_RECIPIENT','مدير الوردية المسجل وحده يؤكد استلام النقد.')
             if any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_CLOSURE_STATE','التقفيلة ليست مرسلة.')
             validate_operational(c,user,legs)
-            from .driver_incentives import require_decisions
-            for principal,s in legs:require_decisions(c,principal,s)
+            # Witnessing physical cash is independent of entitlement decisions.
+            # Those remain mandatory at accounting allocation below.
             identifier=ops.uid()
             c.execute('INSERT INTO shared_driver_closure_receipts(id,declaration_id,received_halalas,received_by,manager_shift_ids,reference) VALUES(%s,%s,%s,%s,%s,%s)',(identifier,declaration['id'],body.received_halalas,user['id'],db.json([s['manager_shift_id'] for _,s in legs]),body.reference))
             for _,s in legs:
