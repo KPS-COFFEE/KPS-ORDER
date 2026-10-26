@@ -63,8 +63,12 @@ def receipt(amount=500,line='1'):
 
 
 @pytest.mark.postgres
-def test_bank_batch_separates_fees_refunds_timing_and_preserves_sources(ops):
+@pytest.mark.parametrize('runtime_environment',['testing','production'])
+def test_bank_batch_separates_fees_refunds_timing_and_preserves_sources(ops,monkeypatch,runtime_environment):
     actor,post,_,_=ops;oid,body,original_collections,original_refunds=setup_sources(ops)
+    # Isolated fixture setup remains testing-only. The complete guarded bank
+    # journey then runs with the real production environment condition too.
+    monkeypatch.setenv('APP_ENV',runtime_environment)
     base='/api/accounting/bank-reconciliation'
     listed=actor('accountant').get(base+'/sources').json()
     assert listed['collections'][0]['id']==body['collection_ids'][0]
@@ -262,3 +266,22 @@ def test_manual_bank_preparation_is_disabled_by_default(monkeypatch):
     assert closure_bank_status(None,{},{} )=={'state':'undocumented','batch_ids':[],'pending_source_count':None}
     zero={'snapshot':{'collections':[],'refunds':[],'summary':{'card_collected_halalas':0,'card_refunded_halalas':0}}}
     assert closure_bank_status(None,{},zero)['state']=='no_card_operations'
+
+
+@pytest.mark.postgres
+def test_registration_period_filter_preserves_original_batches_and_bank_sources(ops):
+    actor,post,_,_=ops;_,body,_,_=setup_sources(ops)
+    base='/api/accounting/bank-reconciliation'
+    made=post('accountant',base,body)
+    proposal=post('accountant',base+'/bank-lines',receipt(1000,'period-filter-line'))
+    post('bankreviewer',base+'/bank-lines/'+proposal['id']+'/decision',decision())
+    assert len(actor('accountant').get(base).json()['batches'])==1
+    assert len(actor('accountant').get(base+'/bank-lines').json()['bank_lines'])==1
+    period='?start=2099-01-01&end=2099-01-02'
+    assert actor('accountant').get(base+period).json()=={'batches':[]}
+    assert actor('accountant').get(base+'/bank-lines'+period).json()=={'proposals':[],'bank_lines':[]}
+    assert actor('accountant').get(base+'?start=invalid').status_code==422
+    assert actor('accountant').get(base+'/bank-lines?start=2026-10-26&end=2026-10-25').status_code==422
+    assert actor('accountant').get(base).json()['batches'][0]['id']==made['id']
+    assert len(actor('accountant').get(base+'/bank-lines').json()['bank_lines'])==1
+    assert actor('other').get(base+'/bank-lines').json()=={'proposals':[],'bank_lines':[]}

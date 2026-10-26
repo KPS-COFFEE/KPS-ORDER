@@ -9,7 +9,7 @@ from test_accounting import accountant
 from test_employee_tickets import request_body
 
 
-@pytest.mark.parametrize('change',[{'expected_version':True},{'due_hours':0},{'due_hours':721},{'action':'approve_refund'},{'note':'\x00bad'},{'evidence':['\x00proof']},{'assignee_id':'\x00target'}])
+@pytest.mark.parametrize('change',[{'expected_version':True},{'due_hours':0},{'due_hours':721},{'action':'approve_refund'},{'note':'\x00bad'},{'evidence':['\x00proof']},{'assignee_id':'\x00target'},{'fallback_id':'\x00target'}])
 def test_followup_does_not_accept_financial_or_unbounded_commands(change):
     with pytest.raises(ValidationError):Command(**(dict(expected_version=1,action='respond',note='Recorded factual answer')|change))
 
@@ -21,7 +21,9 @@ def test_reading_current_workflow_does_not_rewrite_recorded_history():
 
 
 @pytest.mark.postgres
-def test_named_acceptance_return_response_deadline_fallback_and_no_financial_mutation(ops,monkeypatch):
+@pytest.mark.parametrize('environment',['testing','production'])
+def test_named_acceptance_return_response_deadline_fallback_and_no_financial_mutation(ops,monkeypatch,environment):
+    monkeypatch.setenv('APP_ENV',environment)
     monkeypatch.setenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','true')
     actor,post,_,_=ops
     accountant()
@@ -106,7 +108,7 @@ def test_customer_cannot_use_linked_source_lookup_to_read_administrative_metadat
 
 
 
-def test_development_followup_is_disabled_by_default_and_rejects_route_activation(monkeypatch):
+def test_followup_is_disabled_by_default_and_allows_explicit_production_activation(monkeypatch):
     from fastapi import HTTPException
     monkeypatch.delenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED',raising=False)
     assert enabled() is False
@@ -115,7 +117,7 @@ def test_development_followup_is_disabled_by_default_and_rejects_route_activatio
     monkeypatch.setenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','true')
     assert enabled() is True
     monkeypatch.setenv('APP_ENV','production')
-    assert enabled() is False
+    assert enabled() is True
 
 
 @pytest.mark.postgres
@@ -133,3 +135,57 @@ def test_default_off_retains_ticket_access_and_source_behavior(ops,monkeypatch):
     assert 'followup_ticket_id' not in created
     assert 'followups' not in actor('owner').get('/api/vehicle-maintenance/reports/'+created['report']['id']).json()
     with db.tx() as c:assert c.execute("SELECT count(*) n FROM audit_events WHERE action='employee.ticket.followup'").fetchone()['n']==0
+
+
+@pytest.mark.postgres
+def test_named_backup_can_reassign_within_department_and_receives_inactive_dispatcher_reply(ops,monkeypatch):
+    monkeypatch.setenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','true')
+    actor,post,_,_=ops
+    with db.tx() as c:
+        c.execute("""INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions)
+            VALUES('ops-backup','Authorized delivery backup','delivery_manager','ops-brand','["ops-branch"]','["orders_view"]')""")
+        original_money=c.execute('SELECT count(*) n FROM collections').fetchone()['n']
+    ticket=post('driver','/api/employee-tickets',request_body())
+    path='/api/employee-tickets/'+ticket['id']+'/followup'
+    body=dict(expected_version=1,action='assign',assignee_id='ops-manager',department='delivery',fallback_id='ops-backup',note='Please supply the actual delivery facts')
+    assigned=post('owner',path,body)['workflow']
+    assert assigned['fallback_user_id']=='ops-backup' and assigned['fallback_department']=='delivery'
+    assert actor('backup').get('/api/employee-tickets').json()['tickets'][0]['id']==ticket['id']
+    assert actor('backup').get(path).json()['workflow']['actions']==['assign']
+    post('backup','/api/employee-tickets/'+ticket['id']+'/review',dict(expected_version=1,status='approved',note='Must not grant approval authority'),status=403)
+    post('backup',path,dict(expected_version=2,action='assign',assignee_id='ops-driver',department='driver',note='Cannot move task to another department'),status=403)
+    post('manager',path,dict(expected_version=2,action='accept',note='I accept collecting delivery evidence'))
+    with db.tx() as c:c.execute("UPDATE users SET active=false WHERE id='ops-owner'")
+    response=post('manager',path,dict(expected_version=3,action='respond',note='Actual delivery evidence recorded'))['workflow']
+    assert response['status']=='responded' and response['responsible_user_id']=='ops-backup'
+    assert response['dispatcher_id']=='ops-backup' and response['previous_dispatcher_id']=='ops-owner'
+    assert response['handoff_reason']=='dispatcher_unavailable'
+    assert 'complete' in actor('backup').get(path).json()['workflow']['actions']
+    final=post('backup',path,dict(expected_version=4,action='complete',note='Facts received; original financial decision remains separate'))
+    assert final['workflow']['status']=='completed' and final['no_source_mutation']
+    with db.tx() as c:assert c.execute('SELECT count(*) n FROM collections').fetchone()['n']==original_money
+
+
+@pytest.mark.postgres
+def test_backup_scope_distinctness_revocation_and_real_reassignment_are_enforced(ops,monkeypatch):
+    monkeypatch.setenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','true')
+    actor,post,_,_=ops
+    with db.tx() as c:
+        c.execute("""INSERT INTO users(id,display_name,role,brand_id,branch_ids,permissions)
+            VALUES('ops-backup','Delivery backup','delivery_manager','ops-brand','["ops-branch"]','["orders_view"]')""")
+    ticket=post('driver','/api/employee-tickets',request_body())
+    path='/api/employee-tickets/'+ticket['id']+'/followup'
+    body=dict(expected_version=1,action='assign',assignee_id='ops-manager',department='delivery',note='Collect actual dispatch evidence')
+    post('owner',path,{**body,'fallback_id':'ops-manager'},status=422)
+    post('owner',path,{**body,'fallback_id':'ops-other'},status=422)
+    post('owner',path,{**body,'fallback_id':'ops-driver'},status=422)
+    post('owner',path,{**body,'fallback_id':'ops-backup'})
+    changed=post('backup',path,dict(expected_version=2,action='assign',assignee_id='ops-manager',department='delivery',note='Cover the unavailable dispatcher and keep the actual task'))['workflow']
+    assert changed['dispatcher_id']=='ops-backup' and changed['responsible_user_id']=='ops-backup'
+    assert changed['history'][-1]['details']['from_responsible_user_id']=='ops-owner'
+    assert changed['fallback_user_id']=='ops-owner'
+    with db.tx() as c:c.execute("UPDATE users SET active=false WHERE id='ops-backup'")
+    assert actor('backup').get(path).status_code in {401,403,404}
+    # The authorized owner can still recover the task without changing its source.
+    restored=post('owner',path,dict(expected_version=3,action='assign',assignee_id='ops-manager',department='delivery',note='Recover task after recorded dispatcher is disabled'))['workflow']
+    assert restored['responsible_user_id']=='ops-owner'
