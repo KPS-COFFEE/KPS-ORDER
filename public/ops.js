@@ -1072,9 +1072,8 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   }
   async function renderDriverDestinationPanel(shift){
     if(state.user?.role!=='driver'||shift?.status!=='open')return;
-    // Morning and retained single-brand shifts are not shared workdays. An
-    // explicit scope keeps their reads/writes on the canonical shift API;
-    // actual shared workdays still use the central adapter and all leg guards.
+    // Canonical morning/single-brand shifts keep their own destination API.
+    // Shared workdays continue through the guarded central adapter.
     const destinationScope=shift.central_workday_id?{}:{brand:shift.brand_id||state.user.brand_id};
     const owner=state.user.id,host=document.createElement('section');host.className='panel driver-destination-panel';$('#content').append(host);
     const alive=()=>host.isConnected&&state.user?.id===owner&&state.page==='tasks';

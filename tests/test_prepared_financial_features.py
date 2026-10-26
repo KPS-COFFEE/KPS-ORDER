@@ -1,9 +1,9 @@
-"""Owner-held additions stay development-only; current driver card entry is independent."""
+"""Approved features require explicit flags; source corrections remain owner-held."""
 import pytest
 from app import manual_bank_matching,order_financial_treatments,employee_ticket_workflow
 
-FEATURES=[(manual_bank_matching.enabled,'KPS_MANUAL_BANK_MATCHING_ENABLED'),
- (order_financial_treatments.enabled,'KPS_ORDER_SOURCE_TREATMENTS_ENABLED'),
+FEATURES=[(order_financial_treatments.enabled,'KPS_ORDER_SOURCE_TREATMENTS_ENABLED')]
+ACTIVATED=[(manual_bank_matching.enabled,'KPS_MANUAL_BANK_MATCHING_ENABLED'),
  (employee_ticket_workflow.enabled,'KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED')]
 
 @pytest.mark.parametrize('enabled,key',FEATURES)
@@ -35,10 +35,7 @@ def test_production_route_guards_reject_before_opening_a_financial_transaction(m
     transaction=Mock(side_effect=AssertionError('Disabled development route must not open a transaction'))
     monkeypatch.setattr(db,'tx',transaction)
     connection=Mock()
-    for call in (lambda:manual_bank_matching.access(user),
-                 lambda:order_financial_treatments.scoped(connection,user,'order'),
-                 lambda:employee_ticket_workflow.detail('ticket',user),
-                 lambda:employee_ticket_workflow.command('ticket',None,None,user)):
+    for call in (lambda:order_financial_treatments.scoped(connection,user,'order'),):
         with pytest.raises(HTTPException) as error:call()
         assert error.value.status_code==404
     transaction.assert_not_called();connection.execute.assert_not_called()
@@ -52,3 +49,14 @@ def test_production_hold_preserves_existing_source_credit_valuation(monkeypatch)
         credit_halalas=550,original_total_halalas=2500)])
     assert not order_financial_treatments.enabled()
     assert order_financial_treatments.effective_total(Mock(),dict(id='order',total_halalas=2500))==1950
+
+
+@pytest.mark.parametrize('enabled,key',ACTIVATED)
+def test_approved_features_require_explicit_flags_in_production(monkeypatch,enabled,key):
+    monkeypatch.setenv('APP_ENV','production')
+    monkeypatch.delenv(key,raising=False)
+    assert not enabled()
+    monkeypatch.setenv(key,'true')
+    assert enabled()
+    monkeypatch.setenv(key,'false')
+    assert not enabled()

@@ -17,8 +17,7 @@ router=APIRouter(prefix='/api/accounting/bank-reconciliation',tags=['manual-bank
 LIMIT=300
 
 def enabled():
-    return (os.getenv('KPS_MANUAL_BANK_MATCHING_ENABLED','').strip().lower() in {'1','true','yes'}
-        and os.getenv('APP_ENV','production') in {'testing','development'})
+    return os.getenv('KPS_MANUAL_BANK_MATCHING_ENABLED','').strip().lower() in {'1','true','yes'}
 
 
 class Command(BaseModel):
@@ -165,9 +164,13 @@ def available_sources(start:str='',end:str='',user=Depends(access)):
 
 
 @router.get('')
-def listing(user=Depends(access)):
+def listing(start:str='',end:str='',user=Depends(access)):
+    from .accounting import period
+    _,_,lo,hi=period(start,end) if start or end else (None,None,None,None)
     with db.tx() as c:
-        rows=c.execute('SELECT * FROM bank_reconciliation_batches WHERE brand_id=%s AND (%s OR branch_ids <@ %s::jsonb) ORDER BY created_at DESC,id LIMIT 301',(user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])))).fetchall()
+        rows=c.execute('''SELECT * FROM bank_reconciliation_batches WHERE brand_id=%s AND (%s OR branch_ids <@ %s::jsonb)
+            AND (%s::timestamptz IS NULL OR created_at>=%s) AND (%s::timestamptz IS NULL OR created_at<%s)
+            ORDER BY created_at DESC,id LIMIT 301''',(user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])),lo,lo,hi,hi)).fetchall()
         if len(rows)>LIMIT:raise db.error(413,'BANK_BATCH_LIST_TOO_LARGE','عدد دفعات المطابقة كبير؛ يلزم تضييق نطاق التقرير.')
         return safe({'batches':[project(c,r) for r in rows]})
 
@@ -363,25 +366,30 @@ def claim_bank_line(c,user,bank_line_id,amount_halalas,consumer_kind,consumer_id
 
 
 @router.get('/bank-lines')
-def bank_line_listing(user=Depends(access)):
+def bank_line_listing(start:str='',end:str='',user=Depends(access)):
+    from .accounting import period
+    _,_,lo,hi=period(start,end) if start or end else (None,None,None,None)
     with db.tx() as c:
         proposals=c.execute("""SELECT p.*,u.display_name proposer_name,d.decision,d.bank_line_id,d.note decision_note,
           d.decided_by,d.evidence_reference decision_evidence FROM bank_reconciliation_line_proposals p
           JOIN users u ON u.id=p.proposed_by LEFT JOIN bank_reconciliation_line_decisions d ON d.proposal_id=p.id
-          WHERE p.brand_id=%s AND (%s OR p.branch_ids <@ %s::jsonb) ORDER BY p.created_at DESC,p.id LIMIT 301""",
-          (user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])))).fetchall()
+          WHERE p.brand_id=%s AND (%s OR p.branch_ids <@ %s::jsonb)
+          AND (%s::timestamptz IS NULL OR p.created_at>=%s) AND (%s::timestamptz IS NULL OR p.created_at<%s)
+          ORDER BY p.created_at DESC,p.id LIMIT 301""",
+          (user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])),lo,lo,hi,hi)).fetchall()
         if len(proposals)>LIMIT:raise db.error(413,'BANK_LINE_LIST_TOO_LARGE','عدد مصادر البنك كبير؛ يلزم تضييق نطاق التقرير.')
         permitted=[]
         # Select only lines exposed by a currently authorized approved record;
         # scope applies before LIMIT so unrelated brands never hide older sources.
-        lines=c.execute("""SELECT l.* FROM bank_reconciliation_bank_lines l WHERE EXISTS(
+        lines=c.execute("""SELECT l.* FROM bank_reconciliation_bank_lines l WHERE (EXISTS(
             SELECT 1 FROM bank_reconciliation_line_proposals p JOIN bank_reconciliation_line_decisions d ON d.proposal_id=p.id
             WHERE d.bank_line_id=l.id AND d.decision='approved' AND p.brand_id=%s AND (%s OR p.branch_ids <@ %s::jsonb))
           OR EXISTS(SELECT 1 FROM bank_reconciliation_receipts r JOIN bank_reconciliation_batches b ON b.id=r.batch_id
             JOIN bank_reconciliation_decisions d ON d.receipt_id=r.id AND d.decision='approved'
             WHERE r.bank_account_reference=l.bank_account_reference AND r.statement_reference=l.statement_reference AND r.line_reference=l.line_reference
-            AND b.brand_id=%s AND (%s OR b.branch_ids <@ %s::jsonb))
-          ORDER BY l.created_at DESC,l.id LIMIT 301""",(user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])),user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])))).fetchall()
+            AND b.brand_id=%s AND (%s OR b.branch_ids <@ %s::jsonb)))
+          AND (%s::timestamptz IS NULL OR l.created_at>=%s) AND (%s::timestamptz IS NULL OR l.created_at<%s)
+          ORDER BY l.created_at DESC,l.id LIMIT 301""",(user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])),user['brand_id'],unrestricted(user),db.json(user.get('branch_ids',[])),lo,lo,hi,hi)).fetchall()
         if len(lines)>LIMIT:raise db.error(413,'BANK_LINE_LIST_TOO_LARGE','اختر نطاقًا أصغر لمصادر البنك.')
         for line in lines:permitted.append(bank_line(c,user,line['id']))
         return safe({'proposals':proposals,'bank_lines':permitted})

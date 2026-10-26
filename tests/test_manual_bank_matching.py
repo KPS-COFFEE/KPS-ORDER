@@ -63,8 +63,12 @@ def receipt(amount=500,line='1'):
 
 
 @pytest.mark.postgres
-def test_bank_batch_separates_fees_refunds_timing_and_preserves_sources(ops):
+@pytest.mark.parametrize('runtime_environment',['testing','production'])
+def test_bank_batch_separates_fees_refunds_timing_and_preserves_sources(ops,monkeypatch,runtime_environment):
     actor,post,_,_=ops;oid,body,original_collections,original_refunds=setup_sources(ops)
+    # Isolated fixture setup remains testing-only. The complete guarded bank
+    # journey then runs with the real production environment condition too.
+    monkeypatch.setenv('APP_ENV',runtime_environment)
     base='/api/accounting/bank-reconciliation'
     listed=actor('accountant').get(base+'/sources').json()
     assert listed['collections'][0]['id']==body['collection_ids'][0]
@@ -262,3 +266,68 @@ def test_manual_bank_preparation_is_disabled_by_default(monkeypatch):
     assert closure_bank_status(None,{},{} )=={'state':'undocumented','batch_ids':[],'pending_source_count':None}
     zero={'snapshot':{'collections':[],'refunds':[],'summary':{'card_collected_halalas':0,'card_refunded_halalas':0}}}
     assert closure_bank_status(None,{},zero)['state']=='no_card_operations'
+
+
+@pytest.mark.postgres
+def test_registration_period_filter_preserves_original_batches_and_bank_sources(ops):
+    actor,post,_,_=ops;_,body,_,_=setup_sources(ops)
+    base='/api/accounting/bank-reconciliation'
+    made=post('accountant',base,body)
+    proposal=post('accountant',base+'/bank-lines',receipt(1000,'period-filter-line'))
+    post('bankreviewer',base+'/bank-lines/'+proposal['id']+'/decision',decision())
+    assert len(actor('accountant').get(base).json()['batches'])==1
+    assert len(actor('accountant').get(base+'/bank-lines').json()['bank_lines'])==1
+    period='?start=2099-01-01&end=2099-01-02'
+    assert actor('accountant').get(base+period).json()=={'batches':[]}
+    assert actor('accountant').get(base+'/bank-lines'+period).json()=={'proposals':[],'bank_lines':[]}
+    assert actor('accountant').get(base+'?start=invalid').status_code==422
+    assert actor('accountant').get(base+'/bank-lines?start=2026-10-26&end=2026-10-25').status_code==422
+    assert actor('accountant').get(base).json()['batches'][0]['id']==made['id']
+    assert len(actor('accountant').get(base+'/bank-lines').json()['bank_lines'])==1
+    assert actor('other').get(base+'/bank-lines').json()=={'proposals':[],'bank_lines':[]}
+
+
+@pytest.mark.postgres
+def test_both_production_features_keep_delivery_and_actual_cash_close_independent_of_pending_bank(ops,monkeypatch):
+    from test_delivery_workflow_controls import picked_up
+    from test_operations import begin_driver_closure
+    from test_employee_tickets import request_body
+    actor,post,_,_=ops
+    accountant()
+    monkeypatch.setenv('APP_ENV','production')
+    monkeypatch.setenv('KPS_MANUAL_BANK_MATCHING_ENABLED','true')
+    monkeypatch.setenv('KPS_ADMIN_FACTUAL_WORKFLOW_ENABLED','true')
+    oid,task,manager,driver=picked_up(ops,total=2500)
+    ticket=post('driver','/api/employee-tickets',request_body(description='Actual delivery evidence follow-up remains open'))
+    followup='/api/employee-tickets/'+ticket['id']+'/followup'
+    accepted=post('manager',followup,dict(expected_version=1,action='accept',note='I accept the actual operational follow-up'))
+    assert accepted['workflow']['responsible_user_id']=='ops-manager'
+    collected=post('driver',f'/api/orders/{oid}/collect',dict(method='split',amount_halalas=2500,
+        cash_halalas=500,card_halalas=2000,tendered_halalas=500,
+        card_payments=[dict(amount_halalas=2000,reference='ACTUAL EXTERNAL POS COMBINED FEATURES')]))
+    with db.tx() as c:
+        original=c.execute('SELECT * FROM collections WHERE order_id=%s ORDER BY id',(oid,)).fetchall()
+        cards=[r['id'] for r in original if r['method']=='card']
+    assert collected['remaining_halalas']==0 and len(original)==2
+    post('driver',f'/api/tasks/{task}/transition',dict(status='delivered',proof='Actual delivery with original tender evidence'))
+    base='/api/accounting/bank-reconciliation'
+    batch=post('accountant',base,dict(batch_reference='ACTUAL POS COMBINED FEATURES',collection_ids=cards,
+        refund_ids=[],fees_halalas=20,evidence_reference='Actual provider batch and documented fee',
+        note='Bank arrival is still pending while operational work continues'))
+    bid=batch['id']
+    pending=post('owner',base+'/'+bid+'/decision',decision())
+    assert pending['state']=='awaiting_bank' and pending['timing_pending_halalas']==1980
+    begin_driver_closure(post,driver)
+    post('driver',f'/api/shifts/{driver}/submit',dict(terminal_total_halalas=2000,counted_halalas=500,
+        handover_halalas=500,handover=dict(recipient_user_id='ops-manager',to_shift_id=manager,reference='ACTUAL CASH 500')))
+    closed=post('manager',f'/api/shifts/{driver}/driver-close',dict(received_halalas=500,confirmed=True),key='combined-features-close')
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver,)).fetchone()['status']=='closed'
+        assert c.execute('SELECT * FROM collections WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==original
+        assert c.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['n']==1
+        assert c.execute("SELECT sum(amount_halalas) n FROM custody_events WHERE shift_id=%s AND kind='transfer_in'",(manager,)).fetchone()['n']==500
+        assert c.execute('SELECT count(*) n FROM bank_reconciliation_receipts WHERE batch_id=%s',(bid,)).fetchone()['n']==0
+    assert closed['report_id']
+    pending=next(b for b in actor('accountant').get(base).json()['batches'] if b['id']==bid)
+    assert pending['state']=='awaiting_bank' and pending['bank_received_halalas']==0 and pending['timing_pending_halalas']==1980
+    assert actor('manager').get(followup).json()['workflow']['status']=='accepted'

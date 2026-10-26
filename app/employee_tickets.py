@@ -164,8 +164,8 @@ def list_tickets(user=Depends(staff)):
         from .employee_ticket_workflow import enabled
         created=c.execute("""SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id
           WHERE a.action=%s AND a.entity_type='employee_ticket' AND a.details->>'brand_id'=%s
-          AND (%s OR a.actor_id=%s OR (%s AND EXISTS(SELECT 1 FROM audit_events f WHERE f.action='employee.ticket.followup' AND f.entity_id=a.entity_id AND (f.details->>'assignee_id'=%s OR f.details->>'dispatcher_id'=%s)))) ORDER BY a.created_at DESC,a.id DESC LIMIT 200""",
-          (CREATED,user['brand_id'],user['role']=='owner',user['id'],enabled(),user['id'],user['id'])).fetchall()
+          AND (%s OR a.actor_id=%s OR (%s AND EXISTS(SELECT 1 FROM audit_events f WHERE f.action='employee.ticket.followup' AND f.entity_id=a.entity_id AND (f.details->>'assignee_id'=%s OR f.details->>'dispatcher_id'=%s OR f.details->>'fallback_user_id'=%s)))) ORDER BY a.created_at DESC,a.id DESC LIMIT 200""",
+          (CREATED,user['brand_id'],user['role']=='owner',user['id'],enabled(),user['id'],user['id'],user['id'])).fetchall()
         result=[]
         from fastapi import HTTPException
         for ticket in created:
