@@ -1,4 +1,4 @@
-# Two-worker emergency release profile
+# Two-worker release profile — verified resource target 2026-10-26
 
 The release Docker command now starts **two Uvicorn web processes in one
 existing Render service**. This is not a second Render instance, a new paid
@@ -21,13 +21,29 @@ Migration 052 adds a selective recent-contact index; exact basket equality,
 15-minute age, brand and branch checks remain unchanged. The index does not
 make a phone number proof of customer ownership.
 
-## Explicit capacity proposal, not an authorized upgrade
+## Current production resource target and retained historical failures
 
-The current-budget gate stays unchanged: app 0.5 CPU/512 MiB, PostgreSQL
-0.1 CPU/256 MiB. On candidate `7e3e0d72173ed8fb211c1b17f999c97383773265`,
-both runs preserved all orders without HTTP errors or OOM, but 500-user P95
-was 18178.443 / 24494.021 ms: FAIL. Unconstrained runs passed at
-3520.141 / 4390.617 ms; they do not certify the current budget.
+Read-only Render inspection on **2026-10-26** verified the existing application
+service uses **1 CPU / 2 GiB** (`1c-2g`) and its PostgreSQL 18 database uses
+**0.5 CPU / 1 GiB**. The representative release gate selects the existing
+`economy` profile and runs **two independent repetitions** against those kernel
+budgets, with two application processes and four pooled database connections
+per process. This documents the resources already present; no paid plan was
+changed or proposed resources counted as current capacity.
+
+The legacy `current` tool profile remains 0.5 CPU / 512 MiB application and
+0.1 CPU / 256 MiB database for reproducible historical comparisons. It is not
+the verified production target. On candidate
+`7e3e0d72173ed8fb211c1b17f999c97383773265`, its two 500-user P95 results were
+18178.443 / 24494.021 ms: **FAIL**, despite preserved orders and no HTTP errors
+or OOM. Unconstrained results 3520.141 / 4390.617 ms do not certify that small
+resource envelope. Candidate `90043355` also failed the historical small
+profile; its original measurements and artifact IDs remain in
+[the historical evidence record](qa/historical-small-render-budget-90043355.json).
+The [current target record](qa/current-render-capacity-target-20261026.md)
+distinguishes those historical failures from the verified target.
+
+## Larger resource proposal remains unapproved
 
 Separate CI jobs explicitly select `KPS_LOAD_RESOURCE_PROFILE=proposed`:
 app 2 CPU/4 GiB, PostgreSQL 1 CPU/2 GiB, the same two application workers,
@@ -63,7 +79,10 @@ two genuine orders per customer, with concurrent duplicate transmissions.
 Both must pass on the exact release HEAD. The owner requires P95 < 5000 ms,
 P99 <= 10000 ms, unexpected errors <= 1%, zero deadlocks and zero duplicate,
 missing or orphaned business effects. Restart, database outage, exhausted
-connections and post-failure database reconciliation remain mandatory.
+connections and post-failure database reconciliation remain mandatory. The two
+representative current-resource repetitions additionally require **zero**
+unexpected HTTP errors (`--max-error-rate 0`); they retain the same strict
+latency limits, workload and complete data/recovery checks.
 
 The old single-worker 500-user latency failure is **not certified as fixed**.
 Its artifacts remain available, and `--workers 1` retains that diagnostic
@@ -78,10 +97,19 @@ no protected business checks disabled and no customer data used.
 
 ## Deployment boundary
 
-These are shared-runner engineering measurements, **not proof of 500-user
-capacity on the current Render 0.5-CPU / 512-MiB plan**. Two processes do not
-create additional CPU. Any paid capacity change needs separate owner approval
-and a representative isolated load test. Keep automatic deployment off, leave
-the official domain, customer ordering and existing SMS state unchanged. Do not
-activate or send public SMS. Deploy the existing experimental service only after both load
-runs and full CI pass on its exact candidate SHA.
+These are isolated shared-runner engineering measurements, not a certificate
+for every condition of the live service or its real financial balances. Both
+representative repetitions must pass on the exact intended release source,
+alongside the required functional, browser, security, migration, preservation
+and restore gates. Provider I/O, network and other operating traffic remain
+separate observations. Any future paid resource change requires separate
+owner authorization; passing the larger proposed profile does not approve it.
+
+Keep automatic deployment off and preserve existing production settings. An
+authorized release must be pinned to the tested commit, then checked on both
+official domains for the actual source revision, readiness and role access.
+Historical proposed security instructions do not require creating a new live
+owner OTP or sending SMS merely for release verification. Do not claim live
+SMS delivery or image certification beyond the evidence actually obtained.
+The manual bank, source-correction and universal administrative workflow
+preparations remain development-only and unavailable in production.

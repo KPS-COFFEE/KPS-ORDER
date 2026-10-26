@@ -107,7 +107,8 @@ app.include_router(driver_work_hours.router)
 
 
 def revision():
-    return os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or 'local-unversioned'
+    from .runtime_revision import revision as source_revision
+    return source_revision('local-unversioned')
 
 
 @app.get('/health')

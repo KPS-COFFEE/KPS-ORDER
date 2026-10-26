@@ -5,7 +5,8 @@ from . import db
 
 
 def revision():
-    return os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT') or ''
+    from .runtime_revision import revision as source_revision
+    return source_revision()
 
 
 def enabled(feature,brand=None):

@@ -72,8 +72,10 @@ def test_shortage_keeps_entitlement_and_requires_review(ops):
     actor,post,order,shifts=ops;accountant();approve_float(post)
     manager,driver=shifts()
     submit(post,driver,manager,15000,15000)
-    post('manager','/api/shifts/'+driver+'/driver-close',{'confirmed':True,'received_halalas':0},status=422)
-    post('manager','/api/shifts/'+driver+'/driver-close',{'confirmed':True,'received_halalas':0,'exception_reason':'عجز فعلي موثق للاختبار'})
+    post('manager','/api/shifts/'+driver+'/driver-close',{'confirmed':True,'received_halalas':0})
+    with db.tx() as c:
+        assert c.execute('SELECT submission FROM shifts WHERE id=%s',(driver,)).fetchone()['submission']['financial_review_required'] is True
+        assert c.execute("SELECT 1 FROM custody_events WHERE shift_id=%s AND kind='adjustment'",(driver,)).fetchone() is None
     next_shift=post('driver','/api/shifts',{'kind':'driver','branch_ids':['ops-branch'],'manager_shift_id':manager})['shift']
     assert next_shift['permanent_float']['amount']==20000
     with db.tx() as c:
@@ -111,7 +113,7 @@ def test_authorization_scope_stale_replay_and_immutable_records(ops):
     with pytest.raises(psycopg.Error),db.tx() as c:
         c.execute('DELETE FROM driver_float_decisions WHERE request_id=%s',(row['id'],))
     # Existing approval remains current when a proposed change has not been approved.
-    pending=post('manager','/api/driver-floats',{**body,'base_request_id':row['id'],'amount_halalas':30000})
+    pending=post('manager','/api/driver-floats',{**body,'base_request_id':row['id'],'amount_halalas':20000})
     manager,driver=shifts()
     post('accountant','/api/driver-floats/'+pending['id']+'/decision',decision,status=409)
     assert actor('driver').get('/api/shifts/'+driver).json()['shift']['permanent_float']['amount']==20000
@@ -119,7 +121,11 @@ def test_authorization_scope_stale_replay_and_immutable_records(ops):
 
 def test_full_restore_preserves_float_approval_history(ops):
     actor,post,order,shifts=ops;accountant()
-    first=approve_float(post);second=approve_float(post,30000,first)
+    first=approve_float(post);second='synthetic-historical-float-300'
+    # Historical denomination is restored unchanged; it is never newly issued.
+    with db.tx() as c:
+        c.execute("INSERT INTO driver_float_requests(id,brand_id,driver_id,branch_ids,base_request_id,amount_halalas,reference,reason,requested_by) VALUES(%s,'ops-brand','ops-driver','[\"ops-branch\"]',%s,30000,'SYNTHETIC historical original','Historical prior denomination evidence','ops-manager')",(second,first))
+        c.execute("INSERT INTO driver_float_decisions(request_id,brand_id,approved,reviewed_by,reference) VALUES(%s,'ops-brand',true,'ops-accountant','Historical independent certification')",(second,))
     with db.tx() as c:contents,manifest=build_archive(c,full=True)
     target='kps_restore_'+uuid4().hex
     url=os.environ['TEST_DATABASE_URL']

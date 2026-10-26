@@ -679,7 +679,7 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
     duplicated=context.request.post(matching_url,headers={**headers,'idempotency-key':secrets.token_hex(16)},data=request.post_data_json)
     assert duplicated.status==409,duplicated.text()
     assert duplicated.json()['detail']['code']=='SETTLEMENT_FINAL'
-    expect(page.locator('#ac-results')).to_contain_text('تم استلام الكاش واعتماد التسوية')
+    expect(page.locator('#ac-results')).to_contain_text('تم استلام الكاش — مراجعة الموازنة معتمدة')
     expect(page.locator(f'[data-driver-balance="{report_id}"]')).to_have_count(0)
     expect(page.locator(f'[data-driver-receipt="{report_id}"]')).to_have_count(0)
     rows=context.request.get(base+'/api/accounting/driver-settlements?kind=driver').json()['settlements']
@@ -825,17 +825,30 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
         expect(manager.locator('[data-action=confirm-custody]')).to_have_count(1)
         _capture(manager,'delivery-manager-pending-driver-receipt')
         manager.locator('[data-action=confirm-custody]').click()
-        _submit_modal(manager,check=['received'])
+        expect(manager.locator('#modal-body input[name=received]')).to_have_attribute('type','number')
+        with manager.expect_response(lambda response:response.request.method=='POST' and '/api/custody/' in response.url and response.url.endswith('/confirm')) as receipt:
+            _submit_modal(manager,{'received':'10.00'},check=['confirmed'])
+        assert receipt.value.status==200,receipt.value.text()
+        assert receipt.value.request.post_data_json=={'received_halalas':1000,'confirmed':True}
         manager.locator('#navigation [data-page=shifts]').click()
         manager.locator(f'[data-action=shift-detail][data-id="{driver_shift}"]').click()
         expect(manager.locator('#modal-body')).to_contain_text('التسليم النهائي المستلم المؤكد')
         manager.locator(f'[data-action=approve-shift][data-id="{driver_shift}"]').click()
         expect(manager.locator('#modal-body')).to_contain_text('النقد المستلم فعليًا من السائق')
         expect(manager.locator('#modal-body')).to_contain_text('النقد الذي عده السائق')
+        expect(manager.locator('#modal-body [data-saved-actual-receipt]')).to_be_visible()
+        expect(manager.locator('#modal-body input[name=received]')).to_have_count(0)
+        expect(manager.locator('#modal-body [data-action=return-shift]')).to_have_count(0)
         _capture(manager,'delivery-manager-driver-closure-approval')
-        _submit_modal(manager,check=['confirmed'])
+        with manager.expect_response(lambda response:response.request.method=='POST' and response.url.endswith('/api/shifts/'+driver_shift+'/driver-close')) as closed:
+            _submit_modal(manager,check=['confirmed'])
+        assert closed.value.status==200,closed.value.text()
+        assert closed.value.request.post_data_json['received_halalas']==1000
         with db.tx() as conn:
-            assert conn.execute('SELECT status FROM shifts WHERE id=%s',(driver_shift,)).fetchone()['status']=='closed'
+            saved=conn.execute('SELECT status,submission FROM shifts WHERE id=%s',(driver_shift,)).fetchone()
+            assert saved['status']=='closed' and saved['submission']['actual_handover_halalas']==1000
+            assert conn.execute("SELECT count(*) n FROM custody_transfers WHERE from_shift_id=%s AND closure AND status='confirmed'",(driver_shift,)).fetchone()['n']==1
+            assert conn.execute('SELECT count(*) n FROM closure_reports WHERE shift_id=%s',(driver_shift,)).fetchone()['n']==1
 
         manager.locator(f'[data-action=start-closing][data-id="{manager_shift}"]').click()
         expect(manager.locator('#closure-form')).to_be_visible()
@@ -871,7 +884,19 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             actor.locator(f'[data-action=report-view][data-id="{report_id}"]').click()
             expect(actor.locator('#modal-body')).to_contain_text('المتوقع')
             expect(actor.locator('#modal-body')).to_contain_text('المعدود')
-            expect(actor.locator('#modal-body')).to_contain_text('التسليم المؤكد')
+            # Declaration and witnessed receipt remain separate in the saved
+            # report; closing the manager shift alone creates no cash receipt.
+            declared=actor.locator('#modal-body dt').filter(has_text='إقرار التسليم').locator('..').locator('dd')
+            actual=actor.locator('#modal-body dt').filter(has_text='الاستلام الفعلي').locator('..').locator('dd')
+            expect(declared).to_be_visible()
+            expect(actual).to_be_visible()
+            counted=actor.locator('#modal-body dt').filter(has_text='المعدود').locator('..').locator('dd')
+            expect(declared).to_have_text(counted.inner_text())
+            if kind=='driver':
+                expect(actual).to_have_text(declared.inner_text())
+                expect(actor.locator('#modal-body')).to_contain_text('استلام مؤكد')
+            else:
+                expect(actual).to_have_text('غير موثق بهذا الحقل؛ راجع سجل الاستلام')
             _capture(actor,f'{kind}-saved-financial-report-synthetic')
             detail=contexts[who].request.get(live_app+f'/api/reports/{report_id}').json()['report']
             assert detail['pdf_status']=='ready'
@@ -883,6 +908,14 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             assert summary['unique_orders']==1 and summary['cash_collected_halalas']==1000
             assert summary['submission']['expected_halalas']==1000 and summary['submission']['counted_halalas']==1000
             assert summary['submission']['difference_halalas']==0
+            assert summary['submission']['handover_halalas']==1000
+            if kind=='driver':
+                assert summary['submission']['actual_handover_halalas']==1000
+                receipts=[t for t in detail['snapshot']['transfers'] if t['from_shift_id']==shift and t['closure'] and t['status']=='confirmed']
+                assert len(receipts)==1 and receipts[0]['amount_halalas']==1000
+            else:
+                assert summary['submission'].get('actual_handover_halalas') is None
+                assert not [t for t in detail['snapshot']['transfers'] if t['from_shift_id']==shift]
             for suffix in ['pdf','csv']:
                 response=contexts[who].request.get(live_app+f'/api/reports/{report_id}/{suffix}')
                 assert response.ok,response.text()
@@ -905,7 +938,8 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             actor.keyboard.press('Escape')
             saved[kind]={'unique_orders':summary['unique_orders'],'cash_collected_halalas':summary['cash_collected_halalas'],
                          'card_collected_halalas':summary['card_collected_halalas'],'expected_halalas':summary['submission']['expected_halalas'],
-                         'counted_halalas':summary['submission']['counted_halalas'],'received_halalas':summary['submission']['handover_halalas'],
+                         'counted_halalas':summary['submission']['counted_halalas'],'declared_handover_halalas':summary['submission']['handover_halalas'],
+                         'actual_received_halalas':summary['submission'].get('actual_handover_halalas'),
                          'difference_halalas':summary['submission']['difference_halalas']}
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) AS n FROM collections WHERE order_id=%s',(order_id,)).fetchone()['n']==1

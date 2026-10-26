@@ -74,12 +74,10 @@ def test_receipt_records_exact_cash_while_entitlement_review_stays_pending(recei
     assert not any('shared_driver_closure_allocations' in query for query, _ in writes)
 
 
-@pytest.mark.parametrize('blocked', ['amount', 'confirmation', 'recipient', 'state', 'operational'])
+@pytest.mark.parametrize('blocked', ['confirmation', 'recipient', 'state', 'operational'])
 def test_receipt_still_checks_amount_actual_recipient_and_operational_guards(receipt_boundary, blocked):
     user, declaration, driver, writes, operational, pending_review, request, body = receipt_boundary
-    if blocked == 'amount':
-        body = body.model_copy(update={'received_halalas': 22601})
-    elif blocked == 'confirmation':
+    if blocked == 'confirmation':
         body = body.model_copy(update={'confirmed': False})
     elif blocked == 'recipient':
         declaration['expected_snapshot'][0]['manager_user_id'] = 'different-manager'
@@ -89,6 +87,23 @@ def test_receipt_still_checks_amount_actual_recipient_and_operational_guards(rec
         operational.side_effect = HTTPException(409, 'Actual unresolved operational task')
     with pytest.raises(HTTPException) as failure:
         physical.receive('driver-leg', body, request, user)
-    assert failure.value.status_code == (422 if blocked in {'amount', 'confirmation'} else 403 if blocked == 'recipient' else 409)
+    assert failure.value.status_code == (422 if blocked == 'confirmation' else 403 if blocked == 'recipient' else 409)
     assert writes == []
     pending_review.assert_not_called()
+
+
+@pytest.mark.parametrize('actual',[0,22599,22601])
+def test_independent_actual_amount_is_preserved_without_changing_driver_declaration(receipt_boundary,actual):
+    user,declaration,driver,writes,operational,pending_review,request,body=receipt_boundary
+    original=deepcopy(declaration)
+    body=body.model_copy(update={'received_halalas':actual})
+    result=physical.receive('driver-leg',body,request,user)
+    assert result['receipt_id']
+    assert declaration==original and declaration['cash_halalas']==22600
+    operational.assert_called_once();pending_review.assert_not_called()
+    receipts=[values for query,values in writes if query.startswith('INSERT INTO shared_driver_closure_receipts')]
+    assert len(receipts)==1 and receipts[0][2:4]==(actual,user['id'])
+    assert not any('shared_driver_closure_allocations' in query or 'INSERT INTO custody_events' in query for query,_ in writes)
+    details=physical.db.audit.call_args.args[-1]
+    assert details['receipt_difference_halalas']==actual-22600
+    assert details['responsible_role']=='accounting'

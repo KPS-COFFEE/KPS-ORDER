@@ -83,6 +83,26 @@ def make_report(snapshot=None):
     # before the 04:00 operational-day boundary. Boundary behavior has dedicated tests.
     opened = (datetime.now(TZ)-timedelta(days=3)).replace(hour=12, minute=0, second=0, microsecond=0)
     snapshot = snapshot or {'shift': {'user_id': 'ops-driver', 'submission': {'terminal_total_halalas': 5000, 'handover_halalas': 10000}}, 'summary': {}}
+    # Synthetic immutable evidence is explicit; production must never infer
+    # missing collections/refunds as a zero-filled summary.
+    if 'orders' not in snapshot:
+        sub=snapshot['shift']['submission']
+        cash=sub.get('expected_halalas',sub.get('handover_halalas',0))
+        card=sub.get('expected_card_halalas',sub.get('terminal_total_halalas',0))
+        snapshot['orders']=[dict(id='test-source-order',fulfilled_in_report=True,total_halalas=cash+card)]
+        snapshot['collections']=[dict(id='test-source-cash',order_id='test-source-order',method='cash',amount_halalas=cash),
+                                 dict(id='test-source-card',order_id='test-source-order',method='card',amount_halalas=card)]
+        snapshot['refunds']=[]
+        snapshot['shift'].update(id='settlement-shift',opening_halalas=0)
+        sub.setdefault('expected_halalas',cash)
+        sub.setdefault('counted_halalas',sub.get('handover_halalas',0)+sub.get('retained_halalas',0))
+        sub.setdefault('difference_halalas',sub['counted_halalas']-cash)
+        snapshot['custody_events']=[dict(id='test-cash-event',shift_id='settlement-shift',
+            kind='collection',reference_id='test-source-cash',amount_halalas=cash)]
+        snapshot['transfers']=[]
+        snapshot['summary'].update(unique_orders=1,completed_orders=1,gross_completed_halalas=cash+card,
+            cash_collected_halalas=cash,card_collected_halalas=card,
+            cash_refunded_halalas=0,card_refunded_halalas=0,net_collections_halalas=cash+card)
     with db.tx() as c:
         c.execute("""INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at)
           VALUES('settlement-manager','manager','ops-manager','ops-brand',%s,'closed',%s,%s)""",
@@ -94,6 +114,24 @@ def make_report(snapshot=None):
           VALUES('settlement-report','settlement-shift','driver','ops-brand',%s,'ops-driver',%s)""",
           (db.json(['ops-branch']),db.json(snapshot)))
     return snapshot, opened
+
+
+def approve_test_treatment(post,endpoint):
+    from app.accounting import driver_settlement_values
+    rid=endpoint.rsplit('/',1)[-1]
+    with db.tx() as c:
+        row=c.execute('SELECT * FROM closure_reports WHERE id=%s',(rid,)).fetchone()
+        latest=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision DESC LIMIT 1',(rid,)).fetchone()
+        v=driver_settlement_values(row['snapshot'],latest)
+    kind='documented_channel_correction' if v['net_difference_halalas']==0 else 'outstanding'
+    body=dict(expected_revision=v['revision'],kind=kind,cash_variance_halalas=v['cash_variance_halalas'],
+        card_variance_halalas=v['bank_difference_halalas'],evidence_reference='TEST source receipt explicitly reviewed',note='TEST exact channel treatment with independent approval')
+    if kind=='outstanding':body.update(liable_party_type='merchant',liable_party_name='TEST merchant obligation',
+        followup_user_id='ops-accountant',due_on=datetime.now(TZ).date().isoformat())
+    treatment=post('accountant',endpoint+'/treatments',body)
+    return post('owner',endpoint+'/treatments/'+treatment['id']+'/approve',dict(expected_revision=v['revision'],
+        confirmed=True,evidence_reference='TEST independently checked original document',note='TEST independently approved linked treatment',
+        allow_period_approval_with_outstanding=kind=='outstanding'))
 
 
 @pytest.mark.postgres
@@ -126,8 +164,7 @@ def test_delayed_cash_amendment_approval_idempotency_and_immutability(ops):
     post('accountant',url+'/receive-cash',receipt,status=409)
     # A genuine, unconfirmed discrepancy can still be corrected, while the
     # recorded physical receipt remains fixed. Confirmation makes it final.
-    post('accountant',url+'/confirm-variance',{'expected_revision':3,'confirmed':True,
-        'note':'TEST genuine shortage reviewed','action_taken':'TEST document and follow up'})
+    approve_test_treatment(post,url)
     post('accountant',url+'/approve-balance',{**balance, 'expected_revision': 3},status=409)
     row = actor('accountant').get(base).json()['settlements'][0]
     assert row['cash_difference_halalas'] == -100 and row['pending_cash_halalas'] == 0
@@ -275,62 +312,22 @@ def test_variance_confirmation_requires_strict_revision_flag_and_reasoned_action
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('received,net',[(9500,-500),(10500,500)])
-def test_shortage_and_surplus_require_explicit_versioned_confirmation(ops,received,net):
+def test_review_note_cannot_settle_shortage_or_surplus(ops,received,net):
     actor,post,_,_=ops
     accountant();snapshot,opened=make_report()
     endpoint='/api/accounting/driver-settlements/settlement-report'
-    body={'expected_revision':1,'confirmed':True,'note':'TEST reviewed genuine difference',
-          'action_taken':'TEST documented manual follow-up; no salary deduction'}
-    post('accountant',endpoint+'/approve-balance',{'expected_revision':0,'bank_halalas':5000,
-        'cash_due_halalas':10000,'note':'TEST balance approval'})
-    post('accountant',endpoint+'/confirm-variance',body,status=409)
-    post('accountant','/api/accounting/reviews/settlement-report',{'note':'TEST legacy must not approve new variance'},status=409)
-    receipt={'expected_revision':1,'cash_received_halalas':received,'received_on':datetime.now(TZ).date().isoformat(),
-             'receipt_reference':'TEST actual counted receipt','note':'TEST record actual; not variance approval'}
-    post('accountant',endpoint+'/receive-cash',receipt)
+    post('accountant',endpoint+'/approve-balance',dict(expected_revision=0,bank_halalas=5000,
+        cash_due_halalas=10000,note='TEST actual terminal total'))
+    post('accountant',endpoint+'/receive-cash',dict(expected_revision=1,cash_received_halalas=received,
+        received_on=datetime.now(TZ).date().isoformat(),receipt_reference='TEST actual counted receipt',note='TEST actual physical count'))
+    response=post('accountant',endpoint+'/confirm-variance',dict(expected_revision=2,confirmed=True,
+        note='TEST review note is not financial treatment',action_taken='TEST note cannot close debt'),status=409)
+    assert response['detail']['code']=='FINANCIAL_TREATMENT_REQUIRED'
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
-    assert row['variance_pending'] and row['variance_confirmation'] is None
-    assert row['net_difference_halalas']==net
-    body['expected_revision']=2
-    for who in ('driver','manager','customer'):
-        post(who,endpoint+'/confirm-variance',body,status=403)
-    post('other',endpoint+'/confirm-variance',body,status=404)
-    post('accountant',endpoint+'/confirm-variance',{**body,'confirmed':False},status=422)
-    post('accountant',endpoint+'/confirm-variance',{**body,'expected_revision':1},status=409)
+    assert row['variance_pending'] and row['net_difference_halalas']==net and not row['financially_complete']
     with db.tx() as c:
-        scoped_user=c.execute("SELECT * FROM users WHERE id='ops-accountant'").fetchone()
-        lo=opened.replace(hour=0,minute=0,second=0,microsecond=0)
-        pending_rows=deficit_rows(c,scoped_user,lo,lo+timedelta(days=1),['ops-branch'],'','ar')
-        assert len(pending_rows)==1 and pending_rows[0]['review_id'] is None
-        assert pending_rows[0]['approved_shortage']==0
-        old_events=c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision',('settlement-report',)).fetchall()
-        original_reports=c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',('settlement-report',)).fetchone()['snapshot']
-        movement_counts=tuple(c.execute('SELECT (SELECT count(*) FROM collections) collections,(SELECT count(*) FROM custody_events) custody').fetchone().values())
-    confirmed=post('accountant',endpoint+'/confirm-variance',body,key='variance-confirmation')
-    assert confirmed['action']=='accounting.variance_confirmed' and confirmed['actor_name']=='TEST ACCOUNTANT'
-    details=confirmed['details']
-    assert details['settlement_revision']==2 and details['driver_id']=='ops-driver'
-    assert details['net_difference_halalas']==net
-    assert details['shortage_halalas']==max(0,-net) and details['surplus_halalas']==max(0,net)
-    assert details['action_taken']==body['action_taken'] and details['reason']==body['note']
-    assert details['reviewer_id']=='ops-accountant' and details['no_payroll_deduction']
-    assert post('accountant',endpoint+'/confirm-variance',body,key='variance-confirmation')==confirmed
-    post('accountant',endpoint+'/confirm-variance',body,status=409)
-    post('accountant',endpoint+'/confirm-variance',{**body,'note':'TEST changed reason'},key='variance-confirmation',status=409)
-    row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
-    assert not row['variance_pending'] and row['variance_confirmation']['id']==confirmed['id']
-    with db.tx() as c:
-        assert c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',('settlement-report',)).fetchone()['snapshot']==snapshot==original_reports
-        assert c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s ORDER BY revision',('settlement-report',)).fetchall()==old_events
-        assert tuple(c.execute('SELECT (SELECT count(*) FROM collections) collections,(SELECT count(*) FROM custody_events) custody').fetchone().values())==movement_counts
-        events=c.execute("SELECT * FROM audit_events WHERE action='accounting.variance_confirmed'").fetchall()
-        assert len(events)==1 and events[0]['details']==details
-        reviewed_rows=deficit_rows(c,scoped_user,lo,lo+timedelta(days=1),['ops-branch'],'','ar')
-        assert len(reviewed_rows)==1 and reviewed_rows[0]['review_id']==confirmed['id']
-        assert reviewed_rows[0]['approved_shortage']==max(0,-net)
-        c.execute("UPDATE users SET branch_ids='[]'::jsonb WHERE id='ops-accountant'")
-    # A saved idempotent response never bypasses current report scope.
-    post('accountant',endpoint+'/confirm-variance',body,key='variance-confirmation',status=404)
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE action='accounting.variance_confirmed'").fetchone()['n']==0
+        assert c.execute('SELECT snapshot FROM closure_reports WHERE id=%s',('settlement-report',)).fetchone()['snapshot']==snapshot
 
 
 @pytest.mark.postgres
@@ -346,7 +343,9 @@ def test_balanced_reclassification_cannot_create_variance_confirmation(ops):
         'note':'TEST cannot confirm absent variance','action_taken':'TEST reviewed'},status=409)
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
     assert row['reconciliation_complete'] and row['net_difference_halalas']==0
-    assert not row['variance_pending'] and row['variance_confirmation'] is None
+    assert row['variance_pending'] and row['variance_confirmation'] is None
+    assert response['detail']['code']=='FINANCIAL_TREATMENT_REQUIRED'
+    assert row['channel_shortage_halalas']==row['channel_surplus_halalas']==1000
     with db.tx() as c:assert c.execute("SELECT count(*) n FROM audit_events WHERE action='accounting.variance_confirmed'").fetchone()['n']==0
 
 
@@ -381,8 +380,8 @@ def test_pending_variance_correction_preserves_actual_cash_and_invalidates_old_r
     assert post('accountant',endpoint+'/approve-balance',correction,key='pending-variance-correction')==corrected
     confirm={'expected_revision':2,'confirmed':True,'note':'TEST reviewed current genuine surplus','action_taken':'TEST documented surplus'}
     post('accountant',endpoint+'/confirm-variance',confirm,status=409)
-    confirmation=post('accountant',endpoint+'/confirm-variance',{**confirm,'expected_revision':3})
-    assert confirmation['details']['settlement_revision']==3 and confirmation['details']['surplus_halalas']==100
+    confirmation=approve_test_treatment(post,endpoint)
+    assert confirmation['outstanding_payable_halalas']==100
     post('accountant',endpoint+'/approve-balance',{**correction,'expected_revision':3,'bank_halalas':5000},status=409)
     with db.tx() as c:
         assert c.execute('SELECT * FROM driver_accounting_settlements WHERE report_id=%s AND revision<=2 ORDER BY revision',('settlement-report',)).fetchall()==old
@@ -470,7 +469,9 @@ def test_ticket_owner_approval_appends_recount_without_rewriting_originals(ops):
     post('owner',path,approval,status=409)
     post('owner',path,{**approval,'note':'TEST different payload'},key='cash-ticket-approve',status=409)
     row=actor('accountant').get('/api/accounting/driver-settlements').json()['settlements'][0]
-    assert row['revision']==3 and row['actual_total_halalas']==44600 and not row['variance_pending']
+    assert row['revision']==3 and row['actual_total_halalas']==44600 and row['variance_pending']
+    assert row['cash_variance_halalas']==2250 and row['bank_difference_halalas']==-2250
+    assert not row['financially_complete'] and not row['period_approval_allowed']
     assert row['history'][-1]['action_type']=='cash_receipt_correction'
     assert row['cash_correction_requests'][0]['status']=='approved' and row['variance_confirmation'] is None
     card=actor('accountant').get('/api/accounting/manager-cards').json()['cards'][0]['drivers'][0]
@@ -524,7 +525,7 @@ def test_ticket_approval_rechecks_revision_and_final_freezes(ops,finalized):
     accountant();endpoint,_,opened,_=prepare_cash_correction(post)
     ticket=post('accountant',endpoint+'/cash-correction-requests',{'expected_revision':2,'cash_received_halalas':21500,'note':'TEST request before later review'})
     if finalized=='confirmation':
-        post('accountant',endpoint+'/confirm-variance',{'expected_revision':2,'confirmed':True,'note':'TEST surplus verified','action_taken':'TEST follow up recorded surplus'})
+        approve_test_treatment(post,endpoint)
     elif finalized=='day':
         with db.tx() as c:c.execute("""INSERT INTO accounting_daily_closures(id,manager_shift_id,brand_id,branch_ids,operational_date,snapshot,approved_by,note)
           VALUES('cash-correction-day','settlement-manager','ops-brand',%s,%s,'{}','ops-owner','TEST frozen day')""",(db.json(['ops-branch']),opened.date()))

@@ -55,7 +55,6 @@ def test_manager_approves_driver_shortage_match_surplus_after_receipt(ops,counte
     post('manager',f'/api/shifts/{driver}/approve',reason,status=409)
     post('driver',f'/api/custody/{tid}/confirm',status=404)
     post('manager',f'/api/custody/{tid}/confirm')
-    if counted!=1000:post('manager',f'/api/shifts/{driver}/approve',{},status=422)
     result=post('manager',f'/api/shifts/{driver}/approve',reason,key='review-once')
     assert post('manager',f'/api/shifts/{driver}/approve',reason,key='review-once')==result
     with db.tx() as c:
@@ -211,3 +210,72 @@ def test_atomic_driver_submission_rolls_back_bad_handover_and_routes_actual_rece
     post('manager',f"/api/custody/{t['id']}/confirm")
     post('manager',f'/api/shifts/{driver}/approve')
     assert actor('owner').get('/api/report-notifications').json()['notifications']==[]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('actual',[0,900,1100])
+def test_independent_actual_receipt_closes_operations_without_posting_adjustment(ops,actual,monkeypatch):
+    from app import reporting
+    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
+    actor,post,order,shifts=ops
+    manager,driver=shifts();delivered(post,order,driver)
+    begin_driver_closure(post,driver)
+    _,tid=submit_cash(post,driver,manager,1000)
+    body={'received_halalas':actual,'confirmed':True}
+    post('manager',f'/api/custody/{tid}/confirm',{**body,'confirmed':False},status=422)
+    post('driver',f'/api/custody/{tid}/confirm',body,status=404)
+    key=uuid4().hex
+    received=post('manager',f'/api/custody/{tid}/confirm',body,key=key)
+    assert post('manager',f'/api/custody/{tid}/confirm',body,key=key)==received
+    post('manager',f'/api/shifts/{driver}/approve',{})
+    with db.tx() as c:
+        shift=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
+        assert shift['status']=='closed'
+        sub=shift['submission']
+        assert sub['counted_halalas']==1000 and sub['handover_halalas']==1000
+        assert sub['actual_handover_halalas']==actual and sub['receipt_difference_halalas']==actual-1000
+        assert sub['financial_review_required'] is True and sub['financial_state']=='pending_accounting'
+        assert c.execute("SELECT 1 FROM custody_events WHERE shift_id=%s AND kind='adjustment'",(driver,)).fetchone() is None
+        assert c.execute('SELECT amount_halalas FROM custody_transfers WHERE id=%s',(tid,)).fetchone()['amount_halalas']==actual
+        assert c.execute("SELECT sum(amount_halalas) n FROM custody_events WHERE shift_id=%s AND kind='transfer_in'",(manager,)).fetchone()['n']==actual
+        report=c.execute('SELECT snapshot FROM closure_reports WHERE shift_id=%s',(driver,)).fetchone()['snapshot']
+        assert report['shift']['submission']['handover_halalas']==1000
+        assert report['shift']['submission']['actual_handover_halalas']==actual
+        assert c.execute("SELECT count(*) n FROM custody_events WHERE reference_id=%s AND kind='transfer_out'",(tid,)).fetchone()['n']==1
+    next_driver=post('driver','/api/shifts',{'kind':'driver','branch_ids':['ops-branch'],'manager_shift_id':manager})['shift']['id']
+    assert next_driver!=driver
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('counted',[900,1100])
+def test_ledger_cash_difference_is_not_an_automatic_manager_adjustment(ops,counted,monkeypatch):
+    from app import reporting
+    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
+    actor,post,order,shifts=ops
+    manager,driver=shifts();delivered(post,order,driver)
+    begin_driver_closure(post,driver)
+    _,tid=submit_cash(post,driver,manager,counted)
+    post('manager',f'/api/custody/{tid}/confirm')
+    post('manager',f'/api/shifts/{driver}/approve',{})
+    with db.tx() as c:
+        sub=c.execute('SELECT submission FROM shifts WHERE id=%s',(driver,)).fetchone()['submission']
+        assert sub['difference_halalas']==counted-1000 and sub['financial_review_required'] is True
+        assert c.execute("SELECT 1 FROM custody_events WHERE shift_id=%s AND reference_id=%s",(driver,'closure-difference:'+driver)).fetchone() is None
+
+
+@pytest.mark.postgres
+def test_card_difference_does_not_require_manager_financial_approval(ops,monkeypatch):
+    from app import reporting
+    monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
+    actor,post,order,shifts=ops
+    manager,driver=shifts();delivered(post,order,driver)
+    begin_driver_closure(post,driver)
+    post('driver',f'/api/shifts/{driver}/submit',{'terminal_total_halalas':100,'counted_halalas':1000,'handover_halalas':1000,'handover':{'recipient_user_id':'ops-manager','to_shift_id':manager,'reference':'Actual cash with unmatched terminal'}})
+    with db.tx() as c:tid=c.execute('SELECT id FROM custody_transfers WHERE from_shift_id=%s AND closure',(driver,)).fetchone()['id']
+    post('manager',f'/api/custody/{tid}/confirm')
+    post('manager',f'/api/shifts/{driver}/approve',{})
+    with db.tx() as c:
+        sub=c.execute('SELECT submission FROM shifts WHERE id=%s',(driver,)).fetchone()['submission']
+        assert sub['difference_halalas']==0 and sub['card_difference_halalas']==100
+        assert sub['financial_review_required'] is True
+        assert c.execute("SELECT 1 FROM custody_events WHERE shift_id=%s AND kind='adjustment'",(driver,)).fetchone() is None

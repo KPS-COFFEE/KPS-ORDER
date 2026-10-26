@@ -83,6 +83,8 @@ def create_snapshot(c,sid,approved_by):
         snap['operational_date']=(s.get('reporting_operational_date') or s['delivery_operational_date']).isoformat()
         snap['delivery_window']=s.get('delivery_window_snapshot')
         snap['delivery_operational_day_start']='04:00'
+    from .collection_tender_corrections import snapshot_evidence
+    snap['collection_tender_corrections']=snapshot_evidence(c,[p['id'] for p in collections])
     snap['driver_attribution_corrections']=safe(c.execute('SELECT * FROM order_driver_attribution_corrections WHERE source_shift_id=ANY(%s) OR target_shift_id=ANY(%s) ORDER BY created_at,id',(shift_ids,shift_ids)).fetchall())
     snap['legacy_delivery_attestations']=safe(attestations)
     snap['legacy_invoice_imports']=safe(imports)

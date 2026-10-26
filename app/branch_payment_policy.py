@@ -23,7 +23,8 @@ def blockers(branch):
     seller = branch['settings'].get('online_payment_seller')
     if not isinstance(seller, str) or not gateways.IDENTIFIER.fullmatch(seller):
         return ['merchant_selection_required']
-    revision = os.getenv('RUNTIME_REVISION') or os.getenv('RENDER_GIT_COMMIT')
+    from .runtime_revision import revision as source_revision
+    revision = source_revision()
     if not revision or not re.fullmatch(r'[0-9a-f]{40}', revision) or os.getenv('KPS_BRANCH_PAYMENT_ACCEPTANCE_SHA') != revision:
         result.append('exact_release_payment_acceptance_required')
     mode = payment_runtime.mode()

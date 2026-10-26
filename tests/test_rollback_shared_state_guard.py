@@ -132,3 +132,17 @@ def test_real_accepted_clarification_refuses_prior_writer_without_rewriting_fina
 def test_current_startup_inventory_covers_all_new_operational_evidence():
     from app import db
     assert set(prior.ROLLBACK_UNSUPPORTED_STATE_TABLES)<=set(db.PRESERVED_TABLES)
+
+
+def test_financial_review_state_also_refuses_older_writer_without_mutation():
+    class FinancialCatalog(Catalog):
+        def execute(self,statement):
+            query=statement.as_string() if hasattr(statement,'as_string') else statement
+            if "action LIKE 'accounting.financial_treatment.%'" in query:
+                self.queries.append(query)
+                return Read([{'exists':1}])
+            return super().execute(statement)
+    c=FinancialCatalog(available={'audit_events'})
+    with pytest.raises(RuntimeError,match='new financial or administrative review'):
+        prior.guard_rollback_feature_state(c)
+    assert all(query.startswith('SELECT ') for query in c.queries)
