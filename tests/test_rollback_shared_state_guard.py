@@ -173,7 +173,7 @@ def test_real_order_safety_state_blocks_prior_writer_and_keeps_current_source_us
     snapshot={'items':[],'branch_name':'Synthetic'}
     if state=='pending_duplicate':snapshot['duplicate_review']={'status':'pending','related_order_ids':[]}
     with db.tx() as c:
-        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','cash',1000,0,1000,%s,%s)",
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','pending','cash',1000,0,1000,%s,%s)",
                   (oid,db.json(snapshot),db.json({'name':'Synthetic','phone':'+966500000001'})))
         if state!='pending_duplicate':
             db.event(c,oid,'ops-manager','order.duplicate_decided' if state=='duplicate_decision' else 'delivery.partial_return.requested',{'reason':'Synthetic rollback witness'})
