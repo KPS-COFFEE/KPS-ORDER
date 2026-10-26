@@ -117,13 +117,21 @@ def summary(c, o, u):
     amendments = c.execute('SELECT * FROM order_amendments WHERE order_id=%s ORDER BY created_at DESC LIMIT 30', (o['id'],)).fetchall()
     receipts = c.execute('SELECT kind,actor_id FROM order_revision_receipts WHERE order_id=%s AND revision=%s', (o['id'], o.get('amendment_revision', 0))).fetchall()
     net = balance(c, o)
+    # Read the same approved claim used by collection. The immutable invoice
+    # remains the original amount; physical return/source credits and actual
+    # item refunds must not reappear as driver debt in this summary.
+    from .order_financial_treatments import effective_claim, effective_total
+    claim = effective_claim(c, o)
+    effective = effective_total(c, o)
     requests=request_rows(c,o['id'])
     from .administrative_guidance import order as order_guidance
     from .order_financial_cases import case
     guidance=order_guidance(o,financial_case=case(c,o['id']),requests=requests,amendments=amendments,viewer_role=u['role']) if u['role'] not in ('driver','customer') else None
     return {'version':o['version'],'guidance':guidance,'requests': requests, 'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
             'active_id': next((a['id'] for a in amendments if a['status'] in ACTIVE), None), 'revision': o.get('amendment_revision', 0),
-            'due_halalas': max(0, o['total_halalas']-net), 'refund_due_halalas': max(0, net-o['total_halalas']),
+            'original_total_halalas': o['total_halalas'], 'effective_total_halalas': effective,
+            'effective_claim_halalas': claim, 'actual_collected_halalas': net,
+            'due_halalas': max(0, claim-net), 'refund_due_halalas': max(0, net-claim),
             'receipts': receipts if u['role'] != 'customer' else []}
 
 
@@ -302,6 +310,10 @@ def driver_reviewed(c, o, driver_id):
 
 def guard(c, o, *, driver_id=None, require_branch=True):
     """Called with the order lock, before preparation/collection/driver transitions."""
+    from .order_duplicates import guard as duplicate_guard
+    duplicate_guard(c, o)
+    from .delivery_partial_returns import guard as partial_return_guard
+    partial_return_guard(c, o)
     if active(c,o['id']): raise db.error(409,'AMENDMENT_PENDING','يوجد تعديل قيد المراجعة؛ وافق عليه أو ارفضه أو اسحبه قبل متابعة التنفيذ.')
     rev=o.get('amendment_revision',0)
     if not rev:return

@@ -88,6 +88,12 @@ def prior_quantities(c,order_id,products):
     for record in approved_allocations(c,order_id):
         for pid,quantity in record['line_quantities'].items():
             if pid in previous:previous[pid]+=quantity
+    from .delivery_partial_returns import approved
+    order=c.execute('SELECT snapshot FROM orders WHERE id=%s',(order_id,)).fetchone()
+    for record in approved(c,order_id):
+        for line in record['lines']:
+            pid=order['snapshot']['items'][line['line_index']]['product_id']
+            if pid in previous:previous[pid]+=line['quantity']
     return previous
 
 

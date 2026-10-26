@@ -181,6 +181,8 @@ def print_invoice(order_id: str, user=Depends(auth.require_roles('owner','admin'
     from . import invoice_profiles, print_translations
     with db.tx() as conn:
         order = scoped_order(conn,order_id,user,lock=True)
+        from .order_duplicates import guard as duplicate_guard
+        duplicate_guard(conn, order)
         def perform():
             existing = original(conn,order_id)
             if existing:

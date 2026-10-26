@@ -872,6 +872,7 @@ def quote_order(conn, body: QuoteBody, for_update=False, *, user=None, order_id=
             'branch_city': branch['city'], 'branch_location': branch['settings'].get('location'),
             'service': body.service, 'payment_method': body.payment_method, 'items': snapshots,
             'subtotal_halalas': subtotal, 'delivery_fee_halalas': fee, 'total_halalas': subtotal + fee,
+            'minimum_order_halalas': minimum,
             'discount_halalas': 0, 'tax': {'status': 'not_configured', 'amount_halalas': None},
             'notes': body.notes, 'currency': 'SAR', 'priced_at': datetime.now(RIYADH).isoformat()}
     if morning:
