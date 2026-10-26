@@ -21,6 +21,8 @@ class Connection:
 
     def execute(self, sql, params):
         self.statements.append((sql, params))
+        if 'FROM order_events' in sql and 'order.duplicate_decided' in sql:
+            return SimpleNamespace(fetchone=lambda:None)
         if sql.startswith('INSERT'):
             self.inserted.append(params)
             self.previous = {'id': params[0]}
@@ -53,7 +55,8 @@ def user(**changes):
 
 def order(**changes):
     return {'id':'order-1', 'brand_id':'kps', 'branch_id':'branch-2', 'service':'delivery',
-            'snapshot':{'delivery_period':'morning'}} | changes
+            'preparation_status':'accepted','customer':{},
+            'snapshot':{'delivery_period':'morning','duplicate_review':{'status':'clear'}}} | changes
 
 
 @pytest.mark.parametrize('change', [{'brand_id':'enbishan'}, {'service':'pickup'}, {'snapshot':{'delivery_period':'evening'}}, {'snapshot':{}}])
