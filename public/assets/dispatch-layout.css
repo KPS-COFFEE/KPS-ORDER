@@ -22,3 +22,64 @@
 
 .delivery-room button.dispatch-move-grip{display:none;min-height:24px;padding:0 5px;background:transparent;border:0;color:var(--muted);cursor:grab;font-size:15px}
 .delivery-room .dispatch-layout-editing button.dispatch-move-grip{display:inline-block}
+
+/* Mobile control room: keep every action reachable without intrinsic-width overflow. */
+@media screen and (max-width:650px){
+  .delivery-room .topbar{gap:10px;align-items:center}
+  .delivery-room .topbar .brand{min-width:0;flex:1}
+  .delivery-room .header-actions{gap:6px;justify-content:flex-end;max-width:55%}
+  .delivery-room #session-label{flex-basis:100%;font-size:10px;overflow-wrap:anywhere}
+  .delivery-room .side{padding:8px 12px}
+  .delivery-room .dispatch-nav-toggle{width:100%;text-align:start;min-height:44px}
+  .delivery-room .side.nav-open #navigation{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;max-height:50dvh;padding:8px 0 2px}
+  .delivery-room #navigation button,.delivery-room #navigation .button{width:100%;min-width:0;min-height:44px;text-align:start;justify-content:flex-start;white-space:normal;overflow-wrap:anywhere;line-height:1.6;border:1px solid var(--line);padding:8px 10px}
+  .delivery-room #main{padding:12px; padding-bottom:max(20px,env(safe-area-inset-bottom))}
+  .delivery-room .page-heading{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:stretch;margin-bottom:12px}
+  .delivery-room .page-heading>div:first-child{grid-column:1/-1;min-width:0;margin-bottom:2px}
+  .delivery-room .page-heading h1{font-size:22px;line-height:1.5}
+  .delivery-room .page-heading p{font-size:12px;line-height:1.8}
+  .delivery-room .page-heading>.actions{display:contents}
+  .delivery-room .page-heading button{min-width:0;width:100%;min-height:44px;padding:8px 10px;font-size:12px;line-height:1.65;white-space:normal;overflow-wrap:anywhere}
+  .delivery-room .page-heading [data-action="prior-deliveries"],.delivery-room #complimentary-order{grid-column:1/-1}
+  .delivery-room #operational-alerts:not([hidden]){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px;align-items:stretch}
+  .delivery-room #operational-alerts>button,.delivery-room #operational-alerts>.actions>button{min-width:0;width:100%;min-height:44px;padding:8px;font-size:12px;line-height:1.65;white-space:normal;overflow-wrap:anywhere}
+  .delivery-room #operational-alerts [data-action="alert-sound"],.delivery-room #operational-alerts [data-action="alert-policy"]{grid-column:1/-1}
+  .delivery-room #operational-alerts>.notice{min-width:0;padding:10px;font-size:12px}
+  .delivery-room #operational-alerts>.notice:has(button){grid-column:1/-1}
+  .delivery-room #operational-alerts>.notice>button{width:100%;min-height:44px;white-space:normal}
+  .delivery-room #operational-alerts>details,.delivery-room #operational-alerts>div.notice{grid-column:1/-1;max-height:240px;overflow:auto;overscroll-behavior:contain}
+  .delivery-room #operational-alerts summary{font-weight:700;min-height:32px;cursor:pointer}
+  .delivery-room #operational-alerts article{padding:10px 0;border-top:1px solid #e2c899;line-height:1.8}
+  .delivery-room #operational-alerts article p{margin:0 0 6px;font-size:12px;overflow-wrap:anywhere}
+  .delivery-room #operational-alerts article button{width:100%;min-height:44px;font-size:12px}
+  .delivery-room .dispatch-workspace{gap:12px}
+  .delivery-room .dispatch-toolbar{padding:12px}
+  .delivery-room .dispatch-toolbar>div:first-child{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .delivery-room .dispatch-toolbar .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+  .delivery-room .dispatch-toolbar button{min-width:0;min-height:44px;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.6}
+  .delivery-room #dispatch-filters{padding:12px;gap:10px;align-items:end}
+  .delivery-room #dispatch-filters label{font-size:12px}
+  .delivery-room #dispatch-filters input:not([type=checkbox]),.delivery-room #dispatch-filters select{width:100%;min-width:0;max-width:100%;min-height:44px;font-size:16px}
+  .delivery-room #dispatch-filters label:last-child{min-height:34px}
+  .delivery-room .dispatch-personal-controls{justify-content:flex-start;gap:6px}
+  .delivery-room .dispatch-personal-controls>.dispatch-source-counts{flex-basis:100%;width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0 0 2px}
+  .delivery-room .dispatch-source-counts>strong{grid-column:1/-1;font-size:12px}
+  .delivery-room .dispatch-source{min-width:0;min-height:44px;padding:8px;justify-content:space-between;white-space:normal;font-size:11px;gap:5px}
+  .delivery-room .dispatch-source b{flex-shrink:0;font-size:15px}
+  .delivery-room button.dispatch-layout-button,.delivery-room .dispatch-layout-settings>summary{min-height:44px;font-size:12px;padding:9px 8px}
+  .delivery-room .dispatch-layout-editor{inset-inline-start:0;inset-inline-end:auto;max-width:calc(100vw - 24px)}
+  .delivery-room #dispatch-counts{gap:10px}
+  .delivery-room .dispatch-count-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:visible}
+  .delivery-room .dispatch-count-row>strong{grid-column:1/-1;white-space:normal;font-size:12px;padding-bottom:4px}
+  .delivery-room .dispatch-count-row .dispatch-stage{min-width:0;min-height:52px;padding:6px 4px;gap:4px;justify-content:space-between;white-space:normal;line-height:1.5;font-size:11px;text-align:start;border-color:var(--line);border-radius:8px}
+  .delivery-room .dispatch-count-row .dispatch-stage span{min-width:0;overflow-wrap:anywhere}
+  .delivery-room .dispatch-count-row .dispatch-stage b{flex-shrink:0;min-width:22px;padding:2px 4px;font-size:12px;font-variant-numeric:tabular-nums}
+  .delivery-room .dispatch-count-row .dispatch-stage.selected{border-color:var(--accent);background:var(--accent-light)}
+  .delivery-room .dispatch-pane-heading{padding:12px;gap:8px;flex-wrap:wrap}
+  .delivery-room .dispatch-pane-heading h2{font-size:15px}
+  .delivery-room .dispatch-order{gap:12px;padding:14px 12px}
+  .delivery-room .dispatch-order-actions .actions{display:grid;grid-template-columns:minmax(0,1fr);width:100%;gap:6px}
+  .delivery-room .dispatch-order .actions button{min-height:44px;width:100%}
+  .delivery-room .dispatch-order-stage .pill{white-space:normal}
+  .delivery-room .dispatch-driver button,.delivery-room #chat-detail button{min-height:44px}
+}
