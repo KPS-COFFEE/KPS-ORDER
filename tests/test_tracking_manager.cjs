@@ -5,7 +5,7 @@ function harness(){
  const from=source.indexOf('  let trackingPlanSelection='),to=source.indexOf('  function dispatchQuery()',from);
  const calls=[],state={user:{id:'manager',brand_id:'kps',branch_ids:['b']},page:'dashboard',branches:[],dispatchDrivers:[{id:'d',shift_id:'s',gps:{updated_at:new Date().toISOString()}}]};
  const context={state,Date,JSON,Number,Math,document:{hidden:false,addEventListener(){}},navigator:{onLine:true},can:()=>true,$:()=>null,mutation:async(url,body)=>{calls.push({url,body});return {status:'ready',calculated_at:new Date().toISOString(),stops:[]};},tr:(a,b)=>b,esc:String,datetime:String,num:String,notice:String,dataItem:(label,value)=>label+': '+value,branchLabel:()=>'',renderDispatchRows(){}};
- vm.createContext(context);vm.runInContext(source.slice(from,to)+'\nthis.run=selectTrackingPlan;this.refresh=refreshTrackingPlan;this.health=trackingLocationStatus;this.details=trackingDriverDetails;this.publish=publishTrackingPlan;this.setPlan=value=>trackingPlanResult=value;',context);
+ vm.createContext(context);vm.runInContext(source.slice(from,to)+'\nthis.run=selectTrackingPlan;this.refresh=refreshTrackingPlan;this.health=trackingLocationStatus;this.details=trackingDriverDetails;this.publish=publishTrackingPlan;this.setPlan=value=>trackingPlanResult=value;this.getPlan=()=>trackingPlanResult;',context);
  return {context,calls,state};
 }
 test('only selected driver requests bounded automatic road ETA',async()=>{const h=harness();await h.context.refresh();assert.equal(h.calls.length,0);await h.context.run('d');assert.equal(h.calls.length,1);await h.context.refresh();assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/api/operations/route-eta');assert.equal(h.calls[0].body.driver_id,'d');});
@@ -47,3 +47,32 @@ test('cooldown preserves an existing fresh estimate only until its freshness exp
 test('order-page customer fallback respects brand identity',async()=>{
  const h=harness(),now=Date.now();await h.context.run('d');const plan=countdownPlan(now);delete plan.stops[0].customer_name;h.state.orders=[{id:'o',brand_id:'enbishan',customer_name:'Foreign customer'}];h.context.setPlan(plan);assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Foreign customer/);h.state.orders.push({id:'o',brand_id:'kps',customer_name:'Authorized customer'});assert.match(h.context.details(h.state.dispatchDrivers[0]),/Authorized customer/);
 });
+
+async function readyEstimate(){const h=harness(),now=Date.now();h.setClock=offset=>{h.context.Date=class extends Date {static now(){return now+offset;}};};h.setClock(0);await h.context.run('d');h.context.setPlan(countdownPlan(now));h.setClock(61000);h.now=now;return h;}
+test('unavailable reasons tell managers what prevents ETA instead of a generic failure',async()=>{
+ const h=await readyEstimate();const reasons={route_budget_or_cooldown:/monthly route limit/,routing_provider_unavailable:/road service temporarily/,routing_token_unconfigured:/configuration needs system administrator/,itinerary_scope_incomplete:/complete itinerary.*current permissions/,no_stops:/No pending delivery stops/,road_route_unavailable:/no valid road route/,location_stale:/fresh driver location required/,location_or_shift_unavailable:/open shift and fresh available location/};
+ for(const [reason,message] of Object.entries(reasons)){h.context.setPlan({status:'unavailable',reason});const html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,message);assert.doesNotMatch(html,/Ahmed · K-1/);}
+});
+test('provider interruption retains only last fresh estimate and visibly identifies retry',async()=>{
+ const h=await readyEstimate(),original=h.context.getPlan().calculated_at;h.context.mutation=async()=>({status:'unavailable',reason:'routing_provider_unavailable'});await h.context.refresh();let html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,/Ahmed · K-1 · About 3 min remaining/);assert.match(html,/last saved estimate, not a new calculation/);assert.match(html,/road service temporarily/);assert.equal(h.context.getPlan().calculated_at,original);
+ h.setClock(121001);h.state.dispatchDrivers[0].gps.updated_at=new Date(h.now+121001).toISOString();await h.context.refresh();html=h.context.details(h.state.dispatchDrivers[0]);assert.doesNotMatch(html,/Ahmed · K-1/);assert.match(html,/road service temporarily/);
+});
+test('network and 5xx retain a fresh estimate without rewriting its calculation time',async()=>{
+ for(const failure of [Object.assign(new Error('offline'),{code:'NETWORK_ERROR'}),Object.assign(new Error('server'),{status:503})]){const h=await readyEstimate(),original=h.context.getPlan().calculated_at;h.context.mutation=async()=>{throw failure;};await h.context.refresh();const html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,/last saved estimate, not a new calculation/);assert.match(html,/Ahmed · K-1/);assert.equal(h.context.getPlan().calculated_at,original);assert.match(html,failure.code?/connection to server unavailable/:/server temporarily unavailable/);}
+});
+test('revoked access, changed itinerary and unrelated errors never retain old estimate',async()=>{
+ for(const failure of [Object.assign(new Error('denied'),{status:401}),Object.assign(new Error('denied'),{status:403}),Object.assign(new Error('missing'),{status:404}),Object.assign(new Error('changed'),{status:409}),new Error('local validation failed')]){const h=await readyEstimate();h.context.mutation=async()=>{throw failure;};await h.context.refresh();assert.equal(h.context.getPlan().status,'unavailable');assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1|last saved estimate/);}
+ for(const reason of ['itinerary_scope_incomplete','itinerary_changed','routing_token_unconfigured','no_stops']){const h=await readyEstimate();h.context.mutation=async()=>({status:'unavailable',reason});await h.context.refresh();assert.equal(h.context.getPlan().status,'unavailable');assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1/);}
+});
+test('forced route changes never fall back to a previous itinerary on provider failure',async()=>{
+ const h=await readyEstimate();h.context.mutation=async()=>({status:'unavailable',reason:'routing_provider_unavailable'});await h.context.refresh(true);assert.equal(h.context.getPlan().status,'unavailable');assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1/);
+});
+test('in-flight transient result cannot preserve estimates after role or live GPS changes',async()=>{
+ const h=await readyEstimate();let release;h.context.mutation=()=>new Promise(resolve=>{release=resolve;});const pending=h.context.refresh();h.state.user.role='branch';release({status:'unavailable',reason:'routing_provider_unavailable'});await pending;assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1/);
+ const gps=await readyEstimate();gps.context.mutation=()=>new Promise(resolve=>{release=resolve;});const wait=gps.context.refresh();gps.state.dispatchDrivers=[{...gps.state.dispatchDrivers[0],gps:{captured_at:new Date(gps.now-300000).toISOString()}}];release({status:'unavailable',reason:'routing_provider_unavailable'});await wait;assert.equal(gps.context.getPlan().status,'unavailable');assert.doesNotMatch(gps.context.details(gps.state.dispatchDrivers[0]),/Ahmed · K-1/);
+});
+test('successful recovery removes the previous-estimate notice',async()=>{
+ const h=await readyEstimate();h.context.setPlan({...countdownPlan(h.now),refresh_reason:'routing_provider_unavailable'});h.context.mutation=async()=>countdownPlan(h.now+61000);await h.context.refresh();assert.equal(h.context.getPlan().refresh_reason,undefined);assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/last saved estimate|temporarily unavailable/);
+});
+
+test('a revoked view permission hides the previous estimate even without a scope snapshot replacement',async()=>{const h=await readyEstimate();h.context.can=()=>false;assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1|Deliveries complete/);});

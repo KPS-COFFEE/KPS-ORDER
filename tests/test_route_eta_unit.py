@@ -247,3 +247,49 @@ def test_provider_return_reconstructs_current_morning_duty_without_stored_capabi
     monkeypatch.setattr(morning_manager_context,'resolve',resolve)
     result=eta.refreshed_caller(Connection(),user,assignment=True)
     assert result['session_id']=='sess' and calls==['morning-duty']
+
+
+class RouteBudgetCursor:
+    def __init__(self):
+        self.settings={}
+    def execute(self,statement,args=()):
+        if statement.startswith('UPDATE app_settings'):
+            self.settings=args[0].obj
+        return self
+    def fetchone(self):
+        return {'settings':self.settings,'budget_now':NOW}
+
+
+def test_corridor_budget_uses_distinct_cooldown_and_shared_monthly_count():
+    from app import dispatch_map
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'driver','manager',units=9)
+    dispatch_map.consume_route_budget(cursor,'driver','manager',units=1,purpose='corridor')
+    budget=cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]
+    assert budget['count']==10
+    assert set(budget['recent'])=={'driver:driver','manager:manager','corridor:driver:driver','corridor:manager:manager'}
+    for driver,manager,purpose in [('driver','other','corridor'),('other','manager','corridor'),('driver','other','route')]:
+        with pytest.raises(HTTPException) as raised:
+            dispatch_map.consume_route_budget(cursor,driver,manager,purpose=purpose)
+        assert raised.value.status_code==429
+    assert cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['count']==10
+
+
+def test_optional_corridor_monthly_limit_preserves_prior_matrix_reservation(monkeypatch):
+    from app import dispatch_map
+    monkeypatch.setattr(dispatch_map,'ROUTE_MONTHLY_LIMIT',9)
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'driver','manager',units=9)
+    with pytest.raises(HTTPException) as raised:
+        dispatch_map.consume_route_budget(cursor,'driver','manager',purpose='corridor')
+    assert raised.value.status_code==429
+    assert cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['count']==9
+    assert 'corridor:driver:driver' not in cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['recent']
+
+
+@pytest.mark.parametrize('purpose,units',[('other',1),('corridor',2),('corridor',True),('route',0)])
+def test_route_budget_rejects_invalid_purpose_or_corridor_units(purpose,units):
+    from app import dispatch_map
+    with pytest.raises(HTTPException) as raised:
+        dispatch_map.consume_route_budget(RouteBudgetCursor(),'driver','manager',units=units,purpose=purpose)
+    assert raised.value.status_code==422

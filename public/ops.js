@@ -327,7 +327,7 @@
       if (!state.requestKeys.has(pendingKey)) state.requestKeys.set(pendingKey, crypto.randomUUID());
       headers['Idempotency-Key'] = state.requestKeys.get(pendingKey);
     }
-    let response; try { response = await fetch(path, { method, credentials: 'same-origin', headers, body: mutation ? JSON.stringify(options.body || {}) : undefined }); } catch { throw new Error(tr('الاتصال منقطع. العملية لم تؤكد بعد؛ أعد المحاولة دون تغيير بياناتها.', 'Connection interrupted. The operation is not confirmed; retry without changing its data.')); }
+    let response; try { response = await fetch(path, { method, credentials: 'same-origin', headers, body: mutation ? JSON.stringify(options.body || {}) : undefined }); } catch { const failure=new Error(tr('الاتصال منقطع. العملية لم تؤكد بعد؛ أعد المحاولة دون تغيير بياناتها.', 'Connection interrupted. The operation is not confirmed; retry without changing its data.'));failure.code='NETWORK_ERROR';throw failure; }
     const type = response.headers.get('content-type') || '';
     if (mutation && response.ok && !type.includes('application/json')) throw new Error(tr('العملية لم تؤكد بعد؛ أعد المحاولة دون تغيير بياناتها.', 'The operation is not confirmed; retry without changing its data.'));
     let data = type.includes('application/json') ? await response.json() : {};
@@ -522,7 +522,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   // Only the manager-selected driver requests road estimates; workspace polling
   // never issues Directions requests for every driver.
   let trackingPlanSelection=null,trackingPlanResult=null,trackingPlanBusy=false,trackingPlanAttempt=0,trackingPlanGeneration=0;
-  function trackingScope(){return JSON.stringify([state.user?.id,state.user?.brand_id,state.user?.branch_ids,state.user?.effective_permissions]);}
+  function trackingScope(){return JSON.stringify([state.user?.id,state.user?.brand_id,state.user?.branch_ids,state.user?.effective_permissions,state.user?.role,state.user?.central_operations,state.user?.delivery_context?.shift_id]);}
   function trackingLocationStatus(driver){
     const gps=driver.gps,stamp=Date.parse(gps?.captured_at||gps?.updated_at),age=Number.isFinite(stamp)?Math.max(0,Math.floor((Date.now()-stamp)/1000)):null;
     const stale=!gps||gps.stale||age===null||age>120;
@@ -531,6 +531,25 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   function trackingPlanFresh(plan){
     const stamp=typeof plan?.calculated_at==='string'?Date.parse(plan.calculated_at):NaN,age=Date.now()-stamp;
     return plan?.status==='ready'&&Number.isFinite(stamp)&&age>=0&&age<=120000;
+  }
+  function trackingUnavailableReason(reason){
+    const messages={
+      route_budget_or_cooldown:['تعذر التقدير — إعادة المحاولة تلقائيًا بعد دقيقة؛ قد يكون حد المسارات الشهري قد بلغ.','Estimate unavailable — retrying automatically after one minute; the monthly route limit may have been reached.'],
+      routing_provider_unavailable:['تعذر التقدير — خدمة الطرق غير متاحة مؤقتًا؛ ستتم إعادة المحاولة تلقائيًا.','Estimate unavailable — road service temporarily unavailable; retrying automatically.'],
+      routing_token_unconfigured:['تعذر التقدير — إعداد خدمة الطرق يحتاج مراجعة من مسؤول النظام.','Estimate unavailable — road service configuration needs system administrator review.'],
+      itinerary_scope_incomplete:['تعذر التقدير — الرحلة الكاملة غير متاحة ضمن الصلاحيات الحالية.','Estimate unavailable — the complete itinerary is unavailable within current permissions.'],
+      no_stops:['لا توجد محطات توصيل معلقة لهذه الرحلة.','No pending delivery stops for this itinerary.'],
+      road_route_unavailable:['تعذر التقدير — لم يتوفر طريق صالح لجميع المحطات.','Estimate unavailable — no valid road route for every stop.'],
+      location_stale:['التقدير متوقف — يلزم موقع حديث من السائق.','Estimate paused — fresh driver location required.'],
+      location_or_shift_unavailable:['التقدير متوقف — يلزم شفت مفتوح وموقع حديث متاح.','Estimate paused — an open shift and fresh available location are required.'],
+      itinerary_changed:['تغيّرت محطات الرحلة — بانتظار إعادة الحساب؛ لا يُعرض التقدير السابق.','Itinerary changed — awaiting recalculation; previous estimate hidden.'],
+      route_session_expired:['انتهت الجلسة — سجّل الدخول مجددًا لعرض التقدير.','Session expired — sign in again to view estimates.'],
+      route_access_unavailable:['التقدير غير متاح ضمن الصلاحيات أو السائق الحالي.','Estimate unavailable for the current permissions or driver.'],
+      route_network_unavailable:['تعذر التقدير — الاتصال بالخادم غير متاح؛ ستتم إعادة المحاولة تلقائيًا.','Estimate unavailable — connection to server unavailable; retrying automatically.'],
+      route_server_unavailable:['تعذر التقدير — الخادم غير متاح مؤقتًا؛ ستتم إعادة المحاولة تلقائيًا.','Estimate unavailable — server temporarily unavailable; retrying automatically.']
+    };
+    const message=messages[reason];
+    return message?tr(...message):tr('تعذر التقدير؛ تحقق من الموقع وخدمة الطرق.','Estimate unavailable; check location and road service.');
   }
   function trackingRemaining(arrival){
     const stamp=typeof arrival==='string'?Date.parse(arrival):NaN;
@@ -551,11 +570,12 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     let html=`<p class="small-text ${health.stale?'notice warn':''}">${esc(health.label)} · ${esc(tr('آخر نقطة','Latest fix'))}: ${esc(datetime(driver.gps?.captured_at||driver.gps?.updated_at))}${health.age===null?'':` · ${num(health.age)} ${esc(tr('ثانية','seconds'))}`}</p><p class="small-text">${esc(tr('الوجهة القادمة','Next destination'))}: ${esc(destinationText)}</p>`;
     if(driver.shift_id&&can('drivers_view'))html+=`<button class="quiet small" data-action="tracking-plan" data-id="${esc(driver.id)}">${esc(selected?tr('تحديث الرحلة','Refresh itinerary'):tr('متابعة الرحلة والوقت المتبقي','Follow itinerary and ETA'))}</button>`;
     if(driver.shift_id&&can('drivers_view'))html+=`<button class="quiet small" data-action="tracking-history" data-id="${esc(driver.shift_id)}">${esc(tr('سجل المسار','Route history'))}</button>`;
-    if(!selected)return html;
+    if(!selected||!can('drivers_view'))return html;
     html+=`<label>${esc(tr('فرع العودة','Return branch'))}<select data-tracking-return="${esc(driver.id)}"><option value="">${esc(tr('حدد فرع العودة لاحتساب وقته','Select return branch to estimate return'))}</option>${(state.branches||[]).filter(b=>(driver.branch_ids||[]).includes(b.id)).map(b=>`<option value="${esc(b.id)}" ${trackingPlanSelection.return_branch_id===b.id?'selected':''}>${esc(branchLabel(b))}</option>`).join('')}</select></label>`;
     if(health.stale)return html+notice(tr('التقدير متوقف حتى يصل موقع حديث.','Estimates paused until a fresh location arrives.'),'warn');
-    if(!plan||plan.status!=='ready')return html+`<p role="status">${esc(trackingPlanBusy?tr('جاري حساب الرحلة…','Calculating itinerary…'):tr('تعذر التقدير؛ تحقق من الموقع وخدمة الطرق.','Estimate unavailable; check location and road service.'))}</p>`;
+    if(!plan||plan.status!=='ready')return html+`<p role="status">${esc(trackingPlanBusy?tr('جاري حساب الرحلة…','Calculating itinerary…'):trackingUnavailableReason(plan?.reason))}</p>`;
     if(!trackingPlanFresh(plan))return html+notice(tr('تقدير الطريق قديم — بانتظار إعادة الحساب.','Road estimate expired — awaiting recalculation.'),'warn');
+    if(plan.refresh_reason)html+=notice(tr('يُعرض آخر تقدير محفوظ، وليس حسابًا جديدًا. ','Showing the last saved estimate, not a new calculation. ')+trackingUnavailableReason(plan.refresh_reason),'warn');
     const time=v=>v?datetime(v):tr('غير متاح','Unavailable');
     const remaining=v=>trackingRemaining(v)+' · '+time(v);
     html+=`<dl class="data-grid">${dataItem(tr('الوصول للوجهة التالية','Next arrival'),remaining(plan.next_stop?.arrival_at))}${dataItem(tr('إنهاء التوصيلات','Deliveries complete'),remaining(plan.delivery_complete_at))}${dataItem(tr('العودة للفرع','Branch return'),remaining(plan.return_at))}</dl><p class="small-text">${esc(tr('تقدير طرق مع مدد توقف تقديرية؛ يتجدد كل دقيقة أثناء عرض الشاشة.','Road estimate with estimated stop times; refreshes every minute while visible.'))} ${esc(time(plan.calculated_at))}</p>`;
@@ -569,8 +589,25 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     if(!driver||trackingLocationStatus(driver).stale){trackingPlanResult=null;return;}
     if(!force&&Date.now()-trackingPlanAttempt<60000)return;
     trackingPlanAttempt=Date.now();trackingPlanBusy=true;const generation=trackingPlanGeneration;
-    try{const result=await mutation('/api/operations/route-eta',{driver_id:selected.driver_id,...(selected.return_branch_id?{return_branch_id:selected.return_branch_id}:{}),...(selected.ordered_stop_ids?{ordered_stop_ids:selected.ordered_stop_ids}:{})});if(generation===trackingPlanGeneration&&selected.scope===trackingScope()){const keepFresh=!force&&result?.reason==='route_budget_or_cooldown'&&trackingPlanFresh(trackingPlanResult)&&!trackingLocationStatus(driver).stale;if(!keepFresh)trackingPlanResult=result;}}
-    catch{if(generation===trackingPlanGeneration)trackingPlanResult={status:'unavailable'};}
+    const current=()=>generation===trackingPlanGeneration&&selected.scope===trackingScope()&&trackingPlanSelection?.driver_id===selected.driver_id&&can('drivers_view');
+    const retainFresh=reason=>{
+      const latest=(state.dispatchDrivers||[]).find(d=>d.id===selected.driver_id);
+      if(force||!current()||!latest||trackingLocationStatus(latest).stale||!trackingPlanFresh(trackingPlanResult))return false;
+      trackingPlanResult={...trackingPlanResult,refresh_reason:reason};return true;
+    };
+    try{
+      const result=await mutation('/api/operations/route-eta',{driver_id:selected.driver_id,...(selected.return_branch_id?{return_branch_id:selected.return_branch_id}:{}),...(selected.ordered_stop_ids?{ordered_stop_ids:selected.ordered_stop_ids}:{})});
+      if(current()){
+        const transient=result?.status!=='ready'&&['route_budget_or_cooldown','routing_provider_unavailable'].includes(result?.reason);
+        if(!transient||!retainFresh(result.reason))trackingPlanResult=result;
+      }
+    }catch(error){
+      if(current()){
+        const status=Number(error?.status),network=error?.code==='NETWORK_ERROR',server=status>=500&&status<=599;
+        const reason=network?'route_network_unavailable':server?'route_server_unavailable':status===401?'route_session_expired':status===403||status===404?'route_access_unavailable':status===409?'itinerary_changed':null;
+        if(!(network||server)||!retainFresh(reason))trackingPlanResult={status:'unavailable',reason};
+      }
+    }
     finally{trackingPlanBusy=false;if(generation===trackingPlanGeneration&&$('#dispatch-drivers')&&state.page==='dashboard')renderDispatchRows();}
   }
   async function selectTrackingPlan(driverId,stopId=null){
