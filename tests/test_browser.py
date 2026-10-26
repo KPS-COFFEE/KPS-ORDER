@@ -884,7 +884,19 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             actor.locator(f'[data-action=report-view][data-id="{report_id}"]').click()
             expect(actor.locator('#modal-body')).to_contain_text('المتوقع')
             expect(actor.locator('#modal-body')).to_contain_text('المعدود')
-            expect(actor.locator('#modal-body')).to_contain_text('التسليم المؤكد')
+            # Declaration and witnessed receipt remain separate in the saved
+            # report; closing the manager shift alone creates no cash receipt.
+            declared=actor.locator('#modal-body dt').filter(has_text='إقرار التسليم').locator('..').locator('dd')
+            actual=actor.locator('#modal-body dt').filter(has_text='الاستلام الفعلي').locator('..').locator('dd')
+            expect(declared).to_be_visible()
+            expect(actual).to_be_visible()
+            counted=actor.locator('#modal-body dt').filter(has_text='المعدود').locator('..').locator('dd')
+            expect(declared).to_have_text(counted.inner_text())
+            if kind=='driver':
+                expect(actual).to_have_text(declared.inner_text())
+                expect(actor.locator('#modal-body')).to_contain_text('استلام مؤكد')
+            else:
+                expect(actual).to_have_text('غير موثق بهذا الحقل؛ راجع سجل الاستلام')
             _capture(actor,f'{kind}-saved-financial-report-synthetic')
             detail=contexts[who].request.get(live_app+f'/api/reports/{report_id}').json()['report']
             assert detail['pdf_status']=='ready'
@@ -896,6 +908,14 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             assert summary['unique_orders']==1 and summary['cash_collected_halalas']==1000
             assert summary['submission']['expected_halalas']==1000 and summary['submission']['counted_halalas']==1000
             assert summary['submission']['difference_halalas']==0
+            assert summary['submission']['handover_halalas']==1000
+            if kind=='driver':
+                assert summary['submission']['actual_handover_halalas']==1000
+                receipts=[t for t in detail['snapshot']['transfers'] if t['from_shift_id']==shift and t['closure'] and t['status']=='confirmed']
+                assert len(receipts)==1 and receipts[0]['amount_halalas']==1000
+            else:
+                assert summary['submission'].get('actual_handover_halalas') is None
+                assert not [t for t in detail['snapshot']['transfers'] if t['from_shift_id']==shift]
             for suffix in ['pdf','csv']:
                 response=contexts[who].request.get(live_app+f'/api/reports/{report_id}/{suffix}')
                 assert response.ok,response.text()
@@ -918,7 +938,8 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             actor.keyboard.press('Escape')
             saved[kind]={'unique_orders':summary['unique_orders'],'cash_collected_halalas':summary['cash_collected_halalas'],
                          'card_collected_halalas':summary['card_collected_halalas'],'expected_halalas':summary['submission']['expected_halalas'],
-                         'counted_halalas':summary['submission']['counted_halalas'],'received_halalas':summary['submission']['handover_halalas'],
+                         'counted_halalas':summary['submission']['counted_halalas'],'declared_handover_halalas':summary['submission']['handover_halalas'],
+                         'actual_received_halalas':summary['submission'].get('actual_handover_halalas'),
                          'difference_halalas':summary['submission']['difference_halalas']}
         with db.tx() as conn:
             assert conn.execute('SELECT count(*) AS n FROM collections WHERE order_id=%s',(order_id,)).fetchone()['n']==1
