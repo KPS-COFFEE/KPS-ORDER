@@ -26,3 +26,18 @@ const ctx={state:{user:{role:'delivery_manager'}},tr:(a,e)=>e,esc,money:n=>(n/10
  assert.match(source,/else if\(a==='reject'\)await cancelOrderWithJourney\(id\)/);
  console.log('PASS: retained cancellation, version/physical attestation, accounting scope and role restrictions.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
+
+// Exercise the actual rendered card, including permissions and terminal/payment guards.
+const cardContext={...ctx,state:{user:{role:'delivery_manager',brand_id:'kps'},branches:[]},isAdmin:()=>false,isManager:()=>true,can:p=>p==='orders_cancel',
+ orderLabel:o=>o.id,orderStatusBadge:()=>'',serviceName:String,branchLabel:()=>'',orderItems:()=>'',customerCarDetails:()=>'',complimentaryName:()=>'',orderAmount:()=>'',badge:()=>''};
+vm.createContext(cardContext);
+vm.runInContext(source.slice(source.indexOf('  function orderBrandBadge('),source.indexOf('  function performanceBadge(')),cardContext);
+const returned={id:'returned-35',brand_id:'kps',service:'delivery',preparation_status:'handed_over',delivery_status:'picked_up',payment_status:'unpaid',snapshot:{delivery_workflow:'manager_dispatch'}};
+for(const role of ['owner','delivery_manager']){
+ cardContext.state.user.role=role;
+ for(const delivery_status of ['picked_up','problem']) assert.match(cardContext.orderCard({...returned,delivery_status}),/Record return and cancel/);
+ for(const change of [{delivery_status:'delivered'},{delivery_status:'cancelled'},{preparation_status:'cancelled'},{preparation_status:'completed'},{payment_status:'paid'},{completed_at:'2026-10-26'},{test_void:true}])assert.doesNotMatch(cardContext.orderCard({...returned,...change}),/Record return and cancel/);
+}
+cardContext.state.user.role='driver';assert.doesNotMatch(cardContext.orderCard(returned),/Record return and cancel/);
+cardContext.state.user.role='delivery_manager';cardContext.can=()=>false;assert.doesNotMatch(cardContext.orderCard(returned),/Record return and cancel/);
+console.log('PASS: actual return action appears only for authorized, active, picked-up unpaid orders.');
