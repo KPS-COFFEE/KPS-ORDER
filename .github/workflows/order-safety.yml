@@ -50,7 +50,7 @@ jobs:
           node --check public/ops.js
           node --check public/customer.js
           node --test tests/test_checkout_attempts.cjs
-          python -m pytest -q tests/test_order_duplicates.py tests/test_delivery_partial_returns.py tests/test_checkout_attempts_browser.py tests/test_enbishan_order_safety_ui.py tests/test_rollback_shared_state_guard.py tests/test_security_audit_local.py tests/test_browser.py::test_real_customer_car_order_chat_images_and_owner_operations tests/test_order_amendments.py tests/test_order_financial_cases.py tests/test_first_order_gift_postgres.py tests/test_customer_gift_pricing_identity.py --junitxml=evidence/order-safety.xml | tee evidence/order-safety.log
+          python -m pytest -q tests/test_order_duplicates.py tests/test_delivery_partial_returns.py tests/test_checkout_attempts_browser.py tests/test_order_safety_ui.py tests/test_rollback_shared_state_guard.py tests/test_security_audit_local.py tests/test_browser.py::test_real_customer_car_order_chat_images_and_owner_operations tests/test_order_amendments.py tests/test_order_financial_cases.py tests/test_first_order_gift_postgres.py tests/test_customer_gift_pricing_identity.py --junitxml=evidence/order-safety.xml | tee evidence/order-safety.log
           python - <<'PY'
           import xml.etree.ElementTree as E
           cases=list(E.parse('evidence/order-safety.xml').getroot().iter('testcase'))
