@@ -126,7 +126,7 @@ def alerts(user=Depends(auth.require_roles(*STAFF))):
         # Do not hold an outer pool slot while canonical reads acquire theirs.
         for brand_id,principal in principals:
             if principal and auth.has_permission(principal,'drivers_view'):
-                value=alerts(dict(principal,_map_brand_scoped=True))
+                value=alerts(dict(principal,_map_brand_scoped=True,_map_route_viewer=user))
                 result.extend(dict(item,brand_id=brand_id) for item in value['alerts'])
         return safe({'alerts':result})
     with db.tx() as c:

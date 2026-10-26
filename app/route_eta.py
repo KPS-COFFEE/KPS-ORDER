@@ -508,7 +508,7 @@ def published_plan_for(c, user, driver_id):
             if validated:
                 view = validated[3]
                 corridor = saved.get('road_corridor')
-                if corridor_current(corridor,fingerprint(stops),view.get('next_stop'),datetime.now(timezone.utc)):
+                if corridor_current(corridor,fingerprint(validated[1]),view.get('next_stop'),datetime.now(timezone.utc)):
                     view['road_corridor'] = corridor
                 return {**view,'calculated_at':saved['published_calculated_at'],'published_at':saved['published_at']}
     except (HTTPException,ValueError,TypeError,KeyError):

@@ -83,7 +83,7 @@ def for_scope(c, user):
                 if expected is None or arrival < expected:
                     expected = arrival
         from .route_eta import published_plan_for
-        published = published_plan_for(c,user,shift['user_id'])
+        published = published_plan_for(c,user.get('_map_route_viewer') or user,shift['user_id'])
         next_stop = (published or {}).get('next_stop')
         if next_stop and next_stop.get('brand_id') == user['brand_id']:
             target = next_stop.get('location')

@@ -30,6 +30,8 @@ def mixed_day(central,monkeypatch):
         calls.append(points)
         return [[0 if i==j else 60 for j in range(len(points))] for i in range(len(points))]
     monkeypatch.setattr(route_eta,'fetch_matrix',matrix)
+    monkeypatch.setattr(route_eta.route_corridor,'fetch_geometry',lambda origin,target,token:
+        {'type':'LineString','coordinates':[[origin['lng'],origin['lat']],[target['lng'],target['lat']]]})
     def add(brand,index,status='picked_up'):
         # The location belongs to the original confirmed customer snapshot.
         # Never mutate that immutable snapshot after assignment/confirmation.
@@ -111,3 +113,48 @@ def test_revoked_brand_cannot_be_hidden_while_claiming_complete_eta(mixed_day):
     assert result['stops']==[]
     assert result['next_stop'] is None
     assert 'mixed-order-enbishan' not in str(result)
+
+
+@pytest.mark.postgres
+def test_mixed_publication_corridor_alert_uses_central_viewer_without_cross_brand_leak(mixed_day,monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app import map_services, multibrand
+    actor,post,legs,calls,add=mixed_day
+    add('kps',1);add('enbishan',2)
+    plan=post('manager','/api/operations/route-eta',{'driver_id':'dual-driver','publish':True})
+    assert plan['status']=='ready' and plan['corridor_status']=='ready',plan
+    target_brand=plan['next_stop']['brand_id']
+    now=datetime.now(timezone.utc)
+    with db.tx() as c:
+        saved=c.execute("SELECT road_corridor FROM driver_route_eta_state WHERE driver_id='dual-driver' AND manager_id='dual-manager'").fetchone()
+        corridor=dict(saved['road_corridor'],calculated_at=(now-timedelta(minutes=3)).isoformat())
+        c.execute("UPDATE driver_route_eta_state SET road_corridor=%s WHERE driver_id='dual-driver' AND manager_id='dual-manager'",(db.json(corridor),))
+        session=c.execute("SELECT id FROM sessions WHERE user_id='dual-driver' AND revoked_at IS NULL ORDER BY expires_at DESC LIMIT 1").fetchone()['id']
+        for age in (90,60,1):
+            c.execute("""INSERT INTO driver_tracking_points(id,driver_id,brand_id,shift_id,session_id,lat,lng,accuracy_m,captured_at)
+              VALUES(%s,'dual-driver',%s,%s,%s,28.42,45.95,10,%s)""",
+              (uuid4().hex,target_brand,legs[target_brand],session,now-timedelta(seconds=age)))
+    observed=[]
+    actual=route_eta.published_plan_for
+    def lookup(c,user,driver):
+        result=actual(c,user,driver)
+        observed.append((bool(user.get('central_operations')),result))
+        return result
+    monkeypatch.setattr(route_eta,'published_plan_for',lookup)
+    response=actor('manager').get('/api/operations/map-services/alerts')
+    assert response.status_code==200,response.text
+    alerts=[a for a in response.json()['alerts'] if a['kind']=='route_corridor_deviation']
+    assert len(alerts)==1,response.json()
+    assert alerts[0]['brand_id']==target_brand
+    assert alerts[0]['shift_id']==legs[target_brand]
+    assert alerts[0]['basis']=='road_geometry' and alerts[0]['distance_m']>150
+    assert observed and all(central and view and view.get('road_corridor') for central,view in observed)
+    # A plain canonical principal must not inherit the private central viewer.
+    with db.tx() as c:
+        user=c.execute("SELECT * FROM users WHERE id='dual-manager'").fetchone()
+        canonical=multibrand.project(c,user,'kps')
+    observed.clear()
+    scoped=map_services.alerts(canonical)
+    assert not [a for a in scoped['alerts'] if a['kind']=='route_corridor_deviation']
+    assert all(not central for central,_ in observed)
+    assert all(a['brand_id']=='kps' for a in scoped['alerts'] if 'brand_id' in a)

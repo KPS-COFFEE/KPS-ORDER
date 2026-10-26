@@ -209,4 +209,5 @@ def test_provider_race_rechecks_live_caller_authority_before_cache_or_publicatio
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM driver_route_eta_state').fetchone()['n']==0
         assert c.execute('SELECT count(*) n FROM driver_route_eta_expectations').fetchone()['n']==0
-        assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==9
+        # Three matrix coordinates squared plus the reserved Directions reference.
+        assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==10
