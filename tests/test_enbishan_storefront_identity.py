@@ -45,11 +45,11 @@ def test_original_logo_and_cleaned_menu_assets_are_bundled():
     assert (ROOT/'public/assets/enbishan-original.jpeg').is_file()
     artwork_root = ROOT/'public/assets/enbishan-menu'
     images=[p for p in artwork_root.rglob('*') if p.is_file()]
-    assert len(images)==54
-    assert len([p for p in images if p.parent == artwork_root])==43
+    assert len(images)==88
+    assert len([p for p in images if p.parent == artwork_root])==44
     assert len([p for p in images if p.parent == artwork_root/'beverages'])==6
     assert {p.name for p in images if p.parent == artwork_root/'owner-review'} == {'crispy-small.jpeg','mojito-fattah.jpeg','mojito-grape.jpeg','mojito-mahashi.jpeg','ramadan-box.jpeg'}
-    assert len([p for p in images if p.name.startswith('clean-')])==11
+    assert len([p for p in images if p.name.startswith('clean-')])==19
     from app.enbishan_menu_assets import MANIFEST, valid_bundled
     bundled_paths={entry['path'] for entry in MANIFEST.values()}
     actual_paths={'/' + p.relative_to(ROOT/'public').as_posix() for p in images}

@@ -79,7 +79,7 @@ def test_immediate_admin_reply_while_read_ack_is_delayed_never_submits_native_fo
       window.__chatReadTest={blocked:0,release};
       window.fetch=async function(input,options){
         const path=new URL(typeof input==='string'?input:input.url,location.href).pathname;
-        if(path===%s){window.__chatReadTest.blocked++;await gate;}
+        if(path===%s){window.__chatReadTest.blocked++;document.documentElement.dataset.chatReadBlocked='true';await gate;}
         return original(input,options);
       };
     })();""" % json.dumps('/api/conversations/'+cid+'/read'))
@@ -87,7 +87,7 @@ def test_immediate_admin_reply_while_read_ack_is_delayed_never_submits_native_fo
         page.goto(live_app+'/ops')
         page.locator('#navigation [data-page=chat]').click()
         page.locator(f'.conversation[data-id="{cid}"]').click()
-        page.wait_for_function('window.__chatReadTest.blocked>0')
+        expect(page.locator('html')).to_have_attribute('data-chat-read-blocked','true')
         expect(page.locator('#message-form')).to_be_visible()
         navigations=[]
         page.on('framenavigated',lambda frame:navigations.append(frame.url) if frame==page.main_frame else None)
@@ -101,7 +101,7 @@ def test_immediate_admin_reply_while_read_ack_is_delayed_never_submits_native_fo
         with db.tx() as c:
             assert c.execute('SELECT count(*) n FROM chat_messages WHERE conversation_id=%s AND sender_id=%s AND text=%s',(cid,admin['id'],'Actual reply while read acknowledgment is held')).fetchone()['n']==1
             assert c.execute('SELECT role FROM users WHERE id=%s',(admin['id'],)).fetchone()['role']=='admin'
-        page.evaluate('window.__chatReadTest.release()')
+        page.evaluate('() => window.__chatReadTest.release()')
         expect(page.locator('#message-form button[type=submit]')).to_be_enabled()
         assert not errors
     finally:
