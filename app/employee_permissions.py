@@ -80,8 +80,11 @@ DEFINITIONS.append(('driver_support_approve', 'اعتماد أو رفض طلب �
 DEFINITIONS.append(('complimentary_approve', 'اعتماد وإلغاء أوامر الضيافة والتعويض والاستكمال غير المنفذة',
                     'Authorize and revoke unused courtesy fulfillment commands', 'orders', set()))
 DEFINITIONS.append(('driver_duty_manage', 'تحديد ساعات دوام السائقين', 'Configure driver duty hours', 'staff', set()))
+DEFINITIONS.append(('invoice_price_corrections_approve', 'اعتماد وإرجاع ورفض تصحيح الفاتورة بتفويض المالك',
+                    'Approve, return and reject invoice price corrections by owner delegation', 'reports', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'invoice_price_corrections_approve': {'admin'},
     'driver_duty_manage': {'admin', 'delivery_manager'},
     'complimentary_approve': {'admin', 'delivery_manager'},
     'driver_support_approve': {'admin', 'delivery_manager'},
@@ -101,6 +104,7 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
+    'invoice_price_corrections_approve': {'methods':['GET','POST'], 'paths':['/api/accounting/order-financial-treatments/orders/{oid}','/api/accounting/order-financial-treatments/orders/{oid}/{tid}/approve','/api/accounting/order-financial-treatments/orders/{oid}/{tid}/return','/api/accounting/order-financial-treatments/orders/{oid}/{tid}/reject'], 'scope':'explicit_owner_grant_accounting_review_current_brand_assigned_branches_price_correction_only_independent_of_request_and_custody_no_cash_posting'},
     'driver_duty_manage': {'methods':['GET','PUT'], 'paths':['/api/driver-duty','/api/driver-duty/{identifier}'], 'scope':'current_brand_assigned_driver_branches_next_shift_only_no_financial_authority'},
     'complimentary_approve': {'methods':['GET','POST'], 'paths':['/api/orders/complimentary/quote','/api/orders/complimentary/authorizations','/api/orders/complimentary/authorizations/{identifier}/revoke'], 'scope':'explicit_owner_grant_current_brand_all_original_and_fulfillment_branches_no_refund_or_cash_permission'},
     'driver_support_approve': {'methods':['GET','POST'], 'paths':['/api/driver-support','/api/driver-support/{rid}/accept','/api/driver-support/{rid}/resolve'], 'scope':'owner_granted_staff_identity_all_affected_brand_and_branch_scopes_no_cash_transfer'},
