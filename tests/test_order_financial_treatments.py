@@ -174,3 +174,76 @@ def test_actual_receipt_match_alone_does_not_complete_pending_review(monkeypatch
     assert pending['amounts_matched'] and not pending['financially_complete'] and pending['financial_state']=='pending_review'
     reviewed=source_treatments.state(Mock(),order,'case',review_resolved=True)
     assert reviewed['financially_complete'] and reviewed['financial_state']=='matched'
+
+
+@pytest.mark.postgres
+def test_production_invoice_correction_after_closed_shift_preserves_originals_and_owner_decisions(ops,monkeypatch):
+    from tests.test_operations import begin_driver_closure
+    monkeypatch.setenv('KPS_INVOICE_PRICE_CORRECTIONS_ENABLED','true')
+    monkeypatch.setenv('KPS_ORDER_SOURCE_TREATMENTS_ENABLED','false')
+    actor,post,_,_=ops
+    oid,manager,driver=shortfall(ops)
+    begin_driver_closure(post,driver)
+    post('manager',f'/api/shifts/{driver}/submit',dict(terminal_total_halalas=0,counted_halalas=1950,handover_halalas=1950,exception_reason='TEST actual partial collection'))
+    post('manager',f'/api/shifts/{driver}/driver-close',dict(received_halalas=1950,confirmed=True))
+    with db.tx() as c:
+        closed=c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()
+        reports=c.execute('SELECT * FROM closure_reports WHERE shift_id=%s ORDER BY id',(driver,)).fetchall()
+        assert closed['status']=='closed'
+    before=source(oid)
+    monkeypatch.setenv('APP_ENV','production')
+    url='/api/accounting/order-financial-treatments/orders/'+oid
+    context=actor('accountant').get(url).json()
+    assert context['allowed_kinds']==['price_correction'] and not context['can_approve']
+    body=dict(expected_version=context['version'],case_id=context['case_id'],kind='price_correction',expected_collected_halalas=1950,
+        corrected_total_halalas=1950,evidence_reference='TEST approved original price record',note='TEST original price confirmed19.50')
+    approval=dict(confirmed=True,evidence_reference='TEST independent owner price evidence',note='TEST reviewed original price record')
+    first=post('accountant',url,body)
+    for decision in ('approve','return','reject'):
+        post('accountant',url+'/'+first['id']+'/'+decision,approval if decision=='approve' else dict(note='TEST no authority'),status=403)
+    returned=post('owner',url+'/'+first['id']+'/return',dict(note='TEST attach dated approved price list'))
+    assert returned['responsible_user_id']=='ops-accountant'
+    post('accountant',url,body,status=422)
+    second=post('accountant',url,{**body,'resubmits_treatment_id':first['id']})
+    rejected=post('owner',url+'/'+second['id']+'/reject',dict(note='TEST reject incomplete source document'))
+    assert rejected['status']=='rejected'
+    third=post('accountant',url,{**body,'resubmits_treatment_id':first['id']})
+    key=uuid4().hex
+    approved=post('owner',url+'/'+third['id']+'/approve',approval,key=key)
+    assert post('owner',url+'/'+third['id']+'/approve',approval,key=key)==approved
+    post('owner',url+'/'+third['id']+'/approve',approval,status=409)
+    assert approved['price_credit_halalas']==550 and approved['actual_collected_halalas']==1950
+    assert source(oid)==before
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM shifts WHERE id=%s',(driver,)).fetchone()==closed
+        assert c.execute('SELECT * FROM closure_reports WHERE shift_id=%s ORDER BY id',(driver,)).fetchall()==reports
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE entity_id=%s AND action='accounting.order_financial_treatment.approved'",(oid,)).fetchone()['n']==1
+
+
+@pytest.mark.parametrize('role,requester,actor,actors',[('admin','a','b',set()),('owner','a','a',set()),('owner','a','b',{'b'})])
+def test_owner_decisions_require_independence_for_all_decision_routes(role,requester,actor,actors):
+    from app.order_financial_treatments import independent_owner
+    with pytest.raises(HTTPException) as exc:
+        independent_owner(dict(id=actor,role=role),dict(requested_by=requester),actors)
+    assert exc.value.status_code==403
+
+
+@pytest.mark.postgres
+def test_concurrent_owner_invoice_approvals_create_one_credit(ops,monkeypatch):
+    from app import order_financial_treatments as treatment
+    from tests.test_hardening_operations import principal,request,race
+    monkeypatch.setenv('KPS_INVOICE_PRICE_CORRECTIONS_ENABLED','true')
+    actor,post,_,_=ops;oid,_,_=shortfall(ops)
+    url='/api/accounting/order-financial-treatments/orders/'+oid
+    context=actor('accountant').get(url).json()
+    pending=post('accountant',url,dict(expected_version=context['version'],case_id=context['case_id'],kind='price_correction',expected_collected_halalas=1950,
+        corrected_total_halalas=1950,evidence_reference='TEST dated source price reference',note='TEST original price confirmed19.50'))
+    before=source(oid);owner=principal('owner')
+    approval=Approval(confirmed=True,evidence_reference='TEST owner reviewed price source',note='TEST independent owner approval')
+    results=race([lambda:treatment.approve(oid,pending['id'],approval,request('TEST-price-race-a'),owner),
+                  lambda:treatment.approve(oid,pending['id'],approval,request('TEST-price-race-b'),owner)])
+    assert sorted(r[0] for r in results)==[200,409]
+    assert source(oid)==before
+    with db.tx() as c:
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE entity_id=%s AND action=%s",(oid,treatment.APPROVED)).fetchone()['n']==1
+        assert treatment.effective_total(c,before['order'])==1950

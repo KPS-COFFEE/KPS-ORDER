@@ -15,10 +15,12 @@ router=APIRouter(prefix='/api/accounting/order-financial-treatments/orders',tags
 PROPOSED='accounting.order_financial_treatment.proposed'
 APPROVED='accounting.order_financial_treatment.approved'
 REJECTED='accounting.order_financial_treatment.rejected'
+RETURNED='accounting.order_financial_treatment.returned'
 
 class Proposal(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
     expected_version:StrictInt=Field(ge=1)
+    resubmits_treatment_id:str|None=Field(None,min_length=1,max_length=150)
     case_id:str=Field(min_length=1,max_length=150)
     kind:Literal['price_correction','outstanding']
     expected_collected_halalas:StrictInt=Field(ge=0,le=100000000000)
@@ -43,9 +45,29 @@ class Rejection(BaseModel):
     note:str=Field(min_length=5,max_length=2000,pattern=r'^[^\x00]+$')
 
 
-def enabled():
+def development_enabled():
     return (os.getenv('KPS_ORDER_SOURCE_TREATMENTS_ENABLED','false').strip().lower()=='true'
         and os.getenv('APP_ENV','production') in {'testing','development'})
+
+
+def invoice_corrections_enabled():
+    return os.getenv('KPS_INVOICE_PRICE_CORRECTIONS_ENABLED','false').strip().lower()=='true'
+
+
+def enabled():
+    return invoice_corrections_enabled() or development_enabled()
+
+
+def require_kind(kind):
+    if not (enabled() if kind=='price_correction' else development_enabled()):
+        raise db.error(404,'ORDER_TREATMENT_KIND_DISABLED','هذا النوع من المعالجة غير مفعل؛ تصحيح الفاتورة لا يفعّل الذمم أو تصحيح وسيلة الدفع.')
+
+
+def independent_owner(user, row, actors):
+    if user.get('role')!='owner':
+        raise db.error(403,'ORDER_TREATMENT_OWNER_REQUIRED','الاعتماد والإرجاع والرفض للمالك المخول فقط.')
+    if user['id']==row['requested_by'] or user['id'] in actors:
+        raise db.error(403,'ORDER_TREATMENT_SELF_APPROVAL','القرار لمالك مستقل عن معد الطلب وصاحب العهدة ومستلمها.')
 
 
 def scoped(c,user,oid,lock=False):
@@ -56,10 +78,10 @@ def scoped(c,user,oid,lock=False):
 
 
 def history(c,oid):
-    rows=c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.entity_type='order' AND a.entity_id=%s AND a.action IN (%s,%s,%s) ORDER BY a.created_at,a.id",(oid,PROPOSED,APPROVED,REJECTED)).fetchall()
-    decisions={r['details']['treatment_id']:r for r in rows if r['action'] in (APPROVED,REJECTED)}
+    rows=c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.entity_type='order' AND a.entity_id=%s AND a.action IN (%s,%s,%s,%s) ORDER BY a.created_at,a.id",(oid,PROPOSED,APPROVED,REJECTED,RETURNED)).fetchall()
+    decisions={r['details']['treatment_id']:r for r in rows if r['action'] in (APPROVED,REJECTED,RETURNED)}
     return [dict(id=r['details']['treatment_id'],payload=r['details'],requested_by=r['actor_id'],requester_name=r['actor_name'],
-        created_at=r['created_at'],status=('approved' if decisions[r['details']['treatment_id']]['action']==APPROVED else 'rejected') if r['details']['treatment_id'] in decisions else 'pending',
+        created_at=r['created_at'],status=('approved' if decisions[r['details']['treatment_id']]['action']==APPROVED else 'returned' if decisions[r['details']['treatment_id']]['action']==RETURNED else 'rejected') if r['details']['treatment_id'] in decisions else 'pending',
         approval=decisions.get(r['details']['treatment_id'])) for r in rows if r['action']==PROPOSED]
 
 
@@ -183,7 +205,7 @@ def listing(oid:str,user=Depends(auth.current_user)):
                 raise
             followup.append(dict(id=person['id'],name=person['display_name']))
         return safe(dict(order_id=oid,version=order['version'],case_id=case['id'] if case else None,treatments=history(c,oid),
-            followup_users=followup,can_propose=bool(case),can_approve=user['id'] not in custody_actors(c,oid),**state(c,order,case['id'] if case else None)))
+            followup_users=followup,allowed_kinds=(["price_correction"] if enabled() else [])+(["outstanding"] if development_enabled() else []),can_propose=bool(case),can_approve=user['role']=='owner' and user['id'] not in custody_actors(c,oid),**state(c,order,case['id'] if case else None)))
 
 
 @router.post('/{oid}')
@@ -197,7 +219,15 @@ def propose(oid:str,body:Proposal,request:Request,user=Depends(auth.current_user
             from .branch_payments import online_order
             if online_order(order) or active(c,oid) or order.get('test_void') or order['preparation_status'] in ('cancelled','rejected'):
                 raise db.error(409,'ORDER_TREATMENT_SOURCE_SCOPE','أكمل مسار المزود أو التعديل أو الإلغاء المختص؛ لا يستخدم تصحيح السعر لتجاوزه.')
+            require_kind(body.kind)
             validate(body,order,case['id'],collected,effective,returned_credit(c,order))
+            previous=history(c,oid)
+            returned=next((r for r in reversed(previous) if r['status']=='returned' and r['payload']['case_id']==case['id']),None)
+            if body.resubmits_treatment_id:
+                if not returned or returned['id']!=body.resubmits_treatment_id:
+                    raise db.error(409,'ORDER_TREATMENT_RESUBMISSION_SOURCE','اربط إعادة التقديم بآخر طلب معاد في الملف نفسه.')
+            elif returned:
+                raise db.error(422,'ORDER_TREATMENT_RESUBMISSION_REQUIRED','اربط الطلب الجديد بالطلب المعاد مع استكمال سبب الإرجاع.')
             if any(r['status']=='approved' and r['payload']['kind']=='outstanding' and body.kind=='outstanding'
                    and r['payload']['case_id']==case['id'] and r['payload']['source_effective_total_halalas']==effective for r in history(c,oid)):
                 raise db.error(409,'ORDER_TREATMENT_RECEIVABLE_EXISTS','الذمة موثقة سابقًا؛ تابع تحصيلها دون إنشاء استحقاق مكرر.')
@@ -230,15 +260,15 @@ def approve(oid:str,tid:str,body:Approval,request:Request,user=Depends(auth.curr
             order=scoped(c,user,oid,True);case=current_case(c,order)
             row=next((r for r in history(c,oid) if r['id']==tid),None)
             if not row or row['status']!='pending':raise db.error(409,'ORDER_TREATMENT_NOT_PENDING','طلب المعالجة غير معلق.')
+            independent_owner(user,row,custody_actors(c,oid))
             proposal=Proposal(**{k:v for k,v in row['payload'].items() if k in Proposal.model_fields})
+            require_kind(proposal.kind)
             from .order_amendments import active
             from .branch_payments import online_order
             if online_order(order) or active(c,oid) or order.get('test_void') or order['preparation_status'] in ('cancelled','rejected'):
                 raise db.error(409,'ORDER_TREATMENT_SOURCE_SCOPE','تغير مسار الطلب؛ أكمل مسار المزود أو التعديل أو الإلغاء المختص.')
             validate(proposal,order,case['id'],balance(c,order),effective_total(c,order),returned_credit(c,order))
             if not body.confirmed:raise db.error(422,'ORDER_TREATMENT_CONFIRM','أكد مراجعة أصل السعر والتحصيل والمستند.')
-            if user['id']==row['requested_by'] or user['id'] in custody_actors(c,oid):
-                raise db.error(403,'ORDER_TREATMENT_SELF_APPROVAL','الاعتماد من موظف مستقل عن المقترح وصاحب العهدة ومستلمها.')
             if (body.allow_period_approval_with_outstanding or proposal.liable_party_type=='employee') and user['role']!='owner':
                 raise db.error(403,'ORDER_TREATMENT_OWNER_REQUIRED','ذمة الموظف واعتماد الفترة بذمة متبقية للمالك فقط؛ لا ينفذ أي خصم آلي.')
             if proposal.kind=='price_correction' and body.allow_period_approval_with_outstanding:
@@ -261,14 +291,39 @@ def approve(oid:str,tid:str,body:Approval,request:Request,user=Depends(auth.curr
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'order_financial_treatment.approve:'+oid+':'+tid,body.model_dump(),perform)
 
 
-@router.post('/{oid}/{tid}/reject')
-def reject(oid:str,tid:str,body:Rejection,request:Request,user=Depends(auth.current_user)):
+def decide(oid,tid,body,request,user,*,returned):
     with db.tx() as c:
         scoped(c,user,oid)
         def perform():
-            scoped(c,user,oid,True);row=next((r for r in history(c,oid) if r['id']==tid),None)
+            order=scoped(c,user,oid,True);row=next((r for r in history(c,oid) if r['id']==tid),None)
             if not row or row['status']!='pending':raise db.error(409,'ORDER_TREATMENT_NOT_PENDING','طلب المعالجة غير معلق.')
-            detail=dict(treatment_id=tid,note=body.note,responsible_user_id=row['requested_by'],required_action='correct_price_or_receivable_evidence')
-            db.audit(c,user['id'],REJECTED,'order',oid,detail);db.event(c,oid,user['id'],'financial_case.source_treatment_rejected',detail)
-            return dict(id=tid,status='rejected',**detail)
-        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'order_financial_treatment.reject:'+oid+':'+tid,body.model_dump(),perform)
+            independent_owner(user,row,custody_actors(c,oid))
+            responsible=None
+            if returned:
+                candidates=[row['requested_by']]+[r['id'] for r in c.execute("SELECT id FROM users WHERE active AND role IN ('admin','owner') ORDER BY CASE WHEN role='admin' THEN 0 ELSE 1 END,display_name,id").fetchall()]
+                for identifier in dict.fromkeys(candidates):
+                    try:responsible=eligible_followup(c,user,order,identifier);break
+                    except Exception as exc:
+                        from fastapi import HTTPException
+                        if isinstance(exc,HTTPException) and exc.status_code==422:continue
+                        raise
+                if not responsible:raise db.error(409,'ORDER_TREATMENT_RETURN_RESPONSIBLE_REQUIRED','حدد محاسبًا مخولًا فعالًا قبل الإرجاع؛ يبقى الطلب لدى المالك حتى تحديد المسؤول.')
+            detail=dict(treatment_id=tid,note=body.note,responsible_user_id=responsible['id'] if responsible else user['id'],
+                required_action=body.note if returned else 'rejected_by_owner',case_id=row['payload']['case_id'],
+                previous_requester_id=row['requested_by'],no_money_posted=True,original_order_preserved=True)
+            action=RETURNED if returned else REJECTED
+            status='returned' if returned else 'rejected'
+            db.audit(c,user['id'],action,'order',oid,detail)
+            db.event(c,oid,user['id'],'financial_case.source_treatment_'+status,detail)
+            return dict(id=tid,status=status,**detail)
+        return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'order_financial_treatment.'+('return:' if returned else 'reject:')+oid+':'+tid,body.model_dump(),perform)
+
+
+@router.post('/{oid}/{tid}/return')
+def return_for_completion(oid:str,tid:str,body:Rejection,request:Request,user=Depends(auth.current_user)):
+    return decide(oid,tid,body,request,user,returned=True)
+
+
+@router.post('/{oid}/{tid}/reject')
+def reject(oid:str,tid:str,body:Rejection,request:Request,user=Depends(auth.current_user)):
+    return decide(oid,tid,body,request,user,returned=False)

@@ -38,7 +38,7 @@ class Rejection(BaseModel):
 
 
 def enabled():
-    from .order_financial_treatments import enabled as source_treatments_enabled
+    from .order_financial_treatments import development_enabled as source_treatments_enabled
     return source_treatments_enabled()
 
 

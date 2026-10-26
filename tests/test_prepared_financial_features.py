@@ -60,3 +60,20 @@ def test_approved_features_require_explicit_flags_in_production(monkeypatch,enab
     assert enabled()
     monkeypatch.setenv(key,'false')
     assert not enabled()
+
+
+def test_production_invoice_flag_does_not_enable_tender_or_outstanding(monkeypatch):
+    from app import collection_tender_corrections
+    from fastapi import HTTPException
+    monkeypatch.setenv('APP_ENV','production')
+    monkeypatch.delenv('KPS_INVOICE_PRICE_CORRECTIONS_ENABLED',raising=False)
+    monkeypatch.setenv('KPS_ORDER_SOURCE_TREATMENTS_ENABLED','true')
+    assert not order_financial_treatments.enabled()
+    monkeypatch.setenv('KPS_INVOICE_PRICE_CORRECTIONS_ENABLED','true')
+    assert order_financial_treatments.enabled()
+    order_financial_treatments.require_kind('price_correction')
+    assert not collection_tender_corrections.enabled()
+    with pytest.raises(HTTPException) as error:order_financial_treatments.require_kind('outstanding')
+    assert error.value.status_code==404
+    monkeypatch.setenv('KPS_INVOICE_PRICE_CORRECTIONS_ENABLED','false')
+    assert not order_financial_treatments.enabled()

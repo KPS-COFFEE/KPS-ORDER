@@ -102,6 +102,10 @@ def public_user(user: dict, conn=None) -> dict:
     from .manual_bank_matching import enabled as bank_preparation_enabled
     from .order_financial_treatments import enabled as source_preparation_enabled
     output['manual_bank_matching_enabled']=bank_preparation_enabled() if user.get('role') in {'owner','admin'} else False
+    from .order_financial_treatments import invoice_corrections_enabled
+    output['invoice_price_corrections_enabled']=invoice_corrections_enabled() if user.get('role') in {'owner','admin'} else False
+    from .collection_tender_corrections import enabled as tender_corrections_enabled
+    output['collection_tender_corrections_enabled']=tender_corrections_enabled() if user.get('role') in {'owner','admin'} else False
     output['order_source_treatments_enabled']=source_preparation_enabled() if user.get('role') in {'owner','admin'} else False
     output['employee_sms_email_retired'] = staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn)
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
