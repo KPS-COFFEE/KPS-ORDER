@@ -184,25 +184,93 @@ def route_context(c, user, driver_id):
                 (user['role']=='owner' and (not central_enabled() or not user.get('home_brand_id')) or b in user.get('branch_ids',[]))]
     if not branches:
         raise HTTPException(403, 'السائق خارج نطاق الفروع المسموح.')
-    tasks = c.execute("SELECT t.id,t.order_id,o.order_no,o.customer FROM driver_tasks t JOIN orders o ON o.id=t.order_id "
-                      "WHERE t.driver_id=%s AND t.shift_id=%s AND t.status='picked_up' AND o.brand_id=%s "
+    tasks = c.execute("SELECT t.id,t.order_id,t.status,o.branch_id,o.order_no,o.customer FROM driver_tasks t JOIN orders o ON o.id=t.order_id "
+                      "WHERE t.driver_id=%s AND t.shift_id=%s AND t.status IN ('assigned','accepted','picked_up') AND o.brand_id=%s "
                       "AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.completed_at IS NULL "
                       "AND o.preparation_status NOT IN ('cancelled','rejected') AND o.delivery_status NOT IN ('delivered','cancelled') "
                       "ORDER BY t.picked_up_at,t.id", (driver_id, row['shift_id'], user['brand_id'], branches)).fetchall()
-    destinations = [{'id': t['id'], 'order_id': t['order_id'], 'order_no': t['order_no'], 'location': p}
-                    for t in tasks if (p := route_point((t['customer'] or {}).get('location')))]
+    destinations = [{'id': t['id'], 'order_id': t['order_id'], 'order_no': t['order_no'], 'location': p,
+                     'brand_id': user['brand_id'], 'shift_id': row['shift_id'], 'kind': 'delivery'}
+                    for t in tasks if t['status'] == 'picked_up' and (p := route_point((t['customer'] or {}).get('location')))]
     branch_rows = c.execute('SELECT id,name,settings FROM branches WHERE brand_id=%s AND id=ANY(%s)',
                             (user['brand_id'], branches)).fetchall()
     # These are explicit choices, not a claim that the driver plans to return
     # to the departure branch. Actual return_branch_id is only known on arrival.
-    returns = [{'id': b['id'], 'name': b['name'], 'location': p} for b in branch_rows
+    returns = [{'id': b['id'], 'name': b['name'], 'location': p, 'brand_id': user['brand_id'], 'kind': 'return_branch'} for b in branch_rows
                if catalog.location_verified(b) and (p := route_point((b['settings'] or {}).get('location')))]
+    # The plan includes uncollected orders and never silently discards a missing
+    # coordinate. Consumers must surface unavailable estimates for those stops.
+    branch_points = {b['id']: route_point((b['settings'] or {}).get('location'))
+                     for b in branch_rows if catalog.location_verified(b)}
+    stops = []
+    for task in tasks:
+        common = {'task_id': task['id'], 'order_id': task['order_id'], 'brand_id': user['brand_id'],
+                  'shift_id': row['shift_id'], 'order_no': task['order_no']}
+        prerequisites = []
+        if task['status'] != 'picked_up':
+            pickup_id = 'pickup:' + task['id']
+            prerequisites = [pickup_id]
+            stops.append({**common, 'id': pickup_id, 'kind': 'pickup', 'branch_id': task['branch_id'],
+                          'location': branch_points.get(task['branch_id']), 'prerequisite_ids': []})
+        stops.append({**common, 'id': 'dropoff:' + task['id'], 'kind': 'dropoff',
+                      'location': route_point((task['customer'] or {}).get('location')),
+                      'prerequisite_ids': prerequisites})
     return {'driver_id': driver_id, 'origin': {'lat': row['lat'], 'lng': row['lng']},
-            'updated_at': row['updated_at'], 'tasks': destinations, 'return_branches': returns,
+            'updated_at': row['updated_at'], 'tasks': destinations, 'stops': stops, 'return_branches': returns,
             'next_destination': driver_destination.metadata(c, user, [row])[driver_id]['next_destination']}
 
 
-def consume_route_budget(c, driver_id, manager_id):
+def central_route_context(c, user, driver_id):
+    """Merge only independently authorized live brand legs of one physical shift.
+
+    Brand scope is reloaded on every request. A failure in an authorized leg is
+    not silently ignored: returning a partial plan could drop a customer.
+    """
+    from .central_operations import context
+    from .central_workdays import require_enabled, association
+    from . import multibrand
+    require_enabled(user, 'drivers_view')
+    if user['role'] not in {'owner', 'delivery_manager', 'delivery_staff'}:
+        raise db.error(403, 'ROLE_FORBIDDEN', 'المسارات غير متاحة لحسابك.')
+    values = []
+    workdays = set()
+    for scope in context(c, user)['brands']:
+        shift = c.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND status='open' AND kind='driver'",
+                          (driver_id, scope['id'])).fetchone()
+        if not shift or not set(shift['branch_ids']) & set(scope['branch_ids']):
+            continue
+        principal = multibrand.project(c, user, scope['id'])
+        target = c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active", (driver_id,)).fetchone()
+        driver = multibrand.project(c, target, scope['id']) if target else None
+        if not principal or not driver or not set(driver['branch_ids']) & set(shift['branch_ids']) & set(scope['branch_ids']):
+            continue
+        shift_access(c, principal, shift)
+        group = association(c, shift['id'])
+        workdays.add(group['id'] if group else shift['id'])
+        values.append(dict(route_context(c, principal, driver_id), brand_id=scope['id']))
+    if not values:
+        raise db.error(404, 'CENTRAL_RECORD_UNAVAILABLE', 'السائق غير متاح ضمن صلاحياتك.')
+    if len(workdays) != 1:
+        raise db.error(409, 'CENTRAL_ROUTE_WORKDAY_MISMATCH', 'الشفتات لا تنتمي إلى رحلة عمل موحدة.')
+    return merge_route_contexts(values)
+
+
+def merge_route_contexts(values):
+    """Keep every authorized station, with explicit ledger identity."""
+    result = dict(values[0])
+    for key in ('tasks', 'return_branches', 'stops'):
+        result[key] = [dict(row, brand_id=value['brand_id']) for value in values for row in value.get(key, [])]
+    result['brand_ids'] = [value['brand_id'] for value in values]
+    # Conflicting intent is never promoted from the first brand to the whole trip.
+    intents = [v.get('next_destination') for v in values if v.get('next_destination')]
+    result['next_destination'] = intents[0] if intents and all(v == intents[0] for v in intents) else None
+    result.pop('brand_id', None)
+    return result
+
+
+def consume_route_budget(c, driver_id, manager_id, units=1):
+    if type(units) is not int or not 1 <= units <= 625:
+        raise HTTPException(422, 'Invalid route budget units.')
     # A single existing row locks the budget across ALL brands and workers.
     row = c.execute("SELECT settings,clock_timestamp() AS budget_now FROM app_settings WHERE brand_id='kps' FOR UPDATE").fetchone()
     if not row or not isinstance(row['settings'], dict):
@@ -222,11 +290,11 @@ def consume_route_budget(c, driver_id, manager_id):
     keys = ['driver:' + driver_id, 'manager:' + manager_id]
     if any(now.timestamp() - recent.get(key, 0) < 60 for key in keys):
         raise HTTPException(429, 'انتظر دقيقة قبل طلب مسار جديد.')
-    if budget['count'] >= ROUTE_MONTHLY_LIMIT:
+    if budget['count'] + units > ROUTE_MONTHLY_LIMIT:
         raise HTTPException(429, 'تم بلوغ حد المسارات لهذا الشهر.')
     budget['recent'] = {key: value for key, value in recent.items() if now.timestamp() - value < 60}
     budget['recent'].update({key: now.timestamp() for key in keys})
-    budget['count'] += 1
+    budget['count'] += units
     settings[ROUTE_BUDGET_KEY] = budget
     c.execute("UPDATE app_settings SET settings=%s,updated_at=now() WHERE brand_id='kps'", (db.json(settings),))
     return now

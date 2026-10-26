@@ -39,6 +39,8 @@ ENDPOINTS['order_requests'] = {'decide'}
 ENDPOINTS['driver_support'] = {'list_requests', 'request_support', 'accept_support', 'resolve_request'}
 ENDPOINTS['order_financial_cases'] = {'cancel','nonreceipt','free_item_return','journey','inbox'}
 ENDPOINTS['financial_clarifications'] = {'listing','decide'}
+ENDPOINTS['route_eta'] = {'route_eta'}
+ENDPOINTS['tracking_ingest'] = {'history', 'resolve_alert'}
 ENDPOINTS['map_services'] = {'recommendations', 'health', 'alerts', 'zones', 'plan', 'trips'}
 ENDPOINTS['driver_closure'] = {'listing', 'schedule', 'decide'}
 ENDPOINTS['dispatch_map'] = {'map_config', 'driver_locations', 'discover_driver_routes', 'permit_driver_route'}
@@ -234,6 +236,12 @@ def recheck_resources(conn, user, request, module, name):
     for sid in (request.query_params.get('shift_id'),):
         if sid:
             require_shift(user,conn.execute('SELECT * FROM shifts WHERE id=%s',(sid,)).fetchone())
+    if module == 'route_eta' and body.get('driver_id'):
+        driver_shift = conn.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='driver' AND status='open'",
+                                    (body['driver_id'],user['brand_id'])).fetchone()
+        require_shift(user,driver_shift)
+        if body.get('return_branch_id') and body['return_branch_id'] not in user['branch_ids']:
+            raise db.error(403,'MORNING_MANAGER_BRANCH','فرع العودة خارج نطاق الصباح.')
     if module == 'chat':
         from .chat import conversation
         cid = params.get('cid')

@@ -301,3 +301,19 @@ test('receipted history remains readable while only the fresh physical shift is 
   assert.equal(result.shifts.find(s=>s.id==='receipted').staffing_ended_at,old.staffing_ended_at);
   assert.equal(result.shifts.find(s=>s.id==='fresh').central_workday_id,'new-day');
 });
+
+test('mixed route permits keep central destination validation on POST',async()=>{
+ const calls=[];await create().request('/api/operations/driver-route-context',{method:'POST',body:{driver_id:'driver',task_id:'enb-task'}},async(path,opts)=>{calls.push({path,opts});return {};},user);
+ assert.equal(calls.length,1);assert.equal(calls[0].path,'/api/central-operations/driver-route-context');assert.equal(calls[0].opts.brand,undefined);assert.equal(calls[0].opts.body.task_id,'enb-task');
+});
+test('mixed itinerary estimate with return branch retains full physical route scope',async()=>{
+ const calls=[];await create().request('/api/operations/route-eta',{method:'POST',body:{driver_id:'driver',return_branch_id:'enb-1',publish:true}},async(path,opts)=>{calls.push({path,opts});return {};},user);
+ assert.equal(calls.length,1);assert.equal(calls[0].opts.brand,undefined);assert.equal(calls[0].opts.body.publish,true);
+});
+test('history and alert decisions resolve canonical shift grants',async()=>{
+ const api=create(),calls=[];const raw=async(path,opts)=>{calls.push({path,opts});return path.includes('resource-context')?{brand_id:'enbishan'}:{};};
+ await api.request('/api/operations/map-services/history?shift_id=enb-shift',{},raw,user);
+ assert.match(calls[0].path,/kind=shift/);assert.equal(calls[1].opts.brand,'enbishan');
+ await api.request('/api/operations/map-services/alerts/resolve',{method:'POST',body:{shift_id:'enb-shift',kind:'location_stale',reason:'network unavailable',action:'contacted driver'}},raw,user);
+ assert.equal(calls.at(-1).opts.brand,'enbishan');assert.equal(calls.at(-1).opts.body.reason,'network unavailable');
+});

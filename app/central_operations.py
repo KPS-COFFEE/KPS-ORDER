@@ -263,25 +263,30 @@ def driver_locations(user=Depends(auth.current_user)):
 
 @router.get('/driver-route-context')
 def driver_route_context(driver_id:str=Query(min_length=1,max_length=100),user=Depends(auth.current_user)):
-    from .central_workdays import require_enabled
-    from .dispatch_map import route_context
+    from .dispatch_map import central_route_context
     from .operations import safe
-    require_enabled(user,'drivers_view')
-    if user['role'] not in {'owner','delivery_manager','delivery_staff'}:
-        raise db.error(403,'ROLE_FORBIDDEN','المسارات غير متاحة لحسابك.')
     with db.tx() as c:
-        values=[]
-        for scope in context(c,user)['brands']:
-            shift=c.execute("SELECT branch_ids FROM shifts WHERE user_id=%s AND brand_id=%s AND status='open' AND kind='driver'",(driver_id,scope['id'])).fetchone()
-            if not shift or not set(shift['branch_ids'])&set(scope['branch_ids']):continue
-            principal=multibrand.project(c,user,scope['id'])
-            target=c.execute("SELECT * FROM users WHERE id=%s AND role='driver' AND active",(driver_id,)).fetchone()
-            driver=multibrand.project(c,target,scope['id']) if target else None
-            if principal and driver and set(driver['branch_ids'])&set(shift['branch_ids'])&set(scope['branch_ids']):
-                values.append(dict(route_context(c,principal,driver_id),brand_id=scope['id']))
-        if not values:raise db.error(404,'CENTRAL_RECORD_UNAVAILABLE','السائق غير متاح ضمن صلاحياتك.')
-        return safe({**values[0],'tasks':[dict(row,brand_id=scope.get('brand_id')) for scope in values for row in scope['tasks']],
-                     'return_branches':[row for value in values for row in value['return_branches']]})
+        return safe(central_route_context(c, user, driver_id))
+
+
+from .dispatch_map import DriverRouteRequest
+
+
+@router.post('/driver-route-context')
+def permit_driver_route(body: DriverRouteRequest, user=Depends(auth.current_user)):
+    from .dispatch_map import central_route_context, consume_route_budget
+    from .operations import safe
+    with db.tx() as c:
+        value = central_route_context(c, user, body.driver_id)
+        choices = value['tasks'] if body.task_id else value['return_branches']
+        selected = body.task_id or body.return_branch_id
+        destination = next((row for row in choices if row['id'] == selected), None)
+        if destination is None:
+            raise db.error(409, 'CENTRAL_ROUTE_DESTINATION_UNAVAILABLE', 'الوجهة غير متاحة ضمن صلاحياتك.')
+        issued = consume_route_budget(c, body.driver_id, user['id'])
+        return safe({'driver_id': body.driver_id, 'origin': value['origin'], 'destination': destination['location'],
+                     'brand_id': destination['brand_id'], 'kind': 'customer' if body.task_id else 'return_branch',
+                     'target_id': selected, 'issued_at': issued})
 
 
 @router.get('/fleet/vehicles')
