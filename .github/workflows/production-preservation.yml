@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   crm-browser:
-    if: github.event_name != 'pull_request' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026'
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     services:
@@ -74,7 +74,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   focused:
-    if: github.event_name != 'pull_request' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026'
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
@@ -138,7 +138,7 @@ jobs:
             test-artifacts/permissions-*.png
           retention-days: 14
   windows:
-    if: github.event_name != 'pull_request' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026'
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026'
     runs-on: windows-latest
     timeout-minutes: 8
     steps:

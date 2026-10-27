@@ -13,7 +13,7 @@ concurrency:
 # rollback and complete-regression checks remain mandatory and unchanged.
 jobs:
   invoice-parity:
-    if: github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
+    if: github.head_ref == 'agent/enbishan-receipt-english-20261027' || github.head_ref == 'agent/enbishan-invoice-parity-20261023' || github.ref == 'refs/heads/agent/enbishan-invoice-parity-20261023'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:

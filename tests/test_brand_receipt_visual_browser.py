@@ -54,5 +54,7 @@ def test_original_brand_logo_stays_visible_and_layout_matches(static_customer, l
                 assert page.locator('.receipt').evaluate('(node)=>node.scrollWidth<=node.clientWidth')
             folder = Path('test-artifacts');folder.mkdir(exist_ok=True)
             page.screenshot(path=str(folder/f'brand-receipt-{brand}-{language}-{preparation}.png'))
-        assert dimensions['kps'] == dimensions['enbishan'], 'Original source logo retains identical receipt geometry'
+        for old,new in zip(dimensions['kps'],dimensions['enbishan']):
+            assert old[0] == new[0], 'Retain paper width'
+            assert new[1] > old[1], 'Owner requested a larger Enbishan logo'
         browser.close()

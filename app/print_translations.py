@@ -1,5 +1,9 @@
 """Editable, first-party English labels for the existing KPS menu."""
+import json
+from pathlib import Path
 from . import db
+
+ENBISHAN_DEFAULTS = json.loads(Path(__file__).with_name("enbishan_print_labels.json").read_text())
 
 DEFAULTS = {
     'كولد برو':'Cold Brew', 'قهوة اليوم بارد':'Iced Coffee of the Day',
@@ -24,12 +28,17 @@ DEFAULTS = {
 
 def labels(product):
     settings=product.get('settings') or {}
-    names=[product['name']]
+    names={product['name']:settings.get('name_en','')}
     for group in settings.get('option_groups') or []:
-        names.append(group['name'])
-        names.extend(value['name'] for value in group.get('values') or [])
+        names[group['name']]=group.get('name_en','')
+        for value in group.get('values') or []:
+            names[value['name']]=value.get('name_en','')
     saved=settings.get('print_labels_en') or {}
-    return {name:saved.get(name) or DEFAULTS.get(name,'') for name in dict.fromkeys(names)}
+    defaults=ENBISHAN_DEFAULTS if product.get('brand_id')=='enbishan' else DEFAULTS
+    if settings.get('source_id')=='enbishan-citrus-20261026' and names[product['name']]=='Citrus soda':
+        names[product['name']]='Mirinda Citrus'
+    return {name:saved.get(name) or english or defaults.get(name,'') for name,english in names.items()}
+
 
 
 def validate(value):
@@ -44,7 +53,7 @@ def validate(value):
 def for_order(conn,order):
     """Use the same scoped labels in browser receipts and branch print jobs."""
     items=order['snapshot'].get('items',[])
-    products=conn.execute('SELECT id,name,settings FROM products WHERE brand_id=%s AND id=ANY(%s)',
+    products=conn.execute('SELECT id,brand_id,name,settings FROM products WHERE brand_id=%s AND id=ANY(%s)',
                           (order['brand_id'],[i.get('product_id') for i in items if i.get('product_id')])).fetchall()
     configured={p['id']:((p['settings'].get('print_labels_en') or {}) | labels(p)) for p in products}
     result={}
@@ -56,5 +65,6 @@ def for_order(conn,order):
                 names.extend(c.get('name',c.get('code','')) for c in group.get('choices',[]))
         saved=configured.get(item.get('product_id'),{})
         target=result.setdefault(item.get('product_id',''),{})
-        target.update({name:saved.get(name) or DEFAULTS.get(name) or name for name in names})
+        defaults=ENBISHAN_DEFAULTS if order['brand_id']=='enbishan' else DEFAULTS
+        target.update({name:saved.get(name) or defaults.get(name) or name for name in names})
     return result
