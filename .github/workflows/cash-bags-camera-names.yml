@@ -25,13 +25,13 @@ jobs:
       postgres:
         image: postgres:18.6
         env:
-          POSTGRES_DB: test_cash_bags
+          POSTGRES_DB: test_enbishan_cash_bags
           POSTGRES_USER: bag_test
           POSTGRES_PASSWORD: isolated-test-password
         ports: ['5432:5432']
-        options: --health-cmd "pg_isready -U bag_test -d test_cash_bags" --health-interval 5s --health-timeout 5s --health-retries 12
+        options: --health-cmd "pg_isready -U bag_test -d test_enbishan_cash_bags" --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      TEST_DATABASE_URL: postgresql://bag_test:isolated-test-password@127.0.0.1:5432/test_cash_bags
+      TEST_DATABASE_URL: postgresql://bag_test:isolated-test-password@127.0.0.1:5432/test_enbishan_cash_bags
       TEST_BROWSER: 1
     steps:
       - uses: actions/checkout@v4

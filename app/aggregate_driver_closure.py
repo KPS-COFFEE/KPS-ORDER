@@ -24,7 +24,7 @@ def physical_finished(c,sid):
 
 def pending_pool(c,manager_sid):
     if not multibrand.enabled():return []
-    return c.execute("SELECT DISTINCT d.id declaration_id,r.id receipt_id,r.received_halalas,r.received_by,d.workday_id FROM shared_driver_closure_receipts r JOIN shared_driver_closure_declarations d ON d.id=r.declaration_id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE s.manager_shift_id=%s AND a.id IS NULL",(manager_sid,)).fetchall()
+    return c.execute("SELECT DISTINCT d.id declaration_id,r.id receipt_id,r.received_halalas,r.received_by,d.workday_id FROM shared_driver_closure_receipts r JOIN shared_driver_closure_declarations d ON d.id=r.declaration_id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE s.manager_shift_id=%s AND a.id IS NULL AND NOT EXISTS (SELECT 1 FROM driver_cash_bags b WHERE b.declaration_id=d.id AND b.destination='branch')",(manager_sid,)).fetchall()
 
 
 def accounting(user):

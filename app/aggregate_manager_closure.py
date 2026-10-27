@@ -120,7 +120,7 @@ def submit(sid:str,body:Declaration,request:Request,user=Depends(auth.current_us
             operational_ready(c,legs)
             snapshot=[]
             for _,s in legs:
-                pending=c.execute("SELECT DISTINCT d.id declaration_id FROM shared_driver_closure_declarations d JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts child ON child.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE child.manager_shift_id=%s AND a.id IS NULL",(s['id'],)).fetchall()
+                pending=c.execute("SELECT DISTINCT d.id declaration_id FROM shared_driver_closure_declarations d JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts child ON child.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE child.manager_shift_id=%s AND a.id IS NULL AND NOT EXISTS (SELECT 1 FROM driver_cash_bags b WHERE b.declaration_id=d.id AND b.destination='branch')",(s['id'],)).fetchall()
                 snapshot.append({'shift_id':s['id'],'brand_id':s['brand_id'],'ledger_cash_at_declaration':ops.balance(c,s),'pending_child_declaration_ids':[x['declaration_id'] for x in pending]})
             identifier=ops.uid()
             c.execute('INSERT INTO shared_manager_closure_declarations(id,workday_id,revision,cash_halalas,expected_snapshot,recorded_by,recipient_user_id,reference) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(identifier,day['id'],previous['revision']+1 if previous else 1,body.cash_halalas,db.json(snapshot),user['id'],body.recipient_user_id,body.reference))

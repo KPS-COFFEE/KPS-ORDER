@@ -38,7 +38,7 @@ def create(c,user,day,legs,declaration,branch_id,reference,delivered):
 
 
 def bag_view(c,day_id):
-    return c.execute('SELECT b.*,u.display_name driver_name,br.name branch_name,n.id count_id,n.received_cash_halalas,n.card_halalas,n.created_at counted_at,a.display_name counted_by_name FROM driver_cash_bags b JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id LEFT JOIN users a ON a.id=n.counted_by WHERE b.workday_id=%s ORDER BY b.deposited_at DESC LIMIT 1',(day_id,)).fetchone()
+    return c.execute('SELECT b.*,s.delivery_operational_date shift_date,u.display_name driver_name,br.name branch_name,n.id count_id,n.received_cash_halalas,n.card_halalas,n.created_at counted_at,n.reference count_reference,n.note count_note,a.display_name counted_by_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN shifts s ON s.id=d.anchor_shift_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id LEFT JOIN users a ON a.id=n.counted_by WHERE b.workday_id=%s ORDER BY b.deposited_at DESC LIMIT 1',(day_id,)).fetchone()
 
 
 class Count(ops.OperationBody):
