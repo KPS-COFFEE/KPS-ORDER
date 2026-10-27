@@ -294,16 +294,19 @@ def receipt(order, branch, kind, language, translations=None):
     for item in snap.get('items',[]):
         labels=(translations or {}).get(item.get('product_id'),{})
         def translated(name):
-            return name if ar else (labels.get(name) or print_translations.DEFAULTS.get(name) or name)
+            defaults=print_translations.ENBISHAN_DEFAULTS if order.get('brand_id')=='enbishan' else print_translations.DEFAULTS
+            return name if ar else (labels.get(name) or defaults.get(name) or name)
         add(translated(item['name']),True,role='item')
         if kind=='order' and not free:
             row(('الكمية: ' if ar else 'Quantity: ')+str(item['quantity']),amount(item.get('line_total_halalas')))
         else:
             row('الكمية' if ar else 'Quantity',str(item['quantity']),True)
-        for i,unit in enumerate(item.get('units',[]),1):
+        units=item.get('units',[])
+        identical=order.get('brand_id')=='enbishan' and len(units)>1 and len(units)==item['quantity'] and all(u.get('option_snapshot')==units[0].get('option_snapshot') for u in units)
+        for i,unit in enumerate(units[:1] if identical else units,1):
             for option in (unit.get('option_snapshot') or {}).values():
                 choices=', '.join(translated(str(x.get('name',x.get('code','')))) for x in option.get('choices',[]))
-                if choices: add(f"{i}: {translated(option.get('name',''))} — {choices}")
+                if choices: add(('' if identical else f"{i}: ")+f"{translated(option.get('name',''))} — {choices}")
         if item.get('note'): add(('ملاحظة: ' if ar else 'Note: ')+item['note'],True)
         add('────────────────────',False,True)
     if kind=='preparation' and not free and (order.get('notes') or snap.get('notes')):add(('ملاحظات الطلب: ' if ar else 'Order notes: ')+(order.get('notes') or snap['notes']),True)
@@ -327,7 +330,7 @@ def receipt(order, branch, kind, language, translations=None):
                 qr=fiscal_qr(fiscal)
             else:
                 qr=invoice_profiles.ordinary_qr(order)
-            lines.append({'role':'qr','text':'','matrix':qr['matrix']})
+            lines.append({'role':'qr','text':'','matrix':qr['matrix'],**({'compact':True} if order.get('brand_id')=='enbishan' else {})})
     return {'language':language,'kind':kind,'lines':lines,'occasion_style':occasion_style,'brand_id':order.get('brand_id','kps')}
 
 
@@ -422,7 +425,7 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
                 payload=receipt(printable,branch,kind,body.language,translations)
                 payload['order_revision']=order.get('amendment_revision',0)
                 if destination['id'] != branch['id']:
-                    payload['lines'].insert(0,{'text':('وجهة الطباعة: ' if body.language=='ar' else 'Print destination: ')+destination['name'],'bold':True,'center':True})
+                    payload['lines'].insert(0,{'text':('وجهة الطباعة: '+destination['name'] if body.language=='ar' else 'Print destination: '+('ENBISHAN '+str(destination['branch_no']) if order['brand_id']=='enbishan' else destination['name'])),'bold':True,'center':True})
                 if previous:payload['lines'].insert(0,{'text':('إعادة طباعة' if body.language=='ar' else 'REPRINT'),'bold':True,'center':True})
                 conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason,created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp())',(identifier,user['brand_id'],device['branch_id'],body.device_id,order_id,kind,db.json(payload),user['id'],body.reprint_reason))
                 db.audit(conn,user['id'],'printer.job.queued','print_job',identifier,{'order_id':order_id,'order_branch_id':order['branch_id'],'destination_branch_id':device['branch_id'],'device_id':body.device_id,'kind':kind,'reprint_reason':body.reprint_reason})

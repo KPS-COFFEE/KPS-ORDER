@@ -16,7 +16,7 @@ using System.Windows.Forms;
 
 class KpsPrintBridge {
     const string DefaultOrigin = "https://order.kps.sa";
-    const string BridgeVersion = "20261024.2";
+    const string BridgeVersion = "20261027.1";
     static string Origin = DefaultOrigin;
     static bool RePair;
     static string SecureOrigin(string value) {
@@ -238,8 +238,14 @@ class KpsPrintBridge {
         using(var format=LineFormat(ar,false))
             return graphics.MeasureString(text,font,(int)Math.Floor(width),format).Height;
     }
+    static float QrSize(Dictionary<string,object> line,float width) {
+        if(!Bool(line,"compact"))return width;
+        int count=((IList)line["matrix"]).Count;
+        // Keep at least three printer dots per module on a 203dpi printer.
+        return Math.Min(width,Math.Max(173.23f,count*300f/203f));
+    }
     static float LineHeight(Graphics graphics,Dictionary<string,object> line,Font font,float width,bool ar) {
-        if(Str(line,"role")=="qr")return width+8;
+        if(Str(line,"role")=="qr")return QrSize(line,width)+8;
         if(IsRule(line))return 12;
         if(Str(line,"role")=="row") {
             return Math.Max(TextHeight(graphics,Str(line,"label"),font,width*0.44f-4,ar),
@@ -251,13 +257,15 @@ class KpsPrintBridge {
         if(Str(line,"role")=="qr") {
             var matrix=(IList)line["matrix"];int count=matrix.Count;
             if(count<21 || count>185)throw new Exception("Invalid QR dimensions");
-            float cell=box.Width/count;
+            float side=QrSize(line,box.Width);
+            float left=box.Left+(box.Width-side)/2;
+            float cell=side/count;
             graphics.FillRectangle(Brushes.White,box.Left,box.Top,box.Width,box.Width);
             for(int y=0;y<count;y++) {
                 string row=Convert.ToString(matrix[y]);
                 if(row.Length!=count)throw new Exception("Invalid QR row");
                 for(int x=0;x<count;x++)if(row[x]=='1')
-                    graphics.FillRectangle(Brushes.Black,box.Left+x*cell,box.Top+y*cell,cell,cell);
+                    graphics.FillRectangle(Brushes.Black,left+x*cell,box.Top+y*cell,cell,cell);
             }
             return;
         }
@@ -290,6 +298,8 @@ class KpsPrintBridge {
     static void Print(Dictionary<string,object> job) {
         var payload=Obj(job["payload"]);var lines=Lines(payload);bool ar=Str(payload,"language")=="ar";
         int width=Convert.ToInt32(job["paper_mm"])==58?228:315;
+        bool enbishan=Str(payload,"brand_id")=="enbishan";
+        float logoSize=enbishan?80:60;
         using(var document=new PrintDocument()) using(var regular=new Font("Arial",11)) using(var bold=new Font("Arial",12,FontStyle.Bold)) using(var caption=new Font("Arial",9)) using(var heading=new Font("Arial",13,FontStyle.Bold)) using(var occasion=OccasionFont(payload)) using(var logo=Logo(payload)) {
             document.PrinterSettings.PrinterName=Printer;document.PrinterSettings.Copies=1;
             document.PrintController=new StandardPrintController();document.DocumentName="KPS "+Str(job,"id");
@@ -300,7 +310,8 @@ class KpsPrintBridge {
             var measured=ContentBounds(new RectangleF(0,0,width,1169),settings.PrintableArea,settings.HardMarginX,settings.HardMarginY);
             // Use the driver's printable width (e.g. 72.1mm on an 80mm roll),
             // and the same RTL measurement used for drawing.
-            float height=88+settings.HardMarginY;
+            if(enbishan)measured.Inflate(-4,0);
+            float height=88+(logoSize-60)+settings.HardMarginY;
             using(var graphics=document.PrinterSettings.CreateMeasurementGraphics(settings)) {
                 foreach(var line in lines)height+=LineHeight(graphics,line,LineFont(line,regular,bold,caption,heading,occasion),measured.Width,ar);
             }
@@ -308,11 +319,12 @@ class KpsPrintBridge {
             int index=0;bool first=true;
             document.PrintPage+=(sender,e)=> {
                 var bounds=ContentBounds(e.PageBounds,e.PageSettings.PrintableArea,e.PageSettings.HardMarginX,e.PageSettings.HardMarginY);
+                if(enbishan)bounds.Inflate(-4,0);
                 float left=bounds.Left,top=bounds.Top,available=bounds.Width;
                 while(index<lines.Count) {
                     if(first && Str(lines[index],"role")!="occasion") {
-                        if(top+64>bounds.Bottom && top>bounds.Top) {e.HasMorePages=true;return;}
-                        e.Graphics.DrawImage(logo,left+(available-60)/2,top,60,60);top+=64;first=false;
+                        if(top+logoSize+4>bounds.Bottom && top>bounds.Top) {e.HasMorePages=true;return;}
+                        e.Graphics.DrawImage(logo,left+(available-logoSize)/2,top,logoSize,logoSize);top+=logoSize+4;first=false;
                     }
                     var line=lines[index];var font=LineFont(line,regular,bold,caption,heading,occasion);
                     float lineHeight=LineHeight(e.Graphics,line,font,available,ar);
@@ -355,6 +367,13 @@ class KpsPrintBridge {
                 if(LineHeight(graphics,qrLine,font,290,false)!=298)return 4;
                 DrawLine(graphics,qrLine,font,new RectangleF(0,0,290,290),false);
                 if(bitmap.GetPixel(145,145).R!=0 || bitmap.GetPixel(5,5).R!=255)return 5;
+            }
+            using(var bitmap=new Bitmap(290,290))using(var graphics=Graphics.FromImage(bitmap))using(var font=new Font("Arial",10)) {
+                qrLine["compact"]=true;
+                if(LineHeight(graphics,qrLine,font,290,false)>=298)return 40;
+                if(QrSize(qrLine,150)>150)return 41;
+                DrawLine(graphics,qrLine,font,new RectangleF(0,0,290,290),false);
+                if(bitmap.GetPixel(145,86).R!=0 || bitmap.GetPixel(5,5).R!=255)return 42;
             }
             // Exercise the actual durable journal and lost-ACK recovery without
             // opening a printer or contacting the server. Only this temp path is used.

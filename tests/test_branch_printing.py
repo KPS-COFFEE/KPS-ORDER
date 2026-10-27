@@ -298,3 +298,32 @@ def test_guided_setup_is_branch_bound_private_and_reports_real_connectivity(ops)
     post('owner','/api/printing/devices/'+package['id']+'/revoke',{'reason':'Reset synthetic pairing'})
     assert device()['connection_status']=='revoked'
     assert actor('customer').post('/api/printing/bridge/next',json={},headers={'Authorization':'Bearer '+token}).status_code==401
+
+
+def test_enbishan_canonical_english_legacy_options_and_riyadh_time():
+    from copy import deepcopy
+    from datetime import datetime, timezone
+    from app import print_translations, branch_printing
+    import json
+    reviewed=json.loads((db.ROOT/'docs/enbishan/menu-review/owner-final-20261022.json').read_text())['rows']
+    # Every original item and serving/flavour retains its approved English name.
+    for row in reviewed:
+        product={'id':'test','brand_id':'enbishan','name':row['name'],'settings':{'name_en':row['name_en']}}
+        assert print_translations.labels(product)[row['name']]==row['name_en']
+        for key in ('size','flavour'):
+            if row.get(key):assert print_translations.ENBISHAN_DEFAULTS[row[key]]==row[key+'_en']
+    assert print_translations.labels({'name':'حمضيات','brand_id':'enbishan','settings':{'source_id':'enbishan-citrus-20261026','name_en':'Citrus soda'}})['حمضيات']=='Mirinda Citrus'
+    assert print_translations.labels({'name':'ملفوف','brand_id':'enbishan','settings':{'name_en':'Stuffed Cabbage','print_labels_en':{'ملفوف':'Custom label'}}})['ملفوف']=='Custom label'
+    unit={'option_snapshot':{'SIZE':{'name':'الحجم','choices':[{'name':'فردية'}]}}}
+    order={'brand_id':'enbishan','order_no':1,'created_at':datetime(2026,10,27,22,40,tzinfo=timezone.utc),'payment_method':'cash','payment_status':'unpaid','total_halalas':1900,'snapshot':{'items':[{'name':'نودلز','quantity':2,'line_total_halalas':1900,'units':[deepcopy(unit),deepcopy(unit)]}]}}
+    original=deepcopy(order)
+    result=branch_printing.receipt(order,{'name':'Branch'},'order','en')
+    text=[line['text'] for line in result['lines']]
+    assert 'Noodles' in text and text.count('Size — Single')==1
+    assert 'Date: 2026-10-28' in text and 'Time: 01:40' in text
+    assert not any('Riyadh' in line or 'الرياض' in line for line in text)
+    assert order==original
+    # Different per-unit choices must remain separate for the kitchen.
+    order['snapshot']['items'][0]['units'][1]['option_snapshot']['SIZE']['choices'][0]['name']='صغير · 6 قطعة'
+    text=[line['text'] for line in branch_printing.receipt(order,{'name':'Branch'},'order','en')['lines']]
+    assert '1: Size — Single' in text and '2: Size — Small · 6 pieces' in text
