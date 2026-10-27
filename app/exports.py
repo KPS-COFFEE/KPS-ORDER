@@ -54,7 +54,8 @@ TABLES += ('collection_tender_correction_proposals','collection_tender_correctio
 TRACKING_PRIVATE_TABLES = {'driver_tracking_points', 'driver_trip_stops',
                           'driver_route_eta_state', 'driver_route_eta_expectations'}
 TABLES += ('driver_tracking_points', 'driver_trip_stops', 'driver_route_eta_state', 'driver_route_eta_expectations')
-SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
+TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
+SHARED_PHYSICAL_TABLES = {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
                           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
 # Full private archives retain the whole immutable declaration and its provenance.
@@ -382,6 +383,15 @@ def _verify_staffing_markers(conn, available):
               AND r.received_by=d.recipient_user_id
               AND NOT EXISTS (SELECT 1 FROM shared_manager_closure_returns returned
                               WHERE returned.declaration_id=d.id)))""")
+    if 'driver_cash_bags' in available:
+        proofs.append("""(s.kind='driver' AND EXISTS (
+            SELECT 1 FROM driver_cash_bags b JOIN central_workday_legs l ON l.workday_id=b.workday_id
+            WHERE l.shift_id=s.id AND b.driver_id=s.user_id AND b.destination='branch'
+              AND b.deposited_at=s.staffing_ended_at))""")
+    if 'manager_vault_closures' in available:
+        proofs.append("""(s.kind='manager' AND EXISTS (
+            SELECT 1 FROM manager_vault_closures v JOIN central_workday_legs l ON l.workday_id=v.workday_id
+            WHERE l.shift_id=s.id AND v.manager_id=s.user_id AND v.created_at=s.staffing_ended_at))""")
     invalid = conn.execute("SELECT s.id FROM shifts s WHERE s.staffing_ended_at IS NOT NULL "
         "AND (s.status NOT IN ('submitted','closed') OR NOT ("+' OR '.join(proofs)+")) LIMIT 1").fetchone()
     if invalid:

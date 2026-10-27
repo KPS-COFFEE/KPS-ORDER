@@ -314,3 +314,6 @@ app.include_router(order_financial_treatments.router)
 
 from . import collection_tender_corrections
 app.include_router(collection_tender_corrections.router)
+
+from . import cash_bags
+app.include_router(cash_bags.router)

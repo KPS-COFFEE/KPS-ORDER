@@ -135,3 +135,26 @@ def test_returned_manager_original_and_owner_receipt_survive_full_restore(centra
         restore_archive(invalid,target_url=independent_restore_database,target_schema=refused_schema)
     with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
         assert c.execute('SELECT 1 FROM information_schema.schemata WHERE schema_name=%s',(refused_schema,)).fetchone() is None
+
+
+@pytest.mark.postgres
+def test_separate_bag_count_and_vault_end_survive_full_restore(central,independent_restore_database):
+    from test_aggregate_driver_closure import declare_separate_bag
+    _,_,post,_,_=central
+    manager,driver,_,declared=declare_separate_bag(central,'النعيرية')
+    post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True})
+    post('accountant','/api/cash-bags/'+declared['cash_bag']['id']+'/count',{'received_cash_halalas':650,'card_halalas':900,'reference':'Physical independent archive test count','confirmed':True})
+    tables=('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
+    with db.tx() as c:
+        contents,manifest=build_archive(c,full=True)
+        source={t:c.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(t))).fetchall() for t in tables}
+    schema='kps_restore_'+uuid4().hex
+    try:
+        result=restore_archive(contents,target_url=independent_restore_database,target_schema=schema)
+        assert result['verified']
+        with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
+            for t in tables:assert c.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(t))).fetchall()==source[t]
+            assert c.execute('SELECT staffing_ended_at FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['staffing_ended_at']==source['driver_cash_bags'][0]['deposited_at']
+    finally:
+        with psycopg.connect(independent_restore_database,autocommit=True) as c:c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))

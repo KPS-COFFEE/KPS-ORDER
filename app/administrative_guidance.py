@@ -96,3 +96,55 @@ def employee_ticket(ticket):
         next_step=text('تنفيذ الصلاحية أو تصحيح النقد يحتاج إجراءً مستقلًا من المخول؛ اعتماد التذكرة لا ينفذه.', 'Permissions or cash corrections require a separate authorized action; ticket approval does not execute it.'),
         fallback=text('طلب معلومات إضافية يكون عبر متابعة المالك الحالية؛ لا يوجد إرجاع مسند لقسم آخر من هذه التذكرة.', 'Additional information uses the current owner follow-up; this ticket does not implement an assigned cross-department return.'),
         return_supported=False)
+
+
+def named_people(c,order_row,role,permission=None):
+    """Display existing assignment or scoped eligible people; never invent assignment."""
+    from . import auth, multibrand
+    brand=order_row['brand_id'];branch=order_row.get('branch_id')
+    permission=permission or {'accounting':'accounting_review','delivery_manager':'orders_cancel','branch_manager':'orders_cancel','owner':None,'driver':'tasks_update'}.get(role)
+    assigned=set()
+    if role=='customer':
+        row=c.execute('SELECT id,display_name FROM users WHERE id=%s AND active',(order_row.get('customer_id'),)).fetchone()
+        return ([{'id':row['id'],'name':row['display_name'],'assigned':True}] if row else []),bool(row)
+    if role=='driver':
+        assigned={r['driver_id'] for r in c.execute("SELECT driver_id FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','transferred') ORDER BY created_at DESC LIMIT 1",(order_row['id'],)).fetchall()}
+    elif role=='delivery_manager':
+        assigned={r['user_id'] for r in c.execute("SELECT DISTINCT m.user_id FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN shifts m ON m.id=s.manager_shift_id WHERE t.order_id=%s AND t.status NOT IN ('cancelled','transferred')",(order_row['id'],)).fetchall()}
+    candidates=[]
+    for row in c.execute("SELECT * FROM users WHERE active AND role=ANY(%s) ORDER BY display_name,id",(['admin','owner'] if role=='accounting' else [role],)).fetchall():
+        target=multibrand.project(c,row,brand) if multibrand.enabled() else row if row['brand_id']==brand else None
+        if not target or (target['role']!='owner' or target.get('home_brand_id')) and branch not in target.get('branch_ids',[]):continue
+        if permission and not auth.has_permission(target,permission):continue
+        if target['display_name'].strip():candidates.append({'id':target['id'],'name':target['display_name'],'assigned':target['id'] in assigned})
+    if role=='accounting':
+        admins={row['id'] for row in c.execute("SELECT id FROM users WHERE active AND role='admin'").fetchall()}
+        preferred=[p for p in candidates if p['id'] in admins]
+        if preferred:candidates=preferred
+    actual=[p for p in candidates if p['assigned']]
+    return actual or candidates,bool(actual)
+
+
+def with_names(c,order_row,guidance):
+    if not guidance:return guidance
+    cache={}
+    def resolve(role,permission=None):
+        key=(role,permission)
+        if key not in cache:cache[key]=named_people(c,order_row,role,permission)
+        return cache[key]
+    for stage in guidance.get('stages',[]):
+        permission='orders_view' if stage['code']=='order_execution' and stage['responsible_role']!='driver' else 'orders_amend' if stage['code'].startswith('amendment_') and stage['responsible_role']!='customer' else None
+        people,assigned=resolve(stage['responsible_role'],permission)
+        stage['responsible_people']=people
+        stage['assignment_state']='assigned' if assigned else 'eligible_people' if people else 'unassigned'
+        names='، '.join(p['name'] for p in people)
+        prefix=stage['responsible']
+        if names:stage['responsible']=text(prefix['ar']+' — '+names,prefix['en']+' — '+', '.join(p['name'] for p in people))
+        else:stage['responsible']=text(prefix['ar']+' — لم يُحدد شخص مخوّل',prefix['en']+' — no authorized person identified')
+        stage['assignment_note']=text('المسؤول المسند فعليًا' if assigned else 'المخولون ضمن الفرع؛ لم يسجل إسناد لشخص بعينه' if people else 'يلزم تحديد مسؤول مخول لهذه الخطوة','Actually assigned person' if assigned else 'Eligible people in branch scope; no individual assignment recorded' if people else 'An authorized responsible person must be designated')
+        next_role='accounting' if stage['code']=='cancellation_review' else None
+        if next_role:
+            following,_=resolve(next_role)
+            stage['next_responsible']=text('عند الإلغاء مع وجود تحصيل: '+ROLES[next_role]['ar']+' — '+('، '.join(p['name'] for p in following) or 'لم يُحدد شخص مخوّل'),'If cancelled with collected funds: '+ROLES[next_role]['en']+' — '+(', '.join(p['name'] for p in following) or 'no authorized person identified'))
+    guidance['assignment_recorded']=bool(guidance.get('stages')) and all(s['assignment_state']=='assigned' for s in guidance['stages'])
+    return guidance

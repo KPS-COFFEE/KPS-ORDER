@@ -10,8 +10,9 @@ pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
 
 
 @pytest.mark.parametrize('language', ['ar', 'en'])
-def test_saved_photos_cash_and_delivery(sms_browser_app, chromium_browser, monkeypatch, language):
-    # Reuse all original camera, gallery, persisted stage/evidence, collection
+@pytest.mark.parametrize('camera_mode', ['stream', 'denied'])
+def test_saved_photos_cash_and_delivery(sms_browser_app, chromium_browser, monkeypatch, language, camera_mode):
+    # Reuse live camera, native camera recovery, persisted evidence, collection
     # and manager-read assertions. Only replace the obsolete password helper
     # with actual staff SMS request/verify and canonical work-context reads.
     import test_driver_camera_browser as journey
@@ -43,5 +44,5 @@ def test_saved_photos_cash_and_delivery(sms_browser_app, chromium_browser, monke
         ctx.set_extra_http_headers({'X-KPS-Context': 'work'})
         return ctx, page, errors
     monkeypatch.setattr(journey, '_context', context)
-    journey.test_camera_first_gallery_fallback_and_saved_stage_photos(
-        sms_browser_app, chromium_browser, language)
+    journey.test_live_camera_and_recovery_save_real_stage_photos(
+        sms_browser_app, chromium_browser, language, camera_mode)

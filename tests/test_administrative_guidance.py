@@ -104,3 +104,26 @@ def test_expired_amendment_offers_only_supported_exit_before_new_offer():
     g=order(source(),amendments=[{'id':'expired','status':'offered','expires_at':datetime.now(timezone.utc)-timedelta(seconds=1)}],viewer_role='owner')
     assert [s['code'] for s in g['stages']]==['amendment_expired']
     assert g['stages'][0]['responsible_role']=='delivery_manager'
+
+
+@pytest.mark.postgres
+def test_named_cancellation_people_are_scoped_and_do_not_invent_assignment(ops):
+    from app import db
+    from app.administrative_guidance import with_names
+    actor,post,make_order,_=ops
+    oid=make_order()
+    request=post('customer',f'/api/order-requests/orders/{oid}',{'kind':'cancel','note':'Please cancel this delivery'})
+    response=actor('manager').get(f'/api/order-amendments/orders/{oid}')
+    assert response.status_code==200,response.text
+    stage=response.json()['guidance']['stages'][0]
+    assert stage['responsible_people']
+    assert stage['assignment_state']=='eligible_people'
+    assert stage['next_responsible']['ar'].startswith('عند الإلغاء مع وجود تحصيل:')
+    assert all(p['name'] in stage['responsible']['ar'] for p in stage['responsible_people'])
+    with db.tx() as c:
+        o=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        permitted={p['id'] for p in stage['responsible_people']}
+        c.execute('UPDATE users SET active=false WHERE id=ANY(%s)',(list(permitted),))
+        named=with_names(c,o,order(o,requests=[{'id':request['id'],'decision':None}],viewer_role='owner'))
+        assert named['stages'][0]['assignment_state']=='unassigned'
+        assert named['stages'][0]['responsible_people']==[]

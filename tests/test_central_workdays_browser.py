@@ -136,6 +136,8 @@ def test_driver_shared_closure_has_one_cash_card_input_and_accounting_allocation
         for key in CHECKS:form.locator('[name=inspection_'+key+']').select_option('ok')
         form.locator('[name=cash]').fill('0')
         form.locator('[name=card]').fill('0')
+        form.locator('[name=handover_branch_id]').select_option('kps-branch-1')
+        form.locator('[name=bag_reference]').fill('Synthetic separate driver bag')
         page.once('dialog',lambda dialog:dialog.dismiss())
         page.locator('#modal-close').click()
         expect(form).to_be_visible()
@@ -225,3 +227,44 @@ def test_existing_open_shift_is_adopted_without_repeating_vehicle_receipt(centra
         rows=c.execute("SELECT * FROM shifts WHERE user_id='dual-driver'").fetchall()
         assert len(rows)==2
         assert sum('start' in row['vehicle_log'] for row in rows)==1
+
+
+@pytest.mark.parametrize('language',['ar','en'])
+def test_vault_close_and_actual_bag_count_need_no_owner_confirmation(central,central_web,chromium_browser,language):
+    from playwright.sync_api import expect
+    from test_aggregate_driver_closure import declare_separate_bag
+    _,_,post,_,_=central
+    manager,driver,_,declared=declare_separate_bag(central,'النعيرية')
+    ctx,page,errors=staff_page(central,chromium_browser,central_web,'manager',language)
+    try:
+        page.goto(central_web+'/ops')
+        page.locator('#navigation [data-page=shifts]').click()
+        page.locator('[data-action=shift-detail][data-id="'+manager['shift']['id']+'"]').first.click()
+        expect(page.locator('#modal [name=recipient_user_id]')).to_have_count(0)
+        form=page.locator('#modal form')
+        form.locator('[name=confirmed]').check()
+        form.locator('button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        assert not errors,errors
+    finally:ctx.close()
+    ctx,page,errors=staff_page(central,chromium_browser,central_web,'accountant',language)
+    try:
+        page.goto(central_web+'/ops')
+        page.locator('#navigation [data-page=accounting]').click()
+        page.locator('[data-action=cash-bags]').click()
+        page.locator('[data-action=cash-bag-count][data-id="'+declared['cash_bag']['id']+'"]').click()
+        form=page.locator('#modal form')
+        form.locator('[name=cash]').fill('6.50')
+        form.locator('[name=card]').fill('9.00')
+        form.locator('[name=reference]').fill('Synthetic witnessed accounting count')
+        form.locator('[name=confirmed]').check()
+        form.locator('button[type=submit]').click()
+        details=page.locator('[data-action=cash-bag-count][data-id="'+declared['cash_bag']['id']+'"]')
+        expect(details).to_be_visible()
+        details.click()
+        expect(page.locator('#modal-body')).to_contain_text('SYNTHETIC dual-accountant')
+        with db.tx() as c:
+            assert c.execute('SELECT received_cash_halalas FROM driver_cash_bag_counts WHERE bag_id=%s',(declared['cash_bag']['id'],)).fetchone()['received_cash_halalas']==650
+            assert not c.execute('SELECT 1 FROM shared_manager_closure_receipts').fetchone()
+        assert not errors,errors
+    finally:ctx.close()

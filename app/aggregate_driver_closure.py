@@ -24,7 +24,7 @@ def physical_finished(c,sid):
 
 def pending_pool(c,manager_sid):
     if not multibrand.enabled():return []
-    return c.execute("SELECT DISTINCT d.id declaration_id,r.id receipt_id,r.received_halalas,r.received_by,d.workday_id FROM shared_driver_closure_receipts r JOIN shared_driver_closure_declarations d ON d.id=r.declaration_id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE s.manager_shift_id=%s AND a.id IS NULL",(manager_sid,)).fetchall()
+    return c.execute("SELECT DISTINCT d.id declaration_id,r.id receipt_id,r.received_halalas,r.received_by,d.workday_id FROM shared_driver_closure_receipts r JOIN shared_driver_closure_declarations d ON d.id=r.declaration_id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts s ON s.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE s.manager_shift_id=%s AND a.id IS NULL AND NOT EXISTS (SELECT 1 FROM driver_cash_bags b WHERE b.declaration_id=d.id AND b.destination='branch')",(manager_sid,)).fetchall()
 
 
 def accounting(user):
@@ -73,7 +73,7 @@ def view(c,user,day,legs):
     expected=sum(row['expected_halalas'] for row in declaration['expected_snapshot']) if declaration else sum(ops.balance(c,s) for _,s in legs)
     cards=sum(ops.blind_closure.card_reconciliation(c,s['id'],0,(s.get('external_enbishan') or {}).get('card_halalas',0))['expected_card_halalas'] for _,s in legs)
     if declaration:cards=sum(row['expected_card_halalas'] for row in declaration['expected_snapshot'])
-    output={'driver_id':day['user_id'],'driver_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],'shift':{'id':day['anchor_shift_id'],'kind':'driver','user_id':day['user_id'],'status':legs[0][1]['status']},'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'declaration':declaration,'receipt':receipt,'allocation':allocation,'returned':returned,
+    output={'driver_id':day['user_id'],'driver_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],'shift':{'id':day['anchor_shift_id'],'kind':'driver','user_id':day['user_id'],'status':legs[0][1]['status'],'delivery_operational_date':legs[0][1]['delivery_operational_date']},'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'declaration':declaration,'receipt':receipt,'allocation':allocation,'returned':returned,
       'state':'allocated_amount_settled' if allocation and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if allocation and treatment else 'allocated' if allocation else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_receipt' if declaration else 'awaiting_driver',
       'expected_cash_halalas':expected,'expected_card_halalas':cards,
       'receipt_difference_halalas':handover_difference,
@@ -82,6 +82,11 @@ def view(c,user,day,legs):
       'card_difference_halalas':declaration['card_halalas']-sum(x['expected_card_halalas'] for x in declaration['expected_snapshot']) if declaration else None,
       'legs':[{'shift_id':s['id'],'brand_id':s['brand_id'],'expected_cash_halalas':ops.balance(c,s),'permanent_float_halalas':(s.get('permanent_float') or {}).get('amount',0)} for _,s in legs],
       'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),'staffing_finished':all(physical_finished(c,s['id']) for _,s in legs),'staffing_block_reason':'retained_float_attribution' if receipt and not all(physical_finished(c,s['id']) for _,s in legs) else None}
+    from .cash_bags import bag_view
+    output['cash_bag']=bag_view(c,day['id'])
+    output['handover_branches']=c.execute('SELECT id,name,city FROM branches WHERE id=ANY(%s) ORDER BY branch_no', (list({bid for _,shift in legs for bid in shift['branch_ids']}),)).fetchall()
+    if output['cash_bag'] and not receipt:
+        output['state']='awaiting_accounting_receipt' if output['cash_bag']['destination']=='branch' else 'awaiting_manager_receipt'
     if user['role']=='driver':
         for key in ['expected_cash_halalas','expected_card_halalas','cash_difference_halalas','card_difference_halalas','receipt_difference_halalas','receipt_review_required','receipt_treatment','receipt_accounting_review','legs']:output.pop(key,None)
         if declaration:output['declaration']={k:v for k,v in declaration.items() if k not in {'expected_snapshot'}}
@@ -94,6 +99,9 @@ class PhysicalSubmission(ops.OperationBody):
     card_halalas:StrictInt=Field(ge=0,le=ops.MAX_HALALAS)
     vehicle_inspection:ops.shift_vehicle.Inspection|None=None
     reason:str=Field('',max_length=2000)
+    handover_branch_id:str|None=None
+    bag_reference:str=Field(default='',max_length=200)
+    bag_delivered:StrictBool=False
 
 
 class PhysicalReceipt(ops.OperationBody):
@@ -172,6 +180,10 @@ def submit(sid:str,body:PhysicalSubmission,request:Request,user=Depends(auth.cur
             for _,s in legs:
                 # No actual amount is attributed to either brand at submission.
                 c.execute("UPDATE shifts SET status='submitted',submitted_at=now(),submission=%s WHERE id=%s",(db.json({'shared_declaration_id':identifier,'physical_state':'awaiting_receipt','financial_state':'awaiting_allocation'}),s['id']))
+            if body.handover_branch_id:
+                from .cash_bags import create
+                declaration=c.execute('SELECT * FROM shared_driver_closure_declarations WHERE id=%s',(identifier,)).fetchone()
+                create(c,user,day,legs,declaration,body.handover_branch_id,body.bag_reference,body.bag_delivered)
             db.audit(c,user['id'],'shared_driver.declared','central_workday',day['id'],{'declaration_id':identifier,'cash_halalas':body.cash_halalas,'card_halalas':body.card_halalas,'retained_halalas':retained,'reason':body.reason})
             return {'declaration_id':identifier}
         value=db.idempotent(c,user['id'],request.headers.get('Idempotency-Key',''),'shared_driver.declare:'+day['id'],body.model_dump(mode='json'),perform)
@@ -188,6 +200,8 @@ def receive(sid:str,body:PhysicalReceipt,request:Request,user=Depends(auth.curre
             declaration=latest(c,day['id'])
             if not declaration or declaration['id']!=body.declaration_id or c.execute('SELECT 1 FROM shared_driver_closure_returns WHERE declaration_id=%s',(body.declaration_id,)).fetchone():raise db.error(409,'SHARED_DECLARATION_STALE','تغيرت التقفيلة؛ حدّث الشاشة.')
             if c.execute('SELECT 1 FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RECEIPT_EXISTS','الاستلام محفوظ؛ لا تسجله مرة ثانية.')
+            remote_bag=c.execute("SELECT id FROM driver_cash_bags WHERE declaration_id=%s AND destination='branch'",(declaration['id'],)).fetchone()
+            if remote_bag:raise db.error(409,'CASH_BAG_AWAITING_ACCOUNTANT','الكيس في الفرع وينتظر استلام المحاسبة؛ لا يسجل مدير التوصيل استلامًا لم يحدث.')
             if not body.confirmed:raise db.error(422,'SHARED_RECEIPT_CONFIRMATION','أكد فقط النقد الذي استلمته فعليًا؛ يبقى إقرار السائق محفوظًا مستقلاً.')
             if any(row['manager_user_id']!=user['id'] for row in declaration['expected_snapshot']):raise db.error(403,'SHARED_RECEIPT_RECIPIENT','مدير الوردية المسجل وحده يؤكد استلام النقد.')
             if any(s['status']!='submitted' for _,s in legs):raise db.error(409,'SHARED_CLOSURE_STATE','التقفيلة ليست مرسلة.')
@@ -236,6 +250,7 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
         def perform():
             declaration=latest(c,day['id'])
             if not declaration or declaration['id']!=body.declaration_id:raise db.error(409,'SHARED_DECLARATION_STALE','تغيرت التقفيلة.')
+            if c.execute("SELECT 1 FROM driver_cash_bags WHERE declaration_id=%s AND destination='branch'",(declaration['id'],)).fetchone():raise db.error(409,'CASH_BAG_DECLARATION_IMMUTABLE','الكيس مسجل؛ صحح الفروقات بمعالجة محاسبية مرتبطة دون إعادة أصل التقفيلة.')
             if c.execute('SELECT 1 FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RECEIPT_IMMUTABLE','تم الاستلام؛ المعالجة اللاحقة للمحاسبة مع الحفاظ على الأصل.')
             if c.execute('SELECT 1 FROM shared_driver_closure_returns WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RETURN_EXISTS','التقفيلة أُعيدت بالفعل.')
             c.execute('INSERT INTO shared_driver_closure_returns(declaration_id,recorded_by,reason) VALUES(%s,%s,%s)',(declaration['id'],user['id'],body.reason))
@@ -284,8 +299,10 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
             for principal,s in legs:
                 row=supplied[s['id']];source=expected[s['id']]
                 if s['status']!='submitted' or (s.get('submission') or {}).get('shared_declaration_id')!=declaration['id']:raise db.error(409,'SHARED_ALLOCATION_STATE','سجل الوردية لا يطابق أصل التقفيلة.')
+                bag=c.execute('SELECT destination FROM driver_cash_bags WHERE declaration_id=%s',(declaration['id'],)).fetchone()
+                remote=bool(bag and bag['destination']=='branch')
                 manager=ops.lock_shift(c,source['manager_shift_id'])
-                if not manager or manager['status']=='closed' or manager['user_id']!=receipt['received_by']:raise db.error(409,'SHARED_MANAGER_LEDGER_CLOSED','يلزم إسناد النقد قبل الإقفال المالي لسجل مدير الاستلام.')
+                if not remote and (not manager or manager['status']=='closed' or manager['user_id']!=receipt['received_by']):raise db.error(409,'SHARED_MANAGER_LEDGER_CLOSED','يلزم إسناد النقد قبل الإقفال المالي لسجل مدير الاستلام.')
                 if ops.balance(c,s)!=source['expected_halalas']:raise db.error(409,'SHARED_EXPECTED_CHANGED','تغير دفتر النقد بعد التصريح؛ يلزم مراجعة مرتبطة من المحاسبة.')
                 from .driver_incentives import require_decisions
                 require_decisions(c,principal,s)
@@ -293,15 +310,15 @@ def allocate(sid:str,body:Allocation,request:Request,user=Depends(auth.current_u
                 # This is attribution of an already witnessed physical receipt,
                 # recorded by the actual accountant, never another receipt.
                 transfer=ops.uid()
-                c.execute("INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,recipient_user_id,amount_halalas,reference,closure,status,created_by,confirmed_by,confirmed_at) VALUES(%s,%s,%s,%s,%s,%s,true,'confirmed',%s,%s,%s)",(transfer,s['id'],manager['id'],receipt['received_by'],row.received_halalas,'Allocation of shared receipt '+receipt['id'],user['id'],receipt['received_by'],receipt['created_at']))
+                c.execute("INSERT INTO custody_transfers(id,from_shift_id,to_shift_id,recipient_user_id,amount_halalas,reference,closure,status,created_by,confirmed_by,confirmed_at) VALUES(%s,%s,%s,%s,%s,%s,true,'confirmed',%s,%s,%s)",(transfer,s['id'],None if remote else manager['id'],receipt['received_by'],row.received_halalas,'Allocation of shared receipt '+receipt['id'],user['id'],receipt['received_by'],receipt['created_at']))
                 ops.event(c,s['id'],-row.received_halalas,'transfer_out',transfer,user['id'],'Accounting attribution of shared receipt '+receipt['id'])
-                ops.event(c,manager['id'],row.received_halalas,'transfer_in',transfer,user['id'],'Accounting attribution of shared receipt '+receipt['id'])
+                if not remote:ops.event(c,manager['id'],row.received_halalas,'transfer_in',transfer,user['id'],'Accounting attribution of shared receipt '+receipt['id'])
                 # Attribution does not authorize a cash adjustment or erase debt.
                 carry=c.execute('SELECT amount_halalas FROM retained_carryovers WHERE from_shift_id=%s',(s['id'],)).fetchone()
                 if carry and carry['amount_halalas']!=row.retained_halalas:raise db.error(409,'SHARED_FLOAT_ALREADY_CARRIED','العهدة الدائمة نُقلت للشفت التالي؛ لا تغير أصلها.')
                 if row.retained_halalas and not carry:
                     c.execute('INSERT INTO retained_carryovers(id,from_shift_id,user_id,amount_halalas,approved_by,reason) VALUES(%s,%s,%s,%s,%s,%s)',(ops.uid(),s['id'],s['user_id'],row.retained_halalas,user['id'],'Shared receipt allocation '+identifier))
-                c.execute("UPDATE shifts SET status='closed',closed_at=%s,staffing_ended_at=%s,approved_by=%s,exception_reason=%s,submission=%s WHERE id=%s",(receipt['created_at'],receipt['created_at'],user['id'],body.reason,db.json(values),s['id']))
+                c.execute("UPDATE shifts SET status='closed',closed_at=%s,staffing_ended_at=coalesce(staffing_ended_at,%s),approved_by=%s,exception_reason=%s,submission=%s WHERE id=%s",(receipt['created_at'],receipt['created_at'],user['id'],body.reason,db.json(values),s['id']))
                 from .reporting import create_snapshot
                 reports.append(create_snapshot(c,s['id'],user['id']))
             db.audit(c,user['id'],'shared_driver.allocated','central_workday',day['id'],{'allocation_id':identifier,**body.model_dump(),'report_ids':reports})

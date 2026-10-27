@@ -644,3 +644,32 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 /* Owner-approved intervention entry remains red in every navigation state. */
 #navigation button[data-page="recovery"],
 .delivery-room #navigation button[data-page="recovery"]{color:#b42318;font-weight:700}
+
+/* Clear order search groups with consistent field sizes in RTL and LTR. */
+#filters-form.order-filters{grid-template-columns:repeat(12,minmax(0,1fr));gap:14px 16px;padding:20px;margin:0;border-radius:14px;background:var(--surface)}
+.order-filter-heading{grid-column:1/-1;order:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:5px 16px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.order-filter-heading strong{font-size:17px}.order-filter-heading span{font-size:12px;color:var(--muted)}
+#filters-form.order-filters>label{grid-column:span 3;min-width:0;margin:0;font-size:12px;gap:7px}
+#filters-form.order-filters input,#filters-form.order-filters select{height:46px;min-height:46px;font-size:14px;border-radius:9px;min-width:0;max-width:100%;background:var(--surface)}
+.order-filters>label:has([name=period]){order:1}.order-filters>label:has([name=branch_id]){order:2}.order-filters>label:has([name=service]){order:3}.order-filters>label:has([name=status]){order:4}
+.order-filters>label:has([name=start]){order:5}.order-filters>label:has([name=end]){order:6}.order-filters>label:has([name=driver_id]){order:7}.order-filters>label:has([name=sort]){order:8}
+#filters-form.order-filters>label:has([name=search]),#filters-form.order-filters>label:has([name=phone]),#filters-form.order-filters>label:has([name=neighborhood]){grid-column:span 4}
+.order-filters>label:has([name=search]){order:9}.order-filters>label:has([name=phone]){order:10}.order-filters>label:has([name=neighborhood]){order:11}
+.order-filter-footer{grid-column:1/-1;order:12;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--line)}
+.order-filter-footer button{min-width:180px;height:46px}.order-filter-footer small{font-size:12px;color:var(--muted)}
+.order-summary-list{gap:12px}.order-summary-card{padding:16px;gap:12px;border-radius:13px}
+.order-summary-head{gap:8px 14px;padding-bottom:10px}.order-summary-head .order-reference{font-size:14px;font-weight:700;direction:ltr;unicode-bidi:isolate}
+.order-summary-fields{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.order-summary-fields>div{padding:10px 12px;border:1px solid var(--line);background:var(--bg)}
+.order-summary-fields dt{font-size:12px;margin-bottom:4px}.order-summary-fields dd{font-size:15px;line-height:1.65}
+.order-summary-fields>div:last-child{background:var(--accent-light);border-color:var(--accent-light)}
+.order-summary-fields>div:last-child dd{font-size:18px;font-variant-numeric:tabular-nums}
+.order-summary-status{padding-top:10px;gap:7px}.order-summary-actions{margin:0}
+@media(max-width:1050px){#filters-form.order-filters>label{grid-column:span 6}#filters-form.order-filters>label:has([name=search]),#filters-form.order-filters>label:has([name=phone]),#filters-form.order-filters>label:has([name=neighborhood]){grid-column:span 6}}
+@media(max-width:650px){#filters-form.order-filters{padding:14px;gap:12px}.order-filter-heading{align-items:flex-start;flex-direction:column}.order-filter-heading strong{font-size:16px}.order-filter-footer{gap:8px}.order-filter-footer button{width:100%}.order-filter-footer small{width:100%;text-align:center}.order-summary-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.order-summary-card{padding:13px}.order-summary-head time{flex-basis:100%;margin-inline-start:0}.order-summary-actions button{width:100%}}
+@media(max-width:340px){#filters-form.order-filters>label,#filters-form.order-filters>label:has([name=search]),#filters-form.order-filters>label:has([name=phone]),#filters-form.order-filters>label:has([name=neighborhood]){grid-column:1/-1}.order-summary-fields{grid-template-columns:minmax(0,1fr)}}
+
+@media(min-width:341px) and (max-width:650px){#filters-form.order-filters>label:has([name=search]),#filters-form.order-filters>label:has([name=phone]),#filters-form.order-filters>label:has([name=neighborhood]){grid-column:1/-1}}
+
+#filters-form.order-filters input,#filters-form.order-filters select{font-weight:400}
+@media(max-width:650px){#filters-form.order-filters input,#filters-form.order-filters select{font-size:13px}}

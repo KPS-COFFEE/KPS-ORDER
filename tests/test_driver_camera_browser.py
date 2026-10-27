@@ -1,4 +1,4 @@
-"""Native-picker intent and real persisted evidence; no physical-device camera claim."""
+"""Live camera capture and failure recovery with persisted stage evidence."""
 import os
 import pytest
 from app import db
@@ -11,7 +11,8 @@ pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
 
 
 @pytest.mark.parametrize('language', ['ar', 'en'])
-def test_camera_first_gallery_fallback_and_saved_stage_photos(live_app, chromium_browser, language):
+@pytest.mark.parametrize('camera_mode', ['stream', 'denied'])
+def test_live_camera_and_recovery_save_real_stage_photos(live_app, chromium_browser, language, camera_mode):
     from playwright.sync_api import expect
     users, branch, order = _role_fixture()
     contexts = []
@@ -21,6 +22,21 @@ def test_camera_first_gallery_fallback_and_saved_stage_photos(live_app, chromium
         driver_context, driver, errors = _context(chromium_browser, live_app)
         contexts.append(driver_context)
         driver.add_init_script(f"localStorage.setItem('kps_ops_lang', '{language}')")
+        driver.add_init_script("""(() => {
+          window.__cameraStopped=0;
+          navigator.mediaDevices.getUserMedia=async () => {
+            CAMERA_FAILURE
+            const canvas=document.createElement('canvas');canvas.width=320;canvas.height=240;
+            const context=canvas.getContext('2d');context.fillStyle='green';context.fillRect(0,0,320,240);
+            const stream=canvas.captureStream(10);
+            const timer=setInterval(()=>context.fillRect(0,0,320,240),100);
+            for(const track of stream.getTracks()){
+              const stop=track.stop.bind(track);
+              track.stop=()=>{window.__cameraStopped++;clearInterval(timer);stop();};
+            }
+            return stream;
+          };
+        })();""".replace('CAMERA_FAILURE', "throw new DOMException('Denied for test','NotAllowedError');" if camera_mode=='denied' else ''))
         _staff_ui_login(manager, users['manager'])
         _staff_ui_login(driver, users['driver'])
         manager_shift = _authenticated_post(manager_context, live_app, '/api/shifts',
@@ -36,20 +52,22 @@ def test_camera_first_gallery_fallback_and_saved_stage_photos(live_app, chromium
         driver.locator('#navigation [data-page=tasks]').click()
         for stage, action in [('picked_up', '[data-action=task-transition][data-status=picked_up]'),
                               ('delivered', '[data-action=delivered]')]:
-            # Desktop Chromium exercises the actual native file-chooser fallback.
-            with driver.expect_file_chooser() as initial:
-                driver.locator(action).click()
-            assert initial.value.element.get_attribute('capture') == 'environment'
-            expect(driver.locator('#task-photo-gallery')).to_be_visible()
-            # Cancelling the first chooser leaves gallery and camera usable.
-            with driver.expect_file_chooser() as gallery:
-                driver.locator('#task-photo-gallery').click()
-            assert gallery.value.element.get_attribute('capture') is None
-            if stage == 'delivered':
+            driver.locator(action).click()
+            expect(driver.locator('#task-photo-gallery')).to_have_count(0)
+            if camera_mode == 'stream':
+                expect(driver.locator('#task-camera-live')).to_be_visible()
+                expect(driver.locator('#task-photo-shutter')).to_be_enabled()
+                expect(driver.locator('#task-native-camera')).to_be_hidden()
+                driver.locator('#task-photo-shutter').click()
+            else:
+                expect(driver.locator('#task-native-camera')).to_be_visible()
+                expect(driver.locator('#task-photo-shutter')).to_be_disabled()
+                with db.tx() as conn:
+                    assert not conn.execute('SELECT 1 FROM delivery_photos WHERE order_id=%s AND stage=%s',(order,stage)).fetchone()
                 with driver.expect_file_chooser() as camera:
-                    driver.locator('#task-photo-camera').click()
+                    driver.locator('#task-native-camera').click()
                 assert camera.value.element.get_attribute('capture') == 'environment'
-            _attach_task_photo(driver)
+                _attach_task_photo(driver)
             preview = driver.locator('#task-photo-preview')
             expect(preview).to_be_visible()
             expect(preview).to_have_js_property('complete', True)
@@ -68,6 +86,8 @@ def test_camera_first_gallery_fallback_and_saved_stage_photos(live_app, chromium
             response = manager_context.request.get(live_app + '/api/delivery-photos/' + photo['id'])
             assert response.status == 200 and response.headers['content-type'].startswith('image/')
             assert len(response.body()) > 0
+        if camera_mode == 'stream':
+            assert driver.evaluate('window.__cameraStopped') >= 2
         assert errors == []
     finally:
         for context in contexts:

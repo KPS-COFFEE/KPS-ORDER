@@ -50,6 +50,7 @@ def latest(c,day_id):return c.execute('SELECT * FROM shared_manager_closure_decl
 
 
 def view(c,user,day,legs):
+    vault=c.execute('SELECT * FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone()
     dec=latest(c,day['id'])
     receipt=c.execute('SELECT * FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     returned=c.execute('SELECT * FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
@@ -59,9 +60,9 @@ def view(c,user,day,legs):
     review=allocated_review(c,day['id']) if alloc else None
     treatment=shared_approved(c,day['id'],dec['id'],receipt['id']) if dec and receipt else None
     return ops.safe({'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'manager_id':day['user_id'],'manager_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],
-      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':legs[0][1]['status']},'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),
+      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':'closed' if vault else legs[0][1]['status']},'vault_closure':vault,'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),
       'receipt_difference_halalas':handover_difference,'receipt_review_required':bool(handover_difference and not treatment),'receipt_treatment':treatment,'receipt_accounting_review':review,
-      'state':'allocated_amount_settled' if alloc and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if alloc and treatment else 'allocated' if alloc else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_owner_receipt' if dec else 'awaiting_manager',
+      'state':'awaiting_accounting_bag_counts' if vault else 'allocated_amount_settled' if alloc and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if alloc and treatment else 'allocated' if alloc else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_owner_receipt' if dec else 'awaiting_manager',
       'legs':[{'shift_id':s['id'],'brand_id':s['brand_id'],'current_ledger_cash_halalas':ops.balance(c,s)} for _,s in legs]})
 
 
@@ -119,7 +120,7 @@ def submit(sid:str,body:Declaration,request:Request,user=Depends(auth.current_us
             operational_ready(c,legs)
             snapshot=[]
             for _,s in legs:
-                pending=c.execute("SELECT DISTINCT d.id declaration_id FROM shared_driver_closure_declarations d JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts child ON child.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE child.manager_shift_id=%s AND a.id IS NULL",(s['id'],)).fetchall()
+                pending=c.execute("SELECT DISTINCT d.id declaration_id FROM shared_driver_closure_declarations d JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id JOIN central_workday_legs l ON l.workday_id=d.workday_id JOIN shifts child ON child.id=l.shift_id LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id WHERE child.manager_shift_id=%s AND a.id IS NULL AND NOT EXISTS (SELECT 1 FROM driver_cash_bags b WHERE b.declaration_id=d.id AND b.destination='branch')",(s['id'],)).fetchall()
                 snapshot.append({'shift_id':s['id'],'brand_id':s['brand_id'],'ledger_cash_at_declaration':ops.balance(c,s),'pending_child_declaration_ids':[x['declaration_id'] for x in pending]})
             identifier=ops.uid()
             c.execute('INSERT INTO shared_manager_closure_declarations(id,workday_id,revision,cash_halalas,expected_snapshot,recorded_by,recipient_user_id,reference) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(identifier,day['id'],previous['revision']+1 if previous else 1,body.cash_halalas,db.json(snapshot),user['id'],body.recipient_user_id,body.reference))
@@ -136,6 +137,7 @@ def receive(sid:str,body:Receipt,request:Request,user=Depends(auth.current_user)
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
+            if c.execute('SELECT 1 FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone():raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
             dec=latest(c,day['id'])
             if not dec or dec['id']!=body.declaration_id:raise db.error(409,'SHARED_MANAGER_DECLARATION_STALE','تغير أصل التقفيلة.')
             if c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_DECLARATION_RETURNED','أُعيدت التقفيلة؛ انتظر إعادة إرسال مدير التوصيل للأصل المصحح.')
@@ -159,6 +161,7 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
+            if c.execute('SELECT 1 FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone():raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
             dec=latest(c,day['id'])
             if not dec or dec['id']!=body.declaration_id:raise db.error(409,'SHARED_MANAGER_DECLARATION_STALE','تغير أصل التقفيلة.')
             if user['id'] not in {dec['recipient_user_id'],day['user_id']}:raise db.error(403,'SHARED_MANAGER_ACTUAL_RECIPIENT','الإرجاع لمدير الوردية أو المالك المستلم المسجل.')
