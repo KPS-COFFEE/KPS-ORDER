@@ -121,7 +121,7 @@ def ticket_events(c,user,identifier,lock=False):
     return created,changes
 
 
-def render_ticket(created,changes):
+def render_ticket(created,changes,*,c=None):
     d=created['details'];last=changes[-1]['details'] if changes else dict(status='open',version=1)
     result=safe(dict(id=created['entity_id'],reference=d['reference'],type=d['type'],issue=d['issue'],reason=d['reason'],
         description=d['description'],type_label=d['type_label'],issue_label=d['issue_label'],reason_label=d['reason_label'],requested_by=created['actor_id'],requester_name=created['actor_name'],
@@ -129,7 +129,13 @@ def render_ticket(created,changes):
     from .administrative_guidance import employee_ticket
     from .employee_ticket_workflow import enabled
     if enabled():result['source']=d.get('source')
-    return dict(result,guidance=employee_ticket(result))
+    guidance=employee_ticket(result)
+    if c is not None:
+        from .administrative_guidance import named_people,text
+        people,_=named_people(c,dict(id=created['entity_id'],brand_id=d['brand_id'],branch_id=(d.get('branch_ids') or [None])[0]),'owner')
+        names='، '.join(p['name'] for p in people)
+        guidance['responsible']=text('المالك — '+(names or 'لم يُحدد شخص مخوّل'),'Owner — '+(', '.join(p['name'] for p in people) or 'no authorized person identified'))
+    return dict(result,guidance=guidance)
 
 
 @router.post('')
@@ -154,7 +160,7 @@ def create_ticket(body:TicketBody,request:Request,user=Depends(staff)):
                      issue_label={k:issue[k] for k in ('ar','en')},reason_label={k:reason[k] for k in ('ar','en')},**({'branch_ids':linked['branch_ids'] if linked else user.get('branch_ids',[]),'source':linked} if enabled() else {}),**payload))
             created,changes=ticket_events(c,user,identifier)
             if enabled():initial(c,created,user)
-            return render_ticket(created,changes)
+            return render_ticket(created,changes,c=c)
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'employee.ticket.create:'+user['brand_id'],payload,perform)
 
 
@@ -169,7 +175,7 @@ def list_tickets(user=Depends(staff)):
         result=[]
         from fastapi import HTTPException
         for ticket in created:
-            try:result.append(render_ticket(*ticket_events(c,user,ticket['entity_id'])))
+            try:result.append(render_ticket(*ticket_events(c,user,ticket['entity_id']),c=c))
             except HTTPException as exc:
                 if exc.status_code!=404:raise
         return {'tickets':result}
@@ -182,7 +188,7 @@ def detail(identifier:str,user=Depends(staff)):
         history=[dict(status='open',note=created['details']['description'],actor_name=created['actor_name'],created_at=created['created_at'],version=1)]
         history.extend(dict(status=e['details']['status'],note=e['details']['note'],actor_name=e['actor_name'],created_at=e['created_at'],version=e['details']['version']) for e in changes)
         from .employee_ticket_workflow import enabled,presentation
-        return safe(dict(ticket=render_ticket(created,changes),history=history,**({'workflow':presentation(c,created,user)} if enabled() else {})))
+        return safe(dict(ticket=render_ticket(created,changes,c=c),history=history,**({'workflow':presentation(c,created,user)} if enabled() else {})))
 
 
 @router.post('/{identifier}/review')
@@ -191,12 +197,12 @@ def review_ticket(identifier:str,body:TicketReview,request:Request,user=Depends(
     with db.tx() as c:
         created,changes=ticket_events(c,user,identifier,True)
         def perform():
-            current=render_ticket(created,changes)
+            current=render_ticket(created,changes,c=c)
             if body.expected_version!=current['version']:fail('TICKET_CHANGED','توجد متابعة أحدث؛ حدّث التذكرة.',409)
             db.audit(c,user['id'],REVIEWED,'employee_ticket',identifier,
                 dict(brand_id=user['brand_id'],version=current['version']+1,status=body.status,note=body.note,
                      previous_status=current['status'],review_only=True,no_permission_grant=True,no_cash_movement=True))
-            return render_ticket(*ticket_events(c,user,identifier))
+            return render_ticket(*ticket_events(c,user,identifier),c=c)
         return db.idempotent(c,user['id'],request.headers.get('Idempotency-Key'),'employee.ticket.review:'+identifier,body.model_dump(),perform)
 
 

@@ -397,10 +397,10 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
                 entry=classify(source)
                 if entry['state']=='pending_review':
                     followups.append({'type':'driver_incentive_review','status':'review_required','responsible_role':'delivery_manager','shift_id':entry['shift_id'],'task_id':entry['task_id'],'order_id':oid,'review_url':'/api/driver-incentives/shifts/'+entry['shift_id']})
-        from .administrative_guidance import order as order_guidance
+        from .administrative_guidance import order as order_guidance, with_names
         from .order_requests import rows as request_rows
         pending_case=case(c,oid) if user['role']!='driver' else None
-        guidance=order_guidance(o,financial_case=pending_case,requests=request_rows(c,oid),amendments=c.execute('SELECT id,status,expires_at FROM order_amendments WHERE order_id=%s ORDER BY created_at DESC',(oid,)).fetchall(),viewer_role=user['role'],events=events) if user['role']!='driver' else None
+        guidance=with_names(c,o,order_guidance(o,financial_case=pending_case,requests=request_rows(c,oid),amendments=c.execute('SELECT id,status,expires_at FROM order_amendments WHERE order_id=%s ORDER BY created_at DESC',(oid,)).fetchall(),viewer_role=user['role'],events=events)) if user['role']!='driver' else None
         return {'guidance':guidance,'free_items':[] if user['role']=='driver' else free_items(c,o),'operational_followups':followups,'online_collections':online_collections,'online_refunds':online_refunds,'collections':collections,'refunds':refunds,'order_id':oid,'order_no':o['order_no'],'preparation_status':o['preparation_status'],'delivery_status':o['delivery_status'],
                 'payment_status':o['payment_status'],'version':o['version'],'tasks':tasks,'timeline':events,
                 'financial_case':pending_case}

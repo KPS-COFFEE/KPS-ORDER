@@ -107,14 +107,14 @@ def bundle(c,user,order_query=None,report_ids=()):
     from .order_financial_cases import case
     from .order_financial_treatments import state as source_financial_state
     from .financial_clarifications import present
-    from .administrative_guidance import order as guidance
+    from .administrative_guidance import order as guidance, with_names
     order_results=[]
     for order in orders:
         financial_case=case(c,order['id'])
         source_state=source_financial_state(c,order,financial_case['id'] if financial_case else None,review_resolved=bool(financial_case and financial_case['status']=='resolved'))
         order_results.append({k:order.get(k) for k in ('id','order_no','brand_id','branch_id','service','preparation_status','delivery_status','payment_status','subtotal_halalas','delivery_fee_halalas','total_halalas','created_at','completed_at','version')}
             |dict(reference=order['snapshot'].get('order_reference'),items=order['snapshot'].get('items',[]),financial_case=financial_case,source_financial_state=source_state,
-                guidance=guidance(order,financial_case=financial_case,viewer_role='owner')))
+                guidance=with_names(c,order,guidance(order,financial_case=financial_case,viewer_role='owner'))))
     clarifications=rows(c,'SELECT * FROM financial_case_clarifications WHERE order_id=ANY(%s) ORDER BY created_at,id',(list(order_ids),))
     # Full canonical records are shown once even when parent/child reports overlap.
     from .manual_bank_matching import enabled as bank_matching_enabled

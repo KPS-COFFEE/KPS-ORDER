@@ -50,6 +50,7 @@ def latest(c,day_id):return c.execute('SELECT * FROM shared_manager_closure_decl
 
 
 def view(c,user,day,legs):
+    vault=c.execute('SELECT * FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone()
     dec=latest(c,day['id'])
     receipt=c.execute('SELECT * FROM shared_manager_closure_receipts WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
     returned=c.execute('SELECT * FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone() if dec else None
@@ -59,9 +60,9 @@ def view(c,user,day,legs):
     review=allocated_review(c,day['id']) if alloc else None
     treatment=shared_approved(c,day['id'],dec['id'],receipt['id']) if dec and receipt else None
     return ops.safe({'anchor_shift_id':day['anchor_shift_id'],'workday_id':day['id'],'manager_id':day['user_id'],'manager_name':c.execute('SELECT display_name FROM users WHERE id=%s',(day['user_id'],)).fetchone()['display_name'],
-      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':legs[0][1]['status']},'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),
+      'shift':{'id':day['anchor_shift_id'],'kind':'manager','user_id':day['user_id'],'status':'closed' if vault else legs[0][1]['status']},'vault_closure':vault,'declaration':dec,'receipt':receipt,'allocation':alloc,'returned':returned,'can_allocate':accounting(user) and user['id']!=day['user_id'] and (not receipt or user['id']!=receipt['received_by']),
       'receipt_difference_halalas':handover_difference,'receipt_review_required':bool(handover_difference and not treatment),'receipt_treatment':treatment,'receipt_accounting_review':review,
-      'state':'allocated_amount_settled' if alloc and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if alloc and treatment else 'allocated' if alloc else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_owner_receipt' if dec else 'awaiting_manager',
+      'state':'awaiting_accounting_bag_counts' if vault else 'allocated_amount_settled' if alloc and treatment and review and review['financially_complete'] else 'allocated_with_outstanding' if alloc and treatment else 'allocated' if alloc else 'review_approved_outstanding' if treatment else 'receipt_difference_review' if handover_difference else 'awaiting_accounting' if receipt else 'returned' if returned else 'awaiting_owner_receipt' if dec else 'awaiting_manager',
       'legs':[{'shift_id':s['id'],'brand_id':s['brand_id'],'current_ledger_cash_halalas':ops.balance(c,s)} for _,s in legs]})
 
 

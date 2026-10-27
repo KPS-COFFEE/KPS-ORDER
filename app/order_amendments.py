@@ -124,9 +124,9 @@ def summary(c, o, u):
     claim = effective_claim(c, o)
     effective = effective_total(c, o)
     requests=request_rows(c,o['id'])
-    from .administrative_guidance import order as order_guidance
+    from .administrative_guidance import order as order_guidance, with_names
     from .order_financial_cases import case
-    guidance=order_guidance(o,financial_case=case(c,o['id']),requests=requests,amendments=amendments,viewer_role=u['role']) if u['role'] not in ('driver','customer') else None
+    guidance=with_names(c,o,order_guidance(o,financial_case=case(c,o['id']),requests=requests,amendments=amendments,viewer_role=u['role'])) if u['role'] not in ('driver','customer') else None
     return {'version':o['version'],'guidance':guidance,'requests': requests, 'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
             'active_id': next((a['id'] for a in amendments if a['status'] in ACTIVE), None), 'revision': o.get('amendment_revision', 0),
             'original_total_halalas': o['total_halalas'], 'effective_total_halalas': effective,
