@@ -26,7 +26,7 @@ from .service_hours import closed_delivery_message, hours_status
 
 router = APIRouter(prefix='/api')
 RIYADH = ZoneInfo('Asia/Riyadh')
-DELIVERY_CITIES = {'حفر الباطن', 'الذيبية', 'القيصومة', 'الخفجي', 'رفحاء', 'قبه'}
+DELIVERY_CITIES = {'حفر الباطن', 'الذيبية', 'القيصومة', 'الخفجي', 'رفحاء', 'قبه', 'النعيرية'}
 
 
 # This owner decision applies once to the exact imported menu, never future edits.
