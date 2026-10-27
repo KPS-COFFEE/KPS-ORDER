@@ -25,7 +25,7 @@ def wall():
           window.hidden=false;window.online=true;
           Object.defineProperty(document,'hidden',{get:()=>window.hidden,configurable:true});
           Object.defineProperty(navigator,'onLine',{get:()=>window.online,configurable:true});
-          window.requests=[];window.extraDriver=false;window.secondStale=false;window.etaFailure=0;window.providerUnavailable=false;window.driverStale=false;window.captureOld=false;window.holdEta=false;window.pending=[];window.etaInFlight=0;window.maxEtaInFlight=0;
+          window.requests=[];window.orderChanged=false;window.failOrders=false;window.extraDriver=false;window.secondStale=false;window.etaFailure=0;window.providerUnavailable=false;window.driverStale=false;window.captureOld=false;window.holdEta=false;window.pending=[];window.etaInFlight=0;window.maxEtaInFlight=0;
           window.KPSDispatchMap={mount:async()=>({update(){},destroy(){},fit(){},resize(){}})};
           const iso=ms=>new Date(ms).toISOString();
           window.api=async(path,options={})=>{
@@ -39,6 +39,8 @@ def wall():
               return {status:'ready',driver_id:'d1',calculated_at:iso(clock),location_updated_at:iso(clock),refresh_after_seconds:60,next_stop:{arrival_at:iso(clock+240000)},delivery_complete_at:iso(clock+900000),return_at:iso(clock+1380000),stops:[{id:'s1',kind:'dropoff',brand_id:'kps',order_id:'o1',order_no:'K-1',customer_name:'Ahmed',arrival_at:iso(clock+240000)}]};
             }
             if(path.includes('driver-locations'))return {drivers:[{id:'d1',display_name:'Driver One',branch_ids:['b1'],movement_state:'delivering',updated_at:iso(clock),captured_at:iso(clock-(driverStale||captureOld?300000:0)),stale:driverStale},...(extraDriver?[{id:'d2',display_name:'Driver Two',branch_ids:['b2'],movement_state:'delivering',updated_at:iso(clock),stale:secondStale}]:[])]};
+            if(path.startsWith('/api/orders?')&&failOrders)throw new Error('Order refresh failed');
+            if(path.startsWith('/api/orders?')&&orderChanged)return {orders:[{id:'o2',brand_id:'kps',order_no:'K-2',customer_name:'Different customer',driver_id:'d1',created_at:iso(clock),delivery_status:'picked_up'}],next_offset:null,workspace_counts:{current:{total:1,road:1}}};
             if(path.startsWith('/api/orders?'))return {orders:[{id:'o1',brand_id:'kps',order_no:'K-1',customer_name:'Ahmed',driver_id:'d1',created_at:iso(clock-1000),delivery_status:'picked_up'}],next_offset:null,workspace_counts:{current:{total:1,road:1}}};
             throw new Error('Unexpected API: '+path);
           };
@@ -188,3 +190,15 @@ def test_wall_serial_queue_rechecks_latest_location_before_next_driver(wall):
     assert eta_count(wall) == initial
     assert 'Ahmed' not in wall.locator('.tracking-driver-eta').first.inner_text()
     assert wall.evaluate('maxEtaInFlight') == 1
+
+
+@pytest.mark.parametrize('refresh_event', ['orderChanged', 'failOrders'])
+def test_wall_old_eta_cannot_restore_after_same_city_refresh_invalidates_itinerary(wall, refresh_event):
+    wall.wait_for_function("document.querySelector('.tracking-driver-eta').textContent.includes('Ahmed')")
+    wall.evaluate('window.holdEta=true;tick(61000)')
+    wall.wait_for_function('pending.length===1')
+    wall.evaluate(f'window.{refresh_event}=true;tick(15000)')
+    wall.evaluate('window.holdEta=false;pending.splice(0).forEach(fn=>fn())')
+    wall.wait_for_function('etaInFlight===0')
+    assert 'Ahmed' not in wall.locator('.tracking-driver-eta').inner_text()
+    assert 'K-1' not in wall.locator('.tracking-driver-eta').inner_text()
