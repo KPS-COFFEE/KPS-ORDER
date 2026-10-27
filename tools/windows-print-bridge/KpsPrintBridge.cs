@@ -16,7 +16,7 @@ using System.Windows.Forms;
 
 class KpsPrintBridge {
     const string DefaultOrigin = "https://order.kps.sa";
-    const string BridgeVersion = "20261027.1";
+    const string BridgeVersion = "20261028.1";
     static string Origin = DefaultOrigin;
     static bool RePair;
     static string SecureOrigin(string value) {
@@ -168,7 +168,8 @@ class KpsPrintBridge {
         using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
             key.SetValue("KPS Print Bridge", "\""+System.Reflection.Assembly.GetExecutingAssembly().Location+"\"");
         }
-        Console.WriteLine("Receipt layout: PAPER-FIT-20261012 / SALES-QR-V1 (full printable width QR).");
+        Console.WriteLine("Bridge version: "+BridgeVersion);
+        Console.WriteLine("Receipt layout: ENB-SAFE-64-44 / compact QR; printer settings retained.");
         Console.WriteLine("Registered printers: "+Registrations.Count+". Keep this window open. Ctrl+C stops the bridge.");
     }
     static List<Dictionary<string,object>> Lines(Dictionary<string,object> payload) {
@@ -217,6 +218,17 @@ class KpsPrintBridge {
         if(physical.Width<=16 || physical.Height<=16)throw new Exception("Printer reports an invalid printable area.");
         return new RectangleF(physical.Left-hardX+8,physical.Top-hardY+8,physical.Width-16,physical.Height-16);
     }
+    static RectangleF ReceiptBounds(RectangleF page,RectangleF printable,float hardX,float hardY,bool enbishan,int paperWidth) {
+        var bounds=ContentBounds(page,printable,hardX,hardY);
+        if(enbishan) {
+            // Some thermal drivers advertise the full roll while clipping its
+            // right edge. Keep the existing left origin and cap content, rather
+            // than translating the whole receipt or changing the printer.
+            bounds.X+=4;
+            bounds.Width=Math.Min(bounds.Width-8,(paperWidth==228?44f:64f)*100f/25.4f);
+        }
+        return bounds;
+    }
     static StringFormat LineFormat(bool ar,bool center) {
         var format=new StringFormat();
         if(ar)format.FormatFlags=StringFormatFlags.DirectionRightToLeft;
@@ -260,7 +272,7 @@ class KpsPrintBridge {
             float side=QrSize(line,box.Width);
             float left=box.Left+(box.Width-side)/2;
             float cell=side/count;
-            graphics.FillRectangle(Brushes.White,box.Left,box.Top,box.Width,box.Width);
+            graphics.FillRectangle(Brushes.White,box.Left,box.Top,box.Width,side);
             for(int y=0;y<count;y++) {
                 string row=Convert.ToString(matrix[y]);
                 if(row.Length!=count)throw new Exception("Invalid QR row");
@@ -307,10 +319,9 @@ class KpsPrintBridge {
             document.DefaultPageSettings.Margins=new Margins(8,8,8,8);
             document.DefaultPageSettings.PaperSize=new PaperSize("KPS thermal roll",width,1169);
             var settings=document.DefaultPageSettings;
-            var measured=ContentBounds(new RectangleF(0,0,width,1169),settings.PrintableArea,settings.HardMarginX,settings.HardMarginY);
+            var measured=ReceiptBounds(new RectangleF(0,0,width,1169),settings.PrintableArea,settings.HardMarginX,settings.HardMarginY,enbishan,width);
             // Use the driver's printable width (e.g. 72.1mm on an 80mm roll),
             // and the same RTL measurement used for drawing.
-            if(enbishan)measured.Inflate(-4,0);
             float height=88+(logoSize-60)+settings.HardMarginY;
             using(var graphics=document.PrinterSettings.CreateMeasurementGraphics(settings)) {
                 foreach(var line in lines)height+=LineHeight(graphics,line,LineFont(line,regular,bold,caption,heading,occasion),measured.Width,ar);
@@ -318,8 +329,7 @@ class KpsPrintBridge {
             settings.PaperSize=new PaperSize("KPS thermal roll",width,(int)Math.Min(30000,Math.Ceiling(height)));
             int index=0;bool first=true;
             document.PrintPage+=(sender,e)=> {
-                var bounds=ContentBounds(e.PageBounds,e.PageSettings.PrintableArea,e.PageSettings.HardMarginX,e.PageSettings.HardMarginY);
-                if(enbishan)bounds.Inflate(-4,0);
+                var bounds=ReceiptBounds(e.PageBounds,e.PageSettings.PrintableArea,e.PageSettings.HardMarginX,e.PageSettings.HardMarginY,enbishan,width);
                 float left=bounds.Left,top=bounds.Top,available=bounds.Width;
                 while(index<lines.Count) {
                     if(first && Str(lines[index],"role")!="occasion") {
@@ -359,6 +369,33 @@ class KpsPrintBridge {
             if(!unknownBrandRejected)return 15;
             using(var logo=(Bitmap)Logo(new Dictionary<string,object>{{"brand_id","enbishan"}})) {
                 if(logo.GetPixel(0,0).R!=255 || logo.GetPixel(400,500).R!=0)return 16;
+            }
+            var broad=ReceiptBounds(new RectangleF(0,0,315,800),new RectangleF(0,0,315,800),0,0,true,315);
+            if(broad.Right>265 || broad.Width>252)return 43;
+            var smallSafe=ReceiptBounds(new RectangleF(0,0,228,800),new RectangleF(0,0,228,800),0,0,true,228);
+            if(smallSafe.Width>174)return 44;
+            var unchanged=ReceiptBounds(new RectangleF(0,0,315,800),new RectangleF(12,5,284,790),12,5,false,315);
+            if(unchanged!=area)return 45;
+            using(var expected=new Bitmap(315,400))using(var physical=new Bitmap(315,400))
+            using(var full=Graphics.FromImage(expected))using(var clipped=Graphics.FromImage(physical))
+            using(var font=new Font("Arial",12,FontStyle.Bold)) {
+                expected.SetResolution(100,100);physical.SetResolution(100,100);
+                full.Clear(Color.White);clipped.Clear(Color.White);
+                clipped.SetClip(new RectangleF(0,0,270,400));
+                string[] labels={"Total","Payment","Collection"},values={"49.50 SAR","Cash","Unpaid"};
+                float top=0;
+                for(int n=0;n<values.Length;n++) {
+                    var row=new Dictionary<string,object>{{"role","row"},{"label",labels[n]},{"value",values[n]}};
+                    float h=LineHeight(full,row,font,broad.Width,false);
+                    var box=new RectangleF(broad.Left,top,broad.Width,h);
+                    DrawLine(full,row,font,box,false);DrawLine(clipped,row,font,box,false);top+=h;
+                }
+                bool hasInk=false;
+                for(int y=0;y<400;y++)for(int x=0;x<315;x++) {
+                    if(expected.GetPixel(x,y).R<128)hasInk=true;
+                    if(expected.GetPixel(x,y)!=physical.GetPixel(x,y))return 46;
+                }
+                if(!hasInk)return 47;
             }
             var matrix=new ArrayList();
             for(int y=0;y<29;y++)matrix.Add(y==14?new string('0',14)+"1"+new string('0',14):new string('0',29));
