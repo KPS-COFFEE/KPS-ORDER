@@ -181,6 +181,8 @@ def apply_default_delivery_hours(conn):
     for branch in rows:
         if catalog.normalize_city(branch['city']) not in catalog.DELIVERY_CITIES:
             continue
+        if catalog.normalize_city(branch['city']) == 'النعيرية' and branch['settings'].get('delivery_enabled') is not True:
+            continue
         decision = conn.execute('INSERT INTO delivery_hours_decisions(decision_id,branch_id,result) '
                                 "VALUES(%s,%s,'evaluating') ON CONFLICT(branch_id) DO NOTHING RETURNING branch_id",
                                 (DELIVERY_HOURS_DECISION, branch['id'])).fetchone()
