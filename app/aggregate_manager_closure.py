@@ -137,6 +137,7 @@ def receive(sid:str,body:Receipt,request:Request,user=Depends(auth.current_user)
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
+            if c.execute('SELECT 1 FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone():raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
             dec=latest(c,day['id'])
             if not dec or dec['id']!=body.declaration_id:raise db.error(409,'SHARED_MANAGER_DECLARATION_STALE','تغير أصل التقفيلة.')
             if c.execute('SELECT 1 FROM shared_manager_closure_returns WHERE declaration_id=%s',(dec['id'],)).fetchone():raise db.error(409,'SHARED_MANAGER_DECLARATION_RETURNED','أُعيدت التقفيلة؛ انتظر إعادة إرسال مدير التوصيل للأصل المصحح.')
@@ -160,6 +161,7 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
     with db.tx() as c:
         days.lock_lanes(c);day,legs=authorize(c,user,sid)
         def perform():
+            if c.execute('SELECT 1 FROM manager_vault_closures WHERE workday_id=%s',(day['id'],)).fetchone():raise db.error(409,'MANAGER_VAULT_DUTY_ENDED','المناوبة منتهية والأكياس للمحاسبة؛ لا يعاد فتحها أو تأكيد استلام المالك بعد حفظ الخزنة.')
             dec=latest(c,day['id'])
             if not dec or dec['id']!=body.declaration_id:raise db.error(409,'SHARED_MANAGER_DECLARATION_STALE','تغير أصل التقفيلة.')
             if user['id'] not in {dec['recipient_user_id'],day['user_id']}:raise db.error(403,'SHARED_MANAGER_ACTUAL_RECIPIENT','الإرجاع لمدير الوردية أو المالك المستلم المسجل.')

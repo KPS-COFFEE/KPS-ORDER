@@ -337,3 +337,21 @@ def test_local_unreceived_bag_can_be_returned_without_erasing_original(central):
     assert visible.status_code==200,visible.text
     assert [b['id'] for b in visible.json()['bags']]==[replacement['cash_bag']['id']]
     with db.tx() as c:assert c.execute('SELECT count(*) n FROM driver_cash_bags').fetchone()['n']==2
+
+
+@pytest.mark.postgres
+def test_vault_end_preserves_legacy_original_without_owner_receipt_or_reopening(central):
+    _,_,post,_,_=central
+    manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
+    path='/api/central-operations/workdays/'+manager['shift']['id']
+    old=post('manager',path+'/manager-physical-submit',{'cash_halalas':0,'recipient_user_id':'dual-owner','reference':'Synthetic pre-update manager original','confirmed':True})
+    post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True})
+    post('owner',path+'/manager-physical-receipt',{'declaration_id':old['declaration_id'],'received_halalas':0,'confirmed':True},status=409)
+    post('manager',path+'/manager-physical-return',{'declaration_id':old['declaration_id'],'reason':'Cannot reopen an already ended vault duty'},status=409)
+    with db.tx() as c:
+        row=c.execute('SELECT status,staffing_ended_at FROM shifts WHERE id=%s',(manager['shift']['id'],)).fetchone()
+        assert row['status']=='submitted' and row['staffing_ended_at']
+        assert c.execute('SELECT 1 FROM shared_manager_closure_declarations WHERE id=%s',(old['declaration_id'],)).fetchone()
+        assert not c.execute('SELECT 1 FROM shared_manager_closure_receipts').fetchone()
+        assert not c.execute('SELECT 1 FROM shared_manager_closure_returns').fetchone()
+    post('manager','/api/central-operations/workdays',{'kind':'manager'})
