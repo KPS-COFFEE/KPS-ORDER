@@ -31,6 +31,8 @@
     function renderEta(driver){
       const host=etaHosts.get(driver.id);if(!host)return;host.replaceChildren();
       const record=etaCache.get(driver.id),plan=record?.plan;
+      const destination=host.closest('.tracking-driver')?.querySelector('.tracking-driver-destination');
+      if(destination)destination.hidden=Boolean(locationFresh(driver)&&navigator.onLine&&plan?.status==='ready'&&fresh(plan.calculated_at));
       if(!locationFresh(driver)){host.append(el('p',tr('التقدير متوقف حتى يصل موقع حديث','Estimates paused until a fresh location arrives')));return;}
       if(!navigator.onLine){host.append(el('p',tr('انقطع الاتصال — الأوقات غير مباشرة','Offline — estimates are not live')));return;}
       if(!eligible(driver)){host.append(el('p',tr('لا توجد رحلة نشطة لحساب وقتها','No active itinerary to estimate')));return;}
@@ -112,7 +114,7 @@
           const phaseLabels={delivering:tr('يوصل طلبًا','Delivering an order'),awaiting_pickup:tr('بانتظار استلام الطلب','Awaiting order pickup'),returning:tr('متجه للفرع — وجهة مخططة وليست إثبات وصول','Heading to branch — planned destination, not confirmed arrival'),external_enbishan:tr('متجه لعنبيشان — بإفادة السائق','Heading to Enbishan — driver-declared'),awaiting_destination:tr('بانتظار تحديد الوجهة التالية','Awaiting next destination')};
           card.append(el('p',phaseLabels[driver.movement_state]||tr('حالة الحركة غير متاحة','Movement state unavailable'),'tracking-driver-phase'));
           if(brand?.source==='driver_declared')card.append(el('p',tr('البراند بإفادة السائق','Brand declared by driver')));
-          card.append(el('p',next?tr('الوجهة المخططة: ','Planned destination: ')+(next.kind==='external_enbishan'?tr('عنبيشان — إفادة السائق','Enbishan — driver declaration'):(next.name||tr('فرع','Branch'))):['delivering','awaiting_pickup'].includes(driver.movement_state)?tr('الوجهة التالية تُحدد بعد إتمام الطلبات','Next destination is set after completing orders'):tr('الوجهة التالية غير محددة','Next destination not specified')));
+          card.append(el('p',next?tr('الوجهة المخططة: ','Planned destination: ')+(next.kind==='external_enbishan'?tr('عنبيشان — إفادة السائق','Enbishan — driver declaration'):(next.name||tr('فرع','Branch'))):['delivering','awaiting_pickup'].includes(driver.movement_state)?tr('الوجهة التالية تُحدد بعد إتمام الطلبات','Next destination is set after completing orders'):tr('الوجهة التالية غير محددة','Next destination not specified'),'tracking-driver-destination'));
           const stale=!locationFresh(driver);
           card.append(el('p',(stale?tr('موقع قديم — ليس مباشرًا','Stale location — not live'):tr('موقع حديث','Recent location'))+' · '+(Number.isFinite(stamp(driver.captured_at||driver.updated_at))?new Date(driver.captured_at||driver.updated_at).toLocaleTimeString(lang==='en'?'en-GB':'ar-SA'):tr('وقت الموقع غير متاح','Location time unavailable'))));
           const eta=el('div',null,'tracking-driver-eta');etaHosts.set(driver.id,eta);card.append(eta);driverRows.append(card);renderEta(driver);

@@ -71,6 +71,7 @@ def test_wall_automatic_customer_completion_return_countdowns_and_minute_budget(
     assert 'Ahmed' in text and 'K-1' in text
     assert '4 min' in text and '15 min' in text and '23 min' in text
     assert 'Deliveries complete' in text and ('Branch return' in text or 'Return' in text)
+    assert wall.locator('.tracking-driver-destination').is_hidden()
     initial = eta_count(wall)
     wall.evaluate('tick(15000)');wall.evaluate('tick(15000)');wall.evaluate('tick(15000)')
     assert eta_count(wall) == initial
