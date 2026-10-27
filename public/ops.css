@@ -662,7 +662,7 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 .order-summary-head{gap:8px 14px;padding-bottom:10px}.order-summary-head .order-reference{font-size:14px;font-weight:700;direction:ltr;unicode-bidi:isolate}
 .order-summary-fields{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .order-summary-fields>div{padding:10px 12px;border:1px solid var(--line);background:var(--bg)}
-.order-summary-fields dt{font-size:12px;margin-bottom:4px}.order-summary-fields dd{font-size:15px;line-height:1.65}
+.order-summary-fields dt{font-size:12px;margin-bottom:4px}.order-summary-fields dd{font-size:15px;line-height:1.8}
 .order-summary-fields>div:last-child{background:var(--accent-light);border-color:var(--accent-light)}
 .order-summary-fields>div:last-child dd{font-size:18px;font-variant-numeric:tabular-nums}
 .order-summary-status{padding-top:10px;gap:7px}.order-summary-actions{margin:0}
