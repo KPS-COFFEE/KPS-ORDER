@@ -7,6 +7,8 @@ BEGIN
  SELECT * INTO target FROM branches WHERE id='kps-branch-6' AND brand_id='kps' AND branch_no=6 AND city='النعيرية' FOR UPDATE;
  IF NOT FOUND THEN RETURN; END IF;
  SELECT * INTO source FROM branches WHERE brand_id='kps' AND branch_no=11;
+ -- Empty/bootstrap installations carry no approved live commercial policy.
+ IF source.settings->>'delivery_enabled' IS DISTINCT FROM 'true' THEN RETURN; END IF;
  IF source.settings->>'delivery_fee_halalas' IS NULL OR source.settings->>'minimum_order_halalas' IS NULL THEN
  RAISE EXCEPTION 'Existing outside-Hafar commercial policy is required'; END IF;
  IF target.settings->'location' IS NULL OR target.settings->'location'='null'::jsonb THEN
