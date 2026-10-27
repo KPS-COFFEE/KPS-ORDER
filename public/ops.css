@@ -670,3 +670,6 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 @media(max-width:340px){#filters-form.order-filters>label,#filters-form.order-filters>label:has([name=search]),#filters-form.order-filters>label:has([name=phone]),#filters-form.order-filters>label:has([name=neighborhood]){grid-column:1/-1}.order-summary-fields{grid-template-columns:minmax(0,1fr)}}
 
 @media(min-width:341px) and (max-width:650px){#filters-form.order-filters>label:has([name=search]),#filters-form.order-filters>label:has([name=phone]),#filters-form.order-filters>label:has([name=neighborhood]){grid-column:1/-1}}
+
+#filters-form.order-filters input,#filters-form.order-filters select{font-weight:400}
+@media(max-width:650px){#filters-form.order-filters input,#filters-form.order-filters select{font-size:13px}}
