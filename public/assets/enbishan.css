@@ -86,3 +86,24 @@ html[dir=rtl] .enbishan-journey .mobile-basket{transform:translateX(50%)}
 .grape-flavour-field{margin:0;padding:0;border:0;min-width:0}.grape-flavour-field legend{font-weight:700;margin-bottom:8px}.grape-flavour-field .small{margin:0 0 10px}.grape-flavour-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 /* Match the visible can height to the existing 7Up photograph, retaining each product image. */
 .product-image-button img[src$="/citrus-can.jpg"]{transform:scale(1.02);object-position:center 43%}
+
+/* Compact flavour checkboxes: the whole label remains an easy tap target. */
+.grape-flavour-choices .button{display:flex;align-items:center;justify-content:flex-start!important;gap:9px;min-height:44px!important;padding:4px 0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;color:var(--ink);text-align:start;font-weight:500;position:relative}
+.grape-flavour-choices .button::before{content:"";display:block;width:20px;height:20px;box-sizing:border-box;flex:0 0 20px;border:1px solid #9aafad;border-radius:3px;background:white}
+.grape-flavour-choices .button[aria-pressed=true]::after{content:"";position:absolute;inset-inline-start:7px;top:calc(50% - 7px);width:5px;height:10px;border:solid #dba900;border-width:0 3px 3px 0;transform:rotate(45deg)}
+.grape-flavour-choices .button:disabled{opacity:.4}
+.grape-flavour-choices .button:focus-visible{outline:2px solid #267481;outline-offset:3px}
+.enbishan-cart-image{float:inline-start;width:68px;height:68px;object-fit:contain;background:white;border:1px solid #d8e8e5;border-radius:8px;margin-inline-end:12px;margin-bottom:8px}
+.cart-line:has(.enbishan-cart-image)::after{content:"";display:block;clear:both}
+
+.grape-flavour-choices .button[aria-pressed=true]{outline:0;font-weight:500}.grape-flavour-choices .button:focus-visible{outline:2px solid #267481}
+
+/* Consistent catalog cards with readable selected category state. */
+.enbishan-journey .category-tab[aria-current=true]{background:#267481;color:#fff;border-color:#267481}
+.enbishan-journey .product-content{display:flex;flex-direction:column;flex:1}
+.enbishan-journey .product-content h3{min-height:3em;line-height:1.5}
+.enbishan-journey .product-card-bottom{margin-top:auto}
+.enbishan-journey .enbishan-size-summary{min-height:2.8em;line-height:1.4;margin-bottom:10px}
+@media(max-width:550px){.enbishan-journey .product-content h3{min-height:0}}
+.enbishan-journey .product-detail-image{display:block;width:100%;height:280px;max-width:100%;object-fit:contain;margin:0 auto 12px;border-radius:12px}
+@media(max-width:550px){.enbishan-journey .product-detail-image{height:260px}}

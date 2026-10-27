@@ -39,6 +39,8 @@ assert.deepEqual(flavours.map(b=>b.textContent),['Pomegranate molasses','Spicy',
 flavours[0].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,undefined);
 flavours[1].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'pair-ps');assert.equal(flavours[2].disabled,true);
 flavours[3].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'mixed');assert.deepEqual(flavours.map(b=>b.attributes['aria-pressed']),['false','false','false','true']);
+flavours[3].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,undefined);assert.equal(flavours[3].attributes['aria-pressed'],'false');
+flavours[3].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'mixed');
 flavours[2].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,undefined);assert.equal(flavours[3].attributes['aria-pressed'],'false');
 flavours[0].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,'pair-pl');
 flavours[0].listeners.click();assert.equal(ctx.state.optionValues[0].FLAVOUR,undefined);

@@ -164,6 +164,6 @@ def customer_html(source, request):
         source = re.sub(r'<!-- KPS_CONTACT_START -->.*?<!-- KPS_CONTACT_END -->', brand_fragment, source, flags=re.S)
         if brand == 'enbishan':
             source = source.replace('<html lang="ar" dir="rtl">', '<html lang="ar" dir="rtl" data-storefront-brand="enbishan">')
-            source = source.replace('</head>', '<link rel="stylesheet" href="/assets/enbishan.css?v=20261026-product-photos-flavours"></head>')
+            source = source.replace('</head>', '<link rel="stylesheet" href="/assets/enbishan.css?v=20261026-box-covers"></head>')
         return source
     return source

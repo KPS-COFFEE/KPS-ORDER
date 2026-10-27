@@ -90,7 +90,7 @@ def test_grape_flavours_are_two_individual_choices_or_mixed(static_customer,prod
         page.goto(static_customer+'/?brand_id=enbishan',wait_until='networkidle')
         page.add_style_tag(path=str(ROOT/'public/assets/enbishan.css'))
         page.locator('.product-image-button').click()
-        page.locator('.customer-option-choices').first.get_by_role('button').first.click()
+        page.locator('.customer-option-choices').first.get_by_role('button').filter(has_text='عائلي').click()
         choices=page.locator('.grape-flavour-choices')
         expect(choices.get_by_role('button')).to_have_count(4)
         expect(choices).not_to_contain_text('+')
@@ -100,6 +100,9 @@ def test_grape_flavours_are_two_individual_choices_or_mixed(static_customer,prod
         choices.get_by_role('button',name='مشكل',exact=True).click()
         expect(choices.locator('[aria-pressed=true]')).to_have_count(1)
         expect(choices.locator('[aria-pressed=true]')).to_have_text('مشكل')
+        choices.get_by_role('button',name='مشكل',exact=True).click()
+        expect(choices.locator('[aria-pressed=true]')).to_have_count(0)
+        choices.get_by_role('button',name='مشكل',exact=True).click()
         choices.get_by_role('button',name='ليمون',exact=True).click()
         expect(choices.get_by_role('button',name='مشكل',exact=True)).to_have_attribute('aria-pressed','false')
         page.locator('#product-add').click()
@@ -107,5 +110,36 @@ def test_grape_flavours_are_two_individual_choices_or_mixed(static_customer,prod
         choices.get_by_role('button',name='دبس رمان',exact=True).click()
         page.locator('#product-add').click()
         expect(page.locator('#product-dialog')).not_to_be_visible()
+        family=next(v for g in product['option_groups'] if g['code']=='SIZE' for v in g['values'] if 'عائلي' in v['name'])
+        expected_image=next(v['image_url'] for v in product['variant_images'] if v['options']['SIZE']==family['code'])
+        expect(page.locator('#cart-lines .enbishan-cart-image')).to_have_attribute('src',expected_image)
         assert not errors
+        browser.close()
+
+
+def test_catalog_box_cover_switches_to_the_selected_small_size(static_customer):
+    from playwright.sync_api import sync_playwright,expect
+    products=json.loads((ROOT/'tests/fixtures/enbishan-catalog-presentation.json').read_text())
+    product=next(p for p in products if p['name']=='ورق عنب')
+    product.update(price_halalas=1200,variant_price_matrix=[])
+    family='v-4d099242d361cb106794a77c';small='v-969127f17958a830d1bcc973'
+    for v in product['variant_images']:
+        product['variant_price_matrix'].append({'options':v['options'],'price_halalas':1200})
+    family_image=next(v['image_url'] for v in product['variant_images'] if v['options']['SIZE']==family)
+    small_image=next(v['image_url'] for v in product['variant_images'] if v['options']['SIZE']==small)
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True);page=browser.new_page(viewport={'width':390,'height':844})
+        page.add_init_script("localStorage.setItem('kps_customer_lang','ar')")
+        def route_api(route):
+            key=route.request.url.split('/api/',1)[1].split('?',1)[0]
+            responses={'catalog':{'brand':{'id':'enbishan','name':'عنبيشن'},'source_verified':True,'products':[product]},'branches':{'branches':[],'brand_services':{'delivery':True,'pickup':False,'car_pickup':False}},'session':{'user':None,'csrf_token':None,'customer_verified':False},'identity/channels':{'customer_phone_required':False,'channels':{'guest':{'available':True}}},'experience/public':{'customer_entry_enabled':True},'customer-map/config':{'enabled':False},'banners':{'banners':[]}}
+            route.fulfill(content_type='application/json',body=json.dumps(responses.get(key,{})))
+        page.route('**/api/**',route_api)
+        page.goto(static_customer+'/?brand_id=enbishan',wait_until='networkidle')
+        page.add_style_tag(path=str(ROOT/'public/assets/enbishan.css'))
+        expect(page.locator('.product-image-button img')).to_have_attribute('src',family_image)
+        page.locator('.product-image-button').click()
+        expect(page.locator('#product-image')).to_have_attribute('src',family_image)
+        page.locator('.customer-option-choices button').filter(has_text='صغير').click()
+        expect(page.locator('#product-image')).to_have_attribute('src',small_image)
         browser.close()
