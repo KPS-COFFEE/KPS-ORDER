@@ -282,6 +282,9 @@ def test_separate_bag_physical_route_count_and_next_duty(central,city):
     key=uuid4().hex
     ended=post('manager',close,{'confirmed':True},key=key)
     assert post('manager',close,{'confirmed':True},key=key)==ended
+    with db.tx() as c:
+        vault=c.execute('SELECT bag_ids FROM manager_vault_closures WHERE id=%s',(ended['vault_closure_id'],)).fetchone()
+        assert vault['bag_ids']==([] if remote else [bag['id']])
     next_manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
     next_driver=post('driver','/api/central-operations/workdays',{'kind':'driver','manager_shift_id':next_manager['shift']['id'],'vehicle_inspection':inspection(1010)})
     assert next_driver['shift']['id']!=driver['shift']['id']
@@ -321,3 +324,16 @@ def test_remote_bag_allocation_preserves_end_marker_and_never_credits_manager(ce
         assert c.execute('SELECT staffing_ended_at FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['staffing_ended_at']==original
         assert not c.execute('SELECT 1 FROM custody_events WHERE shift_id=ANY(%s) AND kind=%s',([s['id'] for s in manager['shifts']],'transfer_in')).fetchone()
         assert all(r['to_shift_id'] is None and r['recipient_user_id']=='dual-accountant' for r in c.execute('SELECT * FROM custody_transfers').fetchall())
+
+
+@pytest.mark.postgres
+def test_local_unreceived_bag_can_be_returned_without_erasing_original(central):
+    _,actor,post,_,_=central
+    _,driver,path,declared=declare_separate_bag(central,'القيصومة')
+    post('manager',path+'/physical-return',{'declaration_id':declared['declaration_id'],'reason':'Correct bag reference before physical handover'})
+    replacement=post('driver',path+'/physical-submit',{'cash_halalas':700,'card_halalas':900,'vehicle_inspection':inspection(1010),'handover_branch_id':'kps-branch-1','bag_reference':'Corrected synthetic bag reference'})
+    assert replacement['cash_bag']['id']!=declared['cash_bag']['id']
+    visible=actor('accountant').get('/api/cash-bags')
+    assert visible.status_code==200,visible.text
+    assert [b['id'] for b in visible.json()['bags']]==[replacement['cash_bag']['id']]
+    with db.tx() as c:assert c.execute('SELECT count(*) n FROM driver_cash_bags').fetchone()['n']==2

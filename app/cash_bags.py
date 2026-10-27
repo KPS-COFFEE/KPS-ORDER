@@ -33,12 +33,12 @@ def create(c,user,day,legs,declaration,branch_id,reference,delivered):
             from .aggregate_driver_closure import accounting_followup
             db.audit(c,user['id'],'cash_bag.float_followup','central_workday',day['id'],{'bag_id':bag['id'],'declaration_id':declaration['id'],'responsible_user_id':accounting_followup(c,legs,user['id']),'due_at':(bag['deposited_at']+timedelta(hours=24)).isoformat(),'declared_retained_halalas':declaration['retained_halalas'],'no_employee_liability_assumed':True,'no_money_posted':True})
         for _,s in legs:c.execute('UPDATE shifts SET staffing_ended_at=%s,submission=submission||%s::jsonb WHERE id=%s',(bag['deposited_at'],db.json({'cash_bag_id':bag['id'],'physical_state':'bag_at_branch','financial_state':'awaiting_accounting_receipt'}),s['id']))
-    db.audit(c,user['id'],'cash_bag.deposited','cash_bag',bag['id'],{'driver_id':day['user_id'],'branch_id':branch_id,'destination':destination,'declared_cash_halalas':bag['declared_cash_halalas'],'accounting_receipt_recorded':False})
+    db.audit(c,user['id'],'cash_bag.deposited' if destination=='branch' else 'cash_bag.declared','cash_bag',bag['id'],{'driver_id':day['user_id'],'branch_id':branch_id,'destination':destination,'declared_cash_halalas':bag['declared_cash_halalas'],'accounting_receipt_recorded':False})
     return bag
 
 
 def bag_view(c,day_id):
-    return c.execute('SELECT b.*,s.delivery_operational_date shift_date,u.display_name driver_name,br.name branch_name,n.id count_id,n.received_cash_halalas,n.card_halalas,n.created_at counted_at,n.reference count_reference,n.note count_note,a.display_name counted_by_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN shifts s ON s.id=d.anchor_shift_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id LEFT JOIN users a ON a.id=n.counted_by WHERE b.workday_id=%s ORDER BY b.deposited_at DESC LIMIT 1',(day_id,)).fetchone()
+    return c.execute('SELECT b.*,s.delivery_operational_date shift_date,u.display_name driver_name,br.name branch_name,n.id count_id,n.received_cash_halalas,n.card_halalas,n.created_at counted_at,n.reference count_reference,n.note count_note,a.display_name counted_by_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN shifts s ON s.id=d.anchor_shift_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id LEFT JOIN users a ON a.id=n.counted_by WHERE b.workday_id=%s AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id) ORDER BY b.deposited_at DESC LIMIT 1',(day_id,)).fetchone()
 
 
 class Count(ops.OperationBody):
@@ -55,7 +55,7 @@ def inbox(user=Depends(auth.current_user)):
     with db.tx() as c:
         days.require_enabled(user,'accounting_review')
         result=[]
-        for b in c.execute('SELECT b.*,d.anchor_shift_id,u.display_name driver_name,br.name branch_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id ORDER BY b.deposited_at DESC LIMIT 500').fetchall():
+        for b in c.execute('SELECT b.*,d.anchor_shift_id,u.display_name driver_name,br.name branch_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id WHERE NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id) ORDER BY b.deposited_at DESC LIMIT 500').fetchall():
             try:day,legs=authorize(c,user,b['anchor_shift_id'])
             except HTTPException as exc:
                 if exc.status_code in (403,404):continue
@@ -118,7 +118,7 @@ def vault_close(sid:str,body:VaultClose,request:Request,user=Depends(auth.curren
                 if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'HANDOVER_PENDING','أكمل تسليم مسؤولية المناوبة المعلق.')
                 if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'RECEIPT_PENDING','أكد أو أعد تسليم النقد المعلق أولًا.')
             shifts=[s['id'] for _,s in legs]
-            bags=c.execute('SELECT DISTINCT b.id FROM driver_cash_bags b JOIN central_workday_legs l ON l.workday_id=b.workday_id JOIN shifts s ON s.id=l.shift_id WHERE s.manager_shift_id=ANY(%s)',(shifts,)).fetchall()
+            bags=c.execute("SELECT DISTINCT b.id FROM driver_cash_bags b JOIN shared_driver_closure_receipts r ON r.declaration_id=b.declaration_id JOIN central_workday_legs l ON l.workday_id=b.workday_id JOIN shifts s ON s.id=l.shift_id WHERE s.manager_shift_id=ANY(%s) AND b.destination='manager_vault'",(shifts,)).fetchall()
             entry=c.execute('INSERT INTO manager_vault_closures(id,workday_id,manager_id,bag_ids,note) VALUES(%s,%s,%s,%s,%s) RETURNING *',(ops.uid(),day['id'],user['id'],db.json([b['id'] for b in bags]),body.note)).fetchone()
             for _,s in legs:c.execute("UPDATE shifts SET status='submitted',submitted_at=coalesce(submitted_at,now()),staffing_ended_at=%s,submission=coalesce(submission,'{}'::jsonb)||%s::jsonb WHERE id=%s",(entry['created_at'],db.json({'vault_closure_id':entry['id'],'physical_state':'bags_in_vault','financial_state':'awaiting_accounting_bag_counts'}),s['id']))
             db.audit(c,user['id'],'manager.vault_closed','central_workday',day['id'],{'vault_closure_id':entry['id'],'bag_ids':[b['id'] for b in bags],'owner_receipt_required':False,'cash_received_by_accounting':False})

@@ -250,7 +250,7 @@ def return_declaration(sid:str,body:Return,request:Request,user=Depends(auth.cur
         def perform():
             declaration=latest(c,day['id'])
             if not declaration or declaration['id']!=body.declaration_id:raise db.error(409,'SHARED_DECLARATION_STALE','تغيرت التقفيلة.')
-            if c.execute('SELECT 1 FROM driver_cash_bags WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'CASH_BAG_DECLARATION_IMMUTABLE','الكيس مسجل؛ صحح الفروقات بمعالجة محاسبية مرتبطة دون إعادة أصل التقفيلة.')
+            if c.execute("SELECT 1 FROM driver_cash_bags WHERE declaration_id=%s AND destination='branch'",(declaration['id'],)).fetchone():raise db.error(409,'CASH_BAG_DECLARATION_IMMUTABLE','الكيس مسجل؛ صحح الفروقات بمعالجة محاسبية مرتبطة دون إعادة أصل التقفيلة.')
             if c.execute('SELECT 1 FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RECEIPT_IMMUTABLE','تم الاستلام؛ المعالجة اللاحقة للمحاسبة مع الحفاظ على الأصل.')
             if c.execute('SELECT 1 FROM shared_driver_closure_returns WHERE declaration_id=%s',(declaration['id'],)).fetchone():raise db.error(409,'SHARED_RETURN_EXISTS','التقفيلة أُعيدت بالفعل.')
             c.execute('INSERT INTO shared_driver_closure_returns(declaration_id,recorded_by,reason) VALUES(%s,%s,%s)',(declaration['id'],user['id'],body.reason))
