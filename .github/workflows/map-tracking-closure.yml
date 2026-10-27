@@ -79,6 +79,14 @@ jobs:
           node --check public/assets/driver-location.js
           node --check public/assets/order-tracking.js
           node --test tests/test_tracking_manager.cjs tests/test_driver_trip_ui.cjs tests/test_central_operations_adapter.cjs
+      - name: Verify release integration blockers before full route acceptance
+        run: >-
+          python -m pytest -q
+          tests/test_rollback_schema_compatibility.py tests/test_rollback_shared_state_guard.py
+          tests/test_delivery_hours.py::test_default_only_eligible_branches_once_and_never_enables_service
+          tests/test_enbishan_storefront_identity.py tests/test_menu_language_display.py
+          tests/test_ops_usability_browser.py::test_real_navigation_and_complete_order_rows
+          --junitxml=test-results/release-integration-blockers.xml
       - name: Road timing, scope, captured GPS, recovery and station evidence
         run: >-
           python -m pytest -q
