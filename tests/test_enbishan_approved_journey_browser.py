@@ -40,7 +40,7 @@ def test_browsing_guest_cannot_confirm_until_sms_is_verified(static_customer,lan
                 assert req.post_data_json['challenge_id']=='synthetic-challenge'
                 assert req.post_data_json['display_name']=='Synthetic Guest'
                 if req.post_data_json['code']!='0123':
-                    route.fulfill(status=400,content_type='application/json',body=json.dumps({'detail':{'code':'OTP_INVALID','message':'Synthetic invalid code'}}))
+                    route.fulfill(status=400,content_type='application/json',body=json.dumps({'detail':{'code':'OTP_INVALID','message':'رمز التحقق غير صحيح.'}}))
                     return
                 data={'user':verified,'csrf_token':'synthetic-verified-csrf','customer_verified':True}
             elif key in ('quote','gifts/quote'):
