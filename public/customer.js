@@ -1219,23 +1219,23 @@
     const name=product.name||'';
     if(/موهيتو|فتة/.test(name))return 'الفتة والموهيتو';
     if(/بوكس|سيجنتشر|عنبيشن كبير/.test(name))return 'البوكسات';
+    if(/ورق عنب|ملفوف/.test(name))return 'ورق العنب والملفوف';
     if(/كبة|سمبوسة/.test(name))return 'المقليات';
     if(/مسخن/.test(name))return 'المسخن';
     if(/نودلز/.test(name))return 'النودلز';
     return product.category||'';
   }
-  const enbishanSections=['البوكسات','المحاشي','المقليات','المسخن','الفتة والموهيتو','النودلز','المخبوزات','المشروبات'];
+  const enbishanSections=['ورق العنب والملفوف','المحاشي','المقليات','البوكسات','المسخن','الفتة والموهيتو','النودلز','المخبوزات','المشروبات'];
   function menuSectionLabel(section) {
-    const english={'البوكسات':'Boxes','المحاشي':'Stuffed vegetables','المقليات':'Fried bites','النودلز':'Noodles','المسخن':'Musakhan','الفتة والموهيتو':'Fattah & Mojito','المخبوزات':'Bakery','المشروبات':'Drinks'};
+    const english={'ورق العنب والملفوف':'Grape leaves & cabbage','البوكسات':'Boxes','المحاشي':'Stuffed vegetables','المقليات':'Fried bites','النودلز':'Noodles','المسخن':'Musakhan','الفتة والموهيتو':'Fattah & Mojito','المخبوزات':'Bakery','المشروبات':'Drinks'};
     return requestedBrandId==='enbishan'?entryText(section,english[section]||section):sourceText(state.products.find(p=>p.category===section),'category');
   }
   function menuRank(product, overview=false) {
-    // Lead the overview with existing medium/large/family box photographs.
-    const featured=['enbishan-menu-7b0752b4daa269674e08576f','enbishan-menu-c434c397f9072844ba9c93b4','enbishan-menu-894fad254b67890eafc2c47e','enbishan-menu-b641eb7a3572b133717e64ef','enbishan-menu-0d6d5352fce7cbd44ad6594a','enbishan-menu-2abc3c6b5efd0180c521eef0'];
-    const index=featured.indexOf(product.id);
-    if(overview&&index>=0)return index;
+    // Keep each section together in the full menu as well as category tabs.
     const section=enbishanSections.indexOf(menuSection(product));
-    return 100+(section<0?99:section)*10+(index>=0?0:1);
+    const grapeOrder=['enbishan-menu-894fad254b67890eafc2c47e','enbishan-menu-c434c397f9072844ba9c93b4','enbishan-menu-6c7a9f521d5f21500c2e6d9a','enbishan-menu-cfe9ad0bccc96e0d0537be28','enbishan-menu-2abc3c6b5efd0180c521eef0'];
+    const index=grapeOrder.indexOf(product.id);
+    return (section<0?99:section)*100+(index<0?50:index);
   }
   function menuCover(product) {
     if(product.brand_id!=='enbishan')return {image_url:product.image_url};
@@ -1247,6 +1247,65 @@
       if(image)return {image_url:image.image_url,label:sourceText(size)};
     }
     return {image_url:product.image_url};
+  }
+  // Customer-facing copy only; catalog names, options and prices stay authoritative.
+  const enbishanMenuCopy={
+    "enbishan-menu-028afa83b0694d93a171b9b5": ["لقيمات مسخن بطعم مميز؛ اختر الحجم المناسب وشاركها مع أحبابك.", "Musakhan bites with a distinctive taste. Pick a size and share."],
+    "enbishan-menu-0d6d5352fce7cbd44ad6594a": ["بطاطس محشية لعشّاق المحاشي؛ إضافة لذيذة لسفرتك.", "Stuffed potatoes for mahashi lovers. A delicious addition to your table."],
+    "enbishan-menu-2abc3c6b5efd0180c521eef0": ["لفّات ملفوف لذيذة؛ اختر حجمك واستمتع بكل لفّة.", "Delicious cabbage rolls. Choose your size and enjoy every roll."],
+    "enbishan-menu-3facf0781142b248264e4be9": ["بوكس يجمع 5 كبة + 5 سمبوسة + 5 ورق عنب كريسبي؛ تشكيلة جاهزة للمشاركة.", "A sharing box with 5 kibbeh + 5 samosa + 5 crispy grape leaves. A selection to enjoy together."],
+    "enbishan-menu-43ff27d14aa7990095f3af11": ["كبة وسمبوسة مع بعض؛ صنفين من القرمشة في صحن واحد.", "Kibbeh and sambosa together. Two crispy favourites on one plate."],
+    "enbishan-menu-6c7a9f521d5f21500c2e6d9a": ["ورق عنب بقرمشة مختلفة؛ لقمة تغيّر مزاجك.", "Grape leaves with a crisp twist. A little crunch in every bite."],
+    "enbishan-menu-7b0752b4daa269674e08576f": ["بوكس سيجنتشر للمشاركة؛ تشكيلة عنبيشن تجمع أحبابك على أكثر من طعم.", "Our Signature sharing box brings your favourites together for the whole gathering."],
+    "enbishan-menu-7f0dd1ebba3e28f5b134aea5": ["بصل محشي بطعمه المميز؛ لقمة تستاهل التجربة.", "Stuffed onions with their distinctive taste. A bite worth trying."],
+    "enbishan-menu-894fad254b67890eafc2c47e": ["لفّات ورق عنب بطعم تحبه؛ اختر نكهتين أو مشكل، والحجم على قد جمعتك.", "Grape leaf rolls your way. Choose two flavours or Mixed, in a size for your gathering."],
+    "enbishan-menu-8b9c0ac992a637fc6e97e3e9": ["سمبوسة مقرمشة؛ رفيقة سفرتك ولقمة تحب تكررها.", "Crisp sambosa: a table favourite you will reach for again."],
+    "enbishan-menu-97454e7c5796562295e4937c": ["نودلز لذيذة تغيّر بها اختيارك؛ صحن فردي على ذوقك.", "Delicious noodles for a change of pace, served as an individual plate."],
+    "enbishan-menu-9a85ab30d44850bc6d2e6e18": ["صحن فتة يجمع الطعم والمتعة؛ اختيار لذيذ لسفرتك.", "A satisfying plate of fattah, full of flavour for your table."],
+    "enbishan-menu-b641eb7a3572b133717e64ef": ["تشكيلة عنبيشن في بوكس واحد؛ محاشي ولفّات وكبة لتنويع سفرتك.", "The Enbishan selection in one box: stuffed vegetables, rolls and kibbeh."],
+    "enbishan-menu-b912778fdbf8eeb4211ccf60": ["خلية بحجم فردي؛ لقيمات لذيذة للحظة تستمتع فيها.", "An individual khaliya serving for a delicious little moment."],
+    "enbishan-menu-ba943fd11771582e9003ac47": ["تشكيلة محاشي تجمع أكثر من طعم في صحن واحد؛ لكل لقمة متعتها.", "A selection of stuffed vegetables in one plate. A different delight in every bite."],
+    "enbishan-menu-babdb49012d7b67402db8fc2": ["بوكس يجمع 5 كبة + 6 مسخن + 5 سمبوسة؛ تشكيلة جاهزة للمشاركة.", "A sharing box with 5 kibbeh + 6 musakhan + 5 samosa. A selection to enjoy together."],
+    "enbishan-menu-c434c397f9072844ba9c93b4": ["ورق عنب وملفوف في صحن واحد؛ جمعة الطعمين اللي تحبهم.", "Grape leaves and cabbage together: two favourites in one plate."],
+    "enbishan-menu-cfe9ad0bccc96e0d0537be28": ["قرمشة ورق العنب مع لفّات الملفوف؛ تنويع لذيذ في كل صحن.", "Crispy grape leaves meet cabbage rolls for a delicious mix."],
+    "enbishan-menu-d99fd6d6d3f908666e604235": ["صحن فتة مع موهيتو منعش؛ جمّع الطعم والانتعاش بطلب واحد.", "A fattah plate with a refreshing mojito. Flavour and refreshment together."],
+    "enbishan-menu-d9c5375981f3b70a043b43c9": ["كبة ذهبية بقرمشة شهية؛ لقيمات تكمل جمعتكم.", "Golden, crisp kibbeh bites to share around the table."],
+    "enbishan-menu-e739fd96698117d6fc9cd87d": ["بوكس يجمع 5 سمبوسة + 12 مسخن؛ تشكيلة جاهزة للمشاركة.", "A sharing box with 5 samosa + 12 musakhan. A selection to enjoy together."],
+    "enbishan-menu-eea4f81998c7705a69c69532": ["تشكيلة محاشي تجمع أكثر من طعم في صحن واحد؛ لكل لقمة متعتها.", "A selection of stuffed vegetables in one plate. A different delight in every bite."],
+    "enbishan-menu-f7a3a347bc71bf37d6645975": ["بوكس يجمع 5 كبة + 12 مسخن؛ تشكيلة جاهزة للمشاركة.", "A sharing box with 5 kibbeh + 12 musakhan. A selection to enjoy together."],
+    "enbishan-menu-fda651bf4e57088442d6c972": ["محاشي مشكل وموهيتو منعش؛ تشكيلة لذيذة تكملها رشفة.", "Mixed stuffed vegetables with a refreshing mojito to complete your meal."],
+    "enbishan-menu-fff314143ea1fb39265e203f": ["ورق عنب مع موهيتو منعش؛ لفّة لذيذة ورشفة تكمّلها.", "Grape leaves with a refreshing mojito. A delicious roll, a refreshing sip."],
+    "enbishan-citrus-20261026": ["مشروب حمضيات منعش يكمّل وجبتك.", "A refreshing citrus drink to enjoy with your meal."],
+    "enbishan-menu-2bafb30d47293596fcc41f07": ["بيبسي بارد يكمّل الطعم مع وجبتك.", "A cold Pepsi to enjoy with your meal."],
+    "enbishan-menu-3a1075f078a64e58726b861e": ["سفن أب منعش؛ رشفة خفيفة مع اختياراتك.", "Refreshing 7Up to accompany your favourites."],
+    "enbishan-menu-b3de6ed8adc01188db5d239b": ["ماء للشرب؛ انتعاش بسيط مع وجبتك.", "Drinking water for simple refreshment with your meal."],
+  };
+  function menuDescription(product) {
+    const stored=sourceText(product,'description');
+    if(stored||product.brand_id!=='enbishan')return stored||'';
+    const copy=enbishanMenuCopy[product.id];
+    return copy?entryText(...copy):'';
+  }
+  // Piece distributions transcribed from the approved workbook's contents column.
+  function menuSizeContents(product,size) {
+    if(product.brand_id!=='enbishan')return '';
+    const sizes={
+      'enbishan-menu-eea4f81998c7705a69c69532':{
+        'v-8bc5ff94ef1484666fa0cfde':['٢ ورق عنب + ١ بطاطس + ١ فليفلة + ٢ بصل + ٢ كوسا + ٢ باذنجان','2 grape leaves + 1 potato + 1 pepper + 2 onions + 2 zucchini + 2 eggplants'],
+        'v-7ec6c327c235a99f12ee1173':['٦ ورق عنب + ١ بطاطس + ١ فليفلة + ٤ بصل + ٤ كوسا + ٥ باذنجان','6 grape leaves + 1 potato + 1 pepper + 4 onions + 4 zucchini + 5 eggplants']
+      },
+      'enbishan-menu-b641eb7a3572b133717e64ef':{
+        'v-3301de500e7478b4e03b3a73':['٥ ورق عنب + ١ بطاطس + ٢ فليفلة + ٢ بصل + ٢ كوسا + ١ باذنجان + ٣ ملفوف + ٢ كبة','5 grape leaves + 1 potato + 2 peppers + 2 onions + 2 zucchini + 1 eggplant + 3 cabbage rolls + 2 kibbeh']
+      },
+      'enbishan-menu-7b0752b4daa269674e08576f':{
+        'v-b77b6cf14198f496f49c1d3c':['١٢ ورق عنب + ٢ بطاطس + ٢ فليفلة + ٤ بصل + ٥ كوسا + ٤ باذنجان + ٨ ملفوف + ٧ كبة','12 grape leaves + 2 potatoes + 2 peppers + 4 onions + 5 zucchini + 4 eggplants + 8 cabbage rolls + 7 kibbeh']
+      }
+    };
+    const copy=sizes[product.id]?.[size?.code||size?.id];
+    return copy?entryText(...copy):'';
+  }
+  function menuSizeLabel(product,size) {
+    return [sourceText(size),menuSizeContents(product,size)].filter(Boolean).join(' — ');
   }
   function renderCategories() { const tabs = $('categories'); tabs.replaceChildren(); const categories = [...new Set(state.products.map((p) => menuSection(p)).filter(Boolean))];if(requestedBrandId==='enbishan')categories.sort((a,b)=>(enbishanSections.indexOf(a)<0?99:enbishanSections.indexOf(a))-(enbishanSections.indexOf(b)<0?99:enbishanSections.indexOf(b))); for (const category of ['', ...categories]) { const button = node('button','category-tab',(category?menuSectionLabel(category):t("full_menu"))); button.type='button'; button.setAttribute('aria-current', String(state.category === category)); button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); }); tabs.append(button); } }
   function renderFirstGift(container){
@@ -1263,7 +1322,8 @@
     container.append(card);
   }
   function renderProducts() { const search = $('search').value.trim().toLocaleLowerCase(language); const products = state.products.filter((p) => (!state.category || menuSection(p) === state.category) && (!search || productSearchText(p).includes(search))); if(requestedBrandId==='enbishan')products.sort((a,b)=>menuRank(a,!state.category)-menuRank(b,!state.category)); const container = $('products'); container.replaceChildren(); text('menu-count', t("0_items_1",{"0":()=>(number.format(state.products.length)),"1":()=>(requestedBrandId==='kps'?t("images_and_options_from_the_kps_menu"):` · ${sourceText(state.brand)}`)})); if (!products.length) { const empty=node('div','empty-state'); empty.append(node('h3','', state.products.length?t("no_matching_items"):t("no_items_have_been_added_for_this_brand_yet")),node('p','', state.products.length?t("try_another_search_or_category"):t("items_approved_by_the_brand_will_appear_here"))); container.append(empty); return; }
-    for (const product of products) { const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',t(groups(product).length?"details_of_0":"add_0_to_basket",{"0":()=>(sourceText(product))})); const cover=menuCover(product); const originalUrl=safeImage(cover.image_url); const imageUrl=originalUrl?.match(/^\/assets\/[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/)?originalUrl.replace('/assets/','/media/previews/'):originalUrl?.startsWith('/api/product-assets/')?originalUrl+'?preview=true':originalUrl; if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=sourceText(product);if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading=container.childElementCount<4?'eager':'lazy'; img.fetchPriority=container.childElementCount<2?'high':'auto'; img.decoding='async'; img.addEventListener('error', () => { if(img.src!==new URL(originalUrl,location.href).href){img.src=originalUrl;return;}img.remove(); imageButton.append(node('span','image-fallback',t("photo_currently_unavailable"))); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback',t("no_product_photo"))); imageButton.addEventListener('click',()=>addFromCard(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',sourceText(product)); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if(product.brand_id==='enbishan'){const sizes=groups(product).find(g=>g.code==='SIZE')?.values||[];const detail=cover.label?entryText('الصورة: ','Pictured: ')+cover.label:'';if(detail)info.append(node('p','enbishan-size-summary',detail));} if (restricted(product)) info.append(node('span','pill warning',t("available_only_in_hafar_al_batin"))); if (groups(product).length) info.append(node('span','pill',isMug(product)?t("a_color_for_each_mug"):t("options_for_each_unit"))); const bottom=node('div','product-card-bottom'); const startingVariant=globalThis.KPSMenuVariants?.starting(product);if(startingVariant?.compare_at_halalas>product.price_halalas)bottom.append(node('del','muted',money(startingVariant.compare_at_halalas)));bottom.append(node('span','money',(product.brand_id==='enbishan'&&groups(product).find(g=>g.code==='SIZE')?.values?.length>1?entryText('يبدأ من ','From '):'')+money(product.price_halalas))); const add=node('button','product-add-button','＋'); add.type='button'; add.setAttribute('aria-label',t("add_0_to_basket",{"0":()=>(sourceText(product))})); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || t("choose_quantity_and_options"); add.addEventListener('click',()=>openProduct(product)); const minus=node('button','product-minus-button','−');minus.type='button';minus.setAttribute('aria-label',t('decrease_quantity_of_0',{'0':()=>(sourceText(product))}));minus.addEventListener('click',()=>removeFromCard(product));const count=node('output','product-card-quantity',number.format(cardQuantity(product.id)));count.setAttribute('aria-live','polite');const controls=node('div','product-card-controls');controls.append(minus,count,add);bottom.append(controls); info.append(bottom); if(isKhaliya(product)&&state.service!=='delivery'&&branch()&&city(branch().city)===city('حفر الباطن')&&Number(branch().branch_no)!==2){info.append(node('p','small muted',language==='en'?'Khaliya is available for pickup at Branch 2 only.':'الخلية متوفرة للاستلام من فرع 2 فقط.'));const target=state.branches.find(b=>Number(b.branch_no)===2&&city(b.city)===city('حفر الباطن'));if(target){const transfer=node('button','button secondary',language==='en'?'Order from Branch 2':'الطلب من فرع 2');transfer.type='button';transfer.addEventListener('click',()=>changeBranch(target.id));info.append(transfer);}} if(imageUrl){const zoom=node('button','image-zoom-button',t("enlarge_photo"));zoom.type='button';zoom.setAttribute('aria-label',t("enlarge_photo_of_0",{"0":()=>(sourceText(product))}));zoom.addEventListener('click',()=>showImage({...product,image_url:cover.image_url}));info.append(zoom);}card.addEventListener('click',event=>{if(!event.target.closest('button,a,input,select,textarea'))addFromCard(product);});card.append(imageButton,info); container.append(card); }
+    let previousSection=null;
+    for (const product of products) { const section=menuSection(product);if(requestedBrandId==='enbishan'&&!state.category&&section!==previousSection){const heading=node('h3','menu-section-title',menuSectionLabel(section));container.append(heading);previousSection=section;} const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',t(groups(product).length?"details_of_0":"add_0_to_basket",{"0":()=>(sourceText(product))})); const cover=menuCover(product); const originalUrl=safeImage(cover.image_url); const imageUrl=originalUrl?.match(/^\/assets\/[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/)?originalUrl.replace('/assets/','/media/previews/'):originalUrl?.startsWith('/api/product-assets/')?originalUrl+'?preview=true':originalUrl; if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=sourceText(product);if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading=container.childElementCount<4?'eager':'lazy'; img.fetchPriority=container.childElementCount<2?'high':'auto'; img.decoding='async'; img.addEventListener('error', () => { if(img.src!==new URL(originalUrl,location.href).href){img.src=originalUrl;return;}img.remove(); imageButton.append(node('span','image-fallback',t("photo_currently_unavailable"))); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback',t("no_product_photo"))); imageButton.addEventListener('click',()=>addFromCard(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',sourceText(product)); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if(product.brand_id==='enbishan'){const description=menuDescription(product);if(description)info.append(node('p','enbishan-product-description',description));const detail=cover.label?entryText('الصورة: ','Pictured: ')+cover.label:'';if(detail)info.append(node('p','enbishan-size-summary',detail));} if (restricted(product)) info.append(node('span','pill warning',t("available_only_in_hafar_al_batin"))); if (groups(product).length) info.append(node('span','pill',isMug(product)?t("a_color_for_each_mug"):t("options_for_each_unit"))); const bottom=node('div','product-card-bottom'); const startingVariant=globalThis.KPSMenuVariants?.starting(product);if(startingVariant?.compare_at_halalas>product.price_halalas)bottom.append(node('del','muted',money(startingVariant.compare_at_halalas)));bottom.append(node('span','money',(product.brand_id==='enbishan'&&groups(product).find(g=>g.code==='SIZE')?.values?.length>1?entryText('يبدأ من ','From '):'')+money(product.price_halalas))); const add=node('button','product-add-button','＋'); add.type='button'; add.setAttribute('aria-label',t("add_0_to_basket",{"0":()=>(sourceText(product))})); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || t("choose_quantity_and_options"); add.addEventListener('click',()=>openProduct(product)); const minus=node('button','product-minus-button','−');minus.type='button';minus.setAttribute('aria-label',t('decrease_quantity_of_0',{'0':()=>(sourceText(product))}));minus.addEventListener('click',()=>removeFromCard(product));const count=node('output','product-card-quantity',number.format(cardQuantity(product.id)));count.setAttribute('aria-live','polite');const controls=node('div','product-card-controls');controls.append(minus,count,add);bottom.append(controls); info.append(bottom); if(isKhaliya(product)&&state.service!=='delivery'&&branch()&&city(branch().city)===city('حفر الباطن')&&Number(branch().branch_no)!==2){info.append(node('p','small muted',language==='en'?'Khaliya is available for pickup at Branch 2 only.':'الخلية متوفرة للاستلام من فرع 2 فقط.'));const target=state.branches.find(b=>Number(b.branch_no)===2&&city(b.city)===city('حفر الباطن'));if(target){const transfer=node('button','button secondary',language==='en'?'Order from Branch 2':'الطلب من فرع 2');transfer.type='button';transfer.addEventListener('click',()=>changeBranch(target.id));info.append(transfer);}} if(imageUrl){const zoom=node('button','image-zoom-button',t("enlarge_photo"));zoom.type='button';zoom.setAttribute('aria-label',t("enlarge_photo_of_0",{"0":()=>(sourceText(product))}));zoom.addEventListener('click',()=>showImage({...product,image_url:cover.image_url}));info.append(zoom);}card.addEventListener('click',event=>{if(!event.target.closest('button,a,input,select,textarea'))addFromCard(product);});card.append(imageButton,info); container.append(card); }
     syncCardQuantities();
   }
   function cardQuantity(id) { return state.cart.filter(line=>line.productId===id).reduce((sum,line)=>sum+line.quantity,0); }
@@ -1317,7 +1377,7 @@
         if(!(group?.values||[]).some((value)=>(value.code||value.id)===selected[code]&&value.enabled!==false&&value.available!==false))delete selected[code];
       }
     }
-    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!sourceText(product,'description'); text('product-description',sourceText(product,'description')||''); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason); text('product-add',t("add_to_basket")); renderOptions();
+    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!menuDescription(product); text('product-description',menuDescription(product)); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason); text('product-add',t("add_to_basket")); renderOptions();
     if(optionFocus>=0)$('product-options').querySelectorAll('select')[optionFocus]?.focus({preventScroll:true});
     openDialog('product-dialog');
   }
@@ -1331,12 +1391,12 @@
   }
   function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').getAttribute('src')||state.product.image_url}); }
   function renderVariantPrice(activeUnit=0){
-    const product=state.product;if(!product?.variant_price_matrix)return;
+    const product=state.product;if(!product)return;
     if(product.brand_id==='enbishan'){
       const options=state.optionValues[activeUnit]||state.optionValues[0]||{};
       const sizeGroup=groups(product).find(g=>g.code==='SIZE');
       const selectedSize=sizeGroup?.values?.find(v=>(v.code||v.id)===options.SIZE);
-      const description=[sourceText(product,'description'),selectedSize?sourceText(selectedSize):sizeGroup?.values?.map(v=>sourceText(v)).join(' • ')].filter(Boolean).join(' — ');
+      const description=[menuDescription(product),selectedSize?menuSizeLabel(product,selectedSize):sizeGroup?.values?.map(v=>menuSizeLabel(product,v)).join(' • ')].filter(Boolean).join(' — ');
       text('product-description',description);$('product-description').hidden=!description;
       const variant=(product.variant_images||[]).find(entry=>Object.entries(entry.options||{}).every(([key,value])=>options[key]===value));
       const sizeImages=(product.variant_images||[]).filter(entry=>options.SIZE&&entry.options?.SIZE===options.SIZE);
@@ -1344,6 +1404,7 @@
       const image=safeImage(variant?.image_url||sizeImage||menuCover(product).image_url);
       if(image){$('product-image').src=image;$('product-image').hidden=false;}
     }
+    if(!product.variant_price_matrix)return;
     const rows=state.optionValues.map(options=>globalThis.KPSMenuVariants?.selected(product,options));
     const complete=rows.every(Boolean);
     const total=complete?rows.reduce((sum,row)=>sum+row.price_halalas,0):product.price_halalas;

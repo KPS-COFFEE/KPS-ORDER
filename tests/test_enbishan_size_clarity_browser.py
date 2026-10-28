@@ -143,3 +143,47 @@ def test_catalog_box_cover_switches_to_the_selected_small_size(static_customer):
         page.locator('.customer-option-choices button').filter(has_text='صغير').click()
         expect(page.locator('#product-image')).to_have_attribute('src',small_image)
         browser.close()
+
+
+@pytest.mark.parametrize('lang,width',[('ar',320),('ar',390),('en',390),('ar',550),('en',1366)])
+def test_menu_groups_copy_two_mobile_columns_and_compact_counter(static_customer,lang,width):
+    from playwright.sync_api import sync_playwright,expect
+    products=json.loads((ROOT/'tests/fixtures/enbishan-catalog-presentation.json').read_text())
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True)
+        context=browser.new_context(viewport={'width':width,'height':900})
+        context.add_init_script("localStorage.setItem('kps_customer_lang',"+json.dumps(lang)+")")
+        page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        def route_api(route):
+            key=route.request.url.split('/api/',1)[1].split('?',1)[0]
+            responses={'catalog':{'brand':{'id':'enbishan','name':'عنبيشن'},'source_verified':True,'products':products},'branches':{'branches':[],'brand_services':{'delivery':True,'pickup':False,'car_pickup':False}},'session':{'user':None,'csrf_token':None,'customer_verified':False},'identity/channels':{'customer_phone_required':False,'channels':{'guest':{'available':True}}},'experience/public':{'customer_entry_enabled':True},'customer-map/config':{'enabled':False},'banners':{'banners':[]}}
+            route.fulfill(content_type='application/json',body=json.dumps(responses.get(key,{})))
+        page.route('**/api/**',route_api)
+        page.goto(static_customer+'/?brand_id=enbishan',wait_until='networkidle')
+        page.add_style_tag(path=str(ROOT/'public/assets/enbishan.css'))
+        # Match the brand marker inserted by storefront_scope on the real domain.
+        page.locator('html').evaluate("el=>el.dataset.storefrontBrand='enbishan'")
+        cards=page.locator('.product-card')
+        expect(cards).to_have_count(len(products))
+        expect(page.locator('.enbishan-product-description')).to_have_count(len(products))
+        expect(page.locator('.menu-section-title').first).to_have_text('ورق العنب والملفوف' if lang=='ar' else 'Grape leaves & cabbage')
+        if width<=550:
+            a,b=cards.nth(0).bounding_box(),cards.nth(1).bounding_box()
+            assert abs(a['y']-b['y'])<2
+            assert abs(a['x']-b['x'])>a['width']
+        controls=cards.first.locator('.product-card-controls')
+        assert controls.bounding_box()['width']<=120
+        for button in controls.locator('button').all():
+            box=button.bounding_box();assert box['width']>=44 and box['height']>=44
+        assert controls.locator('.product-minus-button').bounding_box()['x']<controls.locator('output').bounding_box()['x']<controls.locator('.product-add-button').bounding_box()['x']
+        if os.getenv('MENU_QA_SCREENSHOT') and lang=='ar' and width==390:
+            page.locator('.menu-section-title').first.scroll_into_view_if_needed()
+            page.screenshot(path='/tmp/enbishan-menu-mobile.png')
+        mixed=page.locator('[data-product-id="enbishan-menu-eea4f81998c7705a69c69532"]')
+        mixed.locator('h3 button').click()
+        size=page.locator('.customer-option-choices button').filter(has_text='21')
+        size.click()
+        expect(page.locator('#product-description')).to_contain_text('٦ ورق عنب + ١ بطاطس + ١ فليفلة + ٤ بصل + ٤ كوسا + ٥ باذنجان' if lang=='ar' else '6 grape leaves + 1 potato + 1 pepper + 4 onions + 4 zucchini + 5 eggplants')
+        assert page.evaluate('document.documentElement.scrollWidth')<=width+1
+        assert not errors
+        browser.close()

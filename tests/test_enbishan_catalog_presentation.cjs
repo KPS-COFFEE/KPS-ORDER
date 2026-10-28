@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const source=fs.readFileSync('public/customer.js','utf8');
-const ctx={groups:p=>p.option_groups||[],safeImage:u=>u?.startsWith('/assets/')?u:null,sourceText:v=>v?.name,entryText:(ar,en)=>ar,requestedBrandId:'enbishan'};
+const ctx={groups:p=>p.option_groups||[],safeImage:u=>u?.startsWith('/assets/')?u:null,sourceText:(v,field='name')=>v?.[field],entryText:(ar,en)=>ar,requestedBrandId:'enbishan'};
 vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('  function menuSection('),source.indexOf('  function renderCategories()')),ctx);
 const products=JSON.parse(fs.readFileSync('tests/fixtures/enbishan-catalog-presentation.json','utf8'));
 const grape=products.find(p=>p.name==='ورق عنب');const before=JSON.stringify(grape);
@@ -12,5 +12,16 @@ assert.equal(ctx.menuSection({brand_id:'kps',name:'بوكس',category:'Coffee'})
 assert.equal(ctx.menuCover({brand_id:'kps',image_url:'/assets/kps.jpg'}).image_url,'/assets/kps.jpg');
 console.log('PASS: large covers, actual size photo mappings, stable sections and KPS isolation.');
 const overview=[...products].sort((a,b)=>ctx.menuRank(a,true)-ctx.menuRank(b,true));
-assert.equal(overview[0].name,'عنبيشن سيجنتشر');
-assert.ok(overview.slice(0,6).every(p=>ctx.menuCover(p).label),'The first six overview cards show named box sizes');
+assert.equal(overview[0].name,'ورق عنب');
+assert.ok(overview.slice(0,5).every(p=>ctx.menuSection(p)==='ورق العنب والملفوف'));
+for(const name of ['ورق عنب','ورق عنب وملفوف','ورق عنب كريسبى','ورق عنب كريسبي وملفوف','ملفوف'])assert.equal(ctx.menuSection(products.find(p=>p.name===name)),'ورق العنب والملفوف');
+assert.equal(ctx.menuSection(products.find(p=>p.name==='بطاطس')),'المحاشي');
+assert.equal(ctx.menuSection(products.find(p=>p.name==='كبة')),'المقليات');
+const allBefore=JSON.stringify(products);
+for(const p of products)assert.ok(ctx.menuDescription(p),'Every reviewed product has customer copy: '+p.name);
+const mixed=products.find(p=>p.id==='enbishan-menu-eea4f81998c7705a69c69532');
+const large=mixed.option_groups.find(g=>g.code==='SIZE').values.find(v=>v.name.includes('21'));
+assert.match(ctx.menuSizeLabel(mixed,large),/٦ ورق عنب.*١ بطاطس.*١ فليفلة.*٤ بصل.*٤ كوسا.*٥ باذنجان/);
+assert.equal(ctx.menuSizeContents({...mixed,brand_id:'kps'},large),'');
+assert.equal(ctx.menuDescription({brand_id:'kps',description:'Existing KPS description'}),'Existing KPS description');
+assert.equal(JSON.stringify(products),allBefore,'Presentation must never change catalog names/options/prices');
