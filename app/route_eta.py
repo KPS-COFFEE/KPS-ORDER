@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from . import auth, db, dispatch_map
 from .operations import safe
 from . import route_corridor
@@ -30,8 +30,15 @@ class EtaRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     driver_id: str = Field(min_length=1, max_length=100)
     publish: bool = False
+    automatic_preview: bool = False
     return_branch_id: str | None = Field(default=None, min_length=1, max_length=100)
     ordered_stop_ids: list[str] | None = Field(default=None, max_length=MAX_STOPS)
+
+    @model_validator(mode='after')
+    def preview_has_no_mutating_fields(self):
+        if self.automatic_preview and self.model_fields_set & {'publish','ordered_stop_ids','return_branch_id'}:
+            raise ValueError('Automatic preview cannot change publication, order, or return selection.')
+        return self
 
 
 def context_for(c, user, driver_id):
@@ -250,6 +257,34 @@ def refreshed_caller(c, user, *, assignment=False):
     return actor
 
 
+def location_fresh(stamp, now=None):
+    """A future or unzoned capture cannot make an estimate look current."""
+    try:
+        return 0 <= ((now or datetime.now(timezone.utc))-stamp).total_seconds() <= 120
+    except (TypeError,AttributeError,OverflowError):
+        return False
+
+
+def automatic_intent(c, user, context, saved):
+    """Follow authorized current publication; never copy another actor's grants."""
+    published = published_plan_for(c,user,context['driver_id'])
+    if published:
+        returns = [s for s in published['stops'] if s['kind']=='return']
+        return_id = returns[0]['branch_id'] if returns else None
+        ordered = [s['id'] for s in published['stops'] if s['kind']!='return']
+        return return_id, ordered, 'published'
+    return_id = saved.get('return_branch_id') if saved else None
+    stops = prepare_stops(context,return_id)
+    ordered = saved.get('ordered_stop_ids') or None if saved else None
+    if ordered is not None:
+        try:
+            validate_order(stops,ordered)
+        except HTTPException:
+            ordered = None  # Changed tasks cannot silently inherit an old order.
+    basis = 'saved_preferences' if return_id or ordered is not None else 'road_suggestion'
+    return return_id,ordered,basis
+
+
 @router.post('/route-eta')
 def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
     if not auth.has_permission(user,'drivers_view'):
@@ -268,20 +303,24 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         if not complete_itinerary(c,user,context):
             return unavailable(body.driver_id,'itinerary_scope_incomplete')
         stamp = context.get('updated_at')
-        if not stamp or (now-stamp).total_seconds()>120:
+        if not location_fresh(stamp,now):
             return unavailable(body.driver_id,'location_stale','stale')
         saved = c.execute('SELECT * FROM driver_route_eta_state WHERE driver_id=%s AND manager_id=%s FOR UPDATE',
                           (body.driver_id,user['id'])).fetchone()
-        return_id = body.return_branch_id if 'return_branch_id' in body.model_fields_set else saved.get('return_branch_id') if saved else None
+        intent_basis = None
+        if body.automatic_preview:
+            return_id, preview_order, intent_basis = automatic_intent(c,user,context,saved)
+        else:
+            return_id = body.return_branch_id if 'return_branch_id' in body.model_fields_set else saved.get('return_branch_id') if saved else None
         stops = prepare_stops(context,return_id)
         if not stops:
             return unavailable(body.driver_id,'no_stops')
         signature = fingerprint(stops)
-        ordered_ids = body.ordered_stop_ids
+        ordered_ids = preview_order if body.automatic_preview else body.ordered_stop_ids
         remaining_saved = remaining_publication(c,saved,stops,body.driver_id) if saved and saved.get('published_at') else None
-        if ordered_ids is None and remaining_saved:
+        if not body.automatic_preview and ordered_ids is None and remaining_saved:
             ordered_ids = [s['id'] for s in remaining_saved[1] if s['kind']!='return']
-        if ordered_ids is None and saved and saved['fingerprint']==signature:
+        if not body.automatic_preview and ordered_ids is None and saved and saved['fingerprint']==signature:
             ordered_ids = saved['ordered_stop_ids'] or None
         if ordered_ids is not None:
             validate_order(stops,ordered_ids)
@@ -307,12 +346,12 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
                 cached = True
         # Preserve the reference corridor across minute ETA refreshes. Rebase only
         # on a changed plan not at every GPS sample. A valid reference stays fixed for the leg.
-        corridor = (saved or {}).get('road_corridor')
+        corridor = None if body.automatic_preview else (saved or {}).get('road_corridor')
         first = (validate_order(stops,ordered_ids) if ordered_ids is not None else
                  road_order(stops,matrix) if matrix is not None else [None])[0]
         if not corridor_current(corridor,signature,first,now):
             corridor = None
-        wants_publication = body.publish or body.ordered_stop_ids is not None or bool(remaining_saved)
+        wants_publication = not body.automatic_preview and (body.publish or body.ordered_stop_ids is not None or bool(remaining_saved))
         fetch_corridor = False
         # Browser-restricted public tokens must never be reused by the server.
         token = os.getenv('MAPBOX_ROUTING_TOKEN','')
@@ -321,7 +360,8 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
             if not token_valid:
                 return unavailable(body.driver_id,'routing_token_unconfigured')
             try:
-                dispatch_map.consume_route_budget(c,body.driver_id,user['id'],units=(len(stops)+1)**2)
+                dispatch_map.consume_route_budget(c,body.driver_id,user['id'],units=(len(stops)+1)**2,
+                                                  purpose='automatic_preview' if body.automatic_preview else 'route')
             except HTTPException as exc:
                 if exc.status_code==429:
                     return unavailable(body.driver_id,'route_budget_or_cooldown')
@@ -365,18 +405,37 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
             if exc.status_code == 409:
                 return unavailable(body.driver_id,'location_or_shift_unavailable','stale')
             raise
+        checked_at = datetime.now(timezone.utc)
+        if not location_fresh(current.get('updated_at'),checked_at):
+            return unavailable(body.driver_id,'location_stale','stale')
+        if not location_fresh(origin_stamp,checked_at):
+            return unavailable(body.driver_id,'route_origin_stale','stale')
         if not complete_itinerary(c,user,current):
             return unavailable(body.driver_id,'itinerary_scope_incomplete')
         if fingerprint(prepare_stops(current,return_id)) != signature:
             return unavailable(body.driver_id,'itinerary_changed')
-        c.execute('''INSERT INTO driver_route_eta_state(driver_id,manager_id,fingerprint,matrix,calculated_at,
-          origin_updated_at,ordered_stop_ids,return_branch_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
-          ON CONFLICT(driver_id,manager_id) DO UPDATE SET fingerprint=EXCLUDED.fingerprint,matrix=EXCLUDED.matrix,
-          calculated_at=EXCLUDED.calculated_at,origin_updated_at=EXCLUDED.origin_updated_at,
-          ordered_stop_ids=EXCLUDED.ordered_stop_ids,return_branch_id=EXCLUDED.return_branch_id''',
-          (body.driver_id,user['id'],signature,db.json(matrix),calculated,origin_stamp,db.json(ordered_ids or []),return_id))
+        if body.automatic_preview:
+            latest = c.execute('SELECT * FROM driver_route_eta_state WHERE driver_id=%s AND manager_id=%s FOR UPDATE',
+                               (body.driver_id,user['id'])).fetchone()
+            fresh_return,fresh_order,_ = automatic_intent(c,user,current,latest)
+            if (fresh_return,fresh_order)!=(return_id,preview_order):
+                return unavailable(body.driver_id,'route_intent_changed')
+            # Only bounded provider data is cached. The actor's chosen route,
+            # return, published guidance, corridor and expectations are untouched.
+            c.execute('''INSERT INTO driver_route_eta_state(driver_id,manager_id,fingerprint,matrix,calculated_at,origin_updated_at)
+              VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(driver_id,manager_id) DO UPDATE SET
+              fingerprint=EXCLUDED.fingerprint,matrix=EXCLUDED.matrix,
+              calculated_at=EXCLUDED.calculated_at,origin_updated_at=EXCLUDED.origin_updated_at''',
+              (body.driver_id,user['id'],signature,db.json(matrix),calculated,origin_stamp))
+        else:
+            c.execute('''INSERT INTO driver_route_eta_state(driver_id,manager_id,fingerprint,matrix,calculated_at,
+              origin_updated_at,ordered_stop_ids,return_branch_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+              ON CONFLICT(driver_id,manager_id) DO UPDATE SET fingerprint=EXCLUDED.fingerprint,matrix=EXCLUDED.matrix,
+              calculated_at=EXCLUDED.calculated_at,origin_updated_at=EXCLUDED.origin_updated_at,
+              ordered_stop_ids=EXCLUDED.ordered_stop_ids,return_branch_id=EXCLUDED.return_branch_id''',
+              (body.driver_id,user['id'],signature,db.json(matrix),calculated,origin_stamp,db.json(ordered_ids or []),return_id))
         requested_publication = body.publish or body.ordered_stop_ids is not None
-        refreshing_publication = bool(remaining_saved and (not cached or calculated!=saved.get('published_calculated_at'))
+        refreshing_publication = bool(not body.automatic_preview and remaining_saved and (not cached or calculated!=saved.get('published_calculated_at'))
                                       and saved['source_session_id']==user.get('session_id')
                                       and auth.has_permission(user,'delivery_assign'))
         publishing = requested_publication or refreshing_publication
@@ -399,7 +458,7 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         if plan_changed:
             db.audit(c,user['id'],'driver.route_plan','driver',body.driver_id,
                      {'ordered_stop_ids':ordered_ids,'return_branch_id':return_id})
-        if not cached or plan_changed or refreshing_publication:
+        if not body.automatic_preview and (not cached or plan_changed or refreshing_publication):
             expected = [{'id':r['id'],'task_id':r.get('task_id'),'order_id':r.get('order_id'),
                          'shift_id':r.get('shift_id'),'brand_id':r.get('brand_id'),'task_ids':r.get('task_ids',[]),
                          'kind':r['kind'],'arrival_at':r['arrival_at'].isoformat(),
@@ -412,7 +471,8 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
                  'location_updated_at':current['updated_at'],'route_origin_updated_at':origin_stamp,
                  'refresh_after_seconds':TTL_SECONDS,'duration_basis':'road_time_plus_explicit_stop_estimates',
                  'traffic_included':False,'ordering':'manager' if ordered_ids is not None else 'road_duration',
-                 'corridor_status':'ready' if corridor else 'unavailable',
+                 'corridor_status':'not_requested' if body.automatic_preview else 'ready' if corridor else 'unavailable',
+                 'automatic_preview':body.automatic_preview,'intent_basis':intent_basis,
                  'cached':cached,'published':publishing,**output})
 
 

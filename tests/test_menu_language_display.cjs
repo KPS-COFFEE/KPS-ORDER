@@ -51,7 +51,8 @@ function load(saved=null,blocked=false){
     line('  const locale='),line('  const currency ='),line('  const money ='),line('  const number ='),
     line('  const node ='),line('  const text ='),line('  const safeImage ='),
     line('  const restricted ='),line('  const isMug ='),
-    source.slice(source.indexOf('  function renderCategories()'),source.indexOf('  function renderCart()'))].join('\n');
+    // Include the shipped presentation helpers used by cards and category tabs.
+    source.slice(source.indexOf('  function menuSection(product)'),source.indexOf('  function renderCart()'))].join('\n');
   vm.runInContext(prefix+extra+`
     globalThis.probe={sourceText,productSearchText,groupLabel,cartLineName,uiStrings,t,money,
       applyStaticLanguage,renderProducts,renderCategories,current:()=>language,lang:next=>language=next};

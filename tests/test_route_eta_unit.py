@@ -293,3 +293,61 @@ def test_route_budget_rejects_invalid_purpose_or_corridor_units(purpose,units):
     with pytest.raises(HTTPException) as raised:
         dispatch_map.consume_route_budget(RouteBudgetCursor(),'driver','manager',units=units,purpose=purpose)
     assert raised.value.status_code==422
+
+
+@pytest.mark.parametrize('fields',[{'publish':True},{'publish':False},{'ordered_stop_ids':None},
+                                   {'ordered_stop_ids':[]},{'return_branch_id':None},{'return_branch_id':'branch'}])
+def test_automatic_preview_rejects_every_explicit_route_intent_field(fields):
+    with pytest.raises(ValueError):
+        eta.EtaRequest(driver_id='d',automatic_preview=True,**fields)
+
+
+def test_automatic_preview_intent_follows_published_remaining_order_and_explicit_return(monkeypatch):
+    context={'driver_id':'d','tasks':[],'stops':[],'return_branches':[]}
+    published={'stops':[dict(stop('dropoff:b'),order_id='b'),dict(stop('dropoff:a'),order_id='a'),
+                        dict(stop('return:b','return'),branch_id='return-branch')]}
+    monkeypatch.setattr(eta,'published_plan_for',lambda *args:published)
+    saved={'ordered_stop_ids':['dropoff:a','dropoff:b'],'return_branch_id':'private-return'}
+    assert eta.automatic_intent(None,{'id':'m'},context,saved)==('return-branch',['dropoff:b','dropoff:a'],'published')
+    assert saved=={'ordered_stop_ids':['dropoff:a','dropoff:b'],'return_branch_id':'private-return'}
+
+
+def test_automatic_preview_without_published_return_never_infers_one(monkeypatch):
+    monkeypatch.setattr(eta,'published_plan_for',lambda *args:{'stops':[stop('a')]})
+    assert eta.automatic_intent(None,{}, {'driver_id':'d'}, {'return_branch_id':'private-return'})==(None,['a'],'published')
+
+
+def test_automatic_preview_saved_order_survives_cache_signature_changes(monkeypatch):
+    monkeypatch.setattr(eta,'published_plan_for',lambda *args:None)
+    context={'driver_id':'d','stops':[stop('a'),stop('b')],'return_branches':[]}
+    saved={'fingerprint':'old-provider-cache','ordered_stop_ids':['b','a'],'return_branch_id':None}
+    assert eta.automatic_intent(None,{},context,saved)==(None,['b','a'],'saved_preferences')
+    assert eta.automatic_intent(None,{},context,None)==(None,None,'road_suggestion')
+
+
+def test_automatic_preview_budget_allows_fleet_but_keeps_driver_cooldown_and_monthly_cap(monkeypatch):
+    from app import dispatch_map
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'d1','manager',units=9,purpose='automatic_preview')
+    dispatch_map.consume_route_budget(cursor,'d2','manager',units=9,purpose='automatic_preview')
+    budget=cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]
+    assert budget['count']==18
+    assert set(budget['recent'])=={'driver:d1','driver:d2','automatic:manager:manager:driver:d1','automatic:manager:manager:driver:d2'}
+    for purpose in ['route','automatic_preview']:
+        with pytest.raises(HTTPException) as exc:
+            dispatch_map.consume_route_budget(cursor,'d1','other-manager',purpose=purpose)
+        assert exc.value.status_code==429
+    monkeypatch.setattr(dispatch_map,'ROUTE_MONTHLY_LIMIT',20)
+    with pytest.raises(HTTPException):
+        dispatch_map.consume_route_budget(cursor,'d3','manager',units=9,purpose='automatic_preview')
+    assert cursor.settings[dispatch_map.ROUTE_BUDGET_KEY]['count']==18
+
+
+@pytest.mark.parametrize('age,fresh',[(-1,False),(-0.001,False),(0,True),(120,True),(120.001,False),(121,False)])
+def test_eta_location_clock_rejects_future_and_aged_captures(age,fresh):
+    assert eta.location_fresh(NOW-timedelta(seconds=age),NOW) is fresh
+
+
+@pytest.mark.parametrize('stamp',[None,'2026-10-27T12:00:00Z',datetime(2026,10,27,12)])
+def test_eta_location_clock_does_not_trust_missing_unparsed_or_unzoned_capture(stamp):
+    assert eta.location_fresh(stamp,NOW) is False
