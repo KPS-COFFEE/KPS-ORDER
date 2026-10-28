@@ -263,16 +263,37 @@ def declare_separate_bag(central,city):
 def test_separate_bag_physical_route_count_and_next_duty(central,city):
     _,actor,post,_,_=central
     manager,driver,path,declared=declare_separate_bag(central,city)
-    bag=declared['cash_bag'];remote=city=='النعيرية'
+    bag=declared['cash_bag'];remote=city!='حفر الباطن'
     assert bag['destination']==('branch' if remote else 'manager_vault')
     count_path='/api/cash-bags/'+bag['id']+'/count'
     count={'received_cash_halalas':650,'card_halalas':900,'reference':'SYNTHETIC physical bag count','confirmed':True}
     post('driver',count_path,count,status=403)
     post('manager',count_path,count,status=403)
     if remote:
-        assert declared['state']=='awaiting_accounting_receipt'
+        assert declared['state']=='awaiting_manager_approval'
+        assert declared['staffing_finished'] is False
+        assert bag['operational_state']=='awaiting_manager_approval'
+        assert declared['manager_approval_required'] is True
+        post('driver','/api/central-operations/workdays',{'kind':'driver','manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection(1010)},status=409)
+        post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True},status=409)
         post('manager',path+'/physical-receipt',{'declaration_id':declared['declaration_id'],'received_halalas':700,'confirmed':True,'reference':'Not actually received'},status=409)
         with db.tx() as c:assert not c.execute('SELECT 1 FROM shared_driver_closure_receipts').fetchone()
+        approval={'declaration_id':declared['declaration_id'],'confirmed':True,'reason':'Final submitted closure reviewed'}
+        post('driver',path+'/physical-approval',approval,status=403)
+        post('accountant',path+'/physical-approval',approval,status=403)
+        post('owner',path+'/physical-approval',approval,status=403)
+        post('manager',path+'/physical-approval',{**approval,'confirmed':False},status=422)
+        post('manager',path+'/physical-approval',{**approval,'declaration_id':'stale'},status=409)
+        key=uuid4().hex
+        approved=post('manager',path+'/physical-approval',approval,key=key)
+        assert approved['staffing_finished'] is True and approved['manager_approval']['declaration_id']==declared['declaration_id']
+        assert approved['receipt'] is None and approved['cash_bag']['operational_state']=='approved'
+        assert post('manager',path+'/physical-approval',approval,key=key)['approval_id']==approved['approval_id']
+        post('manager',path+'/physical-approval',approval,status=409)
+        with db.tx() as c:
+            assert not c.execute('SELECT 1 FROM shared_driver_closure_receipts').fetchone()
+            assert not c.execute('SELECT 1 FROM custody_transfers').fetchone()
+            assert c.execute("SELECT count(*) n FROM audit_events WHERE action='shared_driver.manager_approved'").fetchone()['n']==1
     else:
         post('accountant',count_path,count,status=409)
         post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True},status=409)
@@ -314,6 +335,7 @@ def test_remote_bag_allocation_preserves_end_marker_and_never_credits_manager(ce
     monkeypatch.setattr(reporting,'generate_files',lambda *_:None)
     _,actor,post,_,_=central
     manager,driver,path,declared=declare_separate_bag(central,'النعيرية')
+    post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True})
     with db.tx() as c:original=c.execute('SELECT staffing_ended_at FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['staffing_ended_at']
     post('accountant','/api/cash-bags/'+declared['cash_bag']['id']+'/count',{'received_cash_halalas':700,'card_halalas':900,'reference':'SYNTHETIC actual remote collection','confirmed':True})
     with db.tx() as c:receipt=c.execute('SELECT * FROM shared_driver_closure_receipts WHERE declaration_id=%s',(declared['declaration_id'],)).fetchone()
@@ -329,7 +351,7 @@ def test_remote_bag_allocation_preserves_end_marker_and_never_credits_manager(ce
 @pytest.mark.postgres
 def test_local_unreceived_bag_can_be_returned_without_erasing_original(central):
     _,actor,post,_,_=central
-    _,driver,path,declared=declare_separate_bag(central,'القيصومة')
+    _,driver,path,declared=declare_separate_bag(central,'حفر الباطن')
     post('manager',path+'/physical-return',{'declaration_id':declared['declaration_id'],'reason':'Correct bag reference before physical handover'})
     replacement=post('driver',path+'/physical-submit',{'cash_halalas':700,'card_halalas':900,'vehicle_inspection':inspection(1010),'handover_branch_id':'kps-branch-1','bag_reference':'Corrected synthetic bag reference'})
     assert replacement['cash_bag']['id']!=declared['cash_bag']['id']
@@ -355,3 +377,80 @@ def test_vault_end_preserves_legacy_original_without_owner_receipt_or_reopening(
         assert not c.execute('SELECT 1 FROM shared_manager_closure_receipts').fetchone()
         assert not c.execute('SELECT 1 FROM shared_manager_closure_returns').fetchone()
     post('manager','/api/central-operations/workdays',{'kind':'manager'})
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('city',['النعيرية','القيصومة'])
+def test_accountant_count_does_not_replace_final_manager_approval(central,city):
+    _,actor,post,_,_=central
+    manager,driver,path,declared=declare_separate_bag(central,city)
+    counted=post('accountant','/api/cash-bags/'+declared['cash_bag']['id']+'/count',{'received_cash_halalas':700,'card_halalas':900,'reference':'Actual accountant collection before manager review','confirmed':True})
+    visible=actor('manager').get(path+'/physical-closure').json()
+    assert visible['state']=='awaiting_manager_approval' and visible['staffing_finished'] is False
+    assert visible['receipt']['received_by']=='dual-accountant'
+    with db.tx() as c:
+        assert all(r['staffing_ended_at'] is None for r in c.execute('SELECT staffing_ended_at FROM shifts WHERE id=ANY(%s)',([s['id'] for s in driver['shifts']],)).fetchall())
+    payload={'declaration_id':declared['declaration_id'],'receipt_id':visible['receipt']['id'],'legs':rows(driver['shifts']),'reason':'Original documents verified independently','confirmed':True}
+    post('owner',path+'/physical-allocation',payload,status=409)
+    next_body={'kind':'driver','manager_shift_id':manager['shift']['id'],'vehicle_inspection':inspection(1010)}
+    post('driver','/api/central-operations/workdays',next_body,status=409)
+    approved=post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True})
+    assert approved['staffing_finished'] is True and approved['receipt']['received_by']=='dual-accountant'
+    post('driver','/api/central-operations/workdays',next_body)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('change',['different_manager','revoked_branch','revoked_brand'])
+def test_final_manager_approval_checks_canonical_scope(central,change):
+    _,_,post,_,_=central
+    _,driver,path,declared=declare_separate_bag(central,'القيصومة')
+    with db.tx() as c:
+        if change=='different_manager':
+            c.execute("UPDATE shifts SET user_id='dual-owner' WHERE id IN (SELECT manager_shift_id FROM shifts WHERE id=ANY(%s))",([s['id'] for s in driver['shifts']],))
+        elif change=='revoked_branch':c.execute("UPDATE users SET branch_ids='[]'::jsonb WHERE id='dual-manager'")
+        else:c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-manager' AND brand_id='enbishan'")
+    result=post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True},status=403 if change!='revoked_brand' else 404)
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM audit_events WHERE action='shared_driver.manager_approved'").fetchone()
+        assert c.execute('SELECT staffing_ended_at FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['staffing_ended_at'] is None
+
+
+@pytest.mark.postgres
+def test_approval_refuses_returned_declaration_and_allows_authorized_delegated_submission(central):
+    _,_,post,_,_=central
+    _,driver,path,declared=submit_physical(central)
+    post('manager',path+'/physical-return',{'declaration_id':declared['declaration_id'],'reason':'Driver declaration needs correction'})
+    post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True},status=409)
+    with db.tx() as c:c.execute("UPDATE branches SET city='القيصومة' WHERE id='kps-branch-1'")
+    delegated=post('manager',path+'/physical-submit',{'cash_halalas':700,'card_halalas':900,'vehicle_inspection':inspection(1010),'reason':'Driver unavailable for submission','handover_branch_id':'kps-branch-1','bag_reference':'Actual delegated remote bag','bag_delivered':True})
+    approved=post('manager',path+'/physical-approval',{'declaration_id':delegated['declaration_id'],'confirmed':True})
+    assert approved['staffing_finished'] is True and approved['receipt'] is None
+    assert approved['manager_approval']['delegated_submission'] is True
+    assert approved['manager_approval']['submitted_by']=='dual-manager'
+    assert approved['manager_approval']['submission_reason']=='Driver unavailable for submission'
+    with db.tx() as c:
+        evidence=c.execute("SELECT details FROM audit_events WHERE action='shared_driver.manager_approved' AND entity_id=%s",(approved['workday_id'],)).fetchone()['details']
+        assert evidence['delegated_submission'] is True and evidence['cash_receipt_recorded'] is False
+        assert evidence['submission_reason']=='Driver unavailable for submission'
+        assert not c.execute('SELECT 1 FROM shared_driver_closure_receipts WHERE declaration_id=%s',(delegated['declaration_id'],)).fetchone()
+
+
+@pytest.mark.postgres
+def test_remote_staffing_marker_requires_audited_approval_not_bag_deposit(central):
+    from app.exports import _verify_staffing_markers
+    _,_,post,_,_=central
+    _,driver,path,declared=declare_separate_bag(central,'القيصومة')
+    with pytest.raises(Exception,match='Staffing end requires'):
+        with db.tx() as c:
+            c.execute('UPDATE shifts SET staffing_ended_at=%s WHERE id=%s',(declared['cash_bag']['deposited_at'],driver['shift']['id']))
+    approved=post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True})
+    available={'driver_cash_bags','manager_vault_closures','shared_manager_closure_receipts'}
+    with db.tx() as c:_verify_staffing_markers(c,available)
+    # Simulate a corrupt archive only in the disposable fixture, then roll it
+    # back: a bag deposit cannot replace the missing final approval witness.
+    with pytest.raises(ValueError,match='immutable physical receipt'):
+        with db.tx() as c:
+            c.execute("DELETE FROM audit_events WHERE action='shared_driver.manager_approved' AND entity_id=%s",(declared['workday_id'],))
+            _verify_staffing_markers(c,available)
+    with db.tx() as c:
+        assert c.execute("SELECT 1 FROM audit_events WHERE action='shared_driver.manager_approved' AND entity_id=%s",(declared['workday_id'],)).fetchone()
