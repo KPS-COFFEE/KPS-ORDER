@@ -16,3 +16,10 @@ dialog:has(.staff-order-kps-menu){width:min(1120px,calc(100vw - 24px))}
 
 .staff-order-kps-menu label[hidden]{display:none}
 .staff-selected-product{font-weight:700;margin-block:12px 6px}
+
+/* Keep manager order choices aligned beside their native checkboxes. */
+#staff-order-form #staff-options{min-width:0}
+#staff-order-form #staff-options fieldset{min-width:0;margin:12px 0;padding:12px;border:1px solid var(--line,#ddd);border-radius:10px}
+#staff-order-form #staff-options legend{max-width:100%;padding-inline:4px;white-space:normal;overflow-wrap:anywhere;line-height:1.6}
+#staff-order-form #staff-options fieldset>label{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;min-width:0;min-height:44px;margin:0;padding:6px 0;line-height:1.6;text-align:start;cursor:pointer;overflow-wrap:anywhere}
+#staff-order-form #staff-options input[type=checkbox]:not([hidden]){appearance:auto;display:block;flex:0 0 20px;width:20px;min-width:20px;max-width:20px;height:20px;min-height:20px;margin:0;padding:0;align-self:center;cursor:pointer}
