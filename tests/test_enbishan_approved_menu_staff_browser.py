@@ -80,3 +80,44 @@ def test_customer_single_mahashi_card_and_signature_banner(static_customer,lang,
   expect(page.locator('#product-price')).to_contain_text('٢٠' if lang=='ar' else '20')
   assert not errors
   browser.close()
+
+
+@pytest.mark.parametrize('product_index',[0,1])
+@pytest.mark.parametrize('lang,width',[('ar',390),('en',1366)])
+def test_staff_single_flavour_pairs_and_mixed_without_note(static_customer,product_index,lang,width):
+ from playwright.sync_api import sync_playwright,expect
+ product=json.loads((ROOT/'tests/fixtures/enbishan-grape-flavours-public.json').read_text())[product_index]
+ with sync_playwright() as p:
+  browser=p.chromium.launch();page=browser.new_page(viewport={'width':width,'height':1000});errors=[]
+  page.on('pageerror',lambda error:errors.append(str(error)))
+  page.goto(static_customer+'/ops.html')
+  page.evaluate('''async ({product,lang})=>{
+   await KPSCustomerOrder.open({user:{id:'synthetic-manager',brand_id:'enbishan',role:'delivery_manager'},branches:[{id:'test-branch',name:'Test branch'}],tr:(ar,en)=>lang==='ar'?ar:en,esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),money:String,
+    api:async path=>path==='/api/shifts/current'?{shifts:[{user_id:'synthetic-manager',kind:'manager',status:'open',branch_ids:['test-branch']}]}:path.startsWith('/api/catalog')?{products:[product]}:{contacts:[]},
+    mutation:async()=>{throw Error('Real writes forbidden');},closeModal:()=>{},onCreated:()=>{},
+    modal:(title,html)=>{document.querySelector('#modal-body').innerHTML=html;document.querySelector('#modal').showModal();}
+   });
+  }''',{'product':product,'lang':lang})
+  page.locator('#staff-options input[data-group="0"]').first.check()
+  picks=page.locator('[data-grape-pick]')
+  expect(picks).to_have_count(4)
+  picks.nth(0).check()
+  page.locator('#staff-add').click()
+  expect(page.locator('#staff-cart > div')).to_have_count(1)
+  expect(page.locator('#staff-cart')).to_contain_text('دبس رمان')
+  picks.nth(1).check()
+  expect(picks.nth(2)).to_be_disabled()
+  page.locator('#staff-add').click()
+  expect(page.locator('#staff-cart > div')).to_have_count(2)
+  picks.nth(3).check()
+  expect(page.locator('[data-grape-pick]:checked')).to_have_count(1)
+  page.locator('#staff-add').click()
+  expect(page.locator('#staff-cart > div')).to_have_count(3)
+  picks.nth(2).check()
+  expect(picks.nth(3)).not_to_be_checked()
+  page.locator('#staff-add').click()
+  expect(page.locator('#staff-cart > div')).to_have_count(4)
+  expect(page.locator('[name=item_note]')).to_have_value('')
+  expect(page.locator('[data-grape-group] p')).to_have_count(0)
+  assert not errors
+  browser.close()

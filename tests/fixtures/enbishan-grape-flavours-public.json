@@ -119,6 +119,90 @@
           "FLAVOUR": "v-2606b799a8a89a992bffd12e"
         },
         "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/source-273d1169ec5c3a2f.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-c6f775eb35653867.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-66930e12efb98caf.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/source-f9b87bfb779ac000.webp"
       }
     ],
     "variant_price_matrix": [
@@ -241,6 +325,96 @@
         },
         "price_halalas": 1450,
         "compare_at_halalas": 2200
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 1200
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 1200
+      },
+      {
+        "options": {
+          "SIZE": "v-969127f17958a830d1bcc973",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 1200
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 6450,
+        "compare_at_halalas": 9500
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 6450,
+        "compare_at_halalas": 9500
+      },
+      {
+        "options": {
+          "SIZE": "v-4d099242d361cb106794a77c",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 6450,
+        "compare_at_halalas": 9500
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 5400
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 5400
+      },
+      {
+        "options": {
+          "SIZE": "v-11c6710e023eb15c7985af50",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 5400
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 1450,
+        "compare_at_halalas": 2200
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 1450,
+        "compare_at_halalas": 2200
+      },
+      {
+        "options": {
+          "SIZE": "v-037e5bbee12e0d9a177f149f",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 1450,
+        "compare_at_halalas": 2200
       }
     ],
     "name_en": "Grape Leaves",
@@ -291,9 +465,27 @@
       },
       {
         "code": "FLAVOUR",
-        "name": "نكهات ورق العنب · نكهتان أو مشكل",
+        "name": "نكهات ورق العنب",
         "type": "select",
         "values": [
+          {
+            "code": "single-pomegranate",
+            "name": "دبس رمان",
+            "name_en": "Pomegranate molasses",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "single-spicy",
+            "name": "سبايسي",
+            "name_en": "Spicy",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "single-lemon",
+            "name": "ليمون",
+            "name_en": "Lemon",
+            "price_delta_halalas": 0
+          },
           {
             "code": "pair-783331fde37a9bb0a6e0",
             "name": "دبس رمان + سبايسي",
@@ -327,7 +519,7 @@
             "unavailable_reason": null
           }
         ],
-        "name_en": "Grape leaf flavours · two flavours or mixed",
+        "name_en": "Grape leaf flavours",
         "required": true,
         "max_select": 1,
         "min_select": 1
@@ -463,6 +655,90 @@
           "FLAVOUR": "v-2606b799a8a89a992bffd12e"
         },
         "image_url": "/assets/enbishan-menu/owner-20261025/grape-cabbage-family.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-a403b7e8dc2e6242.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/approved-193cf5dc249e0086.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/grape-cabbage-family.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "single-spicy"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/grape-cabbage-family.webp"
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "single-lemon"
+        },
+        "image_url": "/assets/enbishan-menu/owner-20261025/grape-cabbage-family.webp"
       }
     ],
     "variant_price_matrix": [
@@ -585,6 +861,96 @@
         },
         "price_halalas": 4550,
         "compare_at_halalas": 6200
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 1200
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 1200
+      },
+      {
+        "options": {
+          "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 1200
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 1450,
+        "compare_at_halalas": 2200
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 1450,
+        "compare_at_halalas": 2200
+      },
+      {
+        "options": {
+          "SIZE": "v-5eaf865e16c194c339bace33",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 1450,
+        "compare_at_halalas": 2200
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 4200
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 4200
+      },
+      {
+        "options": {
+          "SIZE": "v-b804a3f4814cc6028d7ef9da",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 4200
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "single-pomegranate"
+        },
+        "price_halalas": 4550,
+        "compare_at_halalas": 6200
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "single-spicy"
+        },
+        "price_halalas": 4550,
+        "compare_at_halalas": 6200
+      },
+      {
+        "options": {
+          "SIZE": "v-f79d0c0c352f2bb2fc40e13a",
+          "FLAVOUR": "single-lemon"
+        },
+        "price_halalas": 4550,
+        "compare_at_halalas": 6200
       }
     ],
     "name_en": "Grape Leaves & Cabbage",
@@ -635,9 +1001,27 @@
       },
       {
         "code": "FLAVOUR",
-        "name": "نكهات ورق العنب · نكهتان أو مشكل",
+        "name": "نكهات ورق العنب",
         "type": "select",
         "values": [
+          {
+            "code": "single-pomegranate",
+            "name": "دبس رمان",
+            "name_en": "Pomegranate molasses",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "single-spicy",
+            "name": "سبايسي",
+            "name_en": "Spicy",
+            "price_delta_halalas": 0
+          },
+          {
+            "code": "single-lemon",
+            "name": "ليمون",
+            "name_en": "Lemon",
+            "price_delta_halalas": 0
+          },
           {
             "code": "pair-783331fde37a9bb0a6e0",
             "name": "دبس رمان + سبايسي",
@@ -671,7 +1055,7 @@
             "unavailable_reason": null
           }
         ],
-        "name_en": "Grape leaf flavours · two flavours or mixed",
+        "name_en": "Grape leaf flavours",
         "required": true,
         "max_select": 1,
         "min_select": 1

@@ -51,3 +51,40 @@ def test_khaliya_offer_keeps_approval_and_all_flavour_prices(database):
             assert menu_variants.selected_price(updated,row.options)['price_halalas']==1950
         conn.execute(sql)
         assert conn.execute('SELECT * FROM products WHERE id=%s',(p['id'],)).fetchone()==updated
+
+
+def test_single_or_pair_migration_keeps_prices_approval_and_later_edits(database):
+    from copy import deepcopy
+    fixtures=json.loads((ROOT/'tests/fixtures/enbishan-flavour-decision.json').read_text())
+    migration=(ROOT/'migrations/125_enbishan_single_or_two_flavours.sql').read_text()
+    with db.tx() as conn:
+        conn.execute("INSERT INTO brands(id,name) VALUES('enbishan','Synthetic') ON CONFLICT DO NOTHING")
+        for f in fixtures:
+            p=f['after'];settings={k:p[k] for k in ('source_id','option_groups','variants','variant_price_matrix')}
+            settings.update(source_verified=True,owner_approved_digest=db.digest(p),variant_images=[{'options':r['options'],'image_url':'/assets/current-approved.webp'} for r in p['variant_price_matrix']])
+            conn.execute('INSERT INTO products(id,brand_id,name,category,price_halalas,settings) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET settings=EXCLUDED.settings',tuple(p[k] for k in ('id','brand_id','name','category','price_halalas'))+(db.json(settings),))
+        conn.execute(migration)
+        for f in fixtures:
+            updated=conn.execute('SELECT * FROM products WHERE id=%s',(f['after']['id'],)).fetchone()
+            assert source_approved(updated)
+            group=next(g for g in updated['settings']['option_groups'] if g['code']=='FLAVOUR')
+            assert group['name']=='نكهات ورق العنب' and len(group['values'])==7
+            singles=[v for v in group['values'] if v['code'].startswith('single-')]
+            assert len(singles)==3
+            for row in menu_variants.validated(updated):
+                old=next(r for r in f['after']['variant_price_matrix'] if r['options']['SIZE']==row.options['SIZE'])
+                assert row.price_halalas==old['price_halalas']
+                assert row.compare_at_halalas==old.get('compare_at_halalas')
+                assert menu_variants.selected_price(updated,row.options)['price_halalas']==row.price_halalas
+            assert all(i['image_url']=='/assets/current-approved.webp' for i in updated['settings']['variant_images'])
+            assert len(updated['settings']['variant_images'])==28
+        before=conn.execute("SELECT id,settings FROM products WHERE brand_id='enbishan' ORDER BY id").fetchall()
+        conn.execute(migration)
+        assert conn.execute("SELECT id,settings FROM products WHERE brand_id='enbishan' ORDER BY id").fetchall()==before
+        # A later approved commercial edit must never be overwritten on rerun.
+        changed=deepcopy(fixtures[0]['after']);changed['price_halalas']=1201
+        settings={k:changed[k] for k in ('source_id','option_groups','variants','variant_price_matrix')}
+        settings.update(source_verified=True,owner_approved_digest=db.digest(changed))
+        conn.execute('UPDATE products SET price_halalas=1201,settings=%s WHERE id=%s',(db.json(settings),changed['id']))
+        conn.execute(migration)
+        assert conn.execute('SELECT settings FROM products WHERE id=%s',(changed['id'],)).fetchone()['settings']==settings
