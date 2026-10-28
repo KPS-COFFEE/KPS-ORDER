@@ -7,19 +7,20 @@ from test_delivery_workspace_browser import static_customer
 
 pytestmark = pytest.mark.skipif(os.getenv('TEST_BROWSER') != '1', reason='Explicit browser run')
 SOURCE = (Path(__file__).resolve().parents[1] / 'public/customer.js').read_text()
+POLICY_HELPERS = SOURCE[SOURCE.index('  function requiresPhoneVerification()'):SOURCE.index('  // Presentation only:')]
 HELPERS = SOURCE[SOURCE.index('  // One durable unresolved purchase'):SOURCE.index('  const node = (tag, cls, content) =>')]
 
 
 def bootstrap(brand):
     return '''const requestedBrandId=BRAND;
-const state={session:{user:{id:'synthetic-customer',role:'customer',brand_id:requestedBrandId}},cart:[{id:'coffee'}],quote:{}};
+const state={session:{user:{id:'synthetic-customer',role:'customer',brand_id:requestedBrandId},csrf_token:'synthetic-csrf',customer_verified:true},cart:[{id:'coffee'}],quote:{}};
 const key=()=>crypto.randomUUID();const entryText=(ar,en)=>en;const t=x=>x;
 const basketStorageKey='synthetic-basket';
 const persistDraft=()=>{},renderCart=()=>{},queueNearestBranches=()=>{},queueQuote=()=>{},closeDialog=()=>{},toast=()=>{};
 const openOrders=async id=>{window.opened=id;};
 let fail=true;window.writes=[];
 const api=async(path,options)=>{window.writes.push(options);if(fail){fail=false;throw Object.assign(new Error('lost response'),{code:'NETWORK'});}return {order:{id:'synthetic-saved'}};};
-'''.replace('BRAND', repr(brand)) + HELPERS + '''
+'''.replace('BRAND', repr(brand)) + POLICY_HELPERS + HELPERS + '''
 basketGeneration='synthetic-basket-1';
 window.acquire=checkoutAttempt;window.recover=recoverCheckout;window.submit=submitCheckout;
 '''
