@@ -1218,24 +1218,25 @@
     if(product.brand_id!=='enbishan')return product.category||'';
     const name=product.name||'';
     if(/موهيتو|فتة/.test(name))return 'الفتة والموهيتو';
-    if(/بوكس|سيجنتشر|عنبيشن كبير/.test(name))return 'البوكسات';
+    if(/سيجنتشر|عنبيشن كبير/.test(name))return 'عنبيشن';
+    if(/بوكس/.test(name))return 'البوكسات';
+    if(/ورق عنب|ملفوف/.test(name))return 'ورق العنب والملفوف';
     if(/كبة|سمبوسة/.test(name))return 'المقليات';
     if(/مسخن/.test(name))return 'المسخن';
     if(/نودلز/.test(name))return 'النودلز';
     return product.category||'';
   }
-  const enbishanSections=['البوكسات','المحاشي','المقليات','المسخن','الفتة والموهيتو','النودلز','المخبوزات','المشروبات'];
+  const enbishanSections=['ورق العنب والملفوف','المحاشي','المقليات','عنبيشن','البوكسات','المسخن','الفتة والموهيتو','النودلز','المخبوزات','المشروبات'];
   function menuSectionLabel(section) {
-    const english={'البوكسات':'Boxes','المحاشي':'Stuffed vegetables','المقليات':'Fried bites','النودلز':'Noodles','المسخن':'Musakhan','الفتة والموهيتو':'Fattah & Mojito','المخبوزات':'Bakery','المشروبات':'Drinks'};
+    const english={'عنبيشن':'Enbishan','ورق العنب والملفوف':'Grape leaves & cabbage','البوكسات':'Boxes','المحاشي':'Stuffed vegetables','المقليات':'Fried bites','النودلز':'Noodles','المسخن':'Musakhan','الفتة والموهيتو':'Fattah & Mojito','المخبوزات':'Bakery','المشروبات':'Drinks'};
     return requestedBrandId==='enbishan'?entryText(section,english[section]||section):sourceText(state.products.find(p=>p.category===section),'category');
   }
   function menuRank(product, overview=false) {
-    // Lead the overview with existing medium/large/family box photographs.
-    const featured=['enbishan-menu-7b0752b4daa269674e08576f','enbishan-menu-c434c397f9072844ba9c93b4','enbishan-menu-894fad254b67890eafc2c47e','enbishan-menu-b641eb7a3572b133717e64ef','enbishan-menu-0d6d5352fce7cbd44ad6594a','enbishan-menu-2abc3c6b5efd0180c521eef0'];
-    const index=featured.indexOf(product.id);
-    if(overview&&index>=0)return index;
+    // Keep each section together in the full menu as well as category tabs.
     const section=enbishanSections.indexOf(menuSection(product));
-    return 100+(section<0?99:section)*10+(index>=0?0:1);
+    const grapeOrder=['enbishan-menu-894fad254b67890eafc2c47e','enbishan-menu-c434c397f9072844ba9c93b4','enbishan-menu-6c7a9f521d5f21500c2e6d9a','enbishan-menu-cfe9ad0bccc96e0d0537be28','enbishan-menu-2abc3c6b5efd0180c521eef0'];
+    const index=grapeOrder.indexOf(product.id);
+    return (section<0?99:section)*100+(index<0?50:index);
   }
   function menuCover(product) {
     if(product.brand_id!=='enbishan')return {image_url:product.image_url};
@@ -1247,6 +1248,45 @@
       if(image)return {image_url:image.image_url,label:sourceText(size)};
     }
     return {image_url:product.image_url};
+  }
+  // Customer-facing copy only; catalog names, options and prices stay authoritative.
+  function menuDescription(product,selectedSize=null) {
+    if(product.brand_id!=='enbishan')return sourceText(product,'description')||'';
+    const sizes=groups(product).find(g=>g.code==='SIZE')?.values||[];
+    const pictured=menuCover(product).label;
+    const size=selectedSize||sizes.find(v=>sourceText(v)===pictured)||sizes[0];
+    const contents=menuSizeContents(product,size);
+    if(contents)return contents;
+    const name=sourceText(product);
+    if(product.name?.startsWith('بوكس رمضان'))return name.split(' · ').slice(1).join(' · ');
+    if(product.id==='enbishan-menu-ba943fd11771582e9003ac47')return entryText('اختر ٣ أنواع مختلفة من المحاشي؛ عدد الحبات موضح مع كل اختيار.','Choose 3 different stuffed vegetables; piece counts are shown with each choice.');
+    const label=sourceText(size);
+    const combined=label.match(/[（(](.*)[)）]/);
+    if(combined)return combined[1];
+    const count=String(size?.name||'').match(/[0-9٠-٩]+/);
+    if(count)return entryText(count[0]+' قطعة '+name,count[0]+' pieces · '+name);
+    return name;
+  }
+  // Piece distributions transcribed from the approved workbook's contents column.
+  function menuSizeContents(product,size) {
+    if(product.brand_id!=='enbishan')return '';
+    const sizes={
+      'enbishan-menu-eea4f81998c7705a69c69532':{
+        'v-8bc5ff94ef1484666fa0cfde':['٢ ورق عنب + ١ بطاطس + ١ فليفلة + ٢ بصل + ٢ كوسا + ٢ باذنجان','2 grape leaves + 1 potato + 1 pepper + 2 onions + 2 zucchini + 2 eggplants'],
+        'v-7ec6c327c235a99f12ee1173':['٦ ورق عنب + ١ بطاطس + ١ فليفلة + ٤ بصل + ٤ كوسا + ٥ باذنجان','6 grape leaves + 1 potato + 1 pepper + 4 onions + 4 zucchini + 5 eggplants']
+      },
+      'enbishan-menu-b641eb7a3572b133717e64ef':{
+        'v-3301de500e7478b4e03b3a73':['٥ ورق عنب + ١ بطاطس + ٢ فليفلة + ٢ بصل + ٢ كوسا + ١ باذنجان + ٣ ملفوف + ٢ كبة','5 grape leaves + 1 potato + 2 peppers + 2 onions + 2 zucchini + 1 eggplant + 3 cabbage rolls + 2 kibbeh']
+      },
+      'enbishan-menu-7b0752b4daa269674e08576f':{
+        'v-b77b6cf14198f496f49c1d3c':['١٢ ورق عنب + ٢ بطاطس + ٢ فليفلة + ٤ بصل + ٥ كوسا + ٤ باذنجان + ٨ ملفوف + ٧ كبة','12 grape leaves + 2 potatoes + 2 peppers + 4 onions + 5 zucchini + 4 eggplants + 8 cabbage rolls + 7 kibbeh']
+      }
+    };
+    const copy=sizes[product.id]?.[size?.code||size?.id];
+    return copy?entryText(...copy):'';
+  }
+  function menuSizeLabel(product,size) {
+    return [sourceText(size),menuSizeContents(product,size)].filter(Boolean).join(' — ');
   }
   function renderCategories() { const tabs = $('categories'); tabs.replaceChildren(); const categories = [...new Set(state.products.map((p) => menuSection(p)).filter(Boolean))];if(requestedBrandId==='enbishan')categories.sort((a,b)=>(enbishanSections.indexOf(a)<0?99:enbishanSections.indexOf(a))-(enbishanSections.indexOf(b)<0?99:enbishanSections.indexOf(b))); for (const category of ['', ...categories]) { const button = node('button','category-tab',(category?menuSectionLabel(category):t("full_menu"))); button.type='button'; button.setAttribute('aria-current', String(state.category === category)); button.addEventListener('click', () => { state.category = category; renderCategories(); renderProducts(); }); tabs.append(button); } }
   function renderFirstGift(container){
@@ -1262,11 +1302,40 @@
     }
     container.append(card);
   }
-  function renderProducts() { const search = $('search').value.trim().toLocaleLowerCase(language); const products = state.products.filter((p) => (!state.category || menuSection(p) === state.category) && (!search || productSearchText(p).includes(search))); if(requestedBrandId==='enbishan')products.sort((a,b)=>menuRank(a,!state.category)-menuRank(b,!state.category)); const container = $('products'); container.replaceChildren(); text('menu-count', t("0_items_1",{"0":()=>(number.format(state.products.length)),"1":()=>(requestedBrandId==='kps'?t("images_and_options_from_the_kps_menu"):` · ${sourceText(state.brand)}`)})); if (!products.length) { const empty=node('div','empty-state'); empty.append(node('h3','', state.products.length?t("no_matching_items"):t("no_items_have_been_added_for_this_brand_yet")),node('p','', state.products.length?t("try_another_search_or_category"):t("items_approved_by_the_brand_will_appear_here"))); container.append(empty); return; }
-    for (const product of products) { const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',t(groups(product).length?"details_of_0":"add_0_to_basket",{"0":()=>(sourceText(product))})); const cover=menuCover(product); const originalUrl=safeImage(cover.image_url); const imageUrl=originalUrl?.match(/^\/assets\/[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/)?originalUrl.replace('/assets/','/media/previews/'):originalUrl?.startsWith('/api/product-assets/')?originalUrl+'?preview=true':originalUrl; if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=sourceText(product);if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading=container.childElementCount<4?'eager':'lazy'; img.fetchPriority=container.childElementCount<2?'high':'auto'; img.decoding='async'; img.addEventListener('error', () => { if(img.src!==new URL(originalUrl,location.href).href){img.src=originalUrl;return;}img.remove(); imageButton.append(node('span','image-fallback',t("photo_currently_unavailable"))); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback',t("no_product_photo"))); imageButton.addEventListener('click',()=>addFromCard(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',sourceText(product)); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if(product.brand_id==='enbishan'){const sizes=groups(product).find(g=>g.code==='SIZE')?.values||[];const detail=cover.label?entryText('الصورة: ','Pictured: ')+cover.label:'';if(detail)info.append(node('p','enbishan-size-summary',detail));} if (restricted(product)) info.append(node('span','pill warning',t("available_only_in_hafar_al_batin"))); if (groups(product).length) info.append(node('span','pill',isMug(product)?t("a_color_for_each_mug"):t("options_for_each_unit"))); const bottom=node('div','product-card-bottom'); const startingVariant=globalThis.KPSMenuVariants?.starting(product);if(startingVariant?.compare_at_halalas>product.price_halalas)bottom.append(node('del','muted',money(startingVariant.compare_at_halalas)));bottom.append(node('span','money',(product.brand_id==='enbishan'&&groups(product).find(g=>g.code==='SIZE')?.values?.length>1?entryText('يبدأ من ','From '):'')+money(product.price_halalas))); const add=node('button','product-add-button','＋'); add.type='button'; add.setAttribute('aria-label',t("add_0_to_basket",{"0":()=>(sourceText(product))})); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || t("choose_quantity_and_options"); add.addEventListener('click',()=>openProduct(product)); const minus=node('button','product-minus-button','−');minus.type='button';minus.setAttribute('aria-label',t('decrease_quantity_of_0',{'0':()=>(sourceText(product))}));minus.addEventListener('click',()=>removeFromCard(product));const count=node('output','product-card-quantity',number.format(cardQuantity(product.id)));count.setAttribute('aria-live','polite');const controls=node('div','product-card-controls');controls.append(minus,count,add);bottom.append(controls); info.append(bottom); if(isKhaliya(product)&&state.service!=='delivery'&&branch()&&city(branch().city)===city('حفر الباطن')&&Number(branch().branch_no)!==2){info.append(node('p','small muted',language==='en'?'Khaliya is available for pickup at Branch 2 only.':'الخلية متوفرة للاستلام من فرع 2 فقط.'));const target=state.branches.find(b=>Number(b.branch_no)===2&&city(b.city)===city('حفر الباطن'));if(target){const transfer=node('button','button secondary',language==='en'?'Order from Branch 2':'الطلب من فرع 2');transfer.type='button';transfer.addEventListener('click',()=>changeBranch(target.id));info.append(transfer);}} if(imageUrl){const zoom=node('button','image-zoom-button',t("enlarge_photo"));zoom.type='button';zoom.setAttribute('aria-label',t("enlarge_photo_of_0",{"0":()=>(sourceText(product))}));zoom.addEventListener('click',()=>showImage({...product,image_url:cover.image_url}));info.append(zoom);}card.addEventListener('click',event=>{if(!event.target.closest('button,a,input,select,textarea'))addFromCard(product);});card.append(imageButton,info); container.append(card); }
+  // Group menu cards only; each size keeps its original catalog identity and options.
+  const mahashiIds=['enbishan-menu-eea4f81998c7705a69c69532','enbishan-menu-ba943fd11771582e9003ac47'];
+  function mahashiFamily(product){return requestedBrandId==='enbishan'&&mahashiIds.includes(product?.id)?state.products.filter(p=>mahashiIds.includes(p.id)):[];}
+  function menuProducts(){
+    const family=state.products.filter(p=>requestedBrandId==='enbishan'&&mahashiIds.includes(p.id));
+    const representative=family.find(p=>p.id===mahashiIds[0]&&eligibleForProduct(p).ok)||family.find(p=>eligibleForProduct(p).ok)||family[0];
+    return state.products.filter(p=>!family.includes(p)||p===representative);
+  }
+  function menuStartingPrice(product){const family=mahashiFamily(product);return family.length?Math.min(...family.filter(p=>eligibleForProduct(p).ok).map(p=>p.price_halalas).concat(family.every(p=>!eligibleForProduct(p).ok)?[product.price_halalas]:[])):product.price_halalas;}
+  function renderMahashiSizes(product,container){
+    const family=mahashiFamily(product);if(family.length<2)return;
+    const field=node('fieldset','field');field.append(node('legend','',entryText('الحجم','Size')));
+    const choices=node('div','customer-option-choices');choices.setAttribute('aria-label',entryText('حجم محاشي مشكل','Mixed mahashi size'));
+    for(const p of [...family].sort((a,b)=>mahashiIds.indexOf(b.id)-mahashiIds.indexOf(a.id)))for(const size of groups(p).find(g=>g.code==='SIZE')?.values||[]){
+      const code=size.code||size.id;const button=node('button','button secondary',sourceText(size));button.type='button';
+      button.disabled=!eligibleForProduct(p).ok||size.enabled===false||size.available===false;
+      const prices=(p.variant_price_matrix||[]).filter(row=>row.options?.SIZE===code);
+      const price=node('span','enbishan-size-price',money(prices.length?Math.min(...prices.map(row=>row.price_halalas)):p.price_halalas));button.append(price);
+      button.setAttribute('aria-pressed',String(p.id===product.id&&state.optionValues.every(options=>options.SIZE===code)));
+      button.addEventListener('click',()=>{
+        const quantity=$('product-qty').value,note=$('product-notes').value;
+        if(p.id!==state.product.id)openProduct(p);
+        $('product-qty').value=quantity;$('product-notes').value=note;
+        state.optionValues=Array.from({length:Number(quantity)},()=>({SIZE:code}));renderOptions();
+      });choices.append(button);
+    }
+    field.append(choices);container.append(field);
+  }
+  function renderProducts() { const search = $('search').value.trim().toLocaleLowerCase(language); const products = menuProducts().filter((p) => (!state.category || menuSection(p) === state.category) && (!search || [p,...mahashiFamily(p)].some(item=>productSearchText(item).includes(search)))); if(requestedBrandId==='enbishan')products.sort((a,b)=>menuRank(a,!state.category)-menuRank(b,!state.category)); const container = $('products'); container.replaceChildren(); text('menu-count', t("0_items_1",{"0":()=>(number.format(menuProducts().length)),"1":()=>(requestedBrandId==='kps'?t("images_and_options_from_the_kps_menu"):` · ${sourceText(state.brand)}`)})); if (!products.length) { const empty=node('div','empty-state'); empty.append(node('h3','', state.products.length?t("no_matching_items"):t("no_items_have_been_added_for_this_brand_yet")),node('p','', state.products.length?t("try_another_search_or_category"):t("items_approved_by_the_brand_will_appear_here"))); container.append(empty); return; }
+    let previousSection=null;
+    for (const product of products) { const section=menuSection(product);if(requestedBrandId==='enbishan'&&!state.category&&section!==previousSection){const heading=node('h3','menu-section-title',menuSectionLabel(section));container.append(heading);previousSection=section;} const card=node('article','product-card');card.dataset.productId=product.id; const imageButton=node('button','product-image-button'); imageButton.type='button'; imageButton.setAttribute('aria-label',t(groups(product).length?"details_of_0":"add_0_to_basket",{"0":()=>(sourceText(product))})); const cover=menuCover(product); const originalUrl=safeImage(cover.image_url); const imageUrl=originalUrl?.match(/^\/assets\/[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/)?originalUrl.replace('/assets/','/media/previews/'):originalUrl?.startsWith('/api/product-assets/')?originalUrl+'?preview=true':originalUrl; if (imageUrl) { const img=node('img'); img.src=imageUrl; img.alt=sourceText(product);if(isKhaliya(product))img.classList.add('khaliya-owner-image'); img.loading=container.childElementCount<4?'eager':'lazy'; img.fetchPriority=container.childElementCount<2?'high':'auto'; img.decoding='async'; img.addEventListener('error', () => { if(img.src!==new URL(originalUrl,location.href).href){img.src=originalUrl;return;}img.remove(); imageButton.append(node('span','image-fallback',t("photo_currently_unavailable"))); }, {once:true}); imageButton.append(img); } else imageButton.append(node('span','image-fallback',t("no_product_photo"))); imageButton.addEventListener('click',()=>addFromCard(product)); const info=node('div','product-content'); const title=node('h3'); const titleButton=node('button','',sourceText(product)); titleButton.type='button'; titleButton.addEventListener('click',()=>openProduct(product)); title.append(titleButton); info.append(title); if(product.brand_id==='enbishan'){const description=menuDescription(product);if(description)info.append(node('p','enbishan-product-description',description));const family=mahashiFamily(product);const detail=family.length>1?entryText('الأحجام: ','Sizes: ')+[...family].reverse().flatMap(p=>(groups(p).find(g=>g.code==='SIZE')?.values||[]).map(v=>sourceText(v))).join(' • '):cover.label?entryText('الصورة: ','Pictured: ')+cover.label:'';if(detail)info.append(node('p','enbishan-size-summary',detail));} if (restricted(product)) info.append(node('span','pill warning',t("available_only_in_hafar_al_batin"))); if (groups(product).length) info.append(node('span','pill',isMug(product)?t("a_color_for_each_mug"):t("options_for_each_unit"))); const bottom=node('div','product-card-bottom'); const startingVariant=mahashiFamily(product).length>1?null:globalThis.KPSMenuVariants?.starting(product);if(startingVariant?.compare_at_halalas>product.price_halalas)bottom.append(node('del','muted',money(startingVariant.compare_at_halalas)));bottom.append(node('span','money',(product.brand_id==='enbishan'&&(mahashiFamily(product).length>1||groups(product).find(g=>g.code==='SIZE')?.values?.length>1)?entryText('يبدأ من ','From '):'')+money(menuStartingPrice(product)))); const add=node('button','product-add-button','+'); add.type='button'; add.setAttribute('aria-label',t("add_0_to_basket",{"0":()=>(sourceText(product))})); const eligibility=eligibleForProduct(product); add.disabled=!eligibility.ok; add.title=eligibility.reason || t("choose_quantity_and_options"); add.addEventListener('click',()=>openProduct(product)); const minus=node('button','product-minus-button','−');minus.type='button';minus.setAttribute('aria-label',t('decrease_quantity_of_0',{'0':()=>(sourceText(product))}));minus.addEventListener('click',()=>removeFromCard(product));const count=node('output','product-card-quantity',number.format(cardQuantity(product.id)));count.setAttribute('aria-live','polite');const controls=node('div','product-card-controls');controls.append(minus,count,add);bottom.append(controls); info.append(bottom); if(isKhaliya(product)&&state.service!=='delivery'&&branch()&&city(branch().city)===city('حفر الباطن')&&Number(branch().branch_no)!==2){info.append(node('p','small muted',language==='en'?'Khaliya is available for pickup at Branch 2 only.':'الخلية متوفرة للاستلام من فرع 2 فقط.'));const target=state.branches.find(b=>Number(b.branch_no)===2&&city(b.city)===city('حفر الباطن'));if(target){const transfer=node('button','button secondary',language==='en'?'Order from Branch 2':'الطلب من فرع 2');transfer.type='button';transfer.addEventListener('click',()=>changeBranch(target.id));info.append(transfer);}} if(imageUrl){const zoom=node('button','image-zoom-button',t("enlarge_photo"));zoom.type='button';zoom.setAttribute('aria-label',t("enlarge_photo_of_0",{"0":()=>(sourceText(product))}));zoom.addEventListener('click',()=>showImage({...product,image_url:cover.image_url}));info.append(zoom);}card.addEventListener('click',event=>{if(!event.target.closest('button,a,input,select,textarea'))addFromCard(product);});card.append(imageButton,info); container.append(card); }
     syncCardQuantities();
   }
-  function cardQuantity(id) { return state.cart.filter(line=>line.productId===id).reduce((sum,line)=>sum+line.quantity,0); }
+  function cardQuantity(id) { return state.cart.filter(line=>line.productId===id||(requestedBrandId==='enbishan'&&mahashiIds.includes(id)&&mahashiIds.includes(line.productId))).reduce((sum,line)=>sum+line.quantity,0); }
   function syncCardQuantities() {
     for(const card of $('products').querySelectorAll('.product-card')){
       const quantity=cardQuantity(card.dataset.productId);
@@ -1289,7 +1358,7 @@
     cartChanged();
   }
   function removeFromCard(product) {
-    const lines=state.cart.filter(line=>line.productId===product.id);
+    const lines=state.cart.filter(line=>(line.productId===product.id||mahashiFamily(product).some(p=>p.id===line.productId)));
     // A product with multiple option/note lines needs an explicit line choice.
     // Show the existing basket instead of silently choosing a flavour to remove.
     if(lines.length>1){showBasket();return;}
@@ -1297,7 +1366,7 @@
   }
   function renderCart() { const container=$('cart-lines'); container.replaceChildren(); const count=state.cart.reduce((sum,line)=>sum+line.quantity,0); text('header-count',number.format(count)); text('basket-count',t("0_items_2",{"0":()=>(number.format(count))})); text('mobile-basket-count',t("your_basket_0_items",{"0":()=>(number.format(count))})); text('mobile-basket-total',money(state.quote?.total_halalas ?? draftSubtotal())); $('basket-details').hidden=!count;syncMobileBasket();
     if (!count) { const empty=node('div','empty-state'); empty.append(node('span','empty-symbol','＋'),node('h3','',t("start_with_your_favorite")),node('p','',t("items_you_add_will_appear_here"))); container.append(empty); }
-    for (const line of state.cart) { const product=productFor(line); const row=node('div','cart-line'); if(product?.brand_id==='enbishan'){const selectedImage=(product.variant_images||[]).find(v=>Object.entries(v.options||{}).every(([code,value])=>line.options?.[code]===value));const url=safeImage(selectedImage?.image_url||product.image_url);if(url){const image=node('img','enbishan-cart-image');image.src=url;image.alt=cartLineName(product,line.options);image.loading='lazy';row.append(image);}} const title=node('div','cart-line-title'); title.append(node('span','',cartLineName(product,line.options)),node('span','money',money(linePrice(line)*line.quantity))); row.append(title); const label=optionLabel(product || {},line.options); if(label&&!isKhaliya(product||{})) row.append(node('small','',label)); if(line.restoredName)row.append(node('small','',t("previously_saved_item_0_type_and_quantity_retained",{"0":()=>(line.restoredName)}))); if(line.note) row.append(node('small','',t("note_0",{"0":()=>(line.note)}))); const eligible=eligibleForProduct(product || {}); if(!eligible.ok) row.append(node('small','status error',eligible.reason)); else if(!cartOptionsAvailable(line,product))row.append(node('small','status error',t('basket_option_unavailable'))); const controls=node('div','cart-line-controls'); const stepper=node('div','stepper'); const minus=node('button','','−'); minus.type='button'; minus.setAttribute('aria-label',t("decrease_quantity_of_0",{"0":()=>(sourceText(product))})); minus.addEventListener('click',()=>updateQuantity(line.rowId,-1)); const plus=node('button','','＋'); plus.type='button'; plus.disabled=line.quantity>=30; plus.setAttribute('aria-label',t("increase_quantity_of_0",{"0":()=>(sourceText(product))})); plus.addEventListener('click',()=>updateQuantity(line.rowId,1)); stepper.append(minus,node('span','',number.format(line.quantity)),plus); const remove=node('button','remove-line',t("remove")); remove.type='button'; remove.setAttribute('aria-label',t("remove_0_1",{"0":()=>(sourceText(product)),"1":()=>(label?' '+label:'')})); remove.addEventListener('click',()=>{state.cart=state.cart.filter((item)=>item.rowId!==line.rowId); cartChanged();}); controls.append(stepper,remove); row.append(controls); container.append(row); }
+    for (const line of state.cart) { const product=productFor(line); const row=node('div','cart-line'); if(product?.brand_id==='enbishan'){const selectedImage=(product.variant_images||[]).find(v=>Object.entries(v.options||{}).every(([code,value])=>line.options?.[code]===value));const url=safeImage(selectedImage?.image_url||product.image_url);if(url){const image=node('img','enbishan-cart-image');image.src=url;image.alt=cartLineName(product,line.options);image.loading='lazy';row.append(image);}} const title=node('div','cart-line-title'); title.append(node('span','',cartLineName(product,line.options)),node('span','money',money(linePrice(line)*line.quantity))); row.append(title); const label=optionLabel(product || {},line.options); if(label&&!isKhaliya(product||{})) row.append(node('small','',label)); if(line.restoredName)row.append(node('small','',t("previously_saved_item_0_type_and_quantity_retained",{"0":()=>(line.restoredName)}))); if(line.note) row.append(node('small','',t("note_0",{"0":()=>(line.note)}))); const eligible=eligibleForProduct(product || {}); if(!eligible.ok) row.append(node('small','status error',eligible.reason)); else if(!cartOptionsAvailable(line,product))row.append(node('small','status error',t('basket_option_unavailable'))); const controls=node('div','cart-line-controls'); const stepper=node('div','stepper'); const minus=node('button','','−'); minus.type='button'; minus.setAttribute('aria-label',t("decrease_quantity_of_0",{"0":()=>(sourceText(product))})); minus.addEventListener('click',()=>updateQuantity(line.rowId,-1)); const plus=node('button','','+'); plus.type='button'; plus.disabled=line.quantity>=30; plus.setAttribute('aria-label',t("increase_quantity_of_0",{"0":()=>(sourceText(product))})); plus.addEventListener('click',()=>updateQuantity(line.rowId,1)); stepper.append(minus,node('span','',number.format(line.quantity)),plus); const remove=node('button','remove-line',t("remove")); remove.type='button'; remove.setAttribute('aria-label',t("remove_0_1",{"0":()=>(sourceText(product)),"1":()=>(label?' '+label:'')})); remove.addEventListener('click',()=>{state.cart=state.cart.filter((item)=>item.rowId!==line.rowId); cartChanged();}); controls.append(stepper,remove); row.append(controls); container.append(row); }
     syncCardQuantities();renderQuote();
     renderEnbishanJourney();
   }
@@ -1317,7 +1386,7 @@
         if(!(group?.values||[]).some((value)=>(value.code||value.id)===selected[code]&&value.enabled!==false&&value.available!==false))delete selected[code];
       }
     }
-    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!sourceText(product,'description'); text('product-description',sourceText(product,'description')||''); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason); text('product-add',t("add_to_basket")); renderOptions();
+    text('product-title',sourceText(product)); text('product-price',money(product.price_halalas)); const image=safeImage(menuCover(product).image_url); $('product-image').hidden=!image;$('product-image-zoom').hidden=!image; if(image){$('product-image').src=image;$('product-image').alt=sourceText(product);$('product-image').classList.toggle('khaliya-owner-image',isKhaliya(product));} $('product-description').hidden=!menuDescription(product); text('product-description',menuDescription(product)); $('product-restriction').hidden=!restricted(product); const eligibility=eligibleForProduct(product); $('product-add').disabled=!eligibility.ok; showError('product-availability',eligibility.reason); text('product-add',t("add_to_basket")); renderOptions();
     if(optionFocus>=0)$('product-options').querySelectorAll('select')[optionFocus]?.focus({preventScroll:true});
     openDialog('product-dialog');
   }
@@ -1331,12 +1400,12 @@
   }
   function showSelectedProductImage() { if(!state.product)return;showImage({...state.product,image_url:$('product-image').getAttribute('src')||state.product.image_url}); }
   function renderVariantPrice(activeUnit=0){
-    const product=state.product;if(!product?.variant_price_matrix)return;
+    const product=state.product;if(!product)return;
     if(product.brand_id==='enbishan'){
       const options=state.optionValues[activeUnit]||state.optionValues[0]||{};
       const sizeGroup=groups(product).find(g=>g.code==='SIZE');
       const selectedSize=sizeGroup?.values?.find(v=>(v.code||v.id)===options.SIZE);
-      const description=[sourceText(product,'description'),selectedSize?sourceText(selectedSize):sizeGroup?.values?.map(v=>sourceText(v)).join(' • ')].filter(Boolean).join(' — ');
+      const description=menuDescription(product,selectedSize);
       text('product-description',description);$('product-description').hidden=!description;
       const variant=(product.variant_images||[]).find(entry=>Object.entries(entry.options||{}).every(([key,value])=>options[key]===value));
       const sizeImages=(product.variant_images||[]).filter(entry=>options.SIZE&&entry.options?.SIZE===options.SIZE);
@@ -1344,6 +1413,7 @@
       const image=safeImage(variant?.image_url||sizeImage||menuCover(product).image_url);
       if(image){$('product-image').src=image;$('product-image').hidden=false;}
     }
+    if(!product.variant_price_matrix)return;
     const rows=state.optionValues.map(options=>globalThis.KPSMenuVariants?.selected(product,options));
     const complete=rows.every(Boolean);
     const total=complete?rows.reduce((sum,row)=>sum+row.price_halalas,0):product.price_halalas;
@@ -1404,7 +1474,7 @@
     });
     field.append(choices);draw();return field;
   }
-  function renderOptions() { const product=state.product; if(!product)return; const quantity=Math.max(1,Math.min(30,Math.floor(Number($('product-qty').value)||1))); $('product-qty').value=String(quantity); while(state.optionValues.length<quantity)state.optionValues.push({}); state.optionValues.length=quantity; const allGroups=groups(product); for(const options of state.optionValues)for(const group of allGroups)if(fixedSingleSize(product,group))options[group.code]=group.values[0].code||group.values[0].id; const optionGroups=allGroups.filter(group=>!fixedSingleSize(product,group)); const container=$('product-options');container.replaceChildren(); $('product-option-hint').hidden=!optionGroups.length; text('product-option-hint',isMug(product)?t("choose_the_quantity_then_a_color_for_each_mug"):isKhaliya(product)?t("choose_a_type_for_each_unit_classic_or_pecan"):optionGroups.length?(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("حدد اختياراتك لكل وحدة قبل الإضافة.","Choose the options for each unit before adding."):t("choose_the_quantity_then_a_flavor_for_each_unit")):''); $('apply-first-option').hidden=optionGroups.length===0||quantity<2; text('apply-first-option',isMug(product)?t("use_the_first_mug_s_color_for_all"):isKhaliya(product)?t("use_the_first_unit_s_type_for_all"):(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("تطبيق اختيارات الوحدة الأولى على الكل","Use the first unit’s choices for all"):t("use_the_first_unit_s_flavor_for_all"))); for(let index=0;index<quantity&&optionGroups.length;index++){const unit=node('div','option-unit');unit.append(node('h3','',`${isMug(product)?t("mug"):t("unit")} ${number.format(index+1)}`));for(const group of optionGroups){if(requestedBrandId==='enbishan'&&group.code==='FLAVOUR'){const flavours=renderGrapeFlavours(product,group,index);if(flavours){unit.append(flavours);continue;}}const label=node('label','field',groupLabel(group));const select=node('select');select.setAttribute('aria-label',`${groupLabel(group)} ${number.format(index+1)}`); select.append(new Option(isKhaliya(product)?t("choose_a_type"):t("choose_0",{"0":()=>(isMug(product)?t("color"):groupLabel(group))}),''));for(const value of group.values||[]){const available=(state.branchCatalogPending&&state.branchCatalogId!==state.branchId||eligibleForProduct(product).ok)&&value.enabled!==false&&value.available!==false;const repeated=requestedBrandId==='enbishan'&&group.code.startsWith('CHOICE_')&&Object.entries(state.optionValues[index]).some(([code,selected])=>code!==group.code&&code.startsWith('CHOICE_')&&selected===(value.code||value.id));if(repeated)continue;const option=new Option(String(sourceText(value))+(available?'':String(t('unavailable_option'))),value.code||value.id);option.disabled=!available;select.append(option);}select.value=state.optionValues[index][group.code]||'';select.required=group.required!==false;select.addEventListener('change',()=>{state.optionValues[index][group.code]=select.value;if(group.code.startsWith('CHOICE_')){renderOptions();return;}showError('product-error','');renderVariantPrice(index);});label.append(select);
+  function renderOptions() { const product=state.product; if(!product)return; const quantity=Math.max(1,Math.min(30,Math.floor(Number($('product-qty').value)||1))); $('product-qty').value=String(quantity); while(state.optionValues.length<quantity)state.optionValues.push({}); state.optionValues.length=quantity; const allGroups=groups(product); for(const options of state.optionValues)for(const group of allGroups)if(fixedSingleSize(product,group))options[group.code]=group.values[0].code||group.values[0].id; const optionGroups=allGroups.filter(group=>!fixedSingleSize(product,group)&&!(mahashiFamily(product).length>1&&group.code==='SIZE')); const container=$('product-options');container.replaceChildren();renderMahashiSizes(product,container); $('product-option-hint').hidden=!optionGroups.length; text('product-option-hint',isMug(product)?t("choose_the_quantity_then_a_color_for_each_mug"):isKhaliya(product)?t("choose_a_type_for_each_unit_classic_or_pecan"):optionGroups.length?(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("حدد اختياراتك لكل وحدة قبل الإضافة.","Choose the options for each unit before adding."):t("choose_the_quantity_then_a_flavor_for_each_unit")):''); $('apply-first-option').hidden=optionGroups.length===0||quantity<2; text('apply-first-option',isMug(product)?t("use_the_first_mug_s_color_for_all"):isKhaliya(product)?t("use_the_first_unit_s_type_for_all"):(requestedBrandId==='enbishan'&&!optionGroups.some(g=>g.code==='FLAVOUR')?entryText("تطبيق اختيارات الوحدة الأولى على الكل","Use the first unit’s choices for all"):t("use_the_first_unit_s_flavor_for_all"))); for(let index=0;index<quantity&&optionGroups.length;index++){const unit=node('div','option-unit');unit.append(node('h3','',`${isMug(product)?t("mug"):t("unit")} ${number.format(index+1)}`));for(const group of optionGroups){if(requestedBrandId==='enbishan'&&group.code==='FLAVOUR'){const flavours=renderGrapeFlavours(product,group,index);if(flavours){unit.append(flavours);continue;}}const label=node('label','field',groupLabel(group));const select=node('select');select.setAttribute('aria-label',`${groupLabel(group)} ${number.format(index+1)}`); select.append(new Option(isKhaliya(product)?t("choose_a_type"):t("choose_0",{"0":()=>(isMug(product)?t("color"):groupLabel(group))}),''));for(const value of group.values||[]){const available=(state.branchCatalogPending&&state.branchCatalogId!==state.branchId||eligibleForProduct(product).ok)&&value.enabled!==false&&value.available!==false;const repeated=requestedBrandId==='enbishan'&&group.code.startsWith('CHOICE_')&&Object.entries(state.optionValues[index]).some(([code,selected])=>code!==group.code&&code.startsWith('CHOICE_')&&selected===(value.code||value.id));if(repeated)continue;const option=new Option(String(sourceText(value))+(available?'':String(t('unavailable_option'))),value.code||value.id);option.disabled=!available;select.append(option);}select.value=state.optionValues[index][group.code]||'';select.required=group.required!==false;select.addEventListener('change',()=>{state.optionValues[index][group.code]=select.value;if(group.code.startsWith('CHOICE_')){renderOptions();return;}showError('product-error','');renderVariantPrice(index);});label.append(select);
       if(requestedBrandId==='enbishan'){
         select.hidden=true;
         const choices=node('div','customer-option-choices');choices.setAttribute('role','group');choices.setAttribute('aria-label',select.getAttribute('aria-label'));
@@ -1595,6 +1665,11 @@
     controls.hidden=state.banners.length<2;
     container.replaceChildren();
     container.setAttribute('aria-live','off');
+    if(!banner&&requestedBrandId==='enbishan'){
+      const signature=state.products.find(p=>p.id==='enbishan-menu-7b0752b4daa269674e08576f');
+      const image=safeImage(signature?.image_url);
+      if(signature&&image){container.className='campaign-banner';const img=node('img');img.src=image;img.alt=sourceText(signature);const content=node('div','campaign-content');const copy=node('div');copy.append(node('h2','',sourceText(signature)),node('p','',menuDescription(signature)));const button=node('button','button secondary',entryText('عرض عنبيشن سيجنتشر','View Enbishan Signature'));button.type='button';button.addEventListener('click',()=>openProduct(signature));content.append(copy,button);container.append(img,content);return;}
+    }
     if(!banner){
       container.className='intro-banner';
       const content=node('div');

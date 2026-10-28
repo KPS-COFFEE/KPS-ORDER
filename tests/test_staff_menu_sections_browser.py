@@ -57,29 +57,28 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
         expect(cards.first).to_be_visible()
         if brand == 'enbishan':
             buttons = page.locator('#staff-menu-categories [data-menu-category]')
-            expect(buttons).to_have_count(9)
-            assert buttons.last.get_attribute('data-menu-category') == 'drinks'
+            expect(buttons).to_have_count(10)
+            assert buttons.last.get_attribute('data-menu-category') == 'المشروبات'
             labels = buttons.all_text_contents()
-            assert any(('الخلية' if lang == 'ar' else 'Khaliya') in label for label in labels)
-            assert not any('المخبوزات' in label for label in labels)
+            assert any(('المخبوزات' if lang == 'ar' else 'Bakery') in label for label in labels)
+            assert any(('عنبيشن' if lang=='ar' else 'Enbishan') in label for label in labels)
             seen = set()
-            for key in ['grape', 'mahashi', 'fattah', 'fried', 'bakery',
-                        'drinks', 'mojito-meals', 'boxes', 'other']:
-                page.locator(f'[data-menu-category={key}]').click()
-                expect(page.locator(f'[data-menu-category={key}]')).to_have_attribute('aria-pressed', 'true')
+            for key in ['ورق العنب والملفوف','المحاشي','المقليات','عنبيشن','البوكسات','المسخن','الفتة والموهيتو','النودلز','المخبوزات','المشروبات']:
+                page.locator(f'[data-menu-category="{key}"]').click()
+                expect(page.locator(f'[data-menu-category="{key}"]')).to_have_attribute('aria-pressed', 'true')
                 ids = set(page.locator('#staff-menu [data-menu-add]').evaluate_all(
                     '(buttons)=>buttons.map(b=>b.dataset.menuAdd)'))
                 assert ids and not seen.intersection(ids)
                 seen.update(ids)
             assert seen == {p['id'] for p in products}
-            page.locator('[data-menu-category=grape]').click()
-            assert all('ورق عنب' in name for name in
+            page.locator('[data-menu-category="ورق العنب والملفوف"]').click()
+            assert all(('ورق عنب' in name or name=='ملفوف') for name in
                        page.locator('#staff-menu strong').all_text_contents())
             grape_id = page.locator('#staff-menu .staff-menu-photo').first.get_attribute('data-menu-add')
             page.locator('#staff-menu .staff-menu-photo').first.click()
-            page.locator('[data-menu-category=drinks]').click()
+            page.locator('[data-menu-category="المشروبات"]').click()
             expect(page.locator('#staff-cart > div')).to_have_count(1)
-            page.locator('[data-menu-category=grape]').click()
+            page.locator('[data-menu-category="ورق العنب والملفوف"]').click()
             expect(page.locator(f'[data-product-count="{grape_id}"]')).to_have_text('1')
             assert page.locator('#staff-menu').evaluate(
                 '(grid)=>getComputedStyle(grid).gridTemplateColumns.split(" ").length') == (5 if width >= 640 else 2)
@@ -89,9 +88,9 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
             positions = buttons.evaluate_all('(buttons)=>buttons.map(b=>b.getBoundingClientRect().top)')
             assert max(positions) - min(positions) <= 1, 'Category buttons must share a single row'
             for key, ids in expected.items():
-                button = page.locator(f'[data-menu-category={key}]')
+                button = page.locator(f'[data-menu-category="{key}"]')
                 button.click()
-                expect(page.locator(f'[data-menu-category={key}]')).to_have_attribute('aria-pressed', 'true')
+                expect(page.locator(f'[data-menu-category="{key}"]')).to_have_attribute('aria-pressed', 'true')
                 seen = set(page.locator('#staff-menu .staff-menu-photo').evaluate_all('(buttons)=>buttons.map(b=>b.dataset.menuAdd)'))
                 assert seen == ids
                 columns = page.locator('#staff-menu').evaluate('(grid)=>getComputedStyle(grid).gridTemplateColumns.split(" ").length')
