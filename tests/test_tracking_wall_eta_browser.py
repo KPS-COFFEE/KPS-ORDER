@@ -25,7 +25,7 @@ def wall():
           window.hidden=false;window.online=true;
           Object.defineProperty(document,'hidden',{get:()=>window.hidden,configurable:true});
           Object.defineProperty(navigator,'onLine',{get:()=>window.online,configurable:true});
-          window.requests=[];window.orderChanged=false;window.failOrders=false;window.extraDriver=false;window.secondStale=false;window.etaFailure=0;window.providerUnavailable=false;window.driverStale=false;window.captureOld=false;window.holdEta=false;window.pending=[];window.etaInFlight=0;window.maxEtaInFlight=0;
+          window.requests=[];window.workspaceCounts={total:1,sources:{manager:0,website:1},road:1};window.orderChanged=false;window.failOrders=false;window.extraDriver=false;window.secondStale=false;window.etaFailure=0;window.providerUnavailable=false;window.routeReason=null;window.driverStale=false;window.captureOld=false;window.holdEta=false;window.pending=[];window.etaInFlight=0;window.maxEtaInFlight=0;
           window.KPSDispatchMap={mount:async()=>({update(){},destroy(){},fit(){},resize(){}})};
           const iso=ms=>new Date(ms).toISOString();
           window.api=async(path,options={})=>{
@@ -35,13 +35,14 @@ def wall():
               if(holdEta)await new Promise(resolve=>pending.push(resolve));
               etaInFlight--;
               if(etaFailure){const error=new Error('Denied');error.status=etaFailure;throw error;}
+              if(routeReason)return {status:'unavailable',reason:routeReason};
               if(providerUnavailable)return {status:'unavailable',reason:'routing_provider_unavailable'};
               return {status:'ready',driver_id:'d1',calculated_at:iso(clock),location_updated_at:iso(clock),refresh_after_seconds:60,next_stop:{arrival_at:iso(clock+240000)},delivery_complete_at:iso(clock+900000),return_at:iso(clock+1380000),stops:[{id:'s1',kind:'dropoff',brand_id:'kps',order_id:'o1',order_no:'K-1',customer_name:'Ahmed',arrival_at:iso(clock+240000)}]};
             }
             if(path.includes('driver-locations'))return {drivers:[{id:'d1',display_name:'Driver One',branch_ids:['b1'],movement_state:'delivering',updated_at:iso(clock),captured_at:iso(clock-(driverStale||captureOld?300000:0)),stale:driverStale},...(extraDriver?[{id:'d2',display_name:'Driver Two',branch_ids:['b2'],movement_state:'delivering',updated_at:iso(clock),stale:secondStale}]:[])]};
             if(path.startsWith('/api/orders?')&&failOrders)throw new Error('Order refresh failed');
-            if(path.startsWith('/api/orders?')&&orderChanged)return {orders:[{id:'o2',brand_id:'kps',order_no:'K-2',customer_name:'Different customer',driver_id:'d1',created_at:iso(clock),delivery_status:'picked_up'}],next_offset:null,workspace_counts:{current:{total:1,road:1}}};
-            if(path.startsWith('/api/orders?'))return {orders:[{id:'o1',brand_id:'kps',order_no:'K-1',customer_name:'Ahmed',driver_id:'d1',created_at:iso(clock-1000),delivery_status:'picked_up'}],next_offset:null,workspace_counts:{current:{total:1,road:1}}};
+            if(path.startsWith('/api/orders?')&&orderChanged)return {orders:[{id:'o2',brand_id:'kps',order_no:'K-2',customer_name:'Different customer',driver_id:'d1',created_at:iso(clock),delivery_status:'picked_up'}],next_offset:null,workspace_counts:{current:workspaceCounts}};
+            if(path.startsWith('/api/orders?'))return {orders:[{id:'o1',brand_id:'kps',order_no:'K-1',customer_name:'Ahmed',driver_id:'d1',created_at:iso(clock-1000),delivery_status:'picked_up'}],next_offset:null,workspace_counts:{current:workspaceCounts}};
             throw new Error('Unexpected API: '+path);
           };
           window.tick=async(ms=15000)=>{clock+=ms;for(const t of timers)t.fn();await new Promise(resolve=>setTimeout(resolve,30));};
@@ -229,3 +230,72 @@ def test_wall_old_eta_cannot_restore_after_same_city_refresh_invalidates_itinera
     wall.wait_for_function('etaInFlight===0')
     assert 'Ahmed' not in wall.locator('.tracking-driver-eta').inner_text()
     assert 'K-1' not in wall.locator('.tracking-driver-eta').inner_text()
+
+
+@pytest.mark.parametrize('reason,expected', [
+    ('route_monthly_budget_exhausted', 'Monthly road-estimate limit reached'),
+    ('route_refresh_cooldown', 'Estimate refresh is cooling down'),
+    ('route_budget_or_cooldown', 'Estimate deferred by map usage limit'),
+])
+def test_wall_route_budget_and_cooldown_explain_distinct_operator_actions(wall, reason, expected):
+    wall.wait_for_function("document.querySelector('.tracking-driver-eta').textContent.includes('Ahmed')")
+    wall.evaluate('(reason)=>{window.routeReason=reason;}', reason)
+    wall.evaluate('tick(61000)')
+    text = wall.locator('.tracking-driver-eta').inner_text()
+    assert expected in text
+    if reason == 'route_monthly_budget_exhausted':
+        assert 'system administrator to review usage' in text
+        assert 'waiting one minute will not reset the limit' in text
+        assert 'retries automatically' not in text
+        assert 'Ahmed' not in text
+    elif reason == 'route_refresh_cooldown':
+        assert 'retries automatically on the next minute update' in text
+        assert 'Last saved estimate' in text
+        assert 'Ahmed' in text
+    else:
+        assert 'retries automatically' in text
+    # Each response remains subject to the existing per-driver minute bound.
+    count = eta_count(wall)
+    wall.evaluate('tick(15000)')
+    assert eta_count(wall) == count
+
+
+@pytest.mark.parametrize('reason,expected', [
+    ('route_monthly_budget_exhausted', 'حد الاستخدام الشهري'),
+    ('route_refresh_cooldown', 'مهلة التحديث'),
+])
+def test_wall_arabic_budget_message_matches_required_action(wall, reason, expected):
+    wall.evaluate('''async reason=>{
+        controller.destroy();window.routeReason=reason;
+        window.controller=await KPSOrderTracking.mount(document.querySelector('#host'),{
+          api,branches:[{id:'b1',city:'حفر الباطن'}],tr:(ar,en)=>ar,lang:'ar'});
+    }''', reason)
+    wall.wait_for_function('(expected)=>document.querySelector(".tracking-driver-eta").textContent.includes(expected)', arg=expected)
+    text = wall.locator('.tracking-driver-eta').inner_text()
+    if reason == 'route_monthly_budget_exhausted':
+        assert 'مسؤول النظام' in text and 'الانتظار دقيقة لا يعيد ضبط الحد' in text
+        assert 'تلقائيًا' not in text
+    else:
+        assert 'تلقائيًا' in text and 'خلال دقيقة' in text
+
+
+@pytest.mark.parametrize('counts,active,delivered', [
+    ({'total': 100, 'sources': {'manager': 40, 'website': 60}, 'new': 12, 'preparing': 13, 'assigned': 5, 'driver_accepted': 4, 'attention': 6, 'road': 20, 'delivered': 35, 'cancelled': 5}, 60, 35),
+    ({'total': 17, 'sources': {'manager': 12, 'website': 5}, 'new': 1, 'preparing': 2, 'assigned': 3, 'driver_accepted': 4, 'attention': 2, 'road': 5}, 17, 0),
+    ({'total': 0, 'sources': {'manager': 0, 'website': 0}}, 0, 0),
+    ({'total': 8, 'sources': {'manager': 8, 'website': 0}, 'delivered': 6, 'cancelled': 2}, 0, 6),
+])
+def test_wall_active_count_uses_authorized_totals_not_nested_sources_or_page_size(wall, counts, active, delivered):
+    wall.evaluate('(counts)=>{window.workspaceCounts=counts;}', counts)
+    wall.evaluate('tick(15000)')
+    assert wall.get_by_role('button', name=f'Active: {active}', exact=True).is_visible()
+    assert wall.get_by_role('button', name=f'Completed: {delivered}', exact=True).is_visible()
+    assert wall.locator('.tracking-order').count() == 1  # Deliberately smaller than authorized totals.
+    assert 'NaN' not in wall.locator('.tracking-metrics').inner_text()
+
+
+def test_wall_order_date_uses_riyadh_even_in_an_overseas_browser(wall):
+    expected = wall.evaluate("new Date(clock-1000).toLocaleString('en-GB',{timeZone:'Asia/Riyadh'})")
+    overseas = wall.evaluate("new Date(clock-1000).toLocaleString('en-GB')")
+    assert expected != overseas
+    assert wall.locator('.tracking-order time').inner_text() == expected

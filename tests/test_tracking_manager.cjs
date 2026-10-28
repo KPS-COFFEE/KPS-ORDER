@@ -76,3 +76,19 @@ test('successful recovery removes the previous-estimate notice',async()=>{
 });
 
 test('a revoked view permission hides the previous estimate even without a scope snapshot replacement',async()=>{const h=await readyEstimate();h.context.can=()=>false;assert.doesNotMatch(h.context.details(h.state.dispatchDrivers[0]),/Ahmed · K-1|Deliveries complete/);});
+
+test('monthly limit clears a fresh customer estimate and requires administrator review, not a minute wait',async()=>{
+ const h=await readyEstimate();h.context.mutation=async()=>({status:'unavailable',reason:'route_monthly_budget_exhausted'});await h.context.refresh();const html=h.context.details(h.state.dispatchDrivers[0]);
+ assert.equal(h.context.getPlan().status,'unavailable');assert.match(html,/Monthly road-estimate limit reached/);assert.match(html,/system administrator to review usage/);assert.match(html,/waiting one minute will not reset/);assert.doesNotMatch(html,/Ahmed · K-1|retrying automatically|last saved estimate/);
+});
+test('explicit refresh cooldown retains only a fresh calculation and explains the next minute retry',async()=>{
+ const h=await readyEstimate(),original=h.context.getPlan().calculated_at;h.context.mutation=async()=>({status:'unavailable',reason:'route_refresh_cooldown'});await h.context.refresh();let html=h.context.details(h.state.dispatchDrivers[0]);
+ assert.match(html,/Ahmed · K-1 · About 3 min remaining/);assert.match(html,/last saved estimate, not a new calculation/);assert.match(html,/retries automatically on the next minute update/);assert.equal(h.context.getPlan().calculated_at,original);
+ h.setClock(122000);h.state.dispatchDrivers[0].gps.updated_at=new Date(h.now+122000).toISOString();await h.context.refresh();html=h.context.details(h.state.dispatchDrivers[0]);assert.equal(h.context.getPlan().status,'unavailable');assert.doesNotMatch(html,/Ahmed · K-1/);assert.match(html,/cooling down/);
+});
+test('Arabic manager guidance distinguishes monthly exhaustion from minute cooldown',async()=>{
+ for(const [reason,expected] of [['route_monthly_budget_exhausted',/حد الاستخدام الشهري/],['route_refresh_cooldown',/مهلة التحديث/]]){
+  const h=await readyEstimate();h.context.tr=(ar,en)=>ar;h.context.mutation=async()=>({status:'unavailable',reason});await h.context.refresh();const html=h.context.details(h.state.dispatchDrivers[0]);assert.match(html,expected);
+  if(reason==='route_monthly_budget_exhausted'){assert.match(html,/مسؤول النظام/);assert.match(html,/الانتظار دقيقة لا يعيد ضبط الحد/);assert.doesNotMatch(html,/Ahmed · K-1/);}else{assert.match(html,/تلقائيًا.*خلال دقيقة/);assert.match(html,/Ahmed · K-1/);}
+ }
+});

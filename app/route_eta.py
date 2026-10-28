@@ -364,7 +364,7 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
                                                   purpose='automatic_preview' if body.automatic_preview else 'route')
             except HTTPException as exc:
                 if exc.status_code==429:
-                    return unavailable(body.driver_id,'route_budget_or_cooldown')
+                    return unavailable(body.driver_id,getattr(exc,'reason','route_budget_or_cooldown'))
                 raise
         if wants_publication and corridor is None and token_valid:
             # Optional geometry has its own cooldown, but charges the SAME locked
@@ -508,6 +508,28 @@ def published_rows(c, driver_id):
       ORDER BY p.published_at DESC,p.manager_id LIMIT 10''',(driver_id,)).fetchall()
 
 
+def published_return_completed(c, saved, current, driver_id):
+    """A completed canonical trip consumes its old return guidance, not its preference.
+
+    No active tasks is insufficient evidence: an open trip may still be returning.
+    Original order links bind the confirmation to this publication, including
+    trips anchored on another leg of the same physical workday.
+    """
+    if not current or any(stop.get('kind')!='return' for stop in current) or not saved.get('published_at'):
+        return False
+    order_ids = {oid for stop in saved.get('published_stops') or []
+                 for oid in (stop.get('order_ids') or [stop.get('order_id')]) if oid}
+    if not order_ids:
+        return False
+    return bool(c.execute('''SELECT 1 FROM driver_work_trips trip
+      WHERE trip.driver_id=%s AND trip.returned_at>=%s
+      AND EXISTS (SELECT 1 FROM driver_work_trip_orders linked
+                  WHERE linked.trip_id=trip.id AND linked.order_id=ANY(%s))
+      AND NOT EXISTS (SELECT 1 FROM driver_work_trips active
+                      WHERE active.driver_id=trip.driver_id AND active.returned_at IS NULL)
+      LIMIT 1''',(driver_id,saved['published_at'],sorted(order_ids))).fetchone())
+
+
 def remaining_publication(c, saved, current, driver_id):
     """Consume completed stations while rejecting reassignment and new work."""
     original = saved.get('published_stops') or []
@@ -541,7 +563,7 @@ def remaining_publication(c, saved, current, driver_id):
                     or task['status'] not in allowed):
                 return None
     ordered = [current_by_id[i] for i in ids if i in current_by_id]
-    if not ordered:
+    if not ordered or published_return_completed(c,saved,current,driver_id):
         return None
     normalized = validate_order(current,[s['id'] for s in ordered if s['kind']!='return'])
     if [s['id'] for s in normalized] != [s['id'] for s in ordered]:
