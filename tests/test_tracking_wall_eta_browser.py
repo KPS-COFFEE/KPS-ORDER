@@ -15,7 +15,7 @@ def wall():
         if os.getenv('TEST_CHROMIUM_EXECUTABLE'):
             options['executable_path'] = os.environ['TEST_CHROMIUM_EXECUTABLE']
         browser = p.chromium.launch(**options)
-        page = browser.new_page(viewport={'width': 1440, 'height': 900})
+        page = browser.new_page(viewport={'width': 1440, 'height': 900}, timezone_id='America/Los_Angeles')
         page.set_content('<main id="host"></main>')
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
@@ -113,6 +113,32 @@ def test_wall_old_capture_never_looks_live_with_fresh_receipt(wall):
     assert eta_count(wall) == initial
     assert 'Stale' in wall.locator('.tracking-driver').inner_text()
     assert '4 min' not in wall.locator('.tracking-driver').inner_text()
+
+
+def test_wall_fix_and_calculation_times_are_riyadh_even_in_an_overseas_browser(wall):
+    wall.wait_for_function("document.querySelector('.tracking-driver').textContent.includes('Ahmed')")
+    riyadh = wall.evaluate("new Date(clock).toLocaleTimeString('en-GB',{timeZone:'Asia/Riyadh'})")
+    browser_time = wall.evaluate("new Date(clock).toLocaleTimeString('en-GB')")
+    assert riyadh != browser_time
+    assert riyadh in wall.locator('.tracking-driver').inner_text()
+    assert riyadh in wall.locator('.tracking-status').inner_text()
+
+
+def test_wall_provider_failure_has_a_specific_retry_message(wall):
+    wall.wait_for_function("document.querySelector('.tracking-driver').textContent.includes('Ahmed')")
+    wall.evaluate('window.providerUnavailable=true;tick(61000)')
+    assert 'Road service temporarily unavailable' in wall.locator('.tracking-driver-eta').inner_text()
+
+
+def test_wall_queued_driver_starts_as_pending_not_a_false_failure(wall):
+    wall.wait_for_function("document.querySelector('.tracking-driver').textContent.includes('Ahmed')")
+    wall.evaluate('window.extraDriver=true;window.holdEta=true;tick(61000)')
+    wall.wait_for_function('pending.length===1')
+    second = wall.locator('.tracking-driver-eta').nth(1)
+    assert 'Preparing automatic estimate' in second.inner_text()
+    assert 'unavailable' not in second.inner_text()
+    wall.evaluate('window.holdEta=false;pending.splice(0).forEach(fn=>fn())')
+    wall.wait_for_function('etaInFlight===0')
 
 
 def test_wall_two_driver_provider_calls_are_serial(wall):
