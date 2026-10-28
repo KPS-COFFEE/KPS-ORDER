@@ -283,13 +283,13 @@ def money(value):
 
 
 def report_tables(report):
-    headers = ['السائق', 'الوردية', 'المدينة / المحافظة', 'الفرع', 'كبز: عدد', 'كبز: قيمة', 'عنبيشن: عدد', 'عنبيشن: قيمة', 'قيمة الطلبات', 'شبكة', 'كاش', 'العجز', 'الفائض', 'المطابقة', 'التقفيلة التشغيلية']
-    rows = [[r['name'], 'صباحي' if r['period'] == 'morning' else 'مسائي', r.get('city') or 'غير مسجل', r.get('branch') or 'غير مسجل',
+    headers = ['السائق', 'الوردية', 'المدينة / المحافظة', 'كبز: عدد', 'كبز: قيمة', 'عنبيشن: عدد', 'عنبيشن: قيمة', 'قيمة الطلبات', 'شبكة', 'كاش', 'العجز', 'الفائض', 'المطابقة', 'التقفيلة التشغيلية']
+    rows = [[r['name'], 'صباحي' if r['period'] == 'morning' else 'مسائي', r.get('city') or 'غير مسجل',
              r['brands']['kps']['count'], money(r['brands']['kps']['amount']), r['brands']['enbishan']['count'], money(r['brands']['enbishan']['amount']), money(r['net']),
              money(r.get('network')), money(r.get('cash')), money(matching(r)['shortage']), money(matching(r)['surplus']), matching(r)['status'],
              'لقطة مفقودة' if r.get('evidence_missing') else 'مكتملة' if r['closed'] else 'معلّقة'] for r in report['rows']]
     projected = [dict(r, **matching(r)) for r in report['rows']]
-    totals = ['الإجمالي', '', '', '', *[sum(r['brands'][b]['count'] for r in report['rows']) if k == 'count' else money(sum(r['brands'][b]['amount'] for r in report['rows'])) for b in BRANDS for k in ('count', 'amount')], money(report['net']),
+    totals = ['الإجمالي', '', '', *[sum(r['brands'][b]['count'] for r in report['rows']) if k == 'count' else money(sum(r['brands'][b]['amount'] for r in report['rows'])) for b in BRANDS for k in ('count', 'amount')], money(report['net']),
               *[money(complete_sum(projected, k)) for k in ('network', 'cash', 'shortage', 'surplus')], '', '']
     cases = [[r['driver'], BRANDS.get(r['brand'], r['brand']), r['kind'], money(r['amount']), r['reference'], r['reason'], r['approval']] for r in report['cases']]
     return headers, rows, totals, cases
@@ -423,7 +423,7 @@ def make_pdf(report, paper='A3'):
         return result + [line.strip()]
     def layout(data, widths, pts):
         return [(cells, max(len(x) for x in cells)*(pts+3)+8) for cells in [[wrapped(v, w-8, pts) for v,w in zip(row,widths)] for row in data]]
-    weights = [100,51,89,70,35,62,35,62,77,63,63,51,51,86,83]
+    weights = [100,51,89,35,62,35,62,77,63,63,51,51,86,83]
     widths = [usable*x/sum(weights) for x in weights]
     case_widths = [usable*x for x in (.15,.07,.12,.10,.12,.29,.15)]
     city_widths = [usable*x for x in (.25,.10,.17,.12,.12,.12,.12)]
@@ -497,9 +497,9 @@ def make_pdf(report, paper='A3'):
         y -= 12
     # Grouped brand headings preserve the two-brand comparison on paper.
     x=width-margin
-    groups = [(head[i], widths[i], '#edf2f6') for i in range(4)]
-    groups += [('كبز', sum(widths[4:6]), '#fff0e3'), ('عنبيشن', sum(widths[6:8]), '#e6f7f7')]
-    groups += [(head[i], widths[i], '#edf2f6') for i in range(8, len(head))]
+    groups = [(head[i], widths[i], '#edf2f6') for i in range(3)]
+    groups += [('كبز', sum(widths[3:5]), '#fff0e3'), ('عنبيشن', sum(widths[5:7]), '#e6f7f7')]
+    groups += [(head[i], widths[i], '#edf2f6') for i in range(7, len(head))]
     group_height = max(len(wrapped(label, span-8, pts)) for label,span,_ in groups)*(pts+3)+8
     def draw_groups():
         nonlocal y
@@ -511,7 +511,7 @@ def make_pdf(report, paper='A3'):
                 text(line,x-4,y-pts-4-j*leading,pts)
             x-=span
         y-=group_height
-    main_layout[0]=layout([['','','','','عدد','قيمة','عدد','قيمة','','','','','','','']],widths,pts)[0]
+    main_layout[0]=layout([['','','','عدد','قيمة','عدد','قيمة','','','','','','','']],widths,pts)[0]
     draw_table(main_layout,widths,True,grouped=True)
     draw_table(city_layout,city_widths,heading='ملخص المدن / المحافظات')
     if cases:
