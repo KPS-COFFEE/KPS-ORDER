@@ -46,7 +46,7 @@ def test_staff_shared_menu_preserves_size_identity_and_small_choices(static_cust
   page.locator('[data-menu-category="عنبيشن"]').click()
   expect(page.locator('#staff-menu .staff-menu-card')).to_have_count(2)
   expect(page.locator('#staff-cart > div')).to_have_count(2)
-  for name,value in {'phone':'0500000000','neighborhood':'Test area','address':'Test address','lat':'28.4','lng':'45.9'}.items():page.locator(f'[name="{name}"]').fill(value)
+  for name,value in {'phone':'0500000000','neighborhood':'Test area','address':'Test address','lat':'28.4','lng':'45.9'}.items():page.locator(f'#staff-order-form [name="{name}"]').fill(value)
   page.locator('#staff-order-form [type=submit]').click()
   page.wait_for_function('window.menuQuoteBodies.length===1')
   body=page.evaluate('window.menuQuoteBodies[0]')
