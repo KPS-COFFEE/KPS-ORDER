@@ -12,7 +12,7 @@ class Element {
 }
 const fields={};let priced=0;
 const p={id:'e1'};const group={code:'SIZE',name:'Size',required:true,values:[{code:'six',name:'6 pieces'},{code:'twelve',name:'12 pieces'},{code:'closed',name:'Unavailable',available:false}]};
-const ctx={state:{product:p,optionValues:[{}],branchCatalogPending:false,branchId:'b',branchCatalogId:'b'},requestedBrandId:'enbishan',
+const ctx={mahashiFamily:()=>[],renderMahashiSizes:()=>{},state:{product:p,optionValues:[{}],branchCatalogPending:false,branchId:'b',branchCatalogId:'b'},requestedBrandId:'enbishan',
  $:id=>fields[id]||(fields[id]=new Element('div')),groups:()=>[group],fixedSingleSize:()=>false,isMug:()=>false,isKhaliya:()=>false,
  node:(tag,cls,text)=>new Element(tag,text),Option:function(text,value){const el=new Element('option',text);el.value=value;return el;},
  entryText:(ar,en)=>en,text:()=>{},number:{format:String},t:x=>x,groupLabel:g=>g.name,sourceText:v=>v.name,eligibleForProduct:()=>({ok:true}),showError:()=>{},renderVariantPrice:()=>priced++};
