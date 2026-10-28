@@ -8,6 +8,8 @@ on:
       - app/financial_totals.py
       - app/operations.py
       - app/refund_line_values.py
+      - app/order_financial_treatments.py
+      - app/refund_item_allocations.py
       - app/delivery_partial_returns.py
       - tests/test_independent_accounting_audit.py
       - tests/test_sales_refund_recognition.py
@@ -53,6 +55,7 @@ jobs:
           tests/test_accounting.py
           tests/test_shift_reconciliation.py
           tests/test_financial_treatments.py
+          tests/test_order_financial_treatments.py
           tests/test_split_payment.py
           tests/test_financial_gap_controls.py
           tests/test_refund_prior_evidence.py

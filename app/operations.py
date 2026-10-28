@@ -1827,6 +1827,50 @@ def authorized_cash(sid:str,body:AuthorizedCash,request:Request,user=Depends(aut
             return {'event_id':eid,'expected_halalas':balance(c,s)}
         return mutate(c,user,request,'cash.event:'+sid,body.model_dump(),perform)
 
+def dashboard_item_totals(c,where,params,until):
+    """Exact proportional item-net projection for the completed sales cohort.
+
+    Actual refund/credit amounts keep their own evidence; quantities are only
+    reduced by recorded item quantities. Delivery is excluded before allocating
+    the conserved item value. A later movement cannot rewrite an earlier view.
+    """
+    from .refund_line_values import item_allocations
+    sales_where=where.replace('o.created_at>=','o.completed_at>=',1).replace('o.created_at<','o.completed_at<',1)
+    orders=c.execute("""SELECT o.id,o.total_halalas,o.delivery_fee_halalas,o.snapshot,
+      coalesce((SELECT sum(r.amount_halalas) FROM refunds r
+        WHERE r.order_id=o.id AND r.amendment_id IS NULL AND r.created_at<%s),0) refunded,
+      coalesce((SELECT jsonb_agg(r.line_quantities) FROM refunds r
+        WHERE r.order_id=o.id AND r.amendment_id IS NULL AND r.created_at<%s),'[]'::jsonb) returned_quantities,
+      coalesce((SELECT sum((a.details->>'credit_halalas')::bigint) FROM audit_events a
+        WHERE a.entity_type='order' AND a.entity_id=o.id
+        AND a.action='accounting.order_financial_treatment.approved'
+        AND a.details->>'kind'='price_correction' AND a.created_at<%s),0) price_credits
+      FROM orders o WHERE o.completed_at IS NOT NULL AND """+sales_where,
+      [until,until,until,*params]).fetchall()
+    result={}
+    for order in orders:
+        original_items=order['snapshot'].get('items')
+        if not isinstance(original_items,list) or not original_items:continue
+        _,products=item_allocations(order)
+        item_net=sum(product['net_halalas'] for product in products.values())
+        remaining=max(0,order['total_halalas']-int(order['refunded'])-int(order['price_credits']))
+        # Preserve the existing proportional projection without treating a fee
+        # or an undiscounted menu price as additional item sales.
+        projected=item_net*min(order['total_halalas'],remaining)//order['total_halalas'] if order['total_halalas'] else 0
+        _,valued=item_allocations({**order,'total_halalas':projected,'delivery_fee_halalas':0})
+        returned={}
+        for quantities in order['returned_quantities']:
+            for pid,quantity in (quantities or {}).items():returned[pid]=returned.get(pid,0)+quantity
+        for pid,product in products.items():
+            name=max(str(original_items[index].get('name') or pid) for index in product['line_indices'])
+            row=result.setdefault(pid,dict(product_id=pid,name=name,quantity=0,gross_halalas=0,net_halalas=0))
+            row['name']=max(row['name'],name)
+            row['quantity']+=max(0,product['quantity']-returned.get(pid,0))
+            row['gross_halalas']+=product['gross']
+            row['net_halalas']+=valued[pid]['net_halalas']
+    return sorted(result.values(),key=lambda row:(-row['quantity'],row['product_id']))[:10]
+
+
 @router.get('/dashboard')
 def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:str|None=None,branch_id:str|None=None,service:str|None=None,user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff','branch_manager')
@@ -1870,27 +1914,7 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         summary.update(period_totals(c,where,params))
         # The operational intake cohort above keeps creation-time counts. Sales,
         # completed counts and product/branch detail use the same completion day.
-        sales_where=where.replace('o.created_at>=','o.completed_at>=',1).replace('o.created_at<','o.completed_at<',1)
-        items=c.execute("""WITH lines AS (
-          SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,
-            sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas
-          FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item
-          WHERE o.completed_at IS NOT NULL AND """+sales_where+"""
-          GROUP BY o.id,o.total_halalas,item->>'product_id'), valued AS (
-          SELECT lines.*,
-            coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r
-              WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id AND r.created_at<%s),0) returned_quantity,
-            coalesce((SELECT sum(r.amount_halalas) FROM refunds r
-              WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id AND r.created_at<%s),0)
-            +coalesce((SELECT sum((a.details->>'credit_halalas')::bigint) FROM audit_events a
-              WHERE a.entity_type='order' AND a.entity_id=lines.order_id
-              AND a.action='accounting.order_financial_treatment.approved'
-              AND a.details->>'kind'='price_correction' AND a.created_at<%s),0) reductions
-          FROM lines)
-          SELECT product_id,max(name) name,sum(greatest(quantity-returned_quantity,0)) quantity,
-            sum(gross_halalas) gross_halalas,
-            round(sum(gross_halalas::numeric*greatest(total_halalas-reductions,0)/nullif(total_halalas,0))) net_halalas
-          FROM valued GROUP BY product_id ORDER BY quantity DESC,product_id LIMIT 10""",[*params,hi,hi,hi]).fetchall()
+        items=dashboard_item_totals(c,where,params,hi)
         branch_top=period_branch_totals(c,where,params)
         timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
         timing['threshold_minutes']=late;timing['threshold_configured']='late_after_minutes' in config

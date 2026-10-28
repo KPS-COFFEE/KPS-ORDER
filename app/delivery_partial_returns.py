@@ -33,9 +33,9 @@ def approved(c, oid):
     return [r['details'] for r in c.execute('SELECT details FROM order_events WHERE order_id=%s AND event_type=%s ORDER BY created_at,id', (oid, APPROVED)).fetchall()]
 
 
-def value(order, lines, previous):
+def value(order, lines, previous,*,actual_prior_credit_halalas=None):
     """Allocate the immutable discounted item value; fees never become item credit."""
-    from .refund_line_values import item_allocations,quantity_value
+    from .refund_line_values import item_allocations,quantity_value,remaining_item_budget
     items,products = item_allocations(order)
     if not sum(i['line_total_halalas'] for i in items): raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'المرتجع المجاني لا يخفض التحصيل؛ استخدم إرجاع الصنف المجاني.')
     seen = set(); credit = 0
@@ -77,6 +77,8 @@ def value(order, lines, previous):
                 cumulative=end
     if retained <= 0:
         raise db.error(422, 'PARTIAL_RETURN_FULL', 'إرجاع الطلب كاملًا يحتاج مسار الإلغاء والمرتجع الكامل.')
+    if actual_prior_credit_halalas is not None:
+        credit=min(credit,remaining_item_budget(products,actual_prior_credit_halalas))
     if credit <= 0: raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'الأصناف المجانية لا تخفض التحصيل.')
     return credit
 
@@ -158,7 +160,8 @@ def request_return(tid: str, body: Proposal, user=Depends(auth.require_roles('dr
             if o['version'] != body.version: raise db.error(409, 'ORDER_VERSION_CONFLICT', 'تغير الطلب؛ حدّث الصفحة.')
             if any(r['status'] == 'pending' for r in history(c, o['id'])):
                 raise db.error(409, 'PARTIAL_RETURN_PENDING', 'يوجد طلب مرتجع جزئي بانتظار قرار المدير.')
-            credit = value(o, body.lines, remaining(c, o['id']))
+            credit = value(o, body.lines, remaining(c, o['id']),
+                           actual_prior_credit_halalas=sum(r['credit_halalas'] for r in approved(c,o['id'])))
             identifier = db.new_id('partial_')
             details = dict(**body.model_dump(), task_id=tid, credit_halalas=credit, return_id=identifier,
                 original_total_halalas=o['total_halalas'], source_version=o['version'])
@@ -189,11 +192,13 @@ def decide(rid: str, body: Decision, user=Depends(auth.require_roles('owner', 'd
             details={**row['details'],**body.model_dump(),'requested_by':request['actor_id'],'approved_by':user['id'],'no_money_posted':True,'original_order_preserved':True,'responsibility':'branch_review' if row['details']['cause']=='branch_error' else 'customer_reduction','no_driver_shortfall':True}
             if body.action=='approve':
                 if not body.physical_resolution:raise db.error(422,'PARTIAL_RETURN_CUSTODY','وثّق مكان الأصناف المرتجعة.')
-                lines=[Line(**x) for x in row['details']['lines']];credit=value(o,lines,remaining(c,o['id']))
+                lines=[Line(**x) for x in row['details']['lines']]
+                prior=approved(c,o['id'])
+                credit=value(o,lines,remaining(c,o['id']),
+                             actual_prior_credit_halalas=sum(r['credit_halalas'] for r in prior))
                 from .order_amendments import balance
                 from .order_financial_treatments import effective_total, price_credit_rows
                 effective=effective_total(c,o)
-                prior=approved(c,o['id'])
                 if len(price_credit_rows(c,[o['id']]))!=len(prior) or c.execute('SELECT 1 FROM refunds WHERE order_id=%s LIMIT 1',(o['id'],)).fetchone():
                     raise db.error(409,'PARTIAL_RETURN_PRIOR_FINANCIAL_REVIEW','توجد تسوية أخرى؛ يلزم مراجعة المحاسبة منعًا لتكرار التخفيض.')
                 target=effective-credit; collected=balance(c,o)

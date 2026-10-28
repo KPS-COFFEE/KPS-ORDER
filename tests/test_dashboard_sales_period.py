@@ -98,3 +98,64 @@ def test_collection_chart_uses_approved_tender_without_reposting_money(ops,monke
     with db.tx() as c:
         assert c.execute('SELECT * FROM collections WHERE id=%s',(original['id'],)).fetchone()==original
         assert c.execute('SELECT count(*) n FROM collections WHERE order_id=%s',(oid,)).fetchone()['n']==1
+
+
+def discounted_order(ops,delivery=0):
+    actor,post,order,_=ops
+    items=[{'product_id':pid,'name':pid,'quantity':1,'unit_price_halalas':1000,
+            'line_total_halalas':1000,'units':[]} for pid in ('a','b','c')]
+    items.append({'product_id':'gift','name':'Free gift','quantity':1,'unit_price_halalas':0,
+                  'line_total_halalas':0,'units':[],'is_gift':True})
+    oid=db.new_id('dashboard-discount-')
+    snapshot={'items':items,'subtotal_halalas':3000,'discount_halalas':1000,
+              'delivery_fee_halalas':delivery,'total_halalas':2000+delivery,'branch_name':'Synthetic branch'}
+    with db.tx() as c:
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,
+          delivery_status,payment_method,subtotal_halalas,discount_halalas,delivery_fee_halalas,
+          total_halalas,snapshot,customer) VALUES(%s,'ops-brand','ops-branch','ops-customer',
+          'pickup','ready','not_applicable','cash',3000,1000,%s,%s,%s,%s)""",
+          (oid,delivery,2000+delivery,db.json(snapshot),db.json({'name':'Synthetic customer'})))
+    return oid
+
+
+@pytest.mark.parametrize('delivery',[0,500])
+def test_discounted_product_net_conserves_twenty_excluding_delivery_and_gift(ops,delivery):
+    actor,_,_,_=ops
+    oid=discounted_order(ops,delivery)
+    _,_,lo,hi=period('','')
+    with db.tx() as c:complete(c,oid,lo,lo+timedelta(seconds=1))
+    result=dashboard(actor,lo,hi)
+    products={r['product_id']:r for r in result['top_items']}
+    assert [products[pid]['net_halalas'] for pid in ('a','b','c')]==[666,667,667]
+    assert products['gift']['net_halalas']==0
+    assert sum(r['net_halalas'] for r in products.values())==2000
+    assert result['summary']['delivery_fee_halalas']==delivery
+    assert result['summary']['net_completed_halalas']==2000+delivery
+
+
+def test_discounted_refund_projection_uses_actual_money_without_extra_hellalas(ops):
+    actor,post,_,_=ops
+    oid=discounted_order(ops)
+    post('branch',f'/api/orders/{oid}/collect',{'method':'card','amount_halalas':2000,'reference':'Synthetic discounted receipt'})
+    _,_,lo,hi=period('','')
+    with db.tx() as c:complete(c,oid,lo,lo+timedelta(seconds=1))
+    post('owner',f'/api/orders/{oid}/refund',{'method':'card','amount_halalas':666,
+      'reason':'Return one actually discounted item','line_quantities':{'a':1}})
+    result=dashboard(actor,lo,hi)
+    products={r['product_id']:r for r in result['top_items']}
+    assert products['a']['quantity']==0 and products['gift']['net_halalas']==0
+    assert sum(r['net_halalas'] for r in products.values())==1334
+    assert result['summary']['net_completed_halalas']==1334
+
+
+def test_discounted_item_fee_projection_never_adds_fee_to_item_net(ops):
+    actor,post,_,_=ops
+    oid=discounted_order(ops,500)
+    post('branch',f'/api/orders/{oid}/collect',{'method':'card','amount_halalas':2500,'reference':'Synthetic discounted receipt with delivery'})
+    _,_,lo,hi=period('','')
+    with db.tx() as c:complete(c,oid,lo,lo+timedelta(seconds=1))
+    post('owner',f'/api/orders/{oid}/refund',{'method':'card','amount_halalas':500,
+      'reason':'Actual documented monetary return after discounted sale'})
+    result=dashboard(actor,lo,hi)
+    assert sum(r['net_halalas'] for r in result['top_items'])==1600  # 2000 item net * 2000 remaining / 2500 original.
+    assert result['summary']['net_completed_halalas']==2000

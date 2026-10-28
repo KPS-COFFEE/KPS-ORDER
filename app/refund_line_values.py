@@ -45,9 +45,19 @@ def quantity_value(budget,quantity,prior,selected):
     return budget*(prior+selected)//quantity-budget*prior//quantity
 
 
+def remaining_item_budget(products,actual_prior_effect_halalas):
+    """Actual historic effects, rather than revalued old quantities, bind money."""
+    if type(actual_prior_effect_halalas) is not int or actual_prior_effect_halalas<0:
+        raise db.error(409,'REFUND_LINE_HISTORY','مبالغ المرتجعات السابقة غير موثقة؛ راجع المحاسبة قبل إضافة أثر مالي.')
+    return max(0,sum(item['net_halalas'] for item in products.values())-actual_prior_effect_halalas)
+
+
 def ceiling(order, quantities, previous):
     _,products=item_allocations(order)
-    value=0
+    value=0;legacy_value=0
+    document_legacy=order.get('_legacy_refund_documentation') is True
+    gross=sum(item['gross'] for item in products.values())
+    net=sum(item['net_halalas'] for item in products.values())
     for pid,q in quantities.items():
         item=products.get(pid)
         prior=previous.get(pid,0)
@@ -59,6 +69,12 @@ def ceiling(order, quantities, previous):
         if any(a*b0!=a0*b for a,b in prices for a0,b0 in prices) and (q<item['quantity'] or prior):
             raise db.error(409,'REFUND_LINE_AMBIGUOUS','للصنف أسعار مختلفة؛ يلزم تحديد الوحدة الفعلية لدى المحاسبة قبل تسجيل كمية مرتجعة.')
         value+=quantity_value(item['net_halalas'],item['quantity'],prior,q)
+        if document_legacy and gross:
+            denominator=gross*item['quantity']
+            legacy_value+=(item['gross']*net*(prior+q)//denominator)-(item['gross']*net*prior//denominator)
+    if document_legacy:value=max(value,legacy_value)
+    if '_prior_item_effect_halalas' in order:
+        value=min(value,remaining_item_budget(products,order['_prior_item_effect_halalas']))
     return value
 
 
