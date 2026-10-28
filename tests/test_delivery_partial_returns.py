@@ -144,7 +144,8 @@ def test_physical_credit_does_not_discount_the_remaining_items_again(monkeypatch
     order={**sale(),'id':'original'}
     monkeypatch.setattr(delivery_partial_returns,'approved',lambda *args:[dict(credit_halalas=1000)])
     monkeypatch.setattr(order_financial_treatments,'effective_total',lambda *args:1500)
-    valued=order_financial_treatments.valuation_order(Mock(),order)
+    c=Mock();c.execute.return_value.fetchone.return_value={'n':0}
+    valued=order_financial_treatments.valuation_order(c,order)
     assert valued['total_halalas']==2500
     assert ceiling(valued,{'coffee':2},{'cake':1})==1500
     with pytest.raises(HTTPException):ceiling(valued,{'cake':1},{'cake':1})

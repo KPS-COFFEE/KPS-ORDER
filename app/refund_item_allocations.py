@@ -53,7 +53,7 @@ def validate(c,order,body):
     selected=[r for r in rows if r['id'] in body.refund_ids]
     amount=sum(r['amount_halalas'] for r in selected)
     from .order_financial_treatments import valuation_order
-    maximum=ceiling(valuation_order(c,order),body.line_quantities,prior_quantities(c,order['id'],body.line_quantities))
+    maximum=ceiling(valuation_order(c,order,exclude_refund_ids=body.refund_ids),body.line_quantities,prior_quantities(c,order['id'],body.line_quantities))
     if amount>maximum:
         raise db.error(422,'REFUND_ITEM_ALLOCATION_VALUE','مبلغ الاسترداد السابق يتجاوز قيمة الأصناف المحددة بعد الخصم؛ المجاني قيمته صفر.')
     return selected,amount
