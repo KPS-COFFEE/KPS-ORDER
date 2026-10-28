@@ -141,7 +141,8 @@ def test_returned_manager_original_and_owner_receipt_survive_full_restore(centra
 def test_separate_bag_count_and_vault_end_survive_full_restore(central,independent_restore_database):
     from test_aggregate_driver_closure import declare_separate_bag
     _,_,post,_,_=central
-    manager,driver,_,declared=declare_separate_bag(central,'النعيرية')
+    manager,driver,path,declared=declare_separate_bag(central,'النعيرية')
+    approved=post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True})
     post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True})
     post('accountant','/api/cash-bags/'+declared['cash_bag']['id']+'/count',{'received_cash_halalas':650,'card_halalas':900,'reference':'Physical independent archive test count','confirmed':True})
     tables=('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
@@ -155,6 +156,6 @@ def test_separate_bag_count_and_vault_end_survive_full_restore(central,independe
         with psycopg.connect(independent_restore_database,row_factory=dict_row) as c:
             c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
             for t in tables:assert c.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(t))).fetchall()==source[t]
-            assert c.execute('SELECT staffing_ended_at FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['staffing_ended_at']==source['driver_cash_bags'][0]['deposited_at']
+            assert c.execute('SELECT staffing_ended_at FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['staffing_ended_at'].isoformat()==approved['manager_approval']['approved_at']
     finally:
         with psycopg.connect(independent_restore_database,autocommit=True) as c:c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(schema)))

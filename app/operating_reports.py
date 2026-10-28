@@ -165,7 +165,7 @@ def complete_sum(rows, field):
     return sum(r[field] for r in rows) if rows and all(r.get(field) is not None for r in rows) else None
 
 
-def build(c, user, day, scope):
+def build(c, user, day, scope, manager_shift_id=None):
     ops.roles(user, 'owner', 'delivery_manager')
     if not auth.has_permission(user, 'reports_view'):
         raise db.error(403, 'OPERATING_REPORT_FORBIDDEN', 'صلاحية التقارير غير متاحة.')
@@ -174,6 +174,16 @@ def build(c, user, day, scope):
     principals = [user]
     if multibrand.enabled() and not user.get('_morning_manager_context'):
         principals = [p for b in multibrand.available(c, user) if (p := multibrand.project(c, user, b['id'])) and auth.has_permission(p, 'reports_view')]
+    selected_manager_ids = {manager_shift_id} if scope == 'shift' and manager_shift_id else None
+    if selected_manager_ids and multibrand.enabled():
+        # A selected component identifies the entire physical manager duty.
+        # This lookup supplies identities only; every leg still passes the
+        # report's date, brand, owner and current branch authorization below.
+        legs = c.execute('SELECT l.shift_id FROM central_workday_legs l '
+                         'JOIN central_workday_legs anchor ON anchor.workday_id=l.workday_id '
+                         'WHERE anchor.shift_id=%s', (manager_shift_id,)).fetchall()
+        if legs:
+            selected_manager_ids = {leg['shift_id'] for leg in legs}
     managers, driver_rows, cases, entries, approvals = [], {}, [], [], []
     day_allowed = user['role'] == 'owner'
     pending = 0
@@ -182,7 +192,8 @@ def build(c, user, day, scope):
         candidates = c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.brand_id=%s "
                                "AND COALESCE(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)=%s ORDER BY s.opened_at,s.id",
                                (principal['brand_id'], day)).fetchall()
-        visible = [s for s in candidates if allowed_manager(principal, s, scope)]
+        visible = [s for s in candidates if allowed_manager(principal, s, scope)
+                   and (selected_manager_ids is None or s['id'] in selected_manager_ids)]
         day_allowed |= any(s['user_id'] == user['id'] and (s.get('delivery_window_snapshot') or {}).get('period', 'evening') == 'evening' for s in visible)
         for manager in visible:
             if principal.get('_morning_manager_context'):
@@ -212,13 +223,18 @@ def build(c, user, day, scope):
                     if bid in locations:
                         row['cities'].add(locations[bid]['city'])
                         row['branches'].add(locations[bid]['name'])
-                row['closed'] &= shift['status'] == 'closed' and rid is not None
+                # Physical staffing can end before accounting closes the
+                # component ledger (vault bags and approved remote duties).
+                # The guarded marker is operational evidence, never approval.
+                row['closed'] &= not snap.get('evidence_missing') and (
+                    shift.get('staffing_ended_at') is not None
+                    or shift['status'] == 'closed' and rid is not None)
                 row['evidence_missing'] |= bool(snap.get('evidence_missing'))
                 for case in data['cases']:
                     cases.append(dict(case, driver=shift['display_name']))
                 if not rid:
                     entries.append({})
-            if manager['status'] != 'closed':
+            if manager['status'] != 'closed' and manager.get('staffing_ended_at') is None:
                 pending += 1
         if visible:
             # Reuse canonical accounting deadlines, extensions and completion;
@@ -238,6 +254,9 @@ def build(c, user, day, scope):
                 for r in c.execute("SELECT r.id FROM closure_reports r JOIN shifts s ON s.id=r.shift_id WHERE s.manager_shift_id=%s AND r.kind='driver'", (manager['id'],)).fetchall():
                     if r['id'] not in card_ids:
                         entries.append({})
+    if selected_manager_ids is not None and ({m['id'] for m in managers} != selected_manager_ids
+                                             or manager_shift_id not in selected_manager_ids):
+        raise db.error(404, 'OPERATING_REPORT_SHIFT', 'المناوبة غير متاحة ضمن نطاق التقرير المصرح.')
     if scope == 'day' and not day_allowed:
         raise db.error(403, 'OPERATING_REPORT_DAY', 'اليوم الكامل لمدير المساء صاحب المناوبة والمالك.')
     rows = sorted(driver_rows.values(), key=lambda r: (r['period'] != 'morning', r['name']))
@@ -253,10 +272,10 @@ def build(c, user, day, scope):
 
 
 @router.get('')
-def listing(day: date | None = None, scope: Literal['shift', 'day'] = 'shift', user=Depends(auth.current_user)):
+def listing(day: date | None = None, scope: Literal['shift', 'day'] = 'shift', manager_shift_id: str | None = None, user=Depends(auth.current_user)):
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-        return build(c, user, day or service_hours.delivery_operational_date(), scope)
+        return build(c, user, day or service_hours.delivery_operational_date(), scope, manager_shift_id)
 
 
 def money(value):
@@ -322,10 +341,7 @@ def make_html(report):
 
 
 def make_pdf(report, paper='A3'):
-    """One readable landscape page; raise rather than silently drop any row.
-
-For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
-"""
+    """Readable landscape report, paginating all evidence at a fixed font size."""
     from reportlab.pdfgen import canvas
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -344,7 +360,25 @@ For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
     size = landscape(A4 if paper == 'A4' else A3)
     width, height = size
     out = BytesIO()
-    cv = canvas.Canvas(out, pagesize=size, invariant=1)
+    class NumberedCanvas(canvas.Canvas):
+        # Replay finished pages after their total is known, so every footer is
+        # accurate without estimating content height or rebuilding the report.
+        def showPage(self):
+            self.saved_pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            pages = self.saved_pages
+            for state in pages:
+                self.__dict__.update(state)
+                text('تقرير تشغيلي · قيم الحالات مرجعية · جميع المبالغ بالريال السعودي', width-margin, margin+10, 8)
+                text(report['filename'], width-margin, margin-2, 7)
+                text(f'صفحة {self._pageNumber} من {len(pages)}', margin+100, margin+10, 8)
+                super().showPage()
+            super().save()
+
+    cv = NumberedCanvas(out, pagesize=size, invariant=1)
+    cv.saved_pages = []
     cv.setTitle(report['filename'][:-4])
     margin = 22
     usable = width - 2 * margin
@@ -394,31 +428,72 @@ For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
     case_widths = [usable*x for x in (.15,.07,.12,.10,.12,.29,.15)]
     city_widths = [usable*x for x in (.25,.10,.17,.12,.12,.12,.12)]
     pts = 10
-    while True:
-        main_layout = layout([head, *rows, total], widths, pts)
-        case_layout = layout([['السائق','البراند','النوع','القيمة المرجعية','المرجع','السبب','الحالة'], *cases], case_widths, pts) if cases else []
-        city_layout = layout([city_head, *city_rows], city_widths, pts)
-        needed = sum(h for _,h in main_layout+case_layout+city_layout)+30 + (140 if cases else 134) + len(lines)*17 + (25 if report['accounting']['approved'] else 0)
-        if needed <= y - margin:
-            break
-        if pts <= 9:
-            if paper == 'A4':
-                return make_pdf(report,paper='A3')
-            raise db.error(422, 'OPERATING_REPORT_PRINT_CAPACITY', 'تفاصيل اليوم تتجاوز ورقة واضحة واحدة؛ يلزم تقليل تفاصيل الحالات في الملخص.')
-        pts -= .5
-    def draw_table(data, cols, total_row=False):
+    leading = pts + 3
+    bottom = margin + 34  # Reserve the footer on every page.
+    main_layout = layout([head, *rows, total], widths, pts)
+    case_layout = layout([['السائق','البراند','النوع','القيمة المرجعية','المرجع','السبب','الحالة'], *cases], case_widths, pts) if cases else []
+    city_layout = layout([city_head, *city_rows], city_widths, pts)
+
+    def new_page():
         nonlocal y
-        for index,(cells, rh) in enumerate(data):
-            dark = index == 0 or total_row and index == len(data)-1
-            cv.setFillColor(colors.HexColor('#232d34' if dark else '#f4f7f9' if index%2 == 0 else '#ffffff'))
-            cv.rect(margin, y-rh, usable, rh, stroke=0, fill=1)
-            x = width-margin
-            for col, cell in zip(cols, cells):
-                for j,line in enumerate(cell):
-                    text(line, x-4, y-pts-4-j*(pts+3), pts, '#ffffff' if dark else '#232d34')
-                cv.setStrokeColor(colors.HexColor('#cfd6de'));cv.rect(x-col,y-rh,col,rh,stroke=1,fill=0)
-                x -= col
-            y -= rh
+        cv.showPage()
+        y = height - margin
+        text('التقرير التشغيلي · ' + str(report['day']), width-margin, y-12, 11)
+        y -= 32
+
+    def ensure(space):
+        if y - space < bottom:
+            new_page()
+
+    def draw_row(cells, cols, dark=False, shaded=False):
+        nonlocal y
+        rh = max(len(cell) for cell in cells)*leading+8
+        cv.setFillColor(colors.HexColor('#232d34' if dark else '#f4f7f9' if shaded else '#ffffff'))
+        cv.rect(margin, y-rh, usable, rh, stroke=0, fill=1)
+        x = width-margin
+        for col, cell in zip(cols, cells):
+            for j,line in enumerate(cell):
+                text(line, x-4, y-pts-4-j*leading, pts, '#ffffff' if dark else '#232d34')
+            cv.setStrokeColor(colors.HexColor('#cfd6de'))
+            cv.rect(x-col,y-rh,col,rh,stroke=1,fill=0)
+            x -= col
+        y -= rh
+
+    def draw_table(data, cols, total_row=False, heading=None, grouped=False):
+        nonlocal y
+        header, header_height = data[0]
+        def table_header():
+            nonlocal y
+            if heading:
+                text(heading,width-margin,y-11,10)
+                y -= 25
+            if grouped:
+                draw_groups()
+            draw_row(header, cols, dark=True)
+        header_space = header_height + (25 if heading else 0) + (group_height if grouped else 0)
+        # Keep a section title and headings with at least one body line.
+        ensure(header_space + leading + 8)
+        table_header()
+        for index,(cells, rh) in enumerate(data[1:], 1):
+            remaining = [list(cell) for cell in cells]
+            # Prefer an intact row. Only rows taller than a whole fresh page
+            # are split; every cell's wrapped lines are retained in sequence.
+            fresh_capacity = height-margin-32-bottom-header_space
+            if y-rh < bottom and rh <= fresh_capacity:
+                new_page()
+                table_header()
+            while any(remaining):
+                capacity = int((y-bottom-8)//leading)
+                if capacity < 1:
+                    new_page()
+                    table_header()
+                    continue
+                fragment = [cell[:capacity] for cell in remaining]
+                draw_row(fragment, cols, dark=total_row and index == len(data)-1, shaded=index%2 == 0)
+                remaining = [cell[capacity:] for cell in remaining]
+                if any(remaining):
+                    new_page()
+                    table_header()
         y -= 12
     # Grouped brand headings preserve the two-brand comparison on paper.
     x=width-margin
@@ -426,51 +501,69 @@ For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
     groups += [('كبز', sum(widths[4:6]), '#fff0e3'), ('عنبيشن', sum(widths[6:8]), '#e6f7f7')]
     groups += [(head[i], widths[i], '#edf2f6') for i in range(8, len(head))]
     group_height = max(len(wrapped(label, span-8, pts)) for label,span,_ in groups)*(pts+3)+8
-    for label,span,fill in groups:
-        cv.setFillColor(colors.HexColor(fill));cv.rect(x-span,y-group_height,span,group_height,stroke=0,fill=1)
-        for j,line in enumerate(wrapped(label,span-8,pts)):
-            text(line,x-4,y-pts-4-j*(pts+3),pts)
-        x-=span
-    y-=group_height
+    def draw_groups():
+        nonlocal y
+        x = width-margin
+        for label,span,fill in groups:
+            cv.setFillColor(colors.HexColor(fill))
+            cv.rect(x-span,y-group_height,span,group_height,stroke=0,fill=1)
+            for j,line in enumerate(wrapped(label,span-8,pts)):
+                text(line,x-4,y-pts-4-j*leading,pts)
+            x-=span
+        y-=group_height
     main_layout[0]=layout([['','','','','عدد','قيمة','عدد','قيمة','','','','','','','']],widths,pts)[0]
-    draw_table(main_layout,widths,True)
-    text('ملخص المدن / المحافظات',width-margin,y,10);y-=14
-    draw_table(city_layout,city_widths)
+    draw_table(main_layout,widths,True,grouped=True)
+    draw_table(city_layout,city_widths,heading='ملخص المدن / المحافظات')
     if cases:
-        text('حالات التشغيل',width-margin,y,10);y-=14
-        draw_table(case_layout,case_widths)
+        draw_table(case_layout,case_widths,heading='حالات التشغيل')
     else:
-        text('لا توجد ضيافة أو تعويضات أو حالات مسجلة.',width-margin,y,9);y-=20
+        ensure(20)
+        text('لا توجد ضيافة أو تعويضات أو حالات مسجلة.',width-margin,y-10,9);y-=20
     approved = report['accounting']['approved']
+    normal_lines=[line for line in lines if not line.startswith('معتمد محاسبيًا')]
+    approval_lines=[line for line in lines if line.startswith('معتمد محاسبيًا')]
+    approval_parts = [part for line in approval_lines for part in wrapped(line.removeprefix('معتمد محاسبيًا | '),usable-18,9)]
+    accounting_height = 40 + sum(len(wrapped(line,usable-18,9))*17 for line in normal_lines)
+    if approved:
+        accounting_height += 48 + len(approval_parts)*17
+    # Keep ordinary review details and their stamp together. Exceptionally
+    # large approval evidence is safely split below.
+    ensure(min(accounting_height,height-margin-32-bottom))
     cv.setFillColor(colors.HexColor('#e4e9ed'));cv.roundRect(margin,y-8,usable,7,3,stroke=0,fill=1)
     if report['accounting']['percent']:
         cv.setFillColor(colors.HexColor('#08733a' if approved else '#e78216'))
         cv.roundRect(width-margin-usable*report['accounting']['percent']/100,y-8,usable*report['accounting']['percent']/100,7,3,stroke=0,fill=1)
     y-=23
     text('المطابقة: قيمة الطلبات = شبكة + كاش · النقص عجز والزيادة فائض · — بيانات غير متاحة',width-margin,y,9);y-=17
-    normal_lines=[line for line in lines if not line.startswith('معتمد محاسبيًا')]
-    approval_lines=[line for line in lines if line.startswith('معتمد محاسبيًا')]
     for line in normal_lines:
-        text(line,width-margin,y,9,'#08733a' if approved else '#9b4d00');y-=17
+        for part in wrapped(line,usable-18,9):
+            ensure(17)
+            text(part,width-margin,y-10,9,'#08733a' if approved else '#9b4d00');y-=17
     if approved:
-        stamp_height=30+len(approval_lines)*17
-        cv.setStrokeColor(colors.HexColor('#08733a'));cv.setLineWidth(1.5)
-        cv.roundRect(margin,y-stamp_height+12,usable,stamp_height,5,stroke=1,fill=0)
-        text('معتمد محاسبيًا',width-margin-9,y-5,12,'#08733a');y-=25
-        for line in approval_lines:
-            text(line.removeprefix('معتمد محاسبيًا | '),width-margin-9,y,9,'#08733a');y-=17
-    text('تقرير تشغيلي · قيم الحالات مرجعية · جميع المبالغ بالريال السعودي',width-margin,margin+10,8)
-    text(report['filename'], width-margin, margin-2, 7)
-    text('صفحة 1 من 1',margin+85,margin+10,8)
+        # Long approver names/IDs and many approvals can span pages. Each
+        # chunk retains an approval border/title and never covers the footer.
+        while approval_parts:
+            ensure(64)
+            capacity = max(1,int((y-bottom-42)//17))
+            chunk, approval_parts = approval_parts[:capacity], approval_parts[capacity:]
+            stamp_height = 36+len(chunk)*17
+            cv.setStrokeColor(colors.HexColor('#08733a'));cv.setLineWidth(1.5)
+            cv.roundRect(margin,y-stamp_height,usable,stamp_height,5,stroke=1,fill=0)
+            text('معتمد محاسبيًا',width-margin-9,y-18,12,'#08733a')
+            for i,part in enumerate(chunk):
+                text(part,width-margin-9,y-36-i*17,9,'#08733a')
+            y-=stamp_height+12
+            if approval_parts:
+                new_page()
     cv.showPage();cv.save()
     return out.getvalue()
 
 
 @router.get('/export/{format}')
-def export(format: Literal['pdf', 'print'], day: date | None = None, scope: Literal['shift', 'day'] = 'shift', user=Depends(auth.current_user)):
+def export(format: Literal['pdf', 'print'], day: date | None = None, scope: Literal['shift', 'day'] = 'shift', manager_shift_id: str | None = None, user=Depends(auth.current_user)):
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-        report = build(c,user,day or service_hours.delivery_operational_date(),scope)
+        report = build(c,user,day or service_hours.delivery_operational_date(),scope,manager_shift_id)
     headers = {'Cache-Control': 'private, no-store'}
     if format == 'pdf':
         headers['Content-Disposition'] = disposition(report['filename'])

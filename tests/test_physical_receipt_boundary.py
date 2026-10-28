@@ -19,13 +19,16 @@ def receipt_boundary(monkeypatch):
                    'expected_snapshot': [{'shift_id': 'driver-leg',
                       'manager_user_id': user['id'], 'permanent_float_halalas': 0}]}
     driver = {'id': 'driver-leg', 'kind': 'driver', 'status': 'submitted',
-              'manager_shift_id': 'manager-leg'}
+              'manager_shift_id': 'manager-leg', 'branch_ids': ['hafar-branch']}
     day = {'id': 'physical-day', 'user_id': 'driver'}
     writes = []
     connection = Mock()
 
     def execute(query, params=()):
         result = Mock()
+        if query.startswith('SELECT city FROM branches'):
+            assert params == (['hafar-branch'],)
+            result.fetchall.return_value = [{'city': 'حفر الباطن'}]
         if query.startswith('SELECT created_at'):
             result.fetchone.return_value = {'created_at': datetime.now(timezone.utc)}
         else:

@@ -194,7 +194,8 @@ def test_real_separate_cash_bag_count_and_vault_refuse_prior_writer_and_survive_
     from app import db
     from test_aggregate_driver_closure import declare_separate_bag
     _,_,post,_,_=central
-    manager,driver,_,declared=declare_separate_bag(central,'النعيرية')
+    manager,driver,path,declared=declare_separate_bag(central,'النعيرية')
+    approved=post('manager',path+'/physical-approval',{'declaration_id':declared['declaration_id'],'confirmed':True})
     post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True})
     post('accountant','/api/cash-bags/'+declared['cash_bag']['id']+'/count',{
         'received_cash_halalas':650,'card_halalas':900,

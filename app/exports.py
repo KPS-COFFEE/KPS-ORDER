@@ -364,6 +364,7 @@ def _verify_staffing_markers(conn, available):
         JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id
         LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id
         WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at
+          AND coalesce(s.submission->>'manager_approval_required','false')<>'true'
           AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns returned WHERE returned.declaration_id=d.id)
           AND (a.id IS NOT NULL OR d.retained_halalas >=
              (SELECT coalesce(sum((j->>'permanent_float_halalas')::bigint),0)
@@ -387,7 +388,33 @@ def _verify_staffing_markers(conn, available):
         proofs.append("""(s.kind='driver' AND EXISTS (
             SELECT 1 FROM driver_cash_bags b JOIN central_workday_legs l ON l.workday_id=b.workday_id
             WHERE l.shift_id=s.id AND b.driver_id=s.user_id AND b.destination='branch'
-              AND b.deposited_at=s.staffing_ended_at))""")
+              AND b.deposited_at=s.staffing_ended_at
+              AND coalesce(s.submission->>'manager_approval_required','false')<>'true'))""")
+    if 'driver_cash_bags' in available:
+        proofs.append("""(s.kind='driver' AND EXISTS (
+    SELECT 1 FROM central_workday_legs l
+    JOIN central_workdays w ON w.id=l.workday_id
+    JOIN shared_driver_closure_declarations d ON d.workday_id=w.id
+    JOIN audit_events e ON e.entity_type='central_workday' AND e.entity_id=w.id
+      AND e.action='shared_driver.manager_approved'
+    WHERE l.shift_id=s.id AND w.user_id=s.user_id
+      AND d.id=s.submission->>'shared_declaration_id'
+      AND d.id=s.submission->'manager_approval'->>'declaration_id'
+      AND d.id=(SELECT newest.id FROM shared_driver_closure_declarations newest WHERE newest.workday_id=w.id ORDER BY newest.revision DESC LIMIT 1)
+      AND e.actor_id=s.submission->'manager_approval'->>'approved_by'
+      AND e.actor_id<>s.user_id
+      AND e.details @> (s.submission->'manager_approval')
+      AND e.details->>'submitted_by'=d.recorded_by
+      AND e.details->>'submission_reason'=d.reason
+      AND e.details->>'delegated_submission'=CASE WHEN d.recorded_by<>s.user_id THEN 'true' ELSE 'false' END
+      AND (d.recorded_by=s.user_id OR (d.recorded_by=e.actor_id AND length(btrim(d.reason))>0))
+      AND e.details->>'cash_receipt_recorded'='false'
+      AND (e.details->>'approved_at')::timestamptz=s.staffing_ended_at
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(d.expected_snapshot) j WHERE j->>'manager_user_id'<>e.actor_id)
+      AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns returned WHERE returned.declaration_id=d.id)
+      AND (EXISTS (SELECT 1 FROM driver_cash_bags b WHERE b.declaration_id=d.id AND b.driver_id=s.user_id AND b.destination='branch')
+        OR EXISTS (SELECT 1 FROM shared_driver_closure_receipts r WHERE r.declaration_id=d.id))
+  ))""")
     if 'manager_vault_closures' in available:
         proofs.append("""(s.kind='manager' AND EXISTS (
             SELECT 1 FROM manager_vault_closures v JOIN central_workday_legs l ON l.workday_id=v.workday_id

@@ -65,12 +65,22 @@
           }
           if(['users','drivers','authorized_receivers'].includes(name)&&seen.has(identity)){
             const current=seen.get(identity);
+            if(name==='drivers'&&url.pathname==='/api/operations/drivers'){
+              // One physical driver can be unavailable in either brand ledger.
+              // Prefer on-duty unavailability, then ready duty, over no duty.
+              const rank={no_shift:0,available:1,busy:2};
+              if((rank[row.live_status]??-1)>(rank[current.live_status]??-1))current.live_status=row.live_status;
+            }
             current.available=current.available!==false&&row.available!==false;
             current.branch_ids=[...new Set([...(current.branch_ids||[]),...(row.branch_ids||[])])];
             current.operational_brands=[...new Set([...(current.operational_brands||[]),brand.id])];
           }else seen.set(identity,{...row,brand_id:row.brand_id||brand.id,brand_name:brand.name,operational_brands:[brand.id],...(row.central_workday_id?{central_legs:[{id:row.id,brand_id:brand.id,branch_ids:row.branch_ids||[]}]}:{})});
         }
         output[name]=[...seen.values()];
+      }
+      if(url.pathname==='/api/operations/drivers'&&output.drivers?.every(row=>['available','busy','no_shift'].includes(row.live_status))){
+        output.driver_counts={total:output.drivers.length,available:0,busy:0,no_shift:0};
+        for(const row of output.drivers)output.driver_counts[row.live_status]++;
       }
       if(url.pathname==='/api/driver-work-hours/current')output.trip=results.map(r=>r.data.trip).find(Boolean)||null;
       if(output.orders){

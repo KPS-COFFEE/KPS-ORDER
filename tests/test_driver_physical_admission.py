@@ -67,6 +67,9 @@ def test_roster_shows_only_current_physical_shift_after_previous_receipt(central
     assert before.status_code==200,before.text
     row=[r for r in before.json()['drivers'] if r['id']=='dual-driver']
     assert len(row)==1 and row[0]['shift_id'] is None
+    assert row[0]['live_status']=='no_shift'
+    assert before.json()['driver_counts']['total']==len(before.json()['drivers'])
+    assert before.json()['driver_counts']['no_shift']>=1
     from test_central_workdays import inspection as shared_inspection
     opened=post('driver','/api/central-operations/workdays',{
         'kind':'driver','manager_shift_id':manager['shift']['id'],
@@ -78,6 +81,10 @@ def test_roster_shows_only_current_physical_shift_after_previous_receipt(central
     assert len(rows)==1
     assert rows[0]['shift_id']==live_kps['id'] and rows[0]['shift_status']=='open'
     assert rows[0]['active_tasks']==0
+    assert rows[0]['live_status']=='available'
+    counts=response.json()['driver_counts']
+    assert counts['total']==sum(counts[key] for key in ('available','busy','no_shift'))
+    assert counts['total']==len(response.json()['drivers'])
     with db.tx() as c:
         assert c.execute('SELECT status FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['status']=='submitted'
         assert c.execute('SELECT 1 FROM shared_driver_closure_allocations').fetchone() is None

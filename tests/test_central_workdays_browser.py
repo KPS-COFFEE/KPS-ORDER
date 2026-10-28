@@ -239,12 +239,34 @@ def test_vault_close_and_actual_bag_count_need_no_owner_confirmation(central,cen
     try:
         page.goto(central_web+'/ops')
         page.locator('#navigation [data-page=shifts]').click()
+        # Remote deposit stays pending until the delivery manager approves the
+        # actual driver closure. Approval does not invent a manager cash receipt.
+        page.locator('[data-action=shift-detail][data-id="'+driver['shift']['id']+'"]').first.click()
+        expect(page.locator('#modal-body')).to_contain_text(
+            'بانتظار اعتماد مدير التوصيل النهائي' if language=='ar' else 'final delivery manager approval is required')
+        approval=page.locator('#modal form')
+        approval.locator('[name=confirmed]').check()
+        approval.locator('button[type=submit]').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        with db.tx() as c:
+            assert c.execute('SELECT staffing_ended_at FROM shifts WHERE id=%s',(driver['shift']['id'],)).fetchone()['staffing_ended_at'] is not None
+            assert not c.execute('SELECT 1 FROM shared_driver_closure_receipts').fetchone()
+            assert c.execute('SELECT destination FROM driver_cash_bags WHERE id=%s',(declared['cash_bag']['id'],)).fetchone()['destination']=='branch'
         page.locator('[data-action=shift-detail][data-id="'+manager['shift']['id']+'"]').first.click()
+        # Wait for the manager form to replace the preceding checked approval
+        # form; a hidden checkbox already checked can satisfy check() early.
+        expect(page.locator('#modal textarea[name=note]')).to_be_visible()
         expect(page.locator('#modal [name=recipient_user_id]')).to_have_count(0)
         form=page.locator('#modal form')
         form.locator('[name=confirmed]').check()
         form.locator('button[type=submit]').click()
-        expect(page.locator('#modal')).not_to_be_visible()
+        # Successful manager closure immediately opens the operational report.
+        expect(page.locator('#manager-end-duty-report.operating-report')).to_be_visible()
+        expect(page.locator('#manager-end-duty-report .or-heading')).to_be_visible()
+        expect(page.locator('#manager-end-duty-report [data-or-export=share]')).to_be_visible()
+        expect(page.locator('#manager-end-duty-report [data-or-export=print]')).to_be_visible()
+        expect(page.locator('#manager-end-duty-report [data-or-scope=shift]')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('#manager-end-duty-report [data-or-day]')).to_be_disabled()
         assert not errors,errors
     finally:ctx.close()
     ctx,page,errors=staff_page(central,chromium_browser,central_web,'accountant',language)

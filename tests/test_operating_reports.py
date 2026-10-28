@@ -196,11 +196,14 @@ def test_totals_keep_shortage_and_surplus_separate_and_missing_not_zero():
     assert reports.report_tables(report)[2][head.index('كاش')]=='—'
 
 
-def test_build_projects_scoped_live_collections_and_locations_without_writes(monkeypatch):
+@pytest.mark.parametrize('manager_ended,driver_ended,evidence_missing',[(False,False,False),(True,False,False),(False,True,False),(True,True,False),(True,True,True)])
+def test_build_projects_scoped_live_collections_and_locations_without_writes(monkeypatch,manager_ended,driver_ended,evidence_missing):
     from app import accounting_statements
     user=dict(id='owner',role='owner',brand_id='kps',display_name='الإدارة',branch_ids=['b'])
     manager=dict(id='manager',user_id='owner',brand_id='kps',branch_ids=['b'],status='open',delivery_window_snapshot={})
     driver=dict(id='driver',user_id='u',brand_id='kps',branch_ids=['b'],display_name='سائق',status='open')
+    if manager_ended:manager['staffing_ended_at']='2026-10-28T01:00:00+00:00'
+    if driver_ended:driver.update(status='submitted',staffing_ended_at='2026-10-28T00:30:00+00:00')
     class Result:
         def __init__(self,rows):self.rows=rows
         def fetchall(self):return self.rows
@@ -216,10 +219,170 @@ def test_build_projects_scoped_live_collections_and_locations_without_writes(mon
     monkeypatch.setattr(reports.auth,'has_permission',lambda *a:True)
     monkeypatch.setattr(accounting_statements,'manager_cards',lambda *a,**k:dict(cards=[]))
     snap=dict(orders=[dict(id='o',branch_id='b',total_halalas=50000,fulfilled_in_report=True)],refunds=[],collections=[dict(id='1',order_id='o',method='cash',amount_halalas=18000),dict(id='2',order_id='o',method='card',amount_halalas=32000)])
+    if evidence_missing:
+        snap['evidence_missing']=True
+        driver['status']='closed'
     monkeypatch.setattr(reports,'snapshot',lambda *a:(deepcopy(snap),None))
     result=reports.build(Cursor(),user,date(2026,10,27),'day')
     row=result['rows'][0]
     assert row['city']=='الدمام' and row['branch']=='أحد'
-    assert row['cash']==18000 and row['network']==32000
-    assert row['status']=='متوافق' and row['shortage']==row['surplus']==0
+    if evidence_missing:
+        assert row['cash'] is None and row['network'] is None
+        assert row['evidence_missing'] and result['evidence_missing']
+    else:
+        assert row['cash']==18000 and row['network']==32000
+        assert row['status']=='متوافق' and row['shortage']==row['surplus']==0
+    assert row['closed'] is (driver_ended and not evidence_missing)
+    assert result['operational_complete'] is (manager_ended and driver_ended and not evidence_missing)
     assert not result['accounting']['approved']
+    assert result['accounting']['percent']<100
+
+
+def test_busy_pdf_paginates_all_rows_cases_and_repeats_headings_at_readable_size():
+    report=example(True)
+    report['rows']=[dict(deepcopy(report['rows'][0]),name=f'DRIVER-{i:03}',
+                         network=30000,cash=15000,city='الدمام',branch='أحد') for i in range(95)]
+    report['cases']=[dict(driver=f'DRIVER-{i:03}',brand='kps',kind='ضيافة',amount=1000,
+                          reference=f'CASE-{i:03}',reason='سبب موثق',approval='معتمد') for i in range(80)]
+    original=deepcopy(report)
+    pdf=reports.make_pdf(report)
+    reader=PdfReader(BytesIO(pdf))
+    texts=[page.extract_text() for page in reader.pages]
+    assert len(texts)>2
+    for i in range(95):
+        assert f'DRIVER-{i:03}' in '\n'.join(texts)
+    for i in range(80):
+        assert f'CASE-{i:03}' in '\n'.join(texts)
+    assert 'AC-1025' in texts[-1]
+    import re
+    import unicodedata
+    for index,page in enumerate(reader.pages,1):
+        spans=[]
+        page.extract_text(visitor_text=lambda text,cm,tm,font,size: spans.append((text,tm[4],tm[5],size)))
+        # pypdf may split an RTL string into several text visits. Reassemble
+        # the footer by its reserved position rather than extraction ordering.
+        footer=''.join(text for text,x,y,size in spans if x<150 and 25<y<40)
+        assert re.findall(r'\d+',footer)==[str(len(reader.pages)),str(index)]
+        assert all(0<=y<=float(page.mediabox.height) for text,x,y,size in spans if text.strip())
+        driver_spans=[span for span in spans if 'DRIVER-' in span[0]]
+        if driver_spans:
+            assert all(size==10 for text,x,y,size in driver_spans)
+            # Every table page repeats its column labels above its first row.
+            assert 'السائق' in unicodedata.normalize('NFKC',texts[index-1])
+    assert report==original
+
+
+def test_pdf_splits_oversized_reason_without_losing_its_last_line_or_approval():
+    report=example(True)
+    report['cases']=[dict(driver='LONG-DRIVER',brand='kps',kind='تعويض',amount=1000,
+                          reference='LONG-CASE',reason=' '.join(f'NOTE{i:04}' for i in range(900))+' FINAL-REASON',approval='معتمد')]
+    # A single approval can itself be longer than a page.
+    report['accounting']['approvals'][0]['approved_name']=' '.join(f'APPROVER{i:04}' for i in range(900))+' FINAL-APPROVER'
+    pdf=reports.make_pdf(report)
+    pages=PdfReader(BytesIO(pdf)).pages
+    text='\n'.join(page.extract_text() for page in pages)
+    assert len(pages)>2
+    assert 'LONG-CASE' in text and 'FINAL-REASON' in text
+    assert 'AC-1025' in text and 'FINAL-APPROVER' in text
+    for i in range(900):
+        assert f'NOTE{i:04}' in text
+        assert f'APPROVER{i:04}' in text
+
+
+@pytest.mark.parametrize('scope,selected,expected',[
+    ('shift','mine-old',['mine-old']), ('shift','mine-new',['mine-new']),
+    ('day','mine-old',['mine-old','mine-new']),
+    ('shift','other',None), ('shift','revoked',None), ('shift','different-day',None),
+    ('shift','different-brand',None)])
+@pytest.mark.parametrize('central_enabled',[False,True])
+def test_selected_historical_manager_report_keeps_day_and_access_scope(monkeypatch,scope,selected,expected,central_enabled):
+    from app import accounting_statements
+    user=dict(id='me',role='delivery_manager',brand_id='kps',display_name='مدير',branch_ids=['b'])
+    candidates=[dict(id=identity,user_id=owner,brand_id=brand,branch_ids=branches,status='closed',delivery_window_snapshot={})
+                for identity,owner,brand,branches in [('mine-old','me','kps',['b']),('mine-new','me','kps',['b']),
+                                                     ('other','someone','kps',['b']),('revoked','me','kps',['outside']),
+                                                     ('different-brand','me','enbishan',['b'])]]
+    visited=[]
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchall(self):return self.rows
+    class Cursor:
+        def execute(self,query,args):
+            assert query.startswith('SELECT')
+            if 'central_workday_legs' in query:
+                assert central_enabled and scope=='shift'
+                return Result([])  # Legacy shifts have no physical group.
+            if query.startswith('SELECT id,name,city'):return Result([])
+            if "s.kind='manager'" in query:
+                assert args==('kps',date(2026,10,27))
+                return Result(candidates)
+            if "s.kind='driver'" in query:
+                visited.append(args[0]);return Result([])
+            if 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
+            raise AssertionError(query)
+    monkeypatch.setattr(reports.multibrand,'enabled',lambda:central_enabled)
+    monkeypatch.setattr(reports.multibrand,'available',lambda *a:[dict(id='kps')])
+    monkeypatch.setattr(reports.multibrand,'project',lambda c,u,b:dict(u,brand_id=b))
+    monkeypatch.setattr(reports.auth,'has_permission',lambda *a:True)
+    monkeypatch.setattr(accounting_statements,'manager_cards',lambda *a,**k:dict(cards=[]))
+    if expected is None:
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as error:
+            reports.build(Cursor(),user,date(2026,10,27),scope,selected)
+        assert error.value.status_code==404
+        assert visited==[]
+    else:
+        reports.build(Cursor(),user,date(2026,10,27),scope,selected)
+        # Day reports intentionally include other permitted managers as before.
+        assert visited==expected if scope=='shift' else visited==expected+['other']
+
+
+@pytest.mark.parametrize('anchor',['kps-manager','enbishan-manager'])
+@pytest.mark.parametrize('side_access',['allowed','revoked','other-owner','wrong-day','missing-principal'])
+def test_selected_central_manager_report_requires_every_authorized_leg(monkeypatch,anchor,side_access):
+    from app import accounting_statements
+    from fastapi import HTTPException
+    user=dict(id='me',role='delivery_manager',brand_id='kps',display_name='مدير',branch_ids=['b'])
+    managers={brand:dict(id=f'{brand}-manager',user_id='me',brand_id=brand,branch_ids=['b'],status='closed',delivery_window_snapshot={})
+              for brand in ('kps','enbishan')}
+    if side_access=='revoked':managers['enbishan']['branch_ids']=['revoked']
+    if side_access=='other-owner':managers['enbishan']['user_id']='someone'
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchall(self):return self.rows
+    class Cursor:
+        def execute(self,query,args):
+            assert query.startswith('SELECT')
+            if 'JOIN central_workday_legs anchor' in query:
+                assert args==(anchor,)
+                return Result([dict(shift_id=m['id']) for m in managers.values()])
+            if query.startswith('SELECT id,name,city'):
+                return Result([dict(id='b',name='الفرع',city='الدمام')])
+            if "s.kind='manager'" in query:
+                brand,day=args
+                assert day==date(2026,10,27)
+                return Result([] if brand=='enbishan' and side_access=='wrong-day' else [managers[brand]])
+            if "s.kind='driver'" in query:
+                brand=next(b for b,m in managers.items() if m['id']==args[0])
+                return Result([dict(id=f'{brand}-driver',user_id=f'{brand}-u',display_name=brand,brand_id=brand,branch_ids=['b'],status='closed')])
+            if 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
+            raise AssertionError(query)
+    monkeypatch.setattr(reports.multibrand,'enabled',lambda:True)
+    monkeypatch.setattr(reports.multibrand,'available',lambda *a:[dict(id=b) for b in managers])
+    monkeypatch.setattr(reports.multibrand,'project',lambda c,u,b:None if b=='enbishan' and side_access=='missing-principal' else dict(u,brand_id=b))
+    monkeypatch.setattr(reports.auth,'has_permission',lambda *a:True)
+    monkeypatch.setattr(accounting_statements,'manager_cards',lambda *a,**k:dict(cards=[]))
+    def snapshot(c,shift):
+        return dict(orders=[dict(id=shift['id']+'-order',branch_id='b',total_halalas=1000,fulfilled_in_report=True)],
+                    refunds=[],collections=[]),'saved-'+shift['id']
+    monkeypatch.setattr(reports,'snapshot',snapshot)
+    if side_access=='allowed':
+        result=reports.build(Cursor(),user,date(2026,10,27),'shift',anchor)
+        assert {row['name'] for row in result['rows']}=={'kps','enbishan'}
+        assert result['count']==2 and result['net']==2000
+        assert sum(row['brands']['kps']['amount'] for row in result['rows'])==1000
+        assert sum(row['brands']['enbishan']['amount'] for row in result['rows'])==1000
+    else:
+        with pytest.raises(HTTPException) as error:
+            reports.build(Cursor(),user,date(2026,10,27),'shift',anchor)
+        assert error.value.status_code==404
