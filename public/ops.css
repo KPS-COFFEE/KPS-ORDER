@@ -674,3 +674,14 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 
 #filters-form.order-filters input,#filters-form.order-filters select{font-weight:400}
 @media(max-width:650px){#filters-form.order-filters input,#filters-form.order-filters select{font-size:13px}}
+
+/* Bag collection uses independent facts so bilingual content stays readable on phones. */
+#modal.cash-bags-dialog,#modal.operating-report-dialog{width:min(1080px,calc(100vw - 24px))}
+.cash-bag-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.cash-bag-card{min-width:0;border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--surface)}
+.cash-bag-card header{display:flex;align-items:start;justify-content:space-between;gap:10px}.cash-bag-card h3{margin:0;font-size:16px;overflow-wrap:anywhere}
+.cash-bag-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.cash-bag-facts>div{min-width:0}.cash-bag-facts dt{font-size:12px;color:var(--muted)}.cash-bag-facts dd{margin:3px 0 0;font-size:14px;font-weight:600;overflow-wrap:anywhere}.cash-bag-facts bdi{unicode-bidi:isolate}.cash-bag-card footer{border-top:1px solid var(--line);padding-top:12px}.cash-bag-card button{white-space:normal;max-width:100%}
+@media(max-width:700px){.cash-bag-list{grid-template-columns:minmax(0,1fr)}.cash-bag-card{padding:14px}.cash-bag-card header{flex-wrap:wrap}.cash-bag-card footer button{width:100%}}
+@media(max-width:360px){.cash-bag-facts{grid-template-columns:minmax(0,1fr)}}
+
+.dispatch-driver-counts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px}.driver-count-total{flex-basis:100%;color:var(--muted)}.driver-count{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:8px;white-space:nowrap}.driver-count i{width:7px;height:7px;border-radius:50%;background:currentColor}.driver-count-available{background:#e7f6ed;color:#176641}.driver-count-busy{background:#fff1db;color:#8a510b}.driver-count-no_shift{background:#edf0f3;color:#526071}
