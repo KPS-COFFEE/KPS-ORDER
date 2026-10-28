@@ -1,0 +1,70 @@
+name: Accounting recognition and refund precision
+
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/accounting.py
+      - app/financial_totals.py
+      - app/operations.py
+      - app/refund_line_values.py
+      - app/delivery_partial_returns.py
+      - tests/test_independent_accounting_audit.py
+      - tests/test_sales_refund_recognition.py
+      - tests/test_dashboard_sales_period.py
+      - tests/test_refund_rounding_conservation.py
+      - .github/workflows/accounting-regressions.yml
+permissions:
+  contents: read
+jobs:
+  accounting-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_accounting_regressions
+          POSTGRES_USER: accounting_test
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U accounting_test -d test_enbishan_accounting_regressions" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://accounting_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_accounting_regressions
+      APP_ENV: testing
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Test original failures, time boundaries, money conservation and isolation
+        run: >-
+          python -m pytest -q
+          tests/test_independent_accounting_audit.py
+          tests/test_sales_refund_recognition.py
+          tests/test_dashboard_sales_period.py
+          tests/test_refund_rounding_conservation.py
+          tests/test_accounting.py
+          tests/test_shift_reconciliation.py
+          tests/test_financial_treatments.py
+          tests/test_split_payment.py
+          tests/test_financial_gap_controls.py
+          tests/test_refund_prior_evidence.py
+          tests/test_refund_item_allocations.py
+          tests/test_delivery_partial_returns.py
+          tests/test_enbishan_financial_ownership_constraints.py
+          tests/test_financial_integrity.py
+          tests/test_financial_custody_integrity.py
+          tests/test_financial_tender_evidence.py
+          --junitxml=test-results/accounting-regressions.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: accounting-regressions-${{ github.event.pull_request.head.sha }}
+          path: test-results/accounting-regressions.xml

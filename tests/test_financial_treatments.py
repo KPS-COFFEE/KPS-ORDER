@@ -472,16 +472,23 @@ def test_price_credit_reduces_sales_at_approval_time_without_second_money_effect
     c=Mock()
     def execute(query,params):
         result=Mock()
-        if 'FROM audit_events a' in query:
+        if query.startswith('WITH sales_movements AS'):
+            # A price credit may reverse only a recognized completed sale.
+            assert 'o.completed_at IS NOT NULL' in query
+            assert 'GREATEST(o.completed_at,a.created_at)>=' in query
+            result.fetchone.return_value={'completed':1,'gross':2500,'delivery_fee':0,
+                'sales_refunded':0,'price_credit':550}
+        elif 'FROM audit_events a' in query:
             assert 'a.created_at>=' in query and 'a.created_at<' in query
             result.fetchone.return_value={'amount':550}
-        elif 'FROM refunds r' in query:result.fetchone.return_value={'refunded':0,'amendments':0}
-        elif 'FROM collections p' in query:result.fetchall.return_value=[dict(method='cash',amount_halalas=1950)]
-        else:result.fetchone.return_value={'gross':2500}
+        elif 'FROM refunds r' in query:result.fetchone.return_value={'refunded':0}
+        elif 'FROM effective_collections p' in query:result.fetchall.return_value=[dict(method='cash',amount_halalas=1950)]
+        else:raise AssertionError(query)
         return result
     c.execute.side_effect=execute
     result=period_totals(c,'o.created_at>=%s AND o.created_at<%s',('start','end'))
     assert result['gross_completed_halalas']==2500 and result['price_credit_halalas']==550
+    assert result['recognized_price_credit_halalas']==550
     assert result['net_completed_halalas']==1950 and result['net_receipts_halalas']==1950
 
 

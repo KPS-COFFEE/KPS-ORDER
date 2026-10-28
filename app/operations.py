@@ -1866,10 +1866,32 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
         late=config.get('late_after_minutes',60)
         if not isinstance(late,int) or not 1<=late<=1440:fail(503,'حد التأخير غير صحيح')
         summary['live_overdue']=c.execute("SELECT count(*) n FROM orders o WHERE o.service='delivery' AND o.completed_at IS NULL AND o.preparation_status NOT IN ('cancelled','rejected') AND o.created_at<now()-(%s*interval '1 minute') AND "+where,[late,*params]).fetchone()['n']
-        from .financial_totals import period_totals
+        from .financial_totals import period_totals,period_branch_totals
         summary.update(period_totals(c,where,params))
-        items=c.execute("WITH lines AS (SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item WHERE o.completed_at IS NOT NULL AND "+where+" GROUP BY o.id,o.total_halalas,item->>'product_id') SELECT product_id,max(name) name,sum(greatest(quantity-coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)) quantity,sum(gross_halalas) gross_halalas,round(sum(gross_halalas::numeric*greatest(total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id),0),0)/nullif(total_halalas,0))) net_halalas FROM lines GROUP BY product_id ORDER BY quantity DESC LIMIT 10",params).fetchall()
-        branch_top=c.execute("SELECT o.branch_id,b.branch_no,b.name,count(*) completed,coalesce(sum(o.total_halalas-coalesce((SELECT sum(r.amount_halalas) FROM refunds r WHERE r.amendment_id IS NULL AND r.order_id=o.id),0)),0) net_halalas FROM orders o JOIN branches b ON b.id=o.branch_id WHERE o.completed_at IS NOT NULL AND "+where+' GROUP BY o.branch_id,b.branch_no,b.name ORDER BY completed DESC LIMIT 20',params).fetchall()
+        # The operational intake cohort above keeps creation-time counts. Sales,
+        # completed counts and product/branch detail use the same completion day.
+        sales_where=where.replace('o.created_at>=','o.completed_at>=',1).replace('o.created_at<','o.completed_at<',1)
+        items=c.execute("""WITH lines AS (
+          SELECT o.id order_id,o.total_halalas,item->>'product_id' product_id,max(item->>'name') name,
+            sum((item->>'quantity')::int) quantity,sum((item->>'line_total_halalas')::bigint) gross_halalas
+          FROM orders o CROSS JOIN LATERAL jsonb_array_elements(o.snapshot->'items') item
+          WHERE o.completed_at IS NOT NULL AND """+sales_where+"""
+          GROUP BY o.id,o.total_halalas,item->>'product_id'), valued AS (
+          SELECT lines.*,
+            coalesce((SELECT sum((r.line_quantities->>lines.product_id)::int) FROM refunds r
+              WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id AND r.created_at<%s),0) returned_quantity,
+            coalesce((SELECT sum(r.amount_halalas) FROM refunds r
+              WHERE r.amendment_id IS NULL AND r.order_id=lines.order_id AND r.created_at<%s),0)
+            +coalesce((SELECT sum((a.details->>'credit_halalas')::bigint) FROM audit_events a
+              WHERE a.entity_type='order' AND a.entity_id=lines.order_id
+              AND a.action='accounting.order_financial_treatment.approved'
+              AND a.details->>'kind'='price_correction' AND a.created_at<%s),0) reductions
+          FROM lines)
+          SELECT product_id,max(name) name,sum(greatest(quantity-returned_quantity,0)) quantity,
+            sum(gross_halalas) gross_halalas,
+            round(sum(gross_halalas::numeric*greatest(total_halalas-reductions,0)/nullif(total_halalas,0))) net_halalas
+          FROM valued GROUP BY product_id ORDER BY quantity DESC,product_id LIMIT 10""",[*params,hi,hi,hi]).fetchall()
+        branch_top=period_branch_totals(c,where,params)
         timing=c.execute("SELECT count(*) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) valid,count(*) FILTER(WHERE t.picked_up_at IS NULL OR t.delivered_at<t.picked_up_at) excluded,avg(extract(epoch FROM(t.delivered_at-t.picked_up_at))) FILTER(WHERE t.picked_up_at IS NOT NULL AND t.delivered_at>=t.picked_up_at) average_seconds,count(*) FILTER(WHERE t.delivered_at-t.picked_up_at>(%s*interval '1 minute')) delayed FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.status='delivered' AND "+where,[config.get('late_after_minutes',60),*params]).fetchone()
         timing['threshold_minutes']=late;timing['threshold_configured']='late_after_minutes' in config
         from .performance import delivery_summary
@@ -1879,8 +1901,8 @@ def dashboard(period:str='today',start:str|None=None,end:str|None=None,brand_id:
                       average_seconds=frozen_performance['average_seconds'],delayed=frozen_performance['completed_late'])
         timing['classification_basis']='frozen_province_policy'
         # Collection events use their own timestamps, independently of order cohorts and custody transfers.
-        cash_where=where.replace('o.created_at>=','p.created_at>=').replace('o.created_at<','p.created_at<')
-        collected=c.execute('SELECT p.method,coalesce(sum(p.amount_halalas),0) amount_halalas FROM collections p JOIN orders o ON o.id=p.order_id WHERE '+cash_where+' GROUP BY p.method',params).fetchall()
+        cash_where=where.replace('o.created_at>=','p.created_at>=',1).replace('o.created_at<','p.created_at<',1)
+        collected=c.execute('SELECT p.method,coalesce(sum(p.amount_halalas),0) amount_halalas FROM effective_collections p JOIN orders o ON o.id=p.order_id WHERE '+cash_where+' GROUP BY p.method',params).fetchall()
         shift_clause='';shift_params=[]
         if user.get('_morning_manager_context'):
             shift_clause=" AND delivery_window_snapshot->>'period'='morning' AND (id=%s OR manager_shift_id=%s)"

@@ -35,11 +35,11 @@ def approved(c, oid):
 
 def value(order, lines, previous):
     """Allocate the immutable discounted item value; fees never become item credit."""
-    items = order['snapshot']['items']
-    gross = sum(i['line_total_halalas'] for i in items)
-    net = min(gross, max(0, order['total_halalas'] - order['delivery_fee_halalas']))
-    if not gross: raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'المرتجع المجاني لا يخفض التحصيل؛ استخدم إرجاع الصنف المجاني.')
+    from .refund_line_values import item_allocations,quantity_value
+    items,products = item_allocations(order)
+    if not sum(i['line_total_halalas'] for i in items): raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'المرتجع المجاني لا يخفض التحصيل؛ استخدم إرجاع الصنف المجاني.')
     seen = set(); credit = 0
+    selected={}
     # A retained gift cannot disguise returning the whole purchased order.
     retained = sum(i['quantity'] - previous.get(index,0) for index,i in enumerate(items) if i['line_total_halalas']>0)
     for line in lines:
@@ -49,14 +49,32 @@ def value(order, lines, previous):
         i = items[line.line_index]
         if i['line_total_halalas']>0:retained-=line.quantity
         prior = previous.get(line.line_index, 0); qty = i['quantity']
-        if prior + line.quantity > qty:
+        if type(prior) is not int or prior<0 or prior + line.quantity > qty:
             raise db.error(422, 'PARTIAL_RETURN_QUANTITY', 'الكمية تتجاوز المتبقي من الصنف.')
         units = i.get('units') or []
         prices = {u.get('price_halalas') for u in units}
         if len(prices) > 1 and prior + line.quantity < qty:
             raise db.error(409, 'PARTIAL_RETURN_UNIT_AMBIGUOUS', 'تختلف أسعار وحدات الصنف؛ أحل تحديد الوحدة للمحاسبة.')
-        denominator = gross * qty
-        credit += (i['line_total_halalas'] * net * (prior + line.quantity) // denominator) - (i['line_total_halalas'] * net * prior // denominator)
+        selected[line.line_index]=line.quantity
+    for product in products.values():
+        indices=product['line_indices']
+        chosen=sum(selected.get(index,0) for index in indices)
+        if not chosen:continue
+        prices=list(product['prices'])
+        uniform=all(a*b0==a0*b for a,b in prices for a0,b0 in prices)
+        if uniform:
+            prior=sum(previous.get(index,0) for index in indices)
+            credit+=quantity_value(product['net_halalas'],product['quantity'],prior,chosen)
+        else:
+            # Physical requests identify the actual line. Product-only money
+            # requests remain ambiguous after such a partial mixed-price return.
+            cumulative=0
+            for index in indices:
+                item=items[index];end=cumulative+item['line_total_halalas']
+                budget=(end*product['net_halalas']//product['gross']-
+                        cumulative*product['net_halalas']//product['gross']) if product['gross'] else 0
+                credit+=quantity_value(budget,item['quantity'],previous.get(index,0),selected.get(index,0))
+                cumulative=end
     if retained <= 0:
         raise db.error(422, 'PARTIAL_RETURN_FULL', 'إرجاع الطلب كاملًا يحتاج مسار الإلغاء والمرتجع الكامل.')
     if credit <= 0: raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'الأصناف المجانية لا تخفض التحصيل.')
