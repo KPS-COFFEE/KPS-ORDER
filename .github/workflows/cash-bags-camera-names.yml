@@ -9,6 +9,11 @@ on:
       - app/administrative_guidance.py
       - app/employee_tickets.py
       - app/multibrand_migrations/008_driver_cash_bags.sql
+      - app/multibrand_migrations/009_remote_driver_manager_approval.sql
+      - app/operating_reports.py
+      - tests/test_closure_ui_browser.py
+      - tests/test_remote_driver_approval_unit.py
+      - tests/test_driver_live_status.py
       - public/ops.js
       - public/assets/order-amendments.js
       - tests/test_driver_camera_browser.py
@@ -44,7 +49,7 @@ jobs:
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: node --check public/ops.js && node --check public/assets/order-amendments.js
-      - run: python -m pytest -q tests/test_aggregate_driver_closure.py tests/test_aggregate_manager_closure.py tests/test_physical_receipt_boundary.py tests/test_administrative_guidance.py tests/test_employee_tickets.py tests/test_delivery_controls_backup.py tests/test_driver_camera_browser.py tests/test_central_workdays_browser.py --junitxml=batch-results.xml
+      - run: python -m pytest -q tests/test_aggregate_driver_closure.py tests/test_aggregate_manager_closure.py tests/test_physical_receipt_boundary.py tests/test_administrative_guidance.py tests/test_employee_tickets.py tests/test_delivery_controls_backup.py tests/test_driver_camera_browser.py tests/test_central_workdays_browser.py tests/test_closure_ui_browser.py tests/test_closure_ui_context.py tests/test_remote_driver_approval_unit.py tests/test_driver_live_status.py --junitxml=batch-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
