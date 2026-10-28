@@ -674,3 +674,13 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 
 #filters-form.order-filters input,#filters-form.order-filters select{font-weight:400}
 @media(max-width:650px){#filters-form.order-filters input,#filters-form.order-filters select{font-size:13px}}
+
+/* Enbishan delivery-desk flavour cards; canonical option inputs remain hidden. */
+#staff-options [data-grape-group]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;border:0;padding:0;margin:12px 0;min-width:0}
+#staff-options [data-grape-group] legend{margin-bottom:10px}
+#staff-options [data-grape-group]>input[hidden]{display:none!important}
+#staff-options [data-grape-group]>label{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:56px;padding:12px;border:1px solid #cddedb;border-radius:12px;background:#fff;font-weight:600;cursor:pointer;line-height:1.6;min-width:0}
+#staff-options [data-grape-group]>label:has(input:checked){border-color:#267481;background:#edf6f4;color:#195763;font-weight:700}
+#staff-options [data-grape-group] input[data-grape-pick]{flex:0 0 20px;width:20px;min-height:20px;height:20px;margin:0;accent-color:#267481}
+#staff-options [data-grape-group]>label:has(input:disabled){opacity:.45;background:#f3f5f4;border-style:dashed;cursor:not-allowed}
+#staff-options [data-grape-group]>label:has(input:focus-visible){outline:2px solid #267481;outline-offset:3px}
