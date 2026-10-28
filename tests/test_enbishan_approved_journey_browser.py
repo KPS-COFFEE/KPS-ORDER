@@ -76,7 +76,7 @@ def test_browsing_guest_cannot_confirm_until_sms_is_verified(static_customer,lan
         page.locator('#otp-request-form [type=submit]').click()
         expect(page.locator('#otp-verify-form')).to_be_visible()
         page.locator('#otp-code').fill('9999');page.locator('#verify-otp').click()
-        expect(page.locator('#account-error')).to_contain_text('Synthetic invalid code')
+        expect(page.locator('#account-error')).to_contain_text('رمز التحقق غير صحيح' if lang=='ar' else 'The verification code is incorrect')
         expect(page.locator('#confirm-dialog')).not_to_be_visible()
         page.locator('#otp-code').fill('0123');page.locator('#verify-otp').click()
         expect(page.locator('#confirm-dialog')).to_be_visible()
