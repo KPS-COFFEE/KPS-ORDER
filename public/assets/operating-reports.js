@@ -4,10 +4,10 @@
   window.KPSOperatingReports = {mount};
   const esc = x => String(x ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const amount = n => n == null ? '—' : new Intl.NumberFormat('ar-SA',{maximumFractionDigits:2}).format(n/100);
-  async function mount(host,{api,morning=false}) {
-    let report,day='',scope='shift',generation=0;
+  async function mount(host,{api,morning=false,initialDay='',managerShiftId='',allowDay=true,lockContext=false}) {
+    let report,day=initialDay,scope='shift',generation=0;
     host.classList.add('operating-report');
-    const query=()=>new URLSearchParams({...day?{day}:{},scope}).toString();
+    const query=()=>new URLSearchParams({...day?{day}:{},scope,...managerShiftId?{manager_shift_id:managerShiftId}:{}}).toString();
     const error=text=>{const el=host.querySelector('[role="alert"]');if(el)el.textContent=text;};
     async function load(){
       const current=++generation;
@@ -21,7 +21,7 @@
       const cityTotal=(items,k)=>items.every(r=>r[k]!=null)?items.reduce((s,r)=>s+r[k],0):null;
       const dateLabel=new Date(day+'T12:00:00+03:00').toLocaleDateString('ar-SA',{calendar:'gregory',weekday:'long',year:'numeric',month:'long',day:'numeric'});
       host.innerHTML=`<header class="or-heading"><div class="or-logos"><img src="/assets/operating-report/kps.jpeg" alt="كبز"><img src="/assets/operating-report/enbishan.jpeg" alt="عنبيشن"></div><div><h2>التقرير التشغيلي</h2><p>${esc(dateLabel)}</p></div><button type="button" data-or-retry class="or-refresh" aria-label="تحديث">تحديث</button></header>
-      <div class="or-toolbar"><label>اليوم التشغيلي<input type="date" data-or-day value="${esc(day)}"></label><div class="or-scopes"><button type="button" data-or-scope="shift" aria-pressed="${scope==='shift'}">شفتي</button>${report.can_day?`<button type="button" data-or-scope="day" aria-pressed="${scope==='day'}">اليوم التشغيلي</button>`:''}</div></div>
+      <div class="or-toolbar"><label>اليوم التشغيلي<input type="date" data-or-day value="${esc(day)}" ${lockContext?'disabled':''}></label><div class="or-scopes"><button type="button" data-or-scope="shift" aria-pressed="${scope==='shift'}">شفتي</button>${allowDay&&report.can_day?`<button type="button" data-or-scope="day" aria-pressed="${scope==='day'}">اليوم التشغيلي</button>`:''}</div></div>
       <p role="alert" aria-live="polite"></p><p class="or-context">${scope==='day'?'الصباحي والمسائي':'طلبات مناوبتك'} · ${report.operational_complete?'مكتمل تشغيليًا':'التقفيلات التشغيلية لم تكتمل'}</p>
       <div class="or-summary"><div><strong>${report.count}</strong><span>طلب</span></div><div><strong>${report.rows.length}</strong><span>عدد السائقين</span></div><div><strong>${amount(report.net)} <small>ر.س</small></strong><span>صافي الطلبات</span></div></div>
       <section class="or-accounting ${a.approved?'or-approved':''}" aria-label="متابعة المراجعة المحاسبية"><div class="or-progress-heading"><h3>المراجعة المحاسبية</h3><strong>${a.percent}٪</strong><span class="or-review-state ${a.overdue?'or-late':''}">${a.approved?'معتمد':a.overdue?'متأخر':'قيد المراجعة'}</span></div><progress max="100" value="${a.percent}" aria-label="اكتمال المراجعة المحاسبية"></progress><p>${a.completed_steps} من ${a.total_steps} خطوة مكتملة${a.overdue?` · ${a.overdue} تقفيلة تحتاج متابعة`:''}</p>${a.late?`<p>سجل التأخير: ${a.late} تقفيلة أُنجزت بعد الموعد</p>`:''}${a.approved?a.approvals.map(v=>`<div class="or-stamp"><strong>✓ معتمد محاسبيًا</strong><span>المعتمد: ${esc(v.approved_name)}</span><span>${esc(new Date(v.created_at).toLocaleString('ar-SA',{timeZone:'Asia/Riyadh',dateStyle:'short',timeStyle:'short'}))}</span><small>مرجع الاعتماد: ${esc(v.id)}</small></div>`).join(''):'<p>بانتظار اكتمال المراجعة واعتماد المحاسب</p>'}</section>
@@ -33,7 +33,7 @@
     host.addEventListener('change',e=>{if(e.target.matches('[data-or-day]')){day=e.target.value;scope='shift';void load();}});
     host.addEventListener('click',async e=>{
       const button=e.target.closest('button');if(!button)return;
-      if(button.hasAttribute('data-or-scope')){scope=button.dataset.orScope;void load();return;}
+      if(button.hasAttribute('data-or-scope')){if(button.dataset.orScope==='day'&&(!allowDay||!report?.can_day))return;scope=button.dataset.orScope;void load();return;}
       if(button.hasAttribute('data-or-retry')){void load();return;}
       if(!button.dataset.orExport||!report)return;
       const printing=button.dataset.orExport==='print';
