@@ -22,7 +22,7 @@ BRANDS = {'kps': 'كبز', 'enbishan': 'عنبيشن'}
 
 def filename(day, scope):
     day = date.fromisoformat(str(day))
-    return f"تقرير تشغيلي - {'اليوم الكامل' if scope == 'day' else 'شفتي'} - {DAYS[day.weekday()]} - {day:%d-%m-%Y}.pdf"
+    return f"تشغيلي {DAYS[day.weekday()]} {day:%d-%m-%Y}.pdf"
 
 
 def disposition(name):
@@ -84,7 +84,8 @@ def snapshot(c, shift):
     for order in orders:
         order['fulfilled_in_report'] = order['task_status'] == 'delivered' and bool(order.get('task_delivered_at') or order['id'] in attested) and not order.get('test_void')
     refunds = c.execute('SELECT * FROM refunds WHERE shift_id=%s', (shift['id'],)).fetchall()
-    return dict(shift=shift, orders=orders, refunds=refunds, external_enbishan=[shift['external_enbishan']] if shift.get('external_enbishan') else []), None
+    collections = c.execute('SELECT * FROM effective_collections WHERE shift_id=%s', (shift['id'],)).fetchall()
+    return dict(shift=shift, orders=orders, collections=collections, refunds=refunds, external_enbishan=[shift['external_enbishan']] if shift.get('external_enbishan') else []), None
 
 
 def project_driver(shift, snap):
@@ -122,6 +123,48 @@ def project_driver(shift, snap):
     return dict(brands=goods, net=net, cases=cases)
 
 
+def collection_channels(snap):
+    """Recorded order collections only; never cash handover or accountant receipts."""
+    if snap.get('evidence_missing') or 'collections' not in snap:
+        return None, None
+    eligible = {o['id'] for o in snap.get('orders', []) if o.get('fulfilled_in_report') and not o.get('test_void')}
+    channels = {'card': 0, 'cash': 0}
+    seen = set()
+    for record in snap['collections']:
+        if record.get('order_id') not in eligible or record.get('record_kind') == 'test_void':
+            continue
+        identity = record.get('id')
+        if identity and identity in seen:
+            continue
+        if identity:
+            seen.add(identity)
+        if record.get('method') in channels:
+            channels[record['method']] += record['amount_halalas']
+    for record in snap.get('refunds', []):
+        if record.get('record_kind') != 'test_void' and record.get('method') in channels:
+            channels[record['method']] -= record['amount_halalas']
+    for external in snap.get('external_enbishan', []):
+        if not external or not external.get('total_halalas'):
+            continue
+        if any(external.get(k) is None for k in ('card_halalas', 'cash_halalas')):
+            return None, None
+        channels['card'] += external['card_halalas']
+        channels['cash'] += external['cash_halalas']
+    return channels['card'], channels['cash']
+
+
+def matching(row):
+    if row.get('network') is None or row.get('cash') is None:
+        return dict(shortage=None, surplus=None, status='بانتظار البيانات')
+    delta = row['network'] + row['cash'] - row['net']
+    return dict(shortage=max(0, -delta), surplus=max(0, delta),
+                status='عجز' if delta < 0 else 'فائض' if delta > 0 else 'متوافق')
+
+
+def complete_sum(rows, field):
+    return sum(r[field] for r in rows) if rows and all(r.get(field) is not None for r in rows) else None
+
+
 def build(c, user, day, scope):
     ops.roles(user, 'owner', 'delivery_manager')
     if not auth.has_permission(user, 'reports_view'):
@@ -135,6 +178,7 @@ def build(c, user, day, scope):
     day_allowed = user['role'] == 'owner'
     pending = 0
     for principal in principals:
+        locations = {b['id']: b for b in c.execute('SELECT id,name,city FROM branches WHERE brand_id=%s', (principal['brand_id'],)).fetchall()}
         candidates = c.execute("SELECT s.*,u.display_name FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='manager' AND s.brand_id=%s "
                                "AND COALESCE(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)=%s ORDER BY s.opened_at,s.id",
                                (principal['brand_id'], day)).fetchall()
@@ -153,11 +197,21 @@ def build(c, user, day, scope):
                 data = project_driver(shift, snap)
                 period = (manager.get('delivery_window_snapshot') or {}).get('period', 'evening')
                 key = (shift['user_id'], period)
-                row = driver_rows.setdefault(key, dict(name=shift['display_name'], period=period, brands={k: dict(count=0, amount=0) for k in BRANDS}, net=0, closed=True,evidence_missing=False))
+                row = driver_rows.setdefault(key, dict(name=shift['display_name'], period=period, brands={k: dict(count=0, amount=0) for k in BRANDS}, net=0, closed=True,evidence_missing=False,network=0,cash=0,cities=set(),branches=set()))
                 for brand, item in data['brands'].items():
                     for field in ('count', 'amount'):
                         row['brands'][brand][field] += item[field]
                 row['net'] += data['net']
+                network, cash = collection_channels(snap)
+                row['network'] = row['network'] + network if row['network'] is not None and network is not None else None
+                row['cash'] = row['cash'] + cash if row['cash'] is not None and cash is not None else None
+                branch_ids = {o['branch_id'] for o in snap.get('orders', []) if o.get('fulfilled_in_report') and o.get('branch_id')}
+                if not branch_ids:
+                    branch_ids = set(shift.get('branch_ids', []))
+                for bid in branch_ids:
+                    if bid in locations:
+                        row['cities'].add(locations[bid]['city'])
+                        row['branches'].add(locations[bid]['name'])
                 row['closed'] &= shift['status'] == 'closed' and rid is not None
                 row['evidence_missing'] |= bool(snap.get('evidence_missing'))
                 for case in data['cases']:
@@ -187,6 +241,10 @@ def build(c, user, day, scope):
     if scope == 'day' and not day_allowed:
         raise db.error(403, 'OPERATING_REPORT_DAY', 'اليوم الكامل لمدير المساء صاحب المناوبة والمالك.')
     rows = sorted(driver_rows.values(), key=lambda r: (r['period'] != 'morning', r['name']))
+    for row in rows:
+        row['city'] = ' / '.join(sorted(row.pop('cities'))) or 'غير مسجل'
+        row['branch'] = ' / '.join(sorted(row.pop('branches'))) or 'غير مسجل'
+        row.update(matching(row))
     accounting = progress(entries, approvals, [m['id'] for m in managers], pending)
     return ops.safe(dict(day=day, scope=scope, can_day=day_allowed and not bool(user.get('_morning_manager_context')), filename=filename(day, scope), manager=user['display_name'],
                          generated_at=datetime.now(TZ), rows=rows, cases=cases, accounting=accounting,
@@ -202,16 +260,30 @@ def listing(day: date | None = None, scope: Literal['shift', 'day'] = 'shift', u
 
 
 def money(value):
-    return 'غير موثق' if value is None else f'{value / 100:,.2f}'.rstrip('0').rstrip('.')
+    return '—' if value is None else f'{value / 100:,.2f}'.rstrip('0').rstrip('.')
 
 
 def report_tables(report):
-    headers = ['السائق', 'الوردية', 'كبز: عدد', 'كبز: قيمة', 'عنبيشن: عدد', 'عنبيشن: قيمة', 'الصافي', 'التقفيلة التشغيلية']
-    rows = [[r['name'], 'صباحي' if r['period'] == 'morning' else 'مسائي', r['brands']['kps']['count'], money(r['brands']['kps']['amount']),
-             r['brands']['enbishan']['count'], money(r['brands']['enbishan']['amount']), money(r['net']), 'لقطة مفقودة' if r.get('evidence_missing') else 'مكتملة' if r['closed'] else 'معلّقة'] for r in report['rows']]
-    totals = ['الإجمالي', '', *[sum(r['brands'][b]['count'] for r in report['rows']) if k == 'count' else money(sum(r['brands'][b]['amount'] for r in report['rows'])) for b in BRANDS for k in ('count', 'amount')], money(report['net']), '']
+    headers = ['السائق', 'الوردية', 'المدينة / المحافظة', 'الفرع', 'كبز: عدد', 'كبز: قيمة', 'عنبيشن: عدد', 'عنبيشن: قيمة', 'قيمة الطلبات', 'شبكة', 'كاش', 'العجز', 'الفائض', 'المطابقة', 'التقفيلة التشغيلية']
+    rows = [[r['name'], 'صباحي' if r['period'] == 'morning' else 'مسائي', r.get('city') or 'غير مسجل', r.get('branch') or 'غير مسجل',
+             r['brands']['kps']['count'], money(r['brands']['kps']['amount']), r['brands']['enbishan']['count'], money(r['brands']['enbishan']['amount']), money(r['net']),
+             money(r.get('network')), money(r.get('cash')), money(matching(r)['shortage']), money(matching(r)['surplus']), matching(r)['status'],
+             'لقطة مفقودة' if r.get('evidence_missing') else 'مكتملة' if r['closed'] else 'معلّقة'] for r in report['rows']]
+    projected = [dict(r, **matching(r)) for r in report['rows']]
+    totals = ['الإجمالي', '', '', '', *[sum(r['brands'][b]['count'] for r in report['rows']) if k == 'count' else money(sum(r['brands'][b]['amount'] for r in report['rows'])) for b in BRANDS for k in ('count', 'amount')], money(report['net']),
+              *[money(complete_sum(projected, k)) for k in ('network', 'cash', 'shortage', 'surplus')], '', '']
     cases = [[r['driver'], BRANDS.get(r['brand'], r['brand']), r['kind'], money(r['amount']), r['reference'], r['reason'], r['approval']] for r in report['cases']]
     return headers, rows, totals, cases
+
+
+def city_tables(report):
+    groups = defaultdict(list)
+    for row in report['rows']:
+        groups[row.get('city') or 'غير مسجل'].append(dict(row, **matching(row)))
+    headers = ['المدينة / المحافظة', 'الطلبات', 'قيمة الطلبات', 'شبكة', 'كاش', 'العجز', 'الفائض']
+    rows = [[city, sum(v['count'] for r in items for v in r['brands'].values()), money(sum(r['net'] for r in items)),
+             *[money(complete_sum(items, field)) for field in ('network', 'cash', 'shortage', 'surplus')]] for city,items in sorted(groups.items())]
+    return headers, rows
 
 
 def accounting_lines(report):
@@ -237,6 +309,9 @@ def make_html(report):
         return '<table><thead><tr>'+''.join('<th>'+e(x)+'</th>' for x in head)+'</tr></thead><tbody>'+''.join('<tr>'+''.join('<td>'+e(x)+'</td>' for x in r)+'</tr>' for r in data)+'</tbody>'+('<tfoot><tr>'+''.join('<td>'+e(x)+'</td>' for x in total)+'</tr></tfoot>' if total else '')+'</table>'
     body = '<div class="or-print-logos"><img src="/assets/operating-report/kps.jpeg" alt="كبز"><img src="/assets/operating-report/enbishan.jpeg" alt="عنبيشن"></div><h1>'+('تقرير اليوم التشغيلي' if report['scope'] == 'day' else 'تقرير شفتي')+'</h1><p>'+e(report['day'])+' · '+e(report['manager'])+'</p>'
     body += '<p>'+str(report['count'])+' طلب · صافي المبيعات '+money(report['net'])+' ر.س</p>'+table(headers, rows, totals)
+    city_head, city_rows = city_tables(report)
+    body += '<h2>ملخص المدن / المحافظات</h2>'+table(city_head, city_rows)
+    body += '<p>المطابقة: قيمة الطلبات = شبكة + كاش. النقص عجز والزيادة فائض. — بيانات غير متاحة.</p>'
     if cases:
         body += '<h2>الضيافة والتعويضات والحالات</h2>'+table(['السائق', 'البراند', 'النوع', 'القيمة المرجعية', 'المرجع', 'السبب', 'الحالة'], cases)
     else:
@@ -246,7 +321,7 @@ def make_html(report):
     return '<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+e(report['filename'][:-4])+'</title><link rel="stylesheet" href="/assets/operating-reports.css"><script src="/report.js" defer></script><main><nav class="screen-only"><button data-print-report>طباعة</button></nav>'+body+'</main></html>'
 
 
-def make_pdf(report, paper='A4'):
+def make_pdf(report, paper='A3'):
     """One readable landscape page; raise rather than silently drop any row.
 
 For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
@@ -265,6 +340,7 @@ For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
         return get_display(arabic_reshaper.reshape(str(text)))
     head, rows, total, cases = report_tables(report)
     lines = accounting_lines(report)
+    city_head, city_rows = city_tables(report)
     size = landscape(A4 if paper == 'A4' else A3)
     width, height = size
     out = BytesIO()
@@ -313,16 +389,19 @@ For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
         return result + [line.strip()]
     def layout(data, widths, pts):
         return [(cells, max(len(x) for x in cells)*(pts+3)+8) for cells in [[wrapped(v, w-8, pts) for v,w in zip(row,widths)] for row in data]]
-    widths = [usable*x for x in (.17,.07,.08,.13,.08,.13,.14,.20)]
+    weights = [100,51,89,70,35,62,35,62,77,63,63,51,51,86,83]
+    widths = [usable*x/sum(weights) for x in weights]
     case_widths = [usable*x for x in (.15,.07,.12,.10,.12,.29,.15)]
-    pts = 9
+    city_widths = [usable*x for x in (.25,.10,.17,.12,.12,.12,.12)]
+    pts = 10
     while True:
         main_layout = layout([head, *rows, total], widths, pts)
         case_layout = layout([['السائق','البراند','النوع','القيمة المرجعية','المرجع','السبب','الحالة'], *cases], case_widths, pts) if cases else []
-        needed = sum(h for _,h in main_layout+case_layout) + (102 if cases else 96) + len(lines)*17 + (25 if report['accounting']['approved'] else 0)
+        city_layout = layout([city_head, *city_rows], city_widths, pts)
+        needed = sum(h for _,h in main_layout+case_layout+city_layout)+30 + (140 if cases else 134) + len(lines)*17 + (25 if report['accounting']['approved'] else 0)
         if needed <= y - margin:
             break
-        if pts <= 8:
+        if pts <= 9:
             if paper == 'A4':
                 return make_pdf(report,paper='A3')
             raise db.error(422, 'OPERATING_REPORT_PRINT_CAPACITY', 'تفاصيل اليوم تتجاوز ورقة واضحة واحدة؛ يلزم تقليل تفاصيل الحالات في الملخص.')
@@ -343,14 +422,20 @@ For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
         y -= 12
     # Grouped brand headings preserve the two-brand comparison on paper.
     x=width-margin
-    for label,span,fill in [('السائق',widths[0],'#edf2f6'),('الوردية',widths[1],'#edf2f6'),
-                             ('كبز',sum(widths[2:4]),'#fff0e3'),('عنبيشن',sum(widths[4:6]),'#e6f7f7'),
-                             ('الصافي',widths[6],'#edf2f6'),('التقفيلة التشغيلية',widths[7],'#edf2f6')]:
-        cv.setFillColor(colors.HexColor(fill));cv.rect(x-span,y-21,span,21,stroke=0,fill=1)
-        text(label,x-5,y-14,pts);x-=span
-    y-=21
-    main_layout[0]=layout([['','','عدد','قيمة','عدد','قيمة','','']],widths,pts)[0]
+    groups = [(head[i], widths[i], '#edf2f6') for i in range(4)]
+    groups += [('كبز', sum(widths[4:6]), '#fff0e3'), ('عنبيشن', sum(widths[6:8]), '#e6f7f7')]
+    groups += [(head[i], widths[i], '#edf2f6') for i in range(8, len(head))]
+    group_height = max(len(wrapped(label, span-8, pts)) for label,span,_ in groups)*(pts+3)+8
+    for label,span,fill in groups:
+        cv.setFillColor(colors.HexColor(fill));cv.rect(x-span,y-group_height,span,group_height,stroke=0,fill=1)
+        for j,line in enumerate(wrapped(label,span-8,pts)):
+            text(line,x-4,y-pts-4-j*(pts+3),pts)
+        x-=span
+    y-=group_height
+    main_layout[0]=layout([['','','','','عدد','قيمة','عدد','قيمة','','','','','','','']],widths,pts)[0]
     draw_table(main_layout,widths,True)
+    text('ملخص المدن / المحافظات',width-margin,y,10);y-=14
+    draw_table(city_layout,city_widths)
     if cases:
         text('حالات التشغيل',width-margin,y,10);y-=14
         draw_table(case_layout,case_widths)
@@ -362,6 +447,7 @@ For high-volume days choose A3 before shrinking text; no ellipsis/hidden cases.
         cv.setFillColor(colors.HexColor('#08733a' if approved else '#e78216'))
         cv.roundRect(width-margin-usable*report['accounting']['percent']/100,y-8,usable*report['accounting']['percent']/100,7,3,stroke=0,fill=1)
     y-=23
+    text('المطابقة: قيمة الطلبات = شبكة + كاش · النقص عجز والزيادة فائض · — بيانات غير متاحة',width-margin,y,9);y-=17
     normal_lines=[line for line in lines if not line.startswith('معتمد محاسبيًا')]
     approval_lines=[line for line in lines if line.startswith('معتمد محاسبيًا')]
     for line in normal_lines:
