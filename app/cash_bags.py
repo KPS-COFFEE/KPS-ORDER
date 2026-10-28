@@ -4,7 +4,7 @@ from pydantic import Field, StrictBool, StrictInt
 from . import auth, db, operations as ops, multibrand, central_workdays as days
 from .aggregate_driver_closure import accounting, authorize, latest, validate_operational, physical_finished
 router=APIRouter(prefix='/api/cash-bags',tags=['cash-bags'])
-LOCAL_CITIES=frozenset({'حفر الباطن','القيصومة'})
+LOCAL_CITIES=frozenset({'حفر الباطن'})
 
 
 def branch_destination(branch):
@@ -22,7 +22,7 @@ def create(c,user,day,legs,declaration,branch_id,reference,delivered):
     if destination=='branch' and not delivered:raise db.error(422,'CASH_BAG_DELIVERY','أكد تسليم الكيس فعليًا للفرع.')
     bag=c.execute('INSERT INTO driver_cash_bags(id,workday_id,declaration_id,driver_id,branch_id,destination,reference,declared_cash_halalas,declared_card_halalas,recorded_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',(ops.uid(),day['id'],declaration['id'],day['user_id'],branch_id,destination,reference.strip(),declaration['cash_halalas']-declaration['retained_halalas'],declaration['card_halalas'],user['id'])).fetchone()
     if destination=='branch':
-        # Preserve the driver's actual retained float before releasing staffing;
+        # Preserve the driver's actual retained float pending manager approval;
         # a bag declaration is not an accounting receipt or a new float grant.
         sources=[r for r in declaration['expected_snapshot'] if r['permanent_float_halalas']]
         for row in sources:
@@ -32,13 +32,22 @@ def create(c,user,day,legs,declaration,branch_id,reference,delivered):
             from datetime import timedelta
             from .aggregate_driver_closure import accounting_followup
             db.audit(c,user['id'],'cash_bag.float_followup','central_workday',day['id'],{'bag_id':bag['id'],'declaration_id':declaration['id'],'responsible_user_id':accounting_followup(c,legs,user['id']),'due_at':(bag['deposited_at']+timedelta(hours=24)).isoformat(),'declared_retained_halalas':declaration['retained_halalas'],'no_employee_liability_assumed':True,'no_money_posted':True})
-        for _,s in legs:c.execute('UPDATE shifts SET staffing_ended_at=%s,submission=submission||%s::jsonb WHERE id=%s',(bag['deposited_at'],db.json({'cash_bag_id':bag['id'],'physical_state':'bag_at_branch','financial_state':'awaiting_accounting_receipt'}),s['id']))
+        for _,s in legs:c.execute('UPDATE shifts SET submission=submission||%s::jsonb WHERE id=%s',(db.json({'cash_bag_id':bag['id'],'physical_state':'bag_at_branch','financial_state':'awaiting_accounting_receipt','manager_approval_required':True}),s['id']))
     db.audit(c,user['id'],'cash_bag.deposited' if destination=='branch' else 'cash_bag.declared','cash_bag',bag['id'],{'driver_id':day['user_id'],'branch_id':branch_id,'destination':destination,'declared_cash_halalas':bag['declared_cash_halalas'],'accounting_receipt_recorded':False})
     return bag
 
 
 def bag_view(c,day_id):
-    return c.execute('SELECT b.*,s.delivery_operational_date shift_date,u.display_name driver_name,br.name branch_name,n.id count_id,n.received_cash_halalas,n.card_halalas,n.created_at counted_at,n.reference count_reference,n.note count_note,a.display_name counted_by_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN shifts s ON s.id=d.anchor_shift_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id LEFT JOIN users a ON a.id=n.counted_by WHERE b.workday_id=%s AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id) ORDER BY b.deposited_at DESC LIMIT 1',(day_id,)).fetchone()
+    row=c.execute('SELECT b.*,s.submission,s.staffing_ended_at,s.delivery_operational_date shift_date,u.display_name driver_name,br.name branch_name,n.id count_id,n.received_cash_halalas,n.card_halalas,n.created_at counted_at,n.reference count_reference,n.note count_note,a.display_name counted_by_name FROM driver_cash_bags b JOIN central_workdays d ON d.id=b.workday_id JOIN shifts s ON s.id=d.anchor_shift_id JOIN users u ON u.id=b.driver_id JOIN branches br ON br.id=b.branch_id LEFT JOIN driver_cash_bag_counts n ON n.bag_id=b.id LEFT JOIN users a ON a.id=n.counted_by WHERE b.workday_id=%s AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns r WHERE r.declaration_id=b.declaration_id) ORDER BY b.deposited_at DESC LIMIT 1',(day_id,)).fetchone()
+    if not row:return None
+    row=dict(row)
+    submission=row.pop('submission') or {}
+    approval=submission.get('manager_approval')
+    legacy_finished=bool(row.pop('staffing_ended_at') and 'manager_approval_required' not in submission)
+    row['manager_approval_required']=not legacy_finished and (row['destination']=='branch' or submission.get('manager_approval_required',False))
+    row['manager_approval']=approval if approval and approval.get('declaration_id')==row['declaration_id'] else None
+    row['operational_state']='released' if legacy_finished else 'awaiting_manager_approval' if row['manager_approval_required'] and not row['manager_approval'] else 'approved' if row['manager_approval'] else 'awaiting_manager_receipt'
+    return row
 
 
 class Count(ops.OperationBody):
@@ -114,7 +123,7 @@ def vault_close(sid:str,body:VaultClose,request:Request,user=Depends(auth.curren
                 if s['status'] not in {'open','closing','submitted'} or s.get('staffing_ended_at'):raise db.error(409,'VAULT_SHIFT_STATE','المناوبة منتهية أو غير متاحة.')
                 ops.guard_accepted_awaiting_dispatch(c,s)
                 if ops.unresolved(c,s['id']):raise db.error(409,'OPEN_TASKS','أكمل تسليم مسؤولية الطلبات النشطة أولًا.')
-                if c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed' AND staffing_ended_at IS NULL",(s['id'],)).fetchone():raise db.error(409,'DRIVER_BAG_PENDING','أكمل استلام أكياس السائقين أو تسجيل تسليمها للفرع أولًا.')
+                if c.execute("SELECT 1 FROM shifts WHERE manager_shift_id=%s AND status<>'closed' AND staffing_ended_at IS NULL",(s['id'],)).fetchone():raise db.error(409,'DRIVER_BAG_PENDING','أكمل استلام أكياس السائقين أو اعتماد تقفيلات الأكياس المسلمة للفرع أولًا.')
                 if c.execute("SELECT 1 FROM manager_handovers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'HANDOVER_PENDING','أكمل تسليم مسؤولية المناوبة المعلق.')
                 if c.execute("SELECT 1 FROM custody_transfers WHERE (from_shift_id=%s OR to_shift_id=%s) AND status='pending'",(s['id'],s['id'])).fetchone():raise db.error(409,'RECEIPT_PENDING','أكد أو أعد تسليم النقد المعلق أولًا.')
             shifts=[s['id'] for _,s in legs]
