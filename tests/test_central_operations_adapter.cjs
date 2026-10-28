@@ -317,3 +317,18 @@ test('history and alert decisions resolve canonical shift grants',async()=>{
  await api.request('/api/operations/map-services/alerts/resolve',{method:'POST',body:{shift_id:'enb-shift',kind:'location_stale',reason:'network unavailable',action:'contacted driver'}},raw,user);
  assert.equal(calls.at(-1).opts.brand,'enbishan');assert.equal(calls.at(-1).opts.body.reason,'network unavailable');
 });
+
+test('driver live counts deduplicate shared duty and include the busy brand leg',async()=>{
+  const raw=async(path,opts)=>({drivers:[
+    {id:'shared',branch_ids:[opts.brand+'-1'],live_status:opts.brand==='kps'?'available':'busy'},
+    {id:'one-duty',branch_ids:[opts.brand+'-1'],live_status:opts.brand==='kps'?'no_shift':'available'},
+    {id:'off-duty',branch_ids:[opts.brand+'-1'],live_status:'no_shift'},
+  ],driver_counts:{total:3,available:1,busy:1,no_shift:1}});
+  for(const brands of [user.central_operations.brands,[...user.central_operations.brands].reverse()]){
+    const result=await create().request('/api/operations/drivers',{},raw,{...user,central_operations:{brands}});
+    assert.equal(result.drivers.length,3);
+    assert.equal(result.drivers.find(d=>d.id==='shared').live_status,'busy');
+    assert.equal(result.drivers.find(d=>d.id==='one-duty').live_status,'available');
+    assert.deepEqual(result.driver_counts,{total:3,available:1,busy:1,no_shift:1});
+  }
+});
