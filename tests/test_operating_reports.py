@@ -196,11 +196,14 @@ def test_totals_keep_shortage_and_surplus_separate_and_missing_not_zero():
     assert reports.report_tables(report)[2][head.index('كاش')]=='—'
 
 
-def test_build_projects_scoped_live_collections_and_locations_without_writes(monkeypatch):
+@pytest.mark.parametrize('manager_ended,driver_ended,evidence_missing',[(False,False,False),(True,False,False),(False,True,False),(True,True,False),(True,True,True)])
+def test_build_projects_scoped_live_collections_and_locations_without_writes(monkeypatch,manager_ended,driver_ended,evidence_missing):
     from app import accounting_statements
     user=dict(id='owner',role='owner',brand_id='kps',display_name='الإدارة',branch_ids=['b'])
     manager=dict(id='manager',user_id='owner',brand_id='kps',branch_ids=['b'],status='open',delivery_window_snapshot={})
     driver=dict(id='driver',user_id='u',brand_id='kps',branch_ids=['b'],display_name='سائق',status='open')
+    if manager_ended:manager['staffing_ended_at']='2026-10-28T01:00:00+00:00'
+    if driver_ended:driver.update(status='submitted',staffing_ended_at='2026-10-28T00:30:00+00:00')
     class Result:
         def __init__(self,rows):self.rows=rows
         def fetchall(self):return self.rows
@@ -216,17 +219,26 @@ def test_build_projects_scoped_live_collections_and_locations_without_writes(mon
     monkeypatch.setattr(reports.auth,'has_permission',lambda *a:True)
     monkeypatch.setattr(accounting_statements,'manager_cards',lambda *a,**k:dict(cards=[]))
     snap=dict(orders=[dict(id='o',branch_id='b',total_halalas=50000,fulfilled_in_report=True)],refunds=[],collections=[dict(id='1',order_id='o',method='cash',amount_halalas=18000),dict(id='2',order_id='o',method='card',amount_halalas=32000)])
+    if evidence_missing:
+        snap['evidence_missing']=True
+        driver['status']='closed'
     monkeypatch.setattr(reports,'snapshot',lambda *a:(deepcopy(snap),None))
     result=reports.build(Cursor(),user,date(2026,10,27),'day')
     row=result['rows'][0]
     assert row['city']=='الدمام' and row['branch']=='أحد'
-    assert row['cash']==18000 and row['network']==32000
-    assert row['status']=='متوافق' and row['shortage']==row['surplus']==0
+    if evidence_missing:
+        assert row['cash'] is None and row['network'] is None
+        assert row['evidence_missing'] and result['evidence_missing']
+    else:
+        assert row['cash']==18000 and row['network']==32000
+        assert row['status']=='متوافق' and row['shortage']==row['surplus']==0
+    assert row['closed'] is (driver_ended and not evidence_missing)
+    assert result['operational_complete'] is (manager_ended and driver_ended and not evidence_missing)
     assert not result['accounting']['approved']
+    assert result['accounting']['percent']<100
 
 
 def test_busy_pdf_paginates_all_rows_cases_and_repeats_headings_at_readable_size():
-    import fitz
     report=example(True)
     report['rows']=[dict(deepcopy(report['rows'][0]),name=f'DRIVER-{i:03}',
                          network=30000,cash=15000,city='الدمام',branch='أحد') for i in range(95)]
@@ -242,22 +254,21 @@ def test_busy_pdf_paginates_all_rows_cases_and_repeats_headings_at_readable_size
     for i in range(80):
         assert f'CASE-{i:03}' in '\n'.join(texts)
     assert 'AC-1025' in texts[-1]
-    doc=fitz.open(stream=pdf,filetype='pdf')
     import re
     import unicodedata
-    for index,page in enumerate(doc,1):
-        extracted=page.get_text()
-        # ReportLab emits visual Arabic; check the exact rendered page count.
-        footer=page.get_text(clip=fitz.Rect(0,page.rect.height-35,150,page.rect.height))
-        assert re.findall(r'\d+',footer)==[str(len(doc)),str(index)]
-        spans=[span for block in page.get_text('dict')['blocks'] if 'lines' in block
-               for line in block['lines'] for span in line['spans']]
-        assert all(span['bbox'][1]>=0 and span['bbox'][3]<=page.rect.height for span in spans)
-        if any('DRIVER-' in span['text'] for span in spans):
-            assert all(span['size']==10 for span in spans if 'DRIVER-' in span['text'])
+    for index,page in enumerate(reader.pages,1):
+        spans=[]
+        page.extract_text(visitor_text=lambda text,cm,tm,font,size: spans.append((text,tm[4],tm[5],size)))
+        # pypdf may split an RTL string into several text visits. Reassemble
+        # the footer by its reserved position rather than extraction ordering.
+        footer=''.join(text for text,x,y,size in spans if x<150 and 25<y<40)
+        assert re.findall(r'\d+',footer)==[str(len(reader.pages)),str(index)]
+        assert all(0<=y<=float(page.mediabox.height) for text,x,y,size in spans if text.strip())
+        driver_spans=[span for span in spans if 'DRIVER-' in span[0]]
+        if driver_spans:
+            assert all(size==10 for text,x,y,size in driver_spans)
             # Every table page repeats its column labels above its first row.
-            heading='السائق'
-            assert heading in unicodedata.normalize('NFKC',extracted)
+            assert 'السائق' in unicodedata.normalize('NFKC',texts[index-1])
     assert report==original
 
 
