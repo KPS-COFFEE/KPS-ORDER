@@ -253,6 +253,9 @@ def test_vault_close_and_actual_bag_count_need_no_owner_confirmation(central,cen
             assert not c.execute('SELECT 1 FROM shared_driver_closure_receipts').fetchone()
             assert c.execute('SELECT destination FROM driver_cash_bags WHERE id=%s',(declared['cash_bag']['id'],)).fetchone()['destination']=='branch'
         page.locator('[data-action=shift-detail][data-id="'+manager['shift']['id']+'"]').first.click()
+        # Wait for the manager form to replace the preceding checked approval
+        # form; a hidden checkbox already checked can satisfy check() early.
+        expect(page.locator('#modal textarea[name=note]')).to_be_visible()
         expect(page.locator('#modal [name=recipient_user_id]')).to_have_count(0)
         form=page.locator('#modal form')
         form.locator('[name=confirmed]').check()
