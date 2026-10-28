@@ -154,7 +154,56 @@
         &&(/^(فردي|فردية|single)$/i.test(String(values[0].name||'').trim())
           ||/^single$/i.test(String(values[0].name_en||'').trim()));
     }
-    function drawOptions(){const p=products.find(p=>p.id===select.value);form.querySelector('#staff-selected-product').textContent=p?tr('خيارات وملاحظات: ','Options and notes: ')+p.name:'';options.innerHTML=productGroups(p).map((g,i)=>fixedSingleSize(g)?`<input type="checkbox" hidden checked data-group="${i}" value="${esc(g.values[0].code||g.values[0].id)}">`:`<fieldset><legend>${esc(g.name)} · ${esc(tr('الاختيارات','Selections'))} ${g.min_select??(g.required===false?0:1)}–${g.max_select??1}</legend>${(g.values||[]).filter(v=>v.available!==false&&v.enabled!==false).map(v=>`<label><input type="checkbox" data-group="${i}" value="${esc(v.code||v.id)}">${esc(v.name)} ${Number(v.price_delta_halalas)?`(+${esc(money(v.price_delta_halalas))})`:''}</label>`).join('')}</fieldset>`).join('');add.disabled=!p;}
+    // UI picks stay separate; only a complete catalog combination reaches the order.
+    function grapeFlavourChoices(group,index){
+      if(user.brand_id!=='enbishan'||group.code!=='FLAVOUR')return null;
+      const pairs=(group.values||[]).filter(v=>v.code?.startsWith('pair-'));
+      const mixed=(group.values||[]).find(v=>v.name==='مشكل');
+      const split=value=>String(value.name).split(' + ');
+      const names=[...new Set(pairs.flatMap(split))];
+      if(pairs.length!==3||!mixed||names.length!==3)return null;
+      const labels=[...names,mixed.name].map((name,i)=>{
+        const pair=pairs.find(v=>split(v).includes(name));
+        const english=i===3?'Mixed':String(pair.name_en||pair.name).split(' + ')[split(pair).indexOf(name)];
+        return `<label><input type="checkbox" data-grape-pick="${i}">${esc(tr(name,english))}</label>`;
+      }).join('');
+      return `<fieldset class="staff-grape-flavours" data-flavour-group="${index}"><legend>${esc(tr('نكهات ورق العنب','Grape leaf flavours'))}</legend><p class="small-text muted" data-flavour-hint aria-live="polite"></p><input type="checkbox" hidden data-group="${index}" data-flavour-resolved>${labels}</fieldset>`;
+    }
+    function syncGrapeFlavours(field,changed){
+      const group=productGroups(products.find(p=>p.id===select.value))[Number(field.dataset.flavourGroup)];
+      const pairs=(group.values||[]).filter(v=>v.code?.startsWith('pair-'));
+      const mixed=group.values.find(v=>v.name==='مشكل');
+      const split=value=>String(value.name).split(' + ');
+      const names=[...new Set(pairs.flatMap(split))];
+      const inputs=[...field.querySelectorAll('[data-grape-pick]')];
+      const enabled=value=>value.enabled!==false&&value.available!==false;
+      if(changed?.checked){
+        if(changed===inputs[3])inputs.slice(0,3).forEach(input=>input.checked=false);
+        else inputs[3].checked=false;
+      }
+      const picks=inputs.slice(0,3).flatMap((input,i)=>input.checked?[names[i]]:[]);
+      const match=inputs[3].checked&&enabled(mixed)?mixed:pairs.find(value=>enabled(value)&&picks.length===2&&split(value).every(name=>picks.includes(name)));
+      const resolved=field.querySelector('[data-flavour-resolved]');
+      resolved.checked=Boolean(match);resolved.value=match?.code||'';
+      inputs.forEach((input,i)=>input.disabled=i===3?!enabled(mixed):!pairs.some(value=>enabled(value)&&split(value).includes(names[i]))||(!input.checked&&picks.length===2));
+      field.querySelector('[data-flavour-hint]').textContent=inputs[3].checked?tr('تم اختيار مشكل.','Mixed selected.'):tr('اختر نكهتين من أول ثلاث، أو اختر مشكل.','Choose two of the first three flavours, or choose Mixed.');
+    }
+    function drawOptions(){
+      const p=products.find(p=>p.id===select.value);
+      form.querySelector('#staff-selected-product').textContent=p?tr('خيارات وملاحظات: ','Options and notes: ')+p.name:'';
+      options.innerHTML=productGroups(p).map((g,i)=>{
+        if(fixedSingleSize(g))return `<input type="checkbox" hidden checked data-group="${i}" value="${esc(g.values[0].code||g.values[0].id)}">`;
+        const flavours=grapeFlavourChoices(g,i);if(flavours)return flavours;
+        return `<fieldset><legend>${esc(g.name)} · ${esc(tr('الاختيارات','Selections'))} ${g.min_select??(g.required===false?0:1)}–${g.max_select??1}</legend>${(g.values||[]).filter(v=>v.available!==false&&v.enabled!==false).map(v=>`<label><input type="checkbox" data-group="${i}" value="${esc(v.code||v.id)}">${esc(v.name)} ${Number(v.price_delta_halalas)?`(+${esc(money(v.price_delta_halalas))})`:''}</label>`).join('')}</fieldset>`;
+      }).join('');
+      options.querySelectorAll('.staff-grape-flavours').forEach(field=>syncGrapeFlavours(field));
+      add.disabled=!p;
+    }
+    options.addEventListener('change',event=>{
+      const input=event.target.closest('[data-grape-pick]');if(!input)return;
+      syncGrapeFlavours(input.closest('.staff-grape-flavours'),input);
+      form.querySelector('.form-error').textContent='';
+    });
     function photoUrl(value){try{const url=new URL(value||'',location.origin);return value&&(url.protocol==='https:'||url.origin===location.origin)?url.href:null;}catch{return null;}}
     function drawMenu(){
       let visibleProducts=products;
