@@ -5,7 +5,7 @@ const section=source.slice(source.indexOf('  function cardQuantity('),source.ind
 function fixture(){
   const plain={id:'p1'},flavour={id:'p2',option_groups:[{required:true}]};
   const calls=[];let sequence=0;
-  const ctx={state:{cart:[],products:[plain,flavour]},number:{format:String},groups:p=>p.option_groups||[],
+  const ctx={requestedBrandId:'kps',mahashiIds:[],mahashiFamily:()=>[],state:{cart:[],products:[plain,flavour]},number:{format:String},groups:p=>p.option_groups||[],
     eligibleForProduct:p=>({ok:p.enabled!==false,reason:'unavailable'}),toast:x=>calls.push(['toast',x]),
     openProduct:p=>calls.push(['options',p.id]),cartChanged:()=>calls.push(['changed']),key:()=>String(++sequence),t:x=>x,
     showBasket:()=>calls.push(['scroll','basket']),prefersLessMotion:()=>true,$:id=>({scrollIntoView:()=>calls.push(['scroll',id])}),

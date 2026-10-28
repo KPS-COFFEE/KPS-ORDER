@@ -102,7 +102,7 @@ html[dir="rtl"] .account-action::after{transform:rotate(-45deg)}
 .customer-progress-steps li.complete{color:var(--success)}
 @media(max-width:480px){.customer-progress{padding:.8rem}.customer-progress-steps li{flex-basis:calc(50% - .65rem)}}
 /* Enbishan menu: consistent card geometry with or without artwork/options. */
-html[data-storefront-brand="enbishan"] .product-grid{align-items:stretch;grid-auto-rows:1fr}
+html[data-storefront-brand="enbishan"] .product-grid{align-items:stretch}
 html[data-storefront-brand="enbishan"] .product-card{height:100%}
 html[data-storefront-brand="enbishan"] .product-image-button{aspect-ratio:1.2;flex-shrink:0;display:grid;place-items:center}
 html[data-storefront-brand="enbishan"] .product-image-button img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
@@ -124,10 +124,19 @@ html[data-storefront-brand="enbishan"] .product-add-button{grid-column:2;grid-ro
 
 /* Quantity controls occupy a full row under Enbishan variant prices. */
 html[data-storefront-brand="enbishan"] .product-card-bottom{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto}
-html[data-storefront-brand="enbishan"] .product-card-bottom>.product-card-controls{grid-column:1;grid-row:3;justify-content:space-between;margin-top:5px}
+html[data-storefront-brand="enbishan"] .product-card-bottom>.product-card-controls{grid-column:1;grid-row:3;justify-content:center;justify-self:center;width:max-content;max-width:100%;direction:ltr;gap:0;margin-top:5px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 html[data-storefront-brand="enbishan"] .product-card-controls>.product-add-button{grid-column:auto;grid-row:auto}
 
 /* Direct option selection, using the current brand palette and button design. */
 .customer-option-choices{display:flex;flex-wrap:wrap;gap:.5rem;margin-block:.5rem}
 .customer-option-choices button{min-height:44px;flex:1 0 auto}
 .customer-option-choices button[aria-pressed="true"]{outline:2px solid currentColor;outline-offset:2px;font-weight:700}
+
+/* Group titles span the menu without becoming product-sized grid rows. */
+html[data-storefront-brand="enbishan"] .menu-section-title{grid-column:1/-1;margin:14px 0 0;padding-bottom:8px;border-bottom:1px solid var(--line);font-size:19px;color:var(--accent-dark)}
+html[data-storefront-brand="enbishan"] .enbishan-product-description{font-size:12px;line-height:1.7;color:var(--muted);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+html[data-storefront-brand="enbishan"] .product-card-controls>button{width:44px;min-width:44px;height:44px;min-height:44px;border:0;border-radius:0}
+html[data-storefront-brand="enbishan"] .product-card-quantity{min-width:28px;line-height:44px;background:var(--surface);font-size:14px}
+
+/* Contents version: show every listed component. */
+html[data-storefront-brand="enbishan"] .enbishan-product-description{display:block;-webkit-line-clamp:unset;overflow:visible}

@@ -16,3 +16,11 @@ dialog:has(.staff-order-kps-menu){width:min(1120px,calc(100vw - 24px))}
 
 .staff-order-kps-menu label[hidden]{display:none}
 .staff-selected-product{font-weight:700;margin-block:12px 6px}
+
+/* Approved Enbishan descriptions and compact counter tap targets. */
+.staff-order-enbishan-menu .staff-menu-quantity{justify-content:center;align-self:center;width:max-content;gap:0;border:1px solid var(--line,#ddd);border-radius:10px;overflow:hidden;direction:ltr}
+.staff-order-enbishan-menu .staff-menu-quantity button{width:44px;min-width:44px;min-height:44px;border:0;border-radius:0;margin:0}
+.staff-order-enbishan-menu .staff-menu-quantity output{min-width:28px;text-align:center}
+.staff-order-enbishan-menu .staff-menu-description{font-size:12px;line-height:1.7;color:var(--muted,#555);margin:0}
+.staff-order-enbishan-menu .staff-mahashi-sizes{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.staff-order-enbishan-menu .staff-mahashi-sizes legend{font-weight:700}.staff-order-enbishan-menu .staff-mahashi-sizes button[aria-pressed=true]{outline:2px solid var(--accent,#267481)}
+.staff-order-enbishan-menu #staff-options fieldset[hidden]{display:none}
