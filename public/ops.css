@@ -685,3 +685,6 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 @media(max-width:360px){.cash-bag-facts{grid-template-columns:minmax(0,1fr)}}
 
 .dispatch-driver-counts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px}.driver-count-total{flex-basis:100%;color:var(--muted)}.driver-count{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:8px;white-space:nowrap}.driver-count i{width:7px;height:7px;border-radius:50%;background:currentColor}.driver-count-available{background:#e7f6ed;color:#176641}.driver-count-busy{background:#fff1db;color:#8a510b}.driver-count-no_shift{background:#edf0f3;color:#526071}
+
+/* Keep the inbox visible below the live driver summary on desktop. */
+@media(min-width:1000px){.delivery-room #dispatch-panel-messages .conversation-list{max-height:90px}}
