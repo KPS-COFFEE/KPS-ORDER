@@ -26,3 +26,22 @@ def describe(c, row):
         else: eligible.append(bid)
     if not eligible: return 'manager_or_scope_not_ready', 'restore_authorized_open_manager_shift', []
     return 'available', 'none', eligible
+
+
+def live_status(row):
+    """Three mutually exclusive staffing buckets; busy includes paused duty.
+
+    Readiness remains separate: breaks, fuel checks and closing are on-duty
+    unavailability, never evidence that a driver has no physical shift.
+    """
+    if not row.get('shift_id') or row.get('shift_status') == 'closed':
+        return 'no_shift'
+    return 'available' if row.get('availability') == 'available' else 'busy'
+
+
+def live_counts(rows):
+    counts = dict(total=0, available=0, busy=0, no_shift=0)
+    for row in rows:
+        counts['total'] += 1
+        counts[row['live_status']] += 1
+    return counts
