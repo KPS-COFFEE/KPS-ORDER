@@ -16,6 +16,7 @@
     const alive=()=>!destroyed&&root.isConnected&&isActive();
     const etaCache=new Map(),etaHosts=new Map();let visibleDrivers=[],etaBusy=false,etaRevision=0;
     const stamp=value=>typeof value==='string'?Date.parse(value):NaN;
+    const clock=value=>new Date(value).toLocaleTimeString(lang==='en'?'en-GB':'ar-SA',{timeZone:'Asia/Riyadh'});
     const fresh=value=>Number.isFinite(stamp(value))&&Date.now()-stamp(value)>=0&&Date.now()-stamp(value)<=120000;
     const locationFresh=driver=>!driver.stale&&fresh(driver.captured_at||driver.updated_at);
     const eligible=driver=>locationFresh(driver)&&(Number(driver.visible_active_task_count)>0||['delivering','awaiting_pickup','returning'].includes(driver.movement_state));
@@ -25,7 +26,7 @@
       return ['pickup','return'].includes(stop.kind)?String(stop.name||tr('الفرع','Branch')):[stop.customer_name||order?.customer_name||order?.customer?.name,stop.order_no||order?.order_reference||order?.order_no||stop.order_id].filter(Boolean).join(' · ');
     }
     function reasonLabel(reason){
-      const labels={route_budget_or_cooldown:['التقدير مؤجل حسب حد استخدام الخرائط؛ يعاد تلقائيًا','Estimate deferred by map usage limit; retries automatically'],routing_token_unconfigured:['خدمة تقدير الطرق غير مهيأة','Road estimates are not configured'],itinerary_scope_incomplete:['لا يمكن تقدير رحلة كاملة ضمن صلاحيات الحساب','Full itinerary unavailable within account permissions'],no_stops:['لا توجد محطات لتقدير وقتها','No stops to estimate'],location_stale:['بانتظار موقع حديث','Awaiting a fresh location'],itinerary_changed:['تغيرت الرحلة — بانتظار إعادة الحساب','Itinerary changed — awaiting recalculation'],route_access_unavailable:['التقدير غير متاح ضمن الصلاحيات الحالية','Estimate unavailable within current permissions'],route_session_expired:['انتهت الجلسة — سجل الدخول مجددًا','Session expired — sign in again']};
+      const labels={routing_provider_unavailable:['خدمة الطرق غير متاحة مؤقتًا — ستتم إعادة المحاولة','Road service temporarily unavailable — retrying automatically'],road_route_unavailable:['لم يتوفر مسار قيادة بين المحطات — تحقق من مواقعها','No driving route between stops — check their locations'],location_or_shift_unavailable:['تحقق من الشفت المفتوح وموقع السائق','Check the open shift and driver location'],route_origin_stale:['موقع بداية التقدير قديم — بانتظار إعادة الحساب','Estimate origin is stale — awaiting recalculation'],route_intent_changed:['تغير ترتيب الرحلة — بانتظار إعادة الحساب','Route order changed — awaiting recalculation'],route_budget_or_cooldown:['التقدير مؤجل حسب حد استخدام الخرائط؛ يعاد تلقائيًا','Estimate deferred by map usage limit; retries automatically'],routing_token_unconfigured:['خدمة تقدير الطرق غير مهيأة','Road estimates are not configured'],itinerary_scope_incomplete:['لا يمكن تقدير رحلة كاملة ضمن صلاحيات الحساب','Full itinerary unavailable within account permissions'],no_stops:['لا توجد محطات لتقدير وقتها','No stops to estimate'],location_stale:['بانتظار موقع حديث','Awaiting a fresh location'],itinerary_changed:['تغيرت الرحلة — بانتظار إعادة الحساب','Itinerary changed — awaiting recalculation'],route_access_unavailable:['التقدير غير متاح ضمن الصلاحيات الحالية','Estimate unavailable within current permissions'],route_session_expired:['انتهت الجلسة — سجل الدخول مجددًا','Session expired — sign in again']};
       return labels[reason]?tr(...labels[reason]):tr('تعذر تقدير الطريق — ستتم إعادة المحاولة تلقائيًا','Road estimate unavailable — retries automatically');
     }
     function renderEta(driver){
@@ -37,7 +38,7 @@
       if(!navigator.onLine){host.append(el('p',tr('انقطع الاتصال — الأوقات غير مباشرة','Offline — estimates are not live')));return;}
       if(!eligible(driver)){host.append(el('p',tr('لا توجد رحلة نشطة لحساب وقتها','No active itinerary to estimate')));return;}
       if(!plan||plan.status!=='ready'||!fresh(plan.calculated_at)){
-        host.append(el('p',record?.pending?tr('جارٍ حساب وقت الطريق…','Calculating road time…'):plan?.status==='ready'?tr('تقدير الطريق قديم — بانتظار إعادة الحساب','Road estimate expired — awaiting recalculation'):reasonLabel(record?.reason||plan?.reason)));return;
+        host.append(el('p',!record?tr('جارٍ تجهيز التقدير التلقائي…','Preparing automatic estimate…'):record.pending?tr('جارٍ حساب وقت الطريق…','Calculating road time…'):plan?.status==='ready'?tr('تقدير الطريق قديم — بانتظار إعادة الحساب','Road estimate expired — awaiting recalculation'):reasonLabel(record?.reason||plan?.reason)));return;
       }
       if(record.reason)host.append(el('p',tr('آخر تقدير محفوظ · ','Last saved estimate · ')+reasonLabel(record.reason),'muted small-text'));
       const next=plan.next_stop;
@@ -47,7 +48,7 @@
       host.append(list);
       host.append(el('p',tr('إنهاء التوصيلات: ','Deliveries complete: ')+remaining(plan.delivery_complete_at),'tracking-eta-summary'));
       host.append(el('p',tr('العودة للفرع: ','Branch return: ')+(plan.return_at?remaining(plan.return_at):tr('حدد فرع العودة من بطاقة السائق لاحتساب وقته','Select a return branch in the driver card to estimate it')),'tracking-eta-summary'));
-      host.append(el('p',tr('تقدير طرق وتوقفات · يتجدد كل دقيقة · ','Road and stop estimate · refreshes every minute · ')+new Date(plan.calculated_at).toLocaleTimeString(lang==='en'?'en-GB':'ar-SA'),'muted small-text'));
+      host.append(el('p',tr('تقدير طرق وتوقفات · يتجدد كل دقيقة · ','Road and stop estimate · refreshes every minute · ')+clock(plan.calculated_at),'muted small-text'));
       if(plan.intent_basis==='road_suggestion')host.append(el('p',tr('ترتيب مقترح — لم يُعتمد للسائق','Suggested order — not applied to the driver'),'muted small-text'));
     }
     async function refreshEtas(){
@@ -111,19 +112,19 @@
           const card=el('article',null,'tracking-driver'),brand=driver.active_order_brand,next=driver.next_destination;
           const brandId=['kps','enbishan','mixed'].includes(brand?.id)?brand.id:'neutral',swatch=el('i',null,'dispatch-driver-swatch brand-'+brandId);swatch.setAttribute('aria-hidden','true');
           const heading=el('strong',driver.display_name||driver.name||driver.id);card.append(swatch,heading,el('span',brandId==='kps'?'KPS':brandId==='enbishan'?tr('عنبيشان','Enbishan'):brandId==='mixed'?tr('براندات متعددة','Mixed brands'):tr('بدون طلب نشط','No active order')));
-          const phaseLabels={delivering:tr('يوصل طلبًا','Delivering an order'),awaiting_pickup:tr('بانتظار استلام الطلب','Awaiting order pickup'),returning:tr('متجه للفرع — وجهة مخططة وليست إثبات وصول','Heading to branch — planned destination, not confirmed arrival'),external_enbishan:tr('متجه لعنبيشان — بإفادة السائق','Heading to Enbishan — driver-declared'),awaiting_destination:tr('بانتظار تحديد الوجهة التالية','Awaiting next destination')};
+          const phaseLabels={at_branch:tr('لا توجد رحلة نشطة','No active itinerary'),delivering:tr('يوصل طلبًا','Delivering an order'),awaiting_pickup:tr('بانتظار استلام الطلب','Awaiting order pickup'),returning:tr('متجه للفرع — وجهة مخططة وليست إثبات وصول','Heading to branch — planned destination, not confirmed arrival'),external_enbishan:tr('متجه لعنبيشان — بإفادة السائق','Heading to Enbishan — driver-declared'),awaiting_destination:tr('بانتظار تحديد الوجهة التالية','Awaiting next destination')};
           card.append(el('p',phaseLabels[driver.movement_state]||tr('حالة الحركة غير متاحة','Movement state unavailable'),'tracking-driver-phase'));
           if(brand?.source==='driver_declared')card.append(el('p',tr('البراند بإفادة السائق','Brand declared by driver')));
           card.append(el('p',next?tr('الوجهة المخططة: ','Planned destination: ')+(next.kind==='external_enbishan'?tr('عنبيشان — إفادة السائق','Enbishan — driver declaration'):(next.name||tr('فرع','Branch'))):['delivering','awaiting_pickup'].includes(driver.movement_state)?tr('الوجهة التالية تُحدد بعد إتمام الطلبات','Next destination is set after completing orders'):tr('الوجهة التالية غير محددة','Next destination not specified'),'tracking-driver-destination'));
           const stale=!locationFresh(driver);
-          card.append(el('p',(stale?tr('موقع قديم — ليس مباشرًا','Stale location — not live'):tr('موقع حديث','Recent location'))+' · '+(Number.isFinite(stamp(driver.captured_at||driver.updated_at))?new Date(driver.captured_at||driver.updated_at).toLocaleTimeString(lang==='en'?'en-GB':'ar-SA'):tr('وقت الموقع غير متاح','Location time unavailable'))));
+          card.append(el('p',(stale?tr('موقع قديم — ليس مباشرًا','Stale location — not live'):tr('موقع حديث','Recent location'))+' · '+(Number.isFinite(stamp(driver.captured_at||driver.updated_at))?clock(driver.captured_at||driver.updated_at):tr('وقت الموقع غير متاح','Location time unavailable'))));
           const eta=el('div',null,'tracking-driver-eta');etaHosts.set(driver.id,eta);card.append(eta);driverRows.append(card);renderEta(driver);
         }
         if(!drivers.length)driverRows.append(el('p',tr('لا توجد مواقع سائقين ضمن النطاق','No driver locations in this scope')));
         const mapData={branches:visibleBranches,drivers,orders:completed?[]:orders,lang};
         if(!map){const mounted=await window.KPSDispatchMap.mount(mapHost,{api,...mapData});if(!alive()){mounted?.destroy();return;}map=mounted;}else map.update(mapData);
         if(lastCity!==requestedCity){map?.fit?.();lastCity=requestedCity;}
-        status.textContent=tr('الشفت الحالي · آخر تحديث ','Current shift · Updated ')+new Date().toLocaleTimeString(lang==='en'?'en-GB':'ar-SA')+(nextOffset!=null?tr(' · توجد نتائج إضافية',' · More results available'):'');
+        status.textContent=tr('الشفت الحالي · آخر تحديث ','Current shift · Updated ')+clock(Date.now())+(nextOffset!=null?tr(' · توجد نتائج إضافية',' · More results available'):'');
         void refreshEtas();
       }catch(error){if(alive()&&version===generation){
         etaRevision++;

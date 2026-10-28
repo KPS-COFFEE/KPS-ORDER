@@ -102,7 +102,7 @@ jobs:
           python -m pytest -q
           tests/test_dispatch_map_browser.py tests/test_driver_gps_browser.py
           tests/test_delivery_tracking_browser.py tests/test_order_tracking_browser.py
-          tests/test_tracking_wall_eta_browser.py
+          tests/test_tracking_wall_eta_browser.py tests/test_tracking_outer_poll_browser.py
           --junitxml=test-results/map-tracking-browser.xml
       - uses: actions/upload-artifact@v4
         if: always()
