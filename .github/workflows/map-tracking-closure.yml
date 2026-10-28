@@ -18,6 +18,10 @@ on:
       - public/ops.js
       - public/assets/dispatch-map.js
       - public/assets/driver-location.js
+      - public/assets/order-tracking.js
+      - public/ops.css
+      - public/ops.html
+      - tests/test_order_tracking_browser.py
       - tests/test_route_eta*.py
       - tests/test_tracking*.py
       - tests/test_tracking*.cjs
@@ -73,7 +77,16 @@ jobs:
           node --check public/ops.js
           node --check public/assets/dispatch-map.js
           node --check public/assets/driver-location.js
+          node --check public/assets/order-tracking.js
           node --test tests/test_tracking_manager.cjs tests/test_driver_trip_ui.cjs tests/test_central_operations_adapter.cjs
+      - name: Verify release integration blockers before full route acceptance
+        run: >-
+          python -m pytest -q
+          tests/test_rollback_schema_compatibility.py tests/test_rollback_shared_state_guard.py
+          tests/test_delivery_hours.py::test_default_only_eligible_branches_once_and_never_enables_service
+          tests/test_enbishan_storefront_identity.py tests/test_menu_language_display.py
+          tests/test_ops_usability_browser.py::test_real_navigation_and_complete_order_rows
+          --junitxml=test-results/release-integration-blockers.xml
       - name: Road timing, scope, captured GPS, recovery and station evidence
         run: >-
           python -m pytest -q
@@ -89,6 +102,7 @@ jobs:
           python -m pytest -q
           tests/test_dispatch_map_browser.py tests/test_driver_gps_browser.py
           tests/test_delivery_tracking_browser.py tests/test_order_tracking_browser.py
+          tests/test_tracking_wall_eta_browser.py
           --junitxml=test-results/map-tracking-browser.xml
       - uses: actions/upload-artifact@v4
         if: always()

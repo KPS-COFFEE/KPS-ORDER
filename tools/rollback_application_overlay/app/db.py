@@ -286,6 +286,7 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
 # closing, duration or accepted clarification contracts. Reject rollback BEFORE
 # migrations, audit or request workers can touch a database that used them.
 ROLLBACK_UNSUPPORTED_STATE_TABLES = (
+    'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures',
     'driver_tracking_points','driver_trip_stops','driver_route_eta_state','driver_route_eta_expectations',
     'driver_duty_profiles',
     'shared_driver_closure_declarations', 'shared_driver_closure_returns',
@@ -357,6 +358,7 @@ PRESERVED_TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_
 PRESERVED_TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 
 PRESERVED_TABLES += ('driver_tracking_points','driver_trip_stops','driver_route_eta_state','driver_route_eta_expectations')
+PRESERVED_TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
 
 def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     """Compare existing columns/bytes in the same bounded migration transaction.

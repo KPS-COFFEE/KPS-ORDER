@@ -309,7 +309,11 @@ def test_delivery_dates_windows_and_cleared_owner_hours_survive_export_restore(d
 def test_default_only_eligible_branches_once_and_never_enables_service(client):
     with db.tx() as c:
         branches = c.execute("SELECT * FROM branches WHERE brand_id='kps'").fetchall()
-        eligible = [b for b in branches if catalog.normalize_city(b['city']) in catalog.DELIVERY_CITIES]
+        # Adding Nairyah to the supported-city set does not authorize the old
+        # one-time default to configure it while its delivery service is off.
+        eligible = [b for b in branches if catalog.normalize_city(b['city']) in catalog.DELIVERY_CITIES
+                    and (catalog.normalize_city(b['city']) != 'النعيرية'
+                         or b['settings'].get('delivery_enabled') is True)]
         excluded = [b for b in branches if b not in eligible]
         assert len(branches) == 20 and eligible and excluded
         for branch in eligible:
@@ -317,6 +321,9 @@ def test_default_only_eligible_branches_once_and_never_enables_service(client):
             assert branch['settings']['delivery_enabled'] is False
         for branch in excluded:
             assert not branch['settings'].get('delivery_hours')
+        nairyah = [b for b in branches if catalog.normalize_city(b['city']) == 'النعيرية']
+        assert nairyah and all(b['settings']['delivery_enabled'] is False for b in nairyah)
+        assert all(not b['settings'].get('delivery_hours') for b in nairyah)
         bid = eligible[0]['id']
         c.execute("UPDATE branches SET settings=jsonb_set(settings,'{delivery_hours}','[]'::jsonb) WHERE id=%s", (bid,))
     db.migrate()

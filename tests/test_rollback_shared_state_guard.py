@@ -187,3 +187,39 @@ def test_real_order_safety_state_blocks_prior_writer_and_keeps_current_source_us
     with db.tx() as c:
         assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==before
         assert c.execute('SELECT * FROM order_events WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==evidence
+
+
+@pytest.mark.postgres
+def test_real_separate_cash_bag_count_and_vault_refuse_prior_writer_and_survive_current_restart(central,monkeypatch):
+    from app import db
+    from test_aggregate_driver_closure import declare_separate_bag
+    _,_,post,_,_=central
+    manager,driver,_,declared=declare_separate_bag(central,'النعيرية')
+    post('manager','/api/cash-bags/workdays/'+manager['shift']['id']+'/vault-close',{'confirmed':True})
+    post('accountant','/api/cash-bags/'+declared['cash_bag']['id']+'/count',{
+        'received_cash_halalas':650,'card_halalas':900,
+        'reference':'SYNTHETIC rollback immutable count witness','confirmed':True})
+    new_tables=('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
+    sources=('shifts','shared_driver_closure_declarations','shared_driver_closure_receipts',*new_tables)
+    def exact(c):
+        return {table:c.execute(db.sql.SQL('SELECT * FROM {} ORDER BY 1').format(db.sql.Identifier(table))).fetchall() for table in sources}
+    with db.tx() as c:
+        before=exact(c)
+        assert all(len(before[table])==1 for table in new_tables)
+        assert before['driver_cash_bag_counts'][0]['received_cash_halalas']==650
+        assert before['driver_cash_bags'][0]['declared_cash_halalas']==700
+        # Dependencies coexist in the genuine database. Select each guarded
+        # table in test scope so a preceding dependency cannot mask its guard.
+        for table in new_tables:
+            with monkeypatch.context() as scoped:
+                scoped.setattr(prior,'ROLLBACK_UNSUPPORTED_STATE_TABLES',(table,))
+                with pytest.raises(RuntimeError,match='database contains '+table+';'):
+                    prior.guard_rollback_feature_state(c)
+            assert exact(c)==before
+        with pytest.raises(RuntimeError,match='database contains driver_cash_bags;'):
+            prior.guard_rollback_feature_state(c)
+    db.migrate()
+    with db.tx() as c:
+        assert exact(c)==before
+        proof=c.execute("SELECT details FROM audit_events WHERE action='release.operational_data_preserved' ORDER BY created_at DESC,id DESC LIMIT 1").fetchone()['details']
+        assert all(proof['checks'][table]['count']==1 for table in new_tables)

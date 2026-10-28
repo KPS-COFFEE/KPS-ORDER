@@ -392,3 +392,193 @@ def test_optional_corridor_monthly_cap_commits_successful_matrix_and_keeps_eta(e
         budget=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]
         assert budget['count']==9 and 'corridor:driver:gps-driver' not in budget['recent']
         assert c.execute("SELECT published_at FROM driver_route_eta_state WHERE manager_id='map-owner'").fetchone()['published_at']
+
+
+def intent_row(c,manager_id='map-owner'):
+    return c.execute('''SELECT ordered_stop_ids,return_branch_id,published_at,published_stop_ids,published_stops,
+      published_matrix,published_calculated_at,published_shift_ids,source_session_id,manager_brand_id,
+      central_scope,morning_shift_id,road_corridor FROM driver_route_eta_state WHERE manager_id=%s''',(manager_id,)).fetchone()
+
+
+def business_counts(c):
+    return (c.execute('SELECT count(*) n FROM driver_route_eta_expectations').fetchone()['n'],
+            c.execute("SELECT count(*) n FROM audit_events WHERE action LIKE 'driver.route_%%'").fetchone()['n'])
+
+
+@pytest.mark.postgres
+def test_automatic_preview_only_caches_provider_data_without_creating_route_intent(eta_service,monkeypatch):
+    client,user,calls=eta_service
+    def no_geometry(*args):raise AssertionError('Wall preview must not request geometry')
+    monkeypatch.setattr(eta.route_corridor,'fetch_geometry',no_geometry)
+    with db.tx() as c:before=business_counts(c)
+    body={'driver_id':'gps-driver','automatic_preview':True}
+    for cached in (False,True):
+        response=client.post('/api/operations/route-eta',json=body)
+        assert response.status_code==200,response.text
+        data=response.json()
+        assert data['status']=='ready' and data['cached'] is cached,data
+        assert data['automatic_preview'] and not data['published']
+        assert data['intent_basis']=='road_suggestion' and data['corridor_status']=='not_requested'
+        assert data['return_at'] is None
+    with db.tx() as c:
+        assert business_counts(c)==before
+        saved=intent_row(c)
+        assert saved['ordered_stop_ids']==[] and saved['return_branch_id'] is None
+        assert saved['published_at'] is None and saved['source_session_id'] is None and saved['road_corridor'] is None
+        assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==9
+    assert len(calls)==1
+
+
+@pytest.mark.postgres
+def test_automatic_preview_refresh_preserves_own_publication_preferences_corridor_and_expectations(eta_service,monkeypatch):
+    from datetime import timedelta
+    client,user,calls=eta_service
+    wanted=['dropoff:map-task-2','dropoff:map-task-1']
+    published=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','publish':True,
+                          'ordered_stop_ids':wanted,'return_branch_id':'gps-branch'})
+    assert published.status_code==200 and published.json()['published'],published.text
+    def no_geometry(*args):raise AssertionError('Preview cannot update the published corridor')
+    monkeypatch.setattr(eta.route_corridor,'fetch_geometry',no_geometry)
+    with db.tx() as c:
+        before=intent_row(c);counts=business_counts(c)
+        c.execute("UPDATE driver_route_eta_state SET calculated_at=%s WHERE manager_id='map-owner'",
+                  (datetime.now(timezone.utc)-timedelta(seconds=61),))
+        settings=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
+        settings[dispatch_map.ROUTE_BUDGET_KEY]['recent']={}
+        c.execute("UPDATE app_settings SET settings=%s WHERE brand_id='kps'",(db.json(settings),))
+        old_count=settings[dispatch_map.ROUTE_BUDGET_KEY]['count']
+    response=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert response.status_code==200,response.text
+    data=response.json()
+    assert data['status']=='ready' and data['intent_basis']=='published' and not data['cached'],data
+    assert not data['published'] and data['return_at']
+    assert [s['id'] for s in data['stops'] if s['kind']!='return']==wanted
+    with db.tx() as c:
+        assert intent_row(c)==before and business_counts(c)==counts
+        assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==old_count+16
+    assert len(calls)==2
+
+
+@pytest.mark.postgres
+def test_automatic_preview_follows_other_authorized_publisher_without_copying_intent(eta_service):
+    client,user,calls=eta_service
+    wanted=['dropoff:map-task-2','dropoff:map-task-1']
+    first=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','ordered_stop_ids':wanted,'return_branch_id':'gps-branch'})
+    assert first.status_code==200 and first.json()['published'],first.text
+    with db.tx() as c:before=intent_row(c);counts=business_counts(c)
+    second_manager(user)
+    response=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert response.status_code==200,response.text
+    data=response.json()
+    assert data['status']=='ready' and data['cached'] and data['intent_basis']=='published',data
+    assert [s['id'] for s in data['stops'] if s['kind']!='return']==wanted and data['return_at']
+    assert not data['published'] and len(calls)==1
+    with db.tx() as c:
+        assert intent_row(c)==before and business_counts(c)==counts
+        own=intent_row(c,'eta-second-manager')
+        assert own['ordered_stop_ids']==[] and own['return_branch_id'] is None
+        assert own['published_at'] is None and own['road_corridor'] is None
+
+
+@pytest.mark.postgres
+def test_automatic_preview_uses_actor_saved_preferences_without_publishing(eta_service):
+    client,user,calls=eta_service
+    assert client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','return_branch_id':'gps-branch'}).json()['status']=='ready'
+    wanted=['dropoff:map-task-2','dropoff:map-task-1']
+    with db.tx() as c:
+        c.execute("UPDATE driver_route_eta_state SET ordered_stop_ids=%s WHERE manager_id='map-owner'",(db.json(wanted),))
+        before=intent_row(c);counts=business_counts(c)
+    response=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert response.status_code==200,response.text
+    data=response.json()
+    assert data['status']=='ready' and data['intent_basis']=='saved_preferences' and data['return_at'],data
+    assert [s['id'] for s in data['stops'] if s['kind']!='return']==wanted
+    with db.tx() as c:assert intent_row(c)==before and business_counts(c)==counts
+    assert len(calls)==1
+
+
+@pytest.mark.postgres
+def test_automatic_preview_discards_result_if_published_order_changes_during_provider_call(eta_service,monkeypatch):
+    from datetime import timedelta
+    client,user,calls=eta_service
+    first=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','ordered_stop_ids':['dropoff:map-task-2','dropoff:map-task-1']})
+    assert first.status_code==200 and first.json()['published'],first.text
+    with db.tx() as c:
+        c.execute("UPDATE driver_route_eta_state SET calculated_at=%s WHERE manager_id='map-owner'",(datetime.now(timezone.utc)-timedelta(seconds=61),))
+        settings=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
+        settings[dispatch_map.ROUTE_BUDGET_KEY]['recent']={}
+        c.execute("UPDATE app_settings SET settings=%s WHERE brand_id='kps'",(db.json(settings),))
+        counts=business_counts(c)
+    def changed(points,token):
+        with db.tx() as c:
+            c.execute("UPDATE driver_route_eta_state SET published_stop_ids=%s WHERE manager_id='map-owner'",
+                      (db.json(['dropoff:map-task-1','dropoff:map-task-2']),))
+        return [[0 if i==j else 60 for j in range(len(points))] for i in range(len(points))]
+    monkeypatch.setattr(eta,'fetch_matrix',changed)
+    response=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert response.status_code==200,response.text
+    assert response.json()['reason']=='route_intent_changed' and response.json()['stops']==[]
+    with db.tx() as c:assert business_counts(c)==counts
+
+
+@pytest.mark.postgres
+def test_automatic_preview_refreshes_distinct_drivers_under_one_manager_and_same_monthly_cap(eta_service):
+    client,user,calls=eta_service
+    with db.tx() as c:
+        c.execute("""INSERT INTO users(id,display_name,role,brand_id,branch_ids)
+          VALUES('eta-other-driver','Other driver','driver','kps','[\"gps-branch\"]')""")
+        c.execute("""INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id)
+          VALUES('eta-other-shift','driver','eta-other-driver','kps','[\"gps-branch\"]','map-manager')""")
+        c.execute("""INSERT INTO driver_latest_locations(driver_id,brand_id,shift_id,lat,lng,accuracy_m)
+          VALUES('eta-other-driver','kps','eta-other-shift',28.4,45.9,10)""")
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,
+          subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+          SELECT 'eta-other-order',brand_id,branch_id,customer_id,service,delivery_status,payment_method,
+          subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer FROM orders WHERE id='map-order-1'""")
+        c.execute("""INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at)
+          VALUES('eta-other-task','eta-other-order','eta-other-driver','eta-other-shift','picked_up','map-owner',now())""")
+        before=business_counts(c)
+    for identifier in ('gps-driver','eta-other-driver'):
+        result=client.post('/api/operations/route-eta',json={'driver_id':identifier,'automatic_preview':True})
+        assert result.status_code==200 and result.json()['status']=='ready',result.text
+        assert not result.json()['cached'] and result.json()['return_at'] is None
+    with db.tx() as c:
+        budget=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]
+        assert budget['count']==13
+        assert 'driver:gps-driver' in budget['recent'] and 'driver:eta-other-driver' in budget['recent']
+        assert 'manager:map-owner' not in budget['recent']
+        assert business_counts(c)==before
+    assert len(calls)==2
+
+
+@pytest.mark.postgres
+def test_automatic_preview_future_location_cannot_produce_ready_eta_or_spend(eta_service):
+    client,user,calls=eta_service
+    with db.tx() as c:
+        c.execute("UPDATE driver_latest_locations SET updated_at=now()+interval '30 seconds' WHERE driver_id='gps-driver'")
+    result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert result.status_code==200 and result.json()['status']=='stale',result.text
+    assert not calls and result.json()['stops']==[]
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM driver_route_eta_state WHERE driver_id='gps-driver'").fetchone()
+        assert dispatch_map.ROUTE_BUDGET_KEY not in c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('age_seconds',[121,-30])
+def test_automatic_preview_rechecks_location_clock_after_provider_io(eta_service,monkeypatch,age_seconds):
+    from datetime import timedelta
+    client,user,calls=eta_service
+    def changed(points,token):
+        with db.tx() as c:
+            c.execute("UPDATE driver_latest_locations SET updated_at=%s WHERE driver_id='gps-driver'",
+                      (datetime.now(timezone.utc)-timedelta(seconds=age_seconds),))
+        return [[0 if i==j else 60 for j in range(len(points))] for i in range(len(points))]
+    monkeypatch.setattr(eta,'fetch_matrix',changed)
+    result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert result.status_code==200 and result.json()['status']=='stale',result.text
+    assert result.json()['stops']==[]
+    with db.tx() as c:
+        assert not c.execute("SELECT 1 FROM driver_route_eta_state WHERE driver_id='gps-driver'").fetchone()
+        assert c.execute('SELECT count(*) n FROM driver_route_eta_expectations').fetchone()['n']==0
+        assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==9
