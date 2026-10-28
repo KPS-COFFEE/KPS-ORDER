@@ -55,7 +55,7 @@ def test_snapshot_goods_do_not_reprice_or_double_deduct_free_goods():
 def test_filename_uses_selected_operational_day_weekday_not_export_time():
     name=reports.filename(date(2026,10,23),'day')
     assert 'الجمعة' in name and '23-10-2026' in name
-    assert 'شفتي' in reports.filename('2026-10-26','shift')
+    assert reports.filename('2026-10-27','day') == 'تشغيلي الثلاثاء 27-10-2026.pdf'
     assert unquote(reports.disposition(name).split("UTF-8''")[1])==name
 
 
@@ -160,3 +160,66 @@ def test_actual_accountant_stages_update_percent_and_only_final_day_adds_named_s
     assert final['approvals'][0]['approved_name']=='TEST ACCOUNTANT'
     with db.tx() as c:
         assert c.execute("SELECT snapshot FROM closure_reports WHERE id='settlement-report'").fetchone()['snapshot']==original
+
+
+@pytest.mark.parametrize('network,cash,shortage,surplus,status',[(32000,18000,0,0,'متوافق'),(32000,16000,2000,0,'عجز'),(32000,19000,0,1000,'فائض'),(None,0,None,None,'بانتظار البيانات')])
+def test_order_value_matches_card_plus_cash(network,cash,shortage,surplus,status):
+    assert reports.matching(dict(net=50000,network=network,cash=cash))==dict(shortage=shortage,surplus=surplus,status=status)
+
+
+def test_collection_channels_do_not_use_handover_or_count_voids_or_duplicate_receipts():
+    paid=dict(id='paid',fulfilled_in_report=True,total_halalas=50000)
+    receipt=dict(id='card',order_id='paid',method='card',amount_halalas=32000)
+    snapshot=dict(orders=[paid,dict(id='void',test_void=True,fulfilled_in_report=False)],collections=[receipt,receipt,dict(id='cash',order_id='paid',method='cash',amount_halalas=18000),dict(id='voidcash',order_id='void',method='cash',amount_halalas=999)],refunds=[],shift=dict(submission=dict(handover_halalas=99999)))
+    assert reports.collection_channels(snapshot)==(32000,18000)
+    snapshot['refunds']=[dict(method='cash',amount_halalas=1000)]
+    assert reports.collection_channels(snapshot)==(32000,17000)
+    assert reports.collection_channels(dict(evidence_missing=True))==(None,None)
+    assert reports.collection_channels(dict(orders=[]))==(None,None)
+    snapshot['external_enbishan']=[dict(total_halalas=500)]
+    assert reports.collection_channels(snapshot)==(None,None)
+
+
+def test_totals_keep_shortage_and_surplus_separate_and_missing_not_zero():
+    report=example()
+    report['rows']=report['rows'][:2]
+    report['rows'][0].update(network=30000,cash=13000,city='الدمام',branch='أحد')
+    report['rows'][1].update(network=30000,cash=16000,city='حفر الباطن',branch='المروج')
+    report['net']=90000
+    head,rows,total,cases=reports.report_tables(report)
+    assert total[head.index('العجز')]=='20'
+    assert total[head.index('الفائض')]=='10'
+    assert rows[0][head.index('المطابقة')]=='عجز'
+    assert rows[1][head.index('المطابقة')]=='فائض'
+    assert 'الدمام' in reports.make_html(report)
+    report['rows'][0]['cash']=None
+    assert reports.report_tables(report)[2][head.index('كاش')]=='—'
+
+
+def test_build_projects_scoped_live_collections_and_locations_without_writes(monkeypatch):
+    from app import accounting_statements
+    user=dict(id='owner',role='owner',brand_id='kps',display_name='الإدارة',branch_ids=['b'])
+    manager=dict(id='manager',user_id='owner',brand_id='kps',branch_ids=['b'],status='open',delivery_window_snapshot={})
+    driver=dict(id='driver',user_id='u',brand_id='kps',branch_ids=['b'],display_name='سائق',status='open')
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchall(self):return self.rows
+    class Cursor:
+        def execute(self,query,args):
+            assert query.startswith('SELECT')
+            if query.startswith('SELECT id,name,city'):return Result([dict(id='b',name='أحد',city='الدمام')])
+            if "s.kind='manager'" in query:return Result([manager])
+            if "s.kind='driver'" in query:return Result([driver])
+            if 'accounting_daily_closures' in query or 'closure_reports' in query:return Result([])
+            raise AssertionError(query)
+    monkeypatch.setattr(reports.multibrand,'enabled',lambda:False)
+    monkeypatch.setattr(reports.auth,'has_permission',lambda *a:True)
+    monkeypatch.setattr(accounting_statements,'manager_cards',lambda *a,**k:dict(cards=[]))
+    snap=dict(orders=[dict(id='o',branch_id='b',total_halalas=50000,fulfilled_in_report=True)],refunds=[],collections=[dict(id='1',order_id='o',method='cash',amount_halalas=18000),dict(id='2',order_id='o',method='card',amount_halalas=32000)])
+    monkeypatch.setattr(reports,'snapshot',lambda *a:(deepcopy(snap),None))
+    result=reports.build(Cursor(),user,date(2026,10,27),'day')
+    row=result['rows'][0]
+    assert row['city']=='الدمام' and row['branch']=='أحد'
+    assert row['cash']==18000 and row['network']==32000
+    assert row['status']=='متوافق' and row['shortage']==row['surplus']==0
+    assert not result['accounting']['approved']
