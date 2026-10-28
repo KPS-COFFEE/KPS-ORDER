@@ -223,13 +223,18 @@ def build(c, user, day, scope, manager_shift_id=None):
                     if bid in locations:
                         row['cities'].add(locations[bid]['city'])
                         row['branches'].add(locations[bid]['name'])
-                row['closed'] &= shift['status'] == 'closed' and rid is not None
+                # Physical staffing can end before accounting closes the
+                # component ledger (vault bags and approved remote duties).
+                # The guarded marker is operational evidence, never approval.
+                row['closed'] &= not snap.get('evidence_missing') and (
+                    shift.get('staffing_ended_at') is not None
+                    or shift['status'] == 'closed' and rid is not None)
                 row['evidence_missing'] |= bool(snap.get('evidence_missing'))
                 for case in data['cases']:
                     cases.append(dict(case, driver=shift['display_name']))
                 if not rid:
                     entries.append({})
-            if manager['status'] != 'closed':
+            if manager['status'] != 'closed' and manager.get('staffing_ended_at') is None:
                 pending += 1
         if visible:
             # Reuse canonical accounting deadlines, extensions and completion;
