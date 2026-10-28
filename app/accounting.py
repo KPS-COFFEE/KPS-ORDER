@@ -57,7 +57,7 @@ def period(start,end):
 def opday(value):return service_hours.delivery_operational_date(value).isoformat()
 def in_period(value,lo,hi):return bool(value and lo<=value<hi)
 def new_row(label):
-    return dict(label=label,orders=0,correct=0,processed=0,cancelled=0,gross=0,cash=0,card=0,refund_cash=0,refund_card=0,refunds=0,price_credits=0,total=0,net_sales=0,notes='')
+    return dict(label=label,orders=0,correct=0,processed=0,cancelled=0,gross=0,cash=0,card=0,refund_cash=0,refund_card=0,refunds=0,price_credits=0,sales_refunds=0,sales_price_credits=0,total=0,net_sales=0,notes='')
 
 def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar'):
     ds,de,lo,hi=period(start,end);bs=branches(c,u,branch_ids);bids=[b['id'] for b in bs];bn={b['id']:b['name'] for b in bs}
@@ -157,10 +157,15 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         o=om[x['order_id']]
         reported_collection=(source_day_boundary(o) if x['shift_id']==o['source_ledger_shift_id'] else None) or x['created_at']
         if in_period(reported_collection,lo,hi):bucket(o,reported_collection)[x['method']]+=x['amount_halalas']
+    from .financial_totals import sales_adjustment_at
     for x in refs:
+        order=om[x['order_id']]
+        completion=source_day_boundary(order) or order['completed_at']
+        recognized=sales_adjustment_at(completion,x['created_at'])
+        if not x.get('amendment_id') and in_period(recognized,lo,hi):
+            bucket(order,recognized)['sales_refunds']+=x['amount_halalas']
         if not in_period(x['created_at'],lo,hi):continue
-        b=bucket(om[x['order_id']],x['created_at']);b['refund_'+x['method']]+=x['amount_halalas'];b['refunds']+=x['amount_halalas']
-        if x.get('amendment_id'):b['amendment_refunds']=b.get('amendment_refunds',0)+x['amount_halalas']
+        b=bucket(order,x['created_at']);b['refund_'+x['method']]+=x['amount_halalas'];b['refunds']+=x['amount_halalas']
         for pid,qty in x['line_quantities'].items():
             if product_id and pid!=product_id:continue
             if pid not in items:
@@ -168,7 +173,11 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
                 items[pid]=new_item(pid,name)
             items[pid]['returned_quantity']+=qty
     for credit in credits:
-        if in_period(credit['created_at'],lo,hi):bucket(om[credit['order_id']],credit['created_at'])['price_credits']+=credit['credit_halalas']
+        order=om[credit['order_id']]
+        completion=source_day_boundary(order) or order['completed_at']
+        recognized=sales_adjustment_at(completion,credit['created_at'])
+        if in_period(recognized,lo,hi):bucket(order,recognized)['sales_price_credits']+=credit['credit_halalas']
+        if in_period(credit['created_at'],lo,hi):bucket(order,credit['created_at'])['price_credits']+=credit['credit_halalas']
         if in_period(credit['created_at'],lo,hi) and credit['details'].get('source')=='delivery_partial_return':
             order=om[credit['order_id']]
             for line in credit['details']['lines']:
@@ -179,7 +188,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     from .financial_totals import net_sales
     for b in rows.values():
         b['total']=b['cash']+b['card']-b['refunds']
-        b['net_sales']=net_sales(b['gross'],b['refunds'],b.get('amendment_refunds',0))-b['price_credits']
+        b['net_sales']=net_sales(b['gross'],b['sales_refunds'])-b['sales_price_credits']
     if group=='daily':
         for n in range((de-ds).days+1):
             day=(ds+timedelta(days=n)).isoformat()
@@ -222,7 +231,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     from .aggregate_driver_closure import pending_financial_rows
     pending_shared=pending_financial_rows(c,brand_id=u['brand_id'],branch_ids=bids,before=hi)
     return safe({'pending_shared_closures':pending_shared,'financial_completion_blocked':bool(pending_shared),'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'04:00'},'branches':bs,
-      'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات بتاريخ الحركة. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and refunds use transaction time. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
+      'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات النقدية بتاريخ الحركة. لا يعكس رد دفعة طلب غير مكتمل مبيعات؛ أثر المرتجع أو تصحيح السعر على المبيعات لا يسبق الإكمال. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and cash refunds use transaction time. Repaying a never-completed order does not reverse sales; a refund or price credit affects sales no earlier than completion. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
         (' جميع أصناف البراند ظاهرة حتى بلا مبيعات؛ الكمية المباعة منفصلة عن الهدايا والضيافة والإعلان والتعويض وبقية الأصناف الصفرية. الفروع المختارة هي فروع تنفيذ الطلب.' if lang=='ar' else ' All brand items appear, including items without sales. Sold quantities exclude gifts, hospitality, advertising, compensation and other zero-value items. Selected branches are order fulfilment branches.') if group=='items' else '')+(' فواتير ساباد المستوردة تُنسب ليوم التشغيل الأصلي الموثق؛ تاريخ التسجيل ليس وقت التسليم أو التحصيل الفعلي.' if lang=='ar' else ' Imported Sabad invoices are allocated to their documented original operational day; recording timestamps are not actual delivery or collection times.'),
       'generated_at':datetime.now(TZ)})
 
