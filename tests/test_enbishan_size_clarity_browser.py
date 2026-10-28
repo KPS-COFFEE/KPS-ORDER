@@ -172,6 +172,7 @@ def test_menu_groups_copy_two_mobile_columns_and_compact_counter(static_customer
             assert abs(a['y']-b['y'])<2
             assert abs(a['x']-b['x'])>a['width']
         controls=cards.first.locator('.product-card-controls')
+        expect(controls.locator('.product-add-button')).to_have_text('+')
         assert controls.bounding_box()['width']<=120
         for button in controls.locator('button').all():
             box=button.bounding_box();assert box['width']>=44 and box['height']>=44
