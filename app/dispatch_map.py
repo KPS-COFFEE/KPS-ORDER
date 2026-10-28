@@ -269,6 +269,13 @@ def merge_route_contexts(values):
     return result
 
 
+class RouteBudgetExceeded(HTTPException):
+    """Typed internal reason; retain the existing HTTP status/detail contract."""
+    def __init__(self, reason, detail):
+        super().__init__(status_code=429,detail=detail)
+        self.reason = reason
+
+
 def consume_route_budget(c, driver_id, manager_id, units=1, *, purpose='route'):
     if (purpose not in ('route','corridor','automatic_preview') or type(units) is not int or not 1 <= units <= 625
             or purpose=='corridor' and units!=1):
@@ -295,10 +302,10 @@ def consume_route_budget(c, driver_id, manager_id, units=1, *, purpose='route'):
         # Fleet wall previews share the original global driver cooldown, while
         # one manager may refresh different drivers under the SAME monthly cap.
         keys[1] = 'automatic:manager:' + manager_id + ':driver:' + driver_id
-    if any(now.timestamp() - recent.get(key, 0) < 60 for key in keys):
-        raise HTTPException(429, 'انتظر دقيقة قبل طلب مسار جديد.')
     if budget['count'] + units > ROUTE_MONTHLY_LIMIT:
-        raise HTTPException(429, 'تم بلوغ حد المسارات لهذا الشهر.')
+        raise RouteBudgetExceeded('route_monthly_budget_exhausted','تم بلوغ حد المسارات لهذا الشهر.')
+    if any(now.timestamp() - recent.get(key, 0) < 60 for key in keys):
+        raise RouteBudgetExceeded('route_refresh_cooldown','انتظر دقيقة قبل طلب مسار جديد.')
     budget['recent'] = {key: value for key, value in recent.items() if now.timestamp() - value < 60}
     budget['recent'].update({key: now.timestamp() for key in keys})
     budget['count'] += units

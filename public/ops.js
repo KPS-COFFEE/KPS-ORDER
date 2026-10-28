@@ -534,6 +534,8 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   }
   function trackingUnavailableReason(reason){
     const messages={
+      route_monthly_budget_exhausted:['بلغ تقدير الطرق حد الاستخدام الشهري — اطلب من مسؤول النظام مراجعة الاستهلاك؛ الانتظار دقيقة لا يعيد ضبط الحد.','Monthly road-estimate limit reached — ask the system administrator to review usage; waiting one minute will not reset the limit.'],
+      route_refresh_cooldown:['التقدير ينتظر مهلة التحديث — ستعاد المحاولة تلقائيًا مع التحديث القادم خلال دقيقة.','Estimate refresh is cooling down — retries automatically on the next minute update.'],
       route_budget_or_cooldown:['تعذر التقدير — إعادة المحاولة تلقائيًا بعد دقيقة؛ قد يكون حد المسارات الشهري قد بلغ.','Estimate unavailable — retrying automatically after one minute; the monthly route limit may have been reached.'],
       routing_provider_unavailable:['تعذر التقدير — خدمة الطرق غير متاحة مؤقتًا؛ ستتم إعادة المحاولة تلقائيًا.','Estimate unavailable — road service temporarily unavailable; retrying automatically.'],
       routing_token_unconfigured:['تعذر التقدير — إعداد خدمة الطرق يحتاج مراجعة من مسؤول النظام.','Estimate unavailable — road service configuration needs system administrator review.'],
@@ -598,7 +600,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     try{
       const result=await mutation('/api/operations/route-eta',{driver_id:selected.driver_id,...(selected.return_branch_id?{return_branch_id:selected.return_branch_id}:{}),...(selected.ordered_stop_ids?{ordered_stop_ids:selected.ordered_stop_ids}:{})});
       if(current()){
-        const transient=result?.status!=='ready'&&['route_budget_or_cooldown','routing_provider_unavailable'].includes(result?.reason);
+        const transient=result?.status!=='ready'&&['route_budget_or_cooldown','route_refresh_cooldown','routing_provider_unavailable'].includes(result?.reason);
         if(!transient||!retainFresh(result.reason))trackingPlanResult=result;
       }
     }catch(error){

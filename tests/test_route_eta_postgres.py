@@ -78,7 +78,7 @@ def test_provider_failure_commits_reservation_and_does_not_store_success(eta_ser
         assert budget['count']==9
         assert c.execute('SELECT count(*) n FROM driver_route_eta_state').fetchone()['n']==0
         assert c.execute('SELECT count(*) n FROM driver_route_eta_expectations').fetchone()['n']==0
-    assert client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'}).json()['reason']=='route_budget_or_cooldown'
+    assert client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'}).json()['reason']=='route_refresh_cooldown'
 
 
 @pytest.mark.postgres
@@ -255,7 +255,7 @@ def test_shared_recent_matrix_does_not_match_changed_itinerary(eta_service):
         c.execute("UPDATE orders SET delivery_status='delivered',completed_at=now() WHERE id='map-order-2'")
     result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'})
     assert result.status_code==200,result.text
-    assert result.json()['reason']=='route_budget_or_cooldown'
+    assert result.json()['reason']=='route_refresh_cooldown'
     assert result.json()['stops']==[] and len(calls)==1
 
 
@@ -284,7 +284,7 @@ def test_shared_matrix_rejects_expired_and_future_timestamps(eta_service,age_sec
                   (datetime.now(timezone.utc)-timedelta(seconds=age_seconds),))
     result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver'})
     assert result.status_code==200,result.text
-    assert result.json()['reason']=='route_budget_or_cooldown' and len(calls)==1
+    assert result.json()['reason']=='route_refresh_cooldown' and len(calls)==1
 
 
 @pytest.mark.postgres
@@ -582,3 +582,122 @@ def test_automatic_preview_rechecks_location_clock_after_provider_io(eta_service
         assert not c.execute("SELECT 1 FROM driver_route_eta_state WHERE driver_id='gps-driver'").fetchone()
         assert c.execute('SELECT count(*) n FROM driver_route_eta_expectations').fetchone()['n']==0
         assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]['count']==9
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('monthly',[False,True])
+def test_automatic_endpoint_reports_typed_budget_reason_without_calling_provider(eta_service,monthly):
+    client,user,calls=eta_service
+    now=datetime.now(timezone.utc)
+    budget={'month':now.strftime('%Y-%m'),'count':dispatch_map.ROUTE_MONTHLY_LIMIT if monthly else 0,
+            'recent':{'driver:gps-driver':now.timestamp(),
+                      'automatic:manager:map-owner:driver:gps-driver':now.timestamp()}}
+    with db.tx() as c:
+        settings=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
+        settings[dispatch_map.ROUTE_BUDGET_KEY]=budget
+        c.execute("UPDATE app_settings SET settings=%s WHERE brand_id='kps'",(db.json(settings),))
+    result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert result.status_code==200,result.text
+    assert result.json()['reason']==('route_monthly_budget_exhausted' if monthly else 'route_refresh_cooldown')
+    assert result.json()['status']=='unavailable' and not calls
+    with db.tx() as c:assert c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings'][dispatch_map.ROUTE_BUDGET_KEY]==budget
+
+
+@pytest.mark.postgres
+def test_untyped_budget_rejection_retains_generic_endpoint_fallback(eta_service,monkeypatch):
+    from fastapi import HTTPException
+    client,user,calls=eta_service
+    def reject(*args,**kwargs):raise HTTPException(429,'existing limiter')
+    monkeypatch.setattr(dispatch_map,'consume_route_budget',reject)
+    result=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert result.status_code==200 and result.json()['reason']=='route_budget_or_cooldown',result.text
+    assert not calls
+
+
+@pytest.mark.postgres
+def test_canonical_return_consumes_old_guidance_and_preserves_return_preference_for_new_trip(eta_service):
+    from app import driver_work_hours
+    client,user,calls=eta_service
+    client.app.include_router(driver_work_hours.router)
+    manager=dict(user)
+    published=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','return_branch_id':'gps-branch','publish':True})
+    assert published.status_code==200 and published.json()['published'],published.text
+    with db.tx() as c:before=intent_row(c)
+    as_driver(user)
+    started=client.post('/api/driver-work-hours/depart',json={'shift_id':'gps-shift','branch_id':'gps-branch','order_ids':['map-order-1','map-order-2']},headers={'Idempotency-Key':'return-guidance-depart-first'})
+    assert started.status_code==200,started.text
+    trip_id=started.json()['trip']['id']
+    with db.tx() as c:
+        c.execute("UPDATE driver_tasks SET status='delivered',delivered_at=now() WHERE shift_id='gps-shift'")
+        c.execute("UPDATE orders SET delivery_status='delivered',completed_at=now() WHERE id IN ('map-order-1','map-order-2')")
+    # Delivered orders alone are not evidence of a branch return.
+    pending=client.get('/api/operations/driver-route-plan')
+    assert pending.status_code==200 and pending.json()['next_stop']['kind']=='return',pending.text
+    returned=client.post('/api/driver-work-hours/'+trip_id+'/return',json={'branch_id':'gps-branch'},headers={'Idempotency-Key':'return-guidance-confirm-first'})
+    assert returned.status_code==200 and returned.json()['trip']['returned_at'],returned.text
+    retired=client.get('/api/operations/driver-route-plan')
+    assert retired.status_code==200 and retired.json()['status']=='unavailable',retired.text
+    with db.tx() as c:
+        assert c.execute("SELECT status FROM shifts WHERE id='gps-shift'").fetchone()['status']=='open'
+        assert intent_row(c)==before  # Hide completed guidance; never delete the explicit preference.
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,
+          payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+          SELECT 'return-next-order',brand_id,branch_id,customer_id,'delivery','ready','pending',payment_method,
+          subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer FROM orders WHERE id='map-order-1'""")
+        c.execute("""INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at)
+          VALUES('return-next-task','return-next-order','gps-driver','gps-shift','picked_up','map-owner',now())""")
+    next_trip=client.post('/api/driver-work-hours/depart',json={'shift_id':'gps-shift','branch_id':'gps-branch','order_ids':['return-next-order']},headers={'Idempotency-Key':'return-guidance-depart-next'})
+    assert next_trip.status_code==200,next_trip.text
+    user.clear();user.update(manager)
+    with db.tx() as c:
+        settings=c.execute("SELECT settings FROM app_settings WHERE brand_id='kps'").fetchone()['settings']
+        settings[dispatch_map.ROUTE_BUDGET_KEY]['recent']={}
+        c.execute("UPDATE app_settings SET settings=%s WHERE brand_id='kps'",(db.json(settings),))
+    preview=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','automatic_preview':True})
+    assert preview.status_code==200 and preview.json()['status']=='ready',preview.text
+    assert preview.json()['return_at'] and preview.json()['intent_basis']=='saved_preferences'
+    assert preview.json()['stops'][-1]['branch_id']=='gps-branch'
+    reapplied=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','publish':True})
+    assert reapplied.status_code==200 and reapplied.json()['published'],reapplied.text
+    as_driver(user)
+    restored=client.get('/api/operations/driver-route-plan')
+    assert restored.status_code==200 and restored.json()['next_stop']['task_id']=='return-next-task',restored.text
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('scenario,completed',[
+    ('confirmed_linked',True),('pending_return',False),('before_publication',False),
+    ('unrelated_order',False),('other_driver',False),('another_open_trip',False),
+    ('explicit_new_publication',False),
+])
+def test_completed_return_guard_matches_actual_trip_links_driver_and_publication_time(eta_service,scenario,completed):
+    from datetime import timedelta
+    client,user,calls=eta_service
+    response=client.post('/api/operations/route-eta',json={'driver_id':'gps-driver','return_branch_id':'gps-branch','publish':True})
+    assert response.status_code==200 and response.json()['published'],response.text
+    with db.tx() as c:
+        saved=c.execute("SELECT * FROM driver_route_eta_state WHERE driver_id='gps-driver' AND manager_id='map-owner'").fetchone()
+        target=[s for s in saved['published_stops'] if s['kind']=='return']
+        driver='gps-driver';shift='gps-shift';linked='map-order-1'
+        if scenario=='other_driver':
+            driver='return-other-driver';shift='return-other-shift'
+            c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,'Other','driver','kps','[\"gps-branch\"]')",(driver,))
+            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'driver',%s,'kps','[\"gps-branch\"]')",(shift,driver))
+        if scenario=='unrelated_order':
+            linked='return-unrelated-order'
+            c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,
+              subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+              SELECT %s,brand_id,branch_id,customer_id,service,'pending',payment_method,
+              subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer FROM orders WHERE id='map-order-1'""",(linked,))
+        finished=None if scenario=='pending_return' else saved['published_at']+timedelta(microseconds=1)
+        if scenario=='before_publication':finished=saved['published_at']-timedelta(microseconds=1)
+        c.execute("""INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,
+          departed_at,returned_at,return_branch_id,departure_evidence)
+          VALUES('return-proof-trip','kps',%s,%s,'gps-branch',%s,%s,%s,'{}')""",
+          (shift,driver,saved['published_at']-timedelta(minutes=1),finished,'gps-branch' if finished else None))
+        c.execute("INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES('return-proof-trip',%s)",(linked,))
+        if scenario=='another_open_trip':
+            c.execute("""INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,departure_evidence)
+              VALUES('return-next-open','kps','gps-shift','gps-driver','gps-branch','{}')""")
+        if scenario=='explicit_new_publication':saved=dict(saved,published_at=finished+timedelta(microseconds=1))
+        assert eta.published_return_completed(c,saved,target,'gps-driver') is completed

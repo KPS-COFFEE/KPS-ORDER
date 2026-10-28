@@ -351,3 +351,52 @@ def test_eta_location_clock_rejects_future_and_aged_captures(age,fresh):
 @pytest.mark.parametrize('stamp',[None,'2026-10-27T12:00:00Z',datetime(2026,10,27,12)])
 def test_eta_location_clock_does_not_trust_missing_unparsed_or_unzoned_capture(stamp):
     assert eta.location_fresh(stamp,NOW) is False
+
+
+def test_budget_reason_distinguishes_monthly_exhaustion_from_cooldown_without_charges(monkeypatch):
+    from app import dispatch_map
+    cursor=RouteBudgetCursor()
+    dispatch_map.consume_route_budget(cursor,'d','m',units=9,purpose='automatic_preview')
+    before=cursor.settings.copy()
+    with pytest.raises(dispatch_map.RouteBudgetExceeded) as cooldown:
+        dispatch_map.consume_route_budget(cursor,'d','m',purpose='automatic_preview')
+    assert cooldown.value.status_code==429
+    assert cooldown.value.reason=='route_refresh_cooldown'
+    assert cooldown.value.detail=='انتظر دقيقة قبل طلب مسار جديد.'
+    monkeypatch.setattr(dispatch_map,'ROUTE_MONTHLY_LIMIT',9)
+    # Both conditions hold: a minute retry cannot repair monthly exhaustion.
+    with pytest.raises(dispatch_map.RouteBudgetExceeded) as monthly:
+        dispatch_map.consume_route_budget(cursor,'d','m',purpose='automatic_preview')
+    assert monthly.value.status_code==429
+    assert monthly.value.reason=='route_monthly_budget_exhausted'
+    assert monthly.value.detail=='تم بلوغ حد المسارات لهذا الشهر.'
+    assert cursor.settings==before
+
+
+def test_completed_return_guard_requires_linked_confirmed_trip_and_preserves_active_route():
+    saved={'published_at':NOW,'published_stops':[dict(task_stop('dropoff:a'),order_id='order-a'),stop('r','return')]}
+    class Connection:
+        def __init__(self,completed):self.completed=completed;self.args=None
+        def execute(self,sql,args):self.args=args;return self
+        def fetchone(self):return {'exists':1} if self.completed else None
+    pending=Connection(False)
+    assert not eta.published_return_completed(pending,saved,[stop('r','return')],'d')
+    confirmed=Connection(True)
+    assert eta.published_return_completed(confirmed,saved,[stop('r','return')],'d')
+    assert confirmed.args==('d',NOW,['order-a'])
+    # Outstanding work is never hidden merely because an earlier trip returned.
+    active=Connection(True)
+    assert not eta.published_return_completed(active,saved,[task_stop('dropoff:a'),stop('r','return')],'d')
+    assert active.args is None
+    # Unbound explicit repositioning is not inferred to belong to an old trip.
+    assert not eta.published_return_completed(confirmed,{'published_at':NOW,'published_stops':[stop('r','return')]},[stop('r','return')],'d')
+
+
+def test_confirmed_return_consumes_return_only_publication_without_mutating_it():
+    original=[dict(task_stop('dropoff:a'),order_id='order-a'),stop('r','return')]
+    saved={**publication(original),'published_at':NOW,'return_branch_id':'branch'}
+    class Connection(LifeConnection):
+        def fetchone(self):return {'exists':1}
+    c=Connection([life_task('a','delivered')])
+    assert eta.remaining_publication(c,saved,[original[1]],'d') is None
+    assert saved['return_branch_id']=='branch' and saved['published_stop_ids']==['dropoff:a','r']
