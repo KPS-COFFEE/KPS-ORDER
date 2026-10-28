@@ -685,9 +685,9 @@ def test_completed_return_guard_matches_actual_trip_links_driver_and_publication
             c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids) VALUES(%s,'driver',%s,'kps','[\"gps-branch\"]')",(shift,driver))
         if scenario=='unrelated_order':
             linked='return-unrelated-order'
-            c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,payment_method,
+            c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,delivery_status,payment_method,
               subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
-              SELECT %s,brand_id,branch_id,customer_id,service,payment_method,
+              SELECT %s,brand_id,branch_id,customer_id,service,'pending',payment_method,
               subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer FROM orders WHERE id='map-order-1'""",(linked,))
         finished=None if scenario=='pending_return' else saved['published_at']+timedelta(microseconds=1)
         if scenario=='before_publication':finished=saved['published_at']-timedelta(microseconds=1)
