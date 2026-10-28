@@ -29,7 +29,8 @@ def test_widget_mobile_accounting_status_refresh_and_export_filename(width,tmp_p
             page.route('**/api/operating-reports?*',lambda route:route.fulfill(content_type='application/json',body=json.dumps(data)))
             page.route('**/api/operating-reports/export/pdf?*',lambda route:route.fulfill(content_type='application/pdf',body=source))
             page.goto(f'http://127.0.0.1:{server.server_port}/qa-report')
-            page.evaluate('''async()=>{await window.KPSOperatingReports.mount(document.querySelector('#report'),{api:async url=>await(await fetch(url)).json()});}''')
+            page.evaluate('''async()=>{await window.KPSOperatingReports.mount(document.querySelector('#report'),{api:async url=>await(await fetch(url)).json(),initialDay:'2026-10-25',managerShiftId:'historical-manager',allowDay:true,lockContext:true});}''')
+            assert page.locator('[data-or-day]').is_disabled()
             assert page.locator('[role="alert"]').inner_text()==''
             assert page.locator('.or-logos img').count()==2
             page.wait_for_function("Array.from(document.querySelectorAll('.or-logos img')).every(img=>img.complete && img.naturalWidth>0)")
@@ -40,8 +41,9 @@ def test_widget_mobile_accounting_status_refresh_and_export_filename(width,tmp_p
             page.locator('summary').first.click()
             assert page.locator('details[open] tbody tr').count()==2
             assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
-            with page.expect_download() as download:
-                page.get_by_role('button',name='حفظ أو مشاركة PDF').click()
+            with page.expect_request(lambda req:'/export/pdf?' in req.url and 'manager_shift_id=historical-manager' in req.url):
+                with page.expect_download() as download:
+                    page.get_by_role('button',name='حفظ أو مشاركة PDF').click()
             assert download.value.suggested_filename==data['filename']
             data['accounting']=example(True)['accounting']
             page.get_by_role('button',name='تحديث',exact=True).click()
