@@ -29,7 +29,8 @@
     "Immutable legacy source invoice import records preserved/exported; prior reports recognize unknown-time delivery proof without importing new invoices",
     "Explicit bank reconciliation archive and preservation registry; prior writer refuses any new bank rows or independent financial treatment evidence",
     "Source-price and factual administrative workflow evidence uses existing audit ledger; prior writer refuses these new contracts after use",
-    "Prior writer refuses pending duplicate review, duplicate decisions and partial-return evidence before migration; recovery requires a current-aware application"
+    "Prior writer refuses pending duplicate review, duplicate decisions and partial-return evidence before migration; recovery requires a current-aware application",
+    "Cash bag originals, immutable counts and manager vault closures retained in full private archives only; prior writer refuses startup after any of these contracts is used"
   ],
   "fallbacks": [
     "80a prior operations UI",
@@ -38,10 +39,10 @@
   ],
   "files": {
     "app/admin.py": "b4870d67c8aa12b32ac23ff6b2622efd161ef89a4cd4fa1e77d9186f2ffb8dc2",
-    "app/db.py": "5d67b6424d3c7aa28c98cb62564780ee14ce1af774d2f8942aed877d0c5aa8f4",
+    "app/db.py": "1766f5c71ac2be2d25d4e80ec0d7c33e471fe0f5f771ac36db55a91e993facc6",
     "app/driver_work_hours.py": "4490cd9ab275b78a8b9be3ac2bc387537f3383b6b51aadf88bc4faf0f2e78ad5",
     "app/employee_permissions.py": "605843c9677bbf0d7c86c55fcd199ba4959ea9b73e3700b17d4622c80b3121e5",
-    "app/exports.py": "b2f5a4e7b2afab151cb3abd7a79124faf21d8f532e5f85ad8daf4a528d043c4c",
+    "app/exports.py": "13116843622a50390e51208e6c896a2af02f30c649c05575dcf99d7755bc2d8f",
     "app/http_security.py": "7d449b91f1f6c69c1a1d97473a6bf047f9915419cfb187f22bc51f910665158a",
     "app/main.py": "7e9bda6b289ff60d956d17dda0718e371f8368403fa10f5fc4e41ae907a6da3a",
     "app/operations.py": "b85a442aefbe54dd7f90c7eabfb68714be2fb2d86ff3bde788a1220c279169d9",
@@ -54,7 +55,7 @@
   "rollback_feature_policy": {
     "operational_after_feature_use": false,
     "current_aware_image_certified": false,
-    "behavior": "Fail before migrations or request workers if duty, shared physical closure, financial clarification, manual bank or independent financial treatment records exist. Preserve database; keep a current-aware application. Pending duplicate review, duplicate decisions and partial-return events also require a current-aware application.",
+    "behavior": "Fail before migrations or request workers if duty, shared physical closure, financial clarification, manual bank or independent financial treatment records exist. Preserve database; keep a current-aware application. Pending duplicate review, duplicate decisions and partial-return events also require a current-aware application. Physical cash bag, count and manager vault records likewise require a current-aware application.",
     "certification": "Source guard and isolated PostgreSQL witnesses must pass on candidate; no prior image operational support claimed for these states."
   }
 }

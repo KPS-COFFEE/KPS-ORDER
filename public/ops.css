@@ -634,6 +634,7 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 @media(max-width:760px){.tracking-screen{height:auto;min-height:100dvh}.tracking-body{grid-template-columns:1fr}.tracking-map .dispatch-map-canvas{height:50vh;min-height:300px}.tracking-orders{max-height:55vh}.tracking-toolbar h1{width:100%}.tracking-toolbar{gap:6px}}
 
 .tracking-driver{padding:10px 0;border-bottom:1px solid var(--line);display:flex;gap:5px 8px;flex-wrap:wrap;align-items:center}.tracking-driver p{flex-basis:100%;font-size:12px}.tracking-drivers{margin-bottom:16px}
+.tracking-driver-eta{flex:1 1 100%;min-width:0;padding:8px 10px;border-inline-start:3px solid var(--line);background:var(--surface,#faf8f4);border-radius:6px}.tracking-driver-eta p{margin:4px 0}.tracking-driver-eta .tracking-next-stop,.tracking-driver-eta .tracking-eta-summary{font-weight:600}.tracking-eta-stops{margin:8px 0;padding-inline-start:20px;font-size:13px;line-height:1.8;overflow-wrap:anywhere}
 
 /* Order origin uses the same complete authorized scope as the status counters. */
 .delivery-room .dispatch-source-counts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;margin-inline-end:auto}
@@ -661,7 +662,7 @@ body.tracking-tv .app-shell{display:block;max-width:none;min-height:100vh}body.t
 .order-summary-head{gap:8px 14px;padding-bottom:10px}.order-summary-head .order-reference{font-size:14px;font-weight:700;direction:ltr;unicode-bidi:isolate}
 .order-summary-fields{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .order-summary-fields>div{padding:10px 12px;border:1px solid var(--line);background:var(--bg)}
-.order-summary-fields dt{font-size:12px;margin-bottom:4px}.order-summary-fields dd{font-size:15px;line-height:1.65}
+.order-summary-fields dt{font-size:12px;margin-bottom:4px}.order-summary-fields dd{font-size:15px;line-height:1.8}
 .order-summary-fields>div:last-child{background:var(--accent-light);border-color:var(--accent-light)}
 .order-summary-fields>div:last-child dd{font-size:18px;font-variant-numeric:tabular-nums}
 .order-summary-status{padding-top:10px;gap:7px}.order-summary-actions{margin:0}

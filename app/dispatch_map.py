@@ -270,7 +270,7 @@ def merge_route_contexts(values):
 
 
 def consume_route_budget(c, driver_id, manager_id, units=1, *, purpose='route'):
-    if (purpose not in ('route','corridor') or type(units) is not int or not 1 <= units <= 625
+    if (purpose not in ('route','corridor','automatic_preview') or type(units) is not int or not 1 <= units <= 625
             or purpose=='corridor' and units!=1):
         raise HTTPException(422, 'Invalid route budget units.')
     # A single existing row locks the budget across ALL brands and workers.
@@ -291,6 +291,10 @@ def consume_route_budget(c, driver_id, manager_id, units=1, *, purpose='route'):
         raise HTTPException(503, 'ميزانية المسارات غير صالحة.')
     prefix = 'corridor:' if purpose=='corridor' else ''
     keys = [prefix+'driver:' + driver_id, prefix+'manager:' + manager_id]
+    if purpose=='automatic_preview':
+        # Fleet wall previews share the original global driver cooldown, while
+        # one manager may refresh different drivers under the SAME monthly cap.
+        keys[1] = 'automatic:manager:' + manager_id + ':driver:' + driver_id
     if any(now.timestamp() - recent.get(key, 0) < 60 for key in keys):
         raise HTTPException(429, 'انتظر دقيقة قبل طلب مسار جديد.')
     if budget['count'] + units > ROUTE_MONTHLY_LIMIT:

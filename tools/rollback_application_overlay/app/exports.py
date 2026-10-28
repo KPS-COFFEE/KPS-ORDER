@@ -51,7 +51,8 @@ TABLES += ('collection_tender_correction_proposals','collection_tender_correctio
 TRACKING_PRIVATE_TABLES = {'driver_tracking_points', 'driver_trip_stops',
                           'driver_route_eta_state', 'driver_route_eta_expectations'}
 TABLES += ('driver_tracking_points', 'driver_trip_stops', 'driver_route_eta_state', 'driver_route_eta_expectations')
-SHARED_PHYSICAL_TABLES = {'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations','shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
+TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
+SHARED_PHYSICAL_TABLES = {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations','shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Global bank statement originals can span sellers; private full archives retain them.
 SHARED_BANK_TABLES = {'bank_reconciliation_bank_lines'}
 AUTH_TABLES = TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
@@ -83,6 +84,10 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand, *, bank_table_available=True):
+    # These physical cash records can cover both sellers. They belong only to
+    # the full private archive; a brand filter cannot invent an allocation.
+    if brand and table in {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures'}:
+        return 'FALSE', ()
     if brand and table in {'driver_route_eta_state', 'driver_route_eta_expectations'}:
         return 'FALSE', ()
     if brand and table in {'driver_tracking_points', 'driver_trip_stops'}:
