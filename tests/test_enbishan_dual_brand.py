@@ -32,6 +32,10 @@ def dual(request, monkeypatch, safe_test_environment):
         for identifier, role, brand in accounts:
             c.execute('INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES(%s,%s,%s,%s,%s)',
                       (identifier, 'SYNTHETIC '+identifier, role, brand, db.json(['kps-branch-1'] if brand=='kps' else ['enbishan-test-1'])))
+            if role == 'customer' and brand == 'enbishan':
+                # Menu/operations witnesses use an already SMS-verified
+                # synthetic customer; guest ordering is no longer permitted.
+                c.execute("UPDATE users SET phone='+966500000001',identity_kind='phone_sms_verified',phone_verified_at=now(),phone_sms_verified_at=now() WHERE id=%s", (identifier,))
             if role != 'customer':
                 c.execute('INSERT INTO staff_brand_memberships(user_id,brand_id,branch_ids,granted_by) VALUES(%s,%s,%s,%s)',
                           (identifier, 'enbishan', db.json(['enbishan-test-1','enbishan-test-2']), 'dual-owner'))
@@ -59,6 +63,8 @@ def dual(request, monkeypatch, safe_test_environment):
             with db.tx() as c:
                 c.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at) VALUES(%s,%s,%s,%s,now()+interval \'1 hour\',now())',
                           (uuid4().hex, auth.token_hash(token), auth.token_hash(csrf), identifier))
+                if identifier == 'dual-enbishan-customer':
+                    c.execute('UPDATE sessions SET customer_verified_at=now() WHERE token_hash=%s', (auth.token_hash(token),))
             credentials[identifier] = token, csrf
         token, csrf = credentials[identifier]
         client.cookies.clear()

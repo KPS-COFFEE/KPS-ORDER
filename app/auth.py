@@ -181,7 +181,7 @@ def _find_session(conn, request: Request):
         token=request.cookies.get(COOKIE)
     if not token or not re.fullmatch(r'[A-Za-z0-9_-]{40,100}', token):
         return None
-    user = conn.execute("SELECT u.*,COALESCE(a.settings->'customer_phone_required',to_jsonb(u.brand_id='kps'))<>'false'::jsonb AS customer_phone_required,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
+    user = conn.execute("SELECT u.*,CASE WHEN u.brand_id='enbishan' THEN true ELSE COALESCE(a.settings->'customer_phone_required',to_jsonb(u.brand_id='kps'))<>'false'::jsonb END AS customer_phone_required,CASE WHEN s.customer_verified_at IS NULL THEN ARRAY[]::text[] ELSE ARRAY(SELECT source_id FROM customer_identity_links l WHERE l.customer_id=u.id AND l.brand_id=u.brand_id) END AS customer_alias_ids,s.id AS session_id,s.csrf_hash,s.customer_verified_at,s.expires_at AS session_expires_at FROM sessions s JOIN users u ON u.id=s.user_id "
                         'JOIN brands b ON b.id=u.brand_id LEFT JOIN app_settings a ON a.brand_id=u.brand_id '
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
@@ -802,6 +802,10 @@ def channel_readiness(conn, brand):
 
 
 def customer_phone_required(conn,brand):
+    # Enbishan guests may browse/contact, but customer checkout always requires
+    # SMS proof, including databases retaining the former guest-order setting.
+    if brand == 'enbishan':
+        return True
     row=conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s',(brand,)).fetchone()
     return (row or {}).get('settings',{}).get('customer_phone_required',brand=='kps') is not False
 
@@ -809,7 +813,7 @@ def customer_phone_required(conn,brand):
 def assert_customer_order_eligible(conn, user, *, phone_required=None):
     if user['role']!='customer' or not user.get('active',True):
         raise db.error(403,'CUSTOMER_REQUIRED','الطلب يتطلب جلسة عميل مخوّلة.')
-    if (customer_phone_required(conn,user['brand_id']) if phone_required is None else phone_required):
+    if user['brand_id']=='enbishan' or (customer_phone_required(conn,user['brand_id']) if phone_required is None else phone_required):
         proof=user.get('customer_verified_at')
         if not user.get('phone_sms_verified_at') or not proof or proof + timedelta(days=30) <= datetime.now(timezone.utc):
             raise db.error(403,'CUSTOMER_PHONE_VERIFICATION_REQUIRED','تحقق من جوالك لإتمام الطلب. حاول لاحقًا إذا تعذر إرسال الرمز.')
