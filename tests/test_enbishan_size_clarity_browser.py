@@ -74,7 +74,7 @@ def test_mahashi_choices_do_not_repeat_and_have_no_flavour_instruction(static_cu
 
 
 @pytest.mark.parametrize('product_index',[0,1])
-def test_grape_flavours_are_two_individual_choices_or_mixed(static_customer,product_index):
+def test_grape_flavours_allow_one_or_two_individual_choices_or_mixed(static_customer,product_index):
     from playwright.sync_api import sync_playwright,expect
     product=json.loads((ROOT/'tests/fixtures/enbishan-grape-flavours-public.json').read_text())[product_index]
     with sync_playwright() as p:
@@ -106,9 +106,7 @@ def test_grape_flavours_are_two_individual_choices_or_mixed(static_customer,prod
         choices.get_by_role('button',name='ليمون',exact=True).click()
         expect(choices.get_by_role('button',name='مشكل',exact=True)).to_have_attribute('aria-pressed','false')
         page.locator('#product-add').click()
-        expect(page.locator('#product-error')).to_be_visible()
-        choices.get_by_role('button',name='دبس رمان',exact=True).click()
-        page.locator('#product-add').click()
+        expect(page.locator('.grape-flavour-field p')).to_have_count(0)
         expect(page.locator('#product-dialog')).not_to_be_visible()
         family=next(v for g in product['option_groups'] if g['code']=='SIZE' for v in g['values'] if 'عائلي' in v['name'])
         expected_image=next(v['image_url'] for v in product['variant_images'] if v['options']['SIZE']==family['code'])

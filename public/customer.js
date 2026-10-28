@@ -1438,12 +1438,11 @@
     const names=[...new Set(pairs.flatMap(split))];
     if(names.length!==3)return null;
     const options=state.optionValues[index];
-    const selected=pairs.find(v=>v.code===options.FLAVOUR);
+    const singles=(group.values||[]).filter(v=>names.includes(v.name));
+    const selected=[...pairs,...singles].find(v=>v.code===options.FLAVOUR);
     let picks=selected?split(selected):options.FLAVOUR===mixed.code?[]:grapeFlavourDrafts.get(options)||[];
     const field=node('fieldset','field grape-flavour-field');
     field.append(node('legend','',entryText('نكهات ورق العنب','Grape leaf flavours')));
-    const hint=node('p','small muted',entryText('اختر نكهتين من أول ثلاث، أو اختر مشكل.','Choose two of the first three flavours, or choose Mixed.'));
-    hint.setAttribute('aria-live','polite');field.append(hint);
     const choices=node('div','customer-option-choices grape-flavour-choices');
     choices.setAttribute('role','group');choices.setAttribute('aria-label',`${entryText('نكهات ورق العنب','Grape leaf flavours')} ${number.format(index+1)}`);
     const enabled=v=>v.enabled!==false&&v.available!==false;
@@ -1453,9 +1452,8 @@
       buttons.forEach((button,i)=>{
         const active=i===3?isMixed:!isMixed&&picks.includes(names[i]);
         button.setAttribute('aria-pressed',String(active));
-        button.disabled=!eligibleForProduct(product).ok||(i===3?!enabled(mixed):!pairs.some(v=>enabled(v)&&split(v).includes(names[i]))||(!active&&picks.length===2));
+        button.disabled=!eligibleForProduct(product).ok||(i===3?!enabled(mixed):!singles.some(v=>enabled(v)&&v.name===names[i])&&!pairs.some(v=>enabled(v)&&split(v).includes(names[i]))||(!active&&picks.length===2));
       });
-      hint.textContent=isMixed?entryText('تم اختيار مشكل.','Mixed selected.'):entryText(`اختر نكهتين من أول ثلاث، أو اختر مشكل. المحدد: ${number.format(picks.length)} من ${number.format(2)}`,`Choose two of the first three flavours, or choose Mixed. Selected: ${picks.length} of 2`);
     };
     [...names,mixed.name].forEach((name,i)=>{
       const pair=pairs.find(v=>split(v).includes(name));
@@ -1466,7 +1464,7 @@
         else{
           if(options.FLAVOUR===mixed.code)picks=[];
           picks=picks.includes(name)?picks.filter(n=>n!==name):picks.length<2?[...picks,name]:picks;
-          const match=pairs.find(v=>enabled(v)&&picks.length===2&&split(v).every(n=>picks.includes(n)));
+          const match=[...singles,...pairs].find(v=>enabled(v)&&split(v).length===picks.length&&split(v).every(n=>picks.includes(n)));
           if(match)options.FLAVOUR=match.code;else delete options.FLAVOUR;
         }
         grapeFlavourDrafts.set(options,picks);draw();showError('product-error','');renderVariantPrice(index);
