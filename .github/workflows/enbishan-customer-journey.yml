@@ -1,8 +1,13 @@
-name: Enbishan customer journey and guest isolation
+name: Enbishan customer journey and SMS verification
 on:
   pull_request:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/auth.py
+      - migrations/126_enbishan_customer_sms_required.sql
+      - tests/test_enbishan_mandatory_customer_sms.py
+      - tests/test_enbishan_verified_checkout_ui.cjs
+      - tests/test_enbishan_dual_brand.py
       - public/assets/enbishan-menu.js
       - public/assets/customer-order.js
       - tests/test_enbishan_approved_menu_staff_browser.py
@@ -63,6 +68,8 @@ jobs:
       - run: node --check public/customer.js
       - run: node tests/test_enbishan_catalog_presentation.cjs
       - run: node tests/test_enbishan_journey.cjs
+      - run: node --test tests/test_enbishan_verified_checkout_ui.cjs tests/test_checkout_attempts.cjs
+      - run: python -m pytest -q tests/test_enbishan_mandatory_customer_sms.py tests/test_enbishan_sms_boundary.py tests/test_enbishan_otp_provider_gate.py tests/test_enbishan_dual_brand.py
       - run: python -m pytest -q tests/test_enbishan_approved_small_plates.py tests/test_enbishan_journey.py tests/test_enbishan_approved_journey.py tests/test_enbishan_family_menu_clarity.py tests/test_enbishan_flavour_decision.py tests/test_guest_session_policy.py tests/test_customer_neighborhood_policy.py tests/test_customer_card_quantity.py tests/test_optional_customer_address.py tests/test_enbishan_customer_scope_constraints.py tests/test_customer_hotpath.py tests/test_customer_language.py::test_customer_translation_codes_are_complete_and_keep_approved_source_immutable
       - name: Install Chromium dependencies
         run: python -m playwright install --with-deps chromium
