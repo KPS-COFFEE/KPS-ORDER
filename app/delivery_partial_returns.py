@@ -33,13 +33,13 @@ def approved(c, oid):
     return [r['details'] for r in c.execute('SELECT details FROM order_events WHERE order_id=%s AND event_type=%s ORDER BY created_at,id', (oid, APPROVED)).fetchall()]
 
 
-def value(order, lines, previous):
+def value(order, lines, previous,*,actual_prior_credit_halalas=None):
     """Allocate the immutable discounted item value; fees never become item credit."""
-    items = order['snapshot']['items']
-    gross = sum(i['line_total_halalas'] for i in items)
-    net = min(gross, max(0, order['total_halalas'] - order['delivery_fee_halalas']))
-    if not gross: raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'المرتجع المجاني لا يخفض التحصيل؛ استخدم إرجاع الصنف المجاني.')
+    from .refund_line_values import item_allocations,quantity_value,remaining_item_budget
+    items,products = item_allocations(order)
+    if not sum(i['line_total_halalas'] for i in items): raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'المرتجع المجاني لا يخفض التحصيل؛ استخدم إرجاع الصنف المجاني.')
     seen = set(); credit = 0
+    selected={}
     # A retained gift cannot disguise returning the whole purchased order.
     retained = sum(i['quantity'] - previous.get(index,0) for index,i in enumerate(items) if i['line_total_halalas']>0)
     for line in lines:
@@ -49,16 +49,36 @@ def value(order, lines, previous):
         i = items[line.line_index]
         if i['line_total_halalas']>0:retained-=line.quantity
         prior = previous.get(line.line_index, 0); qty = i['quantity']
-        if prior + line.quantity > qty:
+        if type(prior) is not int or prior<0 or prior + line.quantity > qty:
             raise db.error(422, 'PARTIAL_RETURN_QUANTITY', 'الكمية تتجاوز المتبقي من الصنف.')
         units = i.get('units') or []
         prices = {u.get('price_halalas') for u in units}
         if len(prices) > 1 and prior + line.quantity < qty:
             raise db.error(409, 'PARTIAL_RETURN_UNIT_AMBIGUOUS', 'تختلف أسعار وحدات الصنف؛ أحل تحديد الوحدة للمحاسبة.')
-        denominator = gross * qty
-        credit += (i['line_total_halalas'] * net * (prior + line.quantity) // denominator) - (i['line_total_halalas'] * net * prior // denominator)
+        selected[line.line_index]=line.quantity
+    for product in products.values():
+        indices=product['line_indices']
+        chosen=sum(selected.get(index,0) for index in indices)
+        if not chosen:continue
+        prices=list(product['prices'])
+        uniform=all(a*b0==a0*b for a,b in prices for a0,b0 in prices)
+        if uniform:
+            prior=sum(previous.get(index,0) for index in indices)
+            credit+=quantity_value(product['net_halalas'],product['quantity'],prior,chosen)
+        else:
+            # Physical requests identify the actual line. Product-only money
+            # requests remain ambiguous after such a partial mixed-price return.
+            cumulative=0
+            for index in indices:
+                item=items[index];end=cumulative+item['line_total_halalas']
+                budget=(end*product['net_halalas']//product['gross']-
+                        cumulative*product['net_halalas']//product['gross']) if product['gross'] else 0
+                credit+=quantity_value(budget,item['quantity'],previous.get(index,0),selected.get(index,0))
+                cumulative=end
     if retained <= 0:
         raise db.error(422, 'PARTIAL_RETURN_FULL', 'إرجاع الطلب كاملًا يحتاج مسار الإلغاء والمرتجع الكامل.')
+    if actual_prior_credit_halalas is not None:
+        credit=min(credit,remaining_item_budget(products,actual_prior_credit_halalas))
     if credit <= 0: raise db.error(422, 'PARTIAL_RETURN_NO_VALUE', 'الأصناف المجانية لا تخفض التحصيل.')
     return credit
 
@@ -140,7 +160,8 @@ def request_return(tid: str, body: Proposal, user=Depends(auth.require_roles('dr
             if o['version'] != body.version: raise db.error(409, 'ORDER_VERSION_CONFLICT', 'تغير الطلب؛ حدّث الصفحة.')
             if any(r['status'] == 'pending' for r in history(c, o['id'])):
                 raise db.error(409, 'PARTIAL_RETURN_PENDING', 'يوجد طلب مرتجع جزئي بانتظار قرار المدير.')
-            credit = value(o, body.lines, remaining(c, o['id']))
+            credit = value(o, body.lines, remaining(c, o['id']),
+                           actual_prior_credit_halalas=sum(r['credit_halalas'] for r in approved(c,o['id'])))
             identifier = db.new_id('partial_')
             details = dict(**body.model_dump(), task_id=tid, credit_halalas=credit, return_id=identifier,
                 original_total_halalas=o['total_halalas'], source_version=o['version'])
@@ -171,11 +192,13 @@ def decide(rid: str, body: Decision, user=Depends(auth.require_roles('owner', 'd
             details={**row['details'],**body.model_dump(),'requested_by':request['actor_id'],'approved_by':user['id'],'no_money_posted':True,'original_order_preserved':True,'responsibility':'branch_review' if row['details']['cause']=='branch_error' else 'customer_reduction','no_driver_shortfall':True}
             if body.action=='approve':
                 if not body.physical_resolution:raise db.error(422,'PARTIAL_RETURN_CUSTODY','وثّق مكان الأصناف المرتجعة.')
-                lines=[Line(**x) for x in row['details']['lines']];credit=value(o,lines,remaining(c,o['id']))
+                lines=[Line(**x) for x in row['details']['lines']]
+                prior=approved(c,o['id'])
+                credit=value(o,lines,remaining(c,o['id']),
+                             actual_prior_credit_halalas=sum(r['credit_halalas'] for r in prior))
                 from .order_amendments import balance
                 from .order_financial_treatments import effective_total, price_credit_rows
                 effective=effective_total(c,o)
-                prior=approved(c,o['id'])
                 if len(price_credit_rows(c,[o['id']]))!=len(prior) or c.execute('SELECT 1 FROM refunds WHERE order_id=%s LIMIT 1',(o['id'],)).fetchone():
                     raise db.error(409,'PARTIAL_RETURN_PRIOR_FINANCIAL_REVIEW','توجد تسوية أخرى؛ يلزم مراجعة المحاسبة منعًا لتكرار التخفيض.')
                 target=effective-credit; collected=balance(c,o)

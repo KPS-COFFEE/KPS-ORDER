@@ -7,7 +7,13 @@ asserting specific returned quantities. Delivery charges are not item value.
 from . import db
 
 
-def ceiling(order, quantities, previous):
+def item_allocations(order):
+    """Allocate every net item halalah once in frozen snapshot order.
+
+    Product budgets use cumulative integer differences, then quantities within
+    a product telescope against that fixed budget. Zero-price lines never take
+    a rounding remainder; delivery fees never enter the item net.
+    """
     snapshot=order.get('snapshot')
     rows=snapshot.get('items') if isinstance(snapshot,dict) else None
     if (not isinstance(rows,list) or not rows or type(order.get('total_halalas')) is not int
@@ -20,24 +26,55 @@ def ceiling(order, quantities, previous):
     gross=sum(x['line_total_halalas'] for x in rows)
     net=max(0,min(gross,order['total_halalas']-order['delivery_fee_halalas']))
     products={}
-    for row in rows:
+    for index,row in enumerate(rows):
         pid=row['product_id'];qty=int(row['quantity']);amount=int(row['line_total_halalas'])
         if qty<=0 or amount<0:raise db.error(409,'REFUND_LINE_SNAPSHOT','بيانات الصنف لا تسمح بتقييم مرتجع؛ راجع المحاسبة.')
-        item=products.setdefault(pid,{'quantity':0,'gross':0,'prices':set()})
+        item=products.setdefault(pid,{'quantity':0,'gross':0,'prices':set(),'line_indices':[]})
         item['quantity']+=qty;item['gross']+=amount;item['prices'].add((amount,qty))
-    value=0
+        item['line_indices'].append(index)
+    cumulative=0
+    for item in products.values():
+        end=cumulative+item['gross']
+        item['net_halalas']=(end*net//gross-cumulative*net//gross) if gross else 0
+        cumulative=end
+    return rows,products
+
+
+def quantity_value(budget,quantity,prior,selected):
+    """A fixed budget's cumulative differences preserve split-return totals."""
+    return budget*(prior+selected)//quantity-budget*prior//quantity
+
+
+def remaining_item_budget(products,actual_prior_effect_halalas):
+    """Actual historic effects, rather than revalued old quantities, bind money."""
+    if type(actual_prior_effect_halalas) is not int or actual_prior_effect_halalas<0:
+        raise db.error(409,'REFUND_LINE_HISTORY','مبالغ المرتجعات السابقة غير موثقة؛ راجع المحاسبة قبل إضافة أثر مالي.')
+    return max(0,sum(item['net_halalas'] for item in products.values())-actual_prior_effect_halalas)
+
+
+def ceiling(order, quantities, previous):
+    _,products=item_allocations(order)
+    value=0;legacy_value=0
+    document_legacy=order.get('_legacy_refund_documentation') is True
+    gross=sum(item['gross'] for item in products.values())
+    net=sum(item['net_halalas'] for item in products.values())
     for pid,q in quantities.items():
         item=products.get(pid)
         prior=previous.get(pid,0)
-        if not item or type(q) is not int or q<=0 or prior+q>item['quantity']:
+        if (not item or type(q) is not int or q<=0 or type(prior) is not int
+                or prior<0 or prior+q>item['quantity']):
             raise db.error(422,'REFUND_LINE_QUANTITY','اختر كمية مرتجعة فعلية موجبة ضمن المتبقي.')
         # Product-only references cannot distinguish variants with different prices.
         prices=list(item['prices'])
-        if any(a*b0!=a0*b for a,b in prices for a0,b0 in prices) and q+prior<item['quantity']:
+        if any(a*b0!=a0*b for a,b in prices for a0,b0 in prices) and (q<item['quantity'] or prior):
             raise db.error(409,'REFUND_LINE_AMBIGUOUS','للصنف أسعار مختلفة؛ يلزم تحديد الوحدة الفعلية لدى المحاسبة قبل تسجيل كمية مرتجعة.')
-        if gross:
+        value+=quantity_value(item['net_halalas'],item['quantity'],prior,q)
+        if document_legacy and gross:
             denominator=gross*item['quantity']
-            value+=(item['gross']*net*(prior+q)//denominator)-(item['gross']*net*prior//denominator)
+            legacy_value+=(item['gross']*net*(prior+q)//denominator)-(item['gross']*net*prior//denominator)
+    if document_legacy:value=max(value,legacy_value)
+    if '_prior_item_effect_halalas' in order:
+        value=min(value,remaining_item_budget(products,order['_prior_item_effect_halalas']))
     return value
 
 

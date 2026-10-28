@@ -120,15 +120,23 @@ def effective_claim(c,order):
     return max(0,effective-returned_credit(c,order)) if approved else effective
 
 
-def valuation_order(c,order):
+def valuation_order(c,order,*,exclude_refund_ids=()):
     # A physical return consumes specific quantities, not the price of the
     # remaining items. prior_quantities excludes those already returned units.
     # Restore only their source credit while valuing future selected units;
     # other source price corrections still reduce the conservative ceiling.
     from .delivery_partial_returns import approved
     physical_credits=sum(r['credit_halalas'] for r in approved(c,order['id']))
+    # Old item refunds/physical credits used an earlier rounding rule. Their
+    # actual posted amounts must still cap new effects; revaluing their consumed
+    # quantities could otherwise use a delivery-fee halalah as item entitlement.
+    # Item allocation only documents existing money, so its validated selected
+    # historical refund rows are excluded from prior effects for that one check.
+    prior_refunds=int(c.execute("SELECT coalesce(sum(amount_halalas),0) n FROM refunds WHERE order_id=%s AND amendment_id IS NULL AND record_kind<>'test_void' AND NOT (id=ANY(%s))",(order['id'],list(exclude_refund_ids))).fetchone()['n'])
     return {**order,'original_total_halalas':order['total_halalas'],
-        'total_halalas':min(order['total_halalas'],effective_total(c,order)+physical_credits)}
+        'total_halalas':min(order['total_halalas'],effective_total(c,order)+physical_credits),
+        '_prior_item_effect_halalas':prior_refunds+physical_credits,
+        '_legacy_refund_documentation':bool(exclude_refund_ids)}
 
 
 def state(c,order,case_id=None,*,collected_halalas=None,review_resolved=False):
