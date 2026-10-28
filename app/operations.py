@@ -2045,8 +2045,8 @@ def driver_roster(user=Depends(auth.current_user)):
                        "s.id shift_id,s.status shift_status,s.available shift_available,s.manager_shift_id,"
                        "(SELECT count(*) FROM driver_tasks t WHERE t.driver_id=u.id AND t.shift_id=s.id "
                        "AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')) active_tasks "
-                       "FROM users u LEFT JOIN shifts s ON s.user_id=u.id AND s.brand_id=u.brand_id "
-                       "AND s.kind='driver' AND s.status<>'closed'" + staffing_filter + ' '
+                       "FROM users u LEFT JOIN LATERAL (SELECT s.* FROM shifts s WHERE s.user_id=u.id AND s.brand_id=u.brand_id "
+                       "AND s.kind='driver' AND s.status<>'closed'" + staffing_filter + " ORDER BY s.opened_at DESC,s.id DESC LIMIT 1) s ON true "
                        "WHERE u.brand_id=%s AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
         visible=[]
         for row in rows:
@@ -2059,14 +2059,18 @@ def driver_roster(user=Depends(auth.current_user)):
                     row.update(active_tasks=0, assignment_eligible=False, availability='support_requires_handover',
                                readiness_action='request_manager_handover', eligible_branch_ids=[],
                                support_available=True)
+                    from .driver_readiness import live_status
+                    row['live_status']=live_status(row)
                     visible.append(row)
                     continue
                 row['active_tasks'] = c.execute("SELECT count(*) AS n FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.manager_shift_id=%s AND o.brand_id=%s AND o.branch_id=ANY(%s) AND o.snapshot->>'delivery_period'='morning' AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')", (row['id'], context['shift_id'], user['brand_id'], user['branch_ids'])).fetchone()['n']
-            from .driver_readiness import describe
+            from .driver_readiness import describe, live_status
             row['availability'],row['readiness_action'],row['eligible_branch_ids']=describe(c,row)
             row['assignment_eligible']=row['availability']=='available'
+            row['live_status']=live_status(row)
             visible.append(row)
-        return safe({'drivers':visible})
+        from .driver_readiness import live_counts
+        return safe({'drivers':visible, 'driver_counts':live_counts(visible)})
 
 
 class ClosureDraft(OperationBody):
