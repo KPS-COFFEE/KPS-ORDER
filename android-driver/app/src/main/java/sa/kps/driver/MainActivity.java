@@ -86,9 +86,9 @@ public final class MainActivity extends Activity {
                 popup.setWebViewClient(new WebViewClient(){
                     @Override public boolean shouldOverrideUrlLoading(WebView child,WebResourceRequest request){
                         Uri uri=request.getUrl();
-                        if(request.isForMainFrame() && DriverMediaPolicy.whatsapp(uri.toString())){
+                        if(request.isForMainFrame() && DriverMediaPolicy.external(uri.toString(),true)){
                             try{startActivity(new Intent(Intent.ACTION_VIEW,uri));}
-                            catch(ActivityNotFoundException e){status.setText("لا يوجد تطبيق يفتح رابط واتساب");}
+                            catch(ActivityNotFoundException e){status.setText("لا يوجد تطبيق يفتح هذا الرابط");}
                         }
                         return true;
                     }
