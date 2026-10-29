@@ -218,7 +218,7 @@ jobs:
         run: python -m pytest -q tests/test_chat_refresh_browser.py --junitxml=test-results/chat-reading-first.xml
       - name: Verify owner confirmation and cancellation in both brands and languages
         if: matrix.shard == 0
-        run: node --test tests/test_owner_operational_confirmation.cjs
+        run: node --test tests/test_owner_operational_confirmation.cjs tests/test_customer_checkout_quote_race.cjs
       - name: Verify evidenced accounting treatment UI and bilingual clarification actions
         if: matrix.shard == 0
         run: node tests/test_accounting_treatment_ui.cjs && node tests/test_financial_completion_scope_ui.cjs && node tests/test_financial_clarifications_ui.cjs && node tests/test_owner_audit_ui.cjs && node tests/test_financial_treatment_recovery_ui.cjs && node tests/test_refund_item_allocation_ui.cjs && node tests/test_bank_matching_ui.cjs && node tests/test_employee_ticket_workflow_ui.cjs && node tests/test_order_source_treatment_ui.cjs
