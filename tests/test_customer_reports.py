@@ -205,3 +205,22 @@ def test_projected_owner_needs_all_brand_branches_for_page_and_cohorts(database)
             c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city) VALUES('report-new-branch',999,'report-new-branch','kps','Synthetic future branch','حفر الباطن')")
         denied=client.get('/api/reports/customers?start=2026-01-10&end=2026-01-20')
         assert denied.status_code==403,denied.text
+
+
+def test_main_app_routes_customer_cohorts_before_generic_closure_report_ids():
+    from app.main import app
+    from starlette.routing import Match
+    scope={'type':'http','method':'GET','path':'/api/reports/customers',
+           'root_path':'','raw_path':b'/api/reports/customers'}
+    def selected_endpoint(routes):
+        for route in routes:
+            if route.matches(scope)[0] is not Match.FULL:
+                continue
+            # Current FastAPI retains include_router boundaries; older versions
+            # flatten the same routes directly into app.routes.
+            nested=getattr(route,'original_router',None)
+            return selected_endpoint(nested.routes) if nested is not None else route.endpoint
+    assert selected_endpoint(app.routes) is customer_reports.customer_report
+    from app import reporting
+    scope.update(path='/api/reports/retained-closure-report',raw_path=b'/api/reports/retained-closure-report')
+    assert selected_endpoint(app.routes) is reporting.report_detail
