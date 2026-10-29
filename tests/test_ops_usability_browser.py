@@ -186,14 +186,15 @@ def test_staff_cards_and_live_partial_customer_search(live_app,chromium_browser,
     finally:context.close()
 
 
-def test_add_staff_sms_provider_failure_can_retry_without_losing_fields(live_app,chromium_browser,monkeypatch):
+def test_authenticated_owner_adds_staff_when_sms_provider_is_unavailable(live_app,chromium_browser,monkeypatch):
     from playwright.sync_api import expect
     owner=_staff();context,page,errors=_context(chromium_browser,live_app)
     try:
         _owner_login(context,live_app,owner)
-        original=sms_verification.start
         def unavailable(*args,**kwargs):raise db.error(503,'OTP_PROVIDER_FAILURE','تعذر الاتصال بمزود التحقق. حاول لاحقًا.')
         monkeypatch.setattr(sms_verification,'start',unavailable)
+        requests=[]
+        page.on('request',lambda request:requests.append(request.url) if '/api/identity/owner/sms/' in request.url else None)
         page.goto(live_app+'/ops',wait_until='networkidle')
         _open_staff_navigation(page)
         page.locator('#navigation [data-page=admin]').click()
@@ -205,18 +206,12 @@ def test_add_staff_sms_provider_failure_can_retry_without_losing_fields(live_app
         form.locator('.staff-branch-dropdown summary').click()
         form.locator('[name="scope:kps-branch-1"]').check()
         form.locator('button[type=submit]').click()
-        dialog=page.locator('dialog:not(#modal)').filter(has=page.locator('[name=code]'))
-        expect(dialog.locator('.form-error')).to_contain_text('تعذر الاتصال')
-        expect(form.locator('[name=display_name]')).to_have_value('موظف اختبار إعادة المحاولة')
-        with db.tx() as c:assert c.execute("SELECT count(*) n FROM users WHERE phone='+966507654321'").fetchone()['n']==0
-        monkeypatch.setattr(sms_verification,'start',original)
-        dialog.get_by_role('button',name='إعادة إرسال رمز التحقق',exact=True).click()
-        expect(dialog.locator('button[type=submit]')).to_be_enabled()
-        complete_owner_sms_dialog(page,owner)
         expect(page.locator('#modal')).not_to_be_visible()
         with db.tx() as c:
             rows=c.execute("SELECT * FROM users WHERE phone='+966507654321'").fetchall()
             assert len(rows)==1 and rows[0]['display_name']=='موظف اختبار إعادة المحاولة'
+        expect(page.locator('dialog:not(#modal)').filter(has=page.locator('[name=code]'))).to_have_count(0)
+        assert requests==[], 'An approved owner must not depend on another SMS send'
         assert not errors,errors
     finally:context.close()
 

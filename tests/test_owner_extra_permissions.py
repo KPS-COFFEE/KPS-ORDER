@@ -42,8 +42,7 @@ def test_owner_sms_grant_printers_preserves_role_branches_and_immediate_revoke(c
     assert client.get('/api/printing/devices').status_code==403
     sms_login(client,owner,monkeypatch)
     original=policy.effective(driver)
-    assert _save(client,driver,original|{'branch_printers_manage'}).status_code==403
-    sms_step_up(client,owner,monkeypatch)
+    assert client.get('/api/session').json()['user']['owner_session_approved'] is True
     result=_save(client,driver,original|{'branch_printers_manage'})
     assert result.status_code==200,result.text
     updated=result.json()['user']

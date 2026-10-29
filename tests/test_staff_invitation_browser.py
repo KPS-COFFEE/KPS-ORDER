@@ -1,4 +1,4 @@
-"""Owner SMS resend confirmation against isolated PostgreSQL and real Chromium."""
+"""Approved owner sessions cannot revive retired employee email invitations."""
 import os
 
 import pytest
@@ -12,13 +12,12 @@ pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
 
 @pytest.mark.parametrize('language', ['ar', 'en'])
 @pytest.mark.parametrize('role', ['delivery_manager', 'admin', 'owner', 'driver'])
-def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_access(live_app, chromium_browser, language, role):
+def test_kps_email_resend_stays_retired_with_approved_owner_session_without_changing_staff_access(live_app, chromium_browser, language, role):
     from playwright.sync_api import expect
 
     owner = _staff()
     targets = []
-    # Each role gets its own isolated account/database. A single owner verifying
-    # all roles plus an invalid code legitimately exceeds the three-attempt limit.
+    # Each role gets its own isolated account/database.
     for index, role in enumerate((role,)):
         target = _staff(role)
         target.update(email=f'resend-{role}@example.invalid', role=role)
@@ -33,7 +32,7 @@ def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_a
     try:
         response = context.request.post(live_app + f"/api/identity/staff/{targets[0]['id']}/resend", headers=headers, data={})
         assert response.status == 403
-        assert response.json()['detail']['code'] == ('WORK_SMS_REQUIRED' if role == 'driver' else 'OWNER_STEP_UP_REQUIRED')
+        assert response.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
         page.goto(live_app + '/ops')
         if language == 'en':
             page.get_by_role('button', name='English', exact=True).click()
@@ -66,25 +65,9 @@ def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_a
                     button.click()
                     _capture(page, 'TEST_ONLY_owner_resend_confirmation_' + language)
                 expect(modal.locator('input[name=step_up_password]')).to_have_count(0)
-                modal.locator('button[type=submit]').click()
-                sms_dialog = page.locator('dialog[open]').filter(has=page.locator('input[name=code]'))
-                expect(sms_dialog).to_be_visible()
-                expect(sms_dialog.locator('button[type=submit]')).to_be_enabled()
-                if index == 0:
-                    sms_dialog.locator('input[name=code]').fill('0000')
-                    sms_dialog.locator('button[type=submit]').click()
-                    expect(sms_dialog.locator('.form-error')).not_to_be_empty()
-                    expect(page.locator('#app-shell')).to_be_visible()
-                    expect(page.locator('#login-shell')).not_to_be_visible()
-                    with db.tx() as conn:
-                        assert conn.execute('SELECT count(*) AS n FROM email_outbox WHERE recipient=%s', (target['email'],)).fetchone()['n'] == 0
-                        assert conn.execute('SELECT invitation_status FROM users WHERE id=%s', (target['id'],)).fetchone()['invitation_status'] == 'draft'
-                sms_dialog.locator('input[name=code]').fill('0123')
                 with page.expect_response(lambda response: response.url.endswith(f"/api/identity/staff/{target['id']}/resend")) as resend:
-                    with page.expect_response(lambda response: response.url.endswith('/api/identity/owner/sms/verify')) as verification:
-                        sms_dialog.locator('button[type=submit]').click()
-                    assert verification.value.status == 200, (role, verification.value.status, verification.value.text())
-                expect(sms_dialog).to_have_count(0)
+                    modal.locator('button[type=submit]').click()
+                expect(page.locator('dialog[open]').filter(has=page.locator('input[name=code]'))).to_have_count(0)
             assert resend.value.status == 403
             assert resend.value.json()['detail']['code'] == 'WORK_SMS_REQUIRED'
             if target['role'] != 'driver':
@@ -100,6 +83,7 @@ def test_kps_email_resend_stays_retired_after_owner_sms_without_changing_staff_a
                 mail = conn.execute('SELECT status,recipient FROM email_outbox WHERE recipient=%s', (target['email'],)).fetchall()
                 assert mail == []
                 assert conn.execute('SELECT count(*) n FROM identity_tokens WHERE user_id=%s', (target['id'],)).fetchone()['n'] == 0
+                assert conn.execute("SELECT count(*) n FROM otp_challenges WHERE source_user_id=%s AND id LIKE 'owner_sms_%%'", (owner['id'],)).fetchone()['n'] == 0
         assert errors == []
     finally:
         context.close()

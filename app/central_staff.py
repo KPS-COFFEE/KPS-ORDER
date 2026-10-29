@@ -151,3 +151,11 @@ def invite(body:auth.StaffInvitationBody,user=Depends(auth.require_roles('owner'
         output['user']=display(c,target,allowed,user)
         db.audit(c,user['id'],'central.staff.invited','user',identifier,{'branch_grants':scopes})
         return output
+
+
+@router.post('/{identifier}/swap-phone')
+def swap_phone(identifier:str,body:auth.StaffPhoneSwapBody,user=Depends(auth.require_roles('owner'))):
+    require_enabled(user,'drivers_manage')
+    with db.tx() as c:
+        rows={i:owner_scope(c,user,i)[0] for i in sorted({identifier,body.other_user_id})}
+        return auth.swap_staff_phones_in_tx(c,rows[identifier],rows[body.other_user_id],body,user)

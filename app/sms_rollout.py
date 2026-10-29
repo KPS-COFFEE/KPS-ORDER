@@ -130,7 +130,7 @@ def activate(request: Request, user=Depends(auth.require_roles('owner'))):
             raise db.error(403,'SMS_ROLLOUT_PILOT_REQUIRED','اختبار المالك مطلوب قبل التفعيل العام. / Owner pilot required before general activation.')
         if not conn.execute("SELECT 1 FROM otp_challenges WHERE id=%s AND source_user_id=%s AND brand_id=%s AND id LIKE 'employee_otp_%%' AND verified_at IS NOT NULL", (policy.get('employee_verified_challenge_id',''),current['id'],current['brand_id'])).fetchone():
             raise db.error(403,'SMS_ROLLOUT_LOGIN_PROOF_REQUIRED','اختبر دخول الموظف الفعلي أولًا. / Complete the employee SMS login pilot first.')
-        if not conn.execute("SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND source_session_id=%s AND brand_id=%s AND id LIKE 'owner_sms_%%' AND verified_at>now()-interval '10 minutes'", (current['id'],current['session_id'],current['brand_id'])).fetchone():
+        if not auth.owner_session_approved(conn,current) and not conn.execute("SELECT 1 FROM otp_challenges WHERE source_user_id=%s AND source_session_id=%s AND brand_id=%s AND id LIKE 'owner_sms_%%' AND verified_at>now()-interval '10 minutes'", (current['id'],current['session_id'],current['brand_id'])).fetchone():
             raise db.error(403,'SMS_ROLLOUT_SENSITIVE_PROOF_REQUIRED','تحقق SMS حساس من الجلسة نفسها مطلوب. / Recent sensitive SMS proof from this session required.')
         provider_ready(conn,current['brand_id'])
         # Only login/activation challenges belonging to noncustomer principals.

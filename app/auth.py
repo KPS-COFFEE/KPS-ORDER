@@ -104,6 +104,8 @@ def public_user(user: dict, conn=None) -> dict:
     output['manual_bank_matching_enabled']=bank_preparation_enabled() if user.get('role') in {'owner','admin'} else False
     output['order_source_treatments_enabled']=source_preparation_enabled() if user.get('role') in {'owner','admin'} else False
     output['employee_sms_email_retired'] = staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn)
+    output['owner_session_approved'] = (owner_session_approved(conn, user) if conn is not None
+                                         else bool(user.get('_owner_session_approved', False)))
     output['effective_permissions'] = sorted(employee_permissions.effective(user))
     if user.get('_morning_manager_context'):
         output['delivery_context'] = user['_morning_manager_context']
@@ -186,6 +188,7 @@ def _find_session(conn, request: Request):
                         "WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>now() AND (s.customer_verified_at IS NULL OR s.customer_verified_at+interval '30 days'>now()) AND u.active AND b.active",
                         (token_hash(token),)).fetchone()
     if user:
+        user['_owner_session_approved'] = owner_session_approved(conn, user)
         if context and (user['role']=='customer') != (context=='customer'):
             return None
         from .staff_geo_access import require_user as require_work_location
@@ -291,7 +294,7 @@ def establish_session(conn, user: dict, response: Response, *, request: Request 
         proof = conn.execute("SELECT 1 FROM otp_challenges WHERE id=%s AND id LIKE 'employee_otp_%%' AND source_user_id=%s AND brand_id=%s AND phone=normalized_identity_phone(%s) AND source_session_id IS NULL AND delivery_channel='sms' AND provider_name IN ('twilio_verify','tawked') AND verified_at>now()-interval '5 minutes' AND expires_at>now()", (employee_sms_challenge,user['id'],user['brand_id'],user.get('phone'))).fetchone() if employee_sms_challenge else None
         if not proof:
             raise db.error(403,'WORK_SMS_REQUIRED','استخدم رمز SMS من 4 أرقام للدخول. / Use a four-digit SMS code to sign in.')
-        # An ordinary work login must never double as sensitive owner proof.
+        # Approval is derived from the actual SMS login and live session below.
         owner_step_up = False
     from . import multibrand
     if multibrand.enabled() and user.get('role') != 'customer':
@@ -313,15 +316,16 @@ def establish_session(conn, user: dict, response: Response, *, request: Request 
     if user['role'] == 'customer' and (user.get('identity_kind') == 'guest' or customer_verified):
         hours = GUEST_SESSION_SECONDS // 3600
     expiry = datetime.now(timezone.utc) + timedelta(hours=hours)
+    session_id = db.new_id('session_')
     conn.execute('INSERT INTO sessions(id,token_hash,csrf_hash,user_id,expires_at,step_up_at,customer_verified_at) '
                  'VALUES(%s,%s,%s,%s,%s,CASE WHEN %s THEN now() ELSE NULL END,CASE WHEN %s THEN now() ELSE NULL END)',
-                 (db.new_id('session_'), token_hash(token), token_hash(csrf), user['id'], expiry,
+                 (session_id, token_hash(token), token_hash(csrf), user['id'], expiry,
                   bool(owner_step_up and user['role'] == 'owner'), bool(customer_verified and user['role'] == 'customer')))
     cookie_name,csrf_name=context_cookie_names('customer' if user['role']=='customer' else 'work') if context_cookies_enabled(conn) else (COOKIE,CSRF_COOKIE)
     response.set_cookie(cookie_name, token, max_age=hours * 3600, httponly=True, secure=secure_cookie(), samesite='strict', path='/')
     response.set_cookie(csrf_name, csrf, max_age=hours * 3600, httponly=False, secure=secure_cookie(), samesite='strict', path='/')
     db.audit(conn, user['id'], 'session.created', 'user', user['id'])
-    return {'user': public_user(user, conn=conn), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
+    return {'user': public_user(dict(user, session_id=session_id), conn=conn), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
 
 
 @router.get('/session')
@@ -1284,14 +1288,39 @@ def _accept_email_identity(challenge,request,response,display_name=None,phone=No
         return result
 
 
+def owner_session_approved(conn, user):
+    """One real mobile verification approves this live owner session only.
+
+    Login verification and session creation share a transaction (now()), so
+    exact timestamp equality also recognizes existing SMS sessions without
+    granting an older password session another session's proof.
+    """
+    if user.get('role') != 'owner' or not user.get('session_id'):
+        return False
+    return bool(conn.execute("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id "
+        "JOIN otp_challenges c ON c.source_user_id=u.id AND c.brand_id=u.brand_id "
+        "AND c.phone=normalized_identity_phone(u.phone) "
+        "WHERE s.id=%s AND u.id=%s AND u.role='owner' AND u.active "
+        "AND s.revoked_at IS NULL AND s.expires_at>now() "
+        "AND c.delivery_channel='sms' AND c.provider_name IN ('twilio_verify','tawked') "
+        "AND c.verified_at IS NOT NULL AND ("
+        "(c.id LIKE 'employee_otp_%%' AND c.source_session_id IS NULL AND c.verified_at=s.created_at) OR "
+        "(c.id LIKE 'owner_sms_%%' AND c.source_session_id=s.id AND c.verified_at=s.step_up_at)) LIMIT 1",
+        (user['session_id'],user['id'])).fetchone())
+
+
 def require_owner_sms_step_up(conn,user):
-    """Supplementary grants always require a session-bound real SMS proof."""
+    """The owner's SMS-authenticated session is sufficient authorization."""
+    if owner_session_approved(conn, user):
+        return
     proof = conn.execute("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id JOIN otp_challenges c ON c.source_session_id=s.id AND c.source_user_id=u.id AND c.brand_id=u.brand_id WHERE s.id=%s AND u.id=%s AND u.role='owner' AND u.active AND s.revoked_at IS NULL AND s.expires_at>now() AND s.step_up_at>now()-interval '10 minutes' AND c.id LIKE 'owner_sms_%%' AND c.phone=normalized_identity_phone(u.phone) AND c.delivery_channel='sms' AND c.provider_name IN ('twilio_verify','tawked') AND c.verified_at>now()-interval '10 minutes'", (user.get('session_id'),user['id'])).fetchone() if user['role']=='owner' and user.get('session_id') else None
     if not proof:
         raise db.error(403,'OWNER_STEP_UP_REQUIRED','أعد تحقق المالك برسالة SMS قبل الإجراء الحساس. / Verify an owner SMS code before the sensitive action.')
 
 
 def require_owner_step_up(conn,user):
+    if owner_session_approved(conn,user):
+        return
     if staff_email_retired(user.get('home_brand_id', user.get('brand_id','kps')), conn=conn):
         # A timestamp created by a pre-cutover password/email proof is not SMS.
         # Proof must be bound to this owner, this exact live session and the
@@ -1796,6 +1825,48 @@ class StaffLifecycleBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     action:Literal['pause','archive','restore','reinvite']
     reason:str=Field(min_length=3,max_length=500)
+
+
+class StaffPhoneSwapBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    other_user_id:str=Field(min_length=1,max_length=100)
+    expected_phone:str=Field(min_length=8,max_length=30)
+    expected_other_phone:str=Field(min_length=8,max_length=30)
+    reason:str=Field(min_length=3,max_length=500)
+
+
+def swap_staff_phones_in_tx(conn,left,right,body,user):
+    require_owner_step_up(conn,user)
+    if left['id']==right['id'] or any(r['role'] in {'owner','customer'} or r['invitation_status']=='archived' for r in (left,right)):
+        raise db.error(409,'STAFF_PHONE_SWAP_INVALID','اختر موظفين مختلفين غير محذوفين.')
+    phones=[normalize_phone(r['phone'] or '') for r in (left,right)]
+    if phones != [normalize_phone(body.expected_phone),normalize_phone(body.expected_other_phone)]:
+        raise db.error(409,'STAFF_PHONE_STALE','تغير رقم أحد الموظفين؛ حدّث الشاشة قبل التبديل.')
+    if phones[0]==phones[1] or not body.reason.strip():
+        raise db.error(422,'STAFF_PHONE_SWAP_INVALID','اختر رقمين مختلفين وسجل سبب التبديل.')
+    ensure_safe_staff_scope_change(conn,left,[],False)
+    ensure_safe_staff_scope_change(conn,right,[],False)
+    for brand,phone in sorted({(r['brand_id'],p) for r in (left,right) for p in phones}):
+        conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(brand+':staff-phone:'+phone,))
+        if conn.execute("SELECT 1 FROM users WHERE brand_id=%s AND role<>'customer' AND normalized_identity_phone(phone)=%s AND id<>ALL(%s)",(brand,phone,[left['id'],right['id']])).fetchone():
+            raise db.error(409,'STAFF_IDENTITY_CONFLICT','الرقم مستخدم لدى موظف آخر.')
+    # Both changes commit together. No intermediate identity can be used.
+    for row,new_phone in ((left,phones[1]),(right,phones[0])):
+        conn.execute('UPDATE users SET phone=%s,phone_verified_at=NULL,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL,updated_at=now() WHERE id=%s',(new_phone,row['id']))
+        conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(row['id'],))
+        _invalidate_staff_tokens(conn,row['id'])
+        conn.execute('UPDATE otp_challenges SET expires_at=LEAST(expires_at,now()) WHERE source_user_id=%s AND verified_at IS NULL',(row['id'],))
+        db.audit(conn,user['id'],'staff.phone.swapped','user',row['id'],{'other_user_id':right['id'] if row['id']==left['id'] else left['id'],'reason':body.reason.strip()})
+    return {'swapped':True,'user_ids':[left['id'],right['id']]}
+
+
+@router.post('/identity/staff/{identifier}/swap-phone')
+def swap_staff_phones(identifier:str,body:StaffPhoneSwapBody,user=Depends(require_roles('owner'))):
+    with db.tx() as conn:
+        rows={i:_staff_record(conn,i,user) for i in sorted({identifier,body.other_user_id})}
+        if user.get('home_brand_id') and any(not r['branch_ids'] or not set(r['branch_ids'])<=set(user.get('branch_ids',[])) for r in rows.values()):
+            raise db.error(404,'STAFF_NOT_FOUND','الموظف خارج صلاحياتك.')
+        return swap_staff_phones_in_tx(conn,rows[identifier],rows[body.other_user_id],body,user)
 
 
 @router.post('/identity/staff/{identifier}/manage')

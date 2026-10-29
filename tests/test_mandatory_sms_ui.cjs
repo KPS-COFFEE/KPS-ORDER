@@ -46,6 +46,11 @@ for(const lang of ['ar','en']){
  assert.equal(requests[1][1].body.code,'0123');
  assert.equal(JSON.stringify(requests).includes('must-never-be-sent'),false);
  cases++;
+ ownerContext.state.user.owner_session_approved=true;
+ const before=requests.length;
+ assert.equal((await ownerContext.ownerStepUp(undefined,true)).verified,true);
+ assert.equal(requests.length,before,'Approved owner session sends no extra code');
+ cases++;
 }
 console.log(`PASS ${cases} UI handler scenarios: AR/EN mandatory SMS labels, hidden/forced password form, sensitive SMS-only flow.`);
 })().catch(error=>{console.error(error);process.exit(1)});

@@ -29,7 +29,9 @@ def hours_page():
               const driver={driver_id:'d',name:'Synthetic driver',shift_status:'open',actual_seconds:27000,duty_seconds:43200,non_delivery_seconds:12600,work_utilization_percent:62.5,active_work_seconds:3600,work_clock_status:'in_progress',work_review_required:false,work_review_reasons:[],work_trip_evidence:[{accepted_at:'2026-10-28T13:00:00Z',returned_at:'2026-10-28T20:30:00Z',return_branch_id:'b2',duration_seconds:27000,status:'returned'}],order_count:4};
               window.payload={start:'2026-10-28',end:'2026-10-28',operational_day_start:'16:00',calculated_at:'2026-10-28T21:00:00Z',totals:{actual_seconds:27000,duty_seconds:43200,non_delivery_seconds:12600,work_utilization_percent:62.5,active_work_seconds:3600,drivers_needing_review:0},drivers:[driver],branches:[{id:'b1',name:'Origin branch'},{id:'b2',name:'Different return branch'}],options:{drivers:[{id:'d',name:'Synthetic driver'},{id:'other',name:'Other driver'}]}};
               window.fetch=async(url,opts={})=>{
-                calls.push({url,method:opts.method||'GET'});active++;maxActive=Math.max(active,maxActive);
+                calls.push({url,method:opts.method||'GET'});
+                if(url==='/api/session')return {ok:true,status:200,json:async()=>({user:{id:'synthetic-hours-owner',role:'owner',brand_id:'kps',branch_ids:[],effective_permissions:['driver_hours_reports']},csrf_token:'synthetic-csrf'})};
+                active++;maxActive=Math.max(active,maxActive);
                 const result=structuredClone(payload);
                 try{if(hold)await new Promise((resolve,reject)=>{pending.push(resolve);opts.signal?.addEventListener('abort',()=>reject(new DOMException('Cancelled','AbortError')),{once:true});});if(opts.signal?.aborted)throw new DOMException('Cancelled','AbortError');return {ok:true,json:async()=>result};}finally{active--;}
               };
@@ -57,7 +59,10 @@ def test_accepted_to_return_hours_are_fair_separate_and_mobile_readable(hours_pa
     assert 'Different return branch' in driver.inner_text()
     assert ('قبول أول طلب' if lang=='ar' else 'First task acceptance') in driver.inner_text()
     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')
-    assert all(r['method']=='GET' and '/api/driver-work-hours/report?' in r['url'] for r in page.evaluate('calls'))
+    calls=page.evaluate('calls')
+    assert all(r['method']=='GET' for r in calls)
+    assert all(r['url']=='/api/session' or '/api/driver-work-hours/report?' in r['url'] for r in calls)
+    assert any('/api/driver-work-hours/report?' in r['url'] for r in calls)
 
 
 def test_missing_timing_is_review_not_confirmed_zero_or_absence(hours_page):
@@ -71,17 +76,17 @@ def test_missing_timing_is_review_not_confirmed_zero_or_absence(hours_page):
 
 def test_auto_refresh_single_request_hidden_offline_and_cleanup(hours_page):
     page=hours_page()
-    initial=page.evaluate('calls.length')
+    initial=page.evaluate("calls.filter(c=>c.url.includes('/api/driver-work-hours/report?')).length")
     page.evaluate('hold=true;tick()')
     page.evaluate('tick()');page.evaluate('tick()')
-    assert page.evaluate('calls.length')==initial+1
+    assert page.evaluate("calls.filter(c=>c.url.includes('/api/driver-work-hours/report?')).length")==initial+1
     assert page.evaluate('maxActive')==1
     page.evaluate('hold=false;pending.splice(0).forEach(fn=>fn())')
     page.wait_for_function('active===0')
     page.evaluate('hidden=true;tick()');page.evaluate('hidden=false;offline=true;tick()')
-    assert page.evaluate('calls.length')==initial+1
+    assert page.evaluate("calls.filter(c=>c.url.includes('/api/driver-work-hours/report?')).length")==initial+1
     page.evaluate("offline=false;window.dispatchEvent(new Event('pagehide'));tick()")
-    assert page.evaluate('calls.length')==initial+1
+    assert page.evaluate("calls.filter(c=>c.url.includes('/api/driver-work-hours/report?')).length")==initial+1
 
 
 def test_manual_filter_and_language_replace_old_response_without_race(hours_page):
@@ -91,7 +96,7 @@ def test_manual_filter_and_language_replace_old_response_without_race(hours_page
     page.evaluate('hold=false;pending.splice(0).forEach(fn=>fn())')
     page.wait_for_function('active===0')
     assert page.locator('.hours-driver h2').inner_text()=='Other driver result'
-    assert 'driver_id=other' in page.evaluate('calls.at(-1).url')
+    assert 'driver_id=other' in page.evaluate("calls.filter(c=>c.url.includes('/api/driver-work-hours/report?')).at(-1).url")
     page.get_by_role('button',name='العربية',exact=True).click()
     page.wait_for_function("document.documentElement.lang==='ar'")
     assert '٧ ساعة ٣٠ دقيقة' in page.locator('#hours-kpis strong').first.inner_text()

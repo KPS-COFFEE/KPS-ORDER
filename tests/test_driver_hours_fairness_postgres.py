@@ -1,5 +1,6 @@
 """Real report SQL for accepted-to-return work, never synthetic attendance."""
 import pytest
+from psycopg.errors import RaiseException
 from app import db
 from test_operations import ops
 
@@ -18,9 +19,9 @@ def report(actor):
     return r.json()
 
 
-def evidence(c,sid,oid,key,accepted,departed,returned,pickup=None,status='delivered'):
+def evidence(c,sid,oid,key,accepted,departed,returned,pickup=None,*,status='delivered'):
     c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at,delivered_at) VALUES(%s,%s,'ops-driver',%s,%s,'ops-manager',%s,%s,%s)",
-              ('task-'+key,oid,sid,status,accepted,pickup or departed,returned))
+              ('task-'+key,oid,sid,status,accepted,pickup or departed,returned if status=='delivered' else None))
     c.execute("INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,return_branch_id,departed_at,returned_at,departure_evidence,return_evidence) VALUES(%s,'ops-brand',%s,'ops-driver','ops-branch','ops-branch',%s,%s,'{}','{\"source\":\"driver_explicit_confirmation\"}')",
               ('trip-'+key,sid,departed,returned))
     c.execute('INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES(%s,%s)',('trip-'+key,oid))
@@ -110,22 +111,48 @@ def test_acceptance_before_day_boundary_counts_even_when_departure_is_next_day(o
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize('status',['transferred','reassigned','cancelled'])
+@pytest.mark.parametrize('status',['transferred','cancelled'])
 def test_later_handover_or_cancellation_does_not_erase_confirmed_driver_work(ops,status):
     actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
     with db.tx() as c:
+        # Historical terminal state is inserted once, never rewritten after delivery.
         evidence(c,sid,oid,'a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03',status=status)
+        if status=='cancelled':c.execute("UPDATE orders SET delivery_status='cancelled' WHERE id=%s",(oid,))
     row=report(actor)['drivers'][0]
     assert row['actual_seconds']==4*3600
     assert not row['work_review_required']
 
 
 @pytest.mark.postgres
-def test_inconsistent_foreign_order_link_is_not_certified_or_exposed(ops):
-    actor,post,order,shifts=ops;sid=setup(shifts);oid=order(branch='ops-branch-other')
+def test_delivered_task_cannot_be_rewritten_to_invent_reassignment(ops):
+    actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
     with db.tx() as c:
         evidence(c,sid,oid,'a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03')
+    with pytest.raises(RaiseException,match='Final operational record is immutable'):
+        with db.tx() as c:c.execute("UPDATE driver_tasks SET status='reassigned' WHERE id='task-a'")
+    row=report(actor)['drivers'][0]
+    assert row['actual_seconds']==4*3600 and not row['work_review_required']
+    with db.tx() as c:
+        assert c.execute("SELECT status FROM driver_tasks WHERE id='task-a'").fetchone()['status']=='delivered'
+
+
+@pytest.mark.postgres
+def test_inconsistent_foreign_order_link_is_not_certified_or_exposed(ops):
+    actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
+    # Production protects confirmed order ownership. Do not disable that guard
+    # to manufacture the historical-import corruption this report must filter.
+    with pytest.raises(RaiseException,match='Confirmed order ownership and fulfillment are immutable'):
+        with db.tx() as c:
+            c.execute("UPDATE orders SET brand_id='ops-other',branch_id='ops-branch-other' WHERE id=%s",(oid,))
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('hours-foreign-customer','Synthetic foreign customer','customer','ops-other','[]')")
+        c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES('hours-foreign-order','ops-other','ops-branch-other','hours-foreign-customer','delivery','ready','pending','cash',1000,0,1000,'{}','{}')")
+        # An initial legacy link can be inconsistent without mutating ownership.
+        evidence(c,sid,'hours-foreign-order','a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03')
     row=report(actor)['drivers'][0]
     assert row['actual_seconds']==0 and row['work_review_required']
     assert not row['work_trip_evidence'] and not row['trips']
     assert 'ops-branch-other' not in str(row)
+    with db.tx() as c:
+        original=c.execute('SELECT brand_id,branch_id FROM orders WHERE id=%s',(oid,)).fetchone()
+        assert original=={'brand_id':'ops-brand','branch_id':'ops-branch'}

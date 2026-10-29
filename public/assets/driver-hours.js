@@ -2,6 +2,7 @@
 (() => {
  const $=s=>document.querySelector(s), form=$('#hours-filters');
  let initialDate=true,requestController=null,destroyed=false;
+ let accessController=null,accessPromise=null,accessGeneration=0,accessUserId=null,accessFingerprint=null;
  let lang=localStorage.getItem('kps-hours-language')==='en'?'en':'ar',report=null,requestVersion=0;
  const labels={title:['ساعات السائقين','Driver working hours'],back:['التشغيل','Operations'],period:['الفترة','Period'],day:['يوم التشغيل','Operational day'],week:['أسبوع','Week'],month:['شهر','Month'],date:['تاريخ يوم التشغيل','Operational date'],driver:['السائق','Driver'],branch:['الفرع','Branch'],all:['الجميع','All'],show:['عرض التقرير','Show report'],excel:['تصدير Excel','Export Excel'],pdf:['تصدير PDF','Export PDF'],shift:['إجمالي ساعات الشفتات','Total shift hours'],actual:['إجمالي ساعات العمل الفعلي','Actual working hours'],delivery:['إجمالي ساعات التوصيل','Delivery trip hours'],waiting:['إجمالي ساعات الجاهزية والانتظار','Ready and waiting hours'],break:['ساعات الاستراحات','Break hours'],trips:['الرحلات','Trips'],orders:['الطلبات','Orders'],details:['تفاصيل الرحلات من الفرع إلى الفرع','Branch-to-branch trip details'],pending:['بانتظار تأكيد العودة','Awaiting return confirmation'],empty:['لا توجد سجلات ضمن الفترة والنطاق المختارين.','No records within the selected period and scope.'],loading:['جاري تحميل التقرير…','Loading report…'],error:['تعذر تحميل التقرير. تحقق من الجلسة والصلاحيات وأعد المحاولة.','Unable to load report. Check your session and permissions, then retry.'],policy:['الانتظار أثناء الجاهزية عمل فعلي. الرحلات بانتظار تأكيد العودة لا تدخل في إجمالي التوصيل المعتمد. هذه الساعات لا تغير الرواتب أو المستحقات.','Ready waiting counts as actual work. Trips awaiting return confirmation are excluded from approved delivery totals. Hours do not change payroll or entitlements.'],other:['أعمال فعلية أخرى مثبتة','Other evidenced work'],open:['مفتوح','Open'],closed:['مغلق','Closed'],hour:['ساعة','h'],unclassified:['وقت عمل غير مصنف — لا توجد أدلة رحلات تاريخية كافية','Unclassified work — insufficient historic trip evidence'],unavailable:['غير متاح','Unavailable']};
  Object.assign(labels,{
@@ -50,23 +51,88 @@
  $('#hours-drivers').innerHTML=(report.drivers||[]).map(d=>`<article class="panel hours-driver"><header class="hours-driver-head"><h2>${esc(d.name||d.driver_name)}</h2><span class="pill">${esc(t(d.shift_status)||d.shift_status||'—')}</span><span>${esc(t('orders'))}: <b>${esc(count(d.order_count))}</b></span></header><div class="hours-metrics hours-primary">${metric('actual',workValue(d.actual_seconds,d.work_review_required))}${metric('duty',hours(d.duty_seconds))}${metric('remaining',hours(d.non_delivery_seconds))}${metric('utilization',percent(d.work_utilization_percent))}</div><p class="notice ${d.work_review_required?'warn':''}">${esc(t(d.work_clock_status||'needs_review'))}</p>${(d.work_review_reasons||[]).map(r=>`<p class="notice warn">${esc(t(r))}</p>`).join('')}${d.active_work_seconds?`<p class="notice">${esc(t('active_work'))}: <strong>${esc(hours(d.active_work_seconds))}</strong></p>`:''}<details><summary>${esc(t('work_details'))}</summary>${(d.work_trip_evidence||[]).map(w=>`<div class="hours-trip"><p>${esc(t('accepted'))}: ${esc(date(w.accepted_at))}</p><p>${esc(t('work_end'))}: ${w.returned_at?esc(branchName(w.return_branch_id))+' · '+esc(date(w.returned_at)):esc(t('pending'))}</p><p>${esc(t(w.status==='returned'?'recorded':w.status))}: ${w.duration_seconds==null?'—':esc(hours(w.duration_seconds))}</p></div>`).join('')}</details>${d.active_delivery_seconds?`<p class="notice">${esc(t('active_delivery'))}: <strong>${esc(hours(d.active_delivery_seconds))}</strong></p>`:''}${d.missing_order_timing_count?`<p class="notice warn">${esc(count(d.missing_order_timing_count))} — ${esc(t('incomplete'))}</p>`:''}<details><summary>${esc(t('evidence'))}</summary><div class="hours-metrics">${metric('shift',hours(d.shift_seconds))}${metric('delivery',hours(d.delivery_seconds))}${metric('waiting',hours(d.waiting_seconds))}${metric('break',hours(d.break_seconds))}${metric('trips',count(d.trip_count))}${d.unclassified_seconds?metric('unclassified',hours(d.unclassified_seconds)):''}</div><h3>${esc(t('details'))}</h3>${(d.trips||[]).map(r=>`<div class="hours-trip"><strong>${esc(branchName(r.departure_branch_id))} → ${esc(branchName(r.return_branch_id))}</strong><p>${esc(date(r.departed_at))} → ${esc(date(r.returned_at))}</p><p>${esc(t('orders'))}: ${esc(count(r.order_count))} · ${r.returned_at?esc(hours(r.period_seconds??r.duration_seconds)):`<span class="hours-pending">${esc(t('pending'))}</span>`}</p></div>`).join('')||`<p>${esc(t('empty'))}</p>`}</details>${completedHistory(d,branchName)}</article>`).join('')||`<p>${esc(t('empty'))}</p>`;
  }
  function options(select,rows){const current=select.value;select.innerHTML=`<option value="">${esc(t('all'))}</option>`+rows.map(r=>`<option value="${esc(r.id)}">${esc(r.name||r.driver_name||r.id)}</option>`).join('');select.value=current;}
+ function maskWork(){document.documentElement.setAttribute('data-hours-access-pending','');}
+ function clearReport(){
+  report=null;
+  for(const id of ['hours-kpis','hours-drivers'])$('#'+id).replaceChildren();
+  for(const id of ['hours-other','hours-day-note'])$('#'+id).textContent='';
+  for(const kind of ['xlsx','pdf']){const a=$('#hours-'+kind);a.hidden=true;a.removeAttribute('href');}
+ }
+ function revokeAccess(){
+  if(destroyed)return;
+  destroyed=true;requestVersion++;accessGeneration++;
+  requestController?.abort();accessController?.abort();requestController=accessController=null;
+  clearInterval(timer);clearInterval(accessTimer);
+  clearReport();accessUserId=accessFingerprint=null;
+  document.body.replaceChildren();
+  location.replace('/ops');
+ }
+ async function checkAccess(){
+  if(destroyed||document.visibilityState!=='visible'||!navigator.onLine)return false;
+  if(accessPromise)return accessPromise;
+  const generation=++accessGeneration,controller=new AbortController();accessController=controller;
+  const timeout=setTimeout(()=>controller.abort(),5000);
+  accessPromise=(async()=>{
+   try{
+    const response=await fetch('/api/session',{signal:controller.signal,credentials:'same-origin',cache:'no-store',headers:{'X-KPS-Context':'work'}});
+    if(destroyed||generation!==accessGeneration||controller.signal.aborted)return false;
+    if([401,403].includes(response.status)){revokeAccess();return false;}
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    const session=await response.json();
+    if(destroyed||generation!==accessGeneration||controller.signal.aborted)return false;
+    const user=session.user;
+    if(!user||!session.csrf_token||session.reauthentication_required||user.role==='customer'||
+       (user.role!=='owner'&&!user.effective_permissions?.includes('driver_hours_reports'))||
+       (accessUserId&&accessUserId!==user.id)){revokeAccess();return false;}
+    const nextFingerprint=JSON.stringify([user.id,user.role,user.brand_id,user.branch_ids,user.effective_permissions,user.central_operations]);
+    if(accessFingerprint&&accessFingerprint!==nextFingerprint){
+     requestVersion++;requestController?.abort();requestController=null;clearReport();
+     options(form.elements.driver_id,[]);options(form.elements.branch_id,[]);
+     void load(true);
+    }
+    accessUserId=user.id;accessFingerprint=nextFingerprint;
+    document.documentElement.removeAttribute('data-hours-access-pending');
+    return true;
+   }catch(error){
+    if(!destroyed&&generation===accessGeneration)maskWork();
+    return false;
+   }finally{
+    clearTimeout(timeout);
+    if(accessController===controller){accessController=null;accessPromise=null;}
+   }
+  })();
+  return accessPromise;
+ }
+ function pauseAccessChecks(){
+  maskWork();accessGeneration++;accessController?.abort();accessController=null;accessPromise=null;
+  requestVersion++;requestController?.abort();requestController=null;
+ }
+ async function resumeAccessChecks(){
+  if(destroyed)return;
+  maskWork();
+  if(document.visibilityState!=='visible'||!navigator.onLine){pauseAccessChecks();return;}
+  if(await checkAccess())void load(true);
+ }
  async function load(automatic=false){
   if(destroyed||(automatic&&(requestController||document.visibilityState!=='visible'||!navigator.onLine)))return;
   const version=++requestVersion;requestController?.abort();const controller=new AbortController();requestController=controller;
   $('#hours-status').textContent=t('loading');$('#hours-xlsx').hidden=$('#hours-pdf').hidden=true;
   try{const q=query(),response=await fetch('/api/driver-work-hours/report?'+q,{signal:controller.signal,credentials:'same-origin',cache:'no-store',headers:{'X-KPS-Context':'work'}});
+   if([401,403].includes(response.status)){revokeAccess();return;}
    if(!response.ok)throw new Error('HTTP '+response.status);const next=await response.json();if(destroyed||version!==requestVersion)return;
    if(initialDate&&next.operational_date&&next.operational_date!==form.elements.date.value){initialDate=false;form.elements.date.value=next.operational_date;requestController=null;return load();}
    initialDate=false;report=next;options(form.elements.driver_id,report.options?.drivers||(report.drivers||[]).map(d=>({id:d.driver_id,name:d.name||d.driver_name})));options(form.elements.branch_id,report.branches||[]);render();$('#hours-status').textContent='';
    for(const kind of ['xlsx','pdf']){const a=$('#hours-'+kind);a.href='/api/driver-work-hours/export.'+kind+'?'+q+'&lang='+lang;a.hidden=false;}
-  }catch(e){if(destroyed||version!==requestVersion||e.name==='AbortError')return;report=null;$('#hours-kpis').replaceChildren();$('#hours-drivers').replaceChildren();$('#hours-other').textContent='';$('#hours-day-note').textContent='';$('#hours-status').textContent=t('error');}
+  }catch(e){if(destroyed||version!==requestVersion||e.name==='AbortError')return;clearReport();$('#hours-status').textContent=t('error');}
   finally{if(requestController===controller)requestController=null;}
  }
  form.elements.date.value=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Riyadh',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
- form.addEventListener('submit',e=>{e.preventDefault();initialDate=false;load();});form.addEventListener('change',()=>{initialDate=false;load();});$('#hours-language').addEventListener('click',()=>{lang=lang==='ar'?'en':'ar';localStorage.setItem('kps-hours-language',lang);translate();load();});translate();load();
+ form.addEventListener('submit',e=>{e.preventDefault();initialDate=false;load();});form.addEventListener('change',()=>{initialDate=false;load();});$('#hours-language').addEventListener('click',()=>{lang=lang==='ar'?'en':'ar';localStorage.setItem('kps-hours-language',lang);translate();load();});translate();maskWork();
  const timer=setInterval(()=>load(true),60000);
- const resume=()=>load(true);document.addEventListener('visibilitychange',resume);window.addEventListener('online',resume);
- window.addEventListener('pagehide',()=>{destroyed=true;requestVersion++;requestController?.abort();requestController=null;clearInterval(timer);document.removeEventListener('visibilitychange',resume);window.removeEventListener('online',resume);});
+ const accessTimer=setInterval(()=>{void checkAccess();},2000);
+ void checkAccess().then(allowed=>{if(allowed)void load(true);});
+ document.addEventListener('visibilitychange',resumeAccessChecks);window.addEventListener('online',resumeAccessChecks);window.addEventListener('offline',pauseAccessChecks);window.addEventListener('focus',resumeAccessChecks);
+ window.addEventListener('pagehide',()=>{destroyed=true;pauseAccessChecks();clearInterval(timer);clearInterval(accessTimer);document.removeEventListener('visibilitychange',resumeAccessChecks);window.removeEventListener('online',resumeAccessChecks);window.removeEventListener('offline',pauseAccessChecks);window.removeEventListener('focus',resumeAccessChecks);});
  window.addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
 })();
 
