@@ -18,9 +18,9 @@ def report(actor):
     return r.json()
 
 
-def evidence(c,sid,oid,key,accepted,departed,returned,pickup=None):
-    c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at,delivered_at) VALUES(%s,%s,'ops-driver',%s,'delivered','ops-manager',%s,%s,%s)",
-              ('task-'+key,oid,sid,accepted,pickup or departed,returned))
+def evidence(c,sid,oid,key,accepted,departed,returned,pickup=None,status='delivered'):
+    c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at,delivered_at) VALUES(%s,%s,'ops-driver',%s,%s,'ops-manager',%s,%s,%s)",
+              ('task-'+key,oid,sid,status,accepted,pickup or departed,returned))
     c.execute("INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,return_branch_id,departed_at,returned_at,departure_evidence,return_evidence) VALUES(%s,'ops-brand',%s,'ops-driver','ops-branch','ops-branch',%s,%s,'{}','{\"source\":\"driver_explicit_confirmation\"}')",
               ('trip-'+key,sid,departed,returned))
     c.execute('INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES(%s,%s)',('trip-'+key,oid))
@@ -114,9 +114,7 @@ def test_acceptance_before_day_boundary_counts_even_when_departure_is_next_day(o
 def test_later_handover_or_cancellation_does_not_erase_confirmed_driver_work(ops,status):
     actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
     with db.tx() as c:
-        evidence(c,sid,oid,'a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03')
-        c.execute('UPDATE driver_tasks SET status=%s WHERE id=%s',(status,'task-a'))
-        if status=='cancelled':c.execute("UPDATE orders SET delivery_status='cancelled' WHERE id=%s",(oid,))
+        evidence(c,sid,oid,'a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03',status=status)
     row=report(actor)['drivers'][0]
     assert row['actual_seconds']==4*3600
     assert not row['work_review_required']
@@ -124,10 +122,9 @@ def test_later_handover_or_cancellation_does_not_erase_confirmed_driver_work(ops
 
 @pytest.mark.postgres
 def test_inconsistent_foreign_order_link_is_not_certified_or_exposed(ops):
-    actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
+    actor,post,order,shifts=ops;sid=setup(shifts);oid=order(branch='ops-branch-other')
     with db.tx() as c:
         evidence(c,sid,oid,'a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03')
-        c.execute("UPDATE orders SET brand_id='ops-other',branch_id='ops-branch-other' WHERE id=%s",(oid,))
     row=report(actor)['drivers'][0]
     assert row['actual_seconds']==0 and row['work_review_required']
     assert not row['work_trip_evidence'] and not row['trips']

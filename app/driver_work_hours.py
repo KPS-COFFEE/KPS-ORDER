@@ -432,7 +432,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
                 invalid_trip_scope.add(trip['id'])
         accepted_by_trip={t['id']:[] for t in ts}
         if ts:
-            starts=c.execute("""SELECT x.trip_id,o.id order_id,o.brand_id,o.branch_id,o.test_void,o.status order_status,
+            starts=c.execute("""SELECT x.trip_id,o.id order_id,o.brand_id,o.branch_id,o.test_void,
                 a.shift_id,a.driver_id,a.status,a.accepted_at
               FROM driver_work_trip_orders x LEFT JOIN orders o ON o.id=x.order_id
               LEFT JOIN driver_tasks a ON a.order_id=x.order_id AND a.driver_id=%s AND a.shift_id=ANY(%s)
@@ -444,7 +444,8 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
                        and row['status'] in ('accepted','picked_up','problem','delivered','transferred','reassigned','cancelled'))
                 if not valid:invalid_trip_scope.add(row['trip_id'])
                 accepted_by_trip[row['trip_id']].append(row['accepted_at'] if valid else None)
-        tasks=c.execute("""SELECT t.*,o.brand_id order_brand_id,o.branch_id order_branch_id,o.test_void,o.status order_status
+        tasks=c.execute("""SELECT t.*,o.brand_id order_brand_id,o.branch_id order_branch_id,o.test_void,
+            (o.delivery_status='cancelled' OR o.preparation_status IN ('cancelled','rejected')) AS order_cancelled
           FROM driver_tasks t JOIN orders o ON o.id=t.order_id
           WHERE t.shift_id=ANY(%s) AND t.driver_id=%s
             AND t.status IN ('accepted','picked_up','problem','delivered','transferred','reassigned','cancelled')
@@ -464,7 +465,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
             valid_tasks.append(task)
             if task['order_id'] in linked_orders:continue
             shift=mission_shifts[task['shift_id']]
-            if task['status'] in ('delivered','transferred','reassigned','cancelled') or task['order_status']=='cancelled' or shift.get('submitted_at') or shift.get('closed_at') or shift.get('status') not in ('open','closing'):
+            if task['status'] in ('delivered','transferred','reassigned','cancelled') or task['order_cancelled'] or shift.get('submitted_at') or shift.get('closed_at') or shift.get('status') not in ('open','closing'):
                 missing_ids.add(task['shift_id'])
             else:preparing.append(task)
         pending_work=[{'id':'accepted:'+t['id'],'returned_at':None} for t in preparing]
