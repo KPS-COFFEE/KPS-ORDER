@@ -21,6 +21,9 @@ public final class MainActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private boolean visible=false,checking=false,permissionAsked=false,notificationsAsked=false;
     private ValueCallback<Uri[]> upload;
+    private PermissionRequest cameraPermission;
+    private Uri captureUri;
+    private Intent pendingCapture;
     private final Runnable poll=new Runnable(){public void run(){if(visible){checkShift();main.postDelayed(this,15000);}}};
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);WebView.setWebContentsDebuggingEnabled(false);
@@ -54,15 +57,15 @@ public final class MainActivity extends Activity {
         web=new WebView(this);layout.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(layout);
         layout.requestApplyInsets();
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
-        WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);
-        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.4 KPSNativeOrderAudio/1");
+        WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);s.setSupportMultipleWindows(true);
+        s.setUserAgentString(s.getUserAgentString()+" KPSDriver/0.2.5 KPSNativeOrderAudio/1");
         s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setGeolocationEnabled(false); // Native service owns GPS; never a second browser watcher.
         web.setWebViewClient(new WebViewClient(){
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest r){
                 Uri u=r.getUrl();
                 if(isWork(u))return false;
-                if(r.isForMainFrame() && r.hasGesture() && "https".equals(u.getScheme())) {
+                if(r.isForMainFrame() && "https".equals(u.getScheme()) && (r.hasGesture() || "wa.me".equals(u.getHost()))) {
                     try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}
                 }
                 return true;
@@ -76,15 +79,53 @@ public final class MainActivity extends Activity {
             @Override public void onReceivedSslError(WebView v,android.webkit.SslErrorHandler h,android.net.http.SslError e){h.cancel();status.setText("تعذر الاتصال الآمن؛ أعد المحاولة لاحقًا");}
         });
         web.setWebChromeClient(new WebChromeClient(){
+            @Override public boolean onCreateWindow(WebView view,boolean dialog,boolean gesture,Message message){
+                if(!gesture || !isWork(Uri.parse(view.getUrl()==null?"":view.getUrl())))return false;
+                WebView popup=new WebView(MainActivity.this);
+                popup.setWebViewClient(new WebViewClient(){
+                    @Override public boolean shouldOverrideUrlLoading(WebView child,WebResourceRequest request){
+                        Uri uri=request.getUrl();
+                        if(request.isForMainFrame() && "https".equals(uri.getScheme()) && "wa.me".equals(uri.getHost()) && (uri.getPort()==-1 || uri.getPort()==443)){
+                            try{startActivity(new Intent(Intent.ACTION_VIEW,uri));}
+                            catch(ActivityNotFoundException e){status.setText("لا يوجد تطبيق يفتح رابط واتساب");}
+                        }
+                        return true;
+                    }
+                });
+                ((WebView.WebViewTransport)message.obj).setWebView(popup);message.sendToTarget();
+                main.postDelayed(popup::destroy,30000);return true;
+            }
             @Override public boolean onShowFileChooser(WebView v,ValueCallback<Uri[]> result,FileChooserParams p){
                 if(upload!=null)upload.onReceiveValue(null);upload=result;
-                Intent pick=new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
-                try{startActivityForResult(Intent.createChooser(pick,"اختر صورة الإثبات"),31);}catch(ActivityNotFoundException e){upload.onReceiveValue(null);upload=null;}
+                Intent pick;
+                captureUri=null;
+                if(p.isCaptureEnabled()){
+                    captureUri=Uri.parse("content://"+getPackageName()+".proof/photo.jpg");
+                    new java.io.File(getCacheDir(),"driver-proof.jpg").delete();
+                    pick=new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+                        .putExtra(android.provider.MediaStore.EXTRA_OUTPUT,captureUri)
+                        .setClipData(ClipData.newRawUri("Order photo",captureUri))
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                }else pick=new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
+                if(p.isCaptureEnabled() && checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){pendingCapture=pick;requestPermissions(new String[]{Manifest.permission.CAMERA},13);}else launchPhoto(pick);
                 return true;
             }
-            @Override public void onPermissionRequest(PermissionRequest r){r.deny();}
+            @Override public void onPermissionRequest(PermissionRequest r){
+                main.post(()->{
+                    if(!isWork(r.getOrigin()) || !isWork(Uri.parse(web.getUrl()==null?"":web.getUrl()))
+                        || r.getResources().length!=1 || !PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r.getResources()[0])){r.deny();return;}
+                    if(checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED){r.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});return;}
+                    if(cameraPermission!=null)cameraPermission.deny();
+                    cameraPermission=r;requestPermissions(new String[]{Manifest.permission.CAMERA},12);
+                });
+            }
+            @Override public void onPermissionRequestCanceled(PermissionRequest r){if(cameraPermission==r)cameraPermission=null;}
         });
         web.loadUrl(WorkApi.ORIGIN+"/ops");
+    }
+    private void launchPhoto(Intent intent){
+        try{startActivityForResult(Intent.createChooser(intent,"صورة الطلب"),31);}
+        catch(ActivityNotFoundException|SecurityException e){if(upload!=null)upload.onReceiveValue(null);upload=null;captureUri=null;status.setText("تعذر فتح الكاميرا؛ راجع إذن الكاميرا في إعدادات التطبيق");}
     }
     static boolean isWork(Uri u){return "https".equals(u.getScheme()) && "order.kps.sa".equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443);}
     private void checkShift(){
@@ -123,11 +164,18 @@ public final class MainActivity extends Activity {
     private boolean alertsAudible(){
         return OrderAudio.audible(this);
     }
-    @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] grants){super.onRequestPermissionsResult(code,permissions,grants);checkShift();}
+    @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] grants){super.onRequestPermissionsResult(code,permissions,grants);
+        if(code==13){Intent intent=pendingCapture;pendingCapture=null;
+            if(grants.length>0 && grants[0]==PackageManager.PERMISSION_GRANTED && intent!=null)launchPhoto(intent);
+            else{if(upload!=null)upload.onReceiveValue(null);upload=null;captureUri=null;status.setText("اسمح بالكاميرا من إعدادات التطبيق ثم أعد المحاولة");}return;}
+        if(code==12){PermissionRequest r=cameraPermission;cameraPermission=null;
+            if(r!=null){if(grants.length>0 && grants[0]==PackageManager.PERMISSION_GRANTED && isWork(Uri.parse(web.getUrl()==null?"":web.getUrl())))r.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});else r.deny();}return;}
+        checkShift();}
     @Override protected void onResume(){super.onResume();visible=true;main.removeCallbacks(poll);main.post(poll);}
     @Override protected void onPause(){visible=false;main.removeCallbacks(poll);CookieManager.getInstance().flush();super.onPause();}
-    @Override protected void onDestroy(){visible=false;main.removeCallbacksAndMessages(null);if(upload!=null)upload.onReceiveValue(null);web.destroy();io.shutdownNow();super.onDestroy();}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==31 && upload!=null){upload.onReceiveValue(result==RESULT_OK && data!=null && data.getData()!=null?new Uri[]{data.getData()}:null);upload=null;}}
+    @Override protected void onDestroy(){visible=false;main.removeCallbacksAndMessages(null);if(upload!=null)upload.onReceiveValue(null);if(cameraPermission!=null)cameraPermission.deny();web.destroy();io.shutdownNow();super.onDestroy();}
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==31 && upload!=null){Uri photo=captureUri!=null?captureUri:(data==null?null:data.getData());
+        upload.onReceiveValue(result==RESULT_OK && photo!=null?new Uri[]{photo}:null);upload=null;captureUri=null;}}
     @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else super.onBackPressed();}
 }
 

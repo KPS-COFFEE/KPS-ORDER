@@ -63,3 +63,11 @@ device or production acceptance is claimed by a successful compile.
 The host is intentionally fixed for this pilot. If portal routing is enabled
 and staff move to `staff.kps.sa`, change the app's trusted origin through a
 reviewed build rather than accepting arbitrary origins or forwarding cookies.
+
+## Camera and external contact repair (0.2.5)
+
+Operations page camera permission and Android CAMERA permission are both required.
+Only the trusted work origin receives video capture permission; microphone remains denied.
+Capture inputs launch the device camera with one private temporary photo URI.
+User-initiated WhatsApp popup targets are opened externally for the exact HTTPS wa.me host.
+Build/lint and physical-device acceptance remain pending. No signed update is claimed.
