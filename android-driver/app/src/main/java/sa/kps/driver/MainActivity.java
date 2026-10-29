@@ -24,6 +24,7 @@ public final class MainActivity extends Activity {
     private PermissionRequest cameraPermission;
     private Uri captureUri;
     private Intent pendingCapture;
+    private final java.util.Set<WebView> popups=new java.util.HashSet<>();
     private final Runnable poll=new Runnable(){public void run(){if(visible){checkShift();main.postDelayed(this,15000);}}};
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);WebView.setWebContentsDebuggingEnabled(false);
@@ -65,7 +66,7 @@ public final class MainActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest r){
                 Uri u=r.getUrl();
                 if(isWork(u))return false;
-                if(r.isForMainFrame() && "https".equals(u.getScheme()) && (r.hasGesture() || "wa.me".equals(u.getHost()))) {
+                if(r.isForMainFrame() && "https".equals(u.getScheme()) && (r.hasGesture() || ("wa.me".equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443)))) {
                     try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}
                 }
                 return true;
@@ -81,7 +82,7 @@ public final class MainActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient(){
             @Override public boolean onCreateWindow(WebView view,boolean dialog,boolean gesture,Message message){
                 if(!gesture || !isWork(Uri.parse(view.getUrl()==null?"":view.getUrl())))return false;
-                WebView popup=new WebView(MainActivity.this);
+                WebView popup=new WebView(MainActivity.this);popups.add(popup);
                 popup.setWebViewClient(new WebViewClient(){
                     @Override public boolean shouldOverrideUrlLoading(WebView child,WebResourceRequest request){
                         Uri uri=request.getUrl();
@@ -93,9 +94,10 @@ public final class MainActivity extends Activity {
                     }
                 });
                 ((WebView.WebViewTransport)message.obj).setWebView(popup);message.sendToTarget();
-                main.postDelayed(popup::destroy,30000);return true;
+                main.postDelayed(()->{if(popups.remove(popup))popup.destroy();},30000);return true;
             }
             @Override public boolean onShowFileChooser(WebView v,ValueCallback<Uri[]> result,FileChooserParams p){
+                if(!isWork(Uri.parse(v.getUrl()==null?"":v.getUrl()))){result.onReceiveValue(null);return true;}
                 if(upload!=null)upload.onReceiveValue(null);upload=result;
                 Intent pick;
                 captureUri=null;
@@ -173,8 +175,9 @@ public final class MainActivity extends Activity {
         checkShift();}
     @Override protected void onResume(){super.onResume();visible=true;main.removeCallbacks(poll);main.post(poll);}
     @Override protected void onPause(){visible=false;main.removeCallbacks(poll);CookieManager.getInstance().flush();super.onPause();}
-    @Override protected void onDestroy(){visible=false;main.removeCallbacksAndMessages(null);if(upload!=null)upload.onReceiveValue(null);if(cameraPermission!=null)cameraPermission.deny();web.destroy();io.shutdownNow();super.onDestroy();}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==31 && upload!=null){Uri photo=captureUri!=null?captureUri:(data==null?null:data.getData());
+    @Override protected void onDestroy(){visible=false;main.removeCallbacksAndMessages(null);if(upload!=null)upload.onReceiveValue(null);if(cameraPermission!=null)cameraPermission.deny();for(WebView popup:popups)popup.destroy();popups.clear();new java.io.File(getCacheDir(),"driver-proof.jpg").delete();web.destroy();io.shutdownNow();super.onDestroy();}
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==31 && upload!=null){Uri photo=captureUri!=null?(new java.io.File(getCacheDir(),"driver-proof.jpg").length()>0?captureUri:null):(data==null?null:data.getData());
+        if(captureUri!=null)revokeUriPermission(captureUri,Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         upload.onReceiveValue(result==RESULT_OK && photo!=null?new Uri[]{photo}:null);upload=null;captureUri=null;}}
     @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else super.onBackPressed();}
 }
