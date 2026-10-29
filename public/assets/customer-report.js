@@ -7,7 +7,6 @@
   let data = null, applied = null, offset = 0, requestId = 0, controller = null;
   let stopped=false, accessAllowed=false, accessController=null, accessPromise=null, accessGeneration=0, actor=null, accessFingerprint=null, reportPending=true;
   const headers = {'X-KPS-Context': 'work'};
-  if (brand) headers['X-Operations-Brand'] = brand;
   const tr = (ar, english) => en ? english : ar;
   const node = (tag, text, cls) => {const n = document.createElement(tag); if (text != null) n.textContent = text; if (cls) n.className = cls; return n;};
   const number = n => new Intl.NumberFormat(en ? 'en-SA' : 'ar-SA').format(n || 0);
@@ -108,7 +107,7 @@
     if(stopped)return;
     stopped=true;accessAllowed=false;requestId++;accessGeneration++;
     controller?.abort();accessController?.abort();controller=accessController=null;
-    clearInterval(accessTimer);clearReport();form.reset();form.hidden=true;
+    clearInterval(accessTimer);clearReport();HTMLFormElement.prototype.reset.call(form);form.hidden=true;
     actor=accessFingerprint=null;
     $('report-status').className='error';
     $('report-status').textContent=message||tr('انتهى تصريح الدخول. سجّل الدخول بحساب مالك نشط.','Access ended. Sign in with an active owner account.');
@@ -122,12 +121,27 @@
     const timeout=setTimeout(()=>proofController.abort(),5000);
     accessPromise=(async()=>{
       try {
-        const response=await fetch('/api/session',{headers,cache:'no-store',credentials:'same-origin',signal:proofController.signal});
+        let projected=Boolean(headers['X-Operations-Brand']);
+        let response=await fetch('/api/session',{headers:actor?{...headers}:{'X-KPS-Context':'work'},cache:'no-store',credentials:'same-origin',signal:proofController.signal});
         if(stopped||generation!==accessGeneration||proofController.signal.aborted)return false;
         if([401,403].includes(response.status)){revokeAccess();return false;}
         if(!response.ok)throw new Error(tr('تعذر التحقق من صلاحية الوصول. أعد الاتصال للمحاولة.','Unable to verify access. Reconnect to retry.'));
-        const session=await response.json();
+        let session=await response.json();
         if(stopped||generation!==accessGeneration||proofController.signal.aborted)return false;
+        // Same-brand sessions need no projection header (including runtimes
+        // where multibrand is disabled). Foreign scope is proved separately.
+        if(!actor&&brand&&brand!==session.user?.brand_id){
+          const home=session.user;
+          if(!home?.id||home.role!=='owner'||home.active===false||!session.csrf_token||session.reauthentication_required){revokeAccess();return false;}
+          response=await fetch('/api/session',{headers:{'X-KPS-Context':'work','X-Operations-Brand':brand},cache:'no-store',credentials:'same-origin',signal:proofController.signal});
+          if(stopped||generation!==accessGeneration||proofController.signal.aborted)return false;
+          if([401,403].includes(response.status)){revokeAccess();return false;}
+          if(!response.ok)throw new Error(tr('تعذر التحقق من صلاحية الوصول.','Unable to verify access.'));
+          session=await response.json();
+          if(stopped||generation!==accessGeneration||proofController.signal.aborted)return false;
+          if(session.user?.id!==home.id){revokeAccess();return false;}
+          projected=true;
+        }
         const user=session.user;
         if(!user?.id||user.role!=='owner'||user.active===false||!session.csrf_token||session.reauthentication_required||
            (actor&&actor!==user.id)||(brand&&brand!==user.brand_id)){
@@ -137,7 +151,7 @@
         const scopeChanged=accessFingerprint&&accessFingerprint!==fingerprint;
         if(scopeChanged){requestId++;controller?.abort();controller=null;clearReport();}
         actor=user.id;accessFingerprint=fingerprint;accessAllowed=true;
-        brand=user.brand_id;headers['X-Operations-Brand']=brand;
+        brand=user.brand_id;if(projected)headers['X-Operations-Brand']=brand;else delete headers['X-Operations-Brand'];
         $('back-link').href='/ops?operations_brand='+encodeURIComponent(brand);
         $('crm-link').href='/customer-crm?operations_brand='+encodeURIComponent(brand);
         $('report-signin').href='/ops?operations_brand='+encodeURIComponent(brand);
@@ -190,7 +204,7 @@
   form.addEventListener('submit',event=>{event.preventDefault();if(form.reportValidity())load();});
   form.addEventListener('change',event=>{if(['start','end'].includes(event.target.name)){document.querySelectorAll('[data-preset]').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});$('preset-note').textContent='';}});
   $('presets').addEventListener('click',event=>{const button=event.target.closest('[data-preset]');if(button){preset(button.dataset.preset);load();}});
-  $('reset').addEventListener('click',()=>{form.reset();preset('month');load();});
+  $('reset').addEventListener('click',()=>{HTMLFormElement.prototype.reset.call(form);preset('month');load();});
   $('previous').addEventListener('click',()=>load(Math.max(0,offset-50),{...applied}));
   $('next').addEventListener('click',()=>{if(data && data.next_offset!==null)load(data.next_offset,{...applied});});
   $('print').addEventListener('click',()=>{if(data&&accessAllowed&&!stopped){const open=$('daily-details').open;$('daily-details').open=true;window.print();$('daily-details').open=open;}});

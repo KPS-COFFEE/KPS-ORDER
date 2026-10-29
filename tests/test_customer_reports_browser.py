@@ -15,8 +15,11 @@ def test_report_filters_pagination_mobile_and_safe_names(static_customer,lang,wi
     def respond(route):
         request=route.request;url=urlsplit(request.url);q=parse_qs(url.query)
         assert request.headers.get('x-kps-context')=='work'
+        if url.path=='/api/session':
+            projection=request.headers.get('x-operations-brand')
+            assert projection in (None,'enbishan')
+            return route.fulfill(json={'user':{'id':'synthetic-report-owner','role':'owner','brand_id':'enbishan' if projection else 'kps','active':True,'branch_ids':[]},'csrf_token':'synthetic-report-csrf'})
         assert request.headers.get('x-operations-brand')=='enbishan'
-        if url.path=='/api/session':return route.fulfill(json={'user':{'id':'synthetic-report-owner','role':'owner','brand_id':'enbishan','active':True,'branch_ids':[]},'csrf_token':'synthetic-report-csrf'})
         assert url.path=='/api/reports/customers'
         calls.append(q)
         offset=int(q['offset'][0]);n=50 if offset==0 else 1
@@ -116,6 +119,7 @@ def test_real_owner_revocation_clears_an_already_open_customer_report(sms_browse
     try:
         headers=_owner_login(work,base,owner)
         reviewer_headers=_owner_login(admin,base,reviewer)
+        page.bring_to_front()
         page.goto(base+'/customer-report?operations_brand=kps',wait_until='networkidle')
         expect(page.locator('#ranking')).to_contain_text('PRIVATE CUSTOMER REPORT')
         expect(page.locator('#report-content')).to_be_visible()
