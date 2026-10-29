@@ -25,6 +25,7 @@ from tests.browser_sms_helpers import complete_owner_sms_dialog
 from test_browser import (ARTIFACTS, WIDTHS, _context, _capture, _staff,
                           _staff_ui_login, _authenticated_post, _submit_modal,
                           _approve_driver_closure_from_browser,
+                          _confirm_driver_return_from_browser,
                           _match_manager_finances,
                           _inspection_payload, _fill_closure_inspection, _attach_task_photo,
                           chromium_browser, ROOT)
@@ -310,6 +311,7 @@ def test_v5_guest_email_invited_driver_one_collection_final_owner_report(v5_live
         driver.locator('[data-action=delivered]').click()
         _attach_task_photo(driver)
         _submit_modal(driver, {'proof':'دليل تسليم اختبار اصطناعي فقط'})
+        _confirm_driver_return_from_browser(driver,base,driver_shift,order_id)
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
         _approve_driver_closure_from_browser(driver,contexts['delivery_manager'],base,driver_shift)

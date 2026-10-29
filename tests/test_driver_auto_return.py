@@ -148,3 +148,17 @@ def test_removed_verification_does_not_resurrect_old_outside_evidence_when_reena
     state, arrived = evaluate_point(state, sample(0), BRANCH, NOW, DELIVERY, START)
     assert arrived is None
     assert state.get('outside_seen_at') is None
+
+
+def test_first_geofence_initialization_preserves_current_terminal_observation():
+    # The task's transfer/cancellation clock is first observed by the server on
+    # the outside fix. Selecting the geofence must not silently discard it and
+    # restart that independent task clock on the first inside fix.
+    observed = NOW-timedelta(seconds=90)
+    state = {'session_id':'session', 'terminal_signature':['task:transferred'],
+             'terminal_observed_at':observed.isoformat()}
+    for point in complete_points():
+        state, arrived = evaluate_point(state, point, BRANCH, point['captured_at'], observed, START)
+        assert state['terminal_signature'] == ['task:transferred']
+        assert state['terminal_observed_at'] == observed.isoformat()
+    assert arrived == NOW-timedelta(seconds=60)

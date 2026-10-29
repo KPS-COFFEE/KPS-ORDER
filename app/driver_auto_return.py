@@ -52,17 +52,23 @@ def evaluate_point(state, point, branch, now, eligible_after, started_at):
             state.pop(key, None)
         state['status'] = reason
         return state, None
+    def clear_geofence():
+        # Session identity and observed terminal tasks do not depend on the
+        # branch pin. Only location/departure/dwell evidence must be discarded
+        # when initializing, changing or losing the verified geofence.
+        independent={key:state[key] for key in ('session_id','terminal_signature','terminal_observed_at') if key in state}
+        state.clear()
+        state.update(independent)
     try:
         lat, lng, accuracy = (float(point[k]) for k in ('lat','lng','accuracy_m'))
     except (ValueError, TypeError, KeyError): return reset('invalid_point')
     if target is None:
-        state.clear()
+        clear_geofence()
         return reset('branch_location_missing')
     target_key=','.join(format(value,'.8f') for value in target)
     if state.get('target_key')!=target_key:
-        session_id=state.get('session_id')
-        state.clear()
-        state.update(target_key=target_key,session_id=session_id)
+        clear_geofence()
+        state['target_key']=target_key
         previous=None
     if (not captured or not started_at or captured < started_at or
             not 0 <= (now-captured).total_seconds() <= MAX_AGE_SECONDS or
@@ -259,6 +265,13 @@ def describe_current(c,user,trip):
     pin=_location(branch)
     state=trip.get('auto_return_state') or {}
     raw=state.get('status','awaiting_location') if pin else 'branch_location_missing'
+    if pin and raw not in ('departure_not_observed','stop_open'):
+        server_now=c.execute('SELECT now() n').fetchone()['n']
+        last_captured=_stamp(state.get('last_captured_at'))
+        if last_captured and not 0 <= (server_now-last_captured).total_seconds() <= MAX_AGE_SECONDS:
+            raw='location_stale'
+        elif last_captured is None:
+            raw='awaiting_location'
     status=('confirming_return' if raw=='confirming_arrival' else
             'awaiting_deliveries' if raw=='orders_pending' else
             'awaiting_return' if raw=='away_from_return_branch' else
