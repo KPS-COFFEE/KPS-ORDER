@@ -50,6 +50,7 @@ jobs:
         run: >-
           python -m pytest -q --strict-markers
           tests/test_driver_hours_fairness.py tests/test_driver_hours_fairness_postgres.py
+          tests/test_driver_hours_shared_postgres.py
           tests/test_driver_hours_fairness_browser.py
           tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py
           tests/test_driver_order_activity.py tests/test_driver_hours_reports.py
