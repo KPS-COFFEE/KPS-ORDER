@@ -50,7 +50,7 @@ jobs:
           path: |
             android-driver/app/build/outputs/apk/release/app-release-unsigned.apk
             android-driver/app/build/outputs/bundle/release/app-release.aab
-            android-driver/app/build/reports/release-audit.json
+            android-driver/build/reports/release-audit.json
             android-driver/app/build/reports/lint-results-release.*
           if-no-files-found: error
           retention-days: 7
