@@ -117,18 +117,14 @@ def test_appearance_administrator_cannot_change_operating_settings_or_account_pe
 
 @pytest.mark.postgres
 @pytest.mark.parametrize('endpoint', ['/api/admin/users', '/api/identity/staff'])
-def test_owner_permission_change_requires_step_up_revokes_sessions_and_audits(owner, endpoint, monkeypatch):
+def test_owner_permission_change_accepts_mobile_session_revokes_sessions_and_audits(owner, endpoint, monkeypatch):
     client, mutate = owner
     owner_cookies, owner_csrf = dict(client.cookies), client.headers['X-CSRF-Token']
     identifier = _administrator(['branches_manage'])
     _login(client, identifier, monkeypatch)
     old_admin_cookies = dict(client.cookies)
     _restore_owner(client, owner_cookies, owner_csrf)
-    denied = mutate('PATCH', endpoint + '/' + identifier, {'permissions': ['banners_manage']})
-    assert denied.status_code == 403 and denied.json()['detail']['code'] == 'OWNER_STEP_UP_REQUIRED'
-    with db.tx() as conn:
-        owner_user = conn.execute("SELECT * FROM users WHERE id='admin-test-owner'").fetchone()
-    sms_step_up(client, owner_user, monkeypatch)
+    assert client.get('/api/session').json()['user']['owner_session_approved'] is True
     invalid = mutate('PATCH', endpoint + '/' + identifier, {'permissions': ['owner']})
     assert invalid.status_code == 422
     changed = mutate('PATCH', endpoint + '/' + identifier, {'permissions': ['banners_manage']})

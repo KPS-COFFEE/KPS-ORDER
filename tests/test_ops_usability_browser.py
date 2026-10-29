@@ -186,14 +186,15 @@ def test_staff_cards_and_live_partial_customer_search(live_app,chromium_browser,
     finally:context.close()
 
 
-def test_add_staff_sms_provider_failure_can_retry_without_losing_fields(live_app,chromium_browser,monkeypatch):
+def test_authenticated_owner_adds_staff_when_sms_provider_is_unavailable(live_app,chromium_browser,monkeypatch):
     from playwright.sync_api import expect
     owner=_staff();context,page,errors=_context(chromium_browser,live_app)
     try:
         _owner_login(context,live_app,owner)
-        original=sms_verification.start
         def unavailable(*args,**kwargs):raise db.error(503,'OTP_PROVIDER_FAILURE','تعذر الاتصال بمزود التحقق. حاول لاحقًا.')
         monkeypatch.setattr(sms_verification,'start',unavailable)
+        requests=[]
+        page.on('request',lambda request:requests.append(request.url) if '/api/identity/owner/sms/' in request.url else None)
         page.goto(live_app+'/ops',wait_until='networkidle')
         _open_staff_navigation(page)
         page.locator('#navigation [data-page=admin]').click()
@@ -205,18 +206,12 @@ def test_add_staff_sms_provider_failure_can_retry_without_losing_fields(live_app
         form.locator('.staff-branch-dropdown summary').click()
         form.locator('[name="scope:kps-branch-1"]').check()
         form.locator('button[type=submit]').click()
-        dialog=page.locator('dialog:not(#modal)').filter(has=page.locator('[name=code]'))
-        expect(dialog.locator('.form-error')).to_contain_text('تعذر الاتصال')
-        expect(form.locator('[name=display_name]')).to_have_value('موظف اختبار إعادة المحاولة')
-        with db.tx() as c:assert c.execute("SELECT count(*) n FROM users WHERE phone='+966507654321'").fetchone()['n']==0
-        monkeypatch.setattr(sms_verification,'start',original)
-        dialog.get_by_role('button',name='إعادة إرسال رمز التحقق',exact=True).click()
-        expect(dialog.locator('button[type=submit]')).to_be_enabled()
-        complete_owner_sms_dialog(page,owner)
         expect(page.locator('#modal')).not_to_be_visible()
         with db.tx() as c:
             rows=c.execute("SELECT * FROM users WHERE phone='+966507654321'").fetchall()
             assert len(rows)==1 and rows[0]['display_name']=='موظف اختبار إعادة المحاولة'
+        expect(page.locator('dialog:not(#modal)').filter(has=page.locator('[name=code]'))).to_have_count(0)
+        assert requests==[], 'An approved owner must not depend on another SMS send'
         assert not errors,errors
     finally:context.close()
 
@@ -330,7 +325,14 @@ def test_real_driver_hours_eight_shift_six_delivery(live_app,chromium_browser,la
         for i,(pickup,delivered) in enumerate([('16:00','20:00'),('18:00','22:00')]):
             oid=db.new_id('hours_order_')
             c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','completed','delivered','cash',1000,0,1000,'{}','{}')",(oid,customer['id']))
-            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at,delivered_at) VALUES(%s,%s,%s,%s,'delivered',%s,%s,%s)",(db.new_id('hours_task_'),oid,driver['id'],sid,owner['id'],'2026-10-17 '+pickup+'+03','2026-10-17 '+delivered+'+03'))
+            accepted='2026-10-17 '+pickup+'+03'
+            returned='2026-10-17 '+delivered+'+03'
+            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at,delivered_at) VALUES(%s,%s,%s,%s,'delivered',%s,%s,%s,%s)",(db.new_id('hours_task_'),oid,driver['id'],sid,owner['id'],accepted,accepted,returned))
+            # Confirmed mission evidence, not pickup timing used as an invented
+            # acceptance/return. The two overlapping missions unite to six hours.
+            trip_id=db.new_id('hours_trip_')
+            c.execute("INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,return_branch_id,departed_at,returned_at,departure_evidence,return_evidence) VALUES(%s,'kps',%s,%s,'kps-branch-1','kps-branch-1',%s,%s,'{}',%s)",(trip_id,sid,driver['id'],accepted,returned,db.json({'source':'driver_explicit_confirmation'})))
+            c.execute('INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES(%s,%s)',(trip_id,oid))
     context,page,errors=_context(chromium_browser,live_app)
     try:
         _owner_login(context,live_app,owner)
@@ -341,8 +343,8 @@ def test_real_driver_hours_eight_shift_six_delivery(live_app,chromium_browser,la
         page.locator('#hours-filters button[type=submit]').click()
         expect(page.locator('.hours-driver')).to_have_count(1)
         values=page.locator('.hours-driver .hours-primary strong')
-        expect(values.nth(0)).to_have_text('٨ ساعة' if lang=='ar' else '8 h')
-        expect(values.nth(1)).to_have_text('٦ ساعة' if lang=='ar' else '6 h')
+        expect(values.nth(0)).to_have_text('٦ ساعة' if lang=='ar' else '6 h')
+        expect(values.nth(1)).to_have_text('٨ ساعة' if lang=='ar' else '8 h')
         expect(values.nth(2)).to_have_text('٢ ساعة' if lang=='ar' else '2 h')
         expect(values.nth(3)).to_have_text('٧٥%' if lang=='ar' else '75%')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')

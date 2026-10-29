@@ -87,8 +87,7 @@ def test_owner_can_grant_read_only_and_revoke_in_the_same_live_session(client, m
     cookies, csrf = dict(client.cookies), client.headers['X-CSRF-Token']
     assert client.get('/api/shifts').status_code == 403
     sms_login(client, owner, monkeypatch)
-    assert _save(client, target, {'shifts_view'}).status_code == 403
-    sms_step_up(client, owner, monkeypatch)
+    assert client.get('/api/session').json()['user']['owner_session_approved'] is True
     result = _save(client, target, {'shifts_view'})
     assert result.status_code == 200, result.text
     updated = result.json()['user']

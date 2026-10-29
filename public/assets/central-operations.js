@@ -147,6 +147,8 @@
       if(url.pathname==='/api/operations/driver-route-context'&&['GET','POST'].includes(method))return raw('/api/central-operations/driver-route-context'+url.search,options);
       if(['/api/operations/route-eta','/api/operations/driver-route-plan','/api/operations/map-services/trip-stops/current'].includes(url.pathname))return raw(path,options);
       if(url.pathname==='/api/identity/staff'&&method==='GET')return remember(await raw('/api/central-operations/staff',options),user.brand_id);
+      const staffPhoneSwap=url.pathname.match(/^\/api\/identity\/staff\/([^/]+)\/swap-phone$/);
+      if(staffPhoneSwap&&method==='POST')return raw('/api/central-operations/staff/'+staffPhoneSwap[1]+'/swap-phone',options);
       const staffEdit=url.pathname.match(/^\/api\/identity\/staff\/([^/]+)$/);
       if(url.pathname==='/api/identity/staff/invitations'&&method==='POST')return raw('/api/central-operations/staff/invitations',options);
       if(staffEdit&&method==='PATCH'){const expected=staffScopes.get(decodeURIComponent(staffEdit[1]));return raw('/api/central-operations/staff/'+staffEdit[1],{...options,body:{...options.body,...(options.body?.branch_ids&&expected?{expected_branch_ids:expected}:{})}});}

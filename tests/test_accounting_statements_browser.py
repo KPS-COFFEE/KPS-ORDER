@@ -93,7 +93,23 @@ def test_variance_requires_evidenced_independent_treatment(live_app,chromium_bro
         expect(card).to_be_visible()
         expect(card.locator('[data-variance-confirm]')).to_have_count(0)
         card.locator('[data-driver-balance]').click()
-        _submit_modal(page,{'bank':'50.00','cash_due':'100.00','note':'TEST unchanged approval'})
+        # Hold the real post-save card GET: a committed approval must not
+        # expose history/edit handlers still bound to the pre-save snapshot.
+        pending_refresh=[]
+        def hold_card_refresh(route):pending_refresh.append(route)
+        page.route('**/api/accounting/manager-cards',hold_card_refresh)
+        page.locator('#modal [name=bank]').fill('50.00')
+        page.locator('#modal [name=cash_due]').fill('100.00')
+        page.locator('#modal [name=note]').fill('TEST unchanged approval')
+        with page.expect_request('**/api/accounting/manager-cards'):
+            page.locator('#modal button[type=submit]').click()
+        expect(page.locator('#modal button[type=submit]')).to_be_disabled()
+        expect(page.locator('#modal')).to_be_visible()
+        assert len(pending_refresh)==1
+        pending_refresh.pop().continue_()
+        page.unroute('**/api/accounting/manager-cards',hold_card_refresh)
+        expect(page.locator('#modal')).not_to_be_visible()
+        expect(card.locator('[data-driver-balance]')).to_have_text('تعديل الموازنة مع السبب' if lang=='ar' else 'Amend balance with reason')
         expect(card.locator('[data-variance-confirm]')).to_have_count(0)
         card.locator('[data-driver-history]').click()
         expect(page.locator('#modal-body')).to_contain_text('اعتماد المبالغ دون تعديل' if lang=='ar' else 'Amounts approved unchanged')

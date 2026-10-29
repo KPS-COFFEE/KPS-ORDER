@@ -27,7 +27,7 @@ function harness({brand='enbishan',language='ar',session={},phoneRequired=false,
     openDialog:id=>dialogs.push(id),closeDialog(){},renderCustomerEntry(){},updatePolicyLinks(){},
     branch:()=>({name:'Synthetic Branch'}),sourceText:record=>record.name,serviceName:()=>'',
     syncMobileBasket(){},catalogReady:()=>true,document:{querySelector:id=>$(id)},
-    renderAccount(){calls.push('account');},refreshQuote:async()=>{calls.push('quote');state.quote={total_halalas:100};},
+    renderAccount(){calls.push('account');},refreshQuote:async()=>{calls.push('quote');return state.quote={total_halalas:100};},
     orderBody:()=>({customer:{address:'Synthetic address'},payment_method:'cash'}),node:()=>new Element(),
     renderFirstGift(){},money:String,confirmAction:()=>calls.push('confirm'),requireCustomer:()=>calls.push('wrong-brand'),
     showEnbishanLocation:()=>calls.push('location'),api:async path=>{calls.push(path);throw Error('Unexpected HTTP');},
@@ -100,3 +100,4 @@ test('KPS and other brand policy behavior remains unchanged',async()=>{
     assert.equal(await h.context.recoverCheckout(),true);assert.deepEqual(h.calls,['resume']);
   }
 });
+

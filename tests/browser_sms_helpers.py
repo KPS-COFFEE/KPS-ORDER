@@ -47,6 +47,10 @@ def sms_browser_app(database, monkeypatch):
 def complete_owner_sms_dialog(page, owner):
     """Complete the UI's actual session-bound step-up without fabricating proof."""
     from playwright.sync_api import expect
+    session=page.context.request.get(page.url.split('/ops')[0]+'/api/session',headers={'X-KPS-Context':'work'}).json()
+    if session.get('user',{}).get('owner_session_approved') is True:
+        assert session['user']['id']==owner['id']
+        return
     dialog = page.locator('dialog:not(#modal)').filter(has=page.locator('input[name=code]'))
     expect(dialog).to_be_visible()
     # The dialog also handles provider-send failures. A visible input is not

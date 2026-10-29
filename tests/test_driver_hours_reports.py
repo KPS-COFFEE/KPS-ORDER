@@ -9,7 +9,8 @@ from app.driver_hours_reports import make_xlsx, make_pdf, export_rows, COLUMNS
 def fixture():
     metrics = dict(shift_seconds=28800, actual_seconds=25200, delivery_seconds=7200,
                    waiting_seconds=14400, break_seconds=3600, other_work_seconds=0,
-                   unclassified_seconds=3600, order_activity_seconds=21600, active_delivery_seconds=0, remaining_shift_seconds=7200, trip_count=2, order_count=5)
+                   unclassified_seconds=3600, order_activity_seconds=21600, active_delivery_seconds=0, remaining_shift_seconds=7200, trip_count=2, order_count=5,
+                   non_delivery_seconds=3600,duty_seconds=28800,active_work_seconds=0,work_utilization_percent=87.5,work_clock_status='recorded')
     return dict(start='2026-10-18', end='2026-10-18', operational_day_start='05:30',
                 totals=metrics, drivers=[dict(name='=HYPERLINK("bad")', **metrics)])
 
@@ -29,8 +30,27 @@ def test_export_hours_reconcile_and_english_labels():
     rows = export_rows(fixture(), 'en')
     assert rows[0][0] == 'Driver'
     assert rows[1][3:8] == [8, 7, 2, 4, 1]
-    assert rows[-1][1:] == rows[1][1:]
-    assert rows[1][9:] == [1,6,0,2]
+    assert rows[-1][1:-1] == rows[1][1:-1]
+    assert rows[1][9:13] == [1,6,0,1]
+
+
+def test_accepted_return_exports_match_duty_comparison_and_keep_missing_evidence_visible():
+    report=fixture()
+    for row in [report['totals'],report['drivers'][0]]:
+        row.update(actual_seconds=27000,duty_seconds=43200,active_work_seconds=3600,non_delivery_seconds=12600,work_utilization_percent=62.5)
+    rows=export_rows(report,'en')
+    assert rows[1][4]==7.5 and rows[1][12:16]==[3.5,12,1,62.5]
+    row=report['drivers'][0]
+    row.update(actual_seconds=0,work_utilization_percent=None,work_clock_status='needs_review',work_review_required=True)
+    report['totals'].update(actual_seconds=0,work_utilization_percent=None,drivers_needing_review=1)
+    rows=export_rows(report,'en')
+    assert rows[1][4]==rows[1][15]==rows[-1][4]=='Unavailable'
+    assert rows[1][-1]==rows[-1][-1]=='Incomplete — needs review'
+    # Even an older saved report with a numeric partial ratio is not a grade.
+    row['work_utilization_percent']=0
+    report['totals']['work_utilization_percent']=62.5
+    rows=export_rows(report,'en')
+    assert rows[1][15]==rows[-1][15]=='Unavailable'
 
 
 def test_arabic_pdf_has_embedded_font_and_real_pdf():
@@ -65,7 +85,7 @@ def test_four_cards_match_ops_identity_and_responsive_contract():
     js=(root/'public/assets/driver-hours.js').read_text()
     css=(root/'public/assets/driver-hours.css').read_text()
     html=(root/'public/driver-hours.html').read_text()
-    assert "[['shift','shift_seconds'],['order_work','order_activity_seconds'],['remaining','remaining_shift_seconds'],['utilization','order_utilization_percent']]" in js
+    assert "[['actual','actual_seconds'],['duty','duty_seconds'],['remaining','non_delivery_seconds'],['utilization','work_utilization_percent']]" in js
     assert 'repeat(4,minmax(0,1fr))' in css
     assert 'repeat(2,minmax(0,1fr))' in css
     assert '/ops.css' in html and 'unclassified_seconds' in js
@@ -123,3 +143,4 @@ def test_real_sms_delegated_exports_scope_and_immediate_revocation(client,monkey
     client.cookies.clear();client.cookies.update(driver_cookies);client.headers['X-CSRF-Token']=driver_csrf
     for path in paths:
         assert client.get(path).status_code==403
+

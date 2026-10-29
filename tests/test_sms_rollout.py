@@ -79,15 +79,13 @@ def test_pilot_requires_linked_proof_fresh_stepup_and_csrf(client,monkeypatch):
 
 
 @pytest.mark.postgres
-def test_general_activation_needs_actual_pilot_login_and_sensitive_sms(client,monkeypatch):
+def test_general_activation_accepts_actual_owner_mobile_login(client,monkeypatch):
     user,_=setup(client,monkeypatch)
     pilot(client)
     assert client.post('/api/identity/owner/sms/rollout/activate').status_code==403
     login(client)
-    # Normal login is not fresh sensitive authorization.
-    with db.tx() as conn:conn.execute('UPDATE sessions SET step_up_at=now() WHERE user_id=%s',(user['id'],))
-    assert client.post('/api/identity/owner/sms/rollout/activate').status_code==403
-    sensitive(client)
+    # The actual SMS login authorizes this owner's session.
+    assert client.get('/api/session').json()['user']['owner_session_approved'] is True
     activated=client.post('/api/identity/owner/sms/rollout/activate')
     assert activated.status_code==200,activated.text
     assert activated.json()=={'mode':'active','email_retired':True,'sms_sent':False}

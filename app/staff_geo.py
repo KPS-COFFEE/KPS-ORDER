@@ -29,10 +29,11 @@ _OBSERVATION_LOCK = threading.Lock()
 # These shells are intentionally blocked before authentication. All staff
 # principals are also checked in auth._find_session, including shared routes.
 WORK_PAGES = frozenset({
-    '/ops', '/ops.html', '/campaign-report', '/customer-crm', '/driver-hours',
+    '/ops', '/ops.html', '/campaign-report', '/customer-crm', '/customer-report', '/driver-hours',
     '/owner-phone', '/sms-login-test', '/docs/metrics',
 })
-WORK_ASSETS = frozenset({'/ops.js', '/report.js', '/owner-phone.js', '/sms-login-test.js'})
+WORK_ASSETS = frozenset({'/ops.js', '/report.js', '/owner-phone.js', '/sms-login-test.js',
+                         '/assets/customer-report.js', '/assets/customer-report.css'})
 WORK_AUTH_PREFIXES = (
     '/api/identity/staff/', '/api/identity/owners/', '/api/identity/owner/',
     '/api/identity/owner-phone/', '/api/identity/owner-sms/',

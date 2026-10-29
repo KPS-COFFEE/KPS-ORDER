@@ -30,12 +30,11 @@ def test_sms_owner_schema_requires_a_real_boolean_and_accepts_no_password_or_sco
 
 
 @pytest.mark.postgres
-def test_sms_owner_creation_requires_separate_proof_and_preserves_every_existing_user(client,monkeypatch):
+def test_sms_owner_creation_accepts_approved_session_and_preserves_every_existing_user(client,monkeypatch):
     owner=_make_user('owner',username='original.sms.owner',password='OriginalOnly!NoPasswordLogin')
     _make_user('driver',branches=['kps-branch-1'])
     sms_login(client,owner,monkeypatch)
-    assert client.post(PATH,json=body()).status_code==403
-    sms_step_up(client,owner,monkeypatch)
+    assert client.get('/api/session').json()['user']['owner_session_approved'] is True
     with db.tx() as conn:
         before=conn.execute('SELECT * FROM users ORDER BY id').fetchall()
     created=client.post(PATH,json=body())
