@@ -49,6 +49,12 @@ def validate_capture(point, now, opened_at, session_at):
 
 
 def tracking_shift(c,user,shift_id):
+    # Lock the physical workday in its canonical order, shared with explicit
+    # return/closure. Locking one ledger leg first can deadlock two GPS senders.
+    from .driver_work_hours import lock_return_legs
+    preliminary=c.execute('SELECT user_id FROM shifts WHERE id=%s',(shift_id,)).fetchone()
+    if preliminary and preliminary['user_id']==user['id']:
+        lock_return_legs(c,user,shift_id)
     shift=c.execute('SELECT * FROM shifts WHERE id=%s FOR UPDATE',(shift_id,)).fetchone()
     if not shift or shift['user_id']!=user['id'] or shift['kind']!='driver' or shift['status']!='open' or shift['brand_id']!=user['brand_id']:
         raise db.error(409,'TRACKING_SHIFT_SCOPE','التتبع متاح للشفت المفتوح الحالي فقط.')
@@ -95,6 +101,9 @@ def ingest(body:Batch,user=Depends(auth.require_roles('driver'))):
             from .map_services import record_sample
             previous={'shift_id':shift['id'],'updated_at':last_received} if last_received else None
             record_sample(c,user,shift,point,previous,now,near_customer=latest is not None)
+            if latest is not None:
+                from .driver_auto_return import consider_point
+                consider_point(c,user,shift,point.model_dump(),now)
             last_received=now
             accepted.append(point.id)
         return safe({'accepted_ids':accepted,'shift_id':shift['id'],'received_at':now})

@@ -18,12 +18,15 @@
     async function send(position,token){
       if(token!==generation||!consent||!shift||document.hidden||getUser()?.id!==owner||busy||Date.now()-lastAttempt<20000)return;
       const c=position.coords;
-      if(!Number.isFinite(c.latitude)||!Number.isFinite(c.longitude)||!Number.isFinite(c.accuracy)||c.accuracy>1000||!Number.isFinite(position.timestamp)||Date.now()-position.timestamp>30000){message=tr('الموقع غير دقيق أو قديم؛ جارٍ المحاولة مجددًا. تأكد من تشغيل الموقع الدقيق.','Location is inaccurate or old; retrying. Enable precise location.');render();return;}
+      if(!Number.isFinite(c.latitude)||!Number.isFinite(c.longitude)||!Number.isFinite(c.accuracy)||c.accuracy<0||c.accuracy>1000||!Number.isFinite(position.timestamp)||Date.now()-position.timestamp<0||Date.now()-position.timestamp>30000){message=tr('الموقع غير دقيق أو قديم؛ جارٍ المحاولة مجددًا. تأكد من تشغيل الموقع الدقيق.','Location is inaccurate or old; retrying. Enable precise location.');render();return;}
       busy=true;lastAttempt=Date.now();
       try{
-        pendingWrite=api('/api/operations/driver-location',{method:'POST',body:{lat:c.latitude,lng:c.longitude,accuracy_m:c.accuracy},key:'driver-location:'+crypto.randomUUID()});
+        const id=crypto.randomUUID(),capturedAt=new Date(position.timestamp).toISOString();
+        // Carry the GPS capture clock to the authenticated shift/session batch
+        // path. A transport receipt must never certify an old fix as arrival.
+        pendingWrite=api('/api/operations/driver-location-batch',{method:'POST',body:{shift_id:shift,points:[{id,captured_at:capturedAt,lat:c.latitude,lng:c.longitude,accuracy_m:c.accuracy}]},key:'driver-location:'+id});
         const result=await pendingWrite;
-        if(token===generation&&getUser()?.id===owner){lastUpdate=result.updated_at;message=tr('موقعك يُشارك — آخر تحديث: ','Location shared — last update: ')+new Date(lastUpdate).toLocaleTimeString();}
+        if(token===generation&&getUser()?.id===owner&&result.accepted_ids?.includes(id)){lastUpdate=capturedAt;message=tr('موقعك يُشارك — آخر تحديث: ','Location shared — last update: ')+new Date(lastUpdate).toLocaleTimeString();}
       }catch(error){if(token===generation){message=tr('تعذر تحديث الموقع؛ تحقق من الاتصال.','Location update failed; check your connection.');if([401,403,409].includes(error.status)){consent=false;shift=null;halt();}}}
       finally{busy=false;pendingWrite=null;render();}
     }

@@ -5,10 +5,25 @@ on:
     paths:
       - app/driver_work_hours.py
       - app/driver_hours_reports.py
+      - app/driver_auto_return.py
+      - app/tracking_ingest.py
+      - app/operations.py
+      - app/route_eta.py
+      - migrations/127_driver_automatic_return.sql
       - public/assets/driver-hours.js
+      - public/assets/driver-location.js
+      - public/ops.js
+      - public/ops.html
       - public/driver-hours.html
       - tests/test_driver_hours*
       - tests/test_driver_work_hours*
+      - tests/test_driver_auto_return*
+      - tests/test_driver_automatic_return_browser.py
+      - tests/test_driver_gps_browser.py
+      - tests/test_driver_location_capture.cjs
+      - tests/test_driver_trip_ui.cjs
+      - tests/test_tracking_ingest.py
+      - tests/test_route_eta*
       - .github/workflows/driver-fair-hours.yml
 permissions:
   contents: read
@@ -45,16 +60,25 @@ jobs:
           node-version: '22'
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
-      - run: node --check public/assets/driver-hours.js
+      - name: Driver tracking capture and return UI contract
+        run: >-
+          node --check public/assets/driver-hours.js &&
+          node --check public/assets/driver-location.js &&
+          node --check public/ops.js &&
+          node --test tests/test_driver_location_capture.cjs tests/test_driver_trip_ui.cjs
       - name: Work clock, PostgreSQL scope and export acceptance
         run: >-
           python -m pytest -q --strict-markers
           tests/test_driver_hours_fairness.py tests/test_driver_hours_fairness_postgres.py
           tests/test_driver_hours_shared_postgres.py
-          tests/test_driver_hours_fairness_browser.py
+          tests/test_driver_hours_fairness_browser.py tests/test_driver_automatic_return_browser.py
           tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py
           tests/test_driver_order_activity.py tests/test_driver_hours_reports.py
           tests/test_hours_navigation_layout.py
+          tests/test_driver_auto_return*.py
+          tests/test_driver_automatic_return_browser.py tests/test_driver_gps_browser.py
+          tests/test_tracking_ingest.py
+          tests/test_route_eta_unit.py tests/test_route_eta_postgres.py
           --junitxml=test-results/fair-driver-hours.xml
       - uses: actions/upload-artifact@v4
         if: always()
