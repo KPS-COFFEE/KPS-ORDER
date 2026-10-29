@@ -28,6 +28,8 @@ jobs:
         working-directory: android-driver
         run: |
           mkdir -p build/policy
+          javac -d build/policy app/src/main/java/sa/kps/driver/DriverMediaPolicy.java tests/DriverMediaPolicyTest.java
+          java -cp build/policy DriverMediaPolicyTest
           javac -d build/policy app/src/main/java/sa/kps/driver/TrackingPolicy.java app/src/main/java/sa/kps/driver/BellPolicy.java app/src/main/java/sa/kps/driver/SoundPolicy.java app/src/main/java/sa/kps/driver/ApprovedOrderRing.java tests/TrackingPolicyTest.java tests/BellPolicyTest.java tests/SoundPolicyTest.java
           java -cp build/policy TrackingPolicyTest
           java -cp build/policy BellPolicyTest
@@ -48,7 +50,7 @@ jobs:
           path: |
             android-driver/app/build/outputs/apk/release/app-release-unsigned.apk
             android-driver/app/build/outputs/bundle/release/app-release.aab
-            android-driver/app/build/reports/release-audit.json
+            android-driver/build/reports/release-audit.json
             android-driver/app/build/reports/lint-results-release.*
           if-no-files-found: error
           retention-days: 7
