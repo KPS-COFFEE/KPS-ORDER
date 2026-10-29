@@ -563,6 +563,46 @@ def _authenticated_post(context,base,path,body=None):
 
 
 
+def _confirm_driver_return_from_browser(page, base, shift_id, order_id):
+    """Use the real fallback UI; synthetic browsers do not claim a GPS arrival."""
+    from playwright.sync_api import expect
+    session=page.context.request.get(base+'/api/session',headers={'X-KPS-Context':'work'}).json()
+    assert session.get('user') and session.get('csrf_token')
+    current=page.context.request.get(base+'/api/driver-work-hours/current',headers={'X-KPS-Context':'work'})
+    assert current.status==200,current.text()
+    trip=current.json()['trip']
+    assert trip and trip['shift_id']==shift_id and trip['returned_at'] is None
+    assert trip['auto_return']['enabled'] is True
+    target=trip['auto_return']['return_branch_id']
+    assert target
+    with db.tx() as conn:
+        accepted=conn.execute('SELECT t.accepted_at FROM driver_work_trip_orders x JOIN driver_tasks t ON t.order_id=x.order_id WHERE x.trip_id=%s AND x.order_id=%s AND t.driver_id=%s AND t.shift_id=%s',(trip['id'],order_id,session['user']['id'],shift_id)).fetchone()
+        assert accepted and accepted['accepted_at']
+        assert conn.execute('SELECT returned_at FROM driver_work_trips WHERE id=%s',(trip['id'],)).fetchone()['returned_at'] is None
+    refused=page.context.request.post(base+'/api/shifts/'+shift_id+'/closing',headers={
+        'Origin':base,'X-KPS-Context':'work','X-CSRF-Token':session['csrf_token'],'Idempotency-Key':secrets.token_hex(16)},data={})
+    assert refused.status==409 and refused.json()['detail']['code']=='TRIP_RETURN_REQUIRED'
+    page.locator('#navigation [data-page=tasks]').click()
+    fallback=page.locator('.driver-trip-panel .driver-trip-manual')
+    expect(fallback).to_be_visible()
+    fallback.locator('summary').click()
+    expect(fallback.locator('[name=branch_id]')).to_have_value(target)
+    expect(fallback.locator('[name=branch_id] option')).to_have_count(1)
+    with page.expect_response(lambda response:response.request.method=='POST' and response.url.endswith('/api/driver-work-hours/'+trip['id']+'/return')) as returned:
+        fallback.locator('button[type=submit]').click()
+    assert returned.value.status==200,returned.value.text()
+    saved=returned.value.json()['trip']
+    assert saved['id']==trip['id'] and saved['return_branch_id']==target and saved['returned_at']
+    assert saved['return_evidence']['source']=='driver_explicit_confirmation'
+    assert returned.value.request.post_data_json['branch_id']==target
+    with db.tx() as conn:
+        row=conn.execute('SELECT returned_at,return_evidence FROM driver_work_trips WHERE id=%s',(trip['id'],)).fetchone()
+        assert row['returned_at']>=accepted['accepted_at']
+        assert row['return_evidence']['source']=='driver_explicit_confirmation'
+        assert conn.execute("SELECT count(*) n FROM driver_work_trip_events WHERE trip_id=%s AND action='return'",(trip['id'],)).fetchone()['n']==1
+    assert page.context.request.get(base+'/api/driver-work-hours/current',headers={'X-KPS-Context':'work'}).json()['trip'] is None
+
+
 def _approve_driver_closure_from_browser(page, manager_context, base, shift_id):
     """Exercise refusal, driver UI request and assigned-manager decision before closing."""
     from playwright.sync_api import expect
@@ -821,6 +861,7 @@ def test_real_all_staff_roles_driver_manager_closures_and_saved_report_files(liv
             photos=conn.execute('SELECT stage,used_at FROM delivery_photos WHERE order_id=%s ORDER BY stage',(order_id,)).fetchall()
             assert len(photos)==2 and {row['stage'] for row in photos}=={'picked_up','delivered'} and all(row['used_at'] for row in photos)
 
+        _confirm_driver_return_from_browser(driver,live_app,driver_shift,order_id)
         driver.locator('#navigation [data-page=shifts]').click()
         driver.locator(f'.shift-card [data-action=start-closing][data-id="{driver_shift}"]').click()
         _approve_driver_closure_from_browser(driver,contexts['manager'],live_app,driver_shift)

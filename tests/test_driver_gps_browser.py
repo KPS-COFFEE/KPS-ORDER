@@ -40,7 +40,7 @@ def test_real_browser_driver_consent_throttle_visibility_and_stop(gps_page):
       window.api=async(path,options={})=>{
         if(path==='/api/shifts/current')return {shifts:window.openShift?[{id:'shift',user_id:'driver',kind:'driver',status:'open'}]:[]};
         window.writes.push({path,...options});
-        return {shift_id:'shift',updated_at:new Date(window.clock).toISOString()};
+        return {shift_id:'shift',accepted_ids:(options.body?.points||[]).map(p=>p.id),received_at:new Date(window.clock).toISOString()};
       };
       window.emit=()=>window.position({coords:{latitude:28.4,longitude:45.9,accuracy:12},timestamp:window.clock});
     }''')
@@ -52,8 +52,17 @@ def test_real_browser_driver_consent_throttle_visibility_and_stop(gps_page):
     button.click()
     page.evaluate('window.emit()')
     page.wait_for_function('window.writes.length===1')
-    assert page.evaluate('window.writes[0].body') == {'lat': 28.4, 'lng': 45.9, 'accuracy_m': 12}
+    body = page.evaluate('window.writes[0].body')
+    assert page.evaluate('window.writes[0].path') == '/api/operations/driver-location-batch'
+    assert body['shift_id'] == 'shift'
+    assert len(body['points']) == 1
+    point = body['points'][0]
+    from uuid import UUID
+    assert str(UUID(point['id'])) == point['id']
+    assert point == {'id': point['id'], 'captured_at': page.evaluate('new Date(window.clock).toISOString()'),
+                     'lat': 28.4, 'lng': 45.9, 'accuracy_m': 12}
     assert page.evaluate('window.writes[0].method') == 'POST'
+    assert 'Location shared' in page.locator('#gps').inner_text()
     page.evaluate('window.emit()')
     assert page.evaluate('window.writes.length') == 1
     page.evaluate('window.hiddenPage=true;document.dispatchEvent(new Event("visibilitychange"));window.clock+=21000;window.emit()')

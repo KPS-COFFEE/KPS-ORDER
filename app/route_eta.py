@@ -458,6 +458,15 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
         if plan_changed:
             db.audit(c,user['id'],'driver.route_plan','driver',body.driver_id,
                      {'ordered_stop_ids':ordered_ids,'return_branch_id':return_id})
+        if not body.automatic_preview and 'return_branch_id' in body.model_fields_set and return_id:
+            if not auth.has_permission(user,'delivery_assign'):
+                raise HTTPException(403,'تحديد فرع العودة يتطلب صلاحية الإسناد.')
+            active_trip=c.execute('SELECT id,shift_id FROM driver_work_trips WHERE driver_id=%s AND returned_at IS NULL',(body.driver_id,)).fetchone()
+            if active_trip:
+                from .driver_work_hours import lock_return_legs
+                from .driver_auto_return import set_return_branch
+                lock_return_legs(c,{'id':body.driver_id},active_trip['shift_id'])
+                set_return_branch(c,user,active_trip['id'],return_id)
         if not body.automatic_preview and (not cached or plan_changed or refreshing_publication):
             expected = [{'id':r['id'],'task_id':r.get('task_id'),'order_id':r.get('order_id'),
                          'shift_id':r.get('shift_id'),'brand_id':r.get('brand_id'),'task_ids':r.get('task_ids',[]),

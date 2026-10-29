@@ -1232,6 +1232,10 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
             timestamp={'accepted':'accepted_at','picked_up':'picked_up_at','delivered':'delivered_at'}.get(body.status)
             sql="UPDATE driver_tasks SET status=%s,proof=%s,reason=%s" + (f',{timestamp}=coalesce({timestamp},now())' if timestamp else '')+' WHERE id=%s'
             c.execute(sql,(body.status,body.proof,body.reason,tid))
+            if body.status=='accepted' and user['role']=='driver':
+                from .driver_auto_return import ensure_mission
+                accepted_task=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+                ensure_mission(c,user,s,accepted_task)
             c.execute('UPDATE orders SET delivery_status=%s,completed_at=CASE WHEN %s=\'delivered\' THEN now() ELSE completed_at END,version=version+1 WHERE id=%s',(body.status,body.status,t['order_id']))
             if body.status=='delivered':
                 from .fiscal_issuance import issue_sale
@@ -1352,6 +1356,8 @@ def accept_task_handover(tid:str,request:Request,user=Depends(auth.current_user)
             status='picked_up' if t['status']=='picked_up' else 'accepted'
             c.execute("UPDATE driver_tasks SET status='transferred' WHERE id=%s",(tid,));newid=uid()
             c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at) VALUES(%s,%s,%s,%s,%s,%s,now(),%s)',(newid,t['order_id'],user['id'],to['id'],status,t['transfer_requested_by'],t['picked_up_at']))
+            from .driver_auto_return import ensure_mission
+            ensure_mission(c,user,to,c.execute('SELECT * FROM driver_tasks WHERE id=%s',(newid,)).fetchone())
             c.execute('UPDATE orders SET delivery_status=%s,version=version+1 WHERE id=%s',(status,t['order_id']))
             db.event(c,t['order_id'],user['id'],'task.handover.accepted',{'previous_task_id':tid,'task_id':newid,'driver_id':user['id'],'previous':t['status'],'status':status})
             db.audit(c,user['id'],'task.handover.accept','task',tid,{'new_task_id':newid})

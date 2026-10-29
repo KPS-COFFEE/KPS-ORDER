@@ -172,6 +172,7 @@ def report_completed_orders(c, user, driver_id, shift_ids, allowed, lo, hi, now)
         LEFT JOIN LATERAL (
           SELECT w.* FROM driver_work_trips w JOIN driver_work_trip_orders x ON x.trip_id=w.id
           WHERE x.order_id=t.order_id AND w.shift_id=t.shift_id AND w.driver_id=t.driver_id
+            AND (w.auto_task_ids='[]'::jsonb OR w.auto_task_ids ? t.id)
             AND w.brand_id=o.brand_id ORDER BY w.departed_at DESC LIMIT 1
         ) w ON true
         LEFT JOIN LATERAL (
@@ -240,12 +241,25 @@ def depart(body:Departure,request:Request,user=Depends(auth.current_user)):
             evidence=branch_evidence(c,user,s,body)
             if s['status']!='open' or not s.get('available',True):raise db.error(409,'TRIP_NOT_READY','السائق غير جاهز للخروج.')
             if c.execute("SELECT 1 FROM driver_breaks WHERE shift_id=%s AND status='active'",(s['id'],)).fetchone():raise db.error(409,'TRIP_BREAK','أنهِ الاستراحة أولاً.')
-            if c.execute('SELECT 1 FROM driver_work_trips WHERE driver_id=%s AND returned_at IS NULL',(user['id'],)).fetchone():raise db.error(409,'TRIP_OVERLAP','أكد العودة من الرحلة السابقة أولاً.')
+            c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('automatic-driver-mission:'+user['id'],))
+            existing=c.execute('SELECT * FROM driver_work_trips WHERE driver_id=%s AND returned_at IS NULL FOR UPDATE',(user['id'],)).fetchone()
+            automatic=bool(existing and existing['shift_id']==s['id'] and existing.get('planned_return_branch_id') and existing['departure_evidence'].get('source')=='automatic_task_acceptance' and not existing['departure_evidence'].get('physical_departure_at'))
+            if existing and not automatic:raise db.error(409,'TRIP_OVERLAP','أكد العودة من الرحلة السابقة أولاً.')
             if len(set(body.order_ids))!=len(body.order_ids):raise db.error(422,'TRIP_DUPLICATE_ORDER','الطلب مكرر.')
+            departure_task_ids=[]
             for oid in body.order_ids:
                 task=c.execute("SELECT t.id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.shift_id=%s AND t.driver_id=%s AND t.order_id=%s AND t.status='picked_up' AND o.brand_id=%s AND o.branch_id=%s",(s['id'],user['id'],oid,user['brand_id'],body.branch_id)).fetchone()
                 if not task:raise db.error(403,'TRIP_ORDER_SCOPE','استلم الطلبات المخصصة لك من الفرع أولاً.')
-                if c.execute('SELECT 1 FROM driver_work_trip_orders x JOIN driver_work_trips w ON w.id=x.trip_id WHERE x.order_id=%s AND w.driver_id=%s AND w.shift_id=%s',(oid,user['id'],s['id'])).fetchone():raise db.error(409,'TRIP_ORDER_LINKED','الطلب مسجل في رحلة سابقة.')
+                departure_task_ids.append(task['id'])
+                if c.execute('SELECT 1 FROM driver_work_trip_orders x JOIN driver_work_trips w ON w.id=x.trip_id WHERE x.order_id=%s AND w.driver_id=%s AND w.shift_id=%s AND w.id<>%s',(oid,user['id'],s['id'],existing['id'] if automatic else '')).fetchone():raise db.error(409,'TRIP_ORDER_LINKED','الطلب مسجل في رحلة سابقة.')
+            if automatic:
+                physical=c.execute('SELECT now() n').fetchone()['n']
+                combined={**existing['departure_evidence'],'physical_departure_at':physical.isoformat(),'physical_departure_evidence':evidence}
+                ids=list(dict.fromkeys(existing['auto_task_ids']+departure_task_ids))
+                trip=c.execute("UPDATE driver_work_trips SET departed_at=%s,departure_branch_id=%s,departure_evidence=%s,auto_task_ids=%s,auto_return_state='{}' WHERE id=%s RETURNING *",(physical,body.branch_id,db.json(combined),db.json(ids),existing['id'])).fetchone()
+                for oid in body.order_ids:c.execute('INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(trip['id'],oid))
+                record_event(c,user,trip['id'],'depart',body.branch_id,evidence)
+                return {'trip':trip,'shift_id':s['id']}
             tid=uid()
             trip=c.execute('INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,departure_evidence) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *',(tid,user['brand_id'],s['id'],user['id'],body.branch_id,db.json(evidence))).fetchone()
             for oid in body.order_ids:c.execute('INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES(%s,%s)',(tid,oid))
@@ -298,6 +312,8 @@ def return_trip(trip_id:str,body:Movement,request:Request,user=Depends(auth.curr
             evidence=return_branch_evidence(c,user,s,body)
             current=c.execute('SELECT * FROM driver_work_trips WHERE id=%s FOR UPDATE',(trip_id,)).fetchone()
             if current['returned_at']:raise db.error(409,'TRIP_RETURNED','تم تأكيد العودة مسبقًا.')
+            if current.get('planned_return_branch_id') and body.branch_id!=current['planned_return_branch_id']:
+                raise db.error(409,'TRIP_RETURN_TARGET_CHANGED','أكد العودة إلى الفرع المحدد للرحلة أو اطلب من مدير التوصيل تعديله أولاً.')
             pending=c.execute("SELECT 1 FROM driver_work_trip_orders x JOIN driver_tasks t ON t.order_id=x.order_id WHERE x.trip_id=%s AND t.driver_id=%s AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')",(trip_id,user['id'])).fetchone()
             if pending:raise db.error(409,'TRIP_PENDING_ORDERS','أكمل الطلبات أو سلّمها وفق الإجراء المعتمد أولاً.')
             stop=c.execute('SELECT id,kind FROM driver_trip_stops WHERE trip_id=%s AND departed_at IS NULL FOR UPDATE',(trip_id,)).fetchone()
@@ -435,8 +451,9 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
         if ts:
             starts=c.execute("""SELECT x.trip_id,o.id order_id,o.brand_id,o.branch_id,o.test_void,
                 a.shift_id,a.driver_id,a.status,a.accepted_at
-              FROM driver_work_trip_orders x LEFT JOIN orders o ON o.id=x.order_id
+              FROM driver_work_trip_orders x JOIN driver_work_trips w ON w.id=x.trip_id LEFT JOIN orders o ON o.id=x.order_id
               LEFT JOIN driver_tasks a ON a.order_id=x.order_id AND a.driver_id=%s AND a.shift_id=ANY(%s)
+                AND (w.auto_task_ids='[]'::jsonb OR w.auto_task_ids ? a.id)
               WHERE x.trip_id=ANY(%s)""",(p['id'],mission_ids,[t['id'] for t in ts])).fetchall()
             for row in starts:
                 scope=mission_scopes.get(row['shift_id'])
@@ -451,10 +468,13 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
           WHERE t.shift_id=ANY(%s) AND t.driver_id=%s
             AND t.status IN ('accepted','picked_up','problem','delivered','transferred','reassigned','cancelled')
             AND o.test_void IS NULL""",(mission_ids,p['id'])).fetchall()
-        links=c.execute("""SELECT DISTINCT x.order_id FROM driver_work_trip_orders x
-          JOIN driver_work_trips w ON w.id=x.trip_id WHERE w.driver_id=%s AND w.shift_id=ANY(%s)
-            AND w.brand_id=ANY(%s)""",(p['id'],mission_ids,list({v['brand_id'] for v in mission_scopes.values()}))).fetchall()
-        linked_orders={row['order_id'] for row in links}
+        links=c.execute("""SELECT DISTINCT a.id task_id FROM driver_work_trip_orders x
+          JOIN driver_work_trips w ON w.id=x.trip_id
+          JOIN driver_tasks a ON a.order_id=x.order_id AND a.driver_id=w.driver_id AND a.shift_id=ANY(%s)
+            AND (w.auto_task_ids='[]'::jsonb OR w.auto_task_ids ? a.id)
+          WHERE w.driver_id=%s AND w.shift_id=ANY(%s)
+            AND w.brand_id=ANY(%s)""",(mission_ids,p['id'],mission_ids,list({v['brand_id'] for v in mission_scopes.values()}))).fetchall()
+        linked_tasks={row['task_id'] for row in links}
         preparing=[]
         valid_tasks=[]
         missing_ids=set()
@@ -464,7 +484,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
                 incomplete_scope=True
                 continue
             valid_tasks.append(task)
-            if task['order_id'] in linked_orders:continue
+            if task['id'] in linked_tasks:continue
             shift=mission_shifts[task['shift_id']]
             if task['status'] in ('delivered','transferred','reassigned','cancelled') or task['order_cancelled'] or shift.get('submitted_at') or shift.get('closed_at') or shift.get('status') not in ('open','closing'):
                 missing_ids.add(task['shift_id'])
@@ -533,7 +553,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
     totals['work_utilization_percent']=round(totals['actual_seconds']/totals['duty_seconds']*100,2) if totals['duty_seconds'] and not totals['drivers_needing_review'] else None
     totals['order_utilization_percent']=round(totals['order_activity_seconds']/totals['shift_seconds']*100,2) if totals['shift_seconds'] else 0
     work_branches=c.execute('SELECT id,name FROM branches WHERE id=ANY(%s) ORDER BY brand_id,branch_no',(sorted(work_branch_ids),)).fetchall() if work_branch_ids else []
-    return safe({'start':first,'end':last,'calculated_at':now,'timezone':'Asia/Riyadh','hours_policy':{'version':'accepted-to-return-v1','actual_work':'first_task_acceptance_to_confirmed_branch_return; interval_union','active_separate':True,'gps_affects_work':False,'payroll_effect':False,'scope':'fully_authorized_physical_workdays; interval_union; separate_brand_reports_are_not_additive'},'operational_day_start':f'{minutes//60:02d}:{minutes%60:02d}',
+    return safe({'start':first,'end':last,'calculated_at':now,'timezone':'Asia/Riyadh','hours_policy':{'version':'accepted-to-return-v1','actual_work':'first_task_acceptance_to_confirmed_branch_return; interval_union','active_separate':True,'gps_affects_work':True,'gps_policy':'fresh_observed_branch_return_only; missing_gps_never_absence_or_payroll_deduction','payroll_effect':False,'scope':'fully_authorized_physical_workdays; interval_union; separate_brand_reports_are_not_additive'},'operational_day_start':f'{minutes//60:02d}:{minutes%60:02d}',
                  'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ عرض يوم تقويمي بتوقيت الرياض',
                  'branch_filter_basis':'shift_scope_membership; multi-branch hours are not additive across branch filters',
                  'operational_date':today,'options':{'drivers':[{'id':p['id'],'name':p['display_name']} for p in people if unrestricted_owner or report_scope_contains(p['branch_ids'],allowed)]},'totals':totals,'drivers':drivers,'work_branches':work_branches,'branches':[b for b in branches if b['id'] in allowed]})
@@ -552,6 +572,8 @@ def current_trip(user=Depends(auth.current_user)):
         t=c.execute('SELECT * FROM driver_work_trips WHERE driver_id=%s AND brand_id=%s AND returned_at IS NULL',(user['id'],user['brand_id'])).fetchone()
         if t:
             shift_access(c,user,c.execute('SELECT * FROM shifts WHERE id=%s',(t['shift_id'],)).fetchone())
+            from .driver_auto_return import describe_current
+            t['auto_return']=describe_current(c,user,t)
         return safe({'trip':t})
 
 
