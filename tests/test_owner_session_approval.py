@@ -111,6 +111,16 @@ def test_phone_swap_is_atomic_preserves_records_and_revokes_old_credentials(requ
     if central:
         monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','true')
         monkeypatch.setenv('ENBISHAN_ISOLATED_ENABLED','true')
+        # Preserve the isolated application's credential ban. Only the SMS
+        # transport/configuration boundary is synthetic; OTP proof stays real.
+        from tests import sms_policy_helpers
+        configure_sms=sms_policy_helpers.configure_sms
+        def isolated_sms(patch,brand='kps'):
+            calls=configure_sms(patch,brand)
+            patch.delenv('TAWKED_API_KEY',raising=False)
+            return calls
+        monkeypatch.setattr(sms_policy_helpers,'configure_sms',isolated_sms)
+        monkeypatch.setattr(auth,'_provider_ready',lambda provider:None)
     client=request.getfixturevalue('client')
     left,right=staff(),staff()
     _authenticate(client,left);_authenticate(client,right)
@@ -151,9 +161,10 @@ def test_swap_rolls_back_both_phones_if_audit_fails(client,monkeypatch):
         if action=='staff.phone.swapped':raise RuntimeError('synthetic transaction failure')
         return original(c,actor,action,*args,**kwargs)
     monkeypatch.setattr(db,'audit',fail)
-    # The real security middleware converts the exception to an HTTP 500.
+    # The real security middleware returns its fail-closed 503 contract.
     response=client.post('/api/identity/staff/'+left['id']+'/swap-phone',json=swap_body(left,right))
-    assert response.status_code==500,response.text
+    assert response.status_code==503,response.text
+    assert response.json()['detail']['code']=='SERVICE_UNAVAILABLE'
     with db.tx() as c:
         for old in (left,right):
             assert c.execute('SELECT phone FROM users WHERE id=%s',(old['id'],)).fetchone()['phone']==old['phone']
