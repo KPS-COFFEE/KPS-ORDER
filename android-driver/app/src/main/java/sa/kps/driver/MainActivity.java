@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest r){
                 Uri u=r.getUrl();
                 if(isWork(u))return false;
-                if(r.isForMainFrame() && "https".equals(u.getScheme()) && (r.hasGesture() || ("wa.me".equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443)))) {
+                if(r.isForMainFrame() && DriverMediaPolicy.external(u.toString(),r.hasGesture())) {
                     try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}
                 }
                 return true;
@@ -86,7 +86,7 @@ public final class MainActivity extends Activity {
                 popup.setWebViewClient(new WebViewClient(){
                     @Override public boolean shouldOverrideUrlLoading(WebView child,WebResourceRequest request){
                         Uri uri=request.getUrl();
-                        if(request.isForMainFrame() && "https".equals(uri.getScheme()) && "wa.me".equals(uri.getHost()) && (uri.getPort()==-1 || uri.getPort()==443)){
+                        if(request.isForMainFrame() && DriverMediaPolicy.whatsapp(uri.toString())){
                             try{startActivity(new Intent(Intent.ACTION_VIEW,uri));}
                             catch(ActivityNotFoundException e){status.setText("لا يوجد تطبيق يفتح رابط واتساب");}
                         }
@@ -114,8 +114,7 @@ public final class MainActivity extends Activity {
             }
             @Override public void onPermissionRequest(PermissionRequest r){
                 main.post(()->{
-                    if(!isWork(r.getOrigin()) || !isWork(Uri.parse(web.getUrl()==null?"":web.getUrl()))
-                        || r.getResources().length!=1 || !PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r.getResources()[0])){r.deny();return;}
+                    if(!DriverMediaPolicy.videoRequest(r.getOrigin().toString(),web.getUrl(),r.getResources())){r.deny();return;}
                     if(checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED){r.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});return;}
                     if(cameraPermission!=null)cameraPermission.deny();
                     cameraPermission=r;requestPermissions(new String[]{Manifest.permission.CAMERA},12);
@@ -129,7 +128,7 @@ public final class MainActivity extends Activity {
         try{startActivityForResult(Intent.createChooser(intent,"صورة الطلب"),31);}
         catch(ActivityNotFoundException|SecurityException e){if(upload!=null)upload.onReceiveValue(null);upload=null;captureUri=null;status.setText("تعذر فتح الكاميرا؛ راجع إذن الكاميرا في إعدادات التطبيق");}
     }
-    static boolean isWork(Uri u){return "https".equals(u.getScheme()) && "order.kps.sa".equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443);}
+    static boolean isWork(Uri u){return DriverMediaPolicy.work(u.toString());}
     private void checkShift(){
         if(!visible || checking)return;checking=true;
         io.execute(()->{
@@ -171,7 +170,7 @@ public final class MainActivity extends Activity {
             if(grants.length>0 && grants[0]==PackageManager.PERMISSION_GRANTED && intent!=null)launchPhoto(intent);
             else{if(upload!=null)upload.onReceiveValue(null);upload=null;captureUri=null;status.setText("اسمح بالكاميرا من إعدادات التطبيق ثم أعد المحاولة");}return;}
         if(code==12){PermissionRequest r=cameraPermission;cameraPermission=null;
-            if(r!=null){if(grants.length>0 && grants[0]==PackageManager.PERMISSION_GRANTED && isWork(Uri.parse(web.getUrl()==null?"":web.getUrl())))r.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});else r.deny();}return;}
+            if(r!=null){if(DriverMediaPolicy.cameraResult(true,grants.length>0 && grants[0]==PackageManager.PERMISSION_GRANTED,web.getUrl()))r.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});else r.deny();}return;}
         checkShift();}
     @Override protected void onResume(){super.onResume();visible=true;main.removeCallbacks(poll);main.post(poll);}
     @Override protected void onPause(){visible=false;main.removeCallbacks(poll);CookieManager.getInstance().flush();super.onPause();}
