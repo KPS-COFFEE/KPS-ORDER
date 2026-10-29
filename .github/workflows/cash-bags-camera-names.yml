@@ -4,6 +4,8 @@ on:
     branches: [agent/kps-order-emergency-v4]
     paths:
       - app/cash_bags.py
+      - app/http_security.py
+      - tests/test_http_security.py
       - app/aggregate_driver_closure.py
       - app/aggregate_manager_closure.py
       - app/administrative_guidance.py

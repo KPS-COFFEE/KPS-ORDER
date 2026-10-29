@@ -39,6 +39,11 @@ def test_live_camera_and_recovery_save_real_stage_photos(live_app, chromium_brow
         })();""".replace('CAMERA_FAILURE', "throw new DOMException('Denied for test','NotAllowedError');" if camera_mode=='denied' else ''))
         _staff_ui_login(manager, users['manager'])
         _staff_ui_login(driver, users['driver'])
+        # The synthetic stream below must not conceal a real browser policy
+        # denial: the document itself must permit same-origin camera access.
+        response = driver_context.request.get(live_app + '/ops')
+        assert response.headers['permissions-policy'] == 'camera=(self), microphone=(), geolocation=(self)'
+        assert driver.evaluate("document.featurePolicy.allowsFeature('camera')")
         manager_shift = _authenticated_post(manager_context, live_app, '/api/shifts',
                                              {'kind': 'manager', 'branch_ids': [branch]})['shift']['id']
         driver_shift = _authenticated_post(driver_context, live_app, '/api/shifts', {
