@@ -72,8 +72,15 @@ def test_startup_snapshot_allows_opposite_order_operational_writes(database, mon
 
 def test_overlapping_boots_take_snapshot_after_migration_lock(database, monkeypatch):
     first_entered, release_first = threading.Event(), threading.Event()
+    second_waiting = threading.Event()
     calls, first_pid = [], []
     counter_lock = threading.Lock()
+    original_acquire = db.acquire_migration_lock
+
+    def acquire(conn):
+        if first_pid and conn.info.backend_pid != first_pid[0]:
+            second_waiting.set()
+        original_acquire(conn)
 
     def migrations(conn, **kwargs):
         with counter_lock:
@@ -89,21 +96,68 @@ def test_overlapping_boots_take_snapshot_after_migration_lock(database, monkeypa
             assert conn.execute('SELECT value FROM startup_boot_marker').fetchone()['value'] == 1
 
     monkeypatch.setattr(db, 'apply_migrations', migrations)
+    monkeypatch.setattr(db, 'acquire_migration_lock', acquire)
     with psycopg.connect(database, autocommit=True, row_factory=dict_row) as observer:
         with ThreadPoolExecutor(max_workers=2) as workers:
             first = workers.submit(db.migrate)
             try:
                 assert first_entered.wait(5)
                 second = workers.submit(db.migrate)
-                wait_for(lambda: observer.execute(
+                assert second_waiting.wait(5)
+                assert observer.execute(
                     "SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=764832610 "
-                    'AND pid<>%s AND NOT granted', (first_pid[0],)).fetchone())
+                    'AND pid=%s AND granted', (first_pid[0],)).fetchone()
+                assert len(calls) == 1
                 release_first.set()
                 first.result(timeout=10)
                 second.result(timeout=10)
             finally:
                 release_first.set()
     assert len(calls) == 2
+
+
+def test_migration_wait_can_outlast_statement_deadline(database):
+    """Reproduce the production failure without spending 15 seconds per test.
+
+    Hold the same session lock longer than the waiter's SQL timeout; individual
+    probes must succeed, preserve the timeout, and acquire only after release.
+    """
+    with psycopg.connect(database, autocommit=True, row_factory=dict_row) as holder:
+        holder.execute('SELECT pg_advisory_lock(%s)', (db.MIGRATION_LOCK_KEY,))
+        started = threading.Event()
+
+        def waiter():
+            with psycopg.connect(database, autocommit=True, row_factory=dict_row) as conn:
+                conn.execute("SET statement_timeout='100ms'")
+                started.set()
+                db.acquire_migration_lock(conn)
+                try:
+                    assert conn.execute('SHOW statement_timeout').fetchone()['statement_timeout'] == '100ms'
+                finally:
+                    conn.execute('SELECT pg_advisory_unlock(%s)', (db.MIGRATION_LOCK_KEY,))
+
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            future = workers.submit(waiter)
+            try:
+                assert started.wait(5)
+                time.sleep(0.3)
+                assert not future.done()
+            finally:
+                holder.execute('SELECT pg_advisory_unlock(%s)', (db.MIGRATION_LOCK_KEY,))
+            future.result(timeout=5)
+
+
+def test_migration_wait_timeout_never_unlocks_another_owner(database, monkeypatch):
+    monkeypatch.setattr(db, 'MIGRATION_LOCK_WAIT_SECONDS', 0.1)
+    with psycopg.connect(database, autocommit=True, row_factory=dict_row) as holder:
+        holder.execute('SELECT pg_advisory_lock(%s)', (db.MIGRATION_LOCK_KEY,))
+        with psycopg.connect(database, autocommit=True, row_factory=dict_row) as waiter:
+            with pytest.raises(RuntimeError, match='bounded'):
+                db.acquire_migration_lock(waiter)
+            assert not waiter.execute('SELECT pg_try_advisory_lock(%s) AS acquired',
+                                      (db.MIGRATION_LOCK_KEY,)).fetchone()['acquired']
+        assert holder.execute('SELECT pg_advisory_unlock(%s) AS released',
+                              (db.MIGRATION_LOCK_KEY,)).fetchone()['released']
 
 
 @pytest.mark.parametrize('failure', [psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected])

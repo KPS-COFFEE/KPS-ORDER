@@ -284,14 +284,16 @@ def metric_definitions(user=Depends(auth.current_user)):
 
 
 @app.get('/{filename}')
-def frontend_file(filename: str):
+async def frontend_file(filename: str, request: Request):
     # Never mount the repository, data files, migrations, environment or the legacy executable menu.
     if filename not in {'customer.js', 'style.css', 'customer.css', 'ops.js', 'ops.css', 'report.js', 'work-access.js'}:
         raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
     path = PUBLIC / filename
     if not path.is_file() or path.is_symlink():
         raise db.error(404, 'FILE_NOT_FOUND', 'الملف غير موجود.')
-    return FileResponse(path)
+    # Honor browser validators for unchanged JS/CSS, just as /assets already
+    # does. FileResponse alone always retransmits the complete frontend bundle.
+    return await StaticFiles(directory=PUBLIC, follow_symlink=False).get_response(filename, request.scope)
 
 
 if (PUBLIC / 'assets').exists():
