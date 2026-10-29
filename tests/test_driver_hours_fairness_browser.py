@@ -95,3 +95,38 @@ def test_manual_filter_and_language_replace_old_response_without_race(hours_page
     page.get_by_role('button',name='العربية',exact=True).click()
     page.wait_for_function("document.documentElement.lang==='ar'")
     assert '٧ ساعة ٣٠ دقيقة' in page.locator('#hours-kpis strong').first.inner_text()
+
+
+def test_historical_period_does_not_poll_but_manual_refresh_still_works(hours_page):
+    page=hours_page()
+    # Select a historical day explicitly so initial server-day reconciliation
+    # cannot replace the user's date choice. The server supplies its current day.
+    page.evaluate("payload.operational_date='2026-10-29';document.querySelector('[name=date]').value='2026-09-01';document.querySelector('[name=date]').dispatchEvent(new Event('change',{bubbles:true}));")
+    page.wait_for_function("document.querySelector('#hours-status').textContent===''")
+    initial=page.evaluate('calls.length')
+    page.evaluate('tick()');page.evaluate('tick()')
+    assert page.evaluate('calls.length')==initial
+    page.get_by_role('button',name='Show report',exact=True).click()
+    page.wait_for_function(f'calls.length==={initial+1}')
+    assert 'start=2026-09-01' in page.evaluate('calls.at(-1).url')
+    # A historical month stays quiet; a month containing the current day polls.
+    page.evaluate("document.querySelector('[name=period]').value='month';document.querySelector('[name=period]').dispatchEvent(new Event('change',{bubbles:true}));")
+    page.wait_for_function("document.querySelector('#hours-status').textContent===''")
+    count=page.evaluate('calls.length');page.evaluate('tick()')
+    assert page.evaluate('calls.length')==count
+    page.evaluate("document.querySelector('[name=date]').value='2026-10-01';document.querySelector('[name=date]').dispatchEvent(new Event('change',{bubbles:true}));")
+    page.wait_for_function("document.querySelector('#hours-status').textContent===''")
+    count=page.evaluate('calls.length');page.evaluate('tick()')
+    assert page.evaluate('calls.length')==count+1
+
+
+@pytest.mark.parametrize('lang', ['ar','en'])
+def test_recorded_duty_fallback_and_authorized_physical_return_branch_name(hours_page,lang):
+    page=hours_page(lang)
+    page.evaluate("payload.drivers[0].duty_basis='recorded_shift';payload.work_branches=[{id:'other-brand-return',name:'Authorized shared return branch'}];payload.drivers[0].work_trip_evidence[0].return_branch_id='other-brand-return';tick()")
+    text=page.locator('.hours-driver').inner_text()
+    assert ('مدة الدوام المحددة غير متوفرة؛ المقارنة تستخدم مدة الشفت المسجلة' if lang=='ar' else 'Configured duty duration is unavailable; comparison uses recorded shift duration') in text
+    page.locator('.hours-driver details').first.locator('summary').click()
+    assert 'Authorized shared return branch' in page.locator('.hours-driver').inner_text()
+    assert page.locator('[name=branch_id] option[value="other-brand-return"]').count()==0
+    assert page.locator('[name=branch_id] option[value="b1"]').count()==1

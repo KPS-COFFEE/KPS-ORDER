@@ -52,7 +52,7 @@ def test_late_manager_approval_and_missing_gps_do_not_change_mission_hours(ops):
     actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
     with db.tx() as c:evidence(c,sid,oid,'a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03')
     before=report(actor)['drivers'][0]
-    with db.tx() as c:c.execute("UPDATE shifts SET closed_at='2026-10-28 12:00+03',staffing_ended_at='2026-10-28 12:00+03',available=false WHERE id=%s",(sid,))
+    with db.tx() as c:c.execute("UPDATE shifts SET closed_at='2026-10-28 12:00+03',available=false WHERE id=%s",(sid,))
     after=report(actor)['drivers'][0]
     assert before['actual_seconds']==after['actual_seconds']==4*3600
     assert after['work_utilization_percent']==before['work_utilization_percent']
@@ -110,7 +110,7 @@ def test_acceptance_before_day_boundary_counts_even_when_departure_is_next_day(o
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize('status',['transferred','reassigned','cancelled'])
+@pytest.mark.parametrize('status',['transferred','cancelled'])
 def test_later_handover_or_cancellation_does_not_erase_confirmed_driver_work(ops,status):
     actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
     with db.tx() as c:

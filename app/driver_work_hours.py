@@ -401,6 +401,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
         people.sort(key=lambda p:(p['display_name'],p['id']))
     if driver_id and not any(p['id']==driver_id and (unrestricted_owner or report_scope_contains(p['branch_ids'],allowed)) for p in people):raise db.error(404,'DRIVER_HOURS_DRIVER','السائق خارج الصلاحية.')
     drivers=[]
+    work_branch_ids=set()
     for p in people:
         if driver_id and p['id']!=driver_id:continue
         ss=c.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='driver' AND opened_at<%s AND COALESCE(submitted_at,closed_at,%s)>%s ORDER BY opened_at",(p['id'],user['brand_id'],hi,now,lo)).fetchall()
@@ -505,6 +506,15 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
                     available_work_seconds=m['actual_seconds'],
                     non_delivery_seconds=round(max(0,duty-work['actual_seconds']-work['active_work_seconds']),3))
         evidence=report_completed_orders(c,user,p['id'],sids,allowed,lo,hi,now)
+        if incomplete_scope:
+            # Own pickup/delivery evidence remains visible, but the attached
+            # physical mission can contain a revoked brand leg. Its identity,
+            # departure and return must not disclose that hidden mission.
+            for item in evidence['completed_orders']:
+                for field in ('trip_id','departed_at','returned_at','return_branch_id'):
+                    item[field]=None
+        else:
+            for scope in mission_scopes.values():work_branch_ids.update(scope['branches'])
         ts=visible_trips
         confirmed=[t for t in ts if t['returned_at'] and t.get('return_branch_id') and t['departed_at']<=t['returned_at']<=now]
         for t in ts:
@@ -522,10 +532,11 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
     totals['drivers_needing_review']=sum(d['work_review_required'] for d in drivers)
     totals['work_utilization_percent']=round(totals['actual_seconds']/totals['duty_seconds']*100,2) if totals['duty_seconds'] else None
     totals['order_utilization_percent']=round(totals['order_activity_seconds']/totals['shift_seconds']*100,2) if totals['shift_seconds'] else 0
+    work_branches=c.execute('SELECT id,name FROM branches WHERE id=ANY(%s) ORDER BY brand_id,branch_no',(sorted(work_branch_ids),)).fetchall() if work_branch_ids else []
     return safe({'start':first,'end':last,'calculated_at':now,'timezone':'Asia/Riyadh','hours_policy':{'version':'accepted-to-return-v1','actual_work':'first_task_acceptance_to_confirmed_branch_return; interval_union','active_separate':True,'gps_affects_work':False,'payroll_effect':False,'scope':'fully_authorized_physical_workdays; interval_union; separate_brand_reports_are_not_additive'},'operational_day_start':f'{minutes//60:02d}:{minutes%60:02d}',
                  'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ عرض يوم تقويمي بتوقيت الرياض',
                  'branch_filter_basis':'shift_scope_membership; multi-branch hours are not additive across branch filters',
-                 'operational_date':today,'options':{'drivers':[{'id':p['id'],'name':p['display_name']} for p in people if unrestricted_owner or report_scope_contains(p['branch_ids'],allowed)]},'totals':totals,'drivers':drivers,'branches':[b for b in branches if b['id'] in allowed]})
+                 'operational_date':today,'options':{'drivers':[{'id':p['id'],'name':p['display_name']} for p in people if unrestricted_owner or report_scope_contains(p['branch_ids'],allowed)]},'totals':totals,'drivers':drivers,'work_branches':work_branches,'branches':[b for b in branches if b['id'] in allowed]})
 
 
 @router.get('/report')
