@@ -106,8 +106,8 @@ public final class MainActivity extends Activity {
                     new java.io.File(getCacheDir(),"driver-proof.jpg").delete();
                     pick=new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
                         .putExtra(android.provider.MediaStore.EXTRA_OUTPUT,captureUri)
-                        .setClipData(ClipData.newRawUri("Order photo",captureUri))
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    pick.setClipData(ClipData.newRawUri("Order photo",captureUri));
                 }else pick=new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
                 if(p.isCaptureEnabled() && checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){pendingCapture=pick;requestPermissions(new String[]{Manifest.permission.CAMERA},13);}else launchPhoto(pick);
                 return true;
