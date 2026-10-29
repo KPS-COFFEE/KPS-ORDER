@@ -32,6 +32,9 @@ def test_all_approved_mojito_combos_are_pickup_only_without_restricting_kps_or_f
         product['settings'].update(enabled=True, lifecycle='active')
         before = deepcopy(product)
         assert catalog.product_availability(product, None, service='pickup')[0]
+        for service in (None, 'pickup', 'delivery', 'car'):
+            assert catalog.public_product(product, service=service)['pickup_only'] is True
+        assert 'pickup_only' not in catalog.public_product({**product, 'brand_id': 'kps'})
         for service in ('delivery', 'car'):
             allowed, reason = catalog.product_availability(product, None, service=service)
             assert allowed is False and 'استلام' in reason
