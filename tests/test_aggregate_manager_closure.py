@@ -31,6 +31,14 @@ def test_manager_owner_physical_end_next_workday_and_later_accounting(central,mo
     post('owner',manager_path+'/manager-physical-receipt',{**owner_receipt,'confirmed':False},status=422)
     received=post('owner',manager_path+'/manager-physical-receipt',owner_receipt)
     assert received['state']=='awaiting_accounting'
+    # Physical manager duty must be visible before any child accounting
+    # allocation or immutable closure report exists.
+    cards=actor('accountant').get('/api/accounting/manager-cards')
+    assert cards.status_code==200,cards.text
+    card=next(r for r in cards.json()['cards'] if r['id']==manager['shift']['id'])
+    assert card['operationally_closed'] and not card['financial_ledger_closed']
+    assert card['pending_driver_count']==1 and card['total']==0
+    assert not card['ready'] and card['completion_percent']==0
     next_manager=post('manager','/api/central-operations/workdays',{'kind':'manager'})
     assert next_manager['shift']['id']!=manager['shift']['id']
     with db.tx() as c:

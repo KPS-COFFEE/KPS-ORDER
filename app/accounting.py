@@ -1,7 +1,8 @@
 """Scoped accounting read models over canonical cash, refund and closure records.
 
 Reviews and month snapshots never post cash, edit invoices or deduct payroll.
-Sales use completion time; collections/refunds use their actual event time.
+Delivery reports follow the owning manager shift day. Actual event times stay immutable.
+Non-delivery records retain their transaction-time reporting policy.
 """
 import calendar
 import hashlib
@@ -86,29 +87,48 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     if product_id and not c.execute('SELECT 1 FROM products WHERE id=%s AND brand_id=%s',(product_id,u['brand_id'])).fetchone():fail('PRODUCT_SCOPE','الصنف غير متاح.',404)
     # Fetch qualifying orders once. Lateral task selection prevents split payment,
     # transfers, refunds or multiple tasks from multiplying order/item counts.
-    q="""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
+    # Resolve one effective task before joining money. The manager owns the
+    # reporting day; crossing midnight/04:00 never reassigns an open duty.
+    owner_day="CASE WHEN o.service='delivery' THEN COALESCE(manager_shift.reporting_operational_date,task_shift.reporting_operational_date,registered_manager.reporting_operational_date) END"
+    reporting_day=f"COALESCE(source.operational_date,{owner_day})"
+    # Refunds may belong to a later duty. Select by their owning duty as well
+    # as actual time; the original order's day is not rewritten by a refund.
+    movement_day="(SELECT COALESCE(m.reporting_operational_date,s.reporting_operational_date) FROM shifts s LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id)"
+    q=f"""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
       o.total_halalas,o.snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name,
-      source.operational_date source_operational_date,source.ledger_shift_id source_ledger_shift_id
-      FROM orders o LEFT JOIN LATERAL (SELECT driver_id FROM effective_driver_tasks WHERE order_id=o.id
+      source.operational_date source_operational_date,source.ledger_shift_id source_ledger_shift_id,
+      {reporting_day} reporting_day
+      FROM orders o LEFT JOIN LATERAL (SELECT driver_id,shift_id FROM effective_driver_tasks WHERE order_id=o.id
       ORDER BY (status='delivered') DESC,created_at DESC,id DESC LIMIT 1) t ON true
+      LEFT JOIN shifts task_shift ON task_shift.id=t.shift_id AND task_shift.brand_id=o.brand_id
+      LEFT JOIN shifts manager_shift ON manager_shift.id=task_shift.manager_shift_id AND manager_shift.kind='manager' AND manager_shift.brand_id=o.brand_id
+      LEFT JOIN LATERAL (SELECT e.details->>'manager_shift_id' manager_shift_id FROM order_events e
+        WHERE e.order_id=o.id AND e.event_type='preparation.accepted' AND e.details->>'manager_shift_id' IS NOT NULL
+        ORDER BY e.created_at DESC,e.id DESC LIMIT 1) acceptance ON t.shift_id IS NULL
+      LEFT JOIN shifts registered_manager ON registered_manager.id=COALESCE(acceptance.manager_shift_id,o.snapshot->>'manager_shift_id')
+        AND registered_manager.kind='manager' AND registered_manager.brand_id=o.brand_id
       LEFT JOIN users u ON u.id=t.driver_id LEFT JOIN legacy_invoice_imports source ON source.order_id=o.id
       WHERE o.brand_id=%s AND o.branch_id=ANY(%s)
-      AND ((source.id IS NULL AND (o.created_at>=%s AND o.created_at<%s OR o.completed_at>=%s AND o.completed_at<%s
+      AND ({reporting_day} BETWEEN %s AND %s
+      OR ({reporting_day} IS NULL AND (o.created_at>=%s AND o.created_at<%s OR o.completed_at>=%s AND o.completed_at<%s
       OR EXISTS(SELECT 1 FROM effective_collections x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)))
-      OR source.operational_date BETWEEN %s AND %s
-      OR EXISTS(SELECT 1 FROM refunds x WHERE x.order_id=o.id AND x.created_at>=%s AND x.created_at<%s)
+      OR EXISTS(SELECT 1 FROM effective_collections x WHERE x.order_id=o.id AND o.service='delivery' AND {movement_day} BETWEEN %s AND %s)
+      OR EXISTS(SELECT 1 FROM refunds x WHERE x.order_id=o.id AND (x.created_at>=%s AND x.created_at<%s OR o.service='delivery' AND {movement_day} BETWEEN %s AND %s))
       OR EXISTS(SELECT 1 FROM audit_events a WHERE a.entity_type='order' AND a.entity_id=o.id
           AND a.action='accounting.order_financial_treatment.approved' AND a.details->>'kind'='price_correction'
           AND a.created_at>=%s AND a.created_at<%s))"""
-    args=[u['brand_id'],bids,lo,hi,lo,hi,lo,hi,ds,de,lo,hi,lo,hi]
+    args=[u['brand_id'],bids,ds,de,lo,hi,lo,hi,lo,hi,ds,de,lo,hi,ds,de,lo,hi]
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
     if group!='items':q+=" AND NOT (o.snapshot ? 'complimentary')"
     if group!='actions':q+=" AND o.test_void IS NULL"
-    orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders]
-    source_ids=[o['id'] for o in orders if o['source_operational_date'] and ds<=o['source_operational_date']<=de]
-    cols=c.execute('SELECT * FROM effective_collections WHERE order_id=ANY(%s) AND (created_at<%s OR order_id=ANY(%s)) ORDER BY created_at,id',(ids,hi,source_ids)).fetchall()
-    refs=c.execute('SELECT r.*,u.display_name actor_name FROM refunds r JOIN users u ON u.id=r.authorized_by WHERE order_id=ANY(%s) AND r.created_at<%s ORDER BY r.created_at,r.id',(ids,hi)).fetchall()
+    orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders];order_by_id={o['id']:o for o in orders}
+    allocated_ids=[o['id'] for o in orders if o['reporting_day'] and ds<=o['reporting_day']<=de]
+    # Read actual timestamps unchanged, with a separate reporting-only day.
+    # No upper clock cutoff may discard a late collection on the same duty.
+    payment_day="CASE WHEN o.service='delivery' THEN COALESCE(m.reporting_operational_date,s.reporting_operational_date) END"
+    cols=c.execute(f"SELECT x.*,{payment_day} movement_day FROM effective_collections x JOIN orders o ON o.id=x.order_id LEFT JOIN shifts s ON s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE x.order_id=ANY(%s) AND (x.created_at<%s OR {payment_day} BETWEEN %s AND %s OR x.order_id=ANY(%s)) ORDER BY x.created_at,x.id",(ids,hi,ds,de,allocated_ids)).fetchall()
+    refs=c.execute(f"SELECT x.*,u.display_name actor_name,{payment_day} movement_day FROM refunds x JOIN orders o ON o.id=x.order_id JOIN users u ON u.id=x.authorized_by LEFT JOIN shifts s ON s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE x.order_id=ANY(%s) AND (x.created_at<%s OR {payment_day} BETWEEN %s AND %s) ORDER BY x.created_at,x.id",(ids,hi,ds,de)).fetchall()
     from .refund_line_values import with_allocated_quantities
     refs=with_allocated_quantities(c,refs)
     tickets=c.execute('SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
@@ -116,16 +136,25 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     from .order_financial_treatments import price_credit_rows
     credits=[r for r in price_credit_rows(c,ids) if r['created_at']<hi]
     paid=defaultdict(int);refunded=defaultdict(int);treated={t['order_id'] for t in tickets}|{r['order_id'] for r in credits}
-    for x in cols:paid[x['order_id']]+=x['amount_halalas']
+    for x in cols:
+        order=order_by_id[x['order_id']]
+        imported=bool(order['source_operational_date'] and order['source_ledger_shift_id']==x['shift_id'])
+        if imported or not x.get('movement_day') or x['movement_day']<=de:paid[x['order_id']]+=x['amount_halalas']
     for x in refs:
+        if x.get('movement_day') and x['movement_day']>de:continue
         if x.get('amendment_id'):paid[x['order_id']]-=x['amount_halalas']
         else:refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
     from .item_sales import new_item,add_line
     rows={};items={};om={o['id']:o for o in orders}
+    def day_boundary(day):
+        return datetime.combine(day,time(4),TZ) if day else None
     def source_day_boundary(o):
-        # Reporting allocation only: source invoice imports retain NULL actual
-        # delivery/collection time and their true recording timestamps in storage.
-        return datetime.combine(o['source_operational_date'],time(4),TZ) if o['source_operational_date'] else None
+        # An allocation key, never a replacement for stored event timestamps.
+        return day_boundary(o.get('reporting_day') or o['source_operational_date'])
+    def movement_boundary(record, order, collection=False):
+        if record.get('shift_id')==order.get('source_ledger_shift_id') and order['source_operational_date']:
+            return day_boundary(order['source_operational_date'])
+        return day_boundary(record.get('movement_day')) or (source_day_boundary(order) if collection else None) or record['created_at']
     if group=='items':
         products=c.execute('SELECT id,name FROM products WHERE brand_id=%s ORDER BY name,id',(u['brand_id'],)).fetchall()
         items={p['id']:new_item(p['id'],p['name']) for p in products if not product_id or p['id']==product_id}
@@ -138,7 +167,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         return rows[key]
     for o in orders:
         reported_creation=source_day_boundary(o) or o['created_at']
-        reported_completion=source_day_boundary(o) or o['completed_at']
+        reported_completion=(source_day_boundary(o) or o['completed_at']) if o['completed_at'] or o['source_operational_date'] else None
         if in_period(reported_creation,lo,hi):
             b=bucket(o,reported_creation);b['orders']+=1
             if o['preparation_status'] in ('cancelled','rejected'):b['cancelled']+=1
@@ -155,17 +184,18 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
                 if sold and pid not in seen:it['correct']+=int(correct);it['processed']+=int(not correct);seen.add(pid)
     for x in cols:
         o=om[x['order_id']]
-        reported_collection=(source_day_boundary(o) if x['shift_id']==o['source_ledger_shift_id'] else None) or x['created_at']
+        reported_collection=movement_boundary(x,o,collection=True)
         if in_period(reported_collection,lo,hi):bucket(o,reported_collection)[x['method']]+=x['amount_halalas']
     from .financial_totals import sales_adjustment_at
     for x in refs:
         order=om[x['order_id']]
-        completion=source_day_boundary(order) or order['completed_at']
-        recognized=sales_adjustment_at(completion,x['created_at'])
+        completion=(source_day_boundary(order) or order['completed_at']) if order['completed_at'] or order['source_operational_date'] else None
+        reported_refund=movement_boundary(x,order)
+        recognized=sales_adjustment_at(completion,reported_refund)
         if not x.get('amendment_id') and in_period(recognized,lo,hi):
             bucket(order,recognized)['sales_refunds']+=x['amount_halalas']
-        if not in_period(x['created_at'],lo,hi):continue
-        b=bucket(order,x['created_at']);b['refund_'+x['method']]+=x['amount_halalas'];b['refunds']+=x['amount_halalas']
+        if not in_period(reported_refund,lo,hi):continue
+        b=bucket(order,reported_refund);b['refund_'+x['method']]+=x['amount_halalas'];b['refunds']+=x['amount_halalas']
         for pid,qty in x['line_quantities'].items():
             if product_id and pid!=product_id:continue
             if pid not in items:
@@ -174,7 +204,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
             items[pid]['returned_quantity']+=qty
     for credit in credits:
         order=om[credit['order_id']]
-        completion=source_day_boundary(order) or order['completed_at']
+        completion=(source_day_boundary(order) or order['completed_at']) if order['completed_at'] or order['source_operational_date'] else None
         recognized=sales_adjustment_at(completion,credit['created_at'])
         if in_period(recognized,lo,hi):bucket(order,recognized)['sales_price_credits']+=credit['credit_halalas']
         if in_period(credit['created_at'],lo,hi):bucket(order,credit['created_at'])['price_credits']+=credit['credit_halalas']
@@ -214,15 +244,16 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
             'action':'مستند مرتبط بالأصل — دون تغيير التحصيل / Linked document; receipts unchanged',
             'order_id':order['id']})
     for r in refs:
-        if in_period(r['created_at'],lo,hi):
-            o=om[r['order_id']];test_void=r.get('record_kind')=='test_void'
-            actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(r['created_at']),'kind':'إلغاء تجريبي / Test void' if test_void else 'مرتجع / Refund','amount':r['amount_halalas'],'method':r['method'],'reason':r['reason'],'actor':r['actor_name'],'action':'عكس تسجيل تجريبي — لا صرف نقدي / Test correction — no cash disbursed' if test_void else 'تم تسجيل رد المبلغ / Refund recorded','order_id':o['id']})
+        o=om[r['order_id']];reported_refund=movement_boundary(r,o)
+        if in_period(reported_refund,lo,hi):
+            test_void=r.get('record_kind')=='test_void'
+            actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(reported_refund),'occurred_at':r['created_at'],'kind':'إلغاء تجريبي / Test void' if test_void else 'مرتجع / Refund','amount':r['amount_halalas'],'method':r['method'],'reason':r['reason'],'actor':r['actor_name'],'action':'عكس تسجيل تجريبي — لا صرف نقدي / Test correction — no cash disbursed' if test_void else 'تم تسجيل رد المبلغ / Refund recorded','order_id':o['id']})
     for o in orders:
-        if not o.get('test_void') and o['preparation_status'] in ('cancelled','rejected') and in_period(o['created_at'],lo,hi):
+        if not o.get('test_void') and o['preparation_status'] in ('cancelled','rejected') and in_period(source_day_boundary(o) or o['created_at'],lo,hi):
             ev=[e for e in events if e['order_id']==o['id']]
             relevant=[e for e in ev if any(w in str(e['details'])+e['event_type'] for w in ('cancel','reject'))]
             last=(relevant or ev or [{}])[-1]
-            actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(last.get('created_at') or o['created_at']),'kind':'ملغي / Cancelled','amount':o['total_halalas'],'method':'—','reason':last.get('details',{}).get('reason','—'),'actor':last.get('actor_name') or '—','action':('مبلغ محصل ينتظر الرد / Collected balance awaiting refund' if paid[o['id']]>refunded[o['id']] else 'لا يوجد رصيد مسترد معلق / No remaining refund balance'),'order_id':o['id']})
+            actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(source_day_boundary(o) or o['created_at']),'occurred_at':last.get('created_at') or o['created_at'],'kind':'ملغي / Cancelled','amount':o['total_halalas'],'method':'—','reason':last.get('details',{}).get('reason','—'),'actor':last.get('actor_name') or '—','action':('مبلغ محصل ينتظر الرد / Collected balance awaiting refund' if paid[o['id']]>refunded[o['id']] else 'لا يوجد رصيد مسترد معلق / No remaining refund balance'),'order_id':o['id']})
     for t in tickets:
         if not in_period(t['created_at'],lo,hi):continue
         o=om[t['order_id']];actions.append({'label':str(o['snapshot'].get('order_reference') or o['order_no']),'day':opday(t['created_at']),'kind':'معالجة / Treatment','amount':0,'method':'—','reason':t['note'],'actor':t['actor_name'],'action':t['status']+' / '+t['resolution'],'order_id':o['id']})
@@ -230,13 +261,13 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     if group=='deficits':result=deficits
     from .aggregate_driver_closure import pending_financial_rows
     pending_shared=pending_financial_rows(c,brand_id=u['brand_id'],branch_ids=bids,before=hi)
-    return safe({'pending_shared_closures':pending_shared,'financial_completion_blocked':bool(pending_shared),'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','start_time':'04:00'},'branches':bs,
-      'definitions':('المبيعات بتاريخ الإكمال؛ التحصيل والمرتجعات النقدية بتاريخ الحركة. لا يعكس رد دفعة طلب غير مكتمل مبيعات؛ أثر المرتجع أو تصحيح السعر على المبيعات لا يسبق الإكمال. الطلبات والإلغاءات حسب تاريخ إنشاء الطلب. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Sales use completion time; collections and cash refunds use transaction time. Repaying a never-completed order does not reverse sales; a refund or price credit affects sales no earlier than completion. Orders and cancellations use order creation date. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
+    return safe({'pending_shared_closures':pending_shared,'financial_completion_blocked':bool(pending_shared),'rows':result,'group':group,'branch_basis':'execution','period':{'start':ds,'end':de,'from':lo,'until':hi,'timezone':'Asia/Riyadh','basis':'manager_shift','start_time':None},'branches':bs,
+      'definitions':('طلبات التوصيل ومبيعاتها وتحصيلها حسب اليوم التشغيلي لشفت مدير التوصيل، ولو تجاوزت الساعة 04:00 أو منتصف الليل. المرتجع يتبع يوم الشفت المنفذ له. أوقات الحركات الفعلية محفوظة دون تغيير. الطلبات دون شفت توصيل حسب وقت الحركة. لا يعكس رد دفعة طلب غير مكتمل مبيعات؛ أثر المرتجع أو تصحيح السعر على المبيعات لا يسبق الإكمال. الطلبات والإلغاءات تتبع يوم شفت التوصيل عند ارتباطها به، وإلا تاريخ الإنشاء. الصحيح مكتمل ومحصّل بلا مرتجع أو معالجة. مبالغ فلتر الصنف تخص الطلبات المحتوية عليه، وتقرير الأصناف يفصل قيمة الصنف. صافي التحصيل قد يختلف عن صافي المبيعات. العجز حسب تقفيلة السائق كاملة ولا يوزّع افتراضيًا على الفروع.' if lang=='ar' else 'Delivery orders, sales and receipts follow the owning manager shift day, including after 04:00 or midnight. Refunds follow their processing shift. Actual event timestamps are unchanged. Records without a delivery shift retain transaction-time reporting. Repaying a never-completed order does not reverse sales; a refund or price credit affects sales no earlier than completion. Orders and cancellations follow their delivery shift day when assigned, otherwise creation time. Correct means completed and fully collected without refund or treatment. Product-filtered payment totals cover containing orders; item sales show item values. Net receipts can differ from net sales. A shortage belongs to the full driver closure and is not allocated to branches.')+(
         (' جميع أصناف البراند ظاهرة حتى بلا مبيعات؛ الكمية المباعة منفصلة عن الهدايا والضيافة والإعلان والتعويض وبقية الأصناف الصفرية. الفروع المختارة هي فروع تنفيذ الطلب.' if lang=='ar' else ' All brand items appear, including items without sales. Sold quantities exclude gifts, hospitality, advertising, compensation and other zero-value items. Selected branches are order fulfilment branches.') if group=='items' else '')+(' فواتير ساباد المستوردة تُنسب ليوم التشغيل الأصلي الموثق؛ تاريخ التسجيل ليس وقت التسليم أو التحصيل الفعلي.' if lang=='ar' else ' Imported Sabad invoices are allocated to their documented original operational day; recording timestamps are not actual delivery or collection times.'),
       'generated_at':datetime.now(TZ)})
 
 def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
-    rows=c.execute("SELECT r.*,v.id review_id,v.note review_note,v.created_at reviewed_at,u.display_name driver_name,coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=s.user_id LEFT JOIN accounting_reviews v ON v.report_id=r.id WHERE r.brand_id=%s AND r.kind='driver' AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)>=%s AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)<%s ORDER BY accounting_day,r.created_at,r.id",(u['brand_id'],lo.date(),hi.date())).fetchall()
+    rows=c.execute("SELECT r.*,v.id review_id,v.note review_note,v.created_at reviewed_at,u.display_name driver_name,coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day FROM closure_reports r JOIN shifts s ON s.id=r.shift_id LEFT JOIN shifts manager ON manager.id=s.manager_shift_id AND manager.kind='manager' AND manager.brand_id=s.brand_id JOIN users u ON u.id=s.user_id LEFT JOIN accounting_reviews v ON v.report_id=r.id WHERE r.brand_id=%s AND r.kind='driver' AND coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)>=%s AND coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)<%s ORDER BY accounting_day,r.created_at,r.id",(u['brand_id'],lo.date(),hi.date())).fetchall()
     latest={e['report_id']:e for e in c.execute('SELECT DISTINCT ON(report_id) * FROM driver_accounting_settlements WHERE report_id=ANY(%s) ORDER BY report_id,revision DESC',([r['id'] for r in rows],)).fetchall()}
     output=[]
     for r in rows:
@@ -682,10 +713,10 @@ def driver_settlement_scope(c, user, report_id):
         fail('SELF_SETTLEMENT', 'اعتماد التسوية من حساب محاسب مستقل.', 403)
     if row['kind']=='driver':
         shift = c.execute('SELECT manager_shift_id FROM shifts WHERE id=%s', (row['shift_id'],)).fetchone()
-        manager = c.execute("SELECT id FROM shifts WHERE id=%s AND kind='manager' AND status='closed'",
+        manager = c.execute("SELECT id FROM shifts WHERE id=%s AND kind='manager' AND (status='closed' OR to_jsonb(shifts)->>'staffing_ended_at' IS NOT NULL)",
                             (shift['manager_shift_id'],)).fetchone()
         if not manager:
-            fail('MANAGER_CLOSURE_REQUIRED', 'تنتقل الموازنة للمحاسب بعد إقفال شفت مدير التوصيل.', 409)
+            fail('MANAGER_CLOSURE_REQUIRED', 'تنتقل الموازنة للمحاسب بعد إنهاء مناوبة مدير التوصيل تشغيليًا.', 409)
     return row
 
 
@@ -703,11 +734,11 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
         # No date restriction: cash from an older operational day remains visible.
         rows = c.execute("""SELECT r.*,u.display_name driver_name,
           s.manager_shift_id,manager_user.display_name manager_name,
-          coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day
+          coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day
           FROM closure_reports r JOIN users u ON u.id=r.user_id JOIN shifts s ON s.id=r.shift_id
           LEFT JOIN shifts manager ON manager.id=s.manager_shift_id
           LEFT JOIN users manager_user ON manager_user.id=manager.user_id
-          WHERE r.brand_id=%s AND r.kind=%s AND (r.kind='manager' OR manager.status='closed')
+          WHERE r.brand_id=%s AND r.kind=%s AND (r.kind='manager' OR manager.status='closed' OR to_jsonb(manager)->>'staffing_ended_at' IS NOT NULL)
           ORDER BY r.created_at DESC,r.id""", (user['brand_id'],kind)).fetchall()
         events = c.execute("""SELECT e.*,u.display_name actor_name FROM driver_accounting_settlements e
           JOIN users u ON u.id=e.actor_id WHERE e.brand_id=%s ORDER BY e.report_id,e.revision""", (user['brand_id'],)).fetchall()

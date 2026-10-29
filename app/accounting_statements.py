@@ -9,13 +9,13 @@ def source_rows(c,user,bids,ds=None,de=None,manager_shift_id='',manager_shift_id
     q="""SELECT r.*,s.manager_shift_id,s.submission,s.scheduled_end_at,s.delivery_window_snapshot,
       s.closed_at shift_closed_at,mu.display_name manager_name,
       u.display_name driver_name,
-      coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day"
+      coalesce(m.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day"
       FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=r.user_id
       JOIN shifts m ON m.id=s.manager_shift_id JOIN users mu ON mu.id=m.user_id
-      WHERE r.brand_id=%s AND r.kind='driver' AND m.status='closed' AND r.branch_ids ?| %s"""
+      WHERE r.brand_id=%s AND r.kind='driver' AND (m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL) AND r.branch_ids ?| %s"""
     args=[user['brand_id'],bids]
     if ds:
-        q+=" AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) BETWEEN %s AND %s"
+        q+=" AND coalesce(m.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) BETWEEN %s AND %s"
         args.extend([ds,de])
     if manager_shift_id:q+=' AND s.manager_shift_id=%s';args.append(manager_shift_id)
     if manager_shift_ids is not None:q+=' AND s.manager_shift_id=ANY(%s)';args.append(manager_shift_ids)
@@ -201,6 +201,24 @@ def manager_cards(c,user,bids,manager_shift_ids=None):
     changes=histories(c,user,rows);groups={}
     local={b['id'] for b in c.execute('SELECT id,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall() if normalize_city(b['city'])=='حفر الباطن'}
     approved={r['manager_shift_id']:r for r in c.execute('SELECT id,manager_shift_id,created_at FROM accounting_daily_closures WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
+    # Physical completion enters accounting immediately. A manager awaiting bag
+    # allocation must remain visible even without a final financial snapshot.
+    q="""SELECT m.id,m.status,(to_jsonb(m)->>'staffing_ended_at')::timestamptz staffing_ended_at,m.shift_no,m.delivery_window_snapshot,
+        m.branch_ids,u.display_name manager_name,m.reporting_operational_date AS "day",
+        (SELECT count(*) FROM shifts child WHERE child.manager_shift_id=m.id AND child.kind='driver') expected_driver_count,
+        (SELECT r.id FROM closure_reports r WHERE r.shift_id=m.id AND r.kind='manager' ORDER BY r.version DESC,r.created_at DESC LIMIT 1) manager_report_id
+        FROM shifts m JOIN users u ON u.id=m.user_id
+        WHERE m.kind='manager' AND m.brand_id=%s AND (m.status='closed' OR to_jsonb(m)->>'staffing_ended_at' IS NOT NULL)
+        AND m.branch_ids ?| %s"""
+    args=[user['brand_id'],bids]
+    if manager_shift_ids is not None:q+=' AND m.id=ANY(%s)';args.append(manager_shift_ids)
+    for manager in c.execute(q,args).fetchall():
+        if (user['role']!='owner' or user.get('home_brand_id')) and not set(manager['branch_ids'])<=set(user.get('branch_ids',[])):continue
+        groups[manager['id']]=dict(id=manager['id'],manager_name=manager['manager_name'],day=manager['day'],
+            period=(manager['delivery_window_snapshot'] or {}).get('period','evening'),
+            shift_no=manager['shift_no'],manager_report_id=manager['manager_report_id'],
+            operationally_closed=True,financial_ledger_closed=manager['status']=='closed',
+            expected_driver_count=manager['expected_driver_count'],drivers=[],approved_day=approved.get(manager['id']),due_on=None)
     extensions={r['entity_id']:r for r in c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action='accounting.deadline.extended' AND a.entity_id=ANY(%s)",([r['id'] for r in rows],)).fetchall()}
     for r in rows:
         history=changes[r['id']]
@@ -222,19 +240,21 @@ def manager_cards(c,user,bids,manager_shift_ids=None):
         group['outstanding_receivable_halalas']=sum(r['outstanding_receivable_halalas'] for r in group['drivers'])
         group['outstanding_payable_halalas']=sum(r['outstanding_payable_halalas'] for r in group['drivers'])
         group['total']=len(group['drivers'])
-        group['ready']=group['review_completed']==group['total']
+        group['pending_driver_count']=max(0,group.get('expected_driver_count',group['total'])-group['total'])
+        group['ready']=bool(group['total']) and not group['pending_driver_count'] and group.get('financial_ledger_closed',True) and group['review_completed']==group['total']
         group['balance_completed']=sum(r['balance_approved'] for r in group['drivers'])
         group['cash_completed']=sum(r['cash_recorded'] for r in group['drivers'])
         variance_count=sum(bool(r['has_channel_variance']) for r in group['drivers'])
         confirmed_count=sum(bool(r['financial_treatment'] and r['financial_treatment']['status']=='approved' and r['period_approval_allowed']) for r in group['drivers'])
-        group['completion_percent']=int(100*(group['balance_completed']+group['cash_completed']+confirmed_count)/(2*group['total']+variance_count))
+        group['completion_percent']=int(100*(group['balance_completed']+group['cash_completed']+confirmed_count)/(2*group['total']+variance_count)) if group['total'] else 0
+        if group['pending_driver_count'] or not group.get('financial_ledger_closed',True):group['completion_percent']=min(99,group['completion_percent'])
         group['completion_scope']='accounting_review'
         group['financial_completion_scope']='closure_cash_and_recorded_card'
         group['bank_settlement_included']=False
-        group['financial_completion_percent']=int(100*group['completed']/group['total'])
+        group['financial_completion_percent']=int(100*group['completed']/group['total']) if group['total'] else 0
         pending=[r for r in group['drivers'] if r['stage']!='cash_received' or r['variance_pending']]
-        group['due_at']=min(r['due_at'] for r in (pending or group['drivers']))
-        group['due_on']=group['due_at'].date()
+        group['due_at']=min((r['due_at'] for r in (pending or group['drivers'])),default=None)
+        group['due_on']=group['due_at'].date() if group['due_at'] else None
         group['overdue_count']=sum(r['overdue'] for r in pending)
         group['overdue']=bool(group['overdue_count'])
     return safe({'cards':sorted(groups.values(),key=lambda g:(bool(g['approved_day']),-g['day'].toordinal(),g['manager_name']))})
