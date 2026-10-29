@@ -41,7 +41,7 @@ def export_value(row, key, lang):
     if key=='work_clock_status':
         return {'recorded':('موثق','Recorded'),'in_progress':('جارٍ — غير نهائي','In progress — provisional'),
                 'needs_review':('ناقص — يحتاج مراجعة','Incomplete — needs review')}.get(value,('غير متاح','Unavailable'))[lang=='en']
-    if value is None or (key=='actual_seconds' and not value and row.get('work_review_required')):
+    if value is None or (key=='actual_seconds' and not value and row.get('work_review_required')) or (key=='work_utilization_percent' and row.get('work_review_required')):
         return unavailable
     return round(float(value)/3600,6) if key.endswith('_seconds') else value
 

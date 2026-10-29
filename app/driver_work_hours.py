@@ -502,7 +502,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
         scheduled=[(s['opened_at'],s['scheduled_end_at']) for s in ss if s.get('scheduled_end_at') and s['scheduled_end_at']>=s['opened_at']]
         duty=seconds(clipped(scheduled,lo,hi)) if len(scheduled)==len(ss) else m['shift_seconds']
         work.update(duty_seconds=duty,duty_basis='scheduled' if len(scheduled)==len(ss) else 'recorded_shift',
-                    work_utilization_percent=round(work['actual_seconds']/duty*100,2) if duty else None,
+                    work_utilization_percent=round(work['actual_seconds']/duty*100,2) if duty and not work['work_review_required'] else None,
                     available_work_seconds=m['actual_seconds'],
                     non_delivery_seconds=round(max(0,duty-work['actual_seconds']-work['active_work_seconds']),3))
         evidence=report_completed_orders(c,user,p['id'],sids,allowed,lo,hi,now)
@@ -530,7 +530,7 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
     keys=('shift_seconds','actual_seconds','delivery_seconds','waiting_seconds','break_seconds','other_work_seconds','unclassified_seconds','trip_count','pending_trip_count','order_count','order_activity_seconds','active_delivery_seconds','remaining_shift_seconds','missing_order_timing_count','active_work_seconds','duty_seconds','available_work_seconds','non_delivery_seconds')
     totals={key:sum(d[key] for d in drivers) for key in keys}
     totals['drivers_needing_review']=sum(d['work_review_required'] for d in drivers)
-    totals['work_utilization_percent']=round(totals['actual_seconds']/totals['duty_seconds']*100,2) if totals['duty_seconds'] else None
+    totals['work_utilization_percent']=round(totals['actual_seconds']/totals['duty_seconds']*100,2) if totals['duty_seconds'] and not totals['drivers_needing_review'] else None
     totals['order_utilization_percent']=round(totals['order_activity_seconds']/totals['shift_seconds']*100,2) if totals['shift_seconds'] else 0
     work_branches=c.execute('SELECT id,name FROM branches WHERE id=ANY(%s) ORDER BY brand_id,branch_no',(sorted(work_branch_ids),)).fetchall() if work_branch_ids else []
     return safe({'start':first,'end':last,'calculated_at':now,'timezone':'Asia/Riyadh','hours_policy':{'version':'accepted-to-return-v1','actual_work':'first_task_acceptance_to_confirmed_branch_return; interval_union','active_separate':True,'gps_affects_work':False,'payroll_effect':False,'scope':'fully_authorized_physical_workdays; interval_union; separate_brand_reports_are_not_additive'},'operational_day_start':f'{minutes//60:02d}:{minutes%60:02d}',

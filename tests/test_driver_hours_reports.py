@@ -46,6 +46,11 @@ def test_accepted_return_exports_match_duty_comparison_and_keep_missing_evidence
     rows=export_rows(report,'en')
     assert rows[1][4]==rows[1][15]==rows[-1][4]=='Unavailable'
     assert rows[1][-1]==rows[-1][-1]=='Incomplete — needs review'
+    # Even an older saved report with a numeric partial ratio is not a grade.
+    row['work_utilization_percent']=0
+    report['totals']['work_utilization_percent']=62.5
+    rows=export_rows(report,'en')
+    assert rows[1][15]==rows[-1][15]=='Unavailable'
 
 
 def test_arabic_pdf_has_embedded_font_and_real_pdf():

@@ -65,6 +65,7 @@ def test_missing_acceptance_never_uses_pickup_as_invented_start(ops):
     with db.tx() as c:evidence(c,sid,oid,'a',None,'2026-10-27 17:00+03','2026-10-27 20:00+03')
     row=report(actor)['drivers'][0]
     assert row['actual_seconds']==0 and row['work_review_required']
+    assert row['work_utilization_percent'] is None
     assert 'missing_acceptance_timing' in row['work_review_reasons']
 
 
@@ -74,6 +75,7 @@ def test_missing_pickup_and_return_cannot_certify_zero_work(ops):
     with db.tx() as c:c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,delivered_at) VALUES('unlinked',%s,'ops-driver',%s,'delivered','ops-manager','2026-10-27 16:00+03','2026-10-27 20:00+03')",(oid,sid))
     row=report(actor)['drivers'][0]
     assert row['work_review_required'] and row['work_clock_status']=='needs_review'
+    assert row['work_utilization_percent'] is None
     assert 'missing_return_evidence' in row['work_review_reasons']
 
 
