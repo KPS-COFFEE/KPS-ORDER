@@ -42,7 +42,7 @@ def test_category_filters_five_cards_cart_and_brand_scope(static_customer, engin
         page = browser.new_page(viewport={'width': width, 'height': 1000})
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
-        page.goto(static_customer + '/ops.html')
+        page.goto(static_customer + '/ops.html', wait_until='networkidle')
         page.evaluate('''async ({products,brand,lang})=>{
           await KPSCustomerOrder.open({
             user:{id:'manager',brand_id:brand,role:'delivery_manager'},branches:[{id:'branch',name:'Branch'}],

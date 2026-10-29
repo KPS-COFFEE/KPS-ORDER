@@ -151,11 +151,13 @@ def test_swap_rolls_back_both_phones_if_audit_fails(client,monkeypatch):
         if action=='staff.phone.swapped':raise RuntimeError('synthetic transaction failure')
         return original(c,actor,action,*args,**kwargs)
     monkeypatch.setattr(db,'audit',fail)
-    with pytest.raises(RuntimeError,match='synthetic transaction failure'):
-        client.post('/api/identity/staff/'+left['id']+'/swap-phone',json=swap_body(left,right))
+    # The real security middleware converts the exception to an HTTP 500.
+    response=client.post('/api/identity/staff/'+left['id']+'/swap-phone',json=swap_body(left,right))
+    assert response.status_code==500,response.text
     with db.tx() as c:
         for old in (left,right):
             assert c.execute('SELECT phone FROM users WHERE id=%s',(old['id'],)).fetchone()['phone']==old['phone']
+        assert c.execute("SELECT count(*) n FROM audit_events WHERE actor_id=%s AND action='staff.phone.swapped'",(owner['id'],)).fetchone()['n']==0
 
 
 from tests.test_enbishan_dual_brand import dual

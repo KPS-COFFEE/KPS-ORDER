@@ -53,7 +53,7 @@ def test_late_manager_approval_and_missing_gps_do_not_change_mission_hours(ops):
     actor,post,order,shifts=ops;sid=setup(shifts);oid=order()
     with db.tx() as c:evidence(c,sid,oid,'a','2026-10-27 16:00+03','2026-10-27 17:00+03','2026-10-27 20:00+03')
     before=report(actor)['drivers'][0]
-    with db.tx() as c:c.execute("UPDATE shifts SET closed_at='2026-10-28 12:00+03',staffing_ended_at='2026-10-28 12:00+03',available=false WHERE id=%s",(sid,))
+    with db.tx() as c:c.execute("UPDATE shifts SET status='closed',closed_at='2026-10-28 12:00+03',approved_by='ops-manager',available=false WHERE id=%s",(sid,))
     after=report(actor)['drivers'][0]
     assert before['actual_seconds']==after['actual_seconds']==4*3600
     assert after['work_utilization_percent']==before['work_utilization_percent']

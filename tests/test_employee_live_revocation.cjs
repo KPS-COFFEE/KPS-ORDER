@@ -176,3 +176,28 @@ test('hours heartbeat revokes a different account or a removed report permission
     assert.ok(t.calls.includes('body-cleared'));
   }
 });
+
+test('the actual login transition scrubs already-open dialogs even when a background 401 arrives first',()=>{
+  const loginSource=source.slice(source.indexOf('  function showLogin()'),source.indexOf('  async function driverBrandDedication()'));
+  assert.ok(loginSource.includes('function showLogin()'));
+  const nodes=new Map(),dialogs=[{closed:false,close(){this.closed=true}}];
+  const node=selector=>{
+    if(!nodes.has(selector))nodes.set(selector,{hidden:false,innerHTML:'private',children:['private'],href:'',textContent:'private',replaceChildren(){this.children=[]},reset(){this.resetCalled=true}});
+    return nodes.get(selector);
+  };
+  const state={user:{id:'revoked'},requestKeys:new Map([['pending','private']]),chatHistory:new Map([['chat','private']]),csrf:'private'};
+  const attrs=new Map([['data-work-access-pending','']]);
+  const context={state,$:node,trackingController:null,driverLocation:{reset(){}},setStatus(){},tr:(_ar,en)=>en,
+    document:{querySelectorAll:()=>dialogs,documentElement:{removeAttribute:name=>attrs.delete(name)},body:{classList:{remove(){}}}}};
+  vm.createContext(context);vm.runInContext(loginSource,context);context.showLogin();
+  assert.equal(dialogs[0].closed,true);
+  assert.equal(node('#modal-body').children.length,0);
+  assert.equal(node('#content').innerHTML,'');
+  assert.equal(node('#app-shell').hidden,true);
+  assert.equal(node('#login-shell').hidden,false);
+  assert.equal(state.user,null);
+  assert.equal(state.csrf,'');
+  assert.equal(state.chatHistory.size,0);
+  assert.equal(state.requestKeys.size,0);
+  assert.equal(attrs.has('data-work-access-pending'),false);
+});

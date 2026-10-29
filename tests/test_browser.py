@@ -626,6 +626,16 @@ def _submit_modal(page,values=None,check=None,*,driver_end=False,manager_operati
         expect(page.locator('#modal-body')).to_contain_text('المطابقة المالية لا تغيّر تقفيلتك الأصلية')
         page.locator('#modal-body input[name=confirmed]').check()
         page.locator('#modal-body button[type=submit]').click()
+        # Successful manager closure automatically opens its scoped end-of-duty
+        # report. Verify the approved report, then dismiss it before continuing.
+        expect(page.locator('#modal')).to_have_class(re.compile(r'\boperating-report-dialog\b'))
+        expect(page.locator('#modal-title')).to_have_text(re.compile(r'^(تقرير نهاية المناوبة|End of duty report)$'))
+        report=page.locator('#manager-end-duty-report')
+        expect(report.locator('[data-or-scope=shift]')).to_have_attribute('aria-pressed','true')
+        expect(report.locator('[data-or-day]')).to_be_disabled()
+        expect(report.locator('[data-or-export=share]')).to_be_visible()
+        expect(report.locator('[data-or-export=print]')).to_be_visible()
+        page.locator('#modal-close').click()
     expect(page.locator('#modal')).not_to_be_visible()
 
 
