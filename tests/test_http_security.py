@@ -77,13 +77,30 @@ def test_headers_cookies_streaming_and_monitoring(monkeypatch, path, method, sta
     assert headers[b'x-content-type-options'] == b'nosniff'
     assert headers[b'x-frame-options'] == b'DENY'
     assert headers[b'referrer-policy'] == b'same-origin'
-    assert headers[b'permissions-policy'] == b'camera=(), microphone=(), geolocation=(self)'
+    camera = '(self)' if path in {'/ops', '/ops.html'} else '()'
+    assert headers[b'permissions-policy'].decode() == f'camera={camera}, microphone=(), geolocation=(self)'
     assert b"form-action 'self'" in headers[b'content-security-policy']
     assert headers[b'strict-transport-security'] == b'max-age=31536000; includeSubDomains'
     assert headers[b'cache-control'].decode() == cache
     assert [v for k, v in header_pairs if k == b'set-cookie'] == [b'one=1', b'two=2']
     assert messages[1:] == chunks and all(a is b for a, b in zip(messages[1:], chunks))
     assert records == [status]
+
+
+@pytest.mark.parametrize('path,allowed', [
+    ('/ops', True), ('/ops.html', True),
+    ('/', False), ('/index.html', False), ('/delivery-track', False),
+    ('/work-access', False), ('/api/check', False), ('/ops-other', False),
+])
+def test_camera_permission_is_limited_to_operations_document(path, allowed):
+    async def app(request_scope, receive, send):
+        await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+        await send({'type': 'http.response.body', 'body': b''})
+
+    headers = dict(run(app, scope(path))[0]['headers'])
+    camera = '(self)' if allowed else '()'
+    assert headers[b'permissions-policy'].decode() == f'camera={camera}, microphone=(), geolocation=(self)'
+    assert headers[b'x-frame-options'] == b'DENY'
 
 
 @pytest.mark.parametrize('headers,status,code', [

@@ -80,7 +80,11 @@ class SecurityMiddleware:
                 headers['X-Content-Type-Options'] = 'nosniff'
                 headers['Referrer-Policy'] = 'no-referrer' if path in {'/delivery-track', '/work-access'} else 'same-origin'
                 headers['X-Frame-Options'] = 'DENY'
-                headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
+                # Driver proof capture runs in the top-level operations page.
+                # A blanket camera=() blocks getUserMedia before permission is
+                # even requested. Keep other pages and the microphone denied.
+                camera = '(self)' if path in {'/ops', '/ops.html'} else '()'
+                headers['Permissions-Policy'] = f'camera={camera}, microphone=(), geolocation=(self)'
                 headers['Content-Security-Policy'] = (
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; "
