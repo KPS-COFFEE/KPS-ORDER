@@ -107,6 +107,7 @@ def test_copied_work_credential_cannot_be_used_as_customer(client,monkeypatch):
 @pytest.mark.parametrize('path,header,expected',[
     ('/api/auth/otp/verify','work','customer'),('/api/identity/staff/code/verify','customer','work'),
     ('/api/identity/owner/sms/verify','customer','work'),('/api/identity/owner-phone/verify','customer','work'),
+    ('/customer-report','customer','work'),('/api/reports/customers','customer','work'),
     ('/sms-login-test','customer','work'),('/ops','customer','work'),('/api/session','customer','customer')])
 def test_server_route_context_overrides_ui_hint(path,header,expected):
     scope=dict(request('order.kps.sa').scope)

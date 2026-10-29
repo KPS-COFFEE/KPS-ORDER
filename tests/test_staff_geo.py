@@ -87,7 +87,8 @@ def test_unsafe_proxy_configuration_cannot_start(configured, monkeypatch, value)
         staff_geo.validate_configuration()
 
 
-@pytest.mark.parametrize('path', ['/ops', '/ops.html', '/campaign-report', '/customer-crm',
+@pytest.mark.parametrize('path', ['/ops', '/ops.html', '/campaign-report', '/customer-crm', '/customer-report',
+                                  '/assets/customer-report.js', '/assets/customer-report.css',
                                   '/driver-hours', '/owner-phone', '/api/auth/login',
                                   '/api/identity/staff/code/request', '/api/identity/staff/sms/verify'])
 def test_work_entry_inventory(path):

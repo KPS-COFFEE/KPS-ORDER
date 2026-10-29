@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>تقرير العملاء</title>
+  <link rel="stylesheet" href="/assets/customer-report.css?v=20261029-access1">
+  <script src="/assets/customer-report.js?v=20261029-access1" defer></script>
+</head>
+<body><main>
+  <header class="page-header">
+    <div><span class="eyebrow" id="brand-label">KPS COFFEE</span><h1 data-ar="تقرير العملاء" data-en="Customer report">تقرير العملاء</h1><p data-ar="اعرف من يطلب، ومن يرجع، ومن تأخر عن عادته." data-en="See who orders, who returns and who is overdue.">اعرف من يطلب، ومن يرجع، ومن تأخر عن عادته.</p></div>
+    <nav aria-label="التنقل"><a href="/ops" id="back-link" data-ar="التشغيل" data-en="Operations">التشغيل</a><a href="/customer-crm" id="crm-link" data-ar="سجل العملاء" data-en="Customer records">سجل العملاء</a><button type="button" id="language">English</button></nav>
+  </header>
+  <p id="report-status" role="status" aria-live="polite">جارٍ التحقق من الصلاحية…</p>
+  <a href="/ops" id="report-signin" hidden data-ar="الدخول" data-en="Sign in">الدخول</a>
+  <form id="report-filters" class="panel" hidden>
+    <div class="section-head"><h2 data-ar="الفترة والترتيب" data-en="Period and ranking">الفترة والترتيب</h2><span class="calendar-note" data-ar="أيام تقويمية بتوقيت المملكة" data-en="Riyadh calendar dates">أيام تقويمية بتوقيت المملكة</span></div>
+    <div class="presets" id="presets">
+      <button type="button" data-preset="today" data-ar="اليوم" data-en="Today">اليوم</button>
+      <button type="button" data-preset="month" data-ar="هذا الشهر" data-en="This month">هذا الشهر</button>
+      <button type="button" data-preset="previous" data-ar="الشهر السابق" data-en="Last month">الشهر السابق</button>
+      <button type="button" data-preset="two" data-ar="آخر شهرين" data-en="Last two months">آخر شهرين</button>
+    </div>
+    <div class="filter-grid">
+      <label><span data-ar="من تاريخ" data-en="From">من تاريخ</span><input type="date" name="start" required></label>
+      <label><span data-ar="إلى تاريخ" data-en="To">إلى تاريخ</span><input type="date" name="end" required></label>
+      <label><span data-ar="الترتيب من الأعلى للأقل" data-en="Rank highest to lowest">الترتيب من الأعلى للأقل</span><select name="sort"><option value="orders" data-ar="عدد الطلبات" data-en="Order count">عدد الطلبات</option><option value="value" data-ar="قيمة المشتريات" data-en="Purchase value">قيمة المشتريات</option><option value="absence" data-ar="مدة الغياب" data-en="Days absent">مدة الغياب</option></select></label>
+      <label><span data-ar="تصنيف الفترة" data-en="Period cohort">تصنيف الفترة</span><select name="segment"><option value="all" data-ar="جميع العملاء المشترين سابقًا" data-en="All known buyers">جميع العملاء المشترين سابقًا</option><option value="new" data-ar="جديد خلال الفترة" data-en="New in period">جديد خلال الفترة</option><option value="repeat" data-ar="متكرر خلال الفترة" data-en="Returning in period">متكرر خلال الفترة</option><option value="inactive" data-ar="لم يطلب خلال الفترة" data-en="No orders in period">لم يطلب خلال الفترة</option></select></label>
+      <label><span data-ar="حالة المتابعة" data-en="Follow-up status">حالة المتابعة</span><select name="activity"><option value="all" data-ar="جميع الحالات" data-en="All statuses">جميع الحالات</option><option value="regular" data-ar="منتظم" data-en="Regular">منتظم</option><option value="late" data-ar="متأخر عن عادته" data-en="Overdue">متأخر عن عادته</option><option value="lapsed" data-ar="يُحتمل انقطاعه" data-en="Possibly lapsed">يُحتمل انقطاعه</option><option value="no_repeat" data-ar="طلب مرة ولم يكرر" data-en="One purchase only">طلب مرة ولم يكرر</option><option value="insufficient" data-ar="بيانات غير كافية" data-en="Insufficient history">بيانات غير كافية</option><option value="irregular" data-ar="عادة غير منتظمة" data-en="Irregular pattern">عادة غير منتظمة</option></select></label>
+      <label><span data-ar="الاسم أو الجوال" data-en="Name or mobile">الاسم أو الجوال</span><input type="search" name="q" maxlength="100" placeholder="بحث عن عميل" autocomplete="off"></label>
+    </div>
+    <div class="filter-actions"><button class="primary" type="submit" id="apply" data-ar="عرض التقرير" data-en="Show report">عرض التقرير</button><button type="button" id="reset" data-ar="إعادة ضبط" data-en="Reset">إعادة ضبط</button><small id="preset-note"></small></div>
+  </form>
+  <div id="report-content" hidden>
+    <div class="applied"><div><strong id="applied-period"></strong><p id="applied-filters"></p></div><button type="button" id="print" data-ar="طباعة العرض الحالي" data-en="Print current view">طباعة العرض الحالي</button></div>
+    <p id="coverage-warning" class="notice" hidden></p>
+    <section id="summary" class="summary-grid" aria-label="ملخص الفترة"></section>
+    <section class="panel ranking-panel">
+      <div class="section-head"><div><span class="eyebrow" data-ar="حسب الفترة المحددة" data-en="Selected period">حسب الفترة المحددة</span><h2 id="ranking-title">ترتيب العملاء</h2></div><span class="count-label" id="ranking-count"></span></div>
+      <p class="muted" data-ar="الطلبات والقيمة للفترة المختارة. أول وآخر طلب من سجل العميل حتى نهاية الفترة." data-en="Orders and value use the selected period. First and last purchase use history through period end.">الطلبات والقيمة للفترة المختارة. أول وآخر طلب من سجل العميل حتى نهاية الفترة.</p>
+      <div id="ranking" class="table-wrap"></div>
+      <div class="pagination"><button id="previous" type="button" data-ar="السابق" data-en="Previous">السابق</button><span id="page-label"></span><button id="next" type="button" data-ar="التالي" data-en="Next">التالي</button></div>
+    </section>
+    <section class="panel">
+      <div class="section-head"><div><span class="eyebrow" data-ar="جديد أم متكرر؟" data-en="New or returning?">جديد أم متكرر؟</span><h2 data-ar="السجل اليومي" data-en="Daily history">السجل اليومي</h2></div><span class="count-label" id="daily-count"></span></div>
+      <p class="muted" data-ar="الجديد: يوم أول طلب مكتمل. المتكرر: سبق له طلب في يوم أقدم. طلباته الإضافية في أول يوم تظهر ضمن الطلبات المتكررة، دون تكرار عدد العملاء." data-en="New: the first completed purchase day. Returning: purchased on an earlier day. Extra orders on the first day count as repeat orders without counting the customer twice.">الجديد: يوم أول طلب مكتمل. المتكرر: سبق له طلب في يوم أقدم. طلباته الإضافية في أول يوم تظهر ضمن الطلبات المتكررة، دون تكرار عدد العملاء.</p>
+      <details id="daily-details"><summary data-ar="عرض الأيام بالتفصيل" data-en="Show daily details">عرض الأيام بالتفصيل</summary><div id="daily" class="table-wrap"></div></details>
+    </section>
+    <section class="panel future-panel"><span class="eyebrow" data-ar="جاهز للمرحلة التالية" data-en="Prepared for the next phase">جاهز للمرحلة التالية</span><h2 data-ar="عروض حسب شريحة العميل" data-en="Offers by customer segment">عروض حسب شريحة العميل</h2><p data-ar="نستخدم التصنيف والقيمة ومدة الغياب لاحقًا لتحديد مستحقي الخصم أو الهدية، حسب القواعد التي تعتمدها. هذه الشاشة لا ترسل رسائل ولا تمنح عروضًا." data-en="Cohort, value and absence can later identify coupon or gift audiences under your approved rules. This screen sends no messages and grants no offers.">نستخدم التصنيف والقيمة ومدة الغياب لاحقًا لتحديد مستحقي الخصم أو الهدية، حسب القواعد التي تعتمدها. هذه الشاشة لا ترسل رسائل ولا تمنح عروضًا.</p></section>
+    <details class="panel definitions"><summary data-ar="كيف تُحسب الأرقام والشرائح؟" data-en="How are metrics and segments calculated?">كيف تُحسب الأرقام والشرائح؟</summary><ul id="definitions"></ul></details>
+    <footer id="generated"></footer>
+  </div>
+</main></body></html>
