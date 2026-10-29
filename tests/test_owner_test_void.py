@@ -86,7 +86,10 @@ def test_three_voids_reverse_6950_once_preserve_originals_and_exclude_reports(op
             assert internal['branch_settlement_halalas']==0 and internal['unallocated_refund_halalas']==0
             assert internal['test_void_no_cash_disbursed'] and not internal['refunds']
         from app.accounting import build
-        day=datetime.now().date();start=(day-timedelta(days=1)).isoformat();end=day.isoformat()
+        # The fixture creates a morning duty: after Riyadh midnight its
+        # reporting date differs from the UTC runner date. Query its actual
+        # owning duty day, as the accounting contract requires.
+        day=shift['reporting_operational_date'];start=(day-timedelta(days=1)).isoformat();end=day.isoformat()
         daily=build(c,user,start,end)
         assert sum(r['cash'] for r in daily['rows'])==0
         actions=build(c,user,start,end,group='actions')

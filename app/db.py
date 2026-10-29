@@ -305,6 +305,41 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
     return row['hits'] <= maximum
 
 
+MIGRATION_LOCK_KEY = 764832610
+MIGRATION_LOCK_WAIT_SECONDS = 120.0
+
+
+def acquire_migration_lock(conn):
+    """Wait outside the snapshot without inheriting the 15-second SQL deadline.
+
+    Nonblocking probes keep each statement bounded. The overall monotonic
+    deadline prevents endless startup, while later migration statements retain
+    their existing timeout. Only a successful caller owns/relinquishes the lock.
+    """
+    started = time.monotonic()
+    deadline = started + MIGRATION_LOCK_WAIT_SECONDS
+    next_notice = started + 10.0
+    attempts = 0
+    while True:
+        attempts += 1
+        if conn.execute('SELECT pg_try_advisory_lock(%s) AS acquired',
+                        (MIGRATION_LOCK_KEY,)).fetchone()['acquired']:
+            if attempts > 1:
+                print(jsonlib.dumps({'event': 'startup_migration_lock_acquired',
+                                     'wait_seconds': round(time.monotonic() - started, 3),
+                                     'attempts': attempts}), flush=True)
+            return
+        now = time.monotonic()
+        if now >= deadline:
+            raise RuntimeError('Startup migration lock unavailable after bounded 120-second wait.')
+        if now >= next_notice:
+            print(jsonlib.dumps({'event': 'startup_migration_lock_wait',
+                                 'wait_seconds': round(now - started, 3),
+                                 'attempts': attempts}), flush=True)
+            next_notice = now + 10.0
+        time.sleep(min(0.5, deadline - now))
+
+
 def migrate():
     from .runtime_revision import revision as source_revision
     deployed_revision = source_revision('local-unversioned')
@@ -316,7 +351,7 @@ def migrate():
         # Serialize boot workers BEFORE taking an MVCC snapshot. A transaction
         # advisory-lock SELECT in REPEATABLE READ would take its snapshot before
         # waiting, leaving the next worker with stale migration/catalog state.
-        conn.execute('SELECT pg_advisory_lock(%s)', (764832610,))
+        acquire_migration_lock(conn)
         try:
             for attempt in range(3):
                 try:
@@ -342,7 +377,7 @@ def migrate():
                                          'attempt': attempt + 1, 'sqlstate': exc.sqlstate}), flush=True)
                     time.sleep(0.1 * (attempt + 1))
         finally:
-            conn.execute('SELECT pg_advisory_unlock(%s)', (764832610,))
+            conn.execute('SELECT pg_advisory_unlock(%s)', (MIGRATION_LOCK_KEY,))
 
 
 PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'central_workdays', 'central_workday_legs', 'central_manager_handovers', 'central_manager_handover_legs', 'promotion_report_closures', 'first_order_gift_claims', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
