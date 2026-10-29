@@ -387,10 +387,13 @@ def availability_only_change(previous: dict, updated: dict) -> bool:
 
 
 def public_product(product: dict, branch=None, service=None) -> dict:
+    from .enbishan_menu_review import pickup_only
     settings = product['settings']
     available, reason = product_availability(product, branch, service=service)
     result = {key: product[key] for key in ('id', 'brand_id', 'name', 'category', 'price_halalas')}
     result.update({key: settings.get(key) for key in ('image_url', 'description')})
+    if pickup_only(product):
+        result['pickup_only'] = True
     if product['brand_id'] == 'enbishan':
         from .enbishan_menu_assets import valid_bundled
         result['variant_images'] = [entry for entry in settings.get('variant_images', [])
