@@ -267,7 +267,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
       'generated_at':datetime.now(TZ)})
 
 def deficit_rows(c,u,lo,hi,bids,driver_id,lang):
-    rows=c.execute("SELECT r.*,v.id review_id,v.note review_note,v.created_at reviewed_at,u.display_name driver_name,coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=s.user_id LEFT JOIN accounting_reviews v ON v.report_id=r.id WHERE r.brand_id=%s AND r.kind='driver' AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)>=%s AND coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)<%s ORDER BY accounting_day,r.created_at,r.id",(u['brand_id'],lo.date(),hi.date())).fetchall()
+    rows=c.execute("SELECT r.*,v.id review_id,v.note review_note,v.created_at reviewed_at,u.display_name driver_name,coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day FROM closure_reports r JOIN shifts s ON s.id=r.shift_id LEFT JOIN shifts manager ON manager.id=s.manager_shift_id AND manager.kind='manager' AND manager.brand_id=s.brand_id JOIN users u ON u.id=s.user_id LEFT JOIN accounting_reviews v ON v.report_id=r.id WHERE r.brand_id=%s AND r.kind='driver' AND coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)>=%s AND coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date)<%s ORDER BY accounting_day,r.created_at,r.id",(u['brand_id'],lo.date(),hi.date())).fetchall()
     latest={e['report_id']:e for e in c.execute('SELECT DISTINCT ON(report_id) * FROM driver_accounting_settlements WHERE report_id=ANY(%s) ORDER BY report_id,revision DESC',([r['id'] for r in rows],)).fetchall()}
     output=[]
     for r in rows:
@@ -734,7 +734,7 @@ def driver_settlements(kind:Literal['driver','manager']='driver',user=Depends(ac
         # No date restriction: cash from an older operational day remains visible.
         rows = c.execute("""SELECT r.*,u.display_name driver_name,
           s.manager_shift_id,manager_user.display_name manager_name,
-          coalesce(s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day
+          coalesce(manager.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) accounting_day
           FROM closure_reports r JOIN users u ON u.id=r.user_id JOIN shifts s ON s.id=r.shift_id
           LEFT JOIN shifts manager ON manager.id=s.manager_shift_id
           LEFT JOIN users manager_user ON manager_user.id=manager.user_id

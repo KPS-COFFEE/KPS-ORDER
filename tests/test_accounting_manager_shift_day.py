@@ -77,6 +77,18 @@ def test_pending_payment_never_manufactures_completed_sale(ops):
     assert report(actor,'2026-10-28')['totals']['total']==0
 
 @pytest.mark.postgres
+def test_variance_uses_manager_day_when_driver_date_differs(ops):
+    actor,_,_,_=ops;accountant()
+    with db.tx() as c:
+        sid=duty(c,'variance','2026-10-27',driver_day='2026-10-28')
+        snapshot={'shift':{'id':sid,'user_id':'ops-driver','submission':{'difference_halalas':-100}},'summary':{'completed_orders':2,'card_collected_halalas':3100,'net_collections_halalas':3100}}
+        c.execute("INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES('test-variance-report',%s,'driver','ops-brand','[\"ops-branch\"]','ops-driver',%s)",(sid,db.json(snapshot)))
+    old=report(actor,'2026-10-27','deficits')
+    assert len(old['rows'])==1 and old['rows'][0]['day']=='2026-10-27'
+    assert old['totals']['shortage']==100
+    assert report(actor,'2026-10-28','deficits')['rows']==[]
+
+@pytest.mark.postgres
 def test_later_refund_uses_processing_duty_preserving_original_receipt(ops):
     actor,_,order,_=ops;accountant()
     with db.tx() as c:
