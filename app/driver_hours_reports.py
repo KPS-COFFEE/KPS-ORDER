@@ -18,7 +18,7 @@ router = APIRouter(tags=['driver-hours'])
 COLUMNS = (
     ('name', 'السائق', 'Driver'), ('order_count', 'الطلبات', 'Orders'),
     ('trip_count', 'الرحلات', 'Trips'), ('shift_seconds', 'ساعات الشفت', 'Shift hours'),
-    ('actual_seconds', 'العمل المتاح بعد الاستراحات', 'Available work after breaks'),
+    ('actual_seconds', 'التوصيل الفعلي من القبول إلى العودة', 'Accepted-to-return work hours'),
     ('delivery_seconds', 'رحلات الفرع إلى الفرع', 'Branch-to-branch hours'),
     ('waiting_seconds', 'ساعات الانتظار', 'Waiting hours'),
     ('break_seconds', 'ساعات الاستراحات', 'Break hours'),
@@ -26,21 +26,35 @@ COLUMNS = (
     ('unclassified_seconds', 'وقت غير مصنف', 'Unclassified hours'),
     ('order_activity_seconds', 'توصيل الطلبات المكتملة', 'Completed order delivery hours'),
     ('active_delivery_seconds', 'طلبات جارٍ توصيلها', 'Active delivery hours'),
-    ('remaining_shift_seconds', 'باقي الشفت', 'Remaining shift hours'),
+    ('non_delivery_seconds', 'باقي الدوام خارج التوصيل الجاري والمكتمل', 'Other duty time'),
+    ('duty_seconds', 'مدة الدوام للمقارنة', 'Duty duration'),
+    ('active_work_seconds', 'عمل جارٍ حتى العودة', 'Active accepted-to-return hours'),
+    ('work_utilization_percent', 'نسبة التوصيل من الدوام %', 'Completed work / duty %'),
+    ('work_clock_status', 'حالة توثيق العمل', 'Work timing evidence'),
 )
+
+
+def export_value(row, key, lang):
+    unavailable='غير متاح' if lang=='ar' else 'Unavailable'
+    value=row.get(key)
+    if key=='name':return row.get('name',row.get('driver_name',''))
+    if key=='work_clock_status':
+        return {'recorded':('موثق','Recorded'),'in_progress':('جارٍ — غير نهائي','In progress — provisional'),
+                'needs_review':('ناقص — يحتاج مراجعة','Incomplete — needs review')}.get(value,('غير متاح','Unavailable'))[lang=='en']
+    if value is None or (key=='actual_seconds' and not value and row.get('work_review_required')):
+        return unavailable
+    return round(float(value)/3600,6) if key.endswith('_seconds') else value
 
 
 def export_rows(report, lang='ar'):
     labels = [c[2] if lang == 'en' else c[1] for c in COLUMNS]
     rows = [labels]
     for driver in report['drivers']:
-        rows.append([driver.get('name', driver.get('driver_name', '')) if k == 'name'
-                     else round(float(driver.get(k, 0) or 0) / 3600, 6) if k.endswith('_seconds')
-                     else driver.get(k, 0) for k, _, _ in COLUMNS])
-    total = report['totals']
-    rows.append(['Total' if lang == 'en' else 'الإجمالي', *[
-        round(float(total.get(k, 0) or 0) / 3600, 6) if k.endswith('_seconds')
-        else total.get(k, 0) for k, _, _ in COLUMNS[1:]]])
+        rows.append([export_value(driver,k,lang) for k,_,_ in COLUMNS])
+    total = dict(report['totals'])
+    total['work_review_required']=bool(total.get('drivers_needing_review'))
+    total['work_clock_status']='needs_review' if total['work_review_required'] else 'in_progress' if any(d.get('work_clock_status')=='in_progress' for d in report['drivers']) else 'recorded'
+    rows.append(['Total' if lang == 'en' else 'الإجمالي', *[export_value(total,k,lang) for k,_,_ in COLUMNS[1:]]])
     return rows
 
 
@@ -63,7 +77,7 @@ def make_xlsx(report, lang='ar'):
         archive.writestr('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
         archive.writestr('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Driver hours" sheetId="1" r:id="rId1"/></sheets></workbook>')
         archive.writestr('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
-        archive.writestr('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0" rightToLeft="'+('1' if lang=='ar' else '0')+'"/></sheetViews><cols><col min="1" max="13" width="24" customWidth="1"/></cols><sheetData>'+''.join(sheet_rows)+'</sheetData></worksheet>')
+        archive.writestr('xl/worksheets/sheet1.xml', '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0" rightToLeft="'+('1' if lang=='ar' else '0')+'"/></sheetViews><cols><col min="1" max="17" width="24" customWidth="1"/></cols><sheetData>'+''.join(sheet_rows)+'</sheetData></worksheet>')
     return out.getvalue()
 
 
@@ -143,9 +157,11 @@ def make_pdf(report, lang='ar'):
             draw_lines(cells, first, count)
             first += count
     y -= 12
-    note = ('الرحلات غير المؤكدة العودة مستبعدة من التوصيل المعتمد. لا أثر تلقائي على الرواتب.' if lang=='ar'
-            else 'Trips awaiting return confirmation are excluded from approved delivery totals. No automatic payroll impact.')
-    if y<35: cv.showPage(); y=height-35
+    note = ('العمل من قبول الطلب إلى العودة المؤكدة، دون مضاعفة التداخل. الجاري منفصل والنقص للمراجعة. لا أثر تلقائي على الرواتب.' if lang=='ar'
+            else 'Work runs from acceptance to confirmed return. Overlap counts once; active work is separate. Missing timing needs review. No automatic payroll impact.')
+    if y<35:
+        cv.showPage(); y=height-35; header()
+        draw_lines(column_labels, 0, max(map(len, column_labels)))
     cv.drawRightString(width-25, y, visual(note))
     cv.save()
     return out.getvalue()
@@ -188,3 +204,4 @@ def export_pdf(start: date, end: date, driver_id: str | None = None,
     report = _report(user, start, end, driver_id, branch_id)
     return Response(make_pdf(report, lang), media_type='application/pdf',
                     headers={'Content-Disposition':'attachment; filename="KPS-driver-hours.pdf"', 'Cache-Control':'private, no-store'})
+

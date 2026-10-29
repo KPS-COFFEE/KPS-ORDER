@@ -38,14 +38,59 @@ def seconds(intervals):
     return round(sum((b-a).total_seconds() for a,b in union(intervals)), 3)
 
 
+def trip_activity(trips, accepted_by_trip, lo, hi, now, *, recorded_spans=None, duty_spans=None):
+    """First acceptance through confirmed branch return, unioned per driver.
+
+    Includes preparation, pickup, all deliveries and return. Missing timing is
+    review evidence, never an invented start/return or an attendance deduction.
+    No shift, approval, break or GPS timestamp changes the physical mission.
+    """
+    completed, active, reasons, evidence = [], [], set(), []
+    for trip in trips:
+        accepted=accepted_by_trip.get(trip['id'], [])
+        returned=trip.get('returned_at')
+        if not accepted or any(t is None or t>now for t in accepted):
+            reasons.add('missing_acceptance_timing')
+            evidence.append({'trip_id':trip['id'],'status':'needs_review','accepted_at':None,'returned_at':returned,'duration_seconds':None})
+            continue
+        start=min(accepted)
+        if returned is not None and (returned<start or returned>now or not trip.get('return_branch_id')):
+            reasons.add('invalid_return_timing')
+            evidence.append({'trip_id':trip['id'],'status':'needs_review','accepted_at':start,'returned_at':returned,'duration_seconds':None})
+            continue
+        if returned is None and trip.get('historical'):
+            reasons.add('missing_return_evidence')
+            evidence.append({'trip_id':trip['id'],'status':'needs_review','accepted_at':start,'returned_at':None,'duration_seconds':None})
+            continue
+        if returned is None:
+            active.append((start,now))
+            status='in_progress'
+        else:
+            completed.append((start,returned))
+            status='returned'
+        evidence.append({'trip_id':trip['id'],'status':status,'accepted_at':start,'returned_at':returned,
+                         'return_branch_id':trip.get('return_branch_id'),'duration_seconds':(returned-start).total_seconds() if returned is not None else None})
+    done=clipped(completed,lo,hi)
+    pending=subtract(clipped(active,lo,hi),done)
+    physical=union([*done,*pending])
+    if recorded_spans is not None and subtract(physical,clipped(recorded_spans,lo,hi)):
+        reasons.add('work_outside_shift_evidence')
+    if duty_spans is not None and subtract(physical,clipped(duty_spans,lo,hi)):
+        reasons.add('work_outside_configured_duty')
+    return {'actual_seconds':seconds(done),'active_work_seconds':seconds(pending),
+            'work_review_reasons':sorted(reasons),'work_review_required':bool(reasons),
+            'work_clock_status':'needs_review' if reasons else 'in_progress' if active else 'recorded',
+            'work_trip_evidence':evidence}
+
+
 def metrics(shifts, breaks, trips, lo, hi, now, stops=(), unknown=()):
     spans = clipped([(s['opened_at'],min(s.get('submitted_at') or s.get('closed_at') or now,now)) for s in shifts],lo,hi)
     nonwork = clipped([*breaks,*stops],lo,hi)
     actual = subtract(spans,nonwork)
     # Intersect with actual work so overlap/breaks never inflate delivery totals.
-    confirmed = clipped([(t['departed_at'],t['returned_at']) for t in trips if t.get('returned_at')],lo,hi)
+    confirmed = clipped([(t['departed_at'],t['returned_at']) for t in trips if t.get('returned_at') and t['departed_at']<=t['returned_at']<=now],lo,hi)
     delivery = subtract(actual,subtract(actual,confirmed))
-    pending = clipped([(t['departed_at'],now) for t in trips if not t.get('returned_at')],lo,hi)
+    pending = clipped([(t['departed_at'],now) for t in trips if not t.get('returned_at') or not t['departed_at']<=t['returned_at']<=now],lo,hi)
     unclassified = subtract(actual,subtract(actual,[*unknown,*pending]))
     unclassified = subtract(unclassified,delivery)
     waiting = subtract(actual,[*delivery,*unclassified])
@@ -276,6 +321,53 @@ def report_scope_contains(branch_ids, allowed):
     return bool(assigned) and assigned <= allowed
 
 
+def report_shift_scope(c, user, shifts, driver_id):
+    """Authorize an entire physical workday before using any mission clock.
+
+    Reports use explicit report/branch permission, not operational mutation or
+    current manager ownership. A restricted reader keeps their visible duty
+    evidence but cannot infer the hidden leg's duration or task details.
+    """
+    from . import multibrand
+    from .central_workdays import association
+    selected={s['id']:s for s in shifts}
+    mission={s['id']:s for s in shifts}
+    scopes={}
+    incomplete=False
+    processed=set()
+    for shift in shifts:
+        day=association(c,shift['id'])
+        legs=[shift]
+        if day:
+            if day['id'] in processed:continue
+            processed.add(day['id'])
+            legs=c.execute('SELECT s.* FROM central_workday_legs l JOIN shifts s ON s.id=l.shift_id WHERE l.workday_id=%s ORDER BY s.id',(day['id'],)).fetchall()
+        grants={}
+        valid=bool(legs) and (not day or (day['anchor_shift_id'] in {s['id'] for s in legs} and day['user_id']==driver_id and day['kind']=='driver'))
+        for leg in legs:
+            principal=multibrand.project(c,user,leg['brand_id'])
+            branches=c.execute('SELECT id FROM branches WHERE brand_id=%s',(leg['brand_id'],)).fetchall() if principal else []
+            allowed={b['id'] for b in branches}
+            if principal and (principal['role']!='owner' or principal.get('home_brand_id')):
+                allowed &= set(principal.get('branch_ids') or [])
+            permitted=bool(principal and (principal['role']=='owner' or auth.has_permission(principal,'driver_hours_reports')))
+            permitted=permitted and leg['user_id']==driver_id and leg['kind']=='driver' and report_scope_contains(leg['branch_ids'],allowed)
+            if user.get('_morning_manager_context'):
+                from .morning_manager_context import shift_allowed
+                permitted=permitted and leg['brand_id']==user['brand_id'] and shift_allowed(user,leg)
+            if not permitted:valid=False
+            grants[leg['id']]={'brand_id':leg['brand_id'],'branches':set(leg['branch_ids']) & allowed}
+        if not valid:
+            incomplete=True
+            for leg in legs:mission.pop(leg['id'],None)
+            continue
+        for leg in legs:
+            selected[leg['id']]=leg
+            mission[leg['id']]=leg
+        scopes.update(grants)
+    return sorted(selected.values(),key=lambda s:(s['opened_at'],s['id'])),mission,scopes,incomplete
+
+
 def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
     require_report_access(user)
     brand=c.execute('SELECT settings FROM brands WHERE id=%s',(user['brand_id'],)).fetchone()
@@ -293,27 +385,92 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
     hi=datetime.combine(last+timedelta(days=1),time(),RIYADH)+timedelta(minutes=minutes)
     branches=c.execute('SELECT id,name FROM branches WHERE brand_id=%s ORDER BY branch_no',(user['brand_id'],)).fetchall()
     brand_branches={b['id'] for b in branches}
-    allowed=brand_branches if user['role']=='owner' else set(user.get('branch_ids') or []) & brand_branches
+    unrestricted_owner=user['role']=='owner' and not user.get('home_brand_id')
+    allowed=brand_branches if unrestricted_owner else set(user.get('branch_ids') or []) & brand_branches
     if branch_id and branch_id not in allowed:raise db.error(403,'DRIVER_HOURS_BRANCH','الفرع خارج الصلاحية.')
     people=c.execute("SELECT id,display_name,branch_ids FROM users WHERE brand_id=%s AND role='driver' ORDER BY display_name,id",(user['brand_id'],)).fetchall()
-    if driver_id and not any(p['id']==driver_id and (user['role']=='owner' or report_scope_contains(p['branch_ids'],allowed)) for p in people):raise db.error(404,'DRIVER_HOURS_DRIVER','السائق خارج الصلاحية.')
+    from . import multibrand
+    if multibrand.enabled():
+        shared=c.execute("SELECT u.* FROM users u JOIN staff_brand_memberships m ON m.user_id=u.id WHERE m.brand_id=%s AND m.active AND u.active AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
+        known={p['id'] for p in people}
+        for person in shared:
+            projected=multibrand.project(c,person,user['brand_id'])
+            if projected and projected['id'] not in known:
+                people.append(projected)
+                known.add(projected['id'])
+        people.sort(key=lambda p:(p['display_name'],p['id']))
+    if driver_id and not any(p['id']==driver_id and (unrestricted_owner or report_scope_contains(p['branch_ids'],allowed)) for p in people):raise db.error(404,'DRIVER_HOURS_DRIVER','السائق خارج الصلاحية.')
     drivers=[]
     for p in people:
         if driver_id and p['id']!=driver_id:continue
         ss=c.execute("SELECT * FROM shifts WHERE user_id=%s AND brand_id=%s AND kind='driver' AND opened_at<%s AND COALESCE(submitted_at,closed_at,%s)>%s ORDER BY opened_at",(p['id'],user['brand_id'],hi,now,lo)).fetchall()
         # Multi-branch shifts cannot be divided into invented per-branch hours.
-        ss=[s for s in ss if (user['role']=='owner' or report_scope_contains(s['branch_ids'],allowed)) and (not branch_id or branch_id in s['branch_ids'])]
+        ss=[s for s in ss if (unrestricted_owner or report_scope_contains(s['branch_ids'],allowed)) and (not branch_id or branch_id in s['branch_ids'])]
         if user.get('_morning_manager_context'):
             from .morning_manager_context import shift_allowed
             ss=[s for s in ss if shift_allowed(user,s)]
         if not ss:continue
+        ss,mission_shifts,mission_scopes,incomplete_scope=report_shift_scope(c,user,ss,p['id'])
         sids=[s['id'] for s in ss]
+        mission_ids=list(mission_shifts)
         bs=c.execute('SELECT started_at,ended_at FROM driver_breaks WHERE shift_id=ANY(%s) AND started_at IS NOT NULL',(sids,)).fetchall()
-        ts=c.execute('SELECT t.*,(SELECT count(*) FROM driver_work_trip_orders x WHERE x.trip_id=t.id) AS order_count FROM driver_work_trips t WHERE t.shift_id=ANY(%s) AND t.departed_at<%s AND COALESCE(t.returned_at,%s)>%s ORDER BY departed_at',(sids,hi,now,lo)).fetchall()
-        missing=c.execute('SELECT DISTINCT t.shift_id FROM driver_tasks t WHERE t.shift_id=ANY(%s) AND t.picked_up_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM driver_work_trip_orders x JOIN driver_work_trips w ON w.id=x.trip_id WHERE x.order_id=t.order_id AND w.shift_id=t.shift_id)',(sids,)).fetchall()
-        missing_ids={r['shift_id'] for r in missing}
+        ts=c.execute("""SELECT t.*,(SELECT count(*) FROM driver_work_trip_orders x WHERE x.trip_id=t.id) AS order_count
+          FROM driver_work_trips t WHERE t.shift_id=ANY(%s) AND t.driver_id=%s
+          AND t.brand_id=ANY(%s) AND COALESCE(t.returned_at,%s)>%s
+          AND (t.departed_at<%s OR EXISTS(SELECT 1 FROM driver_work_trip_orders x JOIN driver_tasks a ON a.order_id=x.order_id
+            AND a.shift_id=ANY(%s) AND a.driver_id=t.driver_id WHERE x.trip_id=t.id AND a.accepted_at<%s))
+          ORDER BY t.departed_at""",(mission_ids,p['id'],list({v['brand_id'] for v in mission_scopes.values()}),now,lo,hi,mission_ids,hi)).fetchall()
+        # Every linked order must have authorized evidence. Never silently omit
+        # a hidden/malformed order and certify a later, partial acceptance.
+        invalid_trip_scope=set()
+        for trip in ts:
+            shift=mission_shifts.get(trip['shift_id']) or {}
+            trip['historical']=bool(shift.get('submitted_at') or shift.get('closed_at') or shift.get('status') not in ('open','closing'))
+            scope=mission_scopes.get(trip['shift_id'])
+            group_branches=set().union(*(v['branches'] for v in mission_scopes.values())) if mission_scopes else set()
+            if not scope or trip['brand_id']!=scope['brand_id'] or trip['departure_branch_id'] not in scope['branches'] or (trip.get('return_branch_id') and trip['return_branch_id'] not in group_branches):
+                invalid_trip_scope.add(trip['id'])
+        accepted_by_trip={t['id']:[] for t in ts}
+        if ts:
+            starts=c.execute("""SELECT x.trip_id,o.id order_id,o.brand_id,o.branch_id,o.test_void,o.status order_status,
+                a.shift_id,a.driver_id,a.status,a.accepted_at
+              FROM driver_work_trip_orders x LEFT JOIN orders o ON o.id=x.order_id
+              LEFT JOIN driver_tasks a ON a.order_id=x.order_id AND a.driver_id=%s AND a.shift_id=ANY(%s)
+              WHERE x.trip_id=ANY(%s)""",(p['id'],mission_ids,[t['id'] for t in ts])).fetchall()
+            for row in starts:
+                scope=mission_scopes.get(row['shift_id'])
+                valid=(scope and row['driver_id']==p['id'] and row['brand_id']==scope['brand_id']
+                       and row['branch_id'] in scope['branches'] and row['test_void'] is None
+                       and row['status'] in ('accepted','picked_up','problem','delivered','transferred','reassigned','cancelled'))
+                if not valid:invalid_trip_scope.add(row['trip_id'])
+                accepted_by_trip[row['trip_id']].append(row['accepted_at'] if valid else None)
+        tasks=c.execute("""SELECT t.*,o.brand_id order_brand_id,o.branch_id order_branch_id,o.test_void,o.status order_status
+          FROM driver_tasks t JOIN orders o ON o.id=t.order_id
+          WHERE t.shift_id=ANY(%s) AND t.driver_id=%s
+            AND t.status IN ('accepted','picked_up','problem','delivered','transferred','reassigned','cancelled')
+            AND o.test_void IS NULL""",(mission_ids,p['id'])).fetchall()
+        links=c.execute("""SELECT DISTINCT x.order_id FROM driver_work_trip_orders x
+          JOIN driver_work_trips w ON w.id=x.trip_id WHERE w.driver_id=%s AND w.shift_id=ANY(%s)
+            AND w.brand_id=ANY(%s)""",(p['id'],mission_ids,list({v['brand_id'] for v in mission_scopes.values()}))).fetchall()
+        linked_orders={row['order_id'] for row in links}
+        preparing=[]
+        valid_tasks=[]
+        missing_ids=set()
+        for task in tasks:
+            scope=mission_scopes.get(task['shift_id'])
+            if not scope or task['order_brand_id']!=scope['brand_id'] or task['order_branch_id'] not in scope['branches']:
+                incomplete_scope=True
+                continue
+            valid_tasks.append(task)
+            if task['order_id'] in linked_orders:continue
+            shift=mission_shifts[task['shift_id']]
+            if task['status'] in ('delivered','transferred','reassigned','cancelled') or task['order_status']=='cancelled' or shift.get('submitted_at') or shift.get('closed_at') or shift.get('status') not in ('open','closing'):
+                missing_ids.add(task['shift_id'])
+            else:preparing.append(task)
+        pending_work=[{'id':'accepted:'+t['id'],'returned_at':None} for t in preparing]
+        for t in preparing:accepted_by_trip['accepted:'+t['id']]=[t['accepted_at']]
         # No historical return evidence: keep residual time unknown, never invent waiting.
-        unknown=[(s['opened_at'],s.get('submitted_at') or s.get('closed_at') or now) for s in ss if s['id'] in missing_ids]
+        unknown=[(s['opened_at'],s.get('submitted_at') or s.get('closed_at') or now) for s in ss if incomplete_scope or s['id'] in missing_ids]
         stops=[]
         for s in ss:
             events=c.execute("SELECT created_at,details FROM audit_events WHERE entity_type='shift' AND entity_id=%s AND action='shift.availability' ORDER BY created_at,id",(s['id'],)).fetchall()
@@ -322,28 +479,52 @@ def build_report(c,user,start=None,end=None,driver_id=None,branch_id=None):
                 if e['details'].get('available') is False and e['details'].get('nonworking') is True and paused is None:paused=e['created_at']
                 elif e['details'].get('available') is True and paused is not None:stops.append((paused,e['created_at']));paused=None
             if paused:stops.append((paused,s.get('submitted_at') or s.get('closed_at') or now))
-        m=metrics(ss,[(b['started_at'],b['ended_at'] or now) for b in bs],ts,lo,hi,now,stops,unknown)
-        count=c.execute("SELECT count(DISTINCT order_id) n,avg(extract(epoch FROM(delivered_at-picked_up_at))) FILTER(WHERE delivered_at>=picked_up_at) average FROM effective_driver_tasks WHERE shift_id=ANY(%s) AND status='delivered' AND delivered_at>=%s AND delivered_at<%s",(sids,lo,hi)).fetchone()
-        activity_tasks=c.execute("SELECT order_id,status,picked_up_at,delivered_at FROM driver_tasks WHERE shift_id=ANY(%s) AND driver_id=%s AND (delivered_at>=%s OR (status IN ('picked_up','problem') AND picked_up_at<%s))",(sids,p['id'],lo,hi)).fetchall()
+        visible_trips=[t for t in ts if t['id'] not in invalid_trip_scope]
+        if invalid_trip_scope:incomplete_scope=True
+        m=metrics(ss,[(b['started_at'],b['ended_at'] or now) for b in bs],visible_trips,lo,hi,now,stops,unknown)
+        completed_tasks=[t for t in valid_tasks if t['status']=='delivered' and t.get('delivered_at') and lo<=t['delivered_at']<hi and t['delivered_at']<=now]
+        durations=[(t['delivered_at']-t['picked_up_at']).total_seconds() for t in completed_tasks if t.get('picked_up_at') and t['picked_up_at']<=t['delivered_at']]
+        count={'n':len({t['order_id'] for t in completed_tasks}),'average':sum(durations)/len(durations) if durations else None}
+        activity_tasks=valid_tasks
         activity=order_activity(ss,activity_tasks,[(b['started_at'],b['ended_at'] or now) for b in bs],lo,hi,now,stops)
+        scheduled=[(s['opened_at'],s['scheduled_end_at']) for s in ss if s.get('scheduled_end_at') and s['scheduled_end_at']>=s['opened_at']]
+        recorded=[(s['opened_at'],min(s.get('submitted_at') or s.get('closed_at') or now,now)) for s in ss]
+        duty_spans=scheduled if len(scheduled)==len(ss) else recorded
+        work=trip_activity([*visible_trips,*pending_work],accepted_by_trip,lo,hi,now,recorded_spans=recorded,duty_spans=duty_spans)
+        if incomplete_scope:
+            work['work_review_reasons']=sorted(set(work['work_review_reasons'])|{'incomplete_physical_scope'})
+            work.update(work_review_required=True,work_clock_status='needs_review')
+        if missing_ids:
+            work['work_review_reasons']=sorted(set(work['work_review_reasons'])|{'missing_return_evidence'})
+            work.update(work_review_required=True,work_clock_status='needs_review')
+        scheduled=[(s['opened_at'],s['scheduled_end_at']) for s in ss if s.get('scheduled_end_at') and s['scheduled_end_at']>=s['opened_at']]
+        duty=seconds(clipped(scheduled,lo,hi)) if len(scheduled)==len(ss) else m['shift_seconds']
+        work.update(duty_seconds=duty,duty_basis='scheduled' if len(scheduled)==len(ss) else 'recorded_shift',
+                    work_utilization_percent=round(work['actual_seconds']/duty*100,2) if duty else None,
+                    available_work_seconds=m['actual_seconds'],
+                    non_delivery_seconds=round(max(0,duty-work['actual_seconds']-work['active_work_seconds']),3))
         evidence=report_completed_orders(c,user,p['id'],sids,allowed,lo,hi,now)
-        confirmed=[t for t in ts if t['returned_at']]
+        ts=visible_trips
+        confirmed=[t for t in ts if t['returned_at'] and t.get('return_branch_id') and t['departed_at']<=t['returned_at']<=now]
         for t in ts:
-            t['status']='returned' if t['returned_at'] else 'awaiting_return'
-            t['duration_seconds']=(t['returned_at']-t['departed_at']).total_seconds() if t['returned_at'] else None
-            t['period_seconds']=seconds(clipped([(t['departed_at'],t['returned_at'])],lo,hi)) if t['returned_at'] else None
-        drivers.append({'driver_id':p['id'],'name':p['display_name'],'shift_status':'open' if any(s['status']=='open' for s in ss) else ss[-1]['status'],**m,**activity,
+            valid=bool(t['returned_at'] and t.get('return_branch_id') and t['departed_at']<=t['returned_at']<=now)
+            t['status']='returned' if valid else 'needs_review' if t['returned_at'] else 'awaiting_return'
+            t['duration_seconds']=(t['returned_at']-t['departed_at']).total_seconds() if valid else None
+            t['period_seconds']=seconds(clipped([(t['departed_at'],t['returned_at'])],lo,hi)) if valid else None
+        drivers.append({'driver_id':p['id'],'name':p['display_name'],'shift_status':'open' if any(s['status']=='open' for s in ss) else ss[-1]['status'],**m,**activity,**work,
                         'trip_count':len(confirmed),'pending_trip_count':len(ts)-len(confirmed),'order_count':count['n'],
                         'average_trip_seconds':sum(t['duration_seconds'] for t in confirmed)/len(confirmed) if confirmed else None,
                         'average_order_delivery_seconds':float(count['average']) if count['average'] is not None else None,
                         'missing_trip_evidence':bool(missing_ids),'trips':ts,**evidence})
-    keys=('shift_seconds','actual_seconds','delivery_seconds','waiting_seconds','break_seconds','other_work_seconds','unclassified_seconds','trip_count','pending_trip_count','order_count','order_activity_seconds','active_delivery_seconds','remaining_shift_seconds','missing_order_timing_count')
+    keys=('shift_seconds','actual_seconds','delivery_seconds','waiting_seconds','break_seconds','other_work_seconds','unclassified_seconds','trip_count','pending_trip_count','order_count','order_activity_seconds','active_delivery_seconds','remaining_shift_seconds','missing_order_timing_count','active_work_seconds','duty_seconds','available_work_seconds','non_delivery_seconds')
     totals={key:sum(d[key] for d in drivers) for key in keys}
+    totals['drivers_needing_review']=sum(d['work_review_required'] for d in drivers)
+    totals['work_utilization_percent']=round(totals['actual_seconds']/totals['duty_seconds']*100,2) if totals['duty_seconds'] else None
     totals['order_utilization_percent']=round(totals['order_activity_seconds']/totals['shift_seconds']*100,2) if totals['shift_seconds'] else 0
-    return safe({'start':first,'end':last,'timezone':'Asia/Riyadh','operational_day_start':f'{minutes//60:02d}:{minutes%60:02d}',
+    return safe({'start':first,'end':last,'calculated_at':now,'timezone':'Asia/Riyadh','hours_policy':{'version':'accepted-to-return-v1','actual_work':'first_task_acceptance_to_confirmed_branch_return; interval_union','active_separate':True,'gps_affects_work':False,'payroll_effect':False,'scope':'fully_authorized_physical_workdays; interval_union; separate_brand_reports_are_not_additive'},'operational_day_start':f'{minutes//60:02d}:{minutes%60:02d}',
                  'operational_day_configured':configured,'warning':None if configured else 'لم يحدد بدء اليوم التشغيلي؛ عرض يوم تقويمي بتوقيت الرياض',
                  'branch_filter_basis':'shift_scope_membership; multi-branch hours are not additive across branch filters',
-                 'operational_date':today,'options':{'drivers':[{'id':p['id'],'name':p['display_name']} for p in people if user['role']=='owner' or report_scope_contains(p['branch_ids'],allowed)]},'totals':totals,'drivers':drivers,'branches':[b for b in branches if b['id'] in allowed]})
+                 'operational_date':today,'options':{'drivers':[{'id':p['id'],'name':p['display_name']} for p in people if unrestricted_owner or report_scope_contains(p['branch_ids'],allowed)]},'totals':totals,'drivers':drivers,'branches':[b for b in branches if b['id'] in allowed]})
 
 
 @router.get('/report')
@@ -368,3 +549,4 @@ def guard_shift_completion(c,shift):
             'SELECT 1 FROM driver_work_trips WHERE shift_id=%s AND returned_at IS NULL',
             (shift['id'],)).fetchone():
         raise db.error(409,'TRIP_RETURN_REQUIRED','أكد العودة إلى الفرع قبل تقفيلة الشفت.')
+
