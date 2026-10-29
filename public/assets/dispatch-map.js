@@ -139,18 +139,27 @@
     }
     function fitAll(){if(!map||!library||!ready)return;const values=pins(data);if(!values.length)return;const bounds=new library.LngLatBounds();values.forEach(pin=>bounds.extend([pin.location.lng,pin.location.lat]));map.fitBounds(bounds,{padding:48,maxZoom:14,duration:0});fitted=true;}
     function refresh(){
+      // Hidden panels and detached screens must not keep rebuilding markers.
+      if(destroyed||!host.isConnected||!host.getClientRects().length)return;
       labels();routeDrivers();if(!map||!library||!ready||destroyed)return;
       const current=pins(data),keys=new Set(current.map(p=>p.key));
       for(const [key,item] of markers)if(!keys.has(key)){item.marker.remove();markers.delete(key);}
       for(const pin of current){
         let item=markers.get(pin.key);
+        const cached=trackingLinks.get(pin.id);
+        const signature=JSON.stringify([data.lang,pin,cached&&cached.expires>=Date.now()?cached:null]);
+        if(item?.signature===signature)continue;
         if(!item){const element=document.createElement('button');element.type='button';
           const popupRoot=document.createElement('div');popupRoot.className='dispatch-map-popup';
           const popup=new library.Popup({offset:20,focusAfterOpen:false}).setDOMContent(popupRoot);
           const marker=new library.Marker({element}).setLngLat([pin.location.lng,pin.location.lat]).setPopup(popup).addTo(map);
           item={element,popupRoot,marker};markers.set(pin.key,item);
         }
-        item.marker.setLngLat([pin.location.lng,pin.location.lat]);
+        if(!item.position||item.position.lat!==pin.location.lat||item.position.lng!==pin.location.lng){
+          item.marker.setLngLat([pin.location.lng,pin.location.lat]);
+          item.position=pin.location;
+        }
+        item.signature=signature;
         // Keep Mapbox's marker/anchor classes: they supply absolute positioning.
         item.element.classList.remove('driver','stale','branch','late','delivered','road','brand-kps','brand-enbishan','brand-mixed','brand-neutral');
         item.element.classList.add('dispatch-map-pin');
@@ -183,7 +192,12 @@
     }
     fit.addEventListener('click',fitAll);labels();void refreshServices();
     const freshnessTimer=setInterval(()=>{if(!destroyed&&!document.hidden){refresh();void refreshServices();}},15000);
-    const controller={update(next){data={...data,...next};refresh();},resize(){map?.resize();},fit:fitAll,destroy(){destroyed=true;clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();trackingLinks.clear();map?.remove();map=null;}};
+    const controller={update(next){if(destroyed)return;data={...data,...next};refresh();},resize(){if(!destroyed){map?.resize();refresh();}},fit:fitAll,destroy(){if(destroyed)return;destroyed=true;removalObserver.disconnect();clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();trackingLinks.clear();map?.remove();map=null;}};
+    // Navigation replaces #content. Dispose WebGL resources and the polling
+    // timer immediately instead of retaining an invisible map until next visit.
+    const removalObserver=new MutationObserver(()=>{if(!host.isConnected)controller.destroy();});
+    const removalRoot=host.closest('#content')||host.parentElement;
+    if(removalRoot)removalObserver.observe(removalRoot,{childList:true});
     try{
       const config=await options.api('/api/operations/map-config');
       if(destroyed||!host.isConnected)return controller;
@@ -195,8 +209,8 @@
       const first=pins(data)[0];canvas.hidden=false;
       map=new library.Map({container:canvas,accessToken:config.public_token,style:config.style,center:first?[first.location.lng,first.location.lat]:[45.96,28.43],zoom:10,attributionControl:true});
       map.addControl(new library.NavigationControl({showCompass:false}));
-      map.on('load',()=>{ready=true;state.hidden=true;fit.hidden=false;routeBox.hidden=false;refresh();map.resize();});
-      map.on('error',()=>{stateKind='failed';state.hidden=false;labels();});
+      map.on('load',()=>{if(destroyed)return;ready=true;state.hidden=true;fit.hidden=false;routeBox.hidden=false;refresh();map.resize();});
+      map.on('error',()=>{if(destroyed)return;stateKind='failed';state.hidden=false;labels();});
     }catch{stateKind='failed';canvas.hidden=true;labels();}
     return controller;
   }
