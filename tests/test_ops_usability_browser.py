@@ -325,7 +325,14 @@ def test_real_driver_hours_eight_shift_six_delivery(live_app,chromium_browser,la
         for i,(pickup,delivered) in enumerate([('16:00','20:00'),('18:00','22:00')]):
             oid=db.new_id('hours_order_')
             c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'kps','kps-branch-1',%s,'delivery','completed','delivered','cash',1000,0,1000,'{}','{}')",(oid,customer['id']))
-            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,picked_up_at,delivered_at) VALUES(%s,%s,%s,%s,'delivered',%s,%s,%s)",(db.new_id('hours_task_'),oid,driver['id'],sid,owner['id'],'2026-10-17 '+pickup+'+03','2026-10-17 '+delivered+'+03'))
+            accepted='2026-10-17 '+pickup+'+03'
+            returned='2026-10-17 '+delivered+'+03'
+            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at,delivered_at) VALUES(%s,%s,%s,%s,'delivered',%s,%s,%s,%s)",(db.new_id('hours_task_'),oid,driver['id'],sid,owner['id'],accepted,accepted,returned))
+            # Confirmed mission evidence, not pickup timing used as an invented
+            # acceptance/return. The two overlapping missions unite to six hours.
+            trip_id=db.new_id('hours_trip_')
+            c.execute("INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,return_branch_id,departed_at,returned_at,departure_evidence,return_evidence) VALUES(%s,'kps',%s,%s,'kps-branch-1','kps-branch-1',%s,%s,'{}',%s)",(trip_id,sid,driver['id'],accepted,returned,db.json({'source':'driver_explicit_confirmation'})))
+            c.execute('INSERT INTO driver_work_trip_orders(trip_id,order_id) VALUES(%s,%s)',(trip_id,oid))
     context,page,errors=_context(chromium_browser,live_app)
     try:
         _owner_login(context,live_app,owner)
@@ -336,8 +343,8 @@ def test_real_driver_hours_eight_shift_six_delivery(live_app,chromium_browser,la
         page.locator('#hours-filters button[type=submit]').click()
         expect(page.locator('.hours-driver')).to_have_count(1)
         values=page.locator('.hours-driver .hours-primary strong')
-        expect(values.nth(0)).to_have_text('٨ ساعة' if lang=='ar' else '8 h')
-        expect(values.nth(1)).to_have_text('٦ ساعة' if lang=='ar' else '6 h')
+        expect(values.nth(0)).to_have_text('٦ ساعة' if lang=='ar' else '6 h')
+        expect(values.nth(1)).to_have_text('٨ ساعة' if lang=='ar' else '8 h')
         expect(values.nth(2)).to_have_text('٢ ساعة' if lang=='ar' else '2 h')
         expect(values.nth(3)).to_have_text('٧٥%' if lang=='ar' else '75%')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1')

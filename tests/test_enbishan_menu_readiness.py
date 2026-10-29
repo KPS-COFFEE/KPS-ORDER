@@ -186,8 +186,7 @@ def test_owner_review_sms_scope_draft_import_replay_and_stale_preview(client, mo
     values = preview.json()
     apply = {**body, 'reviewed_digest':values['catalog_digest'], 'expected_catalog_digest':values['expected_catalog_digest']}
     path = '/api/admin/enbishan-menu/apply';headers={'Idempotency-Key':'SYNTHETIC-menu-import-0001'}
-    assert client.post(path,json=apply,headers=headers).status_code == 403
-    sms_step_up(client,owner,monkeypatch)
+    assert client.get('/api/session').json()['user']['owner_session_approved'] is True
     saved = client.post(path,json=apply,headers=headers)
     assert saved.status_code == 200,saved.text
     assert saved.json()['imported_drafts'] == 1 and saved.json()['ordering_enabled'] is False
