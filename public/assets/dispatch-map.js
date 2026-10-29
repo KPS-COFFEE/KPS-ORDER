@@ -138,11 +138,56 @@
       if(messages[stateKind]){const title=document.createElement('strong'),body=document.createElement('span');title.textContent=messages[stateKind][0];body.textContent=messages[stateKind][1];state.replaceChildren(title,body);}
     }
     function fitAll(){if(!map||!library||!ready)return;const values=pins(data);if(!values.length)return;const bounds=new library.LngLatBounds();values.forEach(pin=>bounds.extend([pin.location.lng,pin.location.lat]));map.fitBounds(bounds,{padding:48,maxZoom:14,duration:0});fitted=true;}
+    function populatePopup(pin,item){
+        const title=document.createElement('strong');title.textContent=pin.label;item.popupRoot.replaceChildren(title);
+        if(pin.kind==='driver'){
+          const movementLabels={delivering:tr('يوصل طلبًا','Delivering an order'),awaiting_pickup:tr('بانتظار استلام الطلب','Awaiting order pickup'),returning:tr('متجه للفرع — وجهة مخططة وليست إثبات وصول','Heading to branch — planned destination, not confirmed arrival'),external_enbishan:tr('متجه لعنبيشان — بإفادة السائق','Heading to Enbishan — driver-declared'),awaiting_destination:tr('بانتظار تحديد الوجهة التالية','Awaiting next destination')};
+          const movement=document.createElement('p');movement.className='dispatch-driver-movement';movement.textContent=movementLabels[pin.movement_state]||tr('حالة الحركة غير متاحة','Movement state unavailable');item.popupRoot.append(movement);
+          const brandInfo=document.createElement('p');brandInfo.textContent=(pin.brand==='kps'?'KPS':pin.brand==='enbishan'?tr('عنبيشان','Enbishan'):pin.brand==='mixed'?tr('طلبات متعددة البراندات','Mixed brands'):tr('بدون طلب نشط','No active order'))+(pin.brand_source==='driver_declared'?tr(' — بإفادة السائق',' — driver-declared'):'');item.popupRoot.append(brandInfo);
+          if(pin.next_destination){const next=document.createElement('p');next.textContent=tr('الوجهة المخططة: ','Planned destination: ')+(pin.next_destination.kind==='external_enbishan'?tr('عنبيشان — إفادة السائق','Enbishan — driver declaration'):(pin.next_destination.name||tr('الفرع','Branch')));item.popupRoot.append(next);}
+          const detail=document.createElement('p');
+          detail.textContent=tr(pin.stale?'آخر موقع قديم · ':'آخر تحديث · ',pin.stale?'Stale last location · ':'Last update · ')+new Date(pin.updated_at).toLocaleTimeString(data.lang==='en'?'en-GB':'ar-SA')+tr(' · الدقة ',' · Accuracy ')+Math.round(pin.accuracy_m||0)+tr(' متر',' m');item.popupRoot.append(detail);
+        }
+        if(pin.kind==='order'&&options.onSelectOrder){const button=document.createElement('button');button.type='button';button.textContent=tr('فتح الطلب','Open order');button.addEventListener('click',()=>options.onSelectOrder(pin.id));item.popupRoot.append(button);}
+        if(customerTrackingEnabled&&pin.kind==='order'&&!['delivered','cancelled'].includes(pin.status)){
+          const share=document.createElement('button');share.type='button';share.textContent=tr('إنشاء رابط تتبع للعميل','Create customer tracking link');
+          share.addEventListener('click',async()=>{share.disabled=true;try{const result=await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'POST',body:{}});if(destroyed)return;if(!/^\/delivery-track#[A-Za-z0-9_-]{43}$/.test(result.path))throw new Error('invalid link');trackingLinks.set(pin.id,{path:result.path,expires:Date.now()+4*3600000});refresh();}catch{item.popupRoot.append(serviceText(tr('تعذر إنشاء رابط؛ تحقق من حالة الطلب وصلاحياتك.','Link unavailable; check order status and permission.')));}finally{share.disabled=false;}});item.popupRoot.append(share);trackingControls(pin,item);
+        }
+    }
+    let orderLayerReady=false,orderLayerSignature='',orderLayerPins=new Map(),orderPopup=null,orderPopupId=null,orderPopupItem=null,orderPopupSignature='';
+    function syncOrderLayer(current){
+      const orders=current.filter(pin=>pin.kind==='order');
+      if(!orderLayerReady&&orders.length<80)return current;
+      orderLayerPins=new Map(orders.map(pin=>[pin.id,pin]));
+      const geo={type:'FeatureCollection',features:orders.map(pin=>({type:'Feature',geometry:{type:'Point',coordinates:[pin.location.lng,pin.location.lat]},properties:{id:pin.id,color:pin.late?'#c43c31':pin.status==='delivered'?'#287b48':['picked_up','on_the_way'].includes(pin.status)?'#2865a7':'#e95b19'}}))};
+      const signature=JSON.stringify(geo);
+      if(!orderLayerReady){
+        map.addSource('dispatch-orders',{type:'geojson',data:geo,cluster:true,clusterMaxZoom:13,clusterRadius:45});
+        map.addLayer({id:'dispatch-order-clusters',type:'circle',source:'dispatch-orders',filter:['has','point_count'],paint:{'circle-color':'#e95b19','circle-radius':19,'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
+        map.addLayer({id:'dispatch-order-counts',type:'symbol',source:'dispatch-orders',filter:['has','point_count'],layout:{'text-field':['get','point_count_abbreviated'],'text-size':12},paint:{'text-color':'#fff'}});
+        map.addLayer({id:'dispatch-order-points',type:'circle',source:'dispatch-orders',filter:['!',['has','point_count']],paint:{'circle-color':['get','color'],'circle-radius':9,'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
+        map.on('click','dispatch-order-clusters',event=>{if(destroyed)return;const feature=event.features?.[0];if(feature)map.easeTo({center:feature.geometry.coordinates,zoom:Math.min(map.getZoom()+2,16),duration:200});});
+        map.on('click','dispatch-order-points',event=>{
+          if(destroyed)return;const pin=orderLayerPins.get(event.features?.[0]?.properties?.id);if(!pin)return;
+          orderPopup?.remove();const popupRoot=document.createElement('div');popupRoot.className='dispatch-map-popup';populatePopup(pin,{popupRoot});
+          orderPopup=new library.Popup({offset:12,focusAfterOpen:false}).setLngLat([pin.location.lng,pin.location.lat]).setDOMContent(popupRoot).addTo(map);orderPopupId=pin.id;orderPopupItem={popupRoot};orderPopupSignature='';
+        });
+        orderLayerReady=true;
+      }else if(signature!==orderLayerSignature)map.getSource('dispatch-orders').setData(geo);
+      orderLayerSignature=signature;
+      if(orderPopupId&&!orderLayerPins.has(orderPopupId)){orderPopup?.remove();orderPopup=null;orderPopupId=null;orderPopupItem=null;}
+      const selected=orderLayerPins.get(orderPopupId);
+      if(selected&&orderPopupItem){
+        const cached=trackingLinks.get(selected.id),next=JSON.stringify([data.lang,selected,cached&&cached.expires>=Date.now()?cached:null]);
+        if(next!==orderPopupSignature){populatePopup(selected,orderPopupItem);orderPopup.setLngLat([selected.location.lng,selected.location.lat]);orderPopupSignature=next;}
+      }
+      return current.filter(pin=>pin.kind!=='order');
+    }
     function refresh(){
       // Hidden panels and detached screens must not keep rebuilding markers.
       if(destroyed||!host.isConnected||!host.getClientRects().length)return;
       labels();routeDrivers();if(!map||!library||!ready||destroyed)return;
-      const current=pins(data),keys=new Set(current.map(p=>p.key));
+      const current=syncOrderLayer(pins(data)),keys=new Set(current.map(p=>p.key));
       for(const [key,item] of markers)if(!keys.has(key)){item.marker.remove();markers.delete(key);}
       for(const pin of current){
         let item=markers.get(pin.key);
@@ -172,27 +217,14 @@
           const name=document.createElement('span');name.className='dispatch-driver-name';name.textContent=pin.label;name.dir='auto';item.element.replaceChildren(icon,name);item.element.title=pin.label;
         }else item.element.textContent=pin.kind==='branch'?pin.reference:'●';
         item.element.setAttribute('aria-label',tr(pin.kind==='driver'?'سائق ':pin.kind==='branch'?'فرع ':'طلب ',pin.kind==='driver'?'Driver ':pin.kind==='branch'?'Branch ':'Order ')+pin.label);
-        const title=document.createElement('strong');title.textContent=pin.label;item.popupRoot.replaceChildren(title);
-        if(pin.kind==='driver'){
-          const movementLabels={delivering:tr('يوصل طلبًا','Delivering an order'),awaiting_pickup:tr('بانتظار استلام الطلب','Awaiting order pickup'),returning:tr('متجه للفرع — وجهة مخططة وليست إثبات وصول','Heading to branch — planned destination, not confirmed arrival'),external_enbishan:tr('متجه لعنبيشان — بإفادة السائق','Heading to Enbishan — driver-declared'),awaiting_destination:tr('بانتظار تحديد الوجهة التالية','Awaiting next destination')};
-          const movement=document.createElement('p');movement.className='dispatch-driver-movement';movement.textContent=movementLabels[pin.movement_state]||tr('حالة الحركة غير متاحة','Movement state unavailable');item.popupRoot.append(movement);
-          const brandInfo=document.createElement('p');brandInfo.textContent=(pin.brand==='kps'?'KPS':pin.brand==='enbishan'?tr('عنبيشان','Enbishan'):pin.brand==='mixed'?tr('طلبات متعددة البراندات','Mixed brands'):tr('بدون طلب نشط','No active order'))+(pin.brand_source==='driver_declared'?tr(' — بإفادة السائق',' — driver-declared'):'');item.popupRoot.append(brandInfo);
-          if(pin.next_destination){const next=document.createElement('p');next.textContent=tr('الوجهة المخططة: ','Planned destination: ')+(pin.next_destination.kind==='external_enbishan'?tr('عنبيشان — إفادة السائق','Enbishan — driver declaration'):(pin.next_destination.name||tr('الفرع','Branch')));item.popupRoot.append(next);}
-          const detail=document.createElement('p');
-          detail.textContent=tr(pin.stale?'آخر موقع قديم · ':'آخر تحديث · ',pin.stale?'Stale last location · ':'Last update · ')+new Date(pin.updated_at).toLocaleTimeString(data.lang==='en'?'en-GB':'ar-SA')+tr(' · الدقة ',' · Accuracy ')+Math.round(pin.accuracy_m||0)+tr(' متر',' m');item.popupRoot.append(detail);
-        }
-        if(pin.kind==='order'&&options.onSelectOrder){const button=document.createElement('button');button.type='button';button.textContent=tr('فتح الطلب','Open order');button.addEventListener('click',()=>options.onSelectOrder(pin.id));item.popupRoot.append(button);}
-        if(customerTrackingEnabled&&pin.kind==='order'&&!['delivered','cancelled'].includes(pin.status)){
-          const share=document.createElement('button');share.type='button';share.textContent=tr('إنشاء رابط تتبع للعميل','Create customer tracking link');
-          share.addEventListener('click',async()=>{share.disabled=true;try{const result=await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'POST',body:{}});if(destroyed)return;if(!/^\/delivery-track#[A-Za-z0-9_-]{43}$/.test(result.path))throw new Error('invalid link');trackingLinks.set(pin.id,{path:result.path,expires:Date.now()+4*3600000});refresh();}catch{item.popupRoot.append(serviceText(tr('تعذر إنشاء رابط؛ تحقق من حالة الطلب وصلاحياتك.','Link unavailable; check order status and permission.')));}finally{share.disabled=false;}});item.popupRoot.append(share);trackingControls(pin,item);
-        }
+        populatePopup(pin,item);
 
       }
       if(!fitted)fitAll();
     }
     fit.addEventListener('click',fitAll);labels();void refreshServices();
     const freshnessTimer=setInterval(()=>{if(!destroyed&&!document.hidden){refresh();void refreshServices();}},15000);
-    const controller={update(next){if(destroyed)return;data={...data,...next};refresh();},resize(){if(!destroyed){map?.resize();refresh();}},fit:fitAll,destroy(){if(destroyed)return;destroyed=true;removalObserver.disconnect();clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();trackingLinks.clear();map?.remove();map=null;}};
+    const controller={update(next){if(destroyed)return;data={...data,...next};refresh();},resize(){if(!destroyed){map?.resize();refresh();}},fit:fitAll,destroy(){if(destroyed)return;destroyed=true;removalObserver.disconnect();clearRoute();clearInterval(freshnessTimer);for(const item of markers.values())item.marker.remove();markers.clear();trackingLinks.clear();orderPopup?.remove();orderLayerPins.clear();map?.remove();map=null;}};
     // Navigation replaces #content. Dispose WebGL resources and the polling
     // timer immediately instead of retaining an invisible map until next visit.
     const removalObserver=new MutationObserver(()=>{if(!host.isConnected)controller.destroy();});
