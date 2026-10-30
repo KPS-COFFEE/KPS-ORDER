@@ -428,6 +428,7 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
                     payload['lines'].insert(0,{'text':('وجهة الطباعة: '+destination['name'] if body.language=='ar' else 'Print destination: '+('ENBISHAN '+str(destination['branch_no']) if order['brand_id']=='enbishan' else destination['name'])),'bold':True,'center':True})
                 if previous:payload['lines'].insert(0,{'text':('إعادة طباعة' if body.language=='ar' else 'REPRINT'),'bold':True,'center':True})
                 conn.execute('INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,payload,requested_by,reprint_reason,created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp())',(identifier,user['brand_id'],device['branch_id'],body.device_id,order_id,kind,db.json(payload),user['id'],body.reprint_reason))
+                db.event(conn,order_id,user['id'],'order.print_requested',{'job_id':identifier,'device_id':body.device_id,'kind':kind,'destination_branch_id':device['branch_id']})
                 db.audit(conn,user['id'],'printer.job.queued','print_job',identifier,{'order_id':order_id,'order_branch_id':order['branch_id'],'destination_branch_id':device['branch_id'],'device_id':body.device_id,'kind':kind,'reprint_reason':body.reprint_reason})
                 identifiers.append(identifier)
             return {'id':identifiers[0],'ids':identifiers,'status':'queued'}

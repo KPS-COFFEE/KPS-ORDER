@@ -163,3 +163,30 @@ def test_hours_report_closes_after_employee_pause_even_when_report_was_already_o
         assert not errors and not admin_errors
     finally:
         work.close();admin.close()
+
+
+def test_ordinary_window_focus_rechecks_live_access_without_blanking_work(
+        sms_browser_app,chromium_browser):
+    """Observe the real DOM and genuine session endpoint, not a mocked response."""
+    from playwright.sync_api import expect
+    base=sms_browser_app
+    employee=_staff('driver')
+    work,page,errors=_context(chromium_browser,base)
+    try:
+        _owner_login(work,base,employee)
+        page.goto(base+'/ops',wait_until='networkidle')
+        expect(page.locator('#app-shell')).to_be_visible()
+        page.evaluate('''() => {
+          window.__unexpectedAccessMasks=[];
+          new MutationObserver(records=>{
+            for(const record of records)if(record.attributeName==='data-work-access-pending')
+              window.__unexpectedAccessMasks.push(document.documentElement.hasAttribute('data-work-access-pending'));
+          }).observe(document.documentElement,{attributes:true});
+        }''')
+        with page.expect_response(lambda r:r.url.endswith('/api/session') and r.status==200):
+            page.evaluate("window.dispatchEvent(new Event('focus'))")
+        expect(page.locator('#app-shell')).to_be_visible()
+        assert page.evaluate('window.__unexpectedAccessMasks')==[]
+        assert not errors
+    finally:
+        work.close()

@@ -47,6 +47,7 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations',
           'financial_case_clarifications','financial_case_clarification_events','legacy_invoice_imports',
           'bank_reconciliation_batches','bank_reconciliation_receipts','bank_reconciliation_decisions','bank_reconciliation_source_claims','bank_reconciliation_bank_lines','bank_reconciliation_bank_claims')
+TABLES += ('dispatch_impact_quotes',)
 TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_line_decisions')
 TABLES += ('collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections')
 # Physical GPS/session history and mixed-brand itineraries belong to the private
@@ -61,7 +62,7 @@ SHARED_PHYSICAL_TABLES = {'driver_cash_bags','driver_cash_bag_counts','manager_v
 # Full private archives retain the whole immutable declaration and its provenance.
 # Global bank statement originals can span sellers; private full archives retain them.
 SHARED_BANK_TABLES = {'bank_reconciliation_bank_lines'}
-AUTH_TABLES = TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
+AUTH_TABLES = {'dispatch_impact_quotes'} | TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
                'identity_tokens', 'email_outbox', 'email_webhook_events', 'branch_print_devices', 'staff_geo_access_grants',
                'map_resolution_state', 'map_resolution_clients', 'map_resolution_leases', 'map_resolution_cache'}
 INFRASTRUCTURE_TABLES = {'recovery_events', 'recovery_state', 'recovery_alerts',

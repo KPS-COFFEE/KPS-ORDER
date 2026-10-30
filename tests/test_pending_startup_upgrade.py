@@ -25,6 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = json.loads((Path(__file__).with_name('fixtures') / 'startup-baseline-4e4d781.json').read_text())
 IDENTITY = 'baseline-source-identity.json'
 PENDING = frozenset({
+    '128_photo_capture_location.sql',
+    '129_dispatch_impact.sql',
     '127_driver_automatic_return.sql',
     '126_enbishan_customer_sms_required.sql',
     '125_enbishan_single_or_two_flavours.sql',
@@ -57,7 +59,8 @@ PENDING = frozenset({
     '108_financial_case_clarifications.sql',
 })
 TABLES = ('brands', 'branches', 'users', 'orders', 'collections', 'refunds',
-          'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges', 'shifts')
+          'branch_payment_attempts', 'branch_online_receipts', 'otp_challenges', 'shifts',
+          'driver_tasks', 'delivery_photos')
 
 
 def assert_baseline_source(path, manifest=BASELINE):
@@ -159,6 +162,9 @@ def populated_baseline(monkeypatch, safe_test_environment):
                 c.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,payment_status,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,'upgrade-brand','upgrade-branch','upgrade-customer','car',%s,'not_applicable',%s,%s,%s,%s,%s,%s,'{}')",
                           (oid, preparation, method, paid, subtotal, fee, subtotal + fee,
                            db.json({'items': [], 'synthetic_upgrade': True})))
+            # A real historical photo must survive the additive metadata migration.
+            c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by,status) VALUES('upgrade-task','upgrade-cash','upgrade-owner','upgrade-friday-evening','upgrade-owner','accepted')")
+            c.execute("INSERT INTO delivery_photos(id,task_id,order_id,uploader_id,stage,data,sha256,expires_at) VALUES('upgrade-photo','upgrade-task','upgrade-cash','upgrade-owner','picked_up',%s,%s,now()+interval '1 day')",(b'original-photo-bytes',hashlib.sha256(b'original-photo-bytes').hexdigest()))
             c.execute("INSERT INTO collections(id,order_id,collector_id,method,amount_halalas) VALUES('upgrade-collection','upgrade-cash','upgrade-owner','cash',1000)")
             c.execute("INSERT INTO refunds(id,collection_id,order_id,method,amount_halalas,reason,authorized_by) VALUES('upgrade-refund','upgrade-collection','upgrade-cash','cash',200,'Synthetic partial refund','upgrade-owner')")
             for oid, amount, status in (('upgrade-verified', 2000, 'verified'), ('upgrade-pending', 1100, 'pending'), ('upgrade-review', 1200, 'review_required')):
@@ -212,6 +218,9 @@ def test_genuine_populated_baseline_upgrade_preserves_history_and_repeated_start
         db.migrate()
         with db.tx() as c:
             assert original_rows(c, columns)[1] == before
+            historical_photo=c.execute("SELECT data,capture_location FROM delivery_photos WHERE id='upgrade-photo'").fetchone()
+            assert bytes(historical_photo['data']) == b'original-photo-bytes'
+            assert historical_photo['capture_location'] is None  # never invent historical GPS
             days = c.execute("SELECT id,reporting_operational_date::text AS operational_day FROM shifts ORDER BY id").fetchall()
             assert {r['id']: r['operational_day'] for r in days} == {
                 'upgrade-friday-morning': '2026-10-23', 'upgrade-friday-evening': '2026-10-23',

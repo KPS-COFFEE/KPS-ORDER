@@ -26,8 +26,9 @@ def accounting(user):
 def scoped(c, oid, user, lock=False):
     o=c.execute('SELECT * FROM orders WHERE id=%s'+(' FOR UPDATE' if lock else ''),(oid,)).fetchone()
     allowed=False
+    from .order_interventions import high_authority, controlled
     if o and user.get('active',True) and o['brand_id']==user['brand_id']:
-        if user['role']=='admin' and accounting(user):
+        if user['role']=='admin' and (accounting(user) or (high_authority(user) and controlled(o))):
             allowed=o['branch_id'] in user.get('branch_ids',[])
         elif user['role']=='driver':
             # Historical read access, never a new mutation permission.
@@ -159,11 +160,12 @@ def invoice_guard(c,o):
 
 def cancellation_scope(c, oid, user):
     """Authorize and acquire the morning lane before taking an order lock."""
-    if not auth.has_permission(user,'orders_cancel'):
+    from .order_interventions import high_authority
+    if not auth.has_permission(user,'orders_cancel') and not high_authority(user):
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إلغاء الطلبات متوقفة.')
     visible=scoped(c,oid,user)
     from .order_amendments import reviewer
-    if not reviewer(visible,user):raise db.error(403,'CANCELLATION_REVIEWER','الإلغاء من مسؤول الخدمة المختص.')
+    if not reviewer(visible,user) and not high_authority(user):raise db.error(403,'CANCELLATION_REVIEWER','الإلغاء من مسؤول الخدمة المختص.')
     from . import morning_delivery, morning_dispatch
     morning_delivery.authorize_order(c,user,visible,preparation=user['role']=='branch_manager')
     if morning_dispatch.actual_morning(visible):morning_dispatch.lock_operations(c)
@@ -173,6 +175,8 @@ def cancel_locked(c, oid, body, user):
     """Canonical cancellation within the caller's transaction and lock scope."""
     o=scoped(c,oid,user,True)
     if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث الصفحة.')
+    from .order_interventions import guard_cancellation
+    guard_cancellation(c,o,user)
     from .delivery_partial_returns import guard as partial_return_guard
     partial_return_guard(c,o)
     if o['completed_at'] or o['delivery_status']=='delivered' or o['preparation_status'] in ('cancelled','rejected','completed'):
@@ -182,7 +186,10 @@ def cancel_locked(c, oid, body, user):
         raise db.error(403,'DELIVERY_CANCELLATION_MANAGER','إلغاء مهمة السائق من مدير التوصيل.')
     for sid in sorted({t['shift_id'] for t in tasks}):
         from .operations import lock_shift,shift_access
-        shift=lock_shift(c,sid);shift_access(c,user,shift)
+        shift=lock_shift(c,sid)
+        from .order_interventions import delegated_cancel_shift_access
+        if not delegated_cancel_shift_access(user,o,shift,[t for t in tasks if t['shift_id']==sid]):
+            shift_access(c,user,shift)
         if shift['status'] not in ('open','closing'):raise db.error(409,'CANCELLATION_SHIFT_CLOSED','المهمة ضمن تقفيلة محفوظة؛ تحتاج مراجعة مستقلة.')
     for t in tasks:
         if t.get('picked_up_at') and not body.physical_resolution:
@@ -371,6 +378,8 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
         o=scoped(c,oid,user)
         tasks=c.execute('SELECT t.id,t.driver_id,u.display_name driver_name,t.shift_id,t.status,t.reason,t.created_at,t.accepted_at,t.picked_up_at,t.delivered_at FROM effective_driver_tasks t LEFT JOIN users u ON u.id=t.driver_id WHERE t.order_id=%s'+(' AND t.driver_id=%s' if user['role']=='driver' else '')+' ORDER BY t.created_at,t.id',(oid,user['id']) if user['role']=='driver' else (oid,)).fetchall()
         events=c.execute('SELECT e.id,e.event_type,e.actor_id,u.display_name actor_name,e.created_at,e.details FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.order_id=%s ORDER BY e.created_at,e.id',(oid,)).fetchall()
+        from .dispatch_impact import history_events
+        events=history_events(events,oid,user['role'])
         if user['role']!='driver':
             for event in events:
                 details=dict(event['details'] or {})

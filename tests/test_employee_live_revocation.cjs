@@ -201,3 +201,66 @@ test('the actual login transition scrubs already-open dialogs even when a backgr
   assert.equal(state.requestKeys.size,0);
   assert.equal(attrs.has('data-work-access-pending'),false);
 });
+
+test('ordinary focus checks do not blank the visible interface while checking',async()=>{
+  let resolve;
+  const t=setup({api:()=>new Promise(r=>{resolve=r})});
+  t.events.get('focus')();
+  assert.equal(t.attrs.has('data-work-access-pending'),false);
+  assert.equal(t.calls.length,1);
+  // Repeated focus shares the in-flight request rather than firing duplicates.
+  t.events.get('focus')();
+  assert.equal(t.calls.length,1);
+  resolve({user:{...t.state.user},csrf_token:'fresh'});
+  await new Promise(r=>setImmediate(r));
+  assert.equal(t.attrs.has('data-work-access-pending'),false);
+});
+
+test('focus cannot unmask a suspended page before server verification',async()=>{
+  let resolve;
+  const t=setup({api:()=>new Promise(r=>{resolve=r})});
+  t.context.document.hidden=true;t.events.get('visibilitychange')();
+  t.context.document.hidden=false;t.events.get('focus')();
+  assert.equal(t.attrs.has('data-work-access-pending'),true);
+  resolve({user:null,csrf_token:null});
+  await new Promise(r=>setImmediate(r));
+  assert.equal(t.state.user,null);
+  assert.equal(t.dialog.closed,true);
+});
+
+test('network failure on focus still masks private work',async()=>{
+  const t=setup({api:async()=>{throw Error('Network down')}});
+  t.events.get('focus')();
+  await new Promise(r=>setImmediate(r));
+  assert.equal(t.attrs.has('data-work-access-pending'),true);
+});
+
+test('a response begun before hiding cannot unmask a later resume',async()=>{
+  const pending=[];
+  const t=setup({api:()=>new Promise(resolve=>pending.push(resolve))});
+  const first=t.context.refreshEmployeeAccess();
+  t.context.document.hidden=true;t.events.get('visibilitychange')();
+  t.context.document.hidden=false;t.events.get('visibilitychange')();
+  pending[0]({user:{...t.state.user},csrf_token:'pre-hide'});
+  await first;
+  assert.equal(t.attrs.has('data-work-access-pending'),true);
+  assert.equal(t.state.csrf,'initial');
+  assert.equal(pending.length,2);
+  pending[1]({user:null,csrf_token:null});
+  await new Promise(r=>setImmediate(r));
+  assert.equal(t.state.user,null);
+});
+
+test('hidden polls cannot clear the suspended-page mask',async()=>{
+  const t=setup();t.context.document.hidden=true;t.events.get('visibilitychange')();
+  await t.context.refreshEmployeeAccess();
+  assert.equal(t.attrs.has('data-work-access-pending'),true);
+  assert.equal(t.calls.length,0);
+});
+
+test('a session response for another principal revokes instead of replacing identity',async()=>{
+  const t=setup({api:async()=>({user:{id:'different-account'},csrf_token:'foreign'})});
+  await t.context.refreshEmployeeAccess();
+  assert.equal(t.state.user,null);
+  assert.equal(t.modal.children.length,0);
+});

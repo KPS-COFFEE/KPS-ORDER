@@ -14,7 +14,17 @@ def test_missing_ready_stops_preparation_after_pickup():
     events = [{'order_id': 'o', 'event_type': 'preparation.accepted', 'created_at': NOW-timedelta(hours=8)}]
     tasks = [{'order_id':'o','driver_id':'d','display_name':'Test','status':'picked_up',
               'picked_up_at':NOW-timedelta(hours=7),'delivered_at':None}]
-    conn = SimpleNamespace(execute=lambda query, args: SimpleNamespace(fetchall=lambda: events if 'order_events' in query else tasks))
+    def execute(query, args):
+        if query.startswith('SELECT order_id,event_type,created_at FROM order_events'):
+            result = events
+        elif 'FROM effective_driver_tasks' in query:
+            result = tasks
+        elif 'FROM branch_print_jobs' in query or "e.event_type='intervention." in query:
+            result = []
+        else:
+            raise AssertionError('Unexpected timing-enrichment query: '+query)
+        return SimpleNamespace(fetchall=lambda: result)
+    conn = SimpleNamespace(execute=execute)
     row = {'id':'o','created_at':NOW-timedelta(hours=9),'service':'delivery',
            'preparation_status':'handed_over','delivery_status':'picked_up'}
     performance.enrich_orders(conn, [row], NOW)

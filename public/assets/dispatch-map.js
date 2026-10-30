@@ -7,10 +7,14 @@
     if(window.mapboxgl)return Promise.resolve(window.mapboxgl);
     if(loading)return loading;
     loading=new Promise((resolve,reject)=>{
+      let settled=false;
       const css=document.createElement('link');css.rel='stylesheet';css.href=SDK+'mapbox-gl.css';document.head.append(css);
       const script=document.createElement('script');script.src=SDK+'mapbox-gl.js';script.async=true;
-      script.onload=()=>window.mapboxgl?resolve(window.mapboxgl):reject(new Error('sdk'));
-      script.onerror=()=>{script.remove();css.remove();loading=null;reject(new Error('sdk'));};document.head.append(script);
+      const fail=()=>{if(settled)return;settled=true;clearTimeout(timer);script.remove();css.remove();loading=null;reject(new Error('sdk'));};
+      // A stalled request must not poison all future map mounts for this page.
+      const timer=setTimeout(fail,15000);
+      script.onload=()=>{if(settled)return;if(!window.mapboxgl){fail();return;}settled=true;clearTimeout(timer);resolve(window.mapboxgl);};
+      script.onerror=fail;document.head.append(script);
     });return loading;
   }
   function point(value){return value&&typeof value.lat==='number'&&typeof value.lng==='number'&&Number.isFinite(value.lat)&&Number.isFinite(value.lng)&&Math.abs(value.lat)<=90&&Math.abs(value.lng)<=180?{lat:value.lat,lng:value.lng}:null;}
@@ -241,7 +245,10 @@
       const first=pins(data)[0];canvas.hidden=false;
       map=new library.Map({container:canvas,accessToken:config.public_token,style:config.style,center:first?[first.location.lng,first.location.lat]:[45.96,28.43],zoom:10,attributionControl:true});
       map.addControl(new library.NavigationControl({showCompass:false}));
-      map.on('load',()=>{if(destroyed)return;ready=true;state.hidden=true;fit.hidden=false;routeBox.hidden=false;refresh();map.resize();});
+      map.on('load',()=>{if(destroyed)return;ready=true;stateKind='ready';state.hidden=true;fit.hidden=false;routeBox.hidden=false;refresh();map.resize();});
+      // One tile/network failure is recoverable. Do not leave a permanent failure
+      // banner after Mapbox has recovered and finished rendering the current view.
+      map.on('idle',()=>{if(destroyed||!ready)return;if(map.isStyleLoaded?.()===false)return;stateKind='ready';state.hidden=true;});
       map.on('error',()=>{if(destroyed)return;stateKind='failed';state.hidden=false;labels();});
     }catch{stateKind='failed';canvas.hidden=true;labels();}
     return controller;

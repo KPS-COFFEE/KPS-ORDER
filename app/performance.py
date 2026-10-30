@@ -89,6 +89,12 @@ def enrich_orders(conn, rows, now=None):
     points, names = {}, {}
     for event in events:
         points.setdefault(event['order_id'], {}).setdefault(event['event_type'], event['created_at'])
+    # Read genuine queue timestamps; legacy uploads/print acknowledgements must
+    # not be invented as queue time. Reprints do not restart this clock.
+    printed=conn.execute('SELECT order_id,min(created_at) requested_at FROM branch_print_jobs '
+                         "WHERE order_id=ANY(%s) AND kind IN ('order','preparation') GROUP BY order_id",(ids,)).fetchall()
+    for job in printed:
+        points.setdefault(job['order_id'],{}).setdefault('order.print_requested',job['requested_at'])
     for task in tasks:
         point = points.setdefault(task['order_id'], {})
         if task['picked_up_at']:
@@ -97,6 +103,8 @@ def enrich_orders(conn, rows, now=None):
             point['task.delivered'] = task['delivered_at']
         names[task['order_id']] = {'driver_id': task['driver_id'], 'driver_name': task['display_name'],
                                  'delivery_problem_reason': task.get('reason') if task['status']=='problem' else None}
+    from .order_interventions import enrich_orders as enrich_interventions
+    enrich_interventions(conn, rows)
     for row in rows:
         point = points.get(row['id'], {})
         done = row.get('completed_at') or point.get('task.delivered')
@@ -127,6 +135,8 @@ def enrich_orders(conn, rows, now=None):
         row['server_now'] = now.isoformat()
         from .experience_policy import evaluate
         row['stage_timing'] = evaluate(row, point, [t for t in tasks if t['order_id'] == row['id']], now)
+        from .journey_timing import evaluate as evaluate_journey
+        row['journey_timing'] = evaluate_journey(row, point, [t for t in tasks if t['order_id'] == row['id']], now)
     return rows
 
 

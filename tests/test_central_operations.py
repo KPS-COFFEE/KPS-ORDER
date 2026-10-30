@@ -327,3 +327,32 @@ def test_staff_quote_uses_work_cookie_and_keeps_customer_host_isolation(central,
     with db.tx() as c:
         c.execute("UPDATE users SET permission_denials=%s WHERE id='dual-manager'", (db.json(['orders_create_customer']),))
     assert client.post('/api/orders/delivery-center/quote', json=body).status_code == 403
+
+
+@pytest.mark.postgres
+def test_session_branch_map_pins_are_verified_minimal_and_revocation_scoped(central):
+    _,actor,_,_,_=central
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET branch_ids=%s WHERE user_id='dual-manager' AND brand_id='enbishan'",(db.json(['enbishan-test-1']),))
+        settings={'location':{'lat':28.4,'lng':45.9,'internal_note':'PRIVATE'},
+                  'location_verified':True,'private_setting':'PRIVATE'}
+        c.execute('UPDATE branches SET settings=settings || %s WHERE id=ANY(%s)',
+                  (db.json(settings),['kps-branch-1','enbishan-test-1','enbishan-test-2']))
+    response=actor('manager').get('/api/session')
+    assert response.status_code==200,response.text
+    scopes={b['id']:b for b in response.json()['user']['central_operations']['brands']}
+    assert [b['id'] for b in scopes['enbishan']['branches']]==['enbishan-test-1']
+    for scope in scopes.values():
+        for branch in scope['branches']:
+            assert branch['location']=={'lat':28.4,'lng':45.9}
+            assert branch['location_verified'] is True
+            assert 'settings' not in branch
+            assert 'internal_note' not in branch['location']
+    with db.tx() as c:
+        c.execute("UPDATE branches SET settings=settings || %s WHERE id='enbishan-test-1'",(db.json({'location_verified':False}),))
+    scopes={b['id']:b for b in actor('manager').get('/api/session').json()['user']['central_operations']['brands']}
+    assert scopes['enbishan']['branches'][0]['location'] is None
+    with db.tx() as c:
+        c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-manager' AND brand_id='enbishan'")
+    scopes=actor('manager').get('/api/session').json()['user']['central_operations']['brands']
+    assert [b['id'] for b in scopes]==['kps']

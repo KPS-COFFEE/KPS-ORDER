@@ -206,7 +206,7 @@ def test_collection_summary_uses_effective_claim_and_actual_net(monkeypatch,net,
     monkeypatch.setattr(order_financial_treatments,'effective_total',lambda *args:1500)
     monkeypatch.setattr(order_requests,'rows',lambda *args:[])
     c=Mock();c.execute.return_value.fetchall.return_value=[]
-    result=order_amendments.summary(c,dict(id='order',version=1,total_halalas=2500),dict(role='driver'))
+    result=order_amendments.summary(c,dict(id='order',version=1,total_halalas=2500,service='delivery',snapshot={}),dict(role='driver'))
     assert result['original_total_halalas']==2500 and result['effective_total_halalas']==1500
     assert result['actual_collected_halalas']==net and result['effective_claim_halalas']==claim
     assert result['due_halalas']==due and result['refund_due_halalas']==refund

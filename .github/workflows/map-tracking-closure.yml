@@ -25,6 +25,9 @@ on:
       - tests/test_route_eta*.py
       - tests/test_tracking*.py
       - tests/test_tracking*.cjs
+      - tests/test_dispatch_map_loader.cjs
+      - tests/test_dispatch_map_browser.py
+      - tests/test_central_branch_map_context.py
       - tests/test_mixed_route*.py
       - .github/workflows/map-tracking-closure.yml
   workflow_dispatch:
@@ -78,7 +81,7 @@ jobs:
           node --check public/assets/dispatch-map.js
           node --check public/assets/driver-location.js
           node --check public/assets/order-tracking.js
-          node --test tests/test_tracking_manager.cjs tests/test_driver_trip_ui.cjs tests/test_central_operations_adapter.cjs
+          node --test tests/test_dispatch_map_loader.cjs tests/test_tracking_manager.cjs tests/test_driver_trip_ui.cjs tests/test_central_operations_adapter.cjs
       - name: Verify release integration blockers before full route acceptance
         run: >-
           python -m pytest -q
@@ -94,7 +97,7 @@ jobs:
           tests/test_route_corridor.py tests/test_route_corridor_integration.py tests/test_tracking_ingest.py tests/test_tracking_alerts.py tests/test_tracking_export_registry.py
           tests/test_mixed_route_context.py tests/test_mixed_route_return.py tests/test_mixed_routes_postgres.py tests/test_trip_history_postgres.py
           tests/test_driver_locations.py tests/test_driver_routes.py tests/test_map_services.py
-          tests/test_central_operations.py tests/test_central_workdays.py
+          tests/test_central_operations.py tests/test_central_branch_map_context.py tests/test_central_workdays.py
           tests/test_morning_manager_context.py tests/test_morning_manager_context_postgres.py
           --junitxml=test-results/map-tracking-integration.xml
       - name: Browser maps and driver regression

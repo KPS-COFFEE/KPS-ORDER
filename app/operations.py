@@ -980,6 +980,9 @@ def eligible_driver_shift(c,s,order):
 class Assignment(OperationBody):
     driver_shift_id:str
     accept_order:bool=False
+    impact_quote_id:str|None=Field(None,max_length=100)
+    impact_reason:str|None=Field(None,max_length=80)
+    impact_contact:str|None=Field(None,max_length=80)
 
 def assign_in_transaction(c,user,oid,body):
     o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
@@ -990,6 +993,9 @@ def assign_in_transaction(c,user,oid,body):
     if o['service']!='delivery' or o['preparation_status'] in ('cancelled','rejected','completed') or o.get('completed_at'):fail(409,'الطلب غير قابل للإسناد')
     from .order_amendments import guard
     guard(c,o,require_branch=False)
+    from . import dispatch_impact
+    if dispatch_impact.enabled() and o.get('snapshot',{}).get('delivery_period')!='morning':
+        dispatch_impact.lock_physical_shifts(c,[body.driver_shift_id])
     s=lock_shift(c,body.driver_shift_id)
     if user.get('_morning_manager_context'):
         shift_access(c, user, s)
@@ -1003,6 +1009,8 @@ def assign_in_transaction(c,user,oid,body):
     eligible_driver_shift(c,s,o)
     if user['role']=='delivery_manager' and manager['user_id']!=user['id']:fail(403,'الشفت تابع لمدير آخر')
     if c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('delivered','cancelled','transferred')",(oid,)).fetchone():fail(409,'الطلب مسند بالفعل؛ استخدم تسليم المهمة بقبول السائق الآخر')
+    from .dispatch_impact import validate_assignment
+    impact_evidence=validate_assignment(c,user,o,s,body)
     if body.accept_order and o['preparation_status']=='new':
         if o['customer'].get('requires_operational_confirmation') and not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' AND details->>'result'='reached'",(oid,)).fetchone():
             raise db.error(409,'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED','تتطلب سياسة الطلب اتصالًا تشغيليًا موثقًا قبل القبول والإسناد.')
@@ -1011,9 +1019,10 @@ def assign_in_transaction(c,user,oid,body):
         db.audit(c,user['id'],'order.preparation','order',oid,{'from':'new','to':'accepted','reason':'Accepted with driver assignment'})
     tid=uid(); c.execute('INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,assigned_by) VALUES(%s,%s,%s,%s,%s)',(tid,oid,s['user_id'],s['id'],user['id']))
     c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(oid,))
+    dispatch_impact.apply_assignment_plan(c,user,o,s,tid,impact_evidence)
     db.event(c,oid,user['id'],'task.assigned',{'task_id':tid,'driver_id':s['user_id']})
     db.audit(c,user['id'],'task.assign','order',oid,{'task_id':tid,'shift_id':s['id']})
-    return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()}
+    return {'task':c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone(), 'dispatch_impact':safe(impact_evidence)}
 
 @router.post('/orders/{oid}/assign')
 def assign(oid:str,body:Assignment,request:Request,user=Depends(auth.current_user)):
@@ -1219,6 +1228,8 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
                     require_photo(c,t,user,body.status,body.photo_id)
             if body.status in ('problem','cancelled') and not body.reason.strip():fail(422,'يلزم سبب')
             if body.status=='cancelled':
+                from .order_interventions import guard_cancellation
+                guard_cancellation(c,o,user)
                 roles(user,'owner','delivery_manager')
                 from .delivery_partial_returns import guard as partial_return_guard
                 partial_return_guard(c,o)
@@ -1278,6 +1289,9 @@ def operational_alerts(user=Depends(auth.current_user)):
         return safe(operational_view({'unassigned':rows,'problems':problems,'printing':printing,'closure_exceptions':exceptions}))
 
 class TaskHandover(OperationBody):
+    impact_quote_id:str|None=Field(None,max_length=100)
+    impact_reason:str|None=Field(None,max_length=80)
+    impact_contact:str|None=Field(None,max_length=80)
     driver_shift_id:str
     reason:str=Field(min_length=1,max_length=2000)
     reassign_before_pickup:StrictBool=False
@@ -1309,6 +1323,9 @@ def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.cu
             c.execute('SELECT id FROM orders WHERE id=%s FOR UPDATE',(prior['order_id'],))
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
             if not t:fail(404,'المهمة غير موجودة')
+            from . import dispatch_impact
+            if dispatch_impact.enabled() and not user.get('_morning_manager_context'):
+                dispatch_impact.lock_physical_shifts(c,[t['shift_id'],body.driver_shift_id])
             shift_access(c,user,lock_shift(c,t['shift_id']))
             to=lock_shift(c,body.driver_shift_id);o=c.execute('SELECT * FROM orders WHERE id=%s',(t['order_id'],)).fetchone()
             order_access(c,user,o)
@@ -1320,11 +1337,13 @@ def task_handover(tid:str,body:TaskHandover,request:Request,user=Depends(auth.cu
             from .driver_receipt_trial import physical_guard
             physical_guard(to,t['status'])
             if c.execute('SELECT 1 FROM collections WHERE order_id=%s',(t['order_id'],)).fetchone():fail(409,'مهمة محصلة: يلزم إنهاؤها لدى صاحب عهدة التحصيل')
+            impact_evidence=dispatch_impact.validate_assignment(c,user,o,to,body)
             if body.reassign_before_pickup and not t.get('picked_up_at') and t['status'] in ('assigned','accepted'):
                 c.execute("UPDATE driver_tasks SET status='transferred',reason=%s,transfer_shift_id=NULL WHERE id=%s",(body.reason,tid))
                 newid=uid()
                 c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) VALUES(%s,%s,%s,%s,'assigned',%s)",(newid,t['order_id'],to['user_id'],to['id'],user['id']))
                 c.execute("UPDATE orders SET delivery_status='assigned',version=version+1 WHERE id=%s",(t['order_id'],))
+                dispatch_impact.apply_assignment_plan(c,user,o,to,newid,impact_evidence)
                 details={'previous_task_id':tid,'task_id':newid,'previous_driver_id':t['driver_id'],'driver_id':to['user_id'],'reason':body.reason,'previous':t['status'],'status':'assigned','acceptance_required':False}
                 db.event(c,t['order_id'],user['id'],'task.reassigned',details)
                 db.audit(c,user['id'],'task.reassigned','task',tid,details)

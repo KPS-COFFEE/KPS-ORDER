@@ -30,6 +30,15 @@ def test_actual_pins_update_without_invented_driver_gps_or_map_reload(static_cus
           operationalMap.events.load();
         }""",lang)
         expect(page.locator('.dispatch-map-canvas')).to_be_visible()
+        # A transient provider/tile error remains visible until the loaded style
+        # actually recovers; it must not poison the map for the whole session.
+        page.evaluate("operationalMap.events.error()")
+        expect(page.locator('.dispatch-map-state')).to_be_visible()
+        page.evaluate("operationalMap.isStyleLoaded=()=>false;operationalMap.events.idle()")
+        expect(page.locator('.dispatch-map-state')).to_be_visible()
+        page.evaluate("operationalMap.isStyleLoaded=()=>true;operationalMap.events.idle()")
+        expect(page.locator('.dispatch-map-state')).not_to_be_visible()
+        assert page.evaluate('constructed')==1
         assert page.evaluate('allMarkers.length')==2
         assert page.evaluate('fitCount')==1
         # A repeated API response must preserve popup nodes/focus and avoid
