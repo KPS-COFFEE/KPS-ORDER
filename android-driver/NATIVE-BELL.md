@@ -93,3 +93,18 @@ Existing owner-signed 0.1.1 does not gain this capability from website changes.
 No owner key/password, production deploy or physical-device acceptance is part of
 this preparation. Android device acceptance remains required before rollout.
 
+# Optional metadata endpoint recovery (0.2.6)
+
+The approved local brand-specific rings remain available before any metadata
+request. A missing optional descriptor endpoint (HTTP 404 or 501) backs off for
+six hours per brand for the lifetime of the foreground service, then retries
+automatically. A service restart allows a new capability check. An authorized
+brand removed from the live grant loses its retry state.
+
+Ordinary network failures and temporary server failures keep the existing
+one-minute retry interval. HTTP 401/403 and the existing access-denial cases
+still revoke access through the foreground service. Failed or missing audio
+downloads do not disable descriptor checks. Neither metadata backoff nor local
+fallback changes order polling, fresh task verification, per-brand reminder
+clocks, notification permissions, volume checks, or driver tracking.
+

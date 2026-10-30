@@ -1,7 +1,7 @@
 name: KPS Driver Android pilot
 on:
   push:
-    branches: [agent/kps-driver-android-pilot-20261021, agent/maps-android-closure-20261026]
+    branches: [agent/kps-driver-android-pilot-20261021, agent/maps-android-closure-20261026, agent/driver-sound-capability-backoff-20261031]
     paths: ['android-driver/**', '.github/workflows/kps-driver-android.yml']
   pull_request:
     paths: ['android-driver/**', '.github/workflows/kps-driver-android.yml']
@@ -24,6 +24,8 @@ jobs:
           gradle-version: '8.11.1'
       - name: Verify owner-local key custody helper
         run: python3 -m unittest discover -s android-driver/tests -p test_local_signing.py -v
+      - name: Verify optional sound endpoint failure and recovery
+        run: python3 -m unittest discover -s android-driver/tests -p test_order_audio_runtime.py -v
       - name: Verify authority and fresh location rules
         working-directory: android-driver
         run: |
@@ -36,6 +38,8 @@ jobs:
           java -cp build/policy SoundPolicyTest
           javac -cp build/policy -d build/policy app/src/main/java/sa/kps/driver/BrandBellPolicy.java tests/BrandBellPolicyTest.java
           java -cp build/policy BrandBellPolicyTest
+          javac -cp build/policy -d build/policy app/src/main/java/sa/kps/driver/SoundRefreshPolicy.java tests/SoundRefreshPolicyTest.java
+          java -cp build/policy SoundRefreshPolicyTest
           javac -cp build/policy -d build/policy app/src/main/java/sa/kps/driver/LocationQueuePolicy.java app/src/main/java/sa/kps/driver/LocationQueueState.java tests/LocationQueuePolicyTest.java tests/LocationQueueStateTest.java
           java -cp build/policy LocationQueuePolicyTest
           java -cp build/policy LocationQueueStateTest

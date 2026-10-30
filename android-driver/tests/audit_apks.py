@@ -28,6 +28,7 @@ def inspect(apk, release):
     found = set(re.findall(r"uses-permission(?:-sdk-\d+)?: name='([^']+)'", permissions))
     assert found == EXPECTED, f'Unexpected compiled permissions: {found ^ EXPECTED}'
     assert "package: name='sa.kps.driver'" in badging
+    assert "versionCode='9'" in badging and "versionName='0.2.6-pilot'" in badging
     assert "sdkVersion:'26'" in badging and "targetSdkVersion:'35'" in badging
     assert "launchable-activity: name='sa.kps.driver.MainActivity'" in badging
     assert not release or 'application-debuggable' not in badging
