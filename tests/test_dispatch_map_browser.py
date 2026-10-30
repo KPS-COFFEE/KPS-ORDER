@@ -134,3 +134,33 @@ def test_dense_mobile_orders_use_layers_without_repeated_updates_or_gps_writes(s
         page.evaluate("document.querySelector('#content').replaceChildren()")
         page.wait_for_function('view.removed===true')
         browser.close()
+
+
+@pytest.mark.parametrize('lang',['ar','en'])
+def test_webgl_failure_is_actionable_private_and_manually_retryable(static_customer,lang):
+    from playwright.sync_api import sync_playwright,expect
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True);page=browser.new_page()
+        page.route('**/__map-diagnostics',lambda route:route.fulfill(content_type='text/html; charset=utf-8',body='<main id="content"><div id="map"></div></main>'))
+        page.goto(static_customer+'/__map-diagnostics')
+        page.add_style_tag(url=static_customer+'/assets/dispatch-map.css')
+        page.add_script_tag(url=static_customer+'/assets/dispatch-map.js')
+        page.evaluate('''async lang=>{
+          window.supportAvailable=false;window.mapCount=0;window.configCount=0;
+          class MapView{constructor(){mapCount++;this.events={};window.view=this;}on(name,handler){this.events[name]=handler;}addControl(){}resize(){}remove(){}}
+          window.mapboxgl={supported:()=>supportAvailable,Map:MapView,NavigationControl:class{}};
+          window.control=await KPSDispatchMap.mount(document.querySelector('#map'),{lang,api:async()=>{configCount++;return {enabled:true,provider:'mapbox',public_token:'pk.private-test-only',style:'synthetic'};}});
+        }''',lang)
+        expect(page.locator('.dispatch-map-diagnostic')).to_contain_text('[MAP_WEBGL]')
+        expect(page.locator('.dispatch-map-state')).not_to_contain_text('private-test-only')
+        assert page.evaluate('mapCount')==0
+        assert page.evaluate('configCount')==1
+        page.evaluate('supportAvailable=true')
+        page.locator('.dispatch-map-state button').click()
+        page.wait_for_function('mapCount===1')
+        page.evaluate('view.events.load()')
+        expect(page.locator('.dispatch-map-state')).not_to_be_visible()
+        expect(page.locator('.dispatch-map-canvas')).to_be_visible()
+        assert page.evaluate('configCount')==2
+        page.evaluate('control.destroy()')
+        browser.close()

@@ -45,7 +45,7 @@ actual-work clocks. The owner controls assignment; overrides use structured choi
 Pending or blocked checks remain pending. No zero-defect guarantee is inferred
 from a test count, a green health endpoint, or a map tile rendering successfully.
 
-## Integration evidence (release still open)
+## Initial integration evidence (superseded by release verification below)
 
 - Local integrated regression:188 Python cases passed,26 PostgreSQL cases
   excluded locally;34 executable Node UI/access/camera/map cases passed.
@@ -63,3 +63,34 @@ from a test count, a green health endpoint, or a map tile rendering successfully
 - Live source remains60cd0c3 until the required release procedure completes.
   Server Matrix readiness and the authorized delegate's live identity remain
   unverified; no production activation or unconditional quality certificate issued.
+
+## Release verification — 30 October 2026
+
+- PR #156 final candidate `dc36a0326252f6365adad127509c1e61eaa4aeb1`
+  passed all applicable workflows, including protected candidate, rollback,
+  host/browser security and prior-application checks. Merged source
+  `fdbcaaa3148984dc1ad2f4507f99bc3b209e40c4` has the same source tree.
+- Render deployment `dep-dbi7u0n23o6c73esb360` became live at 14:27 Riyadh.
+  Health and readiness returned HTTP 200 with that exact revision, connected
+  database and verified preservation. This verifies source identity; it does not
+  attest byte equality with the CI image archive.
+- Road impact and intervention enforcement were activated. Automatic assignment
+  and offer acceptance remain disabled as approved.
+- The owner verified the intended delivery-manager account before its display
+  name was corrected to Mohamed Abdelsamie (محمد عبدالسميع). The post-print
+  cancellation approval grant was saved and reopened as enabled; existing
+  permissions and the 23-branch scope were preserved.
+- A real, read-only tracking view at 15:16 Riyadh returned a fresh road forecast
+  for an existing driver's pickup and delivery, with explicit proposed-plan and
+  missing return-branch labels. This confirms the live road-service path; it does
+  not prove the separate basemap graphics rendered.
+- Basemap rendering failed in the cloud browser. The SDK element remained but
+  no canvas existed. No provider or WebGL cause was inferred as fact. A follow-up
+  adds safe stage codes and explicit retry so live diagnosis can distinguish
+  configuration, SDK, graphics capability and provider resource failures.
+- No artificial production assignment, cancellation, refund or financial
+  transaction was created for testing. Authenticated CI journeys certify those
+  contracts; live verification uses configuration and existing read-only data.
+
+Basemap classification and follow-up release checks remain open until observed.
+No unconditional 100% or zero-defect guarantee is asserted.

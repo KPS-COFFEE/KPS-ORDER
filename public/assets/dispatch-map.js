@@ -129,7 +129,10 @@
       const revoke=document.createElement('button');revoke.type='button';revoke.textContent=tr('إلغاء رابط التتبع','Revoke tracking link');revoke.addEventListener('click',async()=>{revoke.disabled=true;try{await options.api('/api/operations/orders/'+encodeURIComponent(pin.id)+'/tracking-link',{method:'DELETE'});trackingLinks.delete(pin.id);refresh();}catch{revoke.disabled=false;}});item.popupRoot.append(revoke);
     }
     const brandLegend=document.createElement('div');brandLegend.className='dispatch-map-brand-legend';host.append(brandLegend);
-    let stateKind='loading';
+    let stateKind='loading',failureCode='',initializing=false;
+    const retry=document.createElement('button');retry.type='button';retry.className='quiet small';
+    retry.addEventListener('click',()=>{if(!initializing&&!ready&&!destroyed)void initialize();});
+
     function labels(){
       const values=pins(data),orders=values.filter(p=>p.kind==='order').length,branches=values.filter(p=>p.kind==='branch').length,drivers=values.filter(p=>p.kind==='driver').length;
       count.textContent=tr(`${drivers} سائقين · ${orders} مواقع طلبات · ${branches} فروع`,`${drivers} drivers · ${orders} order locations · ${branches} branches`);
@@ -139,7 +142,14 @@
       for(const [brand,label] of [['kps','KPS'],['enbishan',tr('عنبيشان','Enbishan')],['mixed',tr('طلبات متعددة البراندات','Mixed brands')],['neutral',tr('بدون طلب نشط','No active order')],['stale',tr('موقع قديم','Stale location')]]){const entry=document.createElement('span'),swatch=document.createElement('i');swatch.className='dispatch-driver-swatch brand-'+brand;swatch.setAttribute('aria-hidden','true');entry.append(swatch,document.createTextNode(label));brandLegend.append(entry);}
 
       const messages={loading:[tr('جاري تجهيز الخريطة','Preparing map'),tr('تحميل إعدادات الخريطة…','Loading map settings…')],missing:[tr('الخريطة تحتاج تفعيل Mapbox','Mapbox activation required'),tr('لم يُضف مفتاح الخرائط لهذا البراند بعد. ستظهر هنا مواقع الطلبات والفروع بعد الربط.','No map key is configured for this brand. Order and branch locations will appear here once connected.')],failed:[tr('تعذر تحميل الخريطة','Map could not load'),tr('راجع اتصال الشبكة وإعدادات مفتاح الخرائط. يمكنك متابعة الطلبات من القائمة.','Check the connection and map key configuration. Orders remain available in the list.')]};
-      if(messages[stateKind]){const title=document.createElement('strong'),body=document.createElement('span');title.textContent=messages[stateKind][0];body.textContent=messages[stateKind][1];state.replaceChildren(title,body);}
+      if(messages[stateKind]){const title=document.createElement('strong'),body=document.createElement('span');title.textContent=messages[stateKind][0];body.textContent=messages[stateKind][1];state.replaceChildren(title,body);
+        if(stateKind==='failed'){
+          const diagnostic=document.createElement('span');diagnostic.className='dispatch-map-diagnostic';
+          const advice=failureCode==='MAP_WEBGL'?tr('المتصفح لم يوفر تشغيل الرسوم WebGL. جرّب متصفحًا يدعمها أو فعّل تسريع الرسوم.','This browser could not provide WebGL graphics. Use a compatible browser or enable graphics acceleration.'):failureCode==='MAP_AUTH'?tr('رفض مزود الخرائط صلاحية تحميل مورد. يلزم مراجعة إعدادات المفتاح.','The map provider denied a resource request. Check token permissions.'):tr('يمكن إعادة المحاولة؛ متابعة الطلبات وحسابات الرحلة متاحة من اللوحة.','You can retry; order operations and trip calculations remain available in the panel.');
+          diagnostic.textContent=advice+' ['+failureCode+']';state.append(diagnostic);
+          if(!ready&&!initializing){retry.textContent=tr('إعادة تحميل الخريطة','Retry map');state.append(retry);}
+        }
+      }
     }
     function fitAll(){if(!map||!library||!ready)return;const values=pins(data);if(!values.length)return;const bounds=new library.LngLatBounds();values.forEach(pin=>bounds.extend([pin.location.lng,pin.location.lat]));map.fitBounds(bounds,{padding:48,maxZoom:14,duration:0});fitted=true;}
     function populatePopup(pin,item){
@@ -234,23 +244,42 @@
     const removalObserver=new MutationObserver(()=>{if(!host.isConnected)controller.destroy();});
     const removalRoot=host.closest('#content')||host.parentElement;
     if(removalRoot)removalObserver.observe(removalRoot,{childList:true});
-    try{
-      const config=await options.api('/api/operations/map-config');
-      if(destroyed||!host.isConnected)return controller;
-      if(!config.enabled||config.provider!=='mapbox'||!/^pk\./.test(config.public_token)){stateKind='missing';labels();return controller;}
-      customerTrackingEnabled=config.customer_tracking_enabled===true;
-      publicToken=config.public_token;
-      library=await sdk();if(destroyed||!host.isConnected)return controller;
-      if(library.supported&&!library.supported())throw new Error('webgl');
-      const first=pins(data)[0];canvas.hidden=false;
-      map=new library.Map({container:canvas,accessToken:config.public_token,style:config.style,center:first?[first.location.lng,first.location.lat]:[45.96,28.43],zoom:10,attributionControl:true});
-      map.addControl(new library.NavigationControl({showCompass:false}));
-      map.on('load',()=>{if(destroyed)return;ready=true;stateKind='ready';state.hidden=true;fit.hidden=false;routeBox.hidden=false;refresh();map.resize();});
-      // One tile/network failure is recoverable. Do not leave a permanent failure
-      // banner after Mapbox has recovered and finished rendering the current view.
-      map.on('idle',()=>{if(destroyed||!ready)return;if(map.isStyleLoaded?.()===false)return;stateKind='ready';state.hidden=true;});
-      map.on('error',()=>{if(destroyed)return;stateKind='failed';state.hidden=false;labels();});
-    }catch{stateKind='failed';canvas.hidden=true;labels();}
+    async function initialize(){
+      if(destroyed||initializing||ready)return;
+      initializing=true;failureCode='';stateKind='loading';state.hidden=false;labels();
+      // Retry is explicit and only replaces an initialization that never became ready.
+      const previousMap=map;map=null;previousMap?.remove();canvas.replaceChildren();canvas.hidden=true;
+      let stage='MAP_CONFIG';
+      try{
+        const config=await options.api('/api/operations/map-config');
+        if(destroyed||!host.isConnected)return;
+        if(!config.enabled||config.provider!=='mapbox'||!/^pk\./.test(config.public_token)){stateKind='missing';labels();return;}
+        customerTrackingEnabled=config.customer_tracking_enabled===true;
+        publicToken=config.public_token;stage='MAP_SDK';
+        library=await sdk();if(destroyed||!host.isConnected)return;
+        stage='MAP_WEBGL';
+        if(library.supported&&!library.supported())throw new Error('webgl');
+        stage='MAP_INIT';
+        const first=pins(data)[0];canvas.hidden=false;
+        map=new library.Map({container:canvas,accessToken:config.public_token,style:config.style,center:first?[first.location.lng,first.location.lat]:[45.96,28.43],zoom:10,attributionControl:true});
+        const currentMap=map;
+        map.addControl(new library.NavigationControl({showCompass:false}));
+        map.on('load',()=>{if(destroyed||map!==currentMap)return;ready=true;failureCode='';stateKind='ready';state.hidden=true;fit.hidden=false;routeBox.hidden=false;refresh();map.resize();});
+        // A recovered style clears transient resource failures without remounting.
+        map.on('idle',()=>{if(destroyed||map!==currentMap||!ready)return;if(map.isStyleLoaded?.()===false)return;failureCode='';stateKind='ready';state.hidden=true;});
+        map.on('error',event=>{
+          if(destroyed||map!==currentMap)return;
+          // Never render raw error text or URLs: provider URLs may contain tokens.
+          const status=event?.error?.status;
+          failureCode=status===401||status===403?'MAP_AUTH':'MAP_RESOURCE';
+          stateKind='failed';state.hidden=false;labels();
+        });
+      }catch{
+        if(destroyed)return;
+        failureCode=stage;stateKind='failed';canvas.hidden=true;
+      }finally{initializing=false;if(!destroyed)labels();}
+    }
+    await initialize();
     return controller;
   }
   function replay(host,points,options={}){
