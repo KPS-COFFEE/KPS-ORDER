@@ -58,12 +58,12 @@ def test_roster_fuel_pending_distinct_from_refuel_requirement():
     c.execute.return_value.fetchone.side_effect=[{'id':'s','vehicle_log':{'awaiting_refuel':True}}, None]
     assert driver_readiness.describe(c,roster())[0]=='waiting_for_fuel'
 
-def test_available_requires_canonical_assignment_guard_for_branch(monkeypatch):
+def test_available_requires_observed_assignment_checks_for_branch(monkeypatch):
     from app import operations
     c=Mock();s={'id':'s','brand_id':'kps','vehicle_log':{},'available':True}
     c.execute.return_value.fetchone.side_effect=[s,None]
     guard=Mock(side_effect=HTTPException(409,'manager unavailable'))
-    monkeypatch.setattr(operations,'eligible_driver_shift',guard)
+    monkeypatch.setattr(operations,'observe_driver_shift',guard)
     assert driver_readiness.describe(c,roster())[0]=='manager_or_scope_not_ready'
     guard.assert_called_once_with(c,s,{'brand_id':'kps','branch_id':'b'})
     c.execute.return_value.fetchone.side_effect=[s,None];guard.side_effect=None

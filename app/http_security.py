@@ -4,8 +4,10 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 import uuid
 
+import psycopg
 from fastapi import HTTPException, Request
 from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
@@ -69,6 +71,8 @@ class SecurityMiddleware:
         request = Request(scope)
         path, method = scope['path'], scope['method']
         trace = uuid.uuid4().hex
+        request.state.request_trace = trace
+        request.state.request_started = time.monotonic()
         response_started = False
 
         async def secured_send(message):
@@ -180,8 +184,12 @@ class SecurityMiddleware:
                 else:
                     response = JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
             else:
-                LOGGER.error('request_failed trace=%s method=%s path=%s error_type=%s',
-                             trace, method, path, type(exc).__name__)
+                if isinstance(exc, psycopg.OperationalError):
+                    from .database_diagnostics import record_failure
+                    record_failure(request, exc)
+                else:
+                    LOGGER.error('request_failed trace=%s method=%s path=%s error_type=%s',
+                                 trace, method, path, type(exc).__name__)
                 response = JSONResponse({'detail': {'code': 'SERVICE_UNAVAILABLE',
                     'message': 'تعذر تنفيذ العملية الآن. حاول لاحقًا.'}}, status_code=503)
             await response(scope, receive, secured_send)

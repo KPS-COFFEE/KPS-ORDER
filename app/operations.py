@@ -174,6 +174,10 @@ def history_result_access(c,user,oid):
 def authorize_replay(c,user,operation,body,result):
     # Replay protection never extends withdrawn authorization. Validate current
     # resources, not the scope frozen in a formerly successful response.
+    if operation.startswith(('driver.customer_message:','driver.customer_attachment:')):
+        from .chat import authorize_driver_contact_replay
+        authorize_driver_contact_replay(c,user,operation,result)
+        return
     if operation.startswith('ticket.'):
         oid=body.get('order_id')
         if not oid:
@@ -935,6 +939,20 @@ def approve_close(sid:str,body:Review,request:Request,user=Depends(auth.current_
     return result
 
 def eligible_driver_shift(c,s,order):
+    """Canonical assignment check; mutation callers retain their locking guards."""
+    return _eligible_driver_shift(c, s, order, observational=False)
+
+
+def observe_driver_shift(c, s, order):
+    """Describe current readiness without reserving a driver or manager duty.
+
+    The roster owns a fresh, read-only repeatable-read snapshot. An observation
+    never grants assignment: writes always call eligible_driver_shift again.
+    """
+    return _eligible_driver_shift(c, s, order, observational=True)
+
+
+def _eligible_driver_shift(c, s, order, *, observational):
     from .driver_receipt_trial import assignment_guard
     assignment_guard(s,order)
     from .fuel_exceptions import readiness_guard
@@ -950,9 +968,13 @@ def eligible_driver_shift(c,s,order):
     from . import multibrand
     if multibrand.enabled():
         driver=multibrand.project(c,driver,order['brand_id'])
-        multibrand.dedication_guard(c,s['user_id'],order['brand_id'])
+        if observational:
+            multibrand.observe_dedication(c,s['user_id'],order['brand_id'])
+        else:
+            multibrand.dedication_guard(c,s['user_id'],order['brand_id'])
     if not driver or not driver['active'] or driver['role']!='driver' or driver['brand_id']!=order['brand_id'] or order['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
-    manager=lock_shift(c,s['manager_shift_id'])
+    manager=(c.execute('SELECT * FROM shifts WHERE id=%s', (s['manager_shift_id'],)).fetchone()
+             if observational else lock_shift(c,s['manager_shift_id']))
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
     principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
     if multibrand.enabled():principal=multibrand.project(c,principal,order['brand_id'])
@@ -2061,6 +2083,9 @@ def accept_manager_handover(hid:str,request:Request,user=Depends(auth.current_us
 def driver_roster(user=Depends(auth.current_user)):
     roles(user,'owner','delivery_manager','delivery_staff')
     with db.tx() as c:
+        # All readiness details refer to one fresh observation. GET must never
+        # enter assignment's driver advisory/manager row-lock protocol.
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         from . import multibrand
         staffing_filter = ''
         if multibrand.enabled():

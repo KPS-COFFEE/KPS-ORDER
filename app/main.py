@@ -100,6 +100,8 @@ async def invalid_input(request: Request, exc: RequestValidationError):
 
 @app.exception_handler(psycopg.OperationalError)
 async def database_unavailable(request: Request, exc):
+    from .database_diagnostics import record_failure
+    record_failure(request, exc)
     return JSONResponse({'detail': {'code': 'DATABASE_UNAVAILABLE', 'message': 'قاعدة البيانات غير متاحة مؤقتًا.'}}, status_code=503)
 
 

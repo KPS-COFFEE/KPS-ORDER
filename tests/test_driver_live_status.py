@@ -30,7 +30,10 @@ def test_roster_counts_authorized_drivers_including_no_shift(monkeypatch, multib
         dict(id='hidden', branch_ids=['b'], shift_id=None, shift_status=None, availability='no_active_shift'),
     ]
     class Connection:
-        def execute(self, query, params):
+        def execute(self, query, params=()):
+            if query == 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY':
+                assert params == ()
+                return self
             # Canonical latest physical duty, one row per user. The optional
             # migration column stays gated for legacy non-multibrand installs.
             assert 'LEFT JOIN LATERAL' in query and 'LIMIT 1' in query
