@@ -204,7 +204,9 @@ jobs:
     name: representative-render-budget (${{ matrix.repetition }})
     if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
     runs-on: ubuntu-latest
-    # Match Render after the owner-approved 2026-10-30 DB upgrade: app 1 CPU/2 GiB, DB 1 CPU/2 GiB.
+    # Match verified owner-approved live Render: app 2 CPU/4 GiB, DB 1 CPU/2 GiB.
+    # App scale verified by live deploy dep-dbidk5egekts73ab1trg on 2026-10-30.
+    # Prior medium (app 1 CPU/2 GiB) failures remain in run 41100489814.
     # Prior economy (DB 0.5 CPU/1 GiB) failures remain historical evidence in run 41099594723.
     # Retain every workload, recovery drill and latency/error gate unchanged.
     timeout-minutes: 35
@@ -226,7 +228,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_render_budget
-      KPS_LOAD_RESOURCE_PROFILE: medium
+      KPS_LOAD_RESOURCE_PROFILE: production_scaled
       PYTHONDONTWRITEBYTECODE: '1'
       RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -242,7 +244,7 @@ jobs:
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - name: Verify resource ownership and strict latency gate guards
         run: python -m pytest tests/test_resource_load_profile.py -q
-      - name: Prepare a real run-owned 1 CPU and 2 GiB application cgroup
+      - name: Prepare a real run-owned 2 CPU and 4 GiB application cgroup
         shell: bash
         run: |
           mkdir -p test-artifacts
@@ -257,7 +259,7 @@ jobs:
           --max-error-rate 0
           --application-cgroup "$KPS_LOAD_CGROUP_PATH"
           --database-container '${{ job.services.postgres.id }}'
-          --output test-artifacts/current-render-medium-budget-${{ matrix.repetition }}.json
+          --output test-artifacts/current-render-production-scaled-budget-${{ matrix.repetition }}.json
       - name: Remove only the empty run-owned application cgroup
         if: always() && env.KPS_LOAD_CGROUP_PATH != ''
         run: >-
@@ -266,8 +268,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: current-render-medium-resource-budget-${{ matrix.repetition }}
+          name: current-render-production-scaled-resource-budget-${{ matrix.repetition }}
           path: |
-            test-artifacts/current-render-medium-budget-${{ matrix.repetition }}.json
+            test-artifacts/current-render-production-scaled-budget-${{ matrix.repetition }}.json
             test-artifacts/load-app.log
             test-artifacts/resource-setup.log

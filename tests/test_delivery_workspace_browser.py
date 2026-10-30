@@ -39,7 +39,7 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
                     'delivery_workflow':'branch_fulfillment' if period=='morning' else 'manager_dispatch','items':[]}}
     orders=[order('morning','morning','new'),order('new-evening','evening','new'),order('late','evening','accepted')]
     conversation={'id':'chat1','order_reference':'late','customer_name':'عميل تجريبي','route':'delivery','status':'open','unread_count':1}
-    writes=[];order_queries=[]
+    writes=[];order_queries=[];map_config_requests=[]
     with sync_playwright() as p:
         browser=p.chromium.launch(headless=True,executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None)
         context=browser.new_context(viewport={'width':width,'height':1000})
@@ -60,7 +60,8 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
             if path=='/api/session':payload={'user':user,'csrf_token':'synthetic-token'}
             elif path=='/api/catalog':payload={'brand':{'id':'kps','name':'KPS COFFEE','theme':{}}}
             elif path=='/api/branches':payload={'branches':[{'id':'branch','name':'المروج','branch_no':1,'city':'حفر الباطن','brand_id':'kps'}]}
-            elif path=='/api/operations/map-config':payload={'enabled':False,'provider':'mapbox'}
+            elif path=='/api/operations/map-config':
+                map_config_requests.append(req.url);payload={'enabled':False,'provider':'mapbox'}
             elif path=='/api/orders/new-evening':payload={'order':orders[1]}
             elif path=='/api/shifts':payload={'shifts':[{'id':'driver-shift','kind':'driver','status':'open','display_name':'سائق تجريبي'}]}
             elif path=='/api/orders/new-evening/assign':
@@ -103,8 +104,10 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.locator('[data-count-scope=current] [data-stage=""]').click()
         expect(page.locator('[data-count-scope=current] [data-stage=""]')).to_have_attribute('aria-pressed','true')
         expect(page.locator('#dispatch-map')).to_be_visible()
-        expect(page.locator('#dispatch-map .dispatch-map-state')).to_contain_text(
-            'الخريطة تحتاج تفعيل Mapbox' if lang=='ar' else 'Mapbox activation required')
+        expect(page.locator('#dispatch-map.dispatch-map-launch')).to_be_visible()
+        expect(page.locator('#dispatch-map .dispatch-map-canvas')).to_have_count(0)
+        assert not map_config_requests, 'Dashboard must not initialize map settings or SDK'
+        expect(page.locator('#dispatch-map [data-page=tracking]')).to_be_visible()
         expect(page.locator('#dispatch-panel-drivers')).to_be_visible()
         expect(page.locator('#dispatch-panel-messages')).to_be_visible()
         assert page.locator('[data-action=dispatch-panel]').count()==0
@@ -157,9 +160,12 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         page.screenshot(path=f'test-results/customer-entry-control-room-{lang}-{width}.png',full_page=True)
         assert page.locator('[data-action="manager-accept"][data-id="morning"]').count()==0
         assert page.locator('[data-action="assign"][data-id="morning"]').count()==0
-        page.locator('[data-action="manager-accept"][data-id="new-evening"]').click()
-        expect(page.locator('[data-action="assign"][data-id="new-evening"]')).to_be_visible()
-        page.locator('[data-action="assign"][data-id="new-evening"]').click()
+        page.locator('[data-action="dispatch-inspect"][data-id="new-evening"]').first.click()
+        expect(page.locator('#dispatch-panel-details')).to_be_visible()
+        expect(page.locator('#dispatch-panel-details')).to_contain_text('new-evening')
+        page.locator('[data-action="manager-accept"][data-id="new-evening"]').first.click()
+        expect(page.locator('#dispatch-orders [data-action="assign"][data-id="new-evening"]')).to_be_visible()
+        page.locator('#dispatch-orders [data-action="assign"][data-id="new-evening"]').click()
         page.locator('#modal select[name=driver_shift_id]').select_option('driver-shift')
         page.locator('#modal button[type=submit]').click()
         expect(page.locator('#modal')).not_to_be_visible()

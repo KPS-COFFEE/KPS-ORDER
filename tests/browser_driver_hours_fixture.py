@@ -16,7 +16,9 @@ OUT=Path(os.environ.get('KPS_HOURS_SCREENSHOTS','/tmp/kps-driver-hours-ui'))
 def main():
     OUT.mkdir(parents=True,exist_ok=True)
     metric=dict(shift_seconds=28800, actual_seconds=25200, delivery_seconds=10800,
-                waiting_seconds=14400, break_seconds=3600, other_work_seconds=0,
+                waiting_seconds=14400, duty_seconds=28800, non_delivery_seconds=3600,
+                work_utilization_percent=87.5, active_work_seconds=0, drivers_needing_review=0,
+                break_seconds=3600, other_work_seconds=0,
                 unclassified_seconds=0,trip_count=3,order_count=7,order_activity_seconds=21600,active_delivery_seconds=0,remaining_shift_seconds=7200,order_utilization_percent=75,missing_order_timing_count=0)
     fixture=dict(start='2026-10-18',end='2026-10-18',operational_date='2026-10-18',
                  operational_day_start='05:30',timezone='Asia/Riyadh',totals=metric,
@@ -32,6 +34,17 @@ def main():
         with sync_playwright() as p:
             browser=p.chromium.launch(executable_path=os.environ.get('KPS_CHROMIUM') or None,headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
             page=browser.new_page(viewport=dict(width=1440,height=1050))
+            errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+            session_checks=[]
+            def session(route):
+                session_checks.append(route.request.url)
+                route.fulfill(json={'user':{'id':'fixture-owner','role':'owner','brand_id':'kps',
+                    'branch_ids':['fixture-branch'],'effective_permissions':['driver_hours_reports']},
+                    'csrf_token':'synthetic-ui-fixture-csrf'})
+            # This remains an explicit UI-only fixture. The real fail-closed access
+            # heartbeat must receive a valid synthetic session before rendering;
+            # the companion DB/browser tests exercise actual server revocation.
+            page.route('**/api/session',session)
             page.route('**/api/driver-work-hours/report?*',lambda route:route.fulfill(json=fixture))
             page.goto(f'http://127.0.0.1:{server.server_port}/driver-hours.html')
             page.locator('#hours-kpis article').first.wait_for()
@@ -50,7 +63,7 @@ def main():
             checks.append('mobile_no_horizontal_overflow')
             page.screenshot(path=str(OUT/'driver-hours-mobile-ar.png'),full_page=True)
             page.click('#hours-language')
-            page.wait_for_function("document.documentElement.lang==='en' && document.querySelector('#hours-kpis h2').textContent==='Shift duration'")
+            page.wait_for_function("document.documentElement.lang==='en' && document.querySelector('#hours-kpis h2').textContent==='Completed delivery work hours'")
             assert page.locator('html').get_attribute('dir')=='ltr'
             checks.append('english_ltr')
             page.screenshot(path=str(OUT/'driver-hours-mobile-en.png'),full_page=True)
@@ -65,6 +78,8 @@ def main():
             assert 'start=2026-10-01' in page.locator('#hours-xlsx').get_attribute('href')
             assert 'end=2026-10-31' in page.locator('#hours-xlsx').get_attribute('href')
             checks.append('monthly_calendar_period')
+            assert session_checks, 'The real report access heartbeat must execute'
+            assert not errors, errors
             browser.close()
         print(json.dumps(dict(kind='UI synthetic fixture; no database integration claim',PASS=checks,screenshots=str(OUT))))
     finally:server.shutdown()
