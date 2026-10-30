@@ -2,7 +2,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const source=fs.readFileSync('public/ops.js','utf8');
 const helper=source.slice(source.indexOf('  function printAlertRow('),source.indexOf('  async function refreshOperationalAlerts('));
 for(const lang of ['ar','en']){
-  const context={tr:(a,b)=>lang==='ar'?a:b,esc:s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),branchLabel:j=>j.branch_name,orderLabel:j=>j.order_reference,datetime:String};
+  const context={state:{user:{}},tr:(a,b)=>lang==='ar'?a:b,esc:s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),branchLabel:j=>j.branch_name,orderLabel:j=>j.order_reference,datetime:String};
   vm.createContext(context);vm.runInContext(helper+';this.render=printAlertRow;',context);
   for(const status of ['queued','claimed','uncertain']){
     const html=context.render({id:'job-1',order_id:'order-7',branch_id:'branch-4',branch_name:'Branch <4>',order_reference:'REF-7',printer_label:'Printer <1>',kind:'order',status,created_at:'2026-10-19'});

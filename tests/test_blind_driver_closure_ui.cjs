@@ -5,7 +5,8 @@ const identityHelpers=source.slice(source.indexOf('  function driverClosureStatu
 // Execute the shipped dependency too; a stub would hide odometer regressions.
 const odometerHelper=source.slice(source.indexOf('  function currentOdometer('),source.indexOf('  const driverLocation='));
 assert.ok(odometerHelper.startsWith('  function currentOdometer('));
-const helper=identityHelpers+floatHelpers+odometerHelper+source.slice(source.indexOf('  function terminalComparison('),source.indexOf('  async function shiftDetail('));
+const orderReviewHelper=source.slice(source.indexOf('  function driverOrderReviewControl('),source.indexOf('  async function mountDriverOrderReview('));
+const helper=identityHelpers+floatHelpers+odometerHelper+orderReviewHelper+source.slice(source.indexOf('  function terminalComparison('),source.indexOf('  async function shiftDetail('));
 (async()=>{
  for(const lang of ['ar','en']) for(const float of [0,20000,80000]){
   let markup='',submit,sent,inspectionMinimum;const elements=new Map();
