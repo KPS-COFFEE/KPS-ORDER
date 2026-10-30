@@ -18,7 +18,7 @@ final class OrderAudio {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final Map<String,File> selected=new ConcurrentHashMap<>();
     private final Map<String,File> fallbacks=new HashMap<>();
-    private final Map<String,Long> checkedAt=new HashMap<>();
+    private final SoundRefreshPolicy refreshPolicy=new SoundRefreshPolicy();
     private final Deque<String> queue=new ArrayDeque<>();
     private Set<String> active=new HashSet<>();
     private long verified=-1;
@@ -31,6 +31,7 @@ final class OrderAudio {
     // Single IO executor only; never persist credentials alongside audio.
     void refresh(WorkApi.Grant grant)throws Exception{
         selected.keySet().retainAll(grant.brands);
+        refreshPolicy.retain(grant.brands);
         for(String brand:new TreeSet<>(grant.brands))refreshBrand(grant,brand);
     }
     private void refreshBrand(WorkApi.Grant grant,String brand)throws Exception{
@@ -39,14 +40,21 @@ final class OrderAudio {
             fallback=new File(context.getCacheDir(),"approved-order-ring-"+brand+".wav");
             try(OutputStream out=new FileOutputStream(fallback)){out.write(ApprovedOrderRing.bytes(brand));}
             fallbacks.put(brand,fallback);
-            File old=selected.get(brand);if(old==null||!old.isFile())selected.put(brand,fallback);
         }
+        File old=selected.get(brand);if(old==null||!old.isFile())selected.put(brand,fallback);
         long now=SystemClock.elapsedRealtime();
-        if(now-checkedAt.getOrDefault(brand,-60000L)<60000)return;
-        checkedAt.put(brand,now);
+        if(!refreshPolicy.begin(brand,now))return;
         File temporary=null;
         try{
-            JSONObject descriptor=WorkApi.call("GET","/api/operations/driver-order-sound?brand_id="+brand,grant.cookie,null,null).getJSONObject("sound");
+            JSONObject response;
+            try{
+                response=WorkApi.call("GET","/api/operations/driver-order-sound?brand_id="+brand,grant.cookie,null,null);
+            }catch(WorkApi.HttpFailure e){
+                // Missing optional metadata is distinct from failed audio downloads or access denial.
+                refreshPolicy.unavailable(brand,SystemClock.elapsedRealtime(),e.status);
+                throw e;
+            }
+            JSONObject descriptor=response.getJSONObject("sound");
             String hash=descriptor.getString("sha256"),path=descriptor.getString("path");int length=descriptor.getInt("bytes");
             if(!brand.equals(descriptor.getString("brand_id"))||!SoundPolicy.descriptor(hash,length,path,brand))throw new IOException("Invalid brand sound descriptor");
             File destination=new File(context.getCacheDir(),"order-ring-"+brand+"-"+hash+".wav");

@@ -13,6 +13,10 @@ import javax.net.ssl.HttpsURLConnection;
 final class WorkApi {
     static final String ORIGIN = "https://order.kps.sa";
     static final class Denied extends Exception {}
+    static final class HttpFailure extends java.io.IOException {
+        final int status;
+        HttpFailure(int status){super("Request unavailable");this.status=status;}
+    }
     static final class Grant {
         final String user, shift, csrf, cookie;
         final boolean multibrand;
@@ -42,7 +46,7 @@ final class WorkApi {
             }
             int status=c.getResponseCode();
             if (status==401 || status==403 || status==409 || (status>=300 && status<400)) throw new Denied();
-            if (status!=200) throw new java.io.IOException("Request unavailable");
+            if (status!=200) throw new HttpFailure(status);
             try (InputStream in=c.getInputStream(); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
                 byte[] buffer=new byte[4096]; int n;
                 while ((n=in.read(buffer))!=-1) { if (out.size()+n>1024*1024) throw new java.io.IOException("Response too large"); out.write(buffer,0,n); }
