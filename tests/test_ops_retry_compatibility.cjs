@@ -13,7 +13,7 @@ const legacyStorage=`kps_ops_pending_v1:${user}:`+createHash('sha256').update(le
 const saved='SYNTHETIC-committed-key';
 async function scenario(brand,fail=false,central=false,requestBrand=null){
   const storage=new Map([[legacyStorage,saved]]),requests=[];
-  const ctx={state:{user:{id:user,brand_id:brand},csrf:'synthetic-csrf',requestKeys:new Map()},morningMode:false,
+  const ctx={activePageLoad:null,state:{user:{id:user,brand_id:brand},csrf:'synthetic-csrf',requestKeys:new Map()},morningMode:false,
     window:{},URL,URLSearchParams,operationsBrand:brand,TextEncoder,crypto:{subtle:webcrypto.subtle,randomUUID:()=>brand+'-new-synthetic-key'},
     sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
     tr:(ar,en)=>en,apiError:()=>'',location:{},

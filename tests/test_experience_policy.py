@@ -209,20 +209,36 @@ def test_existing_capture_hook_freezes_staff_targets_without_changing_legacy_pol
 def test_enrichment_reads_actual_driver_acceptance_and_stops_its_clock():
     from app import performance
     order = row(preparation_status='accepted', delivery_status='accepted')
+    reads = []
     class Result:
         def __init__(self, values): self.values = values
         def fetchall(self): return self.values
     class Conn:
         def execute(self, query, params):
+            assert params == (['test'],)
             if query.startswith('SELECT order_id,event_type'):
+                reads.append('events')
                 return Result([{'order_id':'test','event_type':'preparation.accepted','created_at':START}])
-            assert 't.accepted_at' in query
-            return Result([{'order_id':'test','driver_id':'driver','display_name':'TEST',
-                'created_at':START+timedelta(seconds=10),'accepted_at':START+timedelta(seconds=70),
-                'picked_up_at':None,'delivered_at':None,'status':'accepted','reason':None}])
+            if 'FROM effective_driver_tasks t' in query:
+                assert 't.accepted_at' in query
+                reads.append('tasks')
+                return Result([{'order_id':'test','driver_id':'driver','display_name':'TEST',
+                    'created_at':START+timedelta(seconds=10),'accepted_at':START+timedelta(seconds=70),
+                    'picked_up_at':None,'delivered_at':None,'status':'accepted','reason':None}])
+            if query.startswith('SELECT order_id,min(created_at) requested_at FROM branch_print_jobs'):
+                reads.append('print_queue')
+                return Result([])
+            if "e.event_type='intervention.requested'" in query:
+                reads.append('interventions')
+                return Result([])
+            if "e.event_type='intervention.accounting_pending'" in query:
+                reads.append('accounting_interventions')
+                return Result([])
+            raise AssertionError(query)
     performance.enrich_orders(Conn(), [order], now=START+timedelta(minutes=10))
     phase = order['stage_timing']['phases']['driver_acceptance']
     assert phase == {'seconds':60.0,'running':False,'color':'normal'}
+    assert reads == ['events','tasks','print_queue','interventions','accounting_interventions']
 
 
 def test_capture_reuses_transaction_settings_without_an_extra_database_read():

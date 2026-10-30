@@ -46,6 +46,7 @@ CGROUP_ROOT = Path('/sys/fs/cgroup')
 RENDER_APP_CPU_MAX = '50000 100000'
 RENDER_APP_MEMORY_BYTES = 512 * 1024 ** 2
 RENDER_DB_MEMORY_BYTES = 256 * 1024 ** 2
+HOSTING_REPORT_RESOURCE_PROFILES = frozenset({'economy', 'medium', 'cpu_only', 'production_scaled'})
 
 
 def resource_budget():
@@ -54,7 +55,7 @@ def resource_budget():
     if name == 'current':
         return {'name': name, 'app_cpu_tenths': 5, 'app_memory': RENDER_APP_MEMORY_BYTES,
                 'db_cpu_tenths': 1, 'db_memory': RENDER_DB_MEMORY_BYTES}
-    if name == 'proposed':
+    if name in {'proposed', 'production_scaled'}:
         return {'name': name, 'app_cpu_tenths': 20, 'app_memory': 4 * 1024 ** 3,
                 'db_cpu_tenths': 10, 'db_memory': 2 * 1024 ** 3}
     if name == 'economy':
@@ -1371,14 +1372,14 @@ def main():
             report['recovery']['revision_matches'] = ready['revision'] == report['head']
             report['recovery']['migration_preservation_verified'] = ready['data_preservation']['verified']
         hosting_reports_ok = True
-        if budget['name'] in {'economy', 'medium', 'cpu_only'}:
+        if budget['name'] in HOSTING_REPORT_RESOURCE_PROFILES:
             report['post_recovery_reports'] = hosting_report_checks(isolated, origin, workloads)
             hosting_reports_ok = report['post_recovery_reports']['passed']
             report['runtime_resource_profile']['post_report_ownership'] = resource_profile.observe(
                 application_root_pid(process), restarted_worker_pids)
         fault_drills_ok = not args.database_container or report['database_fault_drills'].get('passed') is True
         if all(stage['passed'] for stage in report['stages']) and len(report['stages']) == len(levels) and report['recovery']['revision_matches'] and report['recovery']['migration_preservation_verified'] and report['recovery']['confirmed_orders_preserved'] and report['recovery']['worker_count_matches'] and fault_drills_ok and hosting_reports_ok:
-            report['status'] = ('PASS_CANDIDATE_RESOURCE_GATE' if budget['name'] in {'economy', 'medium', 'cpu_only'} else
+            report['status'] = ('PASS_CANDIDATE_RESOURCE_GATE' if budget['name'] in HOSTING_REPORT_RESOURCE_PROFILES else
                                'PASS_PROPOSED_RESOURCE_GATE' if budget['name'] == 'proposed' else
                                'PASS_REPRESENTATIVE_RESOURCE_GATE') if resource_profile else 'PASS_LOCAL_ENGINEERING_GATE'
             report['reason'] = 'All requested load levels and PostgreSQL business invariants passed; production hardware/provider validation remains separate.'

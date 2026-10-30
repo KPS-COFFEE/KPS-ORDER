@@ -237,14 +237,37 @@ def test_two_resource_runs_retain_the_original_workload_and_generator_budget():
     workflow = Path(__file__).resolve().parents[1] / '.github/workflows/software-hardening.yml'
     section = workflow.read_text().split('  representative-render-budget:', 1)[1]
     assert 'repetition: [1, 2]' in section and 'fail-fast: false' in section
-    # The deployed plan was verified independently on Render. Keep the old
-    # current/small profile available for historical reproducibility, while this
-    # production gate must own and measure the actual economy kernel limits.
-    assert '--cpus 0.5 --memory 1g --memory-swap 1g' in section
-    assert 'KPS_LOAD_RESOURCE_PROFILE: economy' in section
+    # Verified live app and DB upgrades on 2026-10-30: app 2 CPU/4 GiB, DB 1 CPU/2 GiB.
+    # Retain economy/medium helpers and failure evidence; this gate measures
+    # the actual paid production limits with all report checks intact.
+    assert '--cpus 1 --memory 2g --memory-swap 2g' in section
+    assert 'KPS_LOAD_RESOURCE_PROFILE: production_scaled' in section
+    assert 'current-render-production-scaled-resource-budget' in section
+    assert 'current-render-medium-resource-budget' not in section
+    assert 'current-render-economy-resource-budget' not in section
     assert '--preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE' in section
     assert '--application-cgroup "$KPS_LOAD_CGROUP_PATH"' in section
     assert '--max-error-rate 0\n' in section
     for option in ('--levels', '--rounds', '--p95-ms', '--p99-ms', '--request-timeout'):
         assert option not in section
 
+
+
+def test_scaled_production_requires_exact_live_limits_and_preserves_report_gate(budgets, monkeypatch):
+    monkeypatch.setenv('KPS_LOAD_RESOURCE_PROFILE', 'production_scaled')
+    with pytest.raises(ValueError):
+        profile(budgets)
+    (budgets.app / 'cpu.max').write_text('200000 100000')
+    (budgets.app / 'memory.max').write_text(str(4 * 1024 ** 3))
+    (budgets.db / 'cpu.max').write_text('100000 100000')
+    (budgets.db / 'memory.max').write_text(str(2 * 1024 ** 3))
+    budgets.inspected['HostConfig'].update(NanoCpus=1_000_000_000, Memory=2 * 1024 ** 3, MemorySwap=2 * 1024 ** 3)
+    configured = profile(budgets)
+    assert configured.budget == {'name': 'production_scaled', 'app_cpu_tenths': 20,
+        'app_memory': 4 * 1024 ** 3, 'db_cpu_tenths': 10, 'db_memory': 2 * 1024 ** 3}
+    assert load.HOSTING_REPORT_RESOURCE_PROFILES == {'economy', 'medium', 'cpu_only', 'production_scaled'}
+    source = Path(load.__file__).read_text()
+    assert source.count("budget['name'] in HOSTING_REPORT_RESOURCE_PROFILES") == 2
+    (budgets.app / 'cpu.max').write_text('100000 100000')
+    with pytest.raises(ValueError):
+        configured.observe(100002, [100003, 100004])

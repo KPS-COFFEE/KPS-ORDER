@@ -28,14 +28,17 @@ def brands(c, user):
     return multibrand.available(c, user) if multibrand.enabled() else [{'id': user['brand_id']}]
 
 
-def capabilities(c, user):
+def capabilities(c, user, *, available_brands=None):
     if user['role'] not in ROLES or not user.get('active'):
         return set()
-    for brand in brands(c, user):
+    for brand in (brands(c, user) if available_brands is None else available_brands):
         value = config(c, brand['id'])
+        # An absent routing or unlisted recipient cannot gain capabilities.
+        # Avoid a redundant membership projection for that negative case.
+        if not value or not any(user['id'] in value.get(group, []) for group in ('delivery', 'care')):
+            continue
         principal = multibrand.project(c, user, brand['id'])
-        if (value and principal and principal.get('branch_ids') and
-                any(user['id'] in value.get(group, []) for group in ('delivery', 'care'))):
+        if principal and principal.get('branch_ids'):
             return CAPABILITIES
     return set()
 

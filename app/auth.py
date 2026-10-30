@@ -199,17 +199,22 @@ def _find_session(conn, request: Request):
         user = request_user(conn, request, user)
         from .central_operations import project_read
         user = project_read(conn, request, user)
-        from .customer_message_routing import capabilities as message_capabilities
-        user['_message_capabilities'] = sorted(message_capabilities(conn, user))
         from .portals import enforce_role
         enforce_role(request, user)
         from .storefront_scope import require_brand
         require_brand(user["brand_id"])
         from . import multibrand
-        if multibrand.enabled() and user['role'] != 'customer':
-            user['operations_brands'] = multibrand.available(conn, user)
+        # One fresh listing belongs to this request only; each projection
+        # still verifies live membership and current branch grants.
+        available_brands = (multibrand.available(conn, user)
+                            if multibrand.enabled() and user['role'] != 'customer' else None)
+        from .customer_message_routing import capabilities as message_capabilities
+        user['_message_capabilities'] = sorted(message_capabilities(
+            conn, user, available_brands=available_brands))
+        if available_brands is not None:
+            user['operations_brands'] = available_brands
             from .central_operations import context as central_context
-            user['central_operations'] = central_context(conn, user)
+            user['central_operations'] = central_context(conn, user, available_brands=available_brands)
             from .central_workdays import drain_metadata
             user['central_workday_drain'] = drain_metadata(conn,user)
     return user

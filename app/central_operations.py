@@ -17,12 +17,12 @@ def enabled():
     return os.getenv('KPS_CENTRAL_OPERATIONS_ENABLED') == 'true' and multibrand.enabled()
 
 
-def context(conn, user):
+def context(conn, user, *, available_brands=None):
     """Publish current branch grants, never a synthetic widened principal."""
     if not enabled() or user['role'] == 'customer':
         return None
     scopes = []
-    for brand in multibrand.available(conn, user):
+    for brand in (multibrand.available(conn, user) if available_brands is None else available_brands):
         principal = multibrand.project(conn, user, brand['id'])
         if not principal:
             continue

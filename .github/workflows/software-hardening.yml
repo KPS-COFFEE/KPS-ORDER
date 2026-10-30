@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   dependency-security:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/enbishan-customer-journey-guest-20261024' || github.head_ref == 'agent/enbishan-approved-journey-20261025' || github.head_ref == 'agent/enbishan-menu-clarity-20261025' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/enbishan-customer-journey-guest-20261024' || github.head_ref == 'agent/enbishan-approved-journey-20261025' || github.head_ref == 'agent/enbishan-menu-clarity-20261025' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020' || github.head_ref == 'agent/morning-role-guide-20261022' || github.head_ref == 'agent/manager-order-return-20261022' || github.head_ref == 'agent/morning-manager-permission-parity-20261022' || github.head_ref == 'agent/owner-ops-confirmation-20261022' || github.head_ref == 'agent/fleet-active-swap-20261022' || github.head_ref == 'agent/ops-approved-integration-20261022' || github.head_ref == 'agent/multibrand-safe-release-20261023' || github.head_ref == 'agent/central-branch-operations-20261023' || github.head_ref == 'agent/central-shared-workday-20261024' || github.head_ref == 'agent/staff-photo-menu-quote-fix-20261024')"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,7 +40,7 @@ jobs:
           path: test-artifacts/dependency-audit.json
 
   isolated-load-recovery:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -89,7 +89,7 @@ jobs:
             test-artifacts/diagnostic/
 
   isolated-two-worker-capacity:
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -134,7 +134,7 @@ jobs:
 
   proposed-capacity-budget:
     name: proposed-capacity-budget (${{ matrix.repetition }})
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -202,10 +202,13 @@ jobs:
 
   representative-render-budget:
     name: representative-render-budget (${{ matrix.repetition }})
-    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
+    if: "!cancelled() && (github.event_name == 'push' || github.head_ref == 'agent/screen-stability-urgent-20261030' || github.head_ref == 'agent/financial-administrative-completion-20261026' || github.head_ref == 'agent/activate-bank-admin-20261026' || github.head_ref == 'agent/order-duplicate-partial-20261026' || github.head_ref == 'agent/maps-tracking-closure-20261026' || github.head_ref == 'agent/kps-order-emergency-v4' || github.head_ref == 'agent/kps-map-services-20261022' || github.head_ref == 'agent/ops-actionable-alerts-20261020' || github.head_ref == 'agent/staff-operations-room-20261020' || github.head_ref == 'agent/customer-journey-stage-policy-20261020')"
     runs-on: ubuntu-latest
-    # Match verified live Render: app 1 CPU/2 GiB, PostgreSQL 0.5 CPU/1 GiB.
-    # Historical 512 MiB/0.1 CPU DB failures remain recorded; thresholds are unchanged.
+    # Match verified owner-approved live Render: app 2 CPU/4 GiB, DB 1 CPU/2 GiB.
+    # App scale verified by live deploy dep-dbidk5egekts73ab1trg on 2026-10-30.
+    # Prior medium (app 1 CPU/2 GiB) failures remain in run 41100489814.
+    # Prior economy (DB 0.5 CPU/1 GiB) failures remain historical evidence in run 41099594723.
+    # Retain every workload, recovery drill and latency/error gate unchanged.
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -220,12 +223,12 @@ jobs:
           POSTGRES_PASSWORD: isolated-load-only
         ports: ['5432:5432']
         options: >-
-          --cpus 0.5 --memory 1g --memory-swap 1g
+          --cpus 1 --memory 2g --memory-swap 2g
           --health-cmd "pg_isready -U hardening_test -d test_hardening_render_budget"
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       TEST_DATABASE_URL: postgresql://hardening_test:isolated-load-only@127.0.0.1:5432/test_hardening_render_budget
-      KPS_LOAD_RESOURCE_PROFILE: economy
+      KPS_LOAD_RESOURCE_PROFILE: production_scaled
       PYTHONDONTWRITEBYTECODE: '1'
       RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -241,7 +244,7 @@ jobs:
         run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - name: Verify resource ownership and strict latency gate guards
         run: python -m pytest tests/test_resource_load_profile.py -q
-      - name: Prepare a real run-owned 1 CPU and 2 GiB application cgroup
+      - name: Prepare a real run-owned 2 CPU and 4 GiB application cgroup
         shell: bash
         run: |
           mkdir -p test-artifacts
@@ -256,7 +259,7 @@ jobs:
           --max-error-rate 0
           --application-cgroup "$KPS_LOAD_CGROUP_PATH"
           --database-container '${{ job.services.postgres.id }}'
-          --output test-artifacts/current-render-economy-budget-${{ matrix.repetition }}.json
+          --output test-artifacts/current-render-production-scaled-budget-${{ matrix.repetition }}.json
       - name: Remove only the empty run-owned application cgroup
         if: always() && env.KPS_LOAD_CGROUP_PATH != ''
         run: >-
@@ -265,8 +268,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: current-render-economy-resource-budget-${{ matrix.repetition }}
+          name: current-render-production-scaled-resource-budget-${{ matrix.repetition }}
           path: |
-            test-artifacts/current-render-economy-budget-${{ matrix.repetition }}.json
+            test-artifacts/current-render-production-scaled-budget-${{ matrix.repetition }}.json
             test-artifacts/load-app.log
             test-artifacts/resource-setup.log
