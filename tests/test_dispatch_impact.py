@@ -107,7 +107,7 @@ def test_assignment_rebases_eta_and_rejects_unsupported_free_text(monkeypatch):
         events.append(args[-1])
     monkeypatch.setattr(d.db,'event',record_event)
     monkeypatch.setattr(d.db,'audit',lambda *args:None)
-    user={'id':'manager'};order={'id':'order','snapshot':{}};shift={'id':'shift','user_id':'driver'}
+    user={'id':'manager'};order={'id':'new','snapshot':{}};shift={'id':'shift','user_id':'driver'}
     body=SimpleNamespace(impact_quote_id='q',impact_reason=None,impact_contact=None)
     # The earlier "within_target" status is never trusted as current evidence.
     with pytest.raises(HTTPException) as err:d.validate_assignment(QuoteCursor(quote),user,order,shift,body)
@@ -181,3 +181,65 @@ def test_quote_and_canonical_publication_use_real_jsonb_serialization(available)
     publication=json.loads(bytes(JsonbDumper(Jsonb).dump(d.json_parameter(canonical))))
     assert d.stamp(publication[0]['dispatch_ready_at'])==NOW
     assert publication[0]['dispatch_dwell_seconds']==180
+
+
+def test_order_history_never_exposes_other_customers_or_route_locations():
+    from copy import deepcopy
+    raw=[{'event_type':'dispatch.impact_accepted','details':{'status':'late',
+        'reason_label':'سبب موثق','origin':{'lat':1,'lng':2},'matrix':[[0]],
+        'stops':[{'order_id':'other','location':{'lat':3,'lng':4}}],
+        'orders':[{'order_id':oid,'order_no':oid,'completion_at':NOW,
+                   'location':{'lat':5,'lng':6}} for oid in ('this','other')]}},
+        {'event_type':'task.assigned','details':{'task_id':'t'}}]
+    original=deepcopy(raw)
+    for role in ('customer','driver'):
+        assert d.history_events(raw,'this',role)==[raw[1]]
+    for role in ('owner','delivery_manager','branch_manager','admin','delivery_staff'):
+        shown=d.history_events(raw,'this',role)
+        assert shown[0]['details']=={'status':'late','reason_label':'سبب موثق',
+            'orders':[{'order_id':'this','order_no':'this','completion_at':NOW}]}
+        assert shown[1]==raw[1]
+    assert raw==original
+
+
+@pytest.mark.parametrize('unavailable',[False,True])
+def test_actual_evidence_writer_keeps_only_each_orders_forecast_and_real_jsonb(unavailable):
+    import json
+    from psycopg.types.json import Jsonb,JsonbDumper
+    class Writer:
+        def __init__(self):self.records=[]
+        def execute(self,statement,params):
+            # Real db.event/db.audit reach the actual JSONB adapter boundary.
+            value=json.loads(bytes(JsonbDumper(Jsonb).dump(params[-1])))
+            self.records.append((statement,params[:-1],value))
+    c=Writer()
+    own=dict(order_id='candidate-own',order_no='own-number',brand_id='native',branch_id='own-branch',
+             deadline_at=NOW,completion_at=NOW,baseline_completion_at=None,late_seconds=0,
+             added_lateness_seconds=0,deadline_basis='order_snapshot',customer_name='PRIVATE-NAME',
+             location={'lat':28.12345,'lng':45.98765},task_id='PRIVATE-TASK')
+    foreign=dict(own,order_id='foreign-order',order_no='foreign-number',brand_id='foreign-brand',
+                 branch_id='foreign-branch',late_seconds=60,added_lateness_seconds=60)
+    evidence=dict(status='unavailable' if unavailable else 'late',quote_id='opaque-q',actor_id='manager',
+        reason='estimate_unavailable' if unavailable else 'all_drivers_busy',contact='not_contacted',
+        recorded_at=NOW,deadline_preserved=True,orders=[] if unavailable else [own,foreign],
+        stops=[foreign],origin={'lat':28.12345,'lng':45.98765},matrix=[[0,10],[10,0]],
+        _route_bridge={'private':'PRIVATE-BRIDGE'})
+    d.record_assignment_evidence(c,{'id':'manager'},{'id':'candidate-own'},evidence)
+    assert len(c.records)==(2 if unavailable else 4)
+    for statement,params,details in c.records:
+        serialized=json.dumps(details)
+        assert all(secret not in serialized for secret in ('PRIVATE','28.12345','45.98765','matrix','origin','stops'))
+        target=params[1] if 'INSERT INTO order_events' in statement else params[4]
+        assert details['quote_id']=='opaque-q' and d.stamp(details['recorded_at'])==NOW
+        if unavailable:
+            assert target=='candidate-own' and details['orders']==[] and details['status']=='unavailable'
+        elif target=='candidate-own':
+            assert 'foreign-order' not in serialized and 'foreign-number' not in serialized and 'foreign-brand' not in serialized
+            assert details['status']=='within_target' and details['orders'][0]['order_id']==target
+        else:
+            assert target=='foreign-order' and 'candidate-own' not in serialized and 'own-number' not in serialized
+            assert details['status']=='late' and details['orders'][0]['added_lateness_seconds']==60
+            assert 'dispatch.impact_affected' in params
+        assert all(set(row)<=set(d.FORECAST_FIELDS) for row in details['orders'])
+    # The full internal itinerary remains available for canonical publication.
+    assert evidence['stops']==[foreign] and evidence['_route_bridge']['private']=='PRIVATE-BRIDGE'

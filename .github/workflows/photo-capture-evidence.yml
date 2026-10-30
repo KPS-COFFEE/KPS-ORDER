@@ -9,6 +9,7 @@ on:
       - public/assets/dispatch-impact.js
       - public/assets/order-interventions.js
       - public/assets/order-amendments.js
+      - tests/test_dispatch_history_privacy.py
       - tests/test_intervention_reachability_browser.py
       - tests/test_intervention_reachability.cjs
       - tests/test_order_requests.py
@@ -69,7 +70,7 @@ jobs:
       - run: node --check public/ops.js && node --test tests/test_photo_location.cjs tests/test_employee_live_revocation.cjs tests/test_dispatch_impact_ui.cjs tests/test_intervention_reachability.cjs
       - run: >-
           python -m pytest -q tests/test_photo_location.py tests/test_photo_location_postgres.py
-          tests/test_intervention_reachability_browser.py
+          tests/test_dispatch_history_privacy.py tests/test_intervention_reachability_browser.py
           tests/test_journey_timing.py tests/test_dispatch_impact.py tests/test_dispatch_impact_postgres.py
           tests/test_order_interventions.py tests/test_order_requests.py
           tests/test_order_amendments.py tests/test_order_financial_cases.py

@@ -82,3 +82,43 @@ def test_printed_dispatch_decision_uses_recorded_arabic_choices():
     for view in ('compact','owner'):
         rows=next(t['rows'] for t in v5_tables(snap,view) if t['key']=='journey_decisions')
         assert rows[0][3:6]==['اعتماد تقييم الإسناد','جميع السائقين مشغولون','لم يتم التواصل']
+
+
+def test_report_retains_forecast_impact_as_estimates_in_both_print_views():
+    from app.reporting import v5_tables
+    snap={'shift':{},'summary':{},'orders':[order()], 'journey_decisions':[{
+        'order_id':'o','event_type':'dispatch.impact_accepted','created_at':T,'details':{
+        'status':'late','orders':[{'order_id':'existing','order_no':123,
+        'deadline_at':(T+timedelta(minutes=45)).isoformat(),
+        'baseline_completion_at':(T+timedelta(minutes=44)).isoformat(),
+        'completion_at':(T+timedelta(minutes=48)).isoformat(),'added_lateness_seconds':180}]}}]}
+    for view in ('compact','owner'):
+        tables=v5_tables(snap,view)
+        decisions=next(t for t in tables if t['key']=='journey_decisions')
+        assert decisions['rows'][0][6]=='تأخر متوقع'
+        forecast=next(t for t in tables if t['key']=='dispatch_forecasts')
+        assert 'ليست أوقات تسليم فعلية' in forecast['title']
+        assert len(forecast['rows'])==1 and forecast['rows'][0][-1]==3
+        assert '123' in forecast['rows'][0][1]
+
+
+def test_native_report_excludes_foreign_route_evidence_without_mutating_audit():
+    from copy import deepcopy
+    from app.reporting import scoped_journey_decisions,v5_tables
+    estimates=[{'order_id':key,'order_no':key,'brand_id':brand,'branch_id':branch,
+        'completion_at':T,'location':{'lat':1,'lng':2}} for key,brand,branch in
+        [('allowed','a','one'),('other-brand','b','one'),('other-branch','a','two')]]
+    raw=[{'order_id':'o','event_type':'dispatch.impact_accepted','created_at':T,
+          'details':{'status':'late','orders':estimates,'matrix':[[0]],
+          'origin':{'lat':1,'lng':2},'stops':estimates,'reason_label':'سبب موثق'}}]
+    before=deepcopy(raw)
+    copied=scoped_journey_decisions(raw,'a',['one'])
+    assert raw==before
+    assert [r['order_id'] for r in copied[0]['details']['orders']]==['allowed']
+    assert set(copied[0]['details'])=={'status','orders','reason_label'}
+    assert 'location' not in copied[0]['details']['orders'][0]
+    # Rendering is also defensive for a previously supplied unsanitized snapshot.
+    snap={'shift':{'brand_id':'a','branch_ids':['one']},'summary':{},'orders':[order()], 'journey_decisions':raw}
+    for view in ('compact','owner'):
+        table=next(t for t in v5_tables(snap,view) if t['key']=='dispatch_forecasts')
+        assert len(table['rows'])==1 and 'allowed' in table['rows'][0][1]

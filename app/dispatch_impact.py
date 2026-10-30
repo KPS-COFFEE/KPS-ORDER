@@ -26,6 +26,31 @@ CONTACTS = {'agreed':'تم التواصل ووافق', 'disagreed':'تم الت�
             'no_answer':'لا يرد', 'not_contacted':'لم يتم التواصل'}
 
 
+def history_events(events, order_id, viewer_role):
+    """Order history never exposes a driver's other customers or route GPS.
+
+    Complete immutable evidence remains in staff audit/report paths, where
+    each report separately projects its authorized native brand and branches.
+    """
+    fields={'status','quote_id','reason','reason_label','contact','contact_label',
+            'recorded_at','deadline_preserved'}
+    forecast_fields={'order_id','order_no','deadline_at','baseline_completion_at',
+                     'completion_at','added_lateness_seconds','deadline_basis'}
+    output=[]
+    for event in events:
+        if not event['event_type'].startswith('dispatch.impact_'):
+            output.append(event)
+            continue
+        if viewer_role in ('customer','driver'):
+            continue
+        evidence=event.get('details') or {}
+        details={k:v for k,v in evidence.items() if k in fields}
+        details['orders']=[{k:v for k,v in item.items() if k in forecast_fields}
+            for item in evidence.get('orders',[]) if item.get('order_id')==order_id]
+        output.append({**event,'details':details})
+    return output
+
+
 def enabled():
     return os.getenv('DISPATCH_ROAD_IMPACT_ENABLED', 'false').lower() == 'true'
 
@@ -286,6 +311,33 @@ def lock_physical_shifts(c,shift_ids):
                   ([r['user_id'] for r in rows],)).fetchall()
 
 
+FORECAST_FIELDS = ('order_id','order_no','brand_id','branch_id','deadline_at',
+                   'completion_at','baseline_completion_at','added_lateness_seconds',
+                   'late_seconds','deadline_basis')
+
+
+def record_assignment_evidence(c,user,order,evidence):
+    """Write each order's own forecast into its native event/audit scope.
+
+    Physical route stations, coordinates and other customers remain only in
+    private quotes/canonical state. No record links a foreign source order.
+    """
+    common={key:evidence.get(key) for key in ('quote_id','actor_id','reason','contact',
+        'reason_label','contact_label','recorded_at','deadline_preserved','basis','preparation_basis')}
+    forecasts={row['order_id']:{key:row[key] for key in FORECAST_FIELDS if key in row}
+               for row in evidence.get('orders',[]) if row.get('order_id')}
+    ids=[order['id']]+sorted(oid for oid in forecasts if oid!=order['id'])
+    for oid in ids:
+        own=forecasts.get(oid)
+        status=('unverified' if own.get('deadline_at') is None else
+                'late' if (own.get('late_seconds') or 0)>0 or (own.get('added_lateness_seconds') or 0)>0 else
+                'within_target') if own else 'unavailable'
+        details=route_eta.safe(dict(common,status=status,orders=[own] if own else []))
+        kind='dispatch.impact_accepted' if oid==order['id'] else 'dispatch.impact_affected'
+        db.event(c,oid,user['id'],kind,details)
+        db.audit(c,user['id'],kind,'order',oid,details)
+
+
 def validate_assignment(c,user,order,shift,body):
     if not enabled() or (order.get('snapshot') or {}).get('delivery_period')=='morning':return None
     # Caller holds all physical live shift rows in canonical order before
@@ -317,8 +369,7 @@ def validate_assignment(c,user,order,shift,body):
               'reason_label':REASONS.get(reason),'contact_label':CONTACTS.get(contact),
               'driver_id':shift['user_id'],'shift_id':shift['id'],'actor_id':user['id'],
               'recorded_at':datetime.now(timezone.utc),'deadline_preserved':True}
-    db.event(c,order['id'],user['id'],'dispatch.impact_accepted',route_eta.safe(evidence))
-    db.audit(c,user['id'],'dispatch.impact_accepted','order',order['id'],route_eta.safe(evidence))
+    record_assignment_evidence(c,user,order,evidence)
     if quote and result['status'] in ('within_target','late','unverified') and 'status' not in plan and quote['result'].get('matrix') is not None:
         evidence['_route_bridge']={'matrix':quote['result']['matrix'],
             'stop_ids':[s['id'] for s in plan['stops']], 'return_branch_id':plan.get('return_branch_id'),
@@ -385,7 +436,9 @@ def apply_assignment_plan(c,user,order,shift,task_id,evidence):
          db.json([i for i in ordered if not i.startswith('return:')]),bridge.get('return_branch_id'),
          db.json(ordered),json_parameter(augmented),db.json(matrix),calculated,db.json(shifts),actor['session_id'],
          user['brand_id'],bool(user.get('central_operations'))))
-    db.audit(c,user['id'],'driver.route_published','driver',shift['user_id'],
-             {'source':'dispatch_impact_assignment','order_id':order['id'],'task_id':task_id,
-              'quote_id':evidence.get('quote_id'),'stop_ids':ordered,'shift_ids':shifts})
+    # Route identities can span brands. Audit this assignment in its own order
+    # scope; the complete itinerary remains in private canonical state only.
+    db.audit(c,user['id'],'driver.route_published','order',order['id'],
+             {'source':'dispatch_impact_assignment','task_id':task_id,
+              'quote_id':evidence.get('quote_id')})
     evidence['route_published']=True

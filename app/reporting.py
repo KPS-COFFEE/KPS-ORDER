@@ -12,6 +12,29 @@ from .operations import uid,safe,fail,roles,mutate,day_start
 
 router=APIRouter(prefix='/api/reports',tags=['reports'])
 
+def scoped_journey_decisions(rows, brand_id, branch_ids):
+    """Copy report-safe evidence; central dispatch may span unrelated brands.
+
+    Full route/GPS/matrix evidence stays in the original authorized audit log.
+    A native closure retains only its own branch forecasts and decision labels.
+    """
+    fields={'kind','status','pending_role','reason_code','contact_result','reason',
+            'reason_label','contact_label','request_id','financial_pending','financial_approval'}
+    forecast_fields={'order_id','order_no','brand_id','branch_id','deadline_at',
+        'baseline_completion_at','completion_at','added_lateness_seconds','deadline_basis'}
+    branches=set(branch_ids)
+    result=[]
+    for row in rows:
+        details=row.get('details') or {}
+        copied={k:v for k,v in details.items() if k in fields}
+        if row['event_type'].startswith('dispatch.impact_'):
+            copied['orders']=[{k:v for k,v in item.items() if k in forecast_fields}
+                for item in details.get('orders',[])
+                if item.get('brand_id')==brand_id and item.get('branch_id') in branches]
+        result.append({**row,'details':copied})
+    return safe(result)
+
+
 def can_read(user,row):
     if user.get('_morning_manager_context'):
         from .morning_manager_context import shift_allowed
@@ -112,12 +135,12 @@ def create_snapshot(c,sid,approved_by):
         snap['external_enbishan']=[row for child in children for row in child['snapshot'].get('external_enbishan',[])]
     snap['external_enbishan_totals']={key:sum(row.get(key,0) for row in snap['external_enbishan']) for key in ('order_count','cash_halalas','card_halalas','total_halalas')}
     order_ids=[o['id'] for o in orders]
-    snap['journey_decisions']=safe(c.execute('''SELECT e.order_id,e.event_type,e.created_at,e.details,
+    snap['journey_decisions']=scoped_journey_decisions(c.execute('''SELECT e.order_id,e.event_type,e.created_at,e.details,
         u.display_name actor_name FROM order_events e JOIN users u ON u.id=e.actor_id
         JOIN orders o ON o.id=e.order_id WHERE e.order_id=ANY(%s) AND o.brand_id=%s
         AND o.branch_id=ANY(%s) AND (e.event_type LIKE 'intervention.%%' OR
-            e.event_type IN ('dispatch.impact_override','dispatch.impact_accepted')) ORDER BY e.created_at,e.id''',
-        (order_ids,s['brand_id'],s['branch_ids'])).fetchall())
+            e.event_type LIKE 'dispatch.impact_%%') ORDER BY e.created_at,e.id''',
+        (order_ids,s['brand_id'],s['branch_ids'])).fetchall(),s['brand_id'],s['branch_ids'])
     snap['conversation_exceptions']=safe(c.execute('SELECT t.*,v.order_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE v.order_id=ANY(%s) ORDER BY t.created_at',(order_ids,)).fetchall())
     if s['kind']=='manager':
         snap['photo_capture_evidence']=safe(c.execute('''SELECT p.order_id,p.stage,p.created_at,p.used_at,
@@ -752,19 +775,33 @@ def v5_tables(snap,view='compact'):
         from .order_support import CATEGORIES,STATES
         table('support-tickets','تذاكر المتابعة والمشكلات',['التذكرة','الطلب','الفرع','التصنيف','الحالة','الملاحظة / الحل'],[[t['reference'],t['order_reference'],branch(t['branch_id']),CATEGORIES.get(t['category'],t['category']),STATES.get(t['status'],t['status']),t['note']+' / '+t.get('resolution','')] for t in snap['support_tickets']])
     decision_rows=[]
+    forecast_rows=[]
+    forecast_states={'within_target':'ضمن الموعد المتوقع','late':'تأخر متوقع','unverified':'تقدير غير مكتمل','unavailable':'التقدير غير متاح'}
     from .order_interventions import REASONS, CONTACT, PENDING_ROLES, STATUSES
     action_labels={'intervention.requested':'طلب معالجة','intervention.approved':'اعتماد',
         'intervention.rejected':'رفض','intervention.resolved':'إقفال المعالجة',
         'intervention.executed':'تنفيذ الإلغاء','intervention.accounting_pending':'إحالة للمحاسبة',
-        'dispatch.impact_override':'إسناد باستثناء موثق','dispatch.impact_accepted':'اعتماد تقييم الإسناد'}
+        'dispatch.impact_override':'إسناد باستثناء موثق','dispatch.impact_accepted':'اعتماد تقييم الإسناد','dispatch.impact_affected':'تأثير الإسناد على الطلب'}
     for d in snap.get('journey_decisions',[]):
         details=d.get('details') or {}
         decision_rows.append([order_name(d['order_id']),v5_stamp(d['created_at']),d.get('actor_name') or '—',
             action_labels.get(d['event_type'],'إجراء موثق'),str(REASONS.get(details.get('reason_code')) or details.get('reason_label') or details.get('reason') or '—'),
-            str(CONTACT.get(details.get('contact_result')) or details.get('contact_label') or '—'),str(STATUSES.get(details.get('status')) or '—'),
+            str(CONTACT.get(details.get('contact_result')) or details.get('contact_label') or '—'),str(STATUSES.get(details.get('status')) or forecast_states.get(details.get('status')) or '—'),
             str(PENDING_ROLES.get(details.get('pending_role')) or '—')])
+        if d['event_type'].startswith('dispatch.impact_'):
+            for estimate in details.get('orders',[]):
+                scope=snap.get('shift') or {}
+                if scope.get('brand_id') and (estimate.get('brand_id')!=scope['brand_id'] or estimate.get('branch_id') not in scope.get('branch_ids',[])):continue
+                forecast_rows.append([order_name(d['order_id']),
+                    display_order_label({'id':estimate.get('order_id'),'order_no':estimate.get('order_no')}),
+                    v5_stamp(d['created_at']),forecast_states.get(details.get('status'),'غير محدد'),
+                    v5_stamp(estimate.get('deadline_at')),v5_stamp(estimate.get('baseline_completion_at')),
+                    v5_stamp(estimate.get('completion_at')),
+                    round(estimate['added_lateness_seconds']/60,1) if estimate.get('added_lateness_seconds') is not None else '—'])
     table('journey_decisions','قرارات الطلب — السبب والتواصل والاعتماد والمسؤول التالي',
         ['الطلب','الوقت','الموظف','الإجراء','السبب','التواصل','القرار','بانتظار'],decision_rows)
+    table('dispatch_forecasts','تقديرات المسار وقت قرار الإسناد — ليست أوقات تسليم فعلية',
+        ['طلب الإسناد','الطلب المتأثر','وقت القرار','حالة التقدير','الموعد المستهدف','التسليم المتوقع قبله','التسليم المتوقع بعده','زيادة التأخر بالدقائق'],forecast_rows)
     journey_rows=[]
     journey_names={'manager_accept':'قبول المدير','dispatch_print':'الطباعة والإسناد','pickup':'استلام الفرع','delivery':'تسليم العميل'}
     for o in snap.get('orders',[]):
@@ -1030,6 +1067,10 @@ def make_v5_pdf(snap,view='compact',part='all'):
         if n==2:weights=[1.9,1.1]
         if table['key']=='finance':weights=[.55,1.45,.55,1.45]
         if table['key']=='drivers':weights=[1.5,.6,.8,.8,.8,.8,.5,1.3]
+        # Keep full date tokens legible in the new eight-column evidence tables.
+        if table['key']=='dispatch_forecasts':weights=[.6,1.2,1.2,1.2,1.1,1.2,.7,.9]
+        if table['key']=='journey_decisions':weights=[1,1,1,1,1,1,1.3,1]
+        if table['key']=='photo_capture_evidence':weights=[1.1,.7,1,1.3,1.3,1,1,1]
         widths=[doc.width*w/sum(weights) for w in weights]
         rendered=Table(rows,colWidths=widths,repeatRows=1 if field_table else 2,hAlign='RIGHT',splitByRow=1,splitInRow=1)
         # Compact staff closures keep the same readable type and line spacing.

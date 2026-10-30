@@ -378,6 +378,8 @@ def journey(oid:str,user=Depends(auth.require_roles('owner','admin','delivery_ma
         o=scoped(c,oid,user)
         tasks=c.execute('SELECT t.id,t.driver_id,u.display_name driver_name,t.shift_id,t.status,t.reason,t.created_at,t.accepted_at,t.picked_up_at,t.delivered_at FROM effective_driver_tasks t LEFT JOIN users u ON u.id=t.driver_id WHERE t.order_id=%s'+(' AND t.driver_id=%s' if user['role']=='driver' else '')+' ORDER BY t.created_at,t.id',(oid,user['id']) if user['role']=='driver' else (oid,)).fetchall()
         events=c.execute('SELECT e.id,e.event_type,e.actor_id,u.display_name actor_name,e.created_at,e.details FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.order_id=%s ORDER BY e.created_at,e.id',(oid,)).fetchall()
+        from .dispatch_impact import history_events
+        events=history_events(events,oid,user['role'])
         if user['role']!='driver':
             for event in events:
                 details=dict(event['details'] or {})

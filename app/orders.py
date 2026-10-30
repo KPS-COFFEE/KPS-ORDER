@@ -783,6 +783,8 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
             events = conn.execute('SELECT e.id,e.event_type,e.details,e.created_at,e.actor_id,u.display_name AS actor_name '
                                   'FROM order_events e LEFT JOIN users u ON u.id=e.actor_id '
                                   'WHERE e.order_id=%s ORDER BY e.created_at,e.id', (order_id,)).fetchall()
+        from .dispatch_impact import history_events
+        events=history_events(events,order_id,user['role'])
         from .branch_payments import enrich_orders as enrich_payments
         enrich_payments(conn, [row])
         from .order_duplicates import enrich as enrich_duplicate_reviews
