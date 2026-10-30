@@ -16,17 +16,31 @@ function setup({role='driver',api}={}) {
   const calls=[];
   const previous={id:'employee-a',role,effective_permissions:['orders_view']};
   const state={user:previous,csrf:'initial',staff:['private'],orders:['private'],shifts:['private'],conversations:['private'],requestKeys:new Map([['pending','private']]),chatHistory:new Map()};
-  const modal={children:['private'],replaceChildren(){this.children=[]}};
+  // The monitor now renders a non-private recovery dialog and makes work inert.
+  // Model those real DOM capabilities while retaining every revocation assertion.
+  const nodes=new Map();
+  class Node {
+    constructor(tag){this.tag=tag;this.children=[];this.hidden=false;this.open=false;this.inert=false;this.listeners={};}
+    append(...children){this.children.push(...children);for(const child of children)if(child.id)nodes.set('#'+child.id,child);}
+    setAttribute(name,value){this[name]=value;}
+    addEventListener(name,handler){this.listeners[name]=handler;}
+    focus(){this.focused=true;}
+    showModal(){this.open=true;}
+    close(){this.open=false;}
+    replaceChildren(){this.children=[];}
+  }
+  const modal=new Node('div');modal.children=['private'];
+  nodes.set('#modal-body',modal);nodes.set('#app-shell',new Node('main'));
   const dialog={closed:false,close(){this.closed=true}};
-  const root={setAttribute:(name,value)=>attrs.set(name,value),removeAttribute:name=>attrs.delete(name)};
-  const document={hidden:false,documentElement:root,querySelectorAll:()=>[dialog],addEventListener:(name,cb)=>events.set(name,cb)};
+  const root={hasAttribute:name=>attrs.has(name),setAttribute:(name,value)=>attrs.set(name,value),removeAttribute:name=>attrs.delete(name)};
+  const document={hidden:false,documentElement:root,createElement:tag=>new Node(tag),body:new Node('body'),querySelectorAll:()=>[dialog],addEventListener:(name,cb)=>events.set(name,cb)};
   const context={state,document,trialMode:false,AbortController,
     window:{addEventListener:(name,cb)=>events.set(name,cb)},
-    $:selector=>{assert.equal(selector,'#modal-body');return modal},
+    $:(selector,parent)=>selector==='button'?parent.children[0].children.find(node=>node.tag==='button'):nodes.get(selector),
     api:async(...args)=>{calls.push(args);return api?api(...args):{user:{...previous},csrf_token:'fresh'}},
     setTimeout:()=>1,clearTimeout:()=>{},setInterval:(cb,ms)=>intervals.push({cb,ms}),
     showLogin:()=>{state.user=null;state.csrf='';calls.push(['showLogin'])},
-    closeModal:()=>calls.push(['closeModal']),renderBrandSwitch(){},navigation(){},loadPage:async()=>{},hideUnavailableActions(){},
+    closeModal:()=>calls.push(['closeModal']),renderBrandSwitch(){},navigation(){},loadPage:async()=>true,hideUnavailableActions(){},
     setStatus:(message,error)=>calls.push(['status',message,error]),tr:(_ar,en)=>en};
   vm.createContext(context);vm.runInContext(monitor,context);
   return {context,state,attrs,dialog,modal,calls,events,intervals};
@@ -187,7 +201,7 @@ test('the actual login transition scrubs already-open dialogs even when a backgr
   };
   const state={user:{id:'revoked'},requestKeys:new Map([['pending','private']]),chatHistory:new Map([['chat','private']]),csrf:'private'};
   const attrs=new Map([['data-work-access-pending','']]);
-  const context={state,$:node,trackingController:null,driverLocation:{reset(){}},setStatus(){},tr:(_ar,en)=>en,
+  const context={state,$:node,employeeScopeRefreshRequired:false,setEmployeeAccessPending:pending=>{assert.equal(pending,false);attrs.delete('data-work-access-pending');node('#app-shell').inert=false;},trackingController:null,driverLocation:{reset(){}},setStatus(){},tr:(_ar,en)=>en,
     document:{querySelectorAll:()=>dialogs,documentElement:{removeAttribute:name=>attrs.delete(name)},body:{classList:{remove(){}}}}};
   vm.createContext(context);vm.runInContext(loginSource,context);context.showLogin();
   assert.equal(dialogs[0].closed,true);
