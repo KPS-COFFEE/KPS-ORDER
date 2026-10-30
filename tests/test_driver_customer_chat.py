@@ -135,6 +135,42 @@ def test_contact_read_denies_wrong_driver_and_revoked_scope(monkeypatch):
         chat.driver_contact_scope(connection(),user(),'task',lock=False)
 
 
+@pytest.mark.parametrize('operation',['send','upload'])
+def test_contact_mutation_takes_brand_lane_before_resource_locks(monkeypatch,operation):
+    from contextlib import contextmanager
+    events=[]
+    class WriteConnection:
+        def execute(self,*args):return self
+    c=WriteConnection()
+    @contextmanager
+    def transaction():yield c
+    monkeypatch.setattr(chat.db,'tx',transaction)
+    monkeypatch.setattr(chat.auth,'has_permission',lambda *args:True)
+    monkeypatch.setattr(chat.db,'rate_limit',lambda *args:True)
+    monkeypatch.setattr(chat.db,'audit',lambda *args:None)
+    monkeypatch.setattr(chat,'driver_conversation',lambda *args:'conversation')
+    monkeypatch.setattr(chat,'uid',lambda:'receipt')
+    def scope(conn,actor,tid):
+        assert events==['brand_lane']
+        events.append('resource_locks')
+        return {'id':tid},{'id':'order'}
+    monkeypatch.setattr(chat,'driver_contact_scope',scope)
+    def mutate(conn,actor,request,name,body,perform):
+        assert events==[]
+        events.append('brand_lane')
+        return perform()
+    monkeypatch.setattr(chat,'mutate',mutate)
+    if operation=='send':
+        result=chat.driver_customer_send('task',chat.DriverCustomerMessage(text='hello'),None,user=user())
+        assert result['message_id']=='receipt'
+    else:
+        monkeypatch.setattr(chat,'validated_image',lambda body:b'image')
+        body=chat.Attachment(content_type='image/png',data_base64='aW1hZ2U=')
+        result=chat.driver_customer_upload('task',body,None,user=user())
+        assert result['id']=='receipt'
+    assert events==['brand_lane','resource_locks']
+
+
 @pytest.mark.parametrize('phone,expected',[('0501234567','https://wa.me/966501234567'),('+966501234567','https://wa.me/966501234567'),('٠٥٠١٢٣٤٥٦٧','https://wa.me/966501234567'),('javascript:alert(1)',None),('',None)])
 def test_whatsapp_exact_phone_link(phone,expected):
     assert chat.whatsapp_contact(phone)==expected

@@ -420,13 +420,33 @@ def driver_conversation(c,tid,order):
     return cid
 
 
+def authorize_driver_contact_replay(c,user,operation,result):
+    """A driver's own task receipt never grants the general chat inbox."""
+    if not auth.has_permission(user,'tasks_update'):fail(403,'صلاحية الإرسال غير متاحة')
+    kind,tid=operation.split(':',1)
+    task,order=driver_contact_scope(c,user,tid)
+    if kind=='driver.customer_message':
+        saved=c.execute('SELECT 1 FROM chat_messages m JOIN conversations v ON v.id=m.conversation_id '
+            'WHERE m.id=%s AND m.sender_id=%s AND m.conversation_id=%s AND v.driver_task_id=%s '
+            'AND v.order_id=%s AND v.brand_id=%s AND v.branch_id=%s',
+            (result.get('message_id'),user['id'],result.get('conversation_id'),task['id'],
+             order['id'],order['brand_id'],order['branch_id'])).fetchone()
+    else:
+        saved=c.execute('SELECT 1 FROM chat_attachments a JOIN conversations v ON v.id=a.conversation_id '
+            'WHERE a.id=%s AND a.uploader_id=%s AND v.driver_task_id=%s '
+            'AND v.order_id=%s AND v.brand_id=%s AND v.branch_id=%s',
+            (result.get('id'),user['id'],task['id'],order['id'],order['brand_id'],order['branch_id'])).fetchone()
+    if not saved:fail(404,'السجل خارج الصلاحية الحالية')
+
+
 @router.post('/tasks/{tid}/customer-chat')
 def driver_customer_send(tid:str,body:DriverCustomerMessage,request:Request,user=Depends(auth.current_user)):
     if not auth.has_permission(user,'tasks_update'):fail(403,'صلاحية الإرسال غير متاحة')
     with db.tx() as c:
-        # Check live assignment even on idempotent replay.
-        task,order=driver_contact_scope(c,user,tid)
         def perform():
+            # mutate owns the brand lane before taking order/task/shift locks.
+            # Replays use the same live scope guard in authorize_replay.
+            task,order=driver_contact_scope(c,user,tid)
             if not db.rate_limit(c,'driver-chat:'+user['id'],30,60):fail(429,'أرسل الرسائل بوتيرة أبطأ')
             cid=driver_conversation(c,tid,order)
             if body.attachment_id:
@@ -446,8 +466,8 @@ def driver_customer_upload(tid:str,body:Attachment,request:Request,user=Depends(
     data=validated_image(body)
     digest=hashlib.sha256(data).hexdigest()
     with db.tx() as c:
-        task,order=driver_contact_scope(c,user,tid)
         def perform():
+            task,order=driver_contact_scope(c,user,tid)
             if not db.rate_limit(c,'attachment:'+user['id'],12,60):fail(429,'أرسل الصور بوتيرة أبطأ')
             cid=driver_conversation(c,tid,order)
             aid=uid()

@@ -194,16 +194,95 @@ def test_chat_send_does_not_cycle_with_gps_event_writer(ops, database, monkeypat
             writer.execute("INSERT INTO order_events(id,order_id,actor_id,event_type,details) "
                            "VALUES('poll-send-gps',%s,'ops-driver','order.gps_near_customer','{}') "
                            "ON CONFLICT(id) DO NOTHING", (oid,))
-    # A deadlocked synthetic send may have rolled back. Replay the same key
-    # only after the failed transaction fully exits; verify exact-once storage.
-    sent = chat.driver_customer_send('poll-send-task', body, request, driver)
-    assert chat.driver_customer_send('poll-send-task', body, request, driver) == sent
+    # Baseline has a second, independent bug: generic inbox authorization
+    # rejects a driver's own receipt replay. Record that exact failure after
+    # proving 40P01; the candidate must return its original successful receipt.
+    if BASELINE:
+        from fastapi import HTTPException
+        with db.tx() as conn:
+            stored = conn.execute('SELECT count(*) n FROM chat_messages WHERE text=%s', (body.text,)).fetchone()['n']
+        if not stored:
+            chat.driver_customer_send('poll-send-task', body, request, driver)
+        with pytest.raises(HTTPException) as legacy_replay:
+            chat.driver_customer_send('poll-send-task', body, request, driver)
+        assert legacy_replay.value.status_code == 404
+    else:
+        # Replay only after any failed transaction fully exits.
+        sent = chat.driver_customer_send('poll-send-task', body, request, driver)
+        assert chat.driver_customer_send('poll-send-task', body, request, driver) == sent
     with db.tx() as conn:
         assert conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone() == saved_order
         assert conn.execute("SELECT count(*) n FROM order_events WHERE id='poll-send-gps'").fetchone()['n'] == 1
         assert conn.execute("SELECT count(*) n FROM chat_messages WHERE text=%s", (body.text,)).fetchone()['n'] == 1
         assert conn.execute("SELECT status,driver_id FROM driver_tasks WHERE id='poll-send-task'").fetchone() == {
             'status': 'picked_up', 'driver_id': 'ops-driver'}
+    if not BASELINE:
+        from fastapi import HTTPException
+        with db.tx() as conn:
+            conn.execute("UPDATE driver_tasks SET driver_id='ops-driver2' WHERE id='poll-send-task'")
+        with pytest.raises(HTTPException) as withdrawn:
+            chat.driver_customer_send('poll-send-task', body, request, driver)
+        assert withdrawn.value.status_code == 404
+
+
+@pytest.mark.skipif(BASELINE, reason='The published baseline acquires the brand lock after task scope')
+def test_chat_send_waits_for_brand_before_taking_order_or_shift_locks(ops, database, monkeypatch):
+    from starlette.requests import Request
+    _, _, order, shifts = ops
+    _, sid = shifts()
+    oid = order()
+    with db.tx() as conn:
+        conn.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) "
+                     "VALUES('poll-brand-task',%s,'ops-driver',%s,'accepted','ops-manager')", (oid, sid))
+        driver = conn.execute("SELECT * FROM users WHERE id='ops-driver'").fetchone()
+    request = Request({'type': 'http', 'headers': [(b'idempotency-key', b'poll-brand-one')],
+                       'method': 'POST', 'path': '/api/tasks/poll-brand-task/customer-chat'})
+    body = chat.DriverCustomerMessage(text='Synthetic canonical brand lock order')
+    pid, entered = _observe_reader(monkeypatch)
+    with psycopg.connect(database, autocommit=True, row_factory=dict_row) as writer:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix='polling-reader') as workers:
+            with writer.transaction():
+                writer.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', ('operations:'+driver['brand_id'],))
+                future = workers.submit(chat.driver_customer_send, 'poll-brand-task', body, request, driver)
+                assert entered.wait(4)
+                _wait_for(lambda: writer.execute('SELECT pg_blocking_pids(%s) p', (pid[0],)).fetchone()['p'])
+                assert writer.execute('SELECT wait_event FROM pg_stat_activity WHERE pid=%s', (pid[0],)).fetchone()['wait_event'] == 'advisory'
+                # NOWAIT proves the blocked sender has not taken either row
+                # first, rather than relying on timing or a source assertion.
+                writer.execute('SELECT id FROM orders WHERE id=%s FOR UPDATE NOWAIT', (oid,))
+                writer.execute('SELECT id FROM shifts WHERE id=%s FOR UPDATE NOWAIT', (sid,))
+            assert future.result(timeout=5)['message_id']
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM chat_messages WHERE text=%s', (body.text,)).fetchone()['n'] == 1
+
+
+@pytest.mark.skipif(BASELINE, reason='Driver attachment receipt binding is certified on the candidate')
+def test_driver_attachment_replay_is_exact_once_and_owner_bound(ops):
+    import base64
+    import io
+    from PIL import Image
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    _, _, order, shifts = ops
+    _, sid = shifts()
+    oid = order()
+    with db.tx() as conn:
+        conn.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by) "
+                     "VALUES('poll-upload-task',%s,'ops-driver',%s,'accepted','ops-manager')", (oid, sid))
+        driver = conn.execute("SELECT * FROM users WHERE id='ops-driver'").fetchone()
+    request = Request({'type': 'http', 'headers': [(b'idempotency-key', b'poll-upload-one')],
+                       'method': 'POST', 'path': '/api/tasks/poll-upload-task/customer-chat/attachments'})
+    data = io.BytesIO()
+    Image.new('RGB', (8, 8), 'white').save(data, format='PNG')
+    body = chat.Attachment(content_type='image/png', data_base64=base64.b64encode(data.getvalue()).decode())
+    saved = chat.driver_customer_upload('poll-upload-task', body, request, driver)
+    assert chat.driver_customer_upload('poll-upload-task', body, request, driver) == saved
+    with db.tx() as conn:
+        assert conn.execute('SELECT count(*) n FROM chat_attachments WHERE id=%s', (saved['id'],)).fetchone()['n'] == 1
+        conn.execute("UPDATE chat_attachments SET uploader_id='ops-driver2' WHERE id=%s", (saved['id'],))
+    with pytest.raises(HTTPException) as stolen:
+        chat.driver_customer_upload('poll-upload-task', body, request, driver)
+    assert stolen.value.status_code == 404
 
 
 @pytest.mark.skipif(BASELINE, reason='Authorization acceptance executes on the fixed candidate')

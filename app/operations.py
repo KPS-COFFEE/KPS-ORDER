@@ -174,6 +174,10 @@ def history_result_access(c,user,oid):
 def authorize_replay(c,user,operation,body,result):
     # Replay protection never extends withdrawn authorization. Validate current
     # resources, not the scope frozen in a formerly successful response.
+    if operation.startswith(('driver.customer_message:','driver.customer_attachment:')):
+        from .chat import authorize_driver_contact_replay
+        authorize_driver_contact_replay(c,user,operation,result)
+        return
     if operation.startswith('ticket.'):
         oid=body.get('order_id')
         if not oid:

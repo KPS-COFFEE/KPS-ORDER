@@ -54,7 +54,7 @@ jobs:
           git worktree add --detach /tmp/kps-polling-baseline 0672b881f255d31b45fd6a878bd7f5b540453b5d
           cp tests/test_polling_deadlock_postgres.py /tmp/kps-polling-baseline/tests/
           cd /tmp/kps-polling-baseline
-          python -m pytest -q --strict-markers tests/test_polling_deadlock_postgres.py -k 'not next_read' --junitxml="$GITHUB_WORKSPACE/test-results/published-baseline.xml"
+          python -m pytest -q --strict-markers tests/test_polling_deadlock_postgres.py -k 'chat_poll_does or roster_poll_does or chat_send_does' --junitxml="$GITHUB_WORKSPACE/test-results/published-baseline.xml"
       - name: Verify nonblocking candidate and fresh authorization
         if: matrix.application == 'fixed-candidate'
         run: python -m pytest -q --strict-markers tests/test_polling_deadlock_postgres.py --junitxml=test-results/fixed-candidate.xml
