@@ -47,3 +47,13 @@ test('actual driver widget submits only a structured problem and leaves pickup a
  await form.onsubmit({preventDefault(){},target:form});assert.equal(writes[0][0],'/api/order-interventions/orders/o%2F1');assert.equal(writes[0][1].kind,'problem');assert.equal(writes[0][1].reason_code,'no_answer');assert.equal(writes[0][1].contact_result,'no_answer');assert.equal(writes[0][1].status,undefined);assert.equal(writes[0][1].version,4);
  form.elements.reason_code.value='damaged';await form.onsubmit({preventDefault(){},target:form});assert.equal(writes[1][1].contact_result,'not_contacted');
 });
+
+test('a cancellation-only admin has an actionable inbox without general orders permission',async()=>{
+ const content={},reads=[],rendered=[];const ctx={...base(),heading:()=>{},$:()=>content,table:(_head,rows)=>{rendered.push(rows);return rows.flat().join('|');},empty:String,api:async path=>{reads.push(path);return {requests:[{order_id:'o"/1',order_no:'123',branch_name:'Branch',created_at:'now',reason_label:'Customer request',pending_label:'Delegate'}]};}};
+ ctx.state.user={role:'admin',effective_permissions:['orders_cancel_after_print']};ctx.can=p=>ctx.state.user.effective_permissions.includes(p);
+ vm.createContext(ctx);vm.runInContext(between('  const pagePermissions=','  const actionPermissions=')+'\nthis.pageAllowed=canPage;\n'+between('  async function interventionInbox(','  async function accounting('),ctx);
+ assert.equal(ctx.pageAllowed('interventionInbox'),true);assert.equal(ctx.pageAllowed('orders'),false);
+ await ctx.interventionInbox();assert.equal(reads[0],'/api/order-interventions/pending-cancellations');assert.match(content.innerHTML,/data-action="order-intervention" data-id="o&quot;\/1"/);assert.equal(rendered[0].length,1);
+ ctx.state.user.effective_permissions=[];assert.equal(ctx.pageAllowed('interventionInbox'),false);
+ ctx.state.user.role='driver';ctx.state.user.effective_permissions=['orders_cancel_after_print'];assert.equal(ctx.pageAllowed('interventionInbox'),false);
+});
