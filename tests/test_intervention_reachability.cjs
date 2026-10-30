@@ -51,7 +51,7 @@ test('actual driver widget submits only a structured problem and leaves pickup a
 test('a cancellation-only admin has an actionable inbox without general orders permission',async()=>{
  const content={},reads=[],rendered=[];const ctx={...base(),heading:()=>{},$:()=>content,table:(_head,rows)=>{rendered.push(rows);return rows.flat().join('|');},empty:String,api:async path=>{reads.push(path);return {requests:[{order_id:'o"/1',order_no:'123',branch_name:'Branch',created_at:'now',reason_label:'Customer request',pending_label:'Delegate'}]};}};
  ctx.state.user={role:'admin',effective_permissions:['orders_cancel_after_print']};ctx.can=p=>ctx.state.user.effective_permissions.includes(p);
- vm.createContext(ctx);vm.runInContext(between('  const pagePermissions=','  const actionPermissions=')+'\nthis.pageAllowed=canPage;\n'+between('  async function interventionInbox(','  async function accounting('),ctx);
+ vm.createContext(ctx);vm.runInContext(between('  function pageReadApi(','  function assertPageLoad('),ctx);vm.runInContext(between('  const pagePermissions=','  const actionPermissions=')+'\nthis.pageAllowed=canPage;\n'+between('  async function interventionInbox(','  async function accounting('),ctx);
  assert.equal(ctx.pageAllowed('interventionInbox'),true);assert.equal(ctx.pageAllowed('orders'),false);
  await ctx.interventionInbox();assert.equal(reads[0],'/api/order-interventions/pending-cancellations');assert.match(content.innerHTML,/data-action="order-intervention" data-id="o&quot;\/1"/);assert.equal(rendered[0].length,1);
  ctx.state.user.effective_permissions=[];assert.equal(ctx.pageAllowed('interventionInbox'),false);

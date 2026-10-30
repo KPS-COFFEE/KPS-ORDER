@@ -16,7 +16,10 @@ pytestmark=pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit Ch
 def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_handover(static_customer,lang,width):
     from playwright.sync_api import sync_playwright,expect
     from app.morning_manager_context import CAPABILITIES,BOOTSTRAP_CAPABILITIES
-    opened=False;task=None;writes=[];reads=[];errors=[]
+    from app.dispatch_impact import REASONS,CONTACTS,absent
+    opened=False;task=None;writes=[];reads=[];errors=[];route_errors=[];previews=[]
+    impact_policy={'impact_enabled':False,'reason_options':REASONS,'contact_options':CONTACTS}
+    handover_reason='إعادة توزيع لتقليل التأخير'
     order={'id':'order','order_no':'TEST-MORNING','brand_id':'kps','branch_id':'branch2','service':'delivery',
            'preparation_status':'accepted','delivery_status':'pending','payment_status':'unpaid','payment_method':'cash',
            'morning_driver_accepted':False,'morning_task_status':None,'morning_driver_name':None,
@@ -28,14 +31,24 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
     full={**busy,'id':'full-shift','user_id':'full-driver','display_name':'مكتمل الطاقة','active_tasks':3,'assignment_eligible':False}
     replacement={**busy,'id':'replacement-shift','user_id':'replacement','display_name':'سائق بديل','active_tasks':0}
     with sync_playwright() as p:
-        browser=p.chromium.launch(headless=True);context=browser.new_context(viewport={'width':width,'height':1000})
+        browser=p.chromium.launch(headless=True,executable_path=os.getenv('TEST_CHROMIUM_EXECUTABLE') or None);context=browser.new_context(viewport={'width':width,'height':1000})
         context.add_init_script(f"localStorage.setItem('kps_ops_lang',{json.dumps(lang)})")
         page=context.new_page();page.on('pageerror',lambda error:errors.append(str(error)))
-        def api(route):
+        def respond(route):
             nonlocal opened,task
             request=route.request;path=urlparse(request.url).path;payload={}
             assert path not in {'/api/identity/staff','/api/admin/export'}
             assert request.headers.get('x-delivery-period')=='morning'
+            if path=='/api/operations/dispatch-impact':
+                # A calculation POST is read-only; it is never a business write.
+                assert request.method=='POST'
+                body=request.post_data_json
+                expected={'task_id':'task','driver_shift_id':'replacement-shift'} if task else {'order_id':'order','driver_shift_id':'busy-shift'}
+                assert body==expected
+                previews.append(body)
+                payload={'enabled':False,**absent('morning_unchanged')}
+                route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
+                return
             if request.method=='GET':reads.append(path)
             else:writes.append((path,request.post_data_json))
             if path=='/api/session':
@@ -59,6 +72,12 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
             elif path=='/api/tasks':
                 assert opened and 'order_id=order' in request.url
                 payload={'tasks':[task] if task else []}
+            elif path=='/api/operations/dispatch-impact-policy':
+                assert request.method=='GET'
+                payload=impact_policy
+            elif path=='/api/operations/map-services/recommendations':
+                assert request.method=='GET' and 'order_id=order' in request.url
+                payload={**impact_policy,'drivers':[],'recommended_shift_id':None}
             elif path=='/api/orders/order/assign':
                 assert request.post_data_json=={'driver_shift_id':'busy-shift','accept_order':False}
                 task={'id':'task','order_id':'order','shift_id':'busy-shift','driver_id':'busy-driver','status':'assigned'}
@@ -71,10 +90,15 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
                 assert (order['preparation_status'],body['status']) in [('accepted','preparing'),('preparing','ready')]
                 order.update(preparation_status=body['status'],version=order['version']+1);payload={'order':order}
             elif path=='/api/tasks/task/handover':
-                assert request.post_data_json=={'driver_shift_id':'replacement-shift','reason':'سبب نقل المهمة','reassign_before_pickup':True}
+                assert request.post_data_json=={'driver_shift_id':'replacement-shift','reason':handover_reason,'reassign_before_pickup':True}
                 task['transfer_shift_id']='replacement-shift';payload={'task_id':'task','acceptance_required':True}
             elif request.method!='GET':raise AssertionError('Unexpected mutation '+path)
             route.fulfill(status=200,content_type='application/json',body=json.dumps(payload))
+        def api(route):
+            try:respond(route)
+            except Exception as error:
+                route_errors.append(f'{route.request.method} {route.request.url}: {error!r}')
+                route.fulfill(status=500,content_type='application/json',body=json.dumps({'detail':'Synthetic API contract failed'}))
         page.route('**/api/**',api);page.goto(static_customer+'/ops.html?delivery_period=morning')
         expect(page.locator('[data-action=morning-open-duty]')).to_be_visible()
         assert '/api/orders' not in reads and writes==[]
@@ -105,7 +129,11 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
             page.locator('[data-action=order-detail][data-id=order]').click()
         page.locator('#modal [data-action=handover-task]').click()
         page.locator('#modal [name=driver_shift_id]').select_option('replacement-shift')
-        page.locator('#modal [name=reason]').fill('سبب نقل المهمة')
+        reason=page.locator('#modal select[name=reason]')
+        expect(reason).to_have_value('')
+        before=len(writes);page.locator('#modal button[type=submit]').click();assert len(writes)==before
+        reason.select_option(label=handover_reason)
+        expect(reason).to_have_value(handover_reason)
         page.locator('#modal button[type=submit]').click();expect(page.locator('#modal')).not_to_be_visible()
         page.locator('[data-action=order-detail][data-id=order]').click()
         expect(page.locator('#morning-dispatch-status')).to_contain_text('بانتظار قبول' if lang=='ar' else 'awaits the receiving driver')
@@ -113,9 +141,11 @@ def test_manager_self_open_assign_busy_driver_prepare_with_reason_and_request_ha
         assert task['driver_id']=='busy-driver' and task['shift_id']=='busy-shift'
         assert page.locator('#modal [data-action=assign],#modal [data-action=handover-task]').count()==0
         assert [path for path,_ in writes]==['/api/shifts','/api/orders/order/assign','/api/orders/order/preparation','/api/orders/order/preparation','/api/tasks/task/handover']
+        assert previews==[]  # The current production policy disables route-impact work.
         assert not page.locator('#navigation [data-page=admin]').count()
         expect(page.locator('#navigation [data-page=shifts]')).to_be_visible()
         assert not errors
+        assert not route_errors,route_errors
         browser.close()
 
 

@@ -29,3 +29,9 @@ jobs:
         run: node tests/test_employee_access_recovery.cjs && node tests/test_ops_background_recovery.cjs && node tests/test_dispatch_map_on_demand.cjs
       - name: Native dialog and full operations fault injection
         run: python tests/test_employee_access_recovery_browser.py && python tests/test_ops_screen_faults_browser.py && python tests/test_ops_map_separation_browser.py
+      - name: Independent operational alert navigation and scope
+        run: python tests/test_ops_independent_alerts_browser.py
+      - name: Prior delivery modal reads during polling and navigation
+        run: python tests/test_ops_prior_modal_browser.py
+      - name: Retained fleet module callbacks after transient refresh failure
+        run: python tests/test_ops_module_callbacks_browser.py

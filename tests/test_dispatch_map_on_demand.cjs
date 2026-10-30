@@ -16,7 +16,7 @@ test('dashboard data repaint never mounts, updates or fetches a map',()=>{
 test('explicit tracking page still mounts its map view and disposes the previous controller',async()=>{
  let mounts=0,destroys=0;const host={};
  const ctx={state:{page:'tracking',user:{id:'manager'},branches:[]},$:()=>host,api(){},loadBranches:async()=>{},heading(){},tr:(_,en)=>en,window:{KPSOrderTracking:{mount:async(h,options)=>{assert.equal(h,host);assert.equal(options.isActive(),true);mounts++;return {destroy:()=>destroys++};}}}};
- vm.createContext(ctx);vm.runInContext(part('  let trackingController=null;','  async function dashboard()'),ctx);
+ vm.createContext(ctx);vm.runInContext(part('  function pageReadApi(','  function assertPageLoad('),ctx);vm.runInContext(part('  let trackingController=null;','  async function dashboard()'),ctx);
  await ctx.tracking();await ctx.tracking();assert.equal(mounts,2);assert.equal(destroys,1);
 });
 test('dashboard map launch remains explicit and route/time calculations are not removed',()=>{
