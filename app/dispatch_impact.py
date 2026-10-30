@@ -48,6 +48,11 @@ def stamp(value):
     return value if isinstance(value,datetime) and value.tzinfo is not None else None
 
 
+def json_parameter(value):
+    """Persist forecast clocks as ISO strings with the normal JSONB adapter."""
+    return db.json(route_eta.safe(value))
+
+
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
 
@@ -269,7 +274,7 @@ def preview(body:PreviewBody,user=Depends(auth.require_roles('owner','delivery_m
         qid=uuid4().hex
         stored=dict(result,origin=plan.get('origin'),origin_updated_at=plan.get('origin_updated_at'),matrix=matrix,calculated_at=plan.get('now'))
         c.execute('INSERT INTO dispatch_impact_quotes(id,actor_id,order_id,driver_id,shift_id,fingerprint,result,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,now()+interval \'45 seconds\')',
-                  (qid,user['id'],order['id'],shift['user_id'],shift['id'],signature or '',db.json(stored)))
+                  (qid,user['id'],order['id'],shift['user_id'],shift['id'],signature or '',json_parameter(stored)))
         return {**route_eta.safe(result),'quote_id':qid,'enabled':enabled(),'expires_in_seconds':TTL_SECONDS,
                 'reason_options':REASONS,'contact_options':CONTACTS}
 
@@ -312,8 +317,8 @@ def validate_assignment(c,user,order,shift,body):
               'reason_label':REASONS.get(reason),'contact_label':CONTACTS.get(contact),
               'driver_id':shift['user_id'],'shift_id':shift['id'],'actor_id':user['id'],
               'recorded_at':datetime.now(timezone.utc),'deadline_preserved':True}
-    db.event(c,order['id'],user['id'],'dispatch.impact_accepted',evidence)
-    db.audit(c,user['id'],'dispatch.impact_accepted','order',order['id'],evidence)
+    db.event(c,order['id'],user['id'],'dispatch.impact_accepted',route_eta.safe(evidence))
+    db.audit(c,user['id'],'dispatch.impact_accepted','order',order['id'],route_eta.safe(evidence))
     if quote and result['status'] in ('within_target','late','unverified') and 'status' not in plan and quote['result'].get('matrix') is not None:
         evidence['_route_bridge']={'matrix':quote['result']['matrix'],
             'stop_ids':[s['id'] for s in plan['stops']], 'return_branch_id':plan.get('return_branch_id'),
@@ -378,7 +383,7 @@ def apply_assignment_plan(c,user,order,shift,task_id,evidence):
         central_scope=EXCLUDED.central_scope,morning_shift_id=NULL,road_corridor=NULL''',
         (shift['user_id'],user['id'],signature,db.json(matrix),calculated,ctx['updated_at'],
          db.json([i for i in ordered if not i.startswith('return:')]),bridge.get('return_branch_id'),
-         db.json(ordered),db.json(augmented),db.json(matrix),calculated,db.json(shifts),actor['session_id'],
+         db.json(ordered),json_parameter(augmented),db.json(matrix),calculated,db.json(shifts),actor['session_id'],
          user['brand_id'],bool(user.get('central_operations'))))
     db.audit(c,user['id'],'driver.route_published','driver',shift['user_id'],
              {'source':'dispatch_impact_assignment','order_id':order['id'],'task_id':task_id,

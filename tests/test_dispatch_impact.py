@@ -100,7 +100,12 @@ def test_assignment_rebases_eta_and_rejects_unsupported_free_text(monkeypatch):
     monkeypatch.setenv('DISPATCH_ROAD_IMPACT_ENABLED','true')
     monkeypatch.setattr(d,'context',lambda *args:('current',{'stops':stops,'origin':{'lat':28.,'lng':45.}}))
     events=[]
-    monkeypatch.setattr(d.db,'event',lambda *args:events.append(args[-1]))
+    def record_event(*args):
+        # Exercise the real psycopg JSON serializer, even without a database.
+        from psycopg.types.json import Jsonb, JsonbDumper
+        JsonbDumper(Jsonb).dump(d.db.json(args[-1]))
+        events.append(args[-1])
+    monkeypatch.setattr(d.db,'event',record_event)
     monkeypatch.setattr(d.db,'audit',lambda *args:None)
     user={'id':'manager'};order={'id':'order','snapshot':{}};shift={'id':'shift','user_id':'driver'}
     body=SimpleNamespace(impact_quote_id='q',impact_reason=None,impact_contact=None)
@@ -154,3 +159,25 @@ def test_frozen_allowances_survive_refresh_only_for_same_task_station():
     assert 'dispatch_ready_at' not in route_eta.inherit_dispatch_allowances([dict(live,task_ids=['new'])],[original])[0]
     assert 'dispatch_ready_at' not in route_eta.inherit_dispatch_allowances([dict(live,location={'lat':2,'lng':3})],[original])[0]
     assert route_eta.fingerprint(live if isinstance(live,list) else [live])!=route_eta.fingerprint([dict(live,task_ids=['new'])])
+
+
+@pytest.mark.parametrize('available',[True,False])
+def test_quote_and_canonical_publication_use_real_jsonb_serialization(available):
+    import json
+    from psycopg.types.json import Jsonb, JsonbDumper
+    result=d.impact([stop('new',candidate=True)],[[0,10],[10,0]],NOW) if available else d.absent('routing_provider_unavailable')
+    stored=dict(result,origin={'lat':28.,'lng':45.},origin_updated_at=NOW,
+                calculated_at=NOW,matrix=[[0,10],[10,0]] if available else None)
+    encoded=JsonbDumper(Jsonb).dump(d.json_parameter(stored))
+    decoded=json.loads(bytes(encoded))
+    assert decoded['status']==('within_target' if available else 'unavailable')
+    assert d.stamp(decoded['origin_updated_at'])==NOW
+    if available:
+        assert d.stamp(decoded['orders'][0]['deadline_at'])==NOW+timedelta(seconds=600)
+        assert d.stamp(decoded['orders'][0]['completion_at'])==NOW+timedelta(seconds=130)
+    else:
+        assert decoded['orders']==[] and decoded['matrix'] is None
+    canonical=[{'id':'p','dispatch_ready_at':NOW,'dispatch_dwell_seconds':180}]
+    publication=json.loads(bytes(JsonbDumper(Jsonb).dump(d.json_parameter(canonical))))
+    assert d.stamp(publication[0]['dispatch_ready_at'])==NOW
+    assert publication[0]['dispatch_dwell_seconds']==180

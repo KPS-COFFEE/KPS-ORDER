@@ -5,22 +5,24 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../public/ops.js'),'utf8');
 const helpers=source.slice(source.indexOf('  async function duplicateReview('),source.indexOf('  async function orderDetail('));
+const interventionLookup=source.slice(source.indexOf('  async function openTaskIntervention('),source.indexOf('  async function cancelOrderWithJourney('));
 const plain=x=>JSON.parse(JSON.stringify(x));
 const fd=data=>({get:name=>data[name]??null});
 function harness(brand,role='driver',pending=false){
   const reads=[],writes=[],modals=[],opened=[];
-  const result={brand_id:brand,version:7,items:[{name:'Coffee',quantity:3},{name:'Cookie',quantity:2}],returned_quantities:{0:1},returns:pending?[{id:'partial-1',status:'pending',details:{reason:'Customer reduction',credit_halalas:500,lines:[{line_index:0,quantity:1}]}}]:[],related_orders:[{reference:'OLD',preparation_status:'ready',payment_status:'partially_paid'}]};
-  const context=vm.createContext({state:{user:{role}},tr:(ar,en)=>en,esc:String,num:String,money:String,statusName:String,
+  const result={enabled:false,brand_id:brand,version:7,items:[{name:'Coffee',quantity:3},{name:'Cookie',quantity:2}],returned_quantities:{0:1},returns:pending?[{id:'partial-1',status:'pending',details:{reason:'Customer reduction',credit_halalas:500,lines:[{line_index:0,quantity:1}]}}]:[],related_orders:[{reference:'OLD',preparation_status:'ready',payment_status:'partially_paid'}]};
+  const context=vm.createContext({state:{user:{role},tasks:[{id:'task /1',order_id:'order /1'}]},tr:(ar,en)=>en,esc:String,num:String,money:String,statusName:String,
     notice:x=>`<p>${x}</p>`,textarea:(label,name)=>`<textarea name="${name}">${label}</textarea>`,check:(label,name)=>`<input type="checkbox" name="${name}">${label}`,formEnd:label=>`<button type="submit">${label}</button>`,
     api:async(path,options)=>{reads.push([path,plain(options??{})]);return structuredClone(result);},
     mutation:async(path,body,button,options)=>{writes.push([path,plain(body),button,plain(options??{})]);},
     modal:(title,html,submit)=>modals.push({title,html,submit}),orderDetail:async id=>opened.push(id),closeModal:()=>{},loadPage:async()=>{}});
-  vm.runInContext(helpers,context);
+  vm.runInContext(interventionLookup+helpers,context);
   return {context,reads,writes,modals,opened,result};
 }
 for(const brand of ['kps','enbishan']){
   test(`${brand}: existing driver Problem action offers branded partial return and preserves ordinary reporting`,async()=>{
-    const h=harness(brand);h.context.driverProblem('task /1',brand);
+    const h=harness(brand);await h.context.driverProblem('task /1',brand);
+    assert.deepEqual(h.reads,[['/api/order-interventions/orders/order%20%2F1',{}]]);
     const modal=h.modals.at(-1);assert.match(modal.html,/data-action="partial-return"/);assert.match(modal.html,new RegExp(`data-brand="${brand}"`));
     await modal.submit(fd({reason:'Vehicle problem'}));
     assert.deepEqual(h.writes,[['/api/tasks/task%20%2F1/transition',{status:'problem',reason:'Vehicle problem'},null,{brand}]]);
@@ -62,6 +64,6 @@ test('actual click dispatcher threads task/order brand using the defined button 
   assert.ok(start>0&&end>start);
   const calls=[];const c=vm.createContext({driverProblem:(...args)=>calls.push(['problem',...args]),partialReturn:async(...args)=>calls.push(['partial-return',...args]),duplicateReview:async(...args)=>calls.push(['duplicate-review',...args])});
   vm.runInContext(`async function dispatch(button){const a=button.dataset.action,id=button.dataset.id;if(false){} ${source.slice(start,end)} }`,c);
-  for(const action of ['problem','partial-return','duplicate-review'])await c.dispatch({dataset:{action,id:'synthetic-id',brand:'enbishan'}});
-  assert.deepEqual(calls,[['problem','synthetic-id','enbishan'],['partial-return','synthetic-id','enbishan'],['duplicate-review','synthetic-id','enbishan']]);
+  for(const action of ['problem','partial-return','duplicate-review'])await c.dispatch({dataset:{action,id:'synthetic-id',brand:'enbishan',orderId:'synthetic-order'}});
+  assert.deepEqual(calls,[['problem','synthetic-id','enbishan','synthetic-order'],['partial-return','synthetic-id','enbishan'],['duplicate-review','synthetic-id','enbishan']]);
 });
