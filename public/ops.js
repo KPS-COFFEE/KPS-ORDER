@@ -294,7 +294,11 @@
   async function api(path, options = {}) {
     if(state.user?.central_operations&&state.page==='accounting'&&!options.brand&&/^\/api\/driver-floats(?:\/|$)/.test(path))options={...options,brand:state.accountingBrand||state.user.brand_id};
     if(state.user?.central_operations&&state.page==='admin'&&!options.brand&&/^\/api\/(admin\/|identity\/settings|invoice-profiles|fiscal\/policy|advertising\/policy)/.test(path))options={...options,brand:state.settingsBrand||state.user.brand_id};
-    return centralOperations.request(path,options,scopedApi,state.user,state.page);
+    const load=activePageLoad;
+    const result=await centralOperations.request(path,options,scopedApi,state.user,state.page);
+    // A delayed read must never paint a page/scope the employee has left.
+    if(load&&!/^\/api\/session(?:[/?]|$)/.test(path)&&(!options.method||options.method==='GET'))assertPageLoad(load);
+    return result;
   }
   async function scopedApi(path, options = {}) {
     const requestActor=state.user?.id;
@@ -383,7 +387,7 @@
   function applyLanguage() {
     document.documentElement.lang = state.lang; document.documentElement.dir = state.lang === 'en' ? 'ltr' : 'rtl'; $('#language').textContent = tr('English', 'العربية'); $('#ops-label').textContent = tr('التشغيل', 'Operations'); $('#logout').textContent = tr('خروج', 'Sign out'); $('#login-title').textContent = tr('دخول الموظفين', 'Staff sign in'); $('#login-note').textContent = tr('حساب الموظف يحدد نطاق الوصول. الدخول المخصص للعملاء من المتجر.', 'Your staff account determines your access scope. Customers sign in through the store.'); $('#login-email-label').textContent = tr('اسم الدخول', 'Username'); $('#login-password-label').textContent = tr('كلمة المرور', 'Password'); $('#login-submit').textContent = tr('دخول آمن', 'Secure sign in');$('#staff-phone-label').textContent=tr('رقم الجوال المسجل','Registered mobile number');$('#staff-code-request-submit').textContent=tr('إرسال كود الدخول','Send sign-in code');$('#staff-code-label').textContent=tr('كود الدخول من 6 أرقام','6-digit sign-in code');$('#staff-code-verify-submit').textContent=tr('تحقق ودخول','Verify and sign in');$('#staff-code-change-phone').textContent=tr('تغيير الرقم','Change number');$('#staff-activation-name-label').textContent=tr('الاسم الكامل — عند تفعيل الدعوة','Full name — for invitation activation');applyStaffChannelLabels();$('#legacy-login-label').textContent=tr('الدخول الحالي بكلمة المرور','Existing password sign-in');
   }
-  function showLogin() { for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();$('#modal-body').replaceChildren();document.documentElement.removeAttribute('data-work-access-pending');state.staff=null;state.orders=[];state.shifts=[];state.conversations=[];state.requestKeys.clear();trackingController?.destroy();trackingController=null;document.body.classList.remove('tracking-tv');driverLocation.reset(); document.body.classList.remove('delivery-room');state.fleetView=null;state.timingView=null;state.pendingPage=null;state.maintenanceFilters={};state.maintenanceOffset=0;state.maintenanceOptions=null;state.branches=[];state.branchBrand=null;state.config=null;state.selectedConversation=null;state.chatHistory.clear();$('#content').innerHTML='';$('.skip').href='#login-shell';state.user = null; state.csrf = ''; state.staffChallenge=null;$('#staff-code-verify-form').hidden=true;$('#staff-code-verify-form').reset(); $('#app-shell').hidden = true; $('#login-shell').hidden = false; $('#logout').hidden = true; $('#session-label').textContent = ''; setStatus(tr('الدخول بحساب موظف مخوّل.', 'Sign in with an authorized staff account.')); }
+  function showLogin() { for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();$('#modal-body').replaceChildren();setEmployeeAccessPending(false);state.staff=null;state.orders=[];state.shifts=[];state.conversations=[];state.requestKeys.clear();trackingController?.destroy();trackingController=null;document.body.classList.remove('tracking-tv');driverLocation.reset(); document.body.classList.remove('delivery-room');state.fleetView=null;state.timingView=null;state.pendingPage=null;state.maintenanceFilters={};state.maintenanceOffset=0;state.maintenanceOptions=null;state.branches=[];state.branchBrand=null;state.config=null;state.selectedConversation=null;state.chatHistory.clear();$('#content').innerHTML='';$('.skip').href='#login-shell';state.user = null; state.csrf = ''; state.staffChallenge=null;$('#staff-code-verify-form').hidden=true;$('#staff-code-verify-form').reset(); $('#app-shell').hidden = true; $('#login-shell').hidden = false; $('#logout').hidden = true; $('#session-label').textContent = ''; setStatus(tr('الدخول بحساب موظف مخوّل.', 'Sign in with an authorized staff account.')); }
   async function driverBrandDedication(){
     try{const data=await api('/api/multibrand/pool');
       modal(tr('تخصيص سائق لبراند','Dedicate driver to a brand'),`<form><label>${esc(tr('السائق','Driver'))}<select name="driver_id" required>${data.drivers.map(d=>`<option value="${esc(d.id)}">${esc(d.display_name)}</option>`).join('')}</select></label><label>${esc(tr('البراند','Brand'))}<select name="brand_id" required>${data.brands.map(b=>`<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select></label><label>${esc(tr('البداية — توقيت الرياض','Start — Riyadh time'))}<input name="starts_at" type="datetime-local" required></label><label>${esc(tr('النهاية — توقيت الرياض','End — Riyadh time'))}<input name="ends_at" type="datetime-local" required></label>${textarea(tr('سبب التخصيص','Reason'),'reason','',true)}${notice(tr('اختر فترة اليوم أو الوردية. يمنع التخصيص الإسناد للبراند الآخر خلالها؛ يجب إكمال المهام الأخرى أولًا.','Choose a day or shift period. Dedication blocks other-brand assignments during it; finish other tasks first.'))}${formEnd(tr('حفظ التخصيص','Save dedication'))}</form>`,async fd=>{const body=Object.fromEntries(fd);body.starts_at=body.starts_at+':00+03:00';body.ends_at=body.ends_at+':00+03:00';await mutation('/api/multibrand/dedications',body);});
@@ -414,7 +418,74 @@
   }
   async function loadMorningTrial(){try{await window.KPSMorningTrial.open({api,mutation,tr,esc,datetime,user:state.user,authorize:ownerStepUp,getUser:()=>state.user,onError:message=>setStatus(message,true)});}catch(error){setStatus(error.message,true);}}
   async function loadBranches() { if(state.user?.central_operations){state.branches=state.user.central_operations.brands.flatMap(b=>b.branches.map(branch=>({...branch,brand_name:b.name})));return;} if (!state.branches.length||state.branchBrand!==state.user.brand_id) { const d=await api(`/api/branches?brand_id=${encodeURIComponent(state.user.brand_id)}`);state.branchBrand=state.user.brand_id; state.branches = (d.branches || []).filter(b=>state.user.role==='owner'||state.user.branch_ids.includes(b.id)); } }
-  async function loadPage(silent=false) { if(trialMode){await loadMorningTrial();return;} if(state.page!=='tracking'){trackingController?.destroy();trackingController=null;}document.body.classList.toggle('tracking-tv',state.page==='tracking'); document.body.classList.toggle('delivery-room',state.page==='dashboard'&&!state.showOperationsReport&&['owner','delivery_manager'].includes(state.user?.role));state.loading=true;$('#content').setAttribute('aria-busy','true');if(!silent)navigation(); if(!silent)$('#content').innerHTML = `<div class="loading">${esc(tr('جاري تحميل البيانات…', 'Loading data…'))}</div>`; try { const handlers = { interventionInbox, employeeTickets, recovery, tracking, timing, fleet, accounting, support, printers, dashboard, orders, customers, tasks, shifts, custody, chat, reports, drivers, admin, maintenance, restricted }; await handlers[state.page]();if(state.page==='dashboard'&&state.showOperationsReport&&['owner','delivery_manager'].includes(state.user.role)){const back=document.createElement('button');back.type='button';back.className='quiet';back.dataset.action='delivery-workspace';back.textContent=tr('العودة لمركز التوصيل','Back to delivery control');$('#content').prepend(back);} setStatus(tr('البيانات محدثة', 'Data refreshed')); } catch (e) { $('#content').innerHTML = (['orders','dashboard'].includes(state.page)?filterForm():'') + notice(e.message, 'error') + `<div class="actions"><button data-action="refresh">${esc(tr('إعادة المحاولة', 'Retry'))}</button></div>`; setStatus(e.message, true); }finally{void driverLocation.refresh();state.loading=false;$('#content').setAttribute('aria-busy','false');hideUnavailableActions();const next=state.pendingPage;state.pendingPage=null;if(next&&state.user&&next!==state.page){state.page=next;await loadPage();}} }
+  let activePageLoad=null,lastPageLoad=null,pageEditVersion=0;
+  document.addEventListener('input',()=>{pageEditVersion++;},true);
+  document.addEventListener('change',()=>{pageEditVersion++;},true);
+  document.addEventListener('scroll',event=>{
+    const view=activePageLoad?.view;if(!view)return;
+    view.x=window.scrollX;view.y=window.scrollY;
+    const node=event.target,root=$('#content');
+    if(node?.nodeType===1&&root.contains(node)){const index=[...root.querySelectorAll('*')].indexOf(node);let saved=view.scroll.find(item=>item.index===index);if(!saved){saved={id:node.id,index};view.scroll.push(saved);}saved.top=node.scrollTop;saved.left=node.scrollLeft;}
+  },true);
+  function pageLoadScope(){return JSON.stringify([state.user?.id,state.user?.brand_id,state.user?.role,state.user?.branch_ids,state.user?.effective_permissions,state.user?.central_operations,state.user?.delivery_context]);}
+  function assertPageLoad(load){
+    if(lastPageLoad!==load||state.page!==load.page||pageLoadScope()!==load.scope||(state.pendingPage&&state.pendingPage!==load.page)||(load.silent&&(pageEditVersion!==load.edit||$('#modal').open||state.busy.size))){
+      const error=new Error('Page refresh superseded');error.code='PAGE_REFRESH_SUPERSEDED';throw error;
+    }
+  }
+  function capturePageView(){
+    const root=$('#content'),controls=[...root.querySelectorAll('input,textarea,select')];
+    return {x:window.scrollX,y:window.scrollY,controls:controls.map((node,index)=>({index,id:node.id,name:node.name,type:node.type,value:node.value,checked:node.checked})),details:[...root.querySelectorAll('details')].map(node=>node.open),scroll:[...root.querySelectorAll('*')].filter(node=>node.scrollTop||node.scrollLeft).map(node=>({id:node.id,index:[...root.querySelectorAll('*')].indexOf(node),top:node.scrollTop,left:node.scrollLeft}))};
+  }
+  function restorePageView(view){
+    const root=$('#content'),controls=[...root.querySelectorAll('input,textarea,select')];
+    for(const saved of view.controls){
+      const node=saved.id?controls.find(item=>item.id===saved.id):['checkbox','radio'].includes(saved.type)?controls.find(item=>item.name===saved.name&&item.type===saved.type&&item.value===saved.value):controls[saved.index];
+      if(!node||node.name!==saved.name||node.type!==saved.type||node.type==='file')continue;
+      if(!['checkbox','radio'].includes(node.type)&&(node.tagName!=='SELECT'||[...node.options].some(option=>option.value===saved.value)))node.value=saved.value;
+      if(['checkbox','radio'].includes(node.type))node.checked=saved.checked;
+    }
+    [...root.querySelectorAll('details')].forEach((node,index)=>{if(index<view.details.length)node.open=view.details[index];});
+    const nodes=[...root.querySelectorAll('*')];for(const saved of view.scroll){const node=saved.id?nodes.find(item=>item.id===saved.id):nodes[saved.index];if(node){node.scrollTop=saved.top;node.scrollLeft=saved.left;}}
+    window.scrollTo(view.x,view.y);
+  }
+  async function loadPage(silent=false) {
+    if(trialMode){await loadMorningTrial();return true;}
+    if(activePageLoad){
+      if(silent)return false;
+      state.pendingPage=state.page;state.pendingPageReload=true;state.page=activePageLoad.page;
+      return new Promise(resolve=>activePageLoad.waiters.push(resolve));
+    }
+    if(silent&&(!state.user||document.documentElement.hasAttribute('data-work-access-pending')))return false;
+    if(!silent)navigation();
+    const load=activePageLoad=lastPageLoad={page:state.page,scope:pageLoadScope(),silent,edit:pageEditVersion,waiters:[]};
+    const view=silent?capturePageView():null;load.view=view;
+    if(state.page!=='tracking'){trackingController?.destroy();trackingController=null;}
+    document.body.classList.toggle('tracking-tv',state.page==='tracking');
+    document.body.classList.toggle('delivery-room',state.page==='dashboard'&&!state.showOperationsReport&&['owner','delivery_manager'].includes(state.user?.role));
+    state.loading=true;$('#content').setAttribute('aria-busy','true');
+    if(!silent)$('#content').innerHTML=`<div class="loading">${esc(tr('جاري تحميل البيانات…','Loading data…'))}</div>`;
+    try{
+      const handlers={interventionInbox,employeeTickets,recovery,tracking,timing,fleet,accounting,support,printers,dashboard,orders,customers,tasks,shifts,custody,chat,reports,drivers,admin,maintenance,restricted};
+      await handlers[load.page]();assertPageLoad(load);
+      if(load.page==='dashboard'&&state.showOperationsReport&&['owner','delivery_manager'].includes(state.user.role)){const back=document.createElement('button');back.type='button';back.className='quiet';back.dataset.action='delivery-workspace';back.textContent=tr('العودة لمركز التوصيل','Back to delivery control');$('#content').prepend(back);}
+      if(view)restorePageView(view);
+      setStatus(tr('البيانات محدثة','Data refreshed'));
+      return true;
+    }catch(e){
+      if(e.code==='PAGE_REFRESH_SUPERSEDED'||!state.user||pageLoadScope()!==load.scope)return false;
+      if(!silent)$('#content').innerHTML=(['orders','dashboard'].includes(load.page)?filterForm():'')+notice(e.message,'error')+`<div class="actions"><button data-action="refresh">${esc(tr('إعادة المحاولة','Retry'))}</button></div>`;
+      setStatus(silent?tr('تعذر تحديث البيانات مؤقتًا؛ البيانات السابقة باقية وستتم إعادة المحاولة تلقائيًا.','Data could not refresh temporarily; previous data remains and will retry automatically.'):e.message,true);
+      return false;
+    }finally{
+      if(activePageLoad===load){activePageLoad=null;state.loading=false;$('#content').setAttribute('aria-busy','false');hideUnavailableActions();void driverLocation.refresh();
+        const next=state.pendingPage,reload=state.pendingPageReload;state.pendingPage=null;state.pendingPageReload=false;
+        let nextResult=false;
+        try{if(state.user&&(reload||(next&&next!==state.page))){state.page=next||state.page;nextResult=await loadPage();}}
+        finally{for(const resolve of load.waiters)resolve(nextResult===true);}
+      }
+    }
+  }
   function filterForm() { const orders=state.page==='orders'; return `<form id="filters-form" class="filters panel${orders?' order-filters':''}">${orders?`<header class="order-filter-heading"><strong>${esc(tr('البحث وتصفية الطلبات','Search and filter orders'))}</strong><span>${esc(tr('اختر الفترة والفرع أو ابحث عن طلب محدد','Choose a period and branch, or search for an order'))}</span></header>`:''}<label>${esc(tr('الفترة', 'Period'))}<select name="period"><option value="today" ${state.filters.period === 'today' ? 'selected' : ''}>${esc(tr('اليوم التشغيلي', 'Operational day'))}</option><option value="yesterday" ${state.filters.period === 'yesterday' ? 'selected' : ''}>${esc(tr('أمس التشغيلي', 'Previous operational day'))}</option><option value="custom" ${state.filters.period === 'custom' ? 'selected' : ''}>${esc(tr('فترة محددة', 'Custom range'))}</option></select></label>${field(tr('من', 'From'), 'start', state.filters.start || '', { type: 'date' })}${field(tr('إلى', 'Until'), 'end', state.filters.end || '', { type: 'date' })}<label>${esc(tr('الفرع', 'Branch'))}<select name="branch_id"><option value="">${esc(tr('كل الفروع', 'All branches'))}</option>${selectOptions(state.branches, state.filters.branch_id, b => `${b.branch_no || '—'} · ${b.name}`)}</select></label><label>${esc(tr('نوع الخدمة', 'Service'))}<select name="service"><option value="">${esc(tr('كل الأنواع', 'All types'))}</option>${['delivery','pickup','car'].map(v => `<option value="${v}" ${state.filters.service === v ? 'selected' : ''}>${esc(serviceName(v))}</option>`).join('')}</select></label>${state.page==='orders'?orderFilters():''}${orders?'<footer class="order-filter-footer">':''}<button type="submit">${esc(tr('تطبيق الفلاتر', 'Apply filters'))}</button>${orders?`<small>${esc(tr('النتائج ضمن الفروع المسموحة لك','Results stay within your permitted branches'))}</small></footer>`:''}</form>`; }
   async function recovery(){const user=state.user.id;await window.KPSTaskRecovery.open({api,mutation,tr,esc,money,datetime,statusName,heading,active:()=>state.user?.id===user&&state.page==='recovery',reviewOrder:orderDetail,resolveDelivery:resolveDeliveredOrder});}
   async function timing(){await loadBranches();state.timingView??={};await window.KPSOrderTiming.open({api,tr,esc,heading,user:state.user,branches:state.branches,branchLabel,orderLabel,statusName,datetime,view:state.timingView,reload:()=>loadPage(),active:()=>state.page==='timing'&&!!state.user});}
@@ -1265,7 +1336,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       const option=(value,text)=>{const o=document.createElement('option');o.value=value;o.textContent=text;select.append(o);};option('',tr('اختر الوجهة','Choose destination'));for(const b of data.branches||[])option('branch:'+b.id,b.name);if(data.external_enbishan_allowed)option('external_enbishan',tr('عنبيشان — إفادة يدوية','Enbishan — manual declaration'));save.type='submit';save.textContent=tr('تأكيد وجهتي','Confirm my destination');form.append(label,save);host.append(form);
       form.addEventListener('submit',async e=>{e.preventDefault();if(!select.value||save.disabled)return;save.disabled=true;try{const body=select.value==='external_enbishan'?{kind:'external_enbishan'}:{kind:'branch',branch_id:select.value.slice(7)};render(await api('/api/operations/driver-destination',{...destinationScope,method:'PUT',body}));}catch(error){if(alive())status.textContent=error.status===409?tr('أكمل الطلبات المفتوحة قبل تغيير الوجهة.','Complete open deliveries before changing destination.'):error.message;}finally{save.disabled=false;}});
     }
-    try{render(await api('/api/operations/driver-destination',destinationScope));}catch{if(alive())host.textContent=tr('تعذر تحميل الوجهة التالية. حدّث الصفحة للمحاولة.','Could not load next destination. Refresh to retry.');}
+    try{render(await api('/api/operations/driver-destination',destinationScope));}catch(error){if(error.code==='PAGE_REFRESH_SUPERSEDED')return;if(alive())host.textContent=tr('تعذر تحميل الوجهة التالية. حدّث الصفحة للمحاولة.','Could not load next destination. Refresh to retry.');}
   }
   async function renderDriverClarifications(){
     const person=state.user?.id,content=$('#content');
@@ -1291,7 +1362,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     const shift=current?ownUnclosedDriverShift(current.shifts):null;
     $('#content').innerHTML=(driver?driverShiftPanel(shift)+driverTools(shift,breaks)+driverHomeSummary(shift,list,achievement)+driverOfferCards(offers?.offers||[]):'')+(list.length?`<div class="task-grid driver-home-tasks">${list.map(taskCard).join('')}</div>`:empty(tr('لا توجد مهام مسندة لك حاليًا.','No tasks are assigned to you right now.')));
     if(driver)await renderDriverTripPanel(shift,list);
-    if(driver){void renderDriverRoutePanel(shift);void renderDriverDestinationPanel(shift);void renderDriverClarifications().catch(error=>{if(state.user?.role==='driver'&&state.page==='tasks')setStatus(error.message);});}
+    if(driver){void renderDriverRoutePanel(shift);void renderDriverDestinationPanel(shift);void renderDriverClarifications().catch(error=>{if(error.code!=='PAGE_REFRESH_SUPERSEDED'&&state.user?.role==='driver'&&state.page==='tasks')setStatus(error.message);});}
   }
   async function renderDriverTripPanel(shift,tasksList) {
     const host=document.createElement('section');host.className='panel driver-trip-panel';host.setAttribute('aria-live','polite');
@@ -1333,7 +1404,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
           await loadPage();
         }catch(error){form.querySelector('.form-error').textContent=error.message;}finally{button.disabled=false;}
       });
-    }catch(error){host.innerHTML=notice(tr('تعذر تحميل حالة الرحلة: ','Trip status could not be loaded: ')+error.message,'warn');}
+    }catch(error){if(error.code==='PAGE_REFRESH_SUPERSEDED')throw error;host.innerHTML=notice(tr('تعذر تحميل حالة الرحلة: ','Trip status could not be loaded: ')+error.message,'warn');}
   }
   async function driverContact(tid){
     const url='/api/tasks/'+encodeURIComponent(tid)+'/customer-chat';
@@ -2428,6 +2499,42 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   document.addEventListener('change',e=>{if(!e.target.matches('.permission-option input'))return;const picker=e.target.closest('.employee-permission-picker');$('output',picker).textContent=`${num(picker.querySelectorAll('.permission-option input:checked').length)} / ${num(picker.querySelectorAll('.permission-option input').length)} ${tr('صلاحية مفعلة','permissions enabled')}`;});
   let permissionRefreshBusy=false;
   let permissionRefreshGeneration=0;
+  let employeeScopeRefreshRequired=false;
+  function employeeAccessScope(user){return JSON.stringify([user?.id,user?.brand_id,user?.role,user?.branch_ids,user?.effective_permissions,user?.central_operations,user?.delivery_context]);}
+  // Keep the current work DOM and inputs intact, but make it inaccessible until
+  // live access is confirmed. The recovery surface contains no employee data.
+  function setEmployeeAccessPending(pending){
+    const shell=$('#app-shell');
+    let recovery=$('#work-access-recovery');
+    if(!pending){
+      document.documentElement.removeAttribute('data-work-access-pending');
+      if(shell)shell.inert=false;
+      if(recovery){if(recovery.open)recovery.close();recovery.hidden=true;}
+      return;
+    }
+    if(!recovery){
+      recovery=document.createElement('dialog');recovery.id='work-access-recovery';
+      recovery.className='work-access-recovery';recovery.tabIndex=-1;
+      recovery.setAttribute('aria-labelledby','work-access-recovery-title');
+      recovery.addEventListener('cancel',event=>event.preventDefault());
+      const card=document.createElement('div');card.className='work-access-recovery-card';
+      const title=document.createElement('h1');title.id='work-access-recovery-title';
+      const message=document.createElement('p');message.id='work-access-recovery-message';
+      message.setAttribute('role','status');message.setAttribute('aria-live','polite');
+      const retry=document.createElement('button');retry.type='button';
+      retry.addEventListener('click',()=>{void refreshEmployeeAccess();});
+      card.append(title,message,retry);recovery.append(card);document.body.append(recovery);
+    }
+    $('#work-access-recovery-title',recovery).textContent=tr('جاري استعادة الاتصال والتحقق','Restoring connection and verifying access');
+    $('#work-access-recovery-message',recovery).textContent=tr('تعذر تأكيد صلاحية الدخول الآن. بيانات الصفحة محفوظة في مكانها، وستعود تلقائيًا بعد نجاح التحقق.','Access cannot be confirmed right now. This page is preserved and will return automatically after verification succeeds.');
+    $('button',recovery).textContent=tr('إعادة المحاولة','Retry now');
+    const wasPending=document.documentElement.hasAttribute('data-work-access-pending');
+    recovery.hidden=false;
+    if(!recovery.open)recovery.showModal();
+    document.documentElement.setAttribute('data-work-access-pending','');
+    if(shell)shell.inert=true;
+    if(!wasPending&&!document.hidden)recovery.focus({preventScroll:true});
+  }
   async function refreshEmployeeAccess(){
     if(trialMode||!state.user||permissionRefreshBusy||document.hidden)return;
     permissionRefreshBusy=true;const previous=state.user,generation=permissionRefreshGeneration;
@@ -2436,15 +2543,28 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
       const d=await api('/api/session',{signal:controller.signal});
       if(state.user?.id!==previous.id||generation!==permissionRefreshGeneration||document.hidden)return;
       if(!d.user||d.user.id!==previous.id||!d.csrf_token||d.reauthentication_required){revokeEmployeeView();return;}
-      document.documentElement.removeAttribute('data-work-access-pending');
-      const changed=JSON.stringify([previous.effective_permissions,previous.central_operations])!==JSON.stringify([d.user.effective_permissions,d.user.central_operations]);
+      const changed=employeeAccessScope(previous)!==employeeAccessScope(d.user);
       state.user=d.user;state.csrf=d.csrf_token;
-      if(!changed)return;
-      closeModal();state.chatHistory.clear();renderBrandSwitch();navigation();await loadPage();hideUnavailableActions();setStatus(tr('حدّث المالك صلاحيات حسابك.','The owner updated your account permissions.'));
+      if(!changed&&!employeeScopeRefreshRequired){setEmployeeAccessPending(false);return;}
+      employeeScopeRefreshRequired=true;
+      setEmployeeAccessPending(true);
+      // Scope revocation cannot be declined by an unsaved-operation prompt.
+      $('#modal').close();$('#modal-body').replaceChildren();state.closureDirty=false;
+      state.staff=null;state.orders=[];state.shifts=[];state.conversations=[];
+      state.branches=[];state.branchBrand=null;state.config=null;state.selectedConversation=null;
+      state.chatHistory.clear();state.fleetView=null;state.timingView=null;
+      if(state.filters?.branch_id&&!state.user.branch_ids?.includes(state.filters.branch_id))state.filters.branch_id='';
+      renderBrandSwitch();navigation();
+      const scope=employeeAccessScope(state.user),rendered=await loadPage();
+      hideUnavailableActions();
+      if(rendered===true&&state.user?.id===previous.id&&generation===permissionRefreshGeneration&&!document.hidden&&employeeAccessScope(state.user)===scope){
+        employeeScopeRefreshRequired=false;setEmployeeAccessPending(false);
+        setStatus(tr('حدّث المالك صلاحيات حسابك.','The owner updated your account permissions.'));
+      }
     }catch(e){
       if(state.user?.id===previous.id&&generation===permissionRefreshGeneration){
         if([401,403].includes(e.status))revokeEmployeeView();
-        else document.documentElement.setAttribute('data-work-access-pending','');
+        else setEmployeeAccessPending(true);
       }
     }finally{
       clearTimeout(timeout);permissionRefreshBusy=false;
@@ -2457,14 +2577,14 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
     $('#modal-body').replaceChildren();
     state.staff=null;state.orders=[];state.shifts=[];state.conversations=[];state.requestKeys.clear();
-    document.documentElement.removeAttribute('data-work-access-pending');
+    employeeScopeRefreshRequired=false;setEmployeeAccessPending(false);
     showLogin();
     setStatus(tr('انتهى تصريح الدخول. راجع الإدارة أو سجّل الدخول بحساب مخوّل.','Access ended. Contact management or sign in with an authorized account.'),true);
   }
   function recheckEmployeeView(){
     if(trialMode||!state.user)return;
     permissionRefreshGeneration++;
-    document.documentElement.setAttribute('data-work-access-pending','');
+    setEmployeeAccessPending(true);
     if(!document.hidden)void refreshEmployeeAccess();
   }
   document.addEventListener('visibilitychange',recheckEmployeeView);
@@ -2903,7 +3023,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
   window.addEventListener('offline',()=>setStatus(tr('الاتصال منقطع. العمليات المالية لا تؤكد حتى الحفظ على الخادم.','Connection offline. Financial operations require server confirmation.'),true));
   setInterval(()=>{if(!document.hidden&&navigator.onLine&&state.user&&!$('#modal').open&&!state.busy.size)pollConversation();},5000);
   setInterval(updateBreakCountdown,1000);
-  let polling=false;setInterval(async()=>{if(trialMode)return;if(state.page==='dashboard'&&!state.showOperationsReport){await pollDispatchWorkspace();return;}if(state.page==='chat'&&!document.hidden&&navigator.onLine&&state.user){await pollInbox();return;}if(polling||state.loading||!state.user||document.hidden||!navigator.onLine||$('#modal').open||state.busy.size||['admin','accounting','chat','reports','timing','fleet','recovery','tracking'].includes(state.page)||/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||''))return;const draft=$('#message-form textarea');if(draft?.value.trim()||$('#message-form input[type=file]')?.files?.length)return;polling=true;const old=new Set((state.orders||[]).map(o=>o.id));try{await loadPage(true);if(state.page==='orders'&&state.orders.some(o=>!old.has(o.id))){setStatus(tr('وصل طلب جديد. القائمة محدثة.','A new order arrived. The list is refreshed.'));document.title=tr('طلب جديد — KPS ORDER','New order — KPS ORDER');}}finally{polling=false;}},15000);
+  let polling=false;setInterval(async()=>{if(trialMode)return;if(state.page==='dashboard'&&!state.showOperationsReport){await pollDispatchWorkspace();return;}if(state.page==='chat'&&!document.hidden&&navigator.onLine&&state.user){await pollInbox();return;}if(polling||state.loading||!state.user||document.hidden||!navigator.onLine||$('#modal').open||state.busy.size||['admin','accounting','chat','reports','timing','fleet','recovery','tracking','customers'].includes(state.page)||/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||''))return;const draft=$('#message-form textarea');if(draft?.value.trim()||$('#message-form input[type=file]')?.files?.length)return;polling=true;const old=new Set((state.orders||[]).map(o=>o.id));try{await loadPage(true);if(state.page==='orders'&&state.orders.some(o=>!old.has(o.id))){setStatus(tr('وصل طلب جديد. القائمة محدثة.','A new order arrived. The list is refreshed.'));document.title=tr('طلب جديد — KPS ORDER','New order — KPS ORDER');}}finally{polling=false;}},15000);
   function currentOdometer(log){const p=log.odometer_checkpoint||{};let rows=[log.start||{},log.fuel_readiness||{},...(log.refuels||[])];if(p.recorded_at)rows=rows.filter(r=>(r.recorded_at||'')>p.recorded_at);return Math.max(p.odometer_km||0,...rows.map(r=>r.odometer_km||0));}
   const driverLocation=window.KPSDriverLocation.init({api,getUser:()=>trialMode?null:state.user,tr,host:$('#driver-location')});
   const driverChecks=window.KPSDriverChecks.init({api,mutation,tr,esc,modal,closeModal,getUser:()=>trialMode||state.user?.delivery_context?null:state.user,getLang:()=>state.lang,can,error:message=>setStatus(message,true)});

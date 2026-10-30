@@ -1,0 +1,31 @@
+name: KPS ORDER Screen Stability
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [agent/kps-order-emergency-v4]
+permissions:
+  contents: read
+concurrency:
+  group: kps-screen-stability-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+jobs:
+  screen-fault-recovery:
+    if: github.event_name == 'push' || github.head_ref == 'agent/screen-stability-urgent-20261030'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Session and loader state regression
+        run: node tests/test_employee_access_recovery.cjs && node tests/test_ops_background_recovery.cjs
+      - name: Native dialog and full operations fault injection
+        run: python tests/test_employee_access_recovery_browser.py && python tests/test_ops_screen_faults_browser.py
