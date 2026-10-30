@@ -140,10 +140,21 @@ def lock_driver(conn, driver_id):
 
 
 def dedication_guard(conn, driver_id, brand):
+    """Mutations serialize dedication decisions with driver assignment."""
+    return _dedication_guard(conn, driver_id, brand, acquire_lock=True)
+
+
+def observe_dedication(conn, driver_id, brand):
+    """Read a dedication inside a roster snapshot without reserving the driver."""
+    return _dedication_guard(conn, driver_id, brand, acquire_lock=False)
+
+
+def _dedication_guard(conn, driver_id, brand, *, acquire_lock):
     if not enabled():
         return
     isolation_guard()
-    lock_driver(conn, driver_id)
+    if acquire_lock:
+        lock_driver(conn, driver_id)
     row = conn.execute('SELECT brand_id FROM driver_brand_dedications WHERE driver_id=%s '
         'AND cancelled_at IS NULL AND starts_at<=now() AND ends_at>now()', (driver_id,)).fetchone()
     if row and row['brand_id'] != brand:

@@ -349,17 +349,24 @@ def status(cid:str,body:Status,request:Request,user=Depends(auth.current_user)):
 
 DRIVER_ACTIVE_TASKS={'assigned','accepted','picked_up','problem'}
 
-def driver_contact_scope(c,user,tid):
+def driver_contact_scope(c,user,tid,*,lock=True):
     roles(user,'driver')
     task=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
     if not task:fail(404,'المهمة غير متاحة للتواصل')
-    # Match task-transition lock order; reassignment cannot race a message send.
-    order=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(task['order_id'],)).fetchone()
-    task=c.execute('SELECT * FROM driver_tasks WHERE id=%s FOR UPDATE',(tid,)).fetchone()
+    # Mutations match task-transition lock order. The polling GET instead owns
+    # a read-only repeatable snapshot: contact scope and messages must describe
+    # the same assignment without locking rows needed by GPS/task writes.
+    suffix=' FOR UPDATE' if lock else ''
+    # Contact never changes order keys. Exclude concurrent order mutations but
+    # allow the KEY SHARE check of GPS order_events inserts while GPS owns the
+    # shift lock. FOR UPDATE here would recreate the order/shift deadlock.
+    order_suffix=' FOR NO KEY UPDATE' if lock else ''
+    order=c.execute('SELECT * FROM orders WHERE id=%s'+order_suffix,(task['order_id'],)).fetchone()
+    task=c.execute('SELECT * FROM driver_tasks WHERE id=%s'+suffix,(tid,)).fetchone()
     if (not task or not order or task['driver_id']!=user['id'] or task['status'] not in DRIVER_ACTIVE_TASKS
         or not auth.can_access_order(user,order,c)):
         fail(404,'المهمة غير متاحة للتواصل')
-    shift=c.execute('SELECT user_id,status FROM shifts WHERE id=%s FOR UPDATE',(task['shift_id'],)).fetchone()
+    shift=c.execute('SELECT user_id,status FROM shifts WHERE id=%s'+suffix,(task['shift_id'],)).fetchone()
     if not shift or shift['user_id']!=user['id'] or shift['status']!='open':fail(409,'التواصل متاح أثناء الشفت المفتوح فقط')
     return task,order
 
@@ -377,7 +384,8 @@ def driver_customer_messages(tid:str,after:int=0,user=Depends(auth.current_user)
     if not auth.has_permission(user,'tasks_view'):fail(403,'صلاحية التواصل غير متاحة')
     if after<0:fail(422,'مرجع غير صالح')
     with db.tx() as c:
-        task,order=driver_contact_scope(c,user,tid)
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+        task,order=driver_contact_scope(c,user,tid,lock=False)
         conv=c.execute('SELECT * FROM conversations WHERE driver_task_id=%s',(tid,)).fetchone()
         rows=[]
         if conv:
@@ -453,7 +461,8 @@ def driver_customer_upload(tid:str,body:Attachment,request:Request,user=Depends(
 def driver_customer_download(tid:str,aid:str,user=Depends(auth.current_user)):
     if not auth.has_permission(user,'tasks_view'):fail(403,'صلاحية التواصل غير متاحة')
     with db.tx() as c:
-        driver_contact_scope(c,user,tid)
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+        driver_contact_scope(c,user,tid,lock=False)
         a=c.execute('SELECT a.* FROM chat_attachments a JOIN conversations v ON v.id=a.conversation_id WHERE a.id=%s AND v.driver_task_id=%s',(aid,tid)).fetchone()
         if not a:fail(404,'المرفق غير موجود')
         return Response(bytes(a['data']),media_type=a['content_type'],headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'inline; filename="image.'+{'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[a['content_type']]+'"'})

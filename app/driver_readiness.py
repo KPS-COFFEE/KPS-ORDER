@@ -14,13 +14,13 @@ def describe(c, row):
         return 'on_break', 'explicitly_end_break', []
     if not s.get('available', True): return 'manually_paused', 'manager_resume_availability', []
     if row['active_tasks']: return 'busy', 'complete_assigned_tasks', []
-    from .operations import eligible_driver_shift
+    from .operations import observe_driver_shift
     eligible=[]
     for bid in row['branch_ids']:
         candidate={'brand_id':s['brand_id'],'branch_id':bid}
         if (s.get('vehicle_log') or {}).get('receipt_trial'):
             candidate['snapshot']={'delivery_period':'morning'}
-        try: eligible_driver_shift(c,s,candidate)
+        try: observe_driver_shift(c,s,candidate)
         except HTTPException as exc:
             if exc.status_code not in (403,404,409): raise
         else: eligible.append(bid)
