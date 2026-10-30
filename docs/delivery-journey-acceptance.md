@@ -44,3 +44,22 @@ actual-work clocks. The owner controls assignment; overrides use structured choi
 
 Pending or blocked checks remain pending. No zero-defect guarantee is inferred
 from a test count, a green health endpoint, or a map tile rendering successfully.
+
+## Integration evidence (release still open)
+
+- Local integrated regression:188 Python cases passed,26 PostgreSQL cases
+  excluded locally;34 executable Node UI/access/camera/map cases passed.
+- Actual PDF renderer exercised with both compact and owner snapshots containing
+  late stage clocks, Arabic dispatch/intervention decisions, weak3000m and missing
+  capture evidence. Rendered pages inspected for legibility and clipping.
+- First unified CI head5819c77 exposed stale test fixture order shapes, forbidden
+  post-insert snapshot edits, and missing private quote registration in the prior
+  application export overlay. Fixes preserve production immutability/authentication
+  and financial guards; new HEAD must prove the fixes rather than retry old bytes.
+- Added genuine authenticated browser report-to-manager resolution scenarios.
+  They must actually execute in CI; local collection is not browser acceptance.
+- Added a scoped actionable delegate inbox and request-before-print escalation.
+  No actual staff identity was granted permission during source implementation.
+- Live source remains60cd0c3 until the required release procedure completes.
+  Server Matrix readiness and the authorized delegate's live identity remain
+  unverified; no production activation or unconditional quality certificate issued.

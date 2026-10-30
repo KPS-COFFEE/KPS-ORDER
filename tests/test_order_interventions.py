@@ -22,9 +22,22 @@ def test_names_never_grant_high_authority():
     assert not high_authority({'role':'driver','extra_permissions':['orders_cancel_after_print']})
 
 
-def mark(oid,source=None,state='ready'):
+def controlled_order(source=None,state='ready',branch='ops-branch'):
+    """Freeze journey controls at INSERT, exactly as real order creation does.
+
+    Confirmed order snapshots are immutable; tests must never retrofit policy.
+    """
+    oid='intervention-order-'+uuid4().hex
+    snapshot={'journey_controls_version':1,'items':[{'product_id':'ops-product','name':'قهوة تجربة',
+        'quantity':1,'unit_price_halalas':1000,'line_total_halalas':1000,'units':[],'note':''}],
+        'branch_name':'فرع اختبار','notes':''}
+    if source:snapshot.update(order_source=source,created_by_staff_id='ops-manager')
     with db.tx() as c:
-        c.execute("UPDATE orders SET preparation_status=%s,snapshot=snapshot||%s WHERE id=%s",(state,db.json({'journey_controls_version':1,**({'order_source':source} if source else {})}),oid))
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,
+            delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+            VALUES(%s,'ops-brand',%s,'ops-customer','delivery',%s,'pending','cash',1000,0,1000,%s,%s)""",
+            (oid,branch,state,db.json(snapshot),db.json({'name':'اختبار'})))
+    return oid
 
 
 def print_job(oid):
@@ -44,7 +57,7 @@ def manager_request(post,oid,rid):
 
 @pytest.mark.postgres
 def test_website_request_is_customer_authored_in_order_chat_and_manager_cannot_bypass(ops):
-    actor,post,order,_=ops;oid=order();mark(oid)
+    actor,post,order,_=ops;oid=controlled_order()
     post('manager',f'/api/order-financial-cases/orders/{oid}/cancel',{'version':1,'reason':'غير موثق'},status=409)
     post('manager',f'/api/order-interventions/orders/{oid}',{'kind':'cancel','reason_code':'customer_cancel','version':1},status=422)
     rid=customer_request(post,oid)
@@ -66,7 +79,7 @@ def test_website_request_is_customer_authored_in_order_chat_and_manager_cannot_b
 
 @pytest.mark.postgres
 def test_any_print_attempt_requires_high_authority_and_preserves_scope(ops):
-    actor,post,order,_=ops;oid=order();mark(oid);print_job(oid)
+    actor,post,order,_=ops;oid=controlled_order();print_job(oid)
     rid=customer_request(post,oid);iid=manager_request(post,oid,rid)
     path=f'/api/order-interventions/orders/{oid}/{iid}/decision'
     body={'action':'approve','reason_code':'customer_cancel','contact_result':'agreed','version':1}
@@ -78,7 +91,7 @@ def test_any_print_attempt_requires_high_authority_and_preserves_scope(ops):
 
 @pytest.mark.postgres
 def test_customer_cancels_unaccepted_unpaid_order_directly_and_old_orders_keep_contract(ops):
-    actor,post,order,_=ops;oid=order();mark(oid,state='new')
+    actor,post,order,_=ops;oid=controlled_order(state='new')
     result=post('customer',f'/api/order-requests/orders/{oid}',{'kind':'cancel','note':'تغير رأي العميل'})
     assert result['status']=='resolved'
     with db.tx() as c:assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='cancelled'
@@ -89,7 +102,7 @@ def test_customer_cancels_unaccepted_unpaid_order_directly_and_old_orders_keep_c
 
 @pytest.mark.postgres
 def test_whatsapp_cancellation_requires_scoped_conversation_image(ops):
-    actor,post,order,_=ops;oid=order(source='delivery_center');mark(oid,source='delivery_center')
+    actor,post,order,_=ops;oid=controlled_order(source='delivery_center')
     data={'kind':'cancel','reason_code':'customer_cancel','version':1}
     path=f'/api/order-interventions/orders/{oid}'
     post('manager',path,data,status=422)
@@ -101,13 +114,13 @@ def test_whatsapp_cancellation_requires_scoped_conversation_image(ops):
     iid=post('manager',path,data)['id']
     saved=actor('manager').get(path).json()['requests'][0]
     assert saved['id']==iid and saved['details']['evidence_attachment_id']==aid
-    other=order(source='delivery_center');mark(other,source='delivery_center')
+    other=controlled_order(source='delivery_center')
     post('manager',f'/api/order-interventions/orders/{other}',data,status=422)
 
 
 @pytest.mark.postgres
 def test_cancel_accounting_pending_is_persisted_without_refund_or_invoice_deletion(ops):
-    actor,post,order,_=ops;oid=order();mark(oid)
+    actor,post,order,_=ops;oid=controlled_order()
     # A recorded collection makes cancellation operational only: accounting stays open.
     with db.tx() as c:
         c.execute("INSERT INTO collections(id,order_id,method,amount_halalas,tendered_halalas,change_halalas,collector_id) VALUES(%s,%s,'cash',1000,1000,0,'ops-driver')",(uuid4().hex,oid))
@@ -126,7 +139,7 @@ def test_cancel_accounting_pending_is_persisted_without_refund_or_invoice_deleti
 
 @pytest.mark.postgres
 def test_operational_reason_cannot_be_relabelled_as_customer_cancellation(ops):
-    actor,post,order,_=ops;oid=order();mark(oid)
+    actor,post,order,_=ops;oid=controlled_order()
     iid=post('manager',f'/api/order-interventions/orders/{oid}',{'kind':'cancel','reason_code':'no_answer','contact_result':'no_answer','version':1})['id']
     post('manager',f'/api/order-interventions/orders/{oid}/{iid}/decision',{'action':'approve','reason_code':'customer_cancel','contact_result':'agreed','version':1},status=422)
     with db.tx() as c:assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='ready'
@@ -154,7 +167,7 @@ def test_delegated_shift_authority_is_only_the_exact_order_task():
 @pytest.mark.postgres
 @pytest.mark.parametrize('picked_up',[False,True])
 def test_delegated_admin_can_cancel_assigned_task_but_has_no_general_shift_grant(ops,picked_up):
-    actor,post,order,shifts=ops;_,sid=shifts();oid=order();mark(oid)
+    actor,post,order,shifts=ops;_,sid=shifts();oid=controlled_order()
     post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':sid})
     with db.tx() as c:
         c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,extra_permissions) VALUES('ops-delegate','TEST GM','admin','ops-brand',%s,%s)",(db.json(['ops-branch']),db.json(['orders_cancel_after_print'])))
@@ -188,7 +201,7 @@ def test_flag_on_legacy_printed_order_cannot_use_old_cancel_endpoint(ops,monkeyp
 
 @pytest.mark.postgres
 def test_driver_operational_problem_needs_no_customer_proof_and_has_single_owner(ops):
-    actor,post,order,shifts=ops;_,sid=shifts();oid=order();mark(oid)
+    actor,post,order,shifts=ops;_,sid=shifts();oid=controlled_order()
     post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':sid})
     path=f'/api/order-interventions/orders/{oid}'
     body={'kind':'problem','reason_code':'damaged','contact_result':'not_contacted','version':2}
@@ -200,6 +213,12 @@ def test_driver_operational_problem_needs_no_customer_proof_and_has_single_owner
         assert len(rows)==1
         assert rows[0]['details']['pending_role']=='delivery_manager'
         assert rows[0]['details']['contact_result']=='not_contacted'
+    manager_view=actor('manager').get(path)
+    assert manager_view.status_code==200
+    assert any(r['id']==iid and not r['decision'] for r in manager_view.json()['requests'])
+    # This asynchronous report does not change physical task progress or money.
+    with db.tx() as c:
+        assert c.execute('SELECT status FROM driver_tasks WHERE order_id=%s',(oid,)).fetchone()['status']=='assigned'
     # The structured cause can be recorded without inventing a phone call.
     post('manager',path+'/'+iid+'/decision',{'action':'resolve','reason_code':'damaged','contact_result':'not_contacted','version':2})
     with db.tx() as c:
@@ -210,3 +229,64 @@ def test_driver_operational_problem_needs_no_customer_proof_and_has_single_owner
 def test_structured_operational_cause_does_not_claim_customer_contact():
     body=RequestBody(kind='problem',reason_code='damaged',contact_result='not_contacted',version=1)
     assert evidence(None,{'snapshot':{}},None,body)=={'source':'website'}
+
+
+@pytest.mark.postgres
+def test_delegated_cancellation_inbox_needs_no_general_order_or_accounting_grant(ops):
+    actor,post,_,_=ops
+    oid=controlled_order()
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids,extra_permissions,permission_denials) VALUES('ops-delegate','GM test','admin','ops-brand',%s,%s,%s)",
+            (db.json(['ops-branch']),db.json(['orders_cancel_after_print']),db.json(['accounting_reports','accounting_review','accounting_cases_followup'])))
+        c.execute("INSERT INTO branches(id,branch_no,source_id,brand_id,name,city,settings) VALUES('ops-sibling',2,'ops-sibling-source','ops-brand','فرع آخر','رفحاء','{}')")
+    other=controlled_order(branch='ops-sibling')
+    for order_id in (oid,other):
+        with db.tx() as c:
+            db.event(c,order_id,'ops-manager','intervention.requested',{'kind':'cancel','reason_code':'no_answer',
+                'contact_result':'no_answer','pending_role':'owner_or_cancel_delegate','revision':0})
+    response=actor('delegate').get('/api/order-interventions/pending-cancellations')
+    assert response.status_code==200,response.text
+    assert [r['order_id'] for r in response.json()['requests']]==[oid]
+    assert actor('delegate').get(f'/api/order-interventions/orders/{oid}').status_code==200
+    assert actor('delegate').get(f'/api/order-interventions/orders/{other}').status_code==404
+    with db.tx() as c:
+        from app import auth
+        user=c.execute("SELECT * FROM users WHERE id='ops-delegate'").fetchone()
+        assert not auth.has_permission(user,'orders_view')
+        assert not auth.has_permission(user,'accounting_reports')
+        c.execute("UPDATE users SET extra_permissions='[]' WHERE id='ops-delegate'")
+    assert actor('delegate').get('/api/order-interventions/pending-cancellations').status_code==403
+    assert actor('manager').get('/api/order-interventions/pending-cancellations').status_code==403
+
+
+@pytest.mark.postgres
+def test_print_after_request_escalates_current_responsibility_without_rewriting_request(ops):
+    actor,post,_,_=ops;oid=controlled_order()
+    rid=customer_request(post,oid);iid=manager_request(post,oid,rid)
+    print_job(oid)
+    path=f'/api/order-interventions/orders/{oid}'
+    response=actor('manager').get(path)
+    assert response.status_code==200,response.text
+    assert response.json()['requests'][0]['details']['pending_role']=='owner_or_cancel_delegate'
+    with db.tx() as c:
+        original=c.execute('SELECT details FROM order_events WHERE id=%s',(iid,)).fetchone()['details']
+        assert original['pending_role']=='delivery_manager'
+        from app.order_interventions import enrich_orders
+        rows=[{'id':oid}];enrich_orders(c,rows)
+        assert rows[0]['intervention_pending']['pending_role']=='owner_or_cancel_delegate'
+        assert rows[0]['intervention_pending']['pending_label']==PENDING_ROLES['owner_or_cancel_delegate']
+    inbox=actor('owner').get('/api/order-interventions/pending-cancellations')
+    assert inbox.status_code==200,inbox.text
+    assert next(r for r in inbox.json()['requests'] if r['order_id']==oid)['pending_label']==PENDING_ROLES['owner_or_cancel_delegate']
+    decision={'action':'approve','reason_code':'customer_cancel','contact_result':'agreed','version':1}
+    post('manager',path+'/'+iid+'/decision',decision,status=403)
+    post('owner',path+'/'+iid+'/decision',decision)
+
+
+def test_effective_pending_role_escalates_only_cancellation_after_print():
+    from app.order_interventions import effective_pending_role
+    details={'kind':'cancel','pending_role':'delivery_manager'}
+    assert effective_pending_role(details,False)=='delivery_manager'
+    assert effective_pending_role(details,True)=='owner_or_cancel_delegate'
+    assert effective_pending_role({**details,'kind':'problem'},True)=='delivery_manager'
+    assert details['pending_role']=='delivery_manager'

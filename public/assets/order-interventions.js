@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  window.KPSInterventions={async open({oid,api,mutation,user,onChanged=()=>{}}){
+  window.KPSInterventions={async open({oid,api,mutation,user,onChanged=()=>{},initialReason}){
     const dialog=document.createElement('dialog');dialog.className='amend-dialog';dialog.dir='rtl';
     dialog.innerHTML='<header><h2>معالجة الطلب</h2><button type="button" data-close aria-label="إغلاق">×</button></header><div class="amend-body"></div>';
     document.body.append(dialog);dialog.showModal();dialog.querySelector('[data-close]').onclick=()=>dialog.close();
@@ -27,12 +27,13 @@
         }
         root.append(section);
       }
-      if(!pending.length){
+      if(!pending.length&&user.role!=='admin'){
         const form=document.createElement('form');
         const kinds=driver?{problem:'رفع مشكلة'}:{cancel:'طلب إلغاء',problem:'متابعة مشكلة'};
         form.innerHTML=`${label('الإجراء',`<select name="kind">${options(kinds)}</select>`)}${label('السبب',`<select name="reason_code">${options(driver?Object.fromEntries(Object.entries(d.reasons).filter(([k])=>!['customer_cancel','customer_change','duplicate'].includes(k))):d.reasons)}</select>`)}${driver?'':label('التواصل مع العميل',`<select name="contact_result">${options(Object.fromEntries(Object.entries(d.contact_results).filter(([k])=>k!=='customer_requested')))}</select>`)}${!driver?label('طلب العميل داخل الموقع',`<select name="customer_request_id"><option value="">سبب تشغيلي / لا ينطبق</option>${d.customer_requests.map(r=>`<option value="${esc(r.id)}">${esc(r.details.note||r.details.kind)} · ${esc(new Date(r.created_at).toLocaleString('en-GB'))}</option>`).join('')}</select>`)+label('صورة المحادثة لطلب الواتساب',`<select name="evidence_attachment_id"><option value="">اختر من صور محادثة الطلب</option>${d.attachments.map((a,i)=>`<option value="${esc(a.id)}">صورة ${i+1} · ${esc(new Date(a.created_at).toLocaleString('en-GB'))}</option>`).join('')}</select>`):''}${driver?'':'<p>إرفاق صورة جديدة: افتح محادثة الطلب وأرفق الصورة، ثم ارجع لهذه الشاشة.</p>'}<button>رفع الطلب للمسؤول</button>`;
+        if(initialReason&&form.elements.reason_code.querySelector(`option[value="${initialReason}"]`))form.elements.reason_code.value=initialReason;
         if(form.elements.contact_result)form.elements.contact_result.value='not_contacted';
-        form.onsubmit=e=>submit(e,async f=>mutation(path,{version:d.version,kind:f.get('kind'),reason_code:f.get('reason_code'),contact_result:f.get('contact_result')||'not_contacted',customer_request_id:f.get('customer_request_id')||null,evidence_attachment_id:f.get('evidence_attachment_id')||null}));root.append(form);
+        form.onsubmit=e=>submit(e,async f=>mutation(path,{version:d.version,kind:f.get('kind'),reason_code:f.get('reason_code'),contact_result:f.get('contact_result')||(f.get('reason_code')==='no_answer'?'no_answer':'not_contacted'),customer_request_id:f.get('customer_request_id')||null,evidence_attachment_id:f.get('evidence_attachment_id')||null}));root.append(form);
       }
     }
     async function submit(e,run){e.preventDefault();const form=e.target;form.querySelectorAll('button').forEach(b=>b.disabled=true);try{await run(new FormData(form));await refresh();}catch(error){root.querySelector('[role=alert]').textContent=error.message;form.querySelectorAll('button').forEach(b=>b.disabled=false);}}

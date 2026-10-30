@@ -49,6 +49,10 @@ def printed(c,o):
     return bool(c.execute('SELECT 1 FROM branch_print_jobs WHERE order_id=%s LIMIT 1',(o['id'],)).fetchone())
 
 
+def effective_pending_role(details,has_print):
+    return 'owner_or_cancel_delegate' if details.get('kind')=='cancel' and has_print else details['pending_role']
+
+
 def records(c,oid):
     return c.execute("""SELECT e.id,e.actor_id,e.created_at,e.details,
        d.actor_id decided_by,d.created_at decided_at,d.details decision
@@ -118,12 +122,42 @@ def evidence(c,o,user,body):
     return result
 
 
+@router.get('/pending-cancellations')
+def pending_cancellations(user=Depends(auth.require_roles('owner','delivery_manager','admin'))):
+    """A cancellation-only inbox needs no general orders or accounting grant."""
+    if not user.get('active',True) or not high_authority(user):
+        raise db.error(403,'CANCEL_AFTER_PRINT_AUTHORITY','قائمة الاعتماد للمالك أو المفوض بالإلغاء فقط.')
+    with db.tx() as c:
+        rows=c.execute("""SELECT o.*,e.id request_id,e.created_at requested_at,e.details request_details,
+            b.name branch_name,EXISTS(SELECT 1 FROM branch_print_jobs p WHERE p.order_id=o.id) has_print FROM order_events e JOIN orders o ON o.id=e.order_id
+            JOIN branches b ON b.id=o.branch_id WHERE o.brand_id=%s AND o.service='delivery'
+            AND (o.snapshot->>'delivery_period' IS DISTINCT FROM 'morning')
+            AND (o.snapshot->>'journey_controls_version'='1' OR %s)
+            AND (%s OR o.branch_id=ANY(%s))
+            AND e.event_type='intervention.requested' AND e.details->>'kind'='cancel'
+            AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=e.order_id
+                AND d.event_type IN ('intervention.approved','intervention.rejected','intervention.resolved')
+                AND d.details->>'request_id'=e.id)
+            ORDER BY e.created_at,e.id LIMIT 200""",(user['brand_id'],
+            os.getenv('DELIVERY_INTERVENTIONS_ENFORCED','false').lower()=='true',
+            user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]))).fetchall()
+        visible=[o for o in rows if user['role']=='admin' or auth.can_access_order(user,o,c)]
+        from .operations import safe
+        return safe({'requests':[{'id':o['request_id'],'order_id':o['id'],'order_no':o['order_no'],
+            'branch_name':o['branch_name'],'created_at':o['requested_at'],
+            'reason_label':REASONS.get(o['request_details']['reason_code']),
+            'pending_label':PENDING_ROLES.get(effective_pending_role(o['request_details'],o['has_print']))} for o in visible]})
+
+
 @router.get('/orders/{oid}')
 def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','admin','customer','driver'))):
     require_access(user)
     with db.tx() as c:
         o=scoped(c,oid,user)
         rows=records(c,oid)
+        has_print=printed(c,o)
+        rows=[{**r,'details':{**r['details'],'pending_role':effective_pending_role(r['details'],has_print)}}
+              if not r['decision'] else r for r in rows]
         if user['role']=='customer':
             rows=[{'id':r['id'],'created_at':r['created_at'],'kind':r['details']['kind'],
                    'status':(r['decision'] or {}).get('status','requested')} for r in rows]
@@ -135,7 +169,7 @@ def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','adm
         elif user['role']=='driver':
             rows=[{'id':r['id'],'created_at':r['created_at'],'details':{'kind':r['details']['kind'],'pending_role':r['details']['pending_role'],'reason_code':r['details']['reason_code'],'contact_result':r['details'].get('contact_result')},'decision':{'status':(r['decision'] or {}).get('status')} if r['decision'] else None} for r in rows if r['actor_id']==user['id']]
         from .operations import safe
-        return safe({'enabled':controlled(o),'printed':printed(c,o),'version':o['version'],
+        return safe({'enabled':controlled(o),'printed':has_print,'version':o['version'],
             'high_authority':high_authority(user),'requests':rows,'reasons':REASONS,'contact_results':CONTACT,
             'pending_roles':PENDING_ROLES,'statuses':STATUSES,'attachments':attachments,'customer_requests':customer_requests})
 
@@ -275,15 +309,16 @@ def require_access(user):
 def enrich_orders(c,orders):
     """Staff-only batch caller: current responsibility without N+1 reads."""
     if not orders:return
-    found=c.execute("""SELECT DISTINCT ON (e.order_id) e.order_id,e.id,e.created_at,e.details
+    found=c.execute("""SELECT DISTINCT ON (e.order_id) e.order_id,e.id,e.created_at,e.details,
+       EXISTS(SELECT 1 FROM branch_print_jobs p WHERE p.order_id=e.order_id) has_print
        FROM order_events e WHERE e.order_id=ANY(%s) AND e.event_type='intervention.requested'
        AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=e.order_id
            AND d.event_type IN ('intervention.approved','intervention.rejected','intervention.resolved')
            AND d.details->>'request_id'=e.id)
        ORDER BY e.order_id,e.created_at,e.id""",([o['id'] for o in orders],)).fetchall()
     pending={r['order_id']:{'id':r['id'],'since':r['created_at'],'kind':r['details']['kind'],
-        'pending_role':r['details']['pending_role'],
-        'pending_label':PENDING_ROLES.get(r['details']['pending_role'],r['details']['pending_role']),
+        'pending_role':effective_pending_role(r['details'],r['has_print']),
+        'pending_label':PENDING_ROLES.get(effective_pending_role(r['details'],r['has_print'])),
         'reason_code':r['details']['reason_code'],'reason_label':REASONS.get(r['details']['reason_code'])} for r in found}
     financial=c.execute("""SELECT DISTINCT ON (e.order_id) e.order_id,e.id,e.created_at,e.details FROM order_events e
        WHERE e.order_id=ANY(%s) AND e.event_type='intervention.accounting_pending'

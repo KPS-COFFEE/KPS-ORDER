@@ -32,8 +32,20 @@ def impact_service(ops,monkeypatch):
         return [[0 if i==j else 30 for j in range(len(points))] for i in range(len(points))]
     monkeypatch.setattr(route_eta,'fetch_matrix',matrix)
     def order():
-        oid=create()
-        with db.tx() as c:c.execute("UPDATE orders SET customer=customer||%s,snapshot=snapshot||%s WHERE id=%s",(db.json({'location':{'lat':28.41,'lng':45.91}}),db.json({'delivery_period':'evening','delivery_workflow':'manager_dispatch'}),oid))
+        # Confirmed customer/snapshot fields are immutable: build the complete
+        # synthetic contract at INSERT, exactly as production creation does.
+        oid='impact-order-'+uuid4().hex
+        snapshot={'items':[{'product_id':'ops-product','name':'قهوة تجربة','quantity':1,
+            'unit_price_halalas':1000,'line_total_halalas':1000,'units':[],'note':''}],
+            'branch_name':'فرع اختبار','notes':'','delivery_period':'evening',
+            'delivery_workflow':'manager_dispatch'}
+        customer={'name':'اختبار','location':{'lat':28.41,'lng':45.91}}
+        with db.tx() as c:
+            c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,
+                preparation_status,delivery_status,payment_method,subtotal_halalas,
+                delivery_fee_halalas,total_halalas,snapshot,customer)
+                VALUES(%s,'ops-brand','ops-branch','ops-customer','delivery','ready',
+                       'pending','cash',1000,0,1000,%s,%s)""",(oid,db.json(snapshot),db.json(customer)))
         return oid
     def send(path,body,key=None):return client.post(path,json=body,headers={'Idempotency-Key':key or uuid4().hex})
     def preview(oid):

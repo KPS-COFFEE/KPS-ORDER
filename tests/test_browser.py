@@ -489,7 +489,7 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
             owner_context.close()
 
 
-def _role_fixture():
+def _role_fixture(*, initial_snapshot=None):
     """Explicitly synthetic second brand: no current KPS prices or scopes changed."""
     brand='browser-ops-test'
     branch_id='browser-ops-branch-test'
@@ -514,6 +514,7 @@ def _role_fixture():
         snapshot={'items':[{'product_id':'browser-synthetic-coffee','name':'قهوة اختبار معزول','quantity':1,
                             'unit_price_halalas':1000,'line_total_halalas':1000,'units':[],'note':''}],
                   'branch_name':'فرع اختبار معزول','notes':'اختبار فقط؛ لا يُجهز أو يُرسل سائق فعلي.'}
+        snapshot.update(initial_snapshot or {})
         conn.execute('INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,'
                      'subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) VALUES(%s,%s,%s,%s,\'delivery\',\'ready\',\'pending\',\'cash\',1000,0,1000,%s,%s)',
                      (order_id,brand,branch_id,users['customer']['id'],db.json(snapshot),db.json({'name':'عميل اختبار فقط','address':'عنوان اختبار معزول','location':{'lat':28.4,'lng':45.9}})))

@@ -103,7 +103,7 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
-    'orders_cancel_after_print': {'methods':['GET','POST'], 'paths':['/api/order-interventions/orders/{oid}','/api/order-interventions/orders/{oid}/{rid}/decision'], 'scope':'explicit_owner_grant_scoped_delivery_cancellation_only_no_refund_or_accounting_authority'},
+    'orders_cancel_after_print': {'methods':['GET','POST'], 'paths':['/api/order-interventions/pending-cancellations','/api/order-interventions/orders/{oid}','/api/order-interventions/orders/{oid}/{rid}/decision'], 'scope':'explicit_owner_grant_scoped_delivery_cancellation_only_no_refund_or_accounting_authority'},
     'driver_duty_manage': {'methods':['GET','PUT'], 'paths':['/api/driver-duty','/api/driver-duty/{identifier}'], 'scope':'current_brand_assigned_driver_branches_next_shift_only_no_financial_authority'},
     'complimentary_approve': {'methods':['GET','POST'], 'paths':['/api/orders/complimentary/quote','/api/orders/complimentary/authorizations','/api/orders/complimentary/authorizations/{identifier}/revoke'], 'scope':'explicit_owner_grant_current_brand_all_original_and_fulfillment_branches_no_refund_or_cash_permission'},
     'driver_support_approve': {'methods':['GET','POST'], 'paths':['/api/driver-support','/api/driver-support/{rid}/accept','/api/driver-support/{rid}/resolve'], 'scope':'owner_granted_staff_identity_all_affected_brand_and_branch_scopes_no_cash_transfer'},
