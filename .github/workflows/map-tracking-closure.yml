@@ -26,6 +26,7 @@ on:
       - tests/test_tracking*.py
       - tests/test_tracking*.cjs
       - tests/test_dispatch_map_loader.cjs
+      - tests/test_dispatch_map_diagnostics.cjs
       - tests/test_dispatch_map_browser.py
       - tests/test_central_branch_map_context.py
       - tests/test_mixed_route*.py
@@ -81,7 +82,7 @@ jobs:
           node --check public/assets/dispatch-map.js
           node --check public/assets/driver-location.js
           node --check public/assets/order-tracking.js
-          node --test tests/test_dispatch_map_loader.cjs tests/test_tracking_manager.cjs tests/test_driver_trip_ui.cjs tests/test_central_operations_adapter.cjs
+          node --test tests/test_dispatch_map_loader.cjs tests/test_dispatch_map_diagnostics.cjs tests/test_tracking_manager.cjs tests/test_driver_trip_ui.cjs tests/test_central_operations_adapter.cjs
       - name: Verify release integration blockers before full route acceptance
         run: >-
           python -m pytest -q
