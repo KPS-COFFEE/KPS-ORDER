@@ -237,11 +237,13 @@ def test_two_resource_runs_retain_the_original_workload_and_generator_budget():
     workflow = Path(__file__).resolve().parents[1] / '.github/workflows/software-hardening.yml'
     section = workflow.read_text().split('  representative-render-budget:', 1)[1]
     assert 'repetition: [1, 2]' in section and 'fail-fast: false' in section
-    # The deployed plan was verified independently on Render. Keep the old
-    # current/small profile available for historical reproducibility, while this
-    # production gate must own and measure the actual economy kernel limits.
-    assert '--cpus 0.5 --memory 1g --memory-swap 1g' in section
-    assert 'KPS_LOAD_RESOURCE_PROFILE: economy' in section
+    # Render DB upgrade was verified on 2026-10-30: app 1 CPU/2 GiB, DB 1 CPU/2 GiB.
+    # Retain the economy helper and historical failure artifacts; this gate
+    # must now measure the actual paid medium kernel limits.
+    assert '--cpus 1 --memory 2g --memory-swap 2g' in section
+    assert 'KPS_LOAD_RESOURCE_PROFILE: medium' in section
+    assert 'current-render-medium-resource-budget' in section
+    assert 'current-render-economy-resource-budget' not in section
     assert '--preserve-env=GITHUB_ACTIONS,KPS_LOAD_RESOURCE_PROFILE' in section
     assert '--application-cgroup "$KPS_LOAD_CGROUP_PATH"' in section
     assert '--max-error-rate 0\n' in section
