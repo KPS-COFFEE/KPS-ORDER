@@ -114,6 +114,13 @@ def create_snapshot(c,sid,approved_by):
     order_ids=[o['id'] for o in orders]
     snap['conversation_exceptions']=safe(c.execute('SELECT t.*,v.order_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE v.order_id=ANY(%s) ORDER BY t.created_at',(order_ids,)).fetchall())
     if s['kind']=='manager':
+        snap['photo_capture_evidence']=safe(c.execute('''SELECT p.order_id,p.stage,p.created_at,p.used_at,
+            p.capture_location,u.display_name driver_name FROM delivery_photos p
+            JOIN orders o ON o.id=p.order_id JOIN users u ON u.id=p.uploader_id
+            WHERE p.order_id=ANY(%s) AND o.brand_id=%s AND o.branch_id=ANY(%s)
+            AND p.used_at IS NOT NULL ORDER BY p.used_at,p.id''',
+            (order_ids,s['brand_id'],s['branch_ids'])).fetchall())
+    if s['kind']=='manager':
         from .order_support import report_tickets
         snap['support_tickets']=safe(report_tickets(c,s['brand_id'],s['branch_ids'],s['opened_at'],s['closed_at']))
     rid=uid();c.execute('INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES(%s,%s,%s,%s,%s,%s,%s)',(rid,sid,s['kind'],s['brand_id'],db.json(s['branch_ids']),s['user_id'],db.json(snap)))
@@ -738,6 +745,21 @@ def v5_tables(snap,view='compact'):
     if snap.get('support_tickets'):
         from .order_support import CATEGORIES,STATES
         table('support-tickets','تذاكر المتابعة والمشكلات',['التذكرة','الطلب','الفرع','التصنيف','الحالة','الملاحظة / الحل'],[[t['reference'],t['order_reference'],branch(t['branch_id']),CATEGORIES.get(t['category'],t['category']),STATES.get(t['status'],t['status']),t['note']+' / '+t.get('resolution','')] for t in snap['support_tickets']])
+    # Included in compact and owner output; metadata survives image retention.
+    photo_labels={'acceptable':'دقة مقبولة','weak':'دقة ضعيفة','missing':'الموقع غير متاح',
+                  'stale':'قراءة قديمة','invalid_clock':'وقت الجهاز غير موثوق',
+                  'capture_time_unverified':'وقت الالتقاط غير متحقق'}
+    photo_rows=[]
+    for p in snap.get('photo_capture_evidence',[]):
+        loc=p.get('capture_location') or {}
+        coords=(str(loc['lat'])+', '+str(loc['lng'])) if loc.get('lat') is not None and loc.get('lng') is not None else '—'
+        photo_rows.append([order_name(p['order_id']),p.get('driver_name') or '—',
+            'استلام الفرع' if p['stage']=='picked_up' else 'تسليم العميل',
+            v5_stamp(p.get('created_at')),v5_stamp(loc.get('captured_at')),
+            photo_labels.get(loc.get('status'),'غير مسجل'),
+            str(loc['accuracy_m'])+' m' if loc.get('accuracy_m') is not None else '—',coords])
+    table('photo_capture_evidence','توثيق الصور — موقع ووقت يبلغهما الجهاز؛ لا يثبتان التسليم وحدهما',
+        ['الطلب','السائق','الخطوة','وقت الرفع','وقت الجهاز','حالة الموقع','هامش الدقة','الإحداثيات'],photo_rows)
     if view!='owner':return tables
     by_branch={};by_item={};collection_branches={o['id']:o.get('branch_id') for o in orders}
     for o in orders:

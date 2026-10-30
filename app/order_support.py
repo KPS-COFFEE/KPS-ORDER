@@ -114,7 +114,10 @@ def update_ticket(tid:str,body:UpdateTicket,request:Request,user=Depends(auth.cu
             return {'id':tid,'status':body.status}
         return mutate(c,user,request,'ticket.update:'+tid,body.model_dump(),perform)
 
+from .photo_location import CaptureLocation, classify_capture
+
 class PhotoBody(BaseModel):
+    capture_location:CaptureLocation|None=None
     stage:Literal['picked_up','delivered']
     data_base64:str=Field(max_length=6990510)
     content_type:Literal['image/jpeg','image/png','image/webp']
@@ -138,9 +141,10 @@ def upload_photo(tid:str,body:PhotoBody,request:Request,user=Depends(auth.curren
             if t['driver_id']!=user['id']:fail(404,'المهمة غير متاحة')
             if not db.rate_limit(c,'delivery-photo:'+user['id'],12,60):fail(429,'أرسل الصور بوتيرة أبطأ')
             if t['status'] not in ('accepted','picked_up','problem'):fail(409,'المهمة لا تستقبل صورًا في حالتها الحالية')
-            aid=uid();c.execute('INSERT INTO delivery_photos(id,task_id,order_id,uploader_id,stage,data,sha256,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(aid,tid,t['order_id'],user['id'],body.stage,data,digest,next_cleanup()))
+            capture=classify_capture(body.capture_location)
+            aid=uid();c.execute('INSERT INTO delivery_photos(id,task_id,order_id,uploader_id,stage,data,sha256,expires_at,capture_location) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(aid,tid,t['order_id'],user['id'],body.stage,data,digest,next_cleanup(),db.json(capture)))
             return {'id':aid,'task_id':tid}
-        return mutate(c,user,request,'delivery.photo:'+tid,{'stage':body.stage,'sha256':digest},perform)
+        return mutate(c,user,request,'delivery.photo:'+tid,{'stage':body.stage,'sha256':digest,'capture_location':body.capture_location.model_dump(mode='json') if body.capture_location else None},perform)
 
 def require_photo(c,t,user,stage,photo_id):
     if user['role']!='driver' or user['id']!=t['driver_id']:fail(403,'الاستلام والتسليم يؤكدهما السائق المكلف')
@@ -193,7 +197,10 @@ def photos(oid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         order_access(c,user,oid)
         result={'photos':c.execute('SELECT id,stage,created_at,deleted_at,used_at FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL ORDER BY created_at',(oid,)).fetchall()}
-        if user['role'] in ('owner','delivery_manager'):result['observations']=evidence_observations(c,oid)
+        if user['role'] in ('owner','delivery_manager'):
+            captures={p['id']:p['capture_location'] for p in c.execute('SELECT id,capture_location FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL',(oid,)).fetchall()}
+            for p in result['photos']:p['capture_location']=captures.get(p['id'])
+            result['observations']=evidence_observations(c,oid)
         return safe(result)
 
 @router.get('/delivery-photos/{aid}')
