@@ -272,6 +272,12 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                 from .complimentary_authorizations import check
                 authorization=check(conn,body,order_id=order_id,actor_id=user['id'])
                 quote=complimentary.prepare(quote,body.kind,body.reason,user['id'],authorization)
+            if body.service=='delivery' and quote.get('delivery_period')!='morning':
+                from .journey_timing import capture
+                journey_policy=capture(quote)
+                if journey_policy:
+                    quote['delivery_journey_policy']=journey_policy
+                    quote['journey_controls_version']=1
             execution_branch_id = quote['branch_id']
             if user.get('_morning_manager_context'):
                 # The clock and routing are authoritative on the server. A
@@ -924,6 +930,8 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
                 if not conn.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operational_confirmation' AND details->>'result'='reached'",(order_id,)).fetchone():
                     raise db.error(409,'OPERATIONAL_CONTACT_CONFIRMATION_REQUIRED','تتطلب سياسة الطلب اتصالًا تشغيليًا موثقًا قبل التجهيز. لا يعتبر ذلك توثيق جوال.')
             if body.status == 'cancelled':
+                from .order_interventions import guard_cancellation
+                guard_cancellation(conn,order,user)
                 if not body.reason.strip():
                     raise db.error(422, 'CANCELLATION_REASON_REQUIRED', 'اكتب سبب رفض أو إلغاء الطلب.')
                 from .order_financial_cases import invoice_guard

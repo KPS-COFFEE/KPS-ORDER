@@ -18,6 +18,8 @@ class Proposal(BaseModel):
     customer: catalog.CustomerInfo
     notes: str = Field(default='', max_length=1000)
     reason: str = Field(min_length=1, max_length=500)
+    evidence_attachment_id: str | None = Field(default=None,max_length=100)
+    customer_request_id: str | None = Field(default=None,max_length=100)
 
 
 class Decision(BaseModel):
@@ -92,7 +94,7 @@ def proposal_quote(c, o, p):
         quote['items'] = o['snapshot']['items']
         quote['subtotal_halalas'] = o['subtotal_halalas']
         quote['total_halalas'] = quote['subtotal_halalas'] + quote['delivery_fee_halalas']
-    for key in ('gift','receipt_occasion_style', 'receipt_occasion_text', 'receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow', 'branch_payment_mode', 'branch_payment_seller'):
+    for key in ('gift','receipt_occasion_style', 'receipt_occasion_text', 'receipt_profile', 'order_source', 'order_reference', 'internal_routing', 'performance_snapshot', 'manager_shift_id', 'created_by_staff_id', 'delivery_workflow', 'branch_payment_mode', 'branch_payment_seller', 'delivery_period', 'delivery_journey_policy', 'journey_controls_version'):
         if key in o['snapshot']: quote[key] = o['snapshot'][key]
     if 'channel_commercial' in o['snapshot']:
         from .channel_commercial import amounts
@@ -127,7 +129,8 @@ def summary(c, o, u):
     from .administrative_guidance import order as order_guidance, with_names
     from .order_financial_cases import case
     guidance=with_names(c,o,order_guidance(o,financial_case=case(c,o['id']),requests=requests,amendments=amendments,viewer_role=u['role'])) if u['role'] not in ('driver','customer') else None
-    return {'version':o['version'],'guidance':guidance,'requests': requests, 'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
+    from .order_interventions import controlled
+    return {'journey_controls_enabled':controlled(o),'journey_controls_version':o['snapshot'].get('journey_controls_version'),'version':o['version'],'guidance':guidance,'requests': requests, 'amendments': [public_amendment(a, u['role'] == 'customer') for a in amendments],
             'active_id': next((a['id'] for a in amendments if a['status'] in ACTIVE), None), 'revision': o.get('amendment_revision', 0),
             'original_total_halalas': o['total_halalas'], 'effective_total_halalas': effective,
             'effective_claim_halalas': claim, 'actual_collected_halalas': net,
@@ -197,11 +200,24 @@ def request_amendment(oid: str, body: Proposal, user=Depends(auth.require_roles(
             if not db.rate_limit(c,'amendment:'+user['id'],10,900):raise db.error(429,'AMENDMENT_RATE','طلبات تعديل كثيرة؛ حاول لاحقًا.')
             if o['payment_status'] in ('refunded','partially_refunded') or balance(c,o)>o['total_halalas']:
                 raise db.error(409, 'AMENDMENT_SETTLEMENT', 'أكمل تسوية الاسترداد القائم قبل طلب تعديل جديد.')
+            from .order_interventions import controlled,evidence,RequestBody
+            proof=None
+            if controlled(o) and user['role']!='customer' and o['preparation_status']!='new':
+                proof=evidence(c,o,user,RequestBody(kind='amend',reason_code='customer_change',
+                    evidence_attachment_id=body.evidence_attachment_id,
+                    customer_request_id=body.customer_request_id,version=body.version))
             quote = proposal_quote(c, o, body)
+            if proof:quote['intervention_evidence']=proof
             if quote['snapshot']['items'] == o['snapshot']['items'] and quote['customer'] == o['customer'] and body.notes == o['snapshot'].get('notes',''):
                 raise db.error(422, 'AMENDMENT_EMPTY', 'لم يتغير شيء في الطلب.')
             aid = db.new_id('amend_')
             c.execute("INSERT INTO order_amendments(id,order_id,requested_by,base_revision,proposal,status,reason) VALUES(%s,%s,%s,%s,%s,'requested',%s)", (aid,oid,user['id'],o['amendment_revision'],db.json(quote),body.reason.strip()))
+            from .order_interventions import controlled,customer_message,apply_pending_customer_amendment
+            if controlled(o) and user['role']=='customer':
+                mid=customer_message(c,o,user,'amend',body.reason.strip())
+                db.event(c,oid,user['id'],'intervention.customer_amend_requested',{'kind':'amend','note':body.reason.strip(),'amendment_id':aid,'evidence_message_id':mid,'revision':o.get('amendment_revision',0),'pending_role':'delivery_manager'})
+                if apply_pending_customer_amendment(c,o,user,aid,quote):
+                    return {'amendment_id':aid,'status':'applied'}
             db.event(c,oid,user['id'],'amendment.requested',{'amendment_id':aid})
             db.audit(c,user['id'],'amendment.requested','order',oid,{'amendment_id':aid,'proposal':quote,'reason':body.reason})
             return {'amendment_id':aid}

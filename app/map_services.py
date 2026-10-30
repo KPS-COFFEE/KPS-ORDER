@@ -84,8 +84,11 @@ def recommendations(order_id: str = Query(min_length=1, max_length=200), user=De
                             'active_tasks':row['active_tasks'], 'distance_m':distance, 'gps':gps})
         # Load first; among equally loaded drivers prefer a reliable nearby location.
         choices.sort(key=lambda r:(r['active_tasks'], r['distance_m'] is None, r['distance_m'] or 0, r['shift_id']))
+        from . import dispatch_impact
         return safe({'drivers':choices,'distance_basis':'straight_line_to_pickup','assignment':'manager_confirmation',
-                     'recommended_shift_id':next((r['shift_id'] for r in choices if r['distance_m'] is not None),None)})
+                     'impact_enabled':dispatch_impact.enabled(),'reason_options':dispatch_impact.REASONS,
+                     'contact_options':dispatch_impact.CONTACTS,
+                     'recommended_shift_id':None if dispatch_impact.enabled() else next((r['shift_id'] for r in choices if r['distance_m'] is not None),None)})
 
 
 @router.get('/health')

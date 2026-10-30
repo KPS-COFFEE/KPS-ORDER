@@ -3,6 +3,18 @@ on:
   pull_request:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/journey_timing.py
+      - app/performance.py
+      - app/dispatch_impact.py
+      - app/order_interventions.py
+      - app/orders.py
+      - app/operations.py
+      - app/branch_printing.py
+      - app/order_financial_cases.py
+      - migrations/129_dispatch_impact.sql
+      - tests/test_journey_timing.py
+      - tests/test_dispatch_impact*
+      - tests/test_order_interventions.py
       - app/photo_location.py
       - app/order_support.py
       - app/reporting.py
@@ -43,9 +55,12 @@ jobs:
           node-version: '22'
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
-      - run: node --check public/ops.js && node --test tests/test_photo_location.cjs tests/test_employee_live_revocation.cjs
+      - run: node --check public/ops.js && node --test tests/test_photo_location.cjs tests/test_employee_live_revocation.cjs tests/test_dispatch_impact_ui.cjs
       - run: >-
           python -m pytest -q tests/test_photo_location.py tests/test_photo_location_postgres.py
+          tests/test_journey_timing.py tests/test_dispatch_impact.py tests/test_dispatch_impact_postgres.py
+          tests/test_order_interventions.py tests/test_order_requests.py
+          tests/test_order_amendments.py tests/test_order_financial_cases.py
           tests/test_order_support.py tests/test_photo_observations.py
           tests/test_driver_camera_browser.py tests/test_employee_live_revocation_browser.py tests/test_route_eta_unit.py tests/test_driver_auto_return.py
           --junitxml=test-results/photo-capture.xml

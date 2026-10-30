@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 
-from . import auth, db, multibrand
+from . import auth, db, multibrand, catalog
 
 router = APIRouter(prefix='/api/central-operations', tags=['central-operations'])
 
@@ -27,11 +27,21 @@ def context(conn, user):
         if not principal:
             continue
         branches = conn.execute(
-            'SELECT id,brand_id,branch_no,name,city FROM branches WHERE brand_id=%s '
+            'SELECT id,brand_id,branch_no,name,city,settings FROM branches WHERE brand_id=%s '
             'AND (%s OR id=ANY(%s)) ORDER BY branch_no,id',
             (brand['id'], principal['role'] == 'owner' and not principal.get('home_brand_id'), principal.get('branch_ids', [])),
         ).fetchall()
-        scopes.append(dict(brand, branch_ids=[b['id'] for b in branches], branches=branches))
+        # Central UI consumes this projection instead of /api/branches. Preserve
+        # verified map pins while never publishing the full operational settings.
+        visible=[]
+        for row in branches:
+            branch={key:row[key] for key in ('id','brand_id','branch_no','name','city')}
+            verified=catalog.location_verified(row)
+            location=row['settings'].get('location') if verified else None
+            branch.update(location={'lat':location['lat'],'lng':location['lng']} if location else None,
+                          location_verified=bool(verified))
+            visible.append(branch)
+        scopes.append(dict(brand, branch_ids=[b['id'] for b in visible], branches=visible))
     return {'brands': scopes}
 
 

@@ -178,11 +178,17 @@ def timeline(stops, ordered, matrix, calculated_at, now=None):
             raise ValueError('no_road_route')
         elapsed += math.ceil(duration)
         arrival = calculated_at+timedelta(seconds=elapsed)
-        dwell = DWELL_SECONDS[stop['kind']]
-        elapsed += dwell
+        dwell = stop.get('dispatch_dwell_seconds',DWELL_SECONDS[stop['kind']])
+        if type(dwell) is not int or not 0<=dwell<=3600:raise ValueError('invalid_stop_allowance')
+        ready=stop.get('dispatch_ready_at')
+        if isinstance(ready,str):
+            try:ready=datetime.fromisoformat(ready.replace('Z','+00:00'))
+            except ValueError:raise ValueError('invalid_ready_clock')
+        wait=max(0,math.ceil((ready-arrival).total_seconds())) if isinstance(ready,datetime) and ready.tzinfo else 0
+        elapsed += wait+dwell
         departure = calculated_at+timedelta(seconds=elapsed)
         rows.append({**stop, 'drive_seconds': math.ceil(duration), 'dwell_seconds': dwell,
-                     'arrival_at': arrival, 'departure_at': departure,
+                     'arrival_at': arrival, 'departure_at': departure, 'wait_seconds':wait,
                      'eta_seconds': max(0, math.ceil((arrival-now).total_seconds()))})
         if stop['kind'] in ('dropoff','delivery'):
             delivery_at = departure
@@ -220,8 +226,27 @@ def corridor_current(corridor, signature, first, now):
         return False
 
 
+def inherit_dispatch_allowances(stops, original):
+    """Retain server-recorded preparation assumptions only for unchanged stations."""
+    by_id={s['id']:s for s in original or []}
+    result=[]
+    for stop in stops:
+        old=by_id.get(stop['id']); current=dict(stop)
+        if old and all(stop.get(k)==old.get(k) for k in ('location','brand_id','shift_id','kind','branch_id')):
+            tasks=set(stop.get('task_ids') or ([stop['task_id']] if stop.get('task_id') else []))
+            old_tasks=set(old.get('task_ids') or ([old['task_id']] if old.get('task_id') else []))
+            if tasks<=old_tasks:
+                for key in ('dispatch_ready_at','dispatch_dwell_seconds'):
+                    if key in old:current[key]=old[key]
+        result.append(current)
+    return result
+
+
 def fingerprint(stops):
-    return hashlib.sha256(json.dumps(stops, sort_keys=True, separators=(',',':'), default=str).encode()).hexdigest()
+    # Frozen preparation allowances belong to evidence timing, not stop identity.
+    # These two server-written fields may be present only in dispatch publication.
+    identity=[{k:v for k,v in s.items() if k not in ('dispatch_ready_at','dispatch_dwell_seconds')} for s in stops]
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',',':'), default=str).encode()).hexdigest()
 
 
 def unavailable(driver_id, reason, status='unavailable'):
@@ -383,6 +408,8 @@ def route_eta(body: EtaRequest, user=Depends(auth.require_roles(*STAFF))):
             return unavailable(body.driver_id,'routing_provider_unavailable')
     try:
         matrix = validate_matrix(matrix,len(stops)+1)
+        if remaining_saved:
+            stops=inherit_dispatch_allowances(stops,remaining_saved[0])
         ordered = validate_order(stops,ordered_ids) if ordered_ids is not None else road_order(stops,matrix)
         output = timeline(stops,ordered,matrix,calculated,now)
     except ValueError:
@@ -571,7 +598,7 @@ def remaining_publication(c, saved, current, driver_id):
             if (not task or task['driver_id']!=driver_id or task['shift_id']!=stop.get('shift_id')
                     or task['status'] not in allowed):
                 return None
-    ordered = [current_by_id[i] for i in ids if i in current_by_id]
+    ordered = inherit_dispatch_allowances([current_by_id[i] for i in ids if i in current_by_id],original)
     if not ordered or published_return_completed(c,saved,current,driver_id):
         return None
     normalized = validate_order(current,[s['id'] for s in ordered if s['kind']!='return'])

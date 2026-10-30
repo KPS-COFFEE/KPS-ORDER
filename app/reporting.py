@@ -112,6 +112,12 @@ def create_snapshot(c,sid,approved_by):
         snap['external_enbishan']=[row for child in children for row in child['snapshot'].get('external_enbishan',[])]
     snap['external_enbishan_totals']={key:sum(row.get(key,0) for row in snap['external_enbishan']) for key in ('order_count','cash_halalas','card_halalas','total_halalas')}
     order_ids=[o['id'] for o in orders]
+    snap['journey_decisions']=safe(c.execute('''SELECT e.order_id,e.event_type,e.created_at,e.details,
+        u.display_name actor_name FROM order_events e JOIN users u ON u.id=e.actor_id
+        JOIN orders o ON o.id=e.order_id WHERE e.order_id=ANY(%s) AND o.brand_id=%s
+        AND o.branch_id=ANY(%s) AND (e.event_type LIKE 'intervention.%%' OR
+            e.event_type IN ('dispatch.impact_override','dispatch.impact_accepted')) ORDER BY e.created_at,e.id''',
+        (order_ids,s['brand_id'],s['branch_ids'])).fetchall())
     snap['conversation_exceptions']=safe(c.execute('SELECT t.*,v.order_id FROM conversation_transfers t JOIN conversations v ON v.id=t.conversation_id WHERE v.order_id=ANY(%s) ORDER BY t.created_at',(order_ids,)).fetchall())
     if s['kind']=='manager':
         snap['photo_capture_evidence']=safe(c.execute('''SELECT p.order_id,p.stage,p.created_at,p.used_at,
@@ -745,6 +751,34 @@ def v5_tables(snap,view='compact'):
     if snap.get('support_tickets'):
         from .order_support import CATEGORIES,STATES
         table('support-tickets','تذاكر المتابعة والمشكلات',['التذكرة','الطلب','الفرع','التصنيف','الحالة','الملاحظة / الحل'],[[t['reference'],t['order_reference'],branch(t['branch_id']),CATEGORIES.get(t['category'],t['category']),STATES.get(t['status'],t['status']),t['note']+' / '+t.get('resolution','')] for t in snap['support_tickets']])
+    decision_rows=[]
+    from .order_interventions import REASONS, CONTACT, PENDING_ROLES, STATUSES
+    action_labels={'intervention.requested':'طلب معالجة','intervention.approved':'اعتماد',
+        'intervention.rejected':'رفض','intervention.resolved':'إقفال المعالجة',
+        'intervention.executed':'تنفيذ الإلغاء','intervention.accounting_pending':'إحالة للمحاسبة',
+        'dispatch.impact_override':'إسناد باستثناء موثق','dispatch.impact_accepted':'اعتماد تقييم الإسناد'}
+    for d in snap.get('journey_decisions',[]):
+        details=d.get('details') or {}
+        decision_rows.append([order_name(d['order_id']),v5_stamp(d['created_at']),d.get('actor_name') or '—',
+            action_labels.get(d['event_type'],'إجراء موثق'),str(REASONS.get(details.get('reason_code')) or details.get('reason_label') or details.get('reason') or '—'),
+            str(CONTACT.get(details.get('contact_result')) or details.get('contact_label') or '—'),str(STATUSES.get(details.get('status')) or '—'),
+            str(PENDING_ROLES.get(details.get('pending_role')) or '—')])
+    table('journey_decisions','قرارات الطلب — السبب والتواصل والاعتماد والمسؤول التالي',
+        ['الطلب','الوقت','الموظف','الإجراء','السبب','التواصل','القرار','بانتظار'],decision_rows)
+    journey_rows=[]
+    journey_names={'manager_accept':'قبول المدير','dispatch_print':'الطباعة والإسناد','pickup':'استلام الفرع','delivery':'تسليم العميل'}
+    for o in snap.get('orders',[]):
+        j=o.get('journey_timing')
+        if not j:continue
+        for step in j['stages']:
+            late=step.get('late_seconds')
+            journey_rows.append([order_name(o['id']),journey_names[step['stage']],
+                v5_stamp(step['deadline_at']),v5_stamp(step.get('completed_at')),
+                'ملغي — لا تقييم' if j.get('cancelled') else {'completed':'مكتمل','pending':'بانتظار الإجراء','missing':'وقت غير مسجل','invalid_time':'توقيت غير صالح'}.get(step['state'],'غير محدد'),
+                str(round(late/60,2)) if late is not None and not j.get('cancelled') else '—',
+                step['responsible_role']])
+    table('delivery_journey','رحلة الطلب — المواعيد من إنشاء الطلب؛ المسؤول عن المتابعة ليس حكمًا بالخطأ',
+        ['الطلب','المرحلة','الموعد المستهدف','وقت التسجيل','الحالة','تجاوز بالدقائق','مسؤول المتابعة'],journey_rows)
     # Included in compact and owner output; metadata survives image retention.
     photo_labels={'acceptable':'دقة مقبولة','weak':'دقة ضعيفة','missing':'الموقع غير متاح',
                   'stale':'قراءة قديمة','invalid_clock':'وقت الجهاز غير موثوق',

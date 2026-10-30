@@ -971,7 +971,14 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   function orderFilters(){return `<label>${esc(tr('الترتيب','Sort'))}<select name="sort">${[['active_oldest',tr('النشط الأقدم أولًا','Oldest active first')],['newest',tr('الأحدث أولًا','Newest first')],['oldest',tr('الأقدم أولًا','Oldest first')]].map(([v,l])=>`<option value="${v}" ${state.filters.sort===v?'selected':''}>${esc(l)}</option>`).join('')}</select></label>${field(tr('بحث برقم الطلب','Order number'),'search',state.filters.search||'')}${field(tr('جوال العميل كاملًا','Full customer mobile'),'phone',state.filters.phone||'',{type:'tel',dir:'ltr',maxlength:30})}${field(tr('الحي','Neighborhood'),'neighborhood',state.filters.neighborhood||'')}<label>${esc(tr('الحالة','Status'))}<select name="status"><option value="">${esc(tr('كل الحالات','All statuses'))}</option>${['new','accepted','preparing','ready','completed','cancelled'].map(v=>`<option value="${v}" ${state.filters.status===v?'selected':''}>${esc(statusName(v))}</option>`).join('')}</select></label><label>${esc(tr('السائق','Driver'))}<select name="driver_id"><option value="">${esc(tr('كل السائقين','All drivers'))}</option>${selectOptions(state.drivers||[],state.filters.driver_id,x=>x.display_name)}</select></label>`;}
   function duration(t){if(!t||t.seconds==null)return esc(t?.state==='not_applicable'?tr('لا ينطبق','Not applicable'):t?.state==='cancelled'?tr('مستبعد','Excluded'):t?.state==='missing'?tr('بيانات الزمن ناقصة','Timing incomplete'):tr('لم يبدأ','Not started'));const seconds=Math.max(0,Math.floor(Number(t.seconds)));return `${num(Math.floor(seconds/60))}:${String(seconds%60).padStart(2,'0')}${t.state==='running'?` · ${esc(tr('جارٍ','Running'))}`:''}`;}
   function performanceBadge(p){if(!p)return `<span class="pill warn">${esc(tr('غير مهيأ','Unconfigured'))}</span>`;return `<span class="pill ${p.classification==='late'?'bad':p.classification==='good'?'warn':p.classification==='excellent'?'good':''}" title="${esc(`${p.basis||''} · ${tr('إصدار','Version')} ${p.policy_version||'—'}`)}">${esc(({excellent:tr('ممتاز','Excellent'),good:tr('جيد','Good'),late:tr('متأخر','Late'),unconfigured:tr('المعيار غير محدد','Unconfigured policy'),not_started:tr('لم تبدأ المرحلة','Not started'),excluded:tr('مستبعد','Excluded'),missing:tr('بيانات الزمن ناقصة','Timing incomplete')})[p.classification]||tr('غير مهيأ','Unconfigured'))}</span>`;}
-  function stageTimingBadge(o){const p=o.stage_timing;if(!p)return '';const names={manager_wait:tr('قبول المدير','Manager acceptance'),assignment:tr('الإسناد','Assignment'),driver_acceptance:tr('قبول السواق','Driver acceptance'),delivery:tr('التوصيل','Delivery'),preparer_wait:tr('قبول المحضّر','Preparer acceptance'),preparation:tr('التحضير','Preparation'),total:tr('إجمالي الطلب','Order total')};const color={normal:'good',orange:'warn',red:'bad'}[p.color]||'';const seconds=Number.isFinite(p.total_seconds)?Math.floor(p.total_seconds):null;const duration=seconds===null?'—':Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');return `<span class="pill ${color}" title="${esc((p.reasons||[]).map(r=>names[r.stage]).join(' · '))}">${esc(tr('الإجمالي','Total'))} ${esc(duration)} · ${esc(p.color==='red'?tr('متأخر','Late'):p.color==='orange'?tr('تنبيه','Warning'):p.color==='normal'?tr('ضمن المعيار','Within target'):tr('توقيت غير مكتمل','Incomplete timing'))}</span>`;}
+  function stageTimingBadge(o){
+    const pending=o.intervention_pending,pendingHtml=pending?`<span class="pill warn">${esc(tr('بانتظار: ','Awaiting: ')+pending.pending_label)} · ${esc(datetime(pending.since))}</span>`:'';
+    const j=o.journey_timing;
+    if(j){const labels={manager_accept:tr('قبول المدير','Manager acceptance'),dispatch_print:tr('الطباعة والإسناد','Print and assign'),pickup:tr('استلام الفرع','Branch pickup'),delivery:tr('تسليم العميل','Customer delivery')};
+      const elapsed=Number.isFinite(j.elapsed_seconds)?Math.floor(j.elapsed_seconds/60):null;
+      return pendingHtml+`<span class="pill ${j.cancelled?'':j.late?'bad':'good'}">${esc(j.cancelled?tr('ملغي — لا تقييم','Cancelled — unrated'):(elapsed===null?'—':elapsed+' / '+Math.floor(j.limit_seconds/60)+' '+tr('دقيقة','min')))}${j.current_stage?' · '+esc(labels[j.current_stage]||'')+' · '+esc(j.action_at||''):''}</span>`;
+    }
+    const p=o.stage_timing;if(!p)return pendingHtml;const names={manager_wait:tr('قبول المدير','Manager acceptance'),assignment:tr('الإسناد','Assignment'),driver_acceptance:tr('قبول السواق','Driver acceptance'),delivery:tr('التوصيل','Delivery'),preparer_wait:tr('قبول المحضّر','Preparer acceptance'),preparation:tr('التحضير','Preparation'),total:tr('إجمالي الطلب','Order total')};const color={normal:'good',orange:'warn',red:'bad'}[p.color]||'';const seconds=Number.isFinite(p.total_seconds)?Math.floor(p.total_seconds):null;const duration=seconds===null?'—':Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');return pendingHtml+`<span class="pill ${color}" title="${esc((p.reasons||[]).map(r=>names[r.stage]).join(' · '))}">${esc(tr('الإجمالي','Total'))} ${esc(duration)} · ${esc(p.color==='red'?tr('متأخر','Late'):p.color==='orange'?tr('تنبيه','Warning'):p.color==='normal'?tr('ضمن المعيار','Within target'):tr('توقيت غير مكتمل','Incomplete timing'))}</span>`;}
   function orderRows(rows){return rows.map(o=>{
     const id=esc(o.id),note=o.notes||o.snapshot?.notes||'',problem=o.delivery_problem_reason||'';
     const review=can('orders_view')?`<button class="quiet small" data-action="order-review" data-id="${id}">${esc(note?tr('مراجعة الملاحظة واتخاذ إجراء','Review note and take action'):tr('تفاصيل الطلب والإجراءات','Order details and actions'))}</button>`:'';
@@ -1044,6 +1051,8 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   }
   async function cancelOrderWithJourney(id){
     const {order:o}=await api(`/api/orders/${encodeURIComponent(id)}`);
+    const intervention=await api(`/api/order-interventions/orders/${encodeURIComponent(id)}`);
+    if(intervention.enabled){await window.KPSInterventions.open({oid:id,api,mutation,user:state.user,onChanged:loadPage});return;}
     modal(tr('إلغاء الطلب مع حفظ سجله','Cancel order and retain its history'),`<form>
       ${notice(tr('يبقى الطلب مرتبطًا بسائقه وسجله. إذا سُجل تحصيل أو فاتورة، تُفتح متابعة للمحاسبة؛ هذا الإجراء لا يرد مبلغًا للعميل.','The order retains its driver and history. Collections or an invoice create an accounting case; this action does not refund money.'))}
       ${textarea(tr('سبب الإلغاء ومن طلبه','Cancellation reason and requester'),'reason','',true)}
@@ -2086,14 +2095,19 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     if(needsAcceptance&&current.snapshot?.delivery_workflow==='manager_dispatch')throw new Error(tr('اقبل الطلب أولًا، ثم أسنده للسائق.','Accept the order first, then assign a driver.'));
     const d=await api('/api/shifts?'+(taskId?'task_id='+encodeURIComponent(taskId):'order_id='+encodeURIComponent(id)));
     const list=(d.shifts||[]).filter(s=>s.kind==='driver'&&s.status==='open'&&(!state.user.delivery_context||s.assignment_eligible!==false));
-    let recommendation=null;
+    let recommendation=null,impactController=null;
+    if(taskId){try{recommendation=await api('/api/operations/dispatch-impact-policy');}catch{}}
     if(!taskId){try{recommendation=await api('/api/operations/map-services/recommendations?order_id='+encodeURIComponent(id));const rank=new Map((recommendation.drivers||[]).map((r,i)=>[r.shift_id,i]));list.sort((a,b)=>(rank.get(a.id)??999)-(rank.get(b.id)??999));}catch{/* Manual assignment remains available. */}}
     const suggestion=recommendation?.drivers?.find(r=>r.shift_id===recommendation.recommended_shift_id);
     const recommendationNote=suggestion?notice(tr('اقتراح: ','Suggested: ')+suggestion.display_name+tr(' · الطلبات الجارية: ',' · Active tasks: ')+suggestion.active_tasks+tr(' · المسافة المباشرة للفرع: ',' · Straight-line distance to branch: ')+Math.round(suggestion.distance_m)+tr(' متر. التأكيد بيدك.',' m. You confirm the assignment.')):'';
     const action=taskId?tr('تغيير السائق','Change driver'):needsAcceptance?tr('قبول وإسناد','Accept and assign'):tr('إسناد لسائق','Assign driver');
     modal(taskId?tr('تسليم مهمة لشفت آخر','Hand over task to another shift'):needsAcceptance?tr('قبول الطلب وإسناده لسائق','Accept order and assign a driver'):tr('إسناد الطلب المقبول لسائق','Assign accepted order to a driver'),
-      `<form>${recommendationNote}<label>${esc(tr('شفت السائق المؤهل المفتوح','Eligible open driver shift'))}<select name="driver_shift_id" required><option value="">${esc(tr('اختر السائق','Choose driver'))}</option>${selectOptions(list,'',s=>`${s.display_name||tr('سائق','Driver')} · ${shiftLabel(s)}${state.user.delivery_context&&Number.isInteger(s.active_tasks)?tr(' · طلبات جارية: ',' · Active tasks: ')+num(s.active_tasks):''}`)}</select></label>${taskId?textarea(tr('سبب تغيير السائق — بعد استلام الطلب يلزم قبول البديل','Reason for changing driver — after pickup the replacement must accept'),'reason','',true):''}${!list.length?notice(tr('لا يوجد سائق متاح بشفت مفتوح يغطي فرع هذا الطلب ضمن صلاحياتك.','No available open driver shift covers this order branch within your permissions.'),'warn'):''}${formEnd(action)}</form>`,
-      async fd=>{const transferred=await mutation(taskId?`/api/tasks/${encodeURIComponent(taskId)}/handover`:`/api/orders/${encodeURIComponent(id)}/assign`,taskId?{driver_shift_id:fd.get('driver_shift_id'),reason:fd.get('reason'),reassign_before_pickup:true}:{driver_shift_id:fd.get('driver_shift_id'),accept_order:needsAcceptance});closeModal();await loadPage();await refreshOperationalAlerts();if(taskId)setStatus(transferred.acceptance_required?tr('أُرسل طلب نقل المهمة؛ الإسناد الحالي مستمر حتى قبول السائق المستلم.','Task handover requested. The current assignment continues until the receiving driver accepts.'):tr('تم تغيير السائق وحفظ السبب؛ الطلب ينتظر قبول السائق الجديد.','Driver changed and reason recorded; the new driver can accept the task.'));});
+      `<form>${recommendationNote}<label>${esc(tr('شفت السائق المؤهل المفتوح','Eligible open driver shift'))}<select name="driver_shift_id" required><option value="">${esc(tr('اختر السائق','Choose driver'))}</option>${selectOptions(list,'',s=>`${s.display_name||tr('سائق','Driver')} · ${shiftLabel(s)}${state.user.delivery_context&&Number.isInteger(s.active_tasks)?tr(' · طلبات جارية: ',' · Active tasks: ')+num(s.active_tasks):''}`)}</select></label>${taskId?`<label>${esc(tr('سبب تغيير السائق','Reason for changing driver'))}<select name="reason" required><option value="">${esc(tr('اختر السبب','Choose reason'))}</option>${Object.entries(recommendation?.reason_options||{all_drivers_busy:'جميع السائقين مشغولون',reduce_delay:'إعادة توزيع لتقليل التأخير',vehicle_or_driver_issue:'مشكلة بالسائق أو المركبة'}).map(([key,label])=>`<option value="${esc(label)}">${esc(label)}</option>`).join('')}</select></label>`:''}<section id="dispatch-impact-preview" ${recommendation?.impact_enabled!==false?'':'hidden'}></section>${!list.length?notice(tr('لا يوجد سائق متاح بشفت مفتوح يغطي فرع هذا الطلب ضمن صلاحياتك.','No available open driver shift covers this order branch within your permissions.'),'warn'):''}${formEnd(action)}</form>`,
+      async fd=>{const transferred=await mutation(taskId?`/api/tasks/${encodeURIComponent(taskId)}/handover`:`/api/orders/${encodeURIComponent(id)}/assign`,taskId?{driver_shift_id:fd.get('driver_shift_id'),reason:fd.get('reason'),reassign_before_pickup:true,...(impactController?.payload()||{})}:{driver_shift_id:fd.get('driver_shift_id'),accept_order:needsAcceptance,...(impactController?.payload()||{})});closeModal();await loadPage();await refreshOperationalAlerts();if(taskId)setStatus(transferred.acceptance_required?tr('أُرسل طلب نقل المهمة؛ الإسناد الحالي مستمر حتى قبول السائق المستلم.','Task handover requested. The current assignment continues until the receiving driver accepts.'):tr('تم تغيير السائق وحفظ السبب؛ الطلب ينتظر قبول السائق الجديد.','Driver changed and reason recorded; the new driver can accept the task.'));});
+    if(recommendation?.impact_enabled!==false&&window.KPSDispatchImpact){
+      impactController=window.KPSDispatchImpact.create({root:$('#dispatch-impact-preview'),select:$('#modal-body [name=driver_shift_id]'),api,orderId:id,taskId,policy:recommendation||{},tr});
+      const dialog=$('#modal'),cleanup=()=>{impactController?.close();dialog.removeEventListener('close',cleanup);};dialog.addEventListener('close',cleanup);
+    }
     if(state.user.delivery_context&&!list.length)$('#modal button[type=submit]').disabled=true;
   }
   async function recordNonreceipt(id){
@@ -2399,25 +2413,31 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   }
   document.addEventListener('change',e=>{if(!e.target.matches('.permission-option input'))return;const picker=e.target.closest('.employee-permission-picker');$('output',picker).textContent=`${num(picker.querySelectorAll('.permission-option input:checked').length)} / ${num(picker.querySelectorAll('.permission-option input').length)} ${tr('صلاحية مفعلة','permissions enabled')}`;});
   let permissionRefreshBusy=false;
+  let permissionRefreshGeneration=0;
   async function refreshEmployeeAccess(){
-    if(trialMode||!state.user||permissionRefreshBusy)return;
-    permissionRefreshBusy=true;const previous=state.user;
+    if(trialMode||!state.user||permissionRefreshBusy||document.hidden)return;
+    permissionRefreshBusy=true;const previous=state.user,generation=permissionRefreshGeneration;
     const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),5000);
     try{
       const d=await api('/api/session',{signal:controller.signal});
-      if(state.user?.id!==previous.id)return;
-      if(!d.user||!d.csrf_token||d.reauthentication_required){revokeEmployeeView();return;}
+      if(state.user?.id!==previous.id||generation!==permissionRefreshGeneration||document.hidden)return;
+      if(!d.user||d.user.id!==previous.id||!d.csrf_token||d.reauthentication_required){revokeEmployeeView();return;}
       document.documentElement.removeAttribute('data-work-access-pending');
       const changed=JSON.stringify([previous.effective_permissions,previous.central_operations])!==JSON.stringify([d.user.effective_permissions,d.user.central_operations]);
       state.user=d.user;state.csrf=d.csrf_token;
       if(!changed)return;
       closeModal();state.chatHistory.clear();renderBrandSwitch();navigation();await loadPage();hideUnavailableActions();setStatus(tr('حدّث المالك صلاحيات حسابك.','The owner updated your account permissions.'));
     }catch(e){
-      if(state.user?.id===previous.id){
+      if(state.user?.id===previous.id&&generation===permissionRefreshGeneration){
         if([401,403].includes(e.status))revokeEmployeeView();
         else document.documentElement.setAttribute('data-work-access-pending','');
       }
-    }finally{clearTimeout(timeout);permissionRefreshBusy=false;}
+    }finally{
+      clearTimeout(timeout);permissionRefreshBusy=false;
+      // A pre-suspension response cannot authorize a later visible page.
+      // Recheck immediately, rather than leaving the work screen blank until a poll.
+      if(state.user?.id===previous.id&&generation!==permissionRefreshGeneration&&!document.hidden)void refreshEmployeeAccess();
+    }
   }
   function revokeEmployeeView(){
     for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
@@ -2429,6 +2449,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   }
   function recheckEmployeeView(){
     if(trialMode||!state.user)return;
+    permissionRefreshGeneration++;
     document.documentElement.setAttribute('data-work-access-pending','');
     if(!document.hidden)void refreshEmployeeAccess();
   }

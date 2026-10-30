@@ -12,7 +12,7 @@ from . import auth, db
 from .orders import scoped_order
 
 router = APIRouter(prefix='/api/order-requests')
-LABELS = {'cancel': 'طلب إلغاء', 'duplicate': 'طلب مكرر'}
+LABELS = {'cancel': 'طلب إلغاء', 'duplicate': 'طلب مكرر', 'amend':'طلب تعديل'}
 
 
 class RequestBody(BaseModel):
@@ -81,9 +81,22 @@ def create(oid: str, body: RequestBody, user=Depends(auth.require_roles('custome
                 raise db.error(429, 'REQUEST_RATE', 'طلبات كثيرة؛ حاول لاحقًا.')
             rid = db.new_id('req_')
             details = {**body.model_dump(), 'note': body.note.strip()}
+            from .order_interventions import controlled, customer_message, printed
+            if controlled(o):
+                details['evidence_message_id']=customer_message(c,o,user,body.kind,body.note.strip())
+                details['pending_role']='delivery_manager'
+                details['revision']=o.get('amendment_revision',0)
+
             c.execute("INSERT INTO order_events(id,order_id,actor_id,event_type,details) VALUES(%s,%s,%s,'customer_request.opened',%s)",
                       (rid, oid, user['id'], db.json(details)))
             db.audit(c, user['id'], 'customer_request.opened', 'order', oid, {'request_id':rid, **details})
+            if controlled(o) and body.kind=='cancel' and o['preparation_status']=='new' and o['delivery_status']=='pending' and not printed(c,o):
+                from .order_financial_cases import needs_accounting
+                if not needs_accounting(c,o) and not c.execute("SELECT 1 FROM driver_tasks WHERE order_id=%s AND status NOT IN ('cancelled','reassigned','transferred')",(oid,)).fetchone():
+                    c.execute("UPDATE orders SET preparation_status='cancelled',delivery_status='cancelled',version=version+1 WHERE id=%s",(oid,))
+                    db.event(c,oid,user['id'],'customer_request.decided',{'request_id':rid,'status':'resolved','note':body.note.strip(),'source':'customer_before_acceptance','financial_status':'not_required'})
+                    db.event(c,oid,user['id'],'order.operationally_cancelled',{'reason':body.note.strip(),'source':'customer_before_acceptance','customer_request_id':rid,'financial_status':'not_required'})
+                    return {'id':rid,'status':'resolved','label':'تم الإلغاء قبل قبول المدير'}
             return {'id':rid, 'status':'requested', 'label':'بانتظار المعالجة'}
         return db.idempotent(c, user['id'], idempotency_key, 'order-request:'+oid, body.model_dump(), perform)
 
