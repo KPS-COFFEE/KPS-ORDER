@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const $ = (s, root = document) => root.querySelector(s);
-  const state = { user: null, csrf: '', page: 'dashboard', lang: localStorage.getItem('kps_ops_lang') === 'en' ? 'en' : 'ar', branches: [], drivers: [], selectedConversation: null, filters: { period: 'today' }, adminTab: 'branches', requestKeys: new Map(), busy: new Set(), closureSubmitted: new Set(), operationPeople: null, chatHistory:new Map(), staffChallenge:null, staffResendAt:0, staffChannel:'sms', workSmsRequired:true };
+  const state = { user: null, csrf: '', page: 'dashboard', lang: localStorage.getItem('kps_ops_lang') === 'en' ? 'en' : 'ar', branches: [], drivers: [], conversations: [], selectedConversation: null, filters: { period: 'today' }, adminTab: 'branches', requestKeys: new Map(), busy: new Set(), closureSubmitted: new Set(), operationPeople: null, chatHistory:new Map(), staffChallenge:null, staffResendAt:0, staffChannel:'sms', workSmsRequired:true };
   let ownerDashboardController = null;
   const trialMode = new URLSearchParams(location.search).get('morning_trial') === '1';
   const morningMode = !trialMode && new URLSearchParams(location.search).get('delivery_period') === 'morning';
