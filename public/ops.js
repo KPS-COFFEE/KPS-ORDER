@@ -1542,6 +1542,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     if(conversationHome?.isConnected)conversationHome.replaceWith(root);
     else root.remove();
     conversationHome=null;
+    root.hidden=true;
     state.selectedConversation=null;
     conversationVersion++;
     root.closest('.chat-layout')?.classList.add('inbox-only');
@@ -1550,6 +1551,7 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
     let root=$('#chat-detail');
     if(!root){modal(tr('المحادثة والمتابعة','Conversation and follow-up'),'<section class="panel" id="chat-detail"></section>');$('#modal').classList.add('conversation-dialog');return;}
     if(root.closest('#modal'))return;
+    root.hidden=false;
     const marker=document.createElement('span');marker.hidden=true;root.before(marker);
     modal(tr('المحادثة والمتابعة','Conversation and follow-up'),'');
     conversationHome=marker;

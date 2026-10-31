@@ -195,6 +195,11 @@ def test_workspace_actions_scope_chat_and_morning_guard(static_customer,lang,wid
         assert not errors,errors
         Path('test-results').mkdir(exist_ok=True)
         page.screenshot(path=f'test-results/customer-entry-delivery-dashboard-{lang}-{width}.png',full_page=True)
+        # Conversation is now an explicit closable window. Close it before
+        # interacting with controls behind its modal backdrop.
+        page.locator('#modal-close').click()
+        expect(page.locator('#modal')).not_to_be_visible()
+        expect(page.locator('#dispatch-panel-messages #chat-detail')).not_to_be_visible()
         # Personal controls must not perform operational writes or alter scope.
         before_writes=len(writes)
         summary_toggle=page.locator('.dispatch-personal-controls button[aria-controls="dispatch-summary-all"]')

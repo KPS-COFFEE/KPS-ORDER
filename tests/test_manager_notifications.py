@@ -242,3 +242,41 @@ def test_actual_conversation_scope_revocation_cancels_waiting_email(ops,monkeypa
     assert email_delivery.dispatch_once()['attempted']==0
     with db.tx() as c:
         assert c.execute('SELECT status FROM email_outbox WHERE id=%s',(mail['id'],)).fetchone()['status']=='cancelled'
+
+
+@pytest.mark.postgres
+def test_private_notification_state_survives_restore_and_is_absent_from_business_export(ops,monkeypatch,tmp_path):
+    import os
+    from uuid import uuid4
+    import psycopg
+    from psycopg import sql
+    from app import db,exports
+    actor,_,_,_=ops
+    monkeypatch.setenv('PUBLIC_BASE_URL','http://testserver')
+    monkeypatch.setattr(email_delivery,'configuration',lambda:{'configured':True})
+    monkeypatch.setattr(email_delivery,'_key',lambda:b'k'*32)
+    item=notices.event('action','synthetic-order','intervention:one')
+    monkeypatch.setattr(notices,'current_events',lambda *_:{item['event_key']:item})
+    with db.tx() as c:
+        c.execute("INSERT INTO manager_notification_subscriptions(id,user_id,brand_id,recipient_email) VALUES('archive-sub','ops-manager','ops-brand','manager@example.com')")
+    assert notices.process_once()['queued']==1
+    with db.tx() as c:
+        c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        raw,manifest=exports.build_archive(c,full=True)
+        business,business_manifest=exports.build_archive(c,brand_id='ops-brand')
+    assert manifest['counts']['manager_notification_subscriptions']==1
+    assert manifest['counts']['manager_email_notifications']==1
+    assert 'manager_notification_subscriptions' not in business_manifest['counts']
+    assert 'manager_email_notifications' not in business_manifest['counts']
+    target='kps_restore_'+uuid4().hex
+    base=os.environ['TEST_DATABASE_URL']
+    try:
+        result=exports.restore_archive(raw,target_url=base,target_schema=target,asset_directory=tmp_path/'assets')
+        assert result['verified'] and result['counts']==manifest['counts']
+        with psycopg.connect(base) as c:
+            c.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(target)))
+            assert c.execute('SELECT recipient_email FROM manager_notification_subscriptions').fetchone()==('manager@example.com',)
+            assert c.execute('SELECT count(*) FROM manager_email_notifications WHERE email_outbox_id IS NOT NULL').fetchone()==(1,)
+    finally:
+        with psycopg.connect(base,autocommit=True) as c:
+            c.execute(sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(sql.Identifier(target)))
