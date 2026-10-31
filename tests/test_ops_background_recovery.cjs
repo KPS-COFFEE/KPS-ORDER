@@ -9,7 +9,7 @@ function setup(){
   const ownerDashboardCalls=[];const ownerDashboardController={pause(){ownerDashboardCalls.push('pause');},refresh:async()=>{ownerDashboardCalls.push('refresh');return true;},reset(){ownerDashboardCalls.push('reset');}};
   const events={};const state={user:{id:'driver-1',role:'driver',brand_id:'kps',branch_ids:['b1'],effective_permissions:['tasks_view']},page:'tasks',busy:new Set()};
   const context={state,ownerDashboardController,window:{scrollX:0,scrollY:240,scrollTo(x,y){this.scrollX=x;this.scrollY=y;}},document:{documentElement:{hasAttribute(){return false;}},body:{classList:{toggle(){}}},addEventListener(name,cb){events[name]=cb;}},$:(selector)=>nodes[selector],trialMode:false,trackingController:null,navigation(){},driverLocation:{refresh(){}},hideUnavailableActions(){},tr:(ar,en)=>en,esc:String,notice:String,filterForm:()=>'',dispatchWorkspaceStatus:()=>false,setStatus(message,error){context.status={message,error};},Promise,JSON,Error,console};
-  const names=['ownerDashboard','interventionInbox','employeeTickets','recovery','tracking','timing','fleet','accounting','support','printers','dashboard','orders','customers','tasks','shifts','custody','chat','reports','drivers','admin','maintenance','restricted'];
+  const names=['staffCatalog','ownerDashboard','interventionInbox','employeeTickets','recovery','tracking','timing','fleet','accounting','support','printers','dashboard','orders','customers','tasks','shifts','custody','chat','reports','drivers','admin','maintenance','restricted'];
   for(const name of names)context[name]=async()=>{nodes['#content'].innerHTML=name;};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  let activePageLoad=null'),source.indexOf('  function filterForm()')),context);

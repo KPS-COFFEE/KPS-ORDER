@@ -1057,7 +1057,7 @@
     for(const [value,label] of cities)citySelect.append(new Option(label,value));
     citySelect.value=state.cityFilter;
     const select=$('branch-select');
-    select.replaceChildren(new Option(t("choose_a_branch"),''));
+    select.replaceChildren(new Option(state.lang==='en'?'General contact — no branch selected':'تواصل عام — بدون تحديد فرع',''));
     for(const b of state.branches){
       if(state.entryEnabled&&state.service==='delivery'&&(!state.location||state.nearest.pending||!state.nearest.branches.some(row=>row.id===b.id)))continue;
       // An existing choice remains visible when the city filter changes.
@@ -1543,12 +1543,13 @@
     state.conversations.forEach((conversation)=>{const card=node('article','order-card');const label=conversation.reference|| (conversation.order_id?t("order_conversation_0",{"0":()=>(conversationOrderLabel(conversation))}):t("conversation_without_an_order"));card.append(node('h3','',label),node('p','small muted',`${conversation.branch_name||state.branches.find((b)=>b.id===conversation.branch_id)?.name||t("relevant_branch")} · ${serviceName(conversation.service||conversation.context_service||'')}`));const summary=node('div','row wrap');summary.append(node('span','pill',({open:t("open"),in_progress:t("processing"),resolved:t("resolved")}[conversation.status]||t("open"))));if(conversation.unread_count>0)summary.append(node('span','pill warning',t("0_new_messages",{"0":()=>(number.format(conversation.unread_count))})));card.append(summary);const button=node('button','button secondary',t("open_conversation"));button.type='button';button.dataset.conversationId=conversation.id;button.addEventListener('click',()=>showConversation(conversation));card.append(button);list.append(card);});
     if(state.nextConversationOffset!==null){const more=node('button','button secondary full',t("load_older_conversations"));more.type='button';more.addEventListener('click',()=>busy(more,async()=>{try{const result=await api(`/api/conversations?offset=${state.nextConversationOffset}`);const rows=result.conversations||[];state.conversations.push(...rows.filter((row)=>!state.conversations.some((entry)=>entry.id===row.id)));state.nextConversationOffset=rows.length===50?state.nextConversationOffset+50:null;renderContacts();}catch(error){showError('contacts-error',errorMessage(error));}}));list.append(more);}
   }
-  function updateContactContext() { $('contact-details').required=$('contact-category').value==='other';const linked=Boolean($('contact-order').value)||['privacy','refund'].includes($('contact-category').value);$('contact-context-fields').hidden=linked;$('contact-branch').required=!linked;$('contact-service').required=!linked; }
+  function updateContactContext() { $('contact-details').required=$('contact-category').value==='other';const linked=Boolean($('contact-order').value)||['privacy','refund'].includes($('contact-category').value);$('contact-context-fields').hidden=linked;$('contact-branch').required=!linked&&!['help','suggestion','complaint','other'].includes($('contact-category').value);$('contact-service').required=!linked; }
   async function startContact(event) {
     event.preventDefault();if(!requireCustomer(openContacts))return;
     const ownOrder=state.contactOrders.find((order)=>order.id===$('contact-order').value);
     const payload={...(ownOrder?{order_id:ownOrder.id}:{branch_id:$('contact-branch').value||null,service:$('contact-service').value}),category:$('contact-category').value,details:$('contact-details').value.trim()};
-    if(!ownOrder&&!payload.branch_id&&!['privacy','refund'].includes(payload.category)){showError('contacts-error',t("choose_a_branch_and_service_to_start_the_conversation"));return;}
+    if(!ownOrder&&!payload.branch_id&&['help','suggestion','complaint','other'].includes(payload.category))payload.general_contact=true;
+    if(!ownOrder&&!payload.branch_id&&!payload.general_contact&&!['privacy','refund'].includes(payload.category)){showError('contacts-error',t("choose_a_branch_and_service_to_start_the_conversation"));return;}
     await busy($('contact-start'),async()=>{try{const idem=stableKey('start-conversation',payload);const result=await api('/api/conversations',{method:'POST',data:payload,idempotency:idem.value});const conversation=result.conversation||result;if(!conversation.id)throw new Error(t("the_server_did_not_confirm_opening_the_conversation"));releaseKey(idem);try{sessionStorage.removeItem(contactDraftKey());}catch{}$('contact-details').value='';await showConversation({...conversation,order_no:ownOrder?.order_no||ownOrder?.number,service:ownOrder?.service||payload.service});}catch(error){showError('contacts-error',errorMessage(error));}});
   }
   async function showConversation(conversation) {
@@ -2018,6 +2019,7 @@
     $('account-branch').addEventListener('click',()=>{closeDialog('account-dialog');if(requestedBrandId==='enbishan')showEnbishanLocation();else $('service-title').scrollIntoView({behavior:prefersLessMotion()?'auto':'smooth'});$('branch-select').focus({preventScroll:true});});
 
     $('legal-contact-button').addEventListener('click',()=>openDialog('public-contact-dialog'));
+    $('quick-contact')?.addEventListener('click',openContacts);
     $('public-contact-support').addEventListener('click',()=>{closeDialog('public-contact-dialog');openContacts();});
     document.querySelectorAll('[data-kps-contact]').forEach(el=>el.hidden=requestedBrandId!=='kps');
     if(location.hash==='#contact')openDialog('public-contact-dialog');

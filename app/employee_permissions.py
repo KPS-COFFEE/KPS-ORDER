@@ -87,6 +87,7 @@ DEFINITIONS.append(('orders_route_preparation', 'اختيار فرع تجهيز 
 DEFINITIONS.append(('reports_supervise', 'عرض تقارير الشفتات المعتمدة ضمن الفروع المخولة', 'Supervise approved reports in assigned branches', 'reports', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'accounting_reports': {'delivery_manager'},
     'reports_supervise': {'delivery_manager'},
     'orders_view': {'admin'},
     'chat_view': {'admin'},
@@ -111,6 +112,7 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
+    'accounting_reports': {'methods':['GET'],'paths':['/api/accounting/options','/api/accounting/reports','/api/accounting/months','/api/accounting/months/{identifier}','/api/accounting/driver-settlements/{report_id}/print','/api/staff/catalog'],'scope':'explicit_owner_grant_read_only_current_brand_and_assigned_branches_no_review_receipt_refund_or_month_closure'},
     'orders_view': {'methods': ['GET'], 'paths': ['/api/orders', '/api/orders/{oid}', '/api/order-financial-cases/orders/{oid}/journey', '/api/fiscal/orders/{order_id}/documents', '/api/orders/{oid}/delivery-photos', '/api/delivery-photos/{aid}'], 'scope': 'explicit_admin_supervision_current_brand_and_assigned_branches_read_only_no_issuance_collection_refund_or_cancellation'},
     'chat_view': {'methods': ['GET', 'POST'], 'paths': ['/api/conversations', '/api/conversations/{cid}/messages', '/api/chat-attachments/{aid}', '/api/conversations/{cid}/read'], 'scope': 'explicit_admin_supervision_current_brand_and_assigned_branches_read_and_own_read_marker_only_no_reply_transfer_claim_or_resolve'},
     'orders_cancel_collected': {'methods': ['POST'], 'paths': ['/api/order-interventions/orders/{oid}/{rid}/decision', '/api/order-financial-cases/orders/{oid}/cancel', '/api/orders/{oid}/preparation', '/api/tasks/{tid}/transition'], 'scope': 'explicit_owner_grant_rechecked_from_live_identity_before_any_ever_collected_cancellation_existing_resource_and_approval_guards_no_refund_or_ledger_override'},
@@ -219,14 +221,14 @@ ROUTES = {
         ('chat_reply', ('create_conversation', 'send', 'upload')),
         ('chat_manage', ('transfer', 'claim', 'status'))
     ) for name in names},
-    'order_support': {'tickets': 'support_manage', 'create_ticket': 'support_manage',
+    'order_support': {'decide_evidence_retention':'orders_view','tickets': 'support_manage', 'create_ticket': 'support_manage',
                       'update_ticket': 'support_manage', 'daily': 'support_manage',
                       'upload_photo': 'task_photos', 'photos': 'orders_view', 'photo': 'orders_view',
                       'read_evidence_observation':'orders_view'},
     'auth': {'staff_list': 'drivers_view', 'invite_staff': 'drivers_manage',
              'update_staff': 'drivers_manage', 'resend_invitation': 'drivers_manage',
              'revoke_invitation': 'drivers_manage', 'register_driver_vehicle': 'vehicle_register'},
-    'catalog': {'nearest_branches': 'delivery_assign',
+    'catalog': {'staff_catalog': ('branch_availability','products_manage','accounting_reports'), 'nearest_branches': 'delivery_assign',
                 'branch_product_availability': ('branch_availability', 'products_manage')},
     'maintenance': {name: {'delivery_manager':'support_manage','driver': 'vehicle_faults_report', 'admin': 'vehicle_maintenance_manage'}
                     for name in ('options', 'list_reports', 'report_detail', 'create_report', 'update_report')},

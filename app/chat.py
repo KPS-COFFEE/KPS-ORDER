@@ -86,10 +86,12 @@ class CreateConversation(BaseModel):
     service:Literal['delivery','pickup','car']|None=None
     category:Literal['help','suggestion','complaint','change','refund','delivery_problem','privacy','other']='help'
     details:str=Field('',max_length=4000)
+    general_contact:bool=False
 
 @router.post('/conversations')
 def create_conversation(body:CreateConversation,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner','customer','admin','delivery_manager','delivery_staff','branch_manager')
+    if body.general_contact and body.order_id is not None:fail(422,'التواصل العام لا يرتبط بطلب')
     if body.order_id is None:roles(user,'customer')
     if body.category=='other' and not body.details.strip():fail(422,'اكتب التفاصيل عند اختيار أخرى')
     with db.tx() as c:
@@ -118,7 +120,8 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 # Customer/guest ownership comes from the revocable server session;
                 # staff/owner accounts cannot fabricate a customer's context.
                 roles(user,'customer')
-                if body.category not in ('privacy','refund') and (body.branch_id is None or body.service is None):fail(422,'حدد نوع الخدمة والفرع لبدء المحادثة')
+                if body.general_contact and (body.branch_id or body.category not in ('help','suggestion','complaint','other')):fail(422,'سياق التواصل العام غير صالح')
+                if not body.general_contact and body.category not in ('privacy','refund') and (body.branch_id is None or body.service is None):fail(422,'حدد نوع الخدمة والفرع لبدء المحادثة')
                 branch=c.execute('SELECT id,brand_id FROM branches WHERE id=%s AND brand_id=%s',(body.branch_id,user['brand_id'])).fetchone()
                 if body.branch_id and not branch:fail(404,'الفرع غير موجود')
                 order_id=None;branch_id=branch['id'] if branch else None;customer_id=user['id'];brand_id=user['brand_id'];service=body.service or 'pickup'
@@ -128,7 +131,7 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 if not allowed(user,existing,c):fail(404,'المحادثة غير متاحة')
                 return {'conversation':existing}
             if not db.rate_limit(c,'contact-create:'+user['id'],10,600):raise db.error(429,'CONTACT_RATE_LIMIT','رسائل كثيرة. حاول بعد قليل.')
-            route=route_for(body.category,service,body.details)
+            route='review' if body.general_contact else route_for(body.category,service,body.details)
             row={'customer_id':customer_id,'brand_id':brand_id,'branch_id':branch_id,'route':route,'order_id':order_id,
                  'context_service':service,'category':body.category,'created_at':c.execute('SELECT now() AS n').fetchone()['n']}
             if not allowed(user,row,c):fail(403,'المحادثة مخصصة لفريق المتابعة المختص')
@@ -137,7 +140,7 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
                 c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text) VALUES(%s,%s,%s,%s)',(uid(),cid,user['id'],body.details.strip()))
             db.audit(c,user['id'],'chat.create','conversation',cid,{'order_id':order_id,'service':service,'branch_id':branch_id,'route':route})
             return {'conversation':c.execute('SELECT * FROM conversations WHERE id=%s',(cid,)).fetchone()}
-        result = mutate(c,user,request,'chat.create',body.model_dump(),perform)
+        result = mutate(c,user,request,'chat.create',body.model_dump() if body.general_contact else body.model_dump(exclude={'general_contact'}),perform)
         if user['role'] == 'customer':
             result = dict(result, conversation=customer_conversation_view(c, result['conversation']))
         return result

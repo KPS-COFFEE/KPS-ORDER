@@ -923,11 +923,11 @@ def branch_product_availability(branch_id: str, product_id: str, body: Availabil
                                 idempotency_key: str | None = Header(default=None)):
     if user['role']!='owner' and not (auth.has_permission(user,'branch_availability') or auth.has_permission(user,'products_manage')):
         raise db.error(403, 'ROLE_FORBIDDEN', 'يلزم تفويض إدارة الأصناف.')
-    if user['role'] != 'owner' and branch_id not in user['branch_ids']:
+    if (user['role'] != 'owner' or user.get('home_brand_id')) and branch_id not in user['branch_ids']:
         raise db.error(404, 'BRANCH_NOT_FOUND', 'الفرع غير موجود ضمن صلاحياتك.')
     with db.tx() as conn:
         def perform():
-            branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s', (branch_id, user['brand_id'])).fetchone()
+            branch = conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s FOR UPDATE', (branch_id, user['brand_id'])).fetchone()
             product = conn.execute('SELECT * FROM products WHERE id=%s AND brand_id=%s FOR UPDATE', (product_id, user['brand_id'])).fetchone()
             if not branch or not product:
                 raise db.error(404, 'PRODUCT_NOT_FOUND', 'الصنف أو الفرع غير موجود.')
@@ -938,6 +938,13 @@ def branch_product_availability(branch_id: str, product_id: str, body: Availabil
             else:
                 blocked.add(branch_id)
             settings['unavailable_branch_ids'] = sorted(blocked)
+            branch_settings=dict(branch['settings'])
+            overrides=dict(branch_settings.get('product_availability') or {})
+            overrides.pop(product_id,None)
+            branch_settings['product_availability']=overrides
+            if branch_settings!=branch['settings']:
+                conn.execute('UPDATE branches SET settings=%s WHERE id=%s',(db.json(branch_settings),branch_id))
+                branch['settings']=branch_settings
             conn.execute('UPDATE products SET settings=%s,updated_at=now() WHERE id=%s', (db.json(settings), product_id))
             db.audit(conn, user['id'], 'product.branch_availability', 'product', product_id,
                      {'branch_id': branch_id, 'available': body.available, 'reason': body.reason})
@@ -945,6 +952,30 @@ def branch_product_availability(branch_id: str, product_id: str, body: Availabil
             ok, reason = product_availability(dict(product, settings=settings), branch)
             return {'product_id': product_id, 'branch_id': branch_id, 'available': ok, 'reason': reason}
         return db.idempotent(conn, user['id'], idempotency_key, 'branch.product_availability:' + branch_id + ':' + product_id, body.model_dump(), perform)
+
+
+@router.get('/staff/catalog')
+def staff_catalog(branch_id:str,user=Depends(auth.current_user)):
+    permissions={'branch_availability','products_manage','accounting_reports'}
+    if user['role']!='owner' and not any(auth.has_permission(user,p) for p in permissions):
+        raise db.error(403,'ROLE_FORBIDDEN','قائمة الأصناف غير متاحة لحسابك.')
+    if user['role']!='owner' and branch_id not in user.get('branch_ids',[]):
+        raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير موجود ضمن صلاحياتك.')
+    with db.tx() as conn:
+        branch=conn.execute('SELECT * FROM branches WHERE id=%s AND brand_id=%s',(branch_id,user['brand_id'])).fetchone()
+        if not branch or (user.get('home_brand_id') and branch_id not in user.get('branch_ids',[])):
+            raise db.error(404,'BRANCH_NOT_FOUND','الفرع غير متاح.')
+        products=[]
+        for product in conn.execute('SELECT * FROM products WHERE brand_id=%s ORDER BY category,name,id',(user['brand_id'],)).fetchall():
+            available,reason=product_availability(product,branch)
+            settings=product['settings']
+            products.append({k:product[k] for k in ('id','name','category','price_halalas')} | {
+                'available':available,'reason':reason,'source_verified':source_approved(product),
+                'lifecycle':settings.get('lifecycle','active'),
+                'stock_enabled':branch_id not in (settings.get('unavailable_branch_ids') or []) and (branch['settings'].get('product_availability') or {}).get(product['id']) is not False,
+                'enabled':settings.get('enabled',True),'purchasable':settings.get('purchasable',True)})
+        return {'products':products,'branch_id':branch_id,
+                'can_manage':user['role']=='owner' or any(auth.has_permission(user,p) for p in ('branch_availability','products_manage'))}
 
 
 MAP_HOSTS = {'www.google.com', 'google.com', 'maps.google.com', 'maps.app.goo.gl', 'goo.gl'}

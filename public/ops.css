@@ -701,3 +701,8 @@ html[data-work-access-pending] dialog:not(#work-access-recovery) { visibility: h
 @media(max-width:400px){#work-access-recovery{padding:16px}.work-access-recovery-card{padding:22px 18px}.work-access-recovery h1{font-size:20px}}
 
 #work-access-recovery::backdrop{background:var(--bg,#f7f5f1)}
+
+/* Keep long actions and every field readable without collapsing words on phones. */
+@media(max-width:650px){.table-wrap>table{min-width:780px}.table-wrap th,.table-wrap td{min-width:120px;word-break:normal;overflow-wrap:break-word}.table-wrap td:last-child{min-width:200px}.table-wrap button{white-space:normal;word-break:normal;overflow-wrap:break-word;min-width:150px;max-width:100%;line-height:1.6}.evidence-review .support-photo{max-width:100%;height:auto}.product-admin-grid{grid-template-columns:minmax(0,1fr)}}
+#staff-catalog-items .product-admin-card{min-width:0;overflow-wrap:anywhere}#staff-catalog-items button{max-width:100%;white-space:normal;min-height:44px}
+.evidence-review img{display:block;width:100%;max-width:360px;height:auto;border-radius:10px}.evidence-review form{display:grid;gap:12px}.evidence-review form button{max-width:100%;white-space:normal;min-height:44px}

@@ -1,0 +1,71 @@
+"""Real HTTP browser acceptance; no production data, messages, or mocked responses."""
+import os
+from datetime import datetime,timedelta
+from zoneinfo import ZoneInfo
+import pytest
+from app import db
+from test_browser import live_app,chromium_browser,synthetic_mail,_staff,_context,_owner_login,_customer_session
+from test_accounting_statements_browser import _documented_snapshot
+
+pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='1',reason='Explicit browser acceptance')]
+
+
+@pytest.mark.parametrize('width',[390,1440])
+def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromium_browser,width):
+    from playwright.sync_api import expect
+    accountant=_staff('admin');manager=_staff('delivery_manager');drivers=[_staff('driver'),_staff('driver')]
+    now=datetime.now(ZoneInfo('Asia/Riyadh'));day=(now-timedelta(days=1)).date().isoformat()
+    with db.tx() as c:
+        c.execute("UPDATE users SET permissions='[\"accounting_reports\"]' WHERE id=%s",(accountant['id'],))
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,delivery_operational_date) VALUES('clarity-manager','manager',%s,'kps','[\"kps-branch-1\"]','closed',%s,%s,%s)",(manager['id'],now-timedelta(hours=4),now,day))
+        for n,driver in enumerate(drivers):
+            sid='clarity-driver-'+str(n)
+            c.execute("UPDATE users SET display_name=%s WHERE id=%s",('TEST DRIVER '+str(n),driver['id']))
+            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,manager_shift_id) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]','closed',%s,%s,'clarity-manager')",(sid,driver['id'],now-timedelta(hours=3),now))
+            c.execute("INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES(%s,%s,'driver','kps','[\"kps-branch-1\"]',%s,%s)",('clarity-report-'+str(n),sid,driver['id'],db.json(_documented_snapshot(driver['id']))))
+    context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,accountant)
+    try:
+        page.set_viewport_size({'width':width,'height':950});page.goto(live_app+'/ops')
+        page.locator('[data-page=accounting]').click();page.locator('[data-ac=reports]').click()
+        page.locator('[name=group]').select_option('driver_statement')
+        page.locator('[name=start]').fill(day);page.locator('[name=end]').fill(day)
+        page.locator('[name=driver_ids]').select_option([d['id'] for d in drivers])
+        page.locator('#ac-filters button[type=submit]').click()
+        expect(page.locator('[data-statement-driver]')).to_have_count(2)
+        expect(page.locator('.ac-driver-statement tbody tr')).to_have_count(2)
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.screenshot(path=f'test-artifacts/clarity-driver-statement-{width}.png',full_page=True)
+        page.locator('[name=driver_ids]').select_option(drivers[0]['id']);page.locator('#ac-filters button[type=submit]').click()
+        expect(page.locator('[data-statement-driver]')).to_have_count(1)
+        page.locator('[name=variance]').select_option('shortage');page.locator('#ac-filters button[type=submit]').click()
+        expect(page.locator('[data-statement-driver]')).to_have_count(0)
+        page.locator('[data-page=catalog]').click()
+        expect(page.locator('#staff-catalog-items .product-admin-card').first).to_be_visible()
+        page.screenshot(path=f'test-artifacts/clarity-branch-catalog-{width}.png',full_page=True)
+        assert page.locator('[data-stock]').count()==0
+        page.locator('#staff-catalog-filters [name=search]').fill('THIS ITEM DOES NOT EXIST')
+        expect(page.locator('#staff-catalog-items .product-admin-card')).to_have_count(0)
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        assert not errors
+    finally:context.close()
+
+
+def test_customer_general_complaint_without_selecting_branch(live_app,chromium_browser):
+    from playwright.sync_api import expect
+    customer,token,csrf=_customer_session();context,page,errors=_context(chromium_browser,live_app,token,csrf)
+    try:
+        page.set_viewport_size({'width':390,'height':950});page.goto(live_app+'/')
+        page.locator('#quick-contact').click()
+        expect(page.locator('#contacts-dialog')).to_be_visible()
+        page.locator('#contact-order').select_option('');page.locator('#contact-branch').select_option('')
+        page.locator('#contact-category').select_option('complaint')
+        page.locator('#contact-details').fill('TEST synthetic complaint without branch or order')
+        page.locator('#contact-start').click()
+        expect(page.locator('#chat-dialog')).to_be_visible()
+        expect(page.locator('#chat-title')).to_contain_text('CS-')
+        with db.tx() as c:
+            row=c.execute('SELECT * FROM conversations WHERE customer_id=%s ORDER BY created_at DESC LIMIT 1',(customer,)).fetchone()
+            assert row['category']=='complaint' and row['branch_id'] is None and row['route']=='review'
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        assert not errors
+    finally:context.close()
