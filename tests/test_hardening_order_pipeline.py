@@ -134,6 +134,7 @@ def test_atomic_checkout_response_matches_existing_projection_and_single_write(p
         expected = json.loads(json.dumps({'order': orders.customer_order_view(row)}, ensure_ascii=False, default=str))
         saved = conn.execute('SELECT response FROM idempotency_keys WHERE user_id=%s AND key=%s', (user_id, key)).fetchone()
     assert expected == first.json() == saved['response']
+    assert not {'performance_snapshot', 'preparation_route_id', 'preparation_branch'} & first.json()['order'].keys()
     assert client.post('/api/orders', json=body, headers={'Idempotency-Key': key}).json() == expected
     assert len(writes) == 1
     assert effects(user_id) == {'counter': 1, 'orders': 1, 'events': 1, 'audits': 1, 'keys': 1}

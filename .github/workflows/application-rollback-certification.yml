@@ -25,13 +25,13 @@ jobs:
       postgres:
         image: postgres:18.6
         env:
-          POSTGRES_DB: test_rollback
+          POSTGRES_DB: test_enbishan_rollback
           POSTGRES_USER: rollback_test
           POSTGRES_PASSWORD: isolated-synthetic-only
         ports: ['5432:5432']
-        options: --health-cmd "pg_isready -U rollback_test -d test_rollback" --health-interval 5s --health-timeout 5s --health-retries 12
+        options: --health-cmd "pg_isready -U rollback_test -d test_enbishan_rollback" --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      TEST_DATABASE_URL: postgresql://rollback_test:isolated-synthetic-only@127.0.0.1:5432/test_rollback
+      TEST_DATABASE_URL: postgresql://rollback_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_rollback
       APP_ENV: testing
       OTP_PROVIDER: disabled
       EMAIL_PROVIDER: disabled
@@ -99,6 +99,7 @@ jobs:
           docker run --rm --network host --entrypoint python \
             --mount "type=bind,src=$RUNNER_TEMP/rollback-test-tools,dst=/test-tools,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/prior-contract-tests,dst=/app/tests,readonly" \
+            --mount "type=bind,src=$ROLLBACK_BASELINE_DIR/docs/enbishan/menu-review/owner-final-20261022.json,dst=/app/docs/enbishan/menu-review/owner-final-20261022.json,readonly" \
             --mount "type=bind,src=$PWD/evidence,dst=/evidence" \
             --env PYTHONPATH=/test-tools:/app --env TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             --env APP_ENV=testing --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \
@@ -117,6 +118,7 @@ jobs:
             tests/test_order_financial_treatments.py tests/test_manual_bank_matching.py \
             tests/test_tracking_ingest.py tests/test_collection_tender_corrections.py tests/test_driver_duty.py \
             tests/test_order_interventions.py tests/test_order_financial_cases.py \
+            tests/test_hardening_order_pipeline.py::test_atomic_checkout_response_matches_existing_projection_and_single_write \
             tests/test_owner_test_void.py::test_stale_owner_cannot_void_paid_order_or_replay_after_authority_revocation[demoted-candidate] \
             tests/test_owner_test_void.py::test_stale_owner_cannot_void_paid_order_or_replay_after_authority_revocation[disabled-candidate] \
             tests/test_fiscal.py::test_completed_driver_sale_automatically_issues_once_and_refunds \

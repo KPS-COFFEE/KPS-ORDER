@@ -199,7 +199,7 @@ def test_grant_revocation_version_and_replay_are_checked(routing):
 ])
 def test_mutation_and_replay_recheck_live_grants_with_stale_dependency(routing, command, change, expected_status):
     r = routing
-    first, second = r['order'](), r['order']()
+    first, second = r['order'](), r['order'](customer_phone='+966500000002')
     if command == 'prepare':
         r['choose'](first); r['choose'](second)
         who, permission = 'target', 'orders_prepare'

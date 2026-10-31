@@ -36,7 +36,7 @@ if identity.exists():
     out['source_identity'] = json.loads(identity.read_text())
 
 db.migrate()
-with TestClient(app, base_url='http://testserver') as client:
+with TestClient(app, base_url='http://testserver', headers={'Origin': 'http://testserver'}) as client:
     def actor(name):
         with db.tx() as conn:
             user = conn.execute('SELECT * FROM users WHERE id=%s', ('ops-' + name,)).fetchone()

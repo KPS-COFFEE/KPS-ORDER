@@ -383,7 +383,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                     'created_audit AS (INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details) '
                     "SELECT %s,%s,'order.created','order',id,%s FROM created_order RETURNING id), "
                     + gift_cte + "operation_response AS (SELECT jsonb_build_object('order',"
-                    "(to_jsonb(o)-'performance_snapshot') || jsonb_build_object("
+                    "(to_jsonb(o)-'performance_snapshot'-'preparation_route_id') || jsonb_build_object("
                     "'branch_id',%s::text,'customer',%s::jsonb,"
                     "'snapshot',jsonb_set(%s::jsonb,'{order_reference}',o.snapshot->'order_reference'),"
                     "'created_at'," + _response_timestamp_sql('o.created_at') + ","

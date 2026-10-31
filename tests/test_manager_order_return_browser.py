@@ -87,9 +87,16 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
         heading = page.locator('#page-heading h1').inner_text()
         # Give both real views enough document height to check restored position.
         page.add_style_tag(content='body::after{content:"";display:block;height:1800px}' )
-        page.evaluate('window.scrollTo(0, 280)')
-        page.wait_for_function('Math.abs(window.scrollY-280)<=1')
-        customer_order.evaluate('(button)=>button.click()')
+        # CI traced a legitimate initial alert-height adjustment 280 -> 225
+        # between separate browser commands, before the form opened. Set the
+        # intended origin and click in one task so this tests save/return only.
+        opened_y = customer_order.evaluate('''(button)=>{
+            window.scrollTo(0, 280);
+            const originY = window.scrollY;
+            button.click();
+            return originY;
+        }''')
+        assert opened_y == pytest.approx(280, abs=1)
         form = page.locator('#staff-order-form')
         expect(form).to_be_visible()
         form.locator('input[name=phone]').fill('0531041449')

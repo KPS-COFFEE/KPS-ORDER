@@ -51,8 +51,8 @@ def immutable_source(conn, oid):
     row = conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
     return {'order': {key: row[key] for key in SOURCE_FIELDS},
             'routes': conn.execute('SELECT * FROM order_preparation_routes WHERE order_id=%s ORDER BY id', (oid,)).fetchall(),
-            'money': {table: conn.execute('SELECT * FROM ' + table + ' WHERE order_id=%s ORDER BY id', (oid,)).fetchall()
-                      for table in ('collections', 'refunds', 'fiscal_documents')}}
+            'money': {table: conn.execute('SELECT * FROM ' + table + ' WHERE order_id=%s ORDER BY ' + key, (oid,)).fetchall()
+                      for table, key in (('collections', 'id'), ('refunds', 'id'), ('fiscal_documents', 'number'))}}
 
 
 @pytest.mark.skipif(not (os.environ.get('ROLLBACK_COMPAT_DIR') or os.environ.get('ROLLBACK_COMPAT_IMAGE')),
