@@ -15,16 +15,16 @@ test('owner dashboard forwards the selected invoice brand to detail opening',asy
   await ctx.ownerDashboard();await configuration.onOrder('enbishan-invoice','enbishan');
   assert.deepEqual(opened,[{id:'enbishan-invoice',brand:'enbishan'}]);
 });
-test('order and driver-task detail reads use the same explicit brand',async()=>{
+for(const central of [false,true])test(`order and task detail reads preserve ${central?'central brand routing':'ordinary single-brand authentication'}`,async()=>{
   const requests=[];let title;
   const order={id:'invoice',brand_id:'enbishan',service:'delivery',items:[],customer:{},timings:{}};
-  const ctx={state:{user:{role:'owner'},orders:[]},
+  const ctx={state:{user:{role:'owner',...(central?{central_operations:{brands:[]}}:{})},orders:[]},
     api:async(path,options)=>{requests.push({path,brand:options?.brand});return path.startsWith('/api/orders/')?{order,events:[]}:{tasks:[]};},
     normalizeOrder:value=>value,modal:(value)=>{title=value;},tr:(_a,en)=>en,esc:String,
     orderCard:()=>'',morningDispatchDetails:()=>'',dataItem:()=>'',duration:()=>'',
     isManager:()=>false,can:()=>false,orderHistoryTimeline:()=>''};
   vm.createContext(ctx);vm.runInContext(extract('  async function orderDetail(','  async function nearestBranches'),ctx);
   await ctx.orderDetail('invoice','enbishan');
-  assert.deepEqual(requests,[{path:'/api/orders/invoice',brand:'enbishan'},{path:'/api/tasks?order_id=invoice',brand:'enbishan'}]);
+  assert.deepEqual(requests,[{path:'/api/orders/invoice',brand:central?'enbishan':undefined},{path:'/api/tasks?order_id=invoice',brand:central?'enbishan':undefined}]);
   assert.equal(title,'Order details');assert.equal(ctx.state.orders[0].brand_id,'enbishan');
 });
