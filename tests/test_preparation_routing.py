@@ -413,7 +413,8 @@ def test_preparation_history_is_preserved_and_exported_with_source_brand(routing
     from app import exports
     r = routing; oid = r['order'](); r['choose'](oid)
     assert 'order_preparation_routes' in db.PRESERVED_TABLES
-    assert exports.TABLES[-1] == 'order_preparation_routes'
+    assert 'order_preparation_routes' in exports.TABLES
+    assert exports.TABLES.index('orders') < exports.TABLES.index('order_preparation_routes')
     clause, values = exports._scoped_sql('order_preparation_routes', 'ops-brand')
     with db.tx() as conn:
         rows = conn.execute('SELECT * FROM order_preparation_routes WHERE ' + clause, values).fetchall()

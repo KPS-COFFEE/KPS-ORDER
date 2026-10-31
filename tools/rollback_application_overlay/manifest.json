@@ -14,7 +14,8 @@
     "Actual routed print destination, driver pickup projection, local route stops, assignment eligibility and physical departure with original acceptance times",
     "Explicit preparation-route export and preservation registry with scoped restore relationship verification",
     "Per-route transaction-local compatibility checks protecting mixed-version operational writes",
-    "Database amendment invariant rejects old-worker basket revisions while preparation is assigned to another branch, including route-aware transactions; return to source preparation preserves the existing amendment path"
+    "Database amendment invariant rejects old-worker basket revisions while preparation is assigned to another branch, including route-aware transactions; return to source preparation preserves the existing amendment path",
+    "Private manager notification subscriptions and outbox receipts remain exportable and preserved during fallback; prior application does not send manager notices"
   ],
   "fallbacks": [
     "b528 prior operations UI and original order search/listing remain distinct from the candidate",
@@ -27,13 +28,13 @@
     "app/branch_printing.py": "822313d48163406b561a2a149843b12c5bf69f9e535a251cbc91b180f6f29452",
     "app/central_operations.py": "f812c632c7bc82667b89a065135ddc4a87498f37a143a72f79fcc47cd1737969",
     "app/collected_order_authority.py": "94b873b3f13ca247cf3255294913fe9a011c8e10a36b4c060a01010991887579",
-    "app/db.py": "e0f42097b02cbb1bd49adef197834eaa8dabc23ce09ca7b8854f8412fd425f6d",
+    "app/db.py": "ba0c5606ece7fcdc86ed7b6bc6103a478f876120aca6fdd0ccd55d6e29886726",
     "app/dispatch_impact.py": "642fe65518441cb3452526bb380fb25da2fe12c517d1cc6c3819dfb9f2e47d56",
     "app/dispatch_map.py": "33d033492c0e690a3fd23f46a2625dafe056a15a7d3fe854dea575ce58d98a3e",
     "app/driver_auto_return.py": "bda17455edf76783f9e22b91c2c4934c33e5470f85b570edd0b02a98ab720032",
     "app/driver_work_hours.py": "1bd3116c194dd0fa15f8fa1db9de18e0c6532a50ad495dc068a6f24c57ba4980",
     "app/employee_permissions.py": "c432ee41d13129743d2914a3b63ab98098706ceab68ffd0c8d250115be05ccde",
-    "app/exports.py": "1bbba6745cc08ec9015617a035e0329f5d3551533bbf0c6babff3fcd335e428d",
+    "app/exports.py": "1acb9b5e1a8609b6975cb147be54839dcae6aa60d0c32529561b94c256ec733d",
     "app/main.py": "a7c0095075afec3a436af2a8aa955b834253b140d389f0e4235964a85c5335e1",
     "app/operations.py": "72bb49f3f28574caf7a93e39d99224aa55c691e5d82dc0eb5d0d35479f6baeba",
     "app/order_amendments.py": "05ee99822e778f50b3d610082d0160a21a1f8a57f0ba727bbc9537c114d9dec0",
@@ -42,6 +43,7 @@
     "app/orders.py": "02fb5f3aa597a47dadf000730344018d1dfaab60e80aebc4b33e5abb83d9a799",
     "app/preparation_routing.py": "e9b7fd974b727b932d3722bfb4773e480240c5ca5c4a1448524e1299e5b4e745",
     "migrations/130_order_preparation_routing.sql": "7d2a5262bd6f432e97205ba473ba07e0da3264884b52b42303fb99d874dbbc0d",
+    "migrations/132_manager_notifications.sql": "dcdf9708f0ba7b3e360ff73f873b3130340b87e6ea8c7fa294d0ece59beda2cf",
     "public/assets/central-operations.js": "f6ac0bd9d463494c0ebaa9e4e8cdab508530c0af21ef0cb66841156108301454",
     "public/assets/preparation-routing.css": "6edf6c3293eb965a44aefb9371cf5df834574df13734aa009711999af82e2fd9",
     "public/assets/preparation-routing.js": "a377a799a1fcca94f45bafedea2d92aa224a5a65a10f0d608d9d4ccfa4d132fa",

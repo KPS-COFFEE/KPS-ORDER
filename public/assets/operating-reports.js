@@ -4,8 +4,8 @@
   window.KPSOperatingReports = {mount};
   const esc = x => String(x ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const amount = n => n == null ? '—' : new Intl.NumberFormat('ar-SA',{maximumFractionDigits:2}).format(n/100);
-  async function mount(host,{api,morning=false,initialDay='',managerShiftId='',allowDay=true,lockContext=false}) {
-    let report,day=initialDay,scope='shift',generation=0;
+  async function mount(host,{api,morning=false,initialDay='',managerShiftId='',allowDay=true,lockContext=false,initialScope='shift',brand=''}) {
+    let report,day=initialDay,scope=initialScope==='day'&&allowDay&&!morning?'day':'shift',generation=0;
     host.classList.add('operating-report');
     const query=()=>new URLSearchParams({...day?{day}:{},scope,...managerShiftId?{manager_shift_id:managerShiftId}:{}}).toString();
     const error=text=>{const el=host.querySelector('[role="alert"]');if(el)el.textContent=text;};
@@ -41,7 +41,7 @@
       const tab=printing?window.open('about:blank','_blank'):null;
       button.disabled=true;error('');
       try{
-        const headers={'X-KPS-Context':'work'};if(morning)headers['X-Delivery-Period']='morning';
+        const headers={'X-KPS-Context':'work'};if(brand)headers['X-Operations-Brand']=brand;if(morning)headers['X-Delivery-Period']='morning';
         const response=await fetch('/api/operating-reports/export/pdf?'+exportQuery,{credentials:'same-origin',cache:'no-store',headers});
         if(!response.ok){const data=await response.json();throw new Error(data.detail?.message||'تعذر تجهيز التقرير');}
         const blob=await response.blob(),file=new File([blob],exported.filename,{type:'application/pdf'});

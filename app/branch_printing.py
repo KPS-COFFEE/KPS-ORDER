@@ -145,12 +145,15 @@ def operational_devices(order_id: str, user=Depends(operators)):
         source=scope(conn,user,order['branch_id'])
         from .preparation_routing import pickup_branch_id
         preparation_id=pickup_branch_id(conn,order,user=user)
-        rows=conn.execute('SELECT d.id,d.branch_id,d.label,d.printer_name,d.paper_mm,b.city '
+        rows=conn.execute('SELECT d.id,d.branch_id,d.label,d.printer_name,d.paper_mm,b.city,b.settings '
                           'FROM branch_print_devices d JOIN branches b ON b.id=d.branch_id '
                           'WHERE d.brand_id=%s AND d.revoked_at IS NULL AND d.approved_at IS NOT NULL '
                           'AND d.token_hash IS NOT NULL ORDER BY d.created_at DESC',
                           (user['brand_id'],)).fetchall()
-        visible=[{k:v for k,v in row.items() if k!='city'} for row in rows
+        point=(order.get('customer') or {}).get('location')
+        visible=[dict({k:v for k,v in row.items() if k not in {'city','settings'}},
+                      distance_to_customer_meters=round(catalog.direct_distance(point,row['settings']['location']),1)
+                      if catalog.valid_location(point) and catalog.location_verified(row) else None) for row in rows
                  if can_access_branch(user, row['branch_id'])
                  and (preparation_id==order['branch_id'] or row['branch_id']==preparation_id)
                  and same_print_city(source,row)]

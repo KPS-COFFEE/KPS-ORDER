@@ -162,7 +162,7 @@ def session_context(request):
     if (path=='/api/auth/login' or path.startswith(('/api/identity/customer-message-routing','/api/identity/staff/','/api/identity/owners/',
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/central-operations','/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
-            '/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
+            '/api/branch-proximity','/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
             '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
             or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/customer-report','/docs/metrics'))):
         return 'work'

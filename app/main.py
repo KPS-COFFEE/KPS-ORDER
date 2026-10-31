@@ -56,6 +56,9 @@ async def lifespan(app):
                 background_tasks.append(asyncio.create_task(morning_dispatch.poll_loop(), name='morning-branch2-dispatch'))
             if email_delivery.configuration()['configured'] and os.getenv('EMAIL_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(email_delivery.poll_loop(), name='identity-email-outbox'))
+            if os.getenv('MANAGER_NOTIFICATION_WORKER_ENABLED','true').lower()=='true' and os.getenv('APP_ENV')!='testing':
+                from . import manager_notifications
+                background_tasks.append(asyncio.create_task(manager_notifications.poll_loop(),name='manager-notifications'))
             if os.getenv('REPORT_WORKER_ENABLED', 'true').lower() == 'true':
                 background_tasks.append(asyncio.create_task(report_notifications.poll_loop(), name='closure-report-worker'))
             from . import branch_payment_webhooks
@@ -155,6 +158,10 @@ from . import branch_payment_policy
 app.include_router(branch_payment_policy.router)
 from . import owner_dashboard
 app.include_router(owner_dashboard.router)
+from . import branch_proximity
+app.include_router(branch_proximity.router)
+from . import manager_notifications
+app.include_router(manager_notifications.router)
 # Components are separate files within this one service and share canonical tables.
 for name in ('dispatch_impact', 'operations', 'driver_support', 'smart_dispatch', 'driver_breaks', 'fuel_exceptions', 'driver_evidence', 'driver_float', 'chat', 'customer_reports', 'reporting', 'admin', 'exports', 'recovery', 'monitoring', 'performance', 'report_notifications', 'maintenance', 'branch_printing', 'invoice_profiles', 'fiscal', 'fiscal_issuance', 'order_support', 'accounting', 'fleet', 'driver_incentives', 'customer_profile', 'customer_legal', 'online_payments', 'order_amendments', 'order_requests', 'order_financial_cases', 'delivery_partial_returns', 'employee_tickets', 'channel_settlement', 'internal_documents', 'driver_closure', 'driver_duty', 'aggregate_driver_closure', 'aggregate_manager_closure', 'financial_clarifications', 'customer_crm', 'owner_audit', 'employee_ticket_workflow'):
     module = importlib.import_module('.' + name, __package__)

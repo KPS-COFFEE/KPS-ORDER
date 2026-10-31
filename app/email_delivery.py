@@ -139,6 +139,9 @@ def dispatch_once(limit=10):
                 authorized=bool(conn.execute("SELECT 1 FROM report_notifications n JOIN users u ON u.id=n.recipient_user_id JOIN brands b ON b.id=u.brand_id WHERE n.email_outbox_id=%s AND u.active AND b.active AND u.role='owner' AND u.brand_id=%s AND u.email_verified_at IS NOT NULL AND lower(btrim(u.email))=%s",(row['id'],row['brand_id'],row['recipient'])).fetchone())
             elif row['kind']=='operations_alert':
                 authorized=bool(conn.execute("SELECT 1 FROM recovery_alert_notifications n JOIN users u ON u.id=n.recipient_user_id JOIN recovery_alerts a ON a.id=n.alert_id JOIN brands b ON b.id=u.brand_id WHERE n.email_outbox_id=%s AND u.active AND b.active AND u.role='owner' AND u.brand_id=%s AND u.email_verified_at IS NOT NULL AND lower(btrim(u.email))=%s AND a.brand_id=u.brand_id",(row['id'],row['brand_id'],row['recipient'])).fetchone())
+            elif row['kind']=='manager_notification':
+                from .manager_notifications import authorized as manager_authorized
+                authorized=manager_authorized(conn,row)
             if not authorized:
                 conn.execute("UPDATE email_outbox SET status='cancelled',updated_at=now() WHERE id=%s",(row['id'],))
                 continue
