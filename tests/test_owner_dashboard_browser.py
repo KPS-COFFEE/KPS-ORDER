@@ -316,6 +316,7 @@ def test_actual_ops_lands_owners_on_dashboard_and_rejects_other_roles(brand):
         page.evaluate('''()=>{window.setInterval=()=>0;
             window.KPSDriverLocation={init:()=>({refresh:async()=>{},reset:()=>{}})};
             window.KPSDriverChecks={init:()=>({refresh:async()=>{},reset:()=>{}})};}''')
+        page.add_script_tag(content=(ROOT/'public/assets/saudi-plate.js').read_text())
         page.add_script_tag(content=(ROOT/'public/assets/owner-dashboard.js').read_text())
         page.add_script_tag(content=source)
         page.evaluate('''user=>{qa.state.user=user;qa.state.csrf='synthetic-only';qa.state.page='orders';qa.showApp();}''', owner(brand, both=False))
@@ -344,6 +345,7 @@ def test_actual_ops_lands_owners_on_dashboard_and_rejects_other_roles(brand):
         messages.locator(':scope > summary').click()
         page.get_by_role('button', name='فتح المحادثة والرد').click()
         expect(page.locator('#chat-detail')).to_contain_text('نص الرسالة')
+        page.locator('#modal-close').click()
         page.get_by_role('button', name='لوحة الملاك', exact=True).click()
         expect(page.locator('#owner-filters')).to_be_visible()
 
