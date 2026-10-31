@@ -37,6 +37,9 @@ def test_owner_test_void_confirmation_and_retained_history(live_app,chromium_bro
         if lang=='en':
             page.get_by_role('button',name='English',exact=True).click()
             expect(page.locator('#content')).to_have_attribute('aria-busy','false')
+        expect(page.locator('#owner-dashboard')).to_be_visible()
+        page.locator('#navigation [data-page=dashboard]').click()
+        expect(page.locator('#content')).to_have_attribute('aria-busy','false')
         all_orders=page.locator('[data-action=dispatch-filter][data-scope=all][data-stage=""]')
         all_orders.click()
         expect(all_orders).to_have_attribute('aria-pressed','true')

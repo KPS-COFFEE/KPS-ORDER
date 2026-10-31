@@ -439,6 +439,9 @@ def test_real_customer_car_order_chat_images_and_owner_operations(live_app, chro
         assert session['user']['id'] == owner['id'] and session['csrf_token']
         _approve_advertising(owner_context, live_app,
             {**work_headers, 'X-CSRF-Token': session['csrf_token']})
+        expect(ops.locator('#navigation [data-page=ownerDashboard]')).to_have_attribute('aria-current', 'page')
+        expect(ops.locator('#owner-dashboard')).to_be_visible()
+        ops.locator('#navigation [data-page=dashboard]').click()
         expect(ops.locator('#dispatch-orders')).to_be_visible()
         _capture(ops, 'operations-dashboard-synthetic-order')
         ops.locator('#navigation [data-page=admin]').click()

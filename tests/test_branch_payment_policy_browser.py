@@ -18,12 +18,14 @@ def test_owner_selects_seller_without_activating_service(live_app, chromium_brow
     page.set_viewport_size({'width': 390, 'height': 900})
     try:
         page.goto('/ops')
-        toggle=page.locator('.dispatch-nav-toggle')
-        expect(toggle).to_be_visible()
-        if toggle.get_attribute('aria-expanded') != 'true':
-            toggle.click()
-        expect(toggle).to_have_attribute('aria-expanded', 'true')
+        expect(page.locator('#owner-dashboard')).to_be_visible()
         admin_navigation=page.locator('#navigation [data-page=admin]')
+        if not admin_navigation.is_visible():
+            toggle=page.locator('.dispatch-nav-toggle')
+            expect(toggle).to_be_visible()
+            if toggle.get_attribute('aria-expanded') != 'true':
+                toggle.click()
+            expect(toggle).to_have_attribute('aria-expanded', 'true')
         expect(admin_navigation).to_be_visible()
         admin_navigation.click()
         page.locator('[data-action=admin-tab][data-tab=settings]').click()

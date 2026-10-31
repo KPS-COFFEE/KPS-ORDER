@@ -19,12 +19,14 @@ def _assert_recovery_preserves_open_dialog_and_retries_above_it(width,height,lan
         page.set_content('<html><body><main id="app-shell"><input id="draft" value="unsaved"><p>Private employee work</p></main><dialog id="modal"><div id="modal-body"><input id="modal-draft" value="open operation draft"></div></dialog></body></html>')
         page.add_style_tag(content=(ROOT/'public/ops.css').read_text())
         page.evaluate('''lang=>{window.state={user:{id:'employee',effective_permissions:['dispatch']},csrf:'before',requestKeys:new Map(),chatHistory:new Map(),lang};window.trialMode=false;window.$=(s,root=document)=>root.querySelector(s);window.tr=(ar,en)=>lang==='ar'?ar:en;window.requests=[];window.api=(path,options)=>new Promise((resolve,reject)=>{requests.push({resolve,reject});options.signal.addEventListener('abort',()=>reject(new Error('timeout')));});window.showLogin=()=>{state.user=null;document.querySelector('#app-shell').hidden=true;setEmployeeAccessPending(false);};window.setStatus=()=>{};window.closeModal=()=>document.querySelector('#modal').close();window.renderBrandSwitch=()=>{};window.navigation=()=>{};window.loadPage=async()=>{};window.hideUnavailableActions=()=>{};}''',lang)
+        page.evaluate('''()=>{window.ownerDashboardCalls=[];window.ownerDashboardController={pause(){ownerDashboardCalls.push('pause');},reset(){ownerDashboardCalls.push('reset');}};}''')
         page.add_script_tag(content=ACCESS)
         page.evaluate("document.querySelector('#modal').showModal();window.check=refreshEmployeeAccess();requests[0].reject(new Error('network'));window.check")
         expect(page.locator('#work-access-recovery')).to_be_visible()
         expect(page.locator('#app-shell')).to_have_css('visibility','hidden')
         expect(page.locator('#modal')).to_have_css('visibility','hidden')
         assert page.evaluate("document.querySelector('#app-shell').inert")
+        assert page.evaluate("ownerDashboardCalls.includes('pause') && !ownerDashboardCalls.includes('reset')")
         assert page.locator('#modal-draft').input_value()=='open operation draft'
         # Browser actionability proves the native old dialog does not make retry inert.
         page.locator('#work-access-recovery button').click()
@@ -36,6 +38,7 @@ def _assert_recovery_preserves_open_dialog_and_retries_above_it(width,height,lan
         assert page.locator('#draft').input_value()=='unsaved'
         assert page.evaluate("document.querySelector('#modal').open")
         assert page.evaluate("!document.querySelector('#app-shell').inert")
+        assert page.evaluate("!ownerDashboardCalls.includes('reset')"), 'Transient recovery must preserve owner dashboard state'
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         browser.close()
 

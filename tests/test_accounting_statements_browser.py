@@ -137,12 +137,15 @@ def test_variance_requires_evidenced_independent_treatment(live_app,chromium_bro
             _owner_login(independent,live_app,reviewer)
             review_page.set_viewport_size({'width':width,'height':1000});review_page.goto(live_app+'/ops')
             if lang=='en':review_page.get_by_role('button',name='English',exact=True).click()
-            if width<=650:
-                # The owner's mobile delivery workspace uses the existing menu;
-                # follow its visible control rather than clicking a hidden item.
+            expect(review_page.locator('#navigation [data-page=ownerDashboard]')).to_have_attribute('aria-current','page')
+            expect(review_page.locator('#owner-dashboard')).to_be_visible()
+            accounting_navigation=review_page.locator('#navigation [data-page=accounting]')
+            if not accounting_navigation.is_visible():
+                # The owner overview exposes navigation directly; a compact
+                # operations workspace may still require its visible menu.
                 expect(review_page.locator('.dispatch-nav-toggle')).to_be_visible()
                 review_page.locator('.dispatch-nav-toggle').click()
-            review_page.locator('#navigation [data-page=accounting]').click()
+            accounting_navigation.click()
             review_page.locator('[data-ac=settlements]').click()
             review_card=review_page.locator('[data-manager-card=browser-variance-manager]')
             review_card.locator('[data-variance-confirm]').click()

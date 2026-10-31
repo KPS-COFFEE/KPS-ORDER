@@ -84,6 +84,9 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
             expect(page.locator('body')).not_to_have_class(re.compile(r'\bdelivery-room\b'))
         customer_order = page.locator('#page-heading [data-action=customer-order]')
         expect(customer_order).to_be_visible()
+        # Heading actions appear before the asynchronous page content settles.
+        # Establish the scroll checkpoint only after the selected view is ready.
+        expect(page.locator('#content')).to_have_attribute('aria-busy', 'false')
         heading = page.locator('#page-heading h1').inner_text()
         # Give both real views enough document height to check restored position.
         page.add_style_tag(content='body::after{content:"";display:block;height:1800px}' )

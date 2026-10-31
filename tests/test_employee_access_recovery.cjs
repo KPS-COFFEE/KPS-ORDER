@@ -6,21 +6,24 @@ const fs=require('node:fs');
 const source=fs.readFileSync('public/ops.js','utf8');
 const section=source.slice(source.indexOf('  let permissionRefreshBusy=false;'),source.indexOf('  new MutationObserver(hideUnavailableActions)'));
 function harness(){
-  const nodes=new Map(),attrs=new Set(),events={},intervals=[],timers=[],requests=[];
+  const nodes=new Map(),attrs=new Set(),events={},intervals=[],timers=[],requests=[],ownerDashboardCalls=[];
+  const ownerDashboardController={pause(){ownerDashboardCalls.push('pause');},reset(){ownerDashboardCalls.push('reset');}};
   class Node{constructor(tag){this.tag=tag;this.children=[];this.hidden=false;this.inert=false;this.listeners={};this.isConnected=true;this.textContent='';}append(...xs){this.children.push(...xs);for(const x of xs)if(x.id)nodes.set('#'+x.id,x);}setAttribute(k,v){this[k]=v;}addEventListener(k,v){this.listeners[k]=v;}focus(){this.focused=true;}showModal(){this.open=true;}close(){this.open=false;}replaceChildren(){this.children=[];}}
   const shell=new Node('main');shell.children=[{value:'unsaved input',scrollTop:137}];nodes.set('#app-shell',shell);nodes.set('#modal-body',new Node('div'));nodes.set('#modal',new Node('dialog'));
   const document={hidden:false,createElement:t=>new Node(t),body:new Node('body'),querySelectorAll:()=>[],documentElement:{setAttribute:k=>attrs.add(k),removeAttribute:k=>attrs.delete(k),hasAttribute:k=>attrs.has(k)},addEventListener:(k,v)=>events[k]=v};
   const state={user:{id:'employee',effective_permissions:['dispatch'],central_operations:false},csrf:'original',requestKeys:new Map(),chatHistory:new Map()};
-  const context={document,state,trialMode:false,window:{addEventListener:(k,v)=>events[k]=v},AbortController,JSON,tr:(_,en)=>en,$:(s,root)=>s==='button'?root.children[0].children.find(x=>x.tag==='button'):nodes.get(s),setTimeout:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimeout(){},setInterval:(fn,ms)=>intervals.push({fn,ms}),api:(path,options)=>new Promise((resolve,reject)=>{requests.push({path,options,resolve,reject});options.signal.addEventListener('abort',()=>reject(new Error('timeout')));}),showLogin:()=>{state.user=null;context.hooks.pending(false);shell.hidden=true;},setStatus(){},closeModal(){},renderBrandSwitch(){},navigation(){},loadPage:async()=>true,hideUnavailableActions(){}};
+  const context={document,state,ownerDashboardController,trialMode:false,window:{addEventListener:(k,v)=>events[k]=v},AbortController,JSON,tr:(_,en)=>en,$:(s,root)=>s==='button'?root.children[0].children.find(x=>x.tag==='button'):nodes.get(s),setTimeout:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimeout(){},setInterval:(fn,ms)=>intervals.push({fn,ms}),api:(path,options)=>new Promise((resolve,reject)=>{requests.push({path,options,resolve,reject});options.signal.addEventListener('abort',()=>reject(new Error('timeout')));}),showLogin:()=>{state.user=null;context.hooks.pending(false);shell.hidden=true;},setStatus(){},closeModal(){},renderBrandSwitch(){},navigation(){},loadPage:async()=>true,hideUnavailableActions(){}};
   vm.createContext(context);vm.runInContext(section+'\nglobalThis.hooks={check:refreshEmployeeAccess,pending:setEmployeeAccessPending};',context);
   const success=()=>requests.at(-1).resolve({user:{...state.user},csrf_token:'verified'});
-  return {context,document,state,nodes,attrs,events,intervals,timers,requests,shell,hooks:context.hooks,success};
+  return {context,document,state,nodes,attrs,events,intervals,timers,requests,ownerDashboardCalls,shell,hooks:context.hooks,success};
 }
 test('timeout masks work with visible recovery, preserves DOM, and automatically restores it',async()=>{
  const h=harness(),original=h.shell.children;
  let p=h.hooks.check();assert.equal(h.requests.length,1);h.timers.at(-1).fn();await p;
+ assert.deepEqual(h.ownerDashboardCalls,['pause'],'Unverified access must stop owner reads without clearing recoverable data');
  assert(h.attrs.has('data-work-access-pending'));assert.equal(h.shell.inert,true);assert.equal(h.nodes.get('#work-access-recovery').hidden,false);assert.equal(h.nodes.get('#work-access-recovery-message').textContent.includes('return automatically'),true);assert.equal(h.state.user.id,'employee');assert.equal(h.shell.children,original);
  p=h.hooks.check();h.success();await p;assert.equal(h.attrs.size,0);assert.equal(h.shell.inert,false);assert.equal(h.nodes.get('#work-access-recovery').hidden,true);assert.equal(h.shell.children,original);assert.equal(h.shell.children[0].value,'unsaved input');assert.equal(h.shell.children[0].scrollTop,137);
+ assert.deepEqual(h.ownerDashboardCalls,['pause'],'An unchanged verified scope must preserve owner state');
 });
 for(const status of [undefined,500,503])test(`transient ${status||'network'} failure retains recoverable account`,async()=>{const h=harness();const p=h.hooks.check();h.requests[0].reject(Object.assign(new Error('temporary'),{status}));await p;assert(h.attrs.has('data-work-access-pending'));assert.equal(h.state.user.id,'employee');});
 for(const status of [401,403])test(`confirmed ${status} revokes rather than displaying a recovery state`,async()=>{const h=harness();const p=h.hooks.check();h.requests[0].reject(Object.assign(new Error('denied'),{status}));await p;assert.equal(h.state.user,null);assert.equal(h.attrs.size,0);assert.equal(h.shell.hidden,true);});
@@ -34,6 +37,7 @@ test('branch-only scope change keeps work masked until confirmed scoped render',
  let finish;h.context.loadPage=()=>new Promise(resolve=>{finish=resolve;});
  const p=h.hooks.check();h.requests[0].resolve({user:{...h.state.user,branch_ids:['b2']},csrf_token:'scope-token'});
  await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(h.ownerDashboardCalls,['reset','pause'],'Revoked scope must clear owner data before the scoped rebuild completes');
  assert(h.attrs.has('data-work-access-pending'));assert.equal(h.state.orders.length,0);assert.equal(h.state.branches.length,0);assert.equal(h.state.filters.branch_id,'');assert.equal(h.nodes.get('#modal').open,false);assert.equal(h.state.closureDirty,false);
  finish(true);await p;assert.equal(h.attrs.size,0);
 });
