@@ -24,7 +24,16 @@ def test_all_manager_close_paths_show_report():
     for endpoint in ('/vault-close','/manager-physical-submit','/approve`'):
         begin=OPS.index(endpoint)
         assert 'managerEndDutyReport(s)' in OPS[begin:begin+500]
-    assert "classList.remove('cash-bags-dialog','operating-report-dialog')" in OPS
+    source=OPS[OPS.index('  function modal('):OPS.index('  function formEnd(')]
+    script="""const classes=new Set(['cash-bags-dialog','operating-report-dialog','conversation-dialog']);
+const dialog={open:false,classList:{remove(...items){items.forEach(x=>classes.delete(x));},add(x){classes.add(x);}},showModal(){this.open=true;}};
+const body={},title={},state={closureDirty:true};let printerRefresh=null;
+const $=s=>s==='#modal'?dialog:s==='#modal-body'?body:s==='#modal-title'?title:null;
+const restoreConversationWindow=()=>{},clearInterval=()=>{},hideUnavailableActions=()=>{};
+const window={KPSSaudiPlate:{bindInputs(){}}};
+"""+source+"\nmodal('Report','<p>Body</p>',null,'new-report');console.log(JSON.stringify({classes:[...classes],open:dialog.open,dirty:state.closureDirty,title:title.textContent,html:body.innerHTML}));"
+    actual=json.loads(subprocess.run(['node','-e',script],capture_output=True,text=True,check=True).stdout)
+    assert actual=={'classes':['new-report'],'open':True,'dirty':False,'title':'Report','html':'<p>Body</p>'}
 
 
 def test_cash_bag_reference_is_isolated_and_escaped_once():
