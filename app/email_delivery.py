@@ -122,7 +122,7 @@ def dispatch_once(limit=10):
     attempted = 0
     for _ in range(max(1,min(20,limit))):
         with db.tx() as conn:
-            row = conn.execute("SELECT * FROM email_outbox WHERE ((status IN ('pending','failed') AND attempts<8 AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now())) AND (kind NOT IN ('owner_report','operations_alert') OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND ic.enabled AND ic.state='active')) AND (kind<>'identity' OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND (ic.state='testing' OR (ic.state='active' AND ic.enabled)))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1").fetchone()
+            row = conn.execute("SELECT * FROM email_outbox WHERE ((status IN ('pending','failed') AND attempts<8 AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now())) AND (kind NOT IN ('owner_report','operations_alert','manager_notice') OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND ic.enabled AND ic.state='active')) AND (kind<>'identity' OR EXISTS(SELECT 1 FROM identity_channels ic WHERE ic.brand_id=email_outbox.brand_id AND ic.channel='email' AND (ic.state='testing' OR (ic.state='active' AND ic.enabled)))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1").fetchone()
             if not row:
                 break
             if row['status']=='sending' and (os.getenv('EMAIL_PROVIDER')=='smtp_ssl' or row['attempts']>=8):
@@ -135,6 +135,9 @@ def dispatch_once(limit=10):
                 # second authentication engine or logging the recipient/code.
                 from .auth import identity_mail_authorized
                 authorized=identity_mail_authorized(conn,row)
+            elif row['kind']=='manager_notice':
+                from . import manager_mail
+                authorized=manager_mail.authorized(conn,row,_payload(row))
             elif row['kind']=='owner_report':
                 authorized=bool(conn.execute("SELECT 1 FROM report_notifications n JOIN users u ON u.id=n.recipient_user_id JOIN brands b ON b.id=u.brand_id WHERE n.email_outbox_id=%s AND u.active AND b.active AND u.role='owner' AND u.brand_id=%s AND u.email_verified_at IS NOT NULL AND lower(btrim(u.email))=%s",(row['id'],row['brand_id'],row['recipient'])).fetchone())
             elif row['kind']=='operations_alert':

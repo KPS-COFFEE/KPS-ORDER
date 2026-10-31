@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/manager_mail.py
+      - app/email_delivery.py
+      - tests/test_manager_mail.py
       - app/branch_proximity.py
       - app/chat.py
       - app/branch_printing.py
@@ -34,6 +37,9 @@ on:
   push:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/manager_mail.py
+      - app/email_delivery.py
+      - tests/test_manager_mail.py
       - app/branch_proximity.py
       - app/chat.py
       - app/branch_printing.py
@@ -107,6 +113,7 @@ jobs:
       - name: Verify both brands, owner scope, shift-day accounting and responsive journeys
         run: >-
           python -m pytest -q --basetemp=qa-owner-dashboard
+          tests/test_manager_mail.py
           tests/test_branch_proximity.py
           tests/test_chat_attachment_sessions.py
           tests/test_chat_attachment_browser.py
