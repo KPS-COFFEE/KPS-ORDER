@@ -251,18 +251,19 @@ def cleanup():
             AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id AND t.status='problem')
             AND NOT EXISTS(SELECT 1 FROM conversations v WHERE v.order_id=o.id AND v.status<>'resolved')
             AND NOT EXISTS(SELECT 1 FROM order_amendments a WHERE a.order_id=o.id AND a.status IN ('requested','branch_confirmed','offered'))
+            AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='financial_case.opened' AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=o.id AND d.event_type='financial_case.resolved' AND d.details->>'case_id'=r.id))
             AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='customer_request.opened' AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=o.id AND d.event_type='customer_request.decided' AND d.details->>'request_id'=r.id))
             AND (
               (NOT EXISTS(SELECT 1 FROM order_amendments a WHERE a.order_id=o.id)
                AND NOT EXISTS(SELECT 1 FROM support_tickets t WHERE t.order_id=o.id)
                AND NOT EXISTS(SELECT 1 FROM conversations v WHERE v.order_id=o.id AND v.category IN ('complaint','change','refund','delivery_problem','other'))
                AND NOT EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND
-                 (e.event_type IN ('customer_request.opened','intervention.customer_amend_requested','order.operationally_cancelled') OR e.event_type LIKE 'intervention.%' OR e.event_type LIKE 'task.problem%'))
+                 (e.event_type IN ('customer_request.opened','intervention.customer_amend_requested','order.operationally_cancelled','order.refund','order.free_item_returned') OR e.event_type LIKE 'financial_case.%' OR e.event_type LIKE 'intervention.%' OR e.event_type LIKE 'task.problem%'))
                AND o.preparation_status NOT IN ('cancelled','rejected') AND o.delivery_status<>'cancelled')
               OR EXISTS(SELECT 1 FROM order_events decision WHERE decision.order_id=o.id AND decision.event_type='evidence.retention_decided'
                 AND decision.details->>'decision'='release'
                 AND decision.id=(SELECT e.id FROM order_events e WHERE e.order_id=o.id AND e.event_type='evidence.retention_decided' ORDER BY e.created_at DESC,e.id DESC LIMIT 1)
-                AND NOT EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND e.created_at>decision.created_at AND (e.event_type IN ('customer_request.opened','intervention.customer_amend_requested','order.operationally_cancelled') OR e.event_type LIKE 'intervention.%' OR e.event_type LIKE 'task.problem%'))
+                AND NOT EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND e.created_at>decision.created_at AND (e.event_type IN ('customer_request.opened','intervention.customer_amend_requested','order.operationally_cancelled','order.refund','order.free_item_returned') OR e.event_type LIKE 'financial_case.%' OR e.event_type LIKE 'intervention.%' OR e.event_type LIKE 'task.problem%'))
                 AND NOT EXISTS(SELECT 1 FROM order_amendments a WHERE a.order_id=o.id AND a.updated_at>decision.created_at)
                 AND NOT EXISTS(SELECT 1 FROM support_tickets t WHERE t.order_id=o.id AND t.updated_at>decision.created_at)
                 AND NOT EXISTS(SELECT 1 FROM chat_messages m JOIN conversations v ON v.id=m.conversation_id WHERE v.order_id=o.id AND m.sender_id=v.customer_id AND m.created_at>decision.created_at))

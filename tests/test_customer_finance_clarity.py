@@ -77,7 +77,8 @@ def test_general_complaint_can_reach_owner_without_order_or_branch_and_keeps_ima
     assert actor('customer').get('/api/chat-attachments/'+aid).status_code==200
 
 
-def test_only_flagged_orders_need_official_retention_decision_and_new_photos_stay(ops):
+@pytest.mark.parametrize('issue_event',['customer_request.opened','financial_case.opened'])
+def test_only_flagged_orders_need_official_retention_decision_and_new_photos_stay(ops,issue_event):
     actor,post,order,shifts=ops
     _,driver=shifts();normal=order();flagged=order()
     photo_ids={}
@@ -86,7 +87,7 @@ def test_only_flagged_orders_need_official_retention_decision_and_new_photos_sta
         photo='TEST-photo-'+oid;photo_ids[oid]=photo
         with db.tx() as c:
             c.execute("INSERT INTO delivery_photos(id,task_id,order_id,uploader_id,stage,data,sha256,expires_at,used_at) VALUES(%s,%s,%s,'ops-driver','delivered',%s,%s,now()-interval '1 day',now())",(photo,tid,oid,b'fake test evidence','a'*64))
-    with db.tx() as c:db.event(c,flagged,'ops-customer','customer_request.opened',{'kind':'cancel','note':'TEST retain the original request'})
+    with db.tx() as c:db.event(c,flagged,'ops-customer',issue_event,{'kind':'cancel','note':'TEST retain the original request'})
     cleanup()
     assert actor('manager').get('/api/delivery-photos/'+photo_ids[normal]).status_code==410
     assert actor('manager').get('/api/delivery-photos/'+photo_ids[flagged]).status_code==200
@@ -98,8 +99,8 @@ def test_only_flagged_orders_need_official_retention_decision_and_new_photos_sta
     post('manager',endpoint,{'decision':'release','reason':'TEST manager reviewed existing evidence'})
     cleanup();assert actor('manager').get('/api/delivery-photos/'+photo_ids[flagged]).status_code==200
     with db.tx() as c:
-        rid=c.execute("SELECT id FROM order_events WHERE order_id=%s AND event_type='customer_request.opened'",(flagged,)).fetchone()['id']
-        db.event(c,flagged,'ops-manager','customer_request.decided',{'request_id':rid,'status':'rejected','note':'TEST formal case decision; request original retained'})
+        rid=c.execute("SELECT id FROM order_events WHERE order_id=%s AND event_type=%s",(flagged,issue_event)).fetchone()['id']
+        db.event(c,flagged,'ops-manager','customer_request.decided' if issue_event=='customer_request.opened' else 'financial_case.resolved',{'request_id':rid,'case_id':rid,'status':'rejected','note':'TEST formal case decision; request original retained'})
     with db.tx() as c:db.event(c,flagged,'ops-manager','task.problem',{'reason':'TEST new documented issue after the first review'})
     cleanup();assert actor('manager').get('/api/delivery-photos/'+photo_ids[flagged]).status_code==200
     post('manager',endpoint,{'decision':'release','reason':'TEST manager reviewed the newly recorded issue'})
@@ -111,7 +112,7 @@ def test_only_flagged_orders_need_official_retention_decision_and_new_photos_sta
     assert actor('manager').get('/api/delivery-photos/'+photo_ids[flagged]).status_code==410
     assert actor('manager').get('/api/delivery-photos/TEST-new-photo').status_code==200
     history=actor('manager').get('/api/orders/'+flagged).json()['events']
-    assert any(e['event_type']=='customer_request.opened' for e in history)
+    assert any(e['event_type']==issue_event for e in history)
     assert len([e for e in history if e['event_type']=='evidence.retention_decided'])==3
 
 
