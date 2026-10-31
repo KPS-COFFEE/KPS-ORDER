@@ -74,6 +74,7 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
 
         page.route('**/*', local_only)
         page.route('**/api/**', api)
+        context.add_init_script("""window.__managerScrollTrace=[]; const previousScroll=window.scrollTo; window.scrollTo=function(...args){window.__managerScrollTrace.push({action:'scrollTo',args,from:scrollY,at:performance.now()});return previousScroll.apply(this,args)}; window.addEventListener('scroll',()=>{window.__managerScrollTrace.push({action:'scroll',y:scrollY,at:performance.now()});if(window.__managerScrollTrace.length>40)window.__managerScrollTrace.shift()});""")
         page.goto(static_customer + '/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
         if screen == 'orders':
@@ -115,7 +116,16 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
         # Refresh restores focus on its next animation frame; an already-restored
         # scroll position must not turn this into a synchronous focus check.
         expect(customer_order).to_be_focused()
-        page.wait_for_function('Math.abs(window.scrollY-280)<=1')
+        try:
+            page.wait_for_function('Math.abs(window.scrollY-280)<=1')
+        except Exception:
+            from pathlib import Path
+            diagnostic = page.evaluate('({y:scrollY,trace:window.__managerScrollTrace,contentTop:document.querySelector("#content").getBoundingClientRect().top,active:document.activeElement?.outerHTML,alerts:document.querySelector("#operational-alerts")?.outerHTML})')
+            evidence = Path('test-results')
+            evidence.mkdir(exist_ok=True)
+            page.screenshot(path=str(evidence/f'manager-return-{brand}-{screen}-{lang}-{width}.png'), full_page=True)
+            print('Manager screen position:', json.dumps(diagnostic, ensure_ascii=False))
+            raise
         saved = [item for item in writes if item[0] == '/api/orders/delivery-center']
         assert len(saved) == 2 and saved[0][1] == saved[1][1]
         assert saved[0][2] and saved[0][2] == saved[1][2]
