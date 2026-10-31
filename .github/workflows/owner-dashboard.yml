@@ -91,6 +91,10 @@ jobs:
           python -m pytest -q --basetemp=qa-owner-dashboard
           tests/test_owner_dashboard.py
           tests/test_owner_dashboard_browser.py
+          tests/test_owner_shift_views_browser.py
+          tests/test_branch_payment_policy_browser.py
+          tests/test_enbishan_menu_browser.py
+          tests/test_owner_test_void_browser.py
           tests/test_accounting_manager_shift_day.py
           tests/test_delivery_reporting_boundaries.py
           tests/test_morning_first_day.py

@@ -20,13 +20,15 @@ def test_owner_current_review_history_and_blank_dates(live_app,chromium_browser,
     ctx.add_init_script("localStorage.setItem('kps_ops_lang',"+repr(lang)+");")
     try:
         page.set_viewport_size({'width':width,'height':900});page.goto(live_app+'/ops')
-        if width <= 650:
+        expect(page.locator('#owner-dashboard')).to_be_visible()
+        shift_navigation=page.locator('#navigation [data-page=shifts]')
+        if not shift_navigation.is_visible():
             toggle=page.locator('.dispatch-nav-toggle')
             expect(toggle).to_be_visible()
             toggle.click()
             expect(toggle).to_have_attribute('aria-expanded','true')
             expect(page.locator('#navigation')).to_be_visible()
-        page.locator('#navigation [data-page=shifts]').click()
+        shift_navigation.click()
         card=lambda status:page.locator('#content [data-action=shift-detail][data-id="'+ids[status]+'"]')
         expect(card('open')).to_be_visible();expect(card('closed')).to_have_count(0);expect(card('submitted')).to_have_count(0)
         page.locator('[data-action=owner-shift-view][data-view=review]').click()
