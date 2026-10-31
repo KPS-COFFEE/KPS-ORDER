@@ -95,6 +95,7 @@ jobs:
           tests/test_branch_payment_policy_browser.py
           tests/test_enbishan_menu_browser.py
           tests/test_owner_test_void_browser.py
+          tests/test_v5_ui.py::test_v5_owner_explicitly_clears_disabled_branch_configuration
           tests/test_accounting_manager_shift_day.py
           tests/test_delivery_reporting_boundaries.py
           tests/test_morning_first_day.py

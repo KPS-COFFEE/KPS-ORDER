@@ -153,6 +153,8 @@ def test_v5_owner_explicitly_clears_disabled_branch_configuration(live_app, chro
     try:
         _staff_ui_login(page, owner)
         _assert_real_fonts(page)
+        expect(page.locator('#owner-dashboard')).to_be_visible()
+        page.locator('#navigation [data-page=dashboard]').click()
         page.locator('[data-action=operations-report]').click()
         expect(page.locator('#content')).to_contain_text('عمر الطلب الجاري تجاوز الحد')
         expect(page.locator('#delivery-performance')).to_contain_text('معيار المحافظة المحفوظ')
