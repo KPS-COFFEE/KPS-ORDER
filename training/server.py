@@ -84,6 +84,7 @@ def configure():
 def seed():
  from app import db, employee_permissions
  db.migrate()
+ report_ids=[]
  with db.tx() as c:
   c.execute("INSERT INTO brands(id,name) VALUES('enbishan','عنبيشن') ON CONFLICT DO NOTHING")
   c.execute("INSERT INTO app_settings(brand_id,settings) VALUES('enbishan','{}') ON CONFLICT DO NOTHING")
@@ -117,6 +118,7 @@ def seed():
     digest=commercial_digest(product)
     c.execute("UPDATE products SET settings=settings||%s WHERE id=%s",(db.json({'owner_approved_digest':digest}),product['id']))
    c.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled) VALUES(%s,'guest','active',true) ON CONFLICT(brand_id,channel) DO UPDATE SET state='active',enabled=true",(brand,))
+   c.execute("INSERT INTO identity_channels(brand_id,channel,state,enabled,delivery_proven_at,sms_provider) VALUES(%s,'sms','active',true,now(),'tawked') ON CONFLICT(brand_id,channel) DO UPDATE SET state='active',enabled=true,delivery_proven_at=now(),sms_provider='tawked'",(brand,))
   branches={b:[r['id'] for r in c.execute('SELECT id FROM branches WHERE brand_id=%s',(b,)).fetchall()] for b in ('kps','enbishan')}
   specs=[('owner','owner',[]),('manager','delivery_manager',[]),('evening','delivery_manager',[]),('morning','delivery_manager',[]),
          ('driver','driver',[]),('driver2','driver',[]),('branch','branch_manager',[]),('accountant','admin',['accounting_reports','accounting_review','accounting_cases_followup']),
@@ -147,9 +149,18 @@ def seed():
       (oid,brand,branch,'train-customer-'+brand,'handed_over' if number==1 else 'ready','picked_up' if number==1 else 'pending',db.json(snap),db.json(customer)))
     db.event(c,oid,'train-evening','order.created',{'training':True})
     if number==1:c.execute("INSERT INTO driver_tasks(id,order_id,driver_id,shift_id,status,assigned_by,accepted_at,picked_up_at) VALUES(%s,%s,'train-driver',%s,'picked_up','train-evening',now(),now())",('train-task-'+brand,oid,'train-shift-driver-'+brand))
+   c.execute("INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route) VALUES(%s,%s,%s,%s,%s,'delivery')",('train-chat-'+brand,'train-order-'+brand+'-1',brand,branch,'train-customer-'+brand))
+   c.execute('INSERT INTO chat_messages(id,conversation_id,sender_id,text) VALUES(%s,%s,%s,%s)',('train-message-'+brand,'train-chat-'+brand,'train-customer-'+brand,'مرحبا، أحتاج متابعة طلبي — هذه رسالة تدريبية.'))
+   sid='train-report-shift-'+brand
+   sub={key:0 for key in ('expected_halalas','counted_halalas','handover_halalas','retained_halalas','difference_halalas','terminal_total_halalas')}
+   c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,submitted_at,closed_at,submission) VALUES(%s,'manager','train-evening',%s,%s,'closed',now()-interval '2 days',now()-interval '1 day',now()-interval '1 day',%s)",(sid,brand,db.json(branches[brand]),db.json(sub)))
+   from app.reporting import create_snapshot
+   report_ids.append(create_snapshot(c,sid,'train-owner'))
   c.execute("UPDATE brands SET settings=settings||%s WHERE id='kps'",(db.json({'morning_delivery':{'version':1,'enabled':True,'execution_branch_ids':['kps-branch-2'],'manager_user_ids':['train-morning'],'preparer_user_ids':['train-branch']}}),))
   c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,delivery_window_snapshot) VALUES('train-morning-shift','manager','train-morning','kps','[\"kps-branch-2\"]','{\"period\":\"morning\"}')")
   # No real employee contact, provider configuration or operational records.
+ from app.reporting import generate_files
+ for rid in report_ids:generate_files(rid)
  db.close_pools()
 
 def build():
