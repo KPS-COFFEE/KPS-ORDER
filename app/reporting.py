@@ -36,12 +36,16 @@ def scoped_journey_decisions(rows, brand_id, branch_ids):
 
 
 def can_read(user,row):
+    from .employee_permissions import reports_supervisor
     if user.get('_morning_manager_context'):
         from .morning_manager_context import shift_allowed
         if not shift_allowed(user,(row.get('snapshot') or {}).get('shift')):return False
     if user['role']=='driver':return False
     if user['role']=='owner':return user['brand_id']==row['brand_id'] and (not user.get('home_brand_id') or set(row['branch_ids'])<=set(user.get('branch_ids',[])))
     if user['brand_id']!=row['brand_id'] or not set(row['branch_ids'])<=set(user.get('branch_ids',[])):return False
+    if (reports_supervisor(user)
+            and row['branch_ids'] and row['snapshot'].get('shift',{}).get('status')=='closed'):
+        return True
     if user['id']==row['user_id']:return True
     return user['role']=='delivery_manager' and row['snapshot'].get('manager_user_id')==user['id']
 
@@ -551,8 +555,10 @@ def report_list(offset:int=0,user=Depends(auth.current_user)):
     roles(user,'owner','driver','delivery_manager')
     if offset<0 or offset>100000:fail(422,'صفحة غير صالحة')
     with db.tx() as c:
-        clause='brand_id=%s' if user['role']=='owner' else "brand_id=%s AND (user_id=%s OR snapshot->>'manager_user_id'=%s)"
-        p=[user['brand_id']] if user['role']=='owner' else [user['brand_id'],user['id'],user['id'] if user['role']=='delivery_manager' else '']
+        from .employee_permissions import reports_supervisor
+        supervise=reports_supervisor(user)
+        clause='brand_id=%s' if user['role']=='owner' else ("brand_id=%s AND snapshot->'shift'->>'status'='closed' AND jsonb_array_length(branch_ids)>0 AND branch_ids <@ %s::jsonb" if supervise else "brand_id=%s AND (user_id=%s OR snapshot->>'manager_user_id'=%s)")
+        p=[user['brand_id']] if user['role']=='owner' else [user['brand_id'],db.json(user.get('branch_ids',[]))] if supervise else [user['brand_id'],user['id'],user['id'] if user['role']=='delivery_manager' else '']
         if user['role']=='owner' and user.get('home_brand_id'):
             clause+=' AND branch_ids <@ %s::jsonb';p.append(db.json(user.get('branch_ids',[])))
         if user.get('_morning_manager_context'):

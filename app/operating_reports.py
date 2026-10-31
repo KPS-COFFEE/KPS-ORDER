@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Response
 from . import auth, db, multibrand, operations as ops, service_hours
+from .employee_permissions import reports_supervisor
 
 router = APIRouter(prefix='/api/operating-reports', tags=['operating-reports'])
 TZ = ZoneInfo('Asia/Riyadh')
@@ -35,7 +36,8 @@ def allowed_manager(user, shift, scope):
     if not ops.unrestricted_owner(user) and (not shift['branch_ids'] or not set(shift['branch_ids']) <= set(user.get('branch_ids', []))):
         return False
     if scope == 'shift' and user['role'] != 'owner' and shift['user_id'] != user['id']:
-        return False
+        if not reports_supervisor(user) or shift.get('status') != 'closed':
+            return False
     from .morning_manager_context import shift_allowed
     return shift_allowed(user, shift)
 
@@ -185,7 +187,7 @@ def build(c, user, day, scope, manager_shift_id=None):
         if legs:
             selected_manager_ids = {leg['shift_id'] for leg in legs}
     managers, driver_rows, cases, entries, approvals = [], {}, [], [], []
-    day_allowed = user['role'] == 'owner'
+    day_allowed = user['role'] == 'owner' or reports_supervisor(user)
     pending = 0
     for principal in principals:
         locations = {b['id']: b for b in c.execute('SELECT id,name,city FROM branches WHERE brand_id=%s', (principal['brand_id'],)).fetchall()}
@@ -194,6 +196,9 @@ def build(c, user, day, scope, manager_shift_id=None):
                                (principal['brand_id'], day)).fetchall()
         visible = [s for s in candidates if allowed_manager(principal, s, scope)
                    and (selected_manager_ids is None or s['id'] in selected_manager_ids)]
+        if (scope == 'day' and reports_supervisor(principal)
+                and any(s['user_id'] != user['id'] and s['status'] != 'closed' for s in visible)):
+            raise db.error(409, 'SUPERVISED_REPORT_PENDING', 'التقرير اليومي بانتظار اعتماد جميع الشفتات المخولة.')
         day_allowed |= any(s['user_id'] == user['id'] and (s.get('delivery_window_snapshot') or {}).get('period', 'evening') == 'evening' for s in visible)
         for manager in visible:
             if principal.get('_morning_manager_context'):

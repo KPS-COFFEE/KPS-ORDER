@@ -83,8 +83,11 @@ DEFINITIONS.append(('driver_duty_manage', 'تحديد ساعات دوام الس
 DEFINITIONS.append(('orders_cancel_after_print', 'اعتماد إلغاء طلب التوصيل بعد إرسال الطباعة', 'Approve delivery cancellation after print request', 'orders', set()))
 DEFINITIONS.append(('orders_cancel_collected', 'اعتماد إلغاء طلب سبق تحصيله مع حفظ القيود والمتابعة المحاسبية', 'Approve cancellation of an ever-collected order with accounting follow-up', 'orders', set()))
 DEFINITIONS.append(('orders_route_preparation', 'اختيار فرع تجهيز الطلب ضمن الفروع المخولة', 'Choose an authorized preparation branch', 'orders', MANAGER))
+# Supervisory report access is an explicit owner grant, never a role default.
+DEFINITIONS.append(('reports_supervise', 'عرض تقارير الشفتات المعتمدة ضمن الفروع المخولة', 'Supervise approved reports in assigned branches', 'reports', set()))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'reports_supervise': {'delivery_manager'},
     'orders_view': {'admin'},
     'chat_view': {'admin'},
     'orders_cancel_collected': {'admin', 'delivery_manager'},
@@ -160,6 +163,12 @@ def effective(user):
     routed = (set(user.get('_message_capabilities') or []) & {'chat_view', 'chat_reply', 'chat_manage'}
               if role in {'admin', 'delivery_manager', 'delivery_staff'} else set())
     return (base | routed | (set(user.get('extra_permissions') or []) & grantable(role))) - set(user.get('permission_denials') or [])
+
+
+def reports_supervisor(user):
+    return (user.get('role') == 'delivery_manager'
+            and 'reports_supervise' in (user.get('extra_permissions') or [])
+            and {'reports_supervise', 'reports_view'} <= effective(user))
 
 
 def catalog():
