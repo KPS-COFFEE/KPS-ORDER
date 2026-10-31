@@ -7,6 +7,7 @@ import json as jsonlib
 import os
 import re
 import threading
+import time
 import uuid
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -112,6 +113,26 @@ def new_id(prefix: str = '') -> str:
 
 def error(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status, detail={'code': code, 'message': message})
+
+
+@contextmanager
+def pooled_connection():
+    """Own an autocommit connection across explicit, short transactions.
+
+    For protocols requiring durable state before an external call. Callers must
+    explicitly release their session locks; the existing pool reset additionally
+    clears session state and advisory locks before reuse. Prefer tx() normally.
+    """
+    url = os.environ.get('DATABASE_URL', '')
+    if not url.startswith(('postgres://', 'postgresql://')):
+        raise RuntimeError('A PostgreSQL DATABASE_URL is required; no temporary storage fallback exists.')
+    pool = _pool_for_url(url)
+    try:
+        with pool.connection(timeout=POOL_CHECKOUT_SECONDS) as conn:
+            conn.execute("SET statement_timeout = '15000ms'")
+            yield conn
+    except (PoolClosed, PoolTimeout, TooManyRequests) as exc:
+        raise psycopg.OperationalError('Database connection capacity is unavailable.') from exc
 
 
 @contextmanager
@@ -222,6 +243,8 @@ def idempotent(conn, user_id: str, key: str | None, operation: str, body: Any, p
                encoded_response: bool = False) -> dict | str | DeferredAtomicResponse:
     if not key or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', key):
         raise error(400, 'IDEMPOTENCY_KEY_REQUIRED', 'أرسل مفتاح منع تكرار صحيحًا للعملية.')
+    from .multibrand import replay_operation
+    operation = replay_operation(conn, user_id, operation)
     lock_key = hashlib.sha256(f'{user_id}:{operation}:{key}'.encode()).digest()[:8]
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (int.from_bytes(lock_key, 'big', signed=True),))
     # An opted-in HTTP caller can send the database's already-authorized JSON
@@ -282,76 +305,97 @@ def rate_limit(conn, bucket: str, maximum: int, window_seconds: int):
     return row['hits'] <= maximum
 
 
-# This prior application is intentionally not a writer for the new physical
-# closing, duration or accepted clarification contracts. Reject rollback BEFORE
-# migrations, audit or request workers can touch a database that used them.
-ROLLBACK_UNSUPPORTED_STATE_TABLES = (
-    'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures',
-    'driver_tracking_points','driver_trip_stops','driver_route_eta_state','driver_route_eta_expectations',
-    'driver_duty_profiles',
-    'shared_driver_closure_declarations', 'shared_driver_closure_returns',
-    'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
-    'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts',
-    'shared_manager_closure_allocations',
-    'collection_tender_correction_proposals','collection_tender_corrections','collection_tender_correction_rejections',
-    'financial_case_clarifications', 'financial_case_clarification_events',
-    'bank_reconciliation_line_proposals','bank_reconciliation_line_decisions',
-    'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims',
-)
+MIGRATION_LOCK_KEY = 764832610
+MIGRATION_LOCK_WAIT_SECONDS = 120.0
 
 
-def guard_rollback_feature_state(conn):
-    available = {row['table_name'] for row in conn.execute(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'").fetchall()}
-    for table in ROLLBACK_UNSUPPORTED_STATE_TABLES:
-        if table in available and conn.execute(sql.SQL('SELECT 1 FROM {} LIMIT 1').format(sql.Identifier(table))).fetchone():
-            raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains ' + table +
-                               '; keep the current-aware application. No database restore or mutation was attempted.')
+def acquire_migration_lock(conn):
+    """Wait outside the snapshot without inheriting the 15-second SQL deadline.
 
-    if 'orders' in available and conn.execute(
-        "SELECT 1 FROM orders WHERE snapshot->'duplicate_review'->>'status'='pending' LIMIT 1").fetchone():
-        raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains pending duplicate review; keep the current-aware application. No database mutation was attempted.')
-    if 'order_events' in available and conn.execute(
-        "SELECT 1 FROM order_events WHERE event_type='order.duplicate_decided' "
-        "OR event_type LIKE 'delivery.partial_return.%' LIMIT 1").fetchone():
-        raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains duplicate decisions or partial returns; keep the current-aware application. No database mutation was attempted.')
-
-    if 'audit_events' in available and conn.execute(
-        "SELECT 1 FROM audit_events WHERE action LIKE 'accounting.financial_treatment.%' "
-        "OR action LIKE 'accounting.refund_item_allocation.%' OR action LIKE 'accounting.order_financial_treatment.%' "
-        "OR action='employee.ticket.followup' LIMIT 1").fetchone():
-        raise RuntimeError('ROLLBACK_FEATURE_STATE_UNSUPPORTED: database contains new financial or administrative review contracts; keep the current-aware application. No database mutation was attempted.')
+    Nonblocking probes keep each statement bounded. The overall monotonic
+    deadline prevents endless startup, while later migration statements retain
+    their existing timeout. Only a successful caller owns/relinquishes the lock.
+    """
+    started = time.monotonic()
+    deadline = started + MIGRATION_LOCK_WAIT_SECONDS
+    next_notice = started + 10.0
+    attempts = 0
+    while True:
+        attempts += 1
+        if conn.execute('SELECT pg_try_advisory_lock(%s) AS acquired',
+                        (MIGRATION_LOCK_KEY,)).fetchone()['acquired']:
+            if attempts > 1:
+                print(jsonlib.dumps({'event': 'startup_migration_lock_acquired',
+                                     'wait_seconds': round(time.monotonic() - started, 3),
+                                     'attempts': attempts}), flush=True)
+            return
+        now = time.monotonic()
+        if now >= deadline:
+            raise RuntimeError('Startup migration lock unavailable after bounded 120-second wait.')
+        if now >= next_notice:
+            print(jsonlib.dumps({'event': 'startup_migration_lock_wait',
+                                 'wait_seconds': round(now - started, 3),
+                                 'attempts': attempts}), flush=True)
+            next_notice = now + 10.0
+        time.sleep(min(0.5, deadline - now))
 
 
 def migrate():
     from .runtime_revision import revision as source_revision
     deployed_revision = source_revision('local-unversioned')
-    with tx() as conn:
-        conn.execute('SELECT pg_advisory_xact_lock(%s)', (764832610,))
-        guard_rollback_feature_state(conn)
-        baseline = preservation_snapshot(conn)
-        apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
-        after = preservation_snapshot(conn, baseline)
-        if baseline != after:
-            raise RuntimeError('Release aborted: existing operational data changed during migration.')
-        audit(conn, None, 'release.operational_data_preserved', 'runtime', deployed_revision,
-              {'verified': bool(baseline), 'tables_checked': len(baseline),
-               'audit_events_appended': (conn.execute('SELECT count(*) AS n FROM audit_events').fetchone()['n']
-                                         - baseline.get('audit_events', {}).get('count', 0)),
-               'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
+    from . import multibrand
+    if multibrand.enabled():
+        # Reject a bad test DSN before opening a connection or acquiring locks.
+        multibrand.isolation_guard()
+    with pooled_connection() as conn:
+        # Serialize boot workers BEFORE taking an MVCC snapshot. A transaction
+        # advisory-lock SELECT in REPEATABLE READ would take its snapshot before
+        # waiting, leaving the next worker with stale migration/catalog state.
+        acquire_migration_lock(conn)
+        try:
+            for attempt in range(3):
+                try:
+                    with conn.transaction():
+                        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+                        baseline = preservation_snapshot(conn, lock_tables=False)
+                        apply_migrations(conn, seed=os.environ.get('INITIAL_CATALOG_IMPORT', 'true').lower() == 'true')
+                        after = preservation_snapshot(conn, baseline, lock_tables=False)
+                        if baseline != after:
+                            raise RuntimeError('Release aborted: existing operational data changed during migration.')
+                        audit(conn, None, 'release.operational_data_preserved', 'runtime', deployed_revision,
+                              {'verified': bool(baseline), 'tables_checked': len(baseline),
+                               'audit_events_appended': (conn.execute('SELECT count(*) AS n FROM audit_events').fetchone()['n']
+                                                         - baseline.get('audit_events', {}).get('count', 0)),
+                               'checks': {table: {'count': value['count'], 'digest': value['digest']} for table, value in after.items()}})
+                    break
+                except (psycopg.errors.SerializationFailure, psycopg.errors.DeadlockDetected) as exc:
+                    # Retry the entire rolled-back transaction with a fresh
+                    # snapshot, never a statement inside an aborted transaction.
+                    if attempt == 2:
+                        raise
+                    print(jsonlib.dumps({'event': 'startup_migration_retry',
+                                         'attempt': attempt + 1, 'sqlstate': exc.sqlstate}), flush=True)
+                    time.sleep(0.1 * (attempt + 1))
+        finally:
+            conn.execute('SELECT pg_advisory_unlock(%s)', (MIGRATION_LOCK_KEY,))
 
 
-PRESERVED_TABLES = ('driver_duty_profiles', 'financial_case_clarification_events', 'financial_case_clarifications', 'shared_driver_closure_allocations', 'shared_driver_closure_declarations', 'shared_driver_closure_receipts', 'shared_driver_closure_returns', 'shared_manager_closure_allocations', 'shared_manager_closure_declarations', 'shared_manager_closure_receipts', 'shared_manager_closure_returns', 'operational_day_reclassifications', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests', 'central_workdays', 'central_workday_legs', 'central_manager_handovers', 'central_manager_handover_legs', 'promotion_report_closures', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
-                    'orders', 'branch_payment_attempts', 'branch_online_receipts', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'order_driver_attribution_corrections', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
-                    'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers',
+PRESERVED_TABLES = ('operational_day_reclassifications', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'central_workdays', 'central_workday_legs', 'central_manager_handovers', 'central_manager_handover_legs', 'promotion_report_closures', 'first_order_gift_claims', 'users', 'driver_check_requests', 'fuel_exceptions', 'driver_evidence', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests', 'driver_float_decisions', 'customer_addresses', 'customer_identity_links', 'sessions', 'identity_tokens', 'otp_challenges', 'email_outbox',
+                    'orders', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'order_amendments', 'order_revisions', 'order_revision_receipts', 'order_daily_counters', 'order_branch_counters', 'order_events', 'shifts', 'driver_tasks', 'order_driver_attribution_corrections', 'driver_work_trips', 'driver_work_trip_orders', 'driver_work_trip_events', 'branch_print_devices', 'branch_print_jobs', 'collections', 'refunds', 'fiscal_previews', 'fiscal_policy_decisions', 'fiscal_documents',
+                    'custody_transfers', 'custody_events', 'retained_carryovers', 'manager_handovers', 'driver_support_requests',
                     'closure_reports', 'manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures', 'report_corrections', 'report_renderings', 'report_notifications',
                     'closure_drafts', 'conversations', 'chat_messages', 'chat_attachments',
                     'conversation_reads', 'conversation_transfers',
                     'recovery_events', 'recovery_state', 'recovery_alerts',
                     'recovery_monitor_state', 'recovery_alert_notifications', 'recovery_worker_observations',
                     'vehicle_reports', 'vehicle_report_events', 'fleet_vehicles', 'vehicle_operating_logs', 'vehicle_log_corrections', 'fleet_route_readings',
-                    'first_order_gift_claims', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules', 'customer_wallets', 'benefit_order_states', 'customer_wallet_entries', 'staff_brand_memberships', 'driver_brand_dedications',
-                    'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports', 'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims', 'audit_events')
+                    'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+                    'customer_wallets','benefit_order_states','customer_wallet_entries',
+                    'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations','legacy_invoice_imports',
+                    'driver_duty_profiles', 'shared_driver_closure_declarations', 'shared_driver_closure_returns',
+                    'shared_driver_closure_receipts', 'shared_driver_closure_allocations',
+                    'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations',
+                    'financial_case_clarifications', 'financial_case_clarification_events', 'bank_reconciliation_batches', 'bank_reconciliation_receipts', 'bank_reconciliation_decisions', 'bank_reconciliation_source_claims', 'bank_reconciliation_bank_lines', 'bank_reconciliation_bank_claims', 'audit_events')
 
 
 PRESERVED_TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_line_decisions')
@@ -359,6 +403,8 @@ PRESERVED_TABLES += ('collection_tender_correction_proposals','collection_tender
 
 PRESERVED_TABLES += ('driver_tracking_points','driver_trip_stops','driver_route_eta_state','driver_route_eta_expectations')
 PRESERVED_TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
+PRESERVED_TABLES += ('order_preparation_routes',)
+PRESERVED_TABLES += ('staff_brand_memberships','driver_brand_dedications')
 
 def preservation_snapshot(conn, baseline=None, *, lock_tables=True):
     """Compare existing columns/bytes in the same bounded migration transaction.
@@ -419,6 +465,8 @@ def apply_migrations(conn, seed=True, owner_decisions=True):
         conn.execute('INSERT INTO schema_migrations(version,sha256) VALUES(%s,%s)', (file.name, checksum))
     if seed:
         seed_initial(conn)
+    from . import multibrand
+    multibrand.migrate(conn)
     # Explicit one-time owner decisions apply to the intended imported identities.
     # Existing seeds stay immutable; subsequent boots never reset admin edits.
     if owner_decisions:

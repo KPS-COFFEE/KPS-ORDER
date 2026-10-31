@@ -79,7 +79,12 @@ def test_paid_order_cannot_be_marked_processed_without_refund(ops):
     post('branch','/api/orders/'+oid+'/collect',{'method':'cash','amount_halalas':1000,'tendered_halalas':1000})
     path='/api/order-requests/orders/'+oid
     rid=post('customer',path,{'kind':'cancel','note':'استرداد وإلغاء'})['id']
-    post('branch','/api/orders/'+oid+'/preparation',{'status':'cancelled','version':1,'reason':'طلب العميل'},status=409)
+    with db.tx() as c:version=c.execute('SELECT version FROM orders WHERE id=%s',(oid,)).fetchone()['version']
+    cancellation={'status':'cancelled','version':version,'reason':'طلب العميل'}
+    denied=post('branch','/api/orders/'+oid+'/preparation',cancellation,status=403)
+    assert denied['detail']['code']=='COLLECTED_CANCELLATION_AUTHORITY'
+    financial=post('owner','/api/orders/'+oid+'/preparation',cancellation,status=409)
+    assert financial['detail']['code']=='REFUND_WORKFLOW_REQUIRED'
     post('branch',path+'/'+rid+'/decision',{'action':'resolved','note':'غير منفذ'},status=409)
     assert actor('branch').get('/api/order-amendments/inbox').json()['requests'][0]['request_id']==rid
 

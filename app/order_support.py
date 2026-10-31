@@ -193,11 +193,12 @@ def read_evidence_observation(oid:str,observation_id:str,request:Request,user=De
 
 @router.get('/orders/{oid}/delivery-photos')
 def photos(oid:str,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager','driver')
+    if not auth.has_admin_read_grant(user,'orders_view'):
+        roles(user,'owner','delivery_manager','driver')
     with db.tx() as c:
         order_access(c,user,oid)
         result={'photos':c.execute('SELECT id,stage,created_at,deleted_at,used_at FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL ORDER BY created_at',(oid,)).fetchall()}
-        if user['role'] in ('owner','delivery_manager'):
+        if user['role'] in ('owner','delivery_manager') or auth.has_admin_read_grant(user,'orders_view'):
             captures={p['id']:p['capture_location'] for p in c.execute('SELECT id,capture_location FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL',(oid,)).fetchall()}
             for p in result['photos']:p['capture_location']=captures.get(p['id'])
             result['observations']=evidence_observations(c,oid)
@@ -205,7 +206,8 @@ def photos(oid:str,user=Depends(auth.current_user)):
 
 @router.get('/delivery-photos/{aid}')
 def photo(aid:str,user=Depends(auth.current_user)):
-    roles(user,'owner','delivery_manager','driver')
+    if not auth.has_admin_read_grant(user,'orders_view'):
+        roles(user,'owner','delivery_manager','driver')
     with db.tx() as c:
         p=c.execute('SELECT * FROM delivery_photos WHERE id=%s',(aid,)).fetchone()
         if not p:fail(404,'الصورة غير موجودة')

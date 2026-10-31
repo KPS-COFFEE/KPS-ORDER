@@ -56,6 +56,9 @@ TRACKING_PRIVATE_TABLES = {'driver_tracking_points', 'driver_trip_stops',
                           'driver_route_eta_state', 'driver_route_eta_expectations'}
 TABLES += ('driver_tracking_points', 'driver_trip_stops', 'driver_route_eta_state', 'driver_route_eta_expectations')
 TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
+# Restore orders first and immutable routes last; their nullable current pointer
+# is deferred, and the complete relationship is verified before constraints end.
+TABLES += ('order_preparation_routes',)
 SHARED_PHYSICAL_TABLES = {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
                           'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
 # Combined physical actuals cannot be split into invented brand amounts in a brand export.
@@ -141,7 +144,7 @@ def _scoped_sql(table, brand, *, bank_table_available=True):
         return 'brand_id=%s', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
-    if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks','order_driver_attribution_corrections', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
+    if table in {'order_preparation_routes','order_amendments','order_revisions','order_revision_receipts','driver_tasks','order_driver_attribution_corrections', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
         return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
     if table == 'support_ticket_events':
         return 'ticket_id IN (SELECT id FROM support_tickets WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
@@ -426,6 +429,24 @@ def _verify_staffing_markers(conn, available):
         raise ValueError('Restored staffing completion lacks its immutable physical receipt.')
 
 
+def _verify_preparation_routes(conn, actual):
+    if 'order_preparation_routes' not in actual:
+        return
+    if conn.execute("""SELECT 1 FROM order_preparation_routes r
+        LEFT JOIN orders o ON o.id=r.order_id
+        LEFT JOIN branches b ON b.id=r.target_branch_id
+        LEFT JOIN branches previous ON previous.id=r.previous_branch_id
+        WHERE o.id IS NULL OR b.id IS NULL OR previous.id IS NULL
+          OR r.brand_id<>o.brand_id OR r.source_branch_id<>o.branch_id
+          OR b.brand_id<>o.brand_id OR previous.brand_id<>o.brand_id
+          OR r.order_version>o.version LIMIT 1""").fetchone():
+        raise ValueError('Preparation routing history does not match its original order and branch scope.')
+    if conn.execute("""SELECT 1 FROM orders o LEFT JOIN order_preparation_routes r ON r.id=o.preparation_route_id
+        WHERE o.preparation_route_id IS NOT NULL AND (r.id IS NULL OR r.order_id<>o.id
+         OR (r.target_branch_id<>o.branch_id AND r.amendment_revision<>o.amendment_revision)) LIMIT 1""").fetchone():
+        raise ValueError('Current preparation destination does not match its immutable route and order revision.')
+
+
 def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     target_database_id: str | None = None, asset_directory: str | Path | None = None) -> dict:
     """Restore to a NEW isolated test schema; no existing schema is overwritten.
@@ -507,6 +528,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             # state: PostgreSQL refuses ALTER TABLE with pending FK events on
             # a populated wallet ledger. A consistent snapshot has no new
             # benefit delta to materialize here.
+            _verify_preparation_routes(conn, actual)
             conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
             conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')

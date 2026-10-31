@@ -175,9 +175,12 @@ def test_post_acceptance_duplicate_preserves_paid_money_and_requires_physical_re
         c.execute("INSERT INTO collections(id,order_id,shift_id,collector_id,method,amount_halalas,tendered_halalas,change_halalas) VALUES(%s,%s,%s,'ops-driver','cash',1000,1000,0)",(cid,oid,driver))
         c.execute("UPDATE orders SET payment_status='paid' WHERE id=%s",(oid,))
     body={'action':'cancel_duplicate','version':original['version'],'reason':'اكتشف العميل التكرار بعد القبول'}
-    denied=post('manager','/api/orders/'+oid+'/duplicate-review',body,status=409)
-    assert denied['detail']['code']=='CANCELLATION_PHYSICAL_RESOLUTION_REQUIRED'
-    saved=post('manager','/api/orders/'+oid+'/duplicate-review',{**body,'physical_resolution':'returned_to_branch'})
+    denied=post('manager','/api/orders/'+oid+'/duplicate-review',body,status=403)
+    assert denied['detail']['code']=='COLLECTED_CANCELLATION_AUTHORITY'
+    physical=post('owner','/api/orders/'+oid+'/duplicate-review',body,status=409)
+    assert physical['detail']['code']=='CANCELLATION_PHYSICAL_RESOLUTION_REQUIRED'
+    post('manager','/api/orders/'+oid+'/duplicate-review',{**body,'physical_resolution':'returned_to_branch'},status=403)
+    saved=post('owner','/api/orders/'+oid+'/duplicate-review',{**body,'physical_resolution':'returned_to_branch'})
     assert saved['review']['status']=='cancelled_duplicate'
     with db.tx() as c:
         current=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()

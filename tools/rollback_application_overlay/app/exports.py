@@ -42,7 +42,10 @@ TABLES = ('brands', 'app_settings', 'branches', 'delivery_hours_decisions', 'bra
           'staff_brand_memberships', 'driver_brand_dedications',
           'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
           'customer_wallets','benefit_order_states','customer_wallet_entries', 'promotion_report_closures',
-          'prior_delivery_grants', 'prior_delivery_revocations', 'prior_delivery_records','legacy_delivery_attestations', 'shared_driver_closure_declarations', 'shared_driver_closure_returns', 'shared_driver_closure_receipts', 'shared_driver_closure_allocations', 'shared_manager_closure_declarations', 'shared_manager_closure_returns', 'shared_manager_closure_receipts', 'shared_manager_closure_allocations', 'financial_case_clarifications', 'financial_case_clarification_events','legacy_invoice_imports',
+          'prior_delivery_grants','prior_delivery_revocations','prior_delivery_records','legacy_delivery_attestations',
+          'shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
+          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations',
+          'financial_case_clarifications','financial_case_clarification_events','legacy_invoice_imports',
           'bank_reconciliation_batches','bank_reconciliation_receipts','bank_reconciliation_decisions','bank_reconciliation_source_claims','bank_reconciliation_bank_lines','bank_reconciliation_bank_claims')
 TABLES += ('dispatch_impact_quotes',)
 TABLES += ('bank_reconciliation_line_proposals', 'bank_reconciliation_line_decisions')
@@ -53,7 +56,13 @@ TRACKING_PRIVATE_TABLES = {'driver_tracking_points', 'driver_trip_stops',
                           'driver_route_eta_state', 'driver_route_eta_expectations'}
 TABLES += ('driver_tracking_points', 'driver_trip_stops', 'driver_route_eta_state', 'driver_route_eta_expectations')
 TABLES += ('driver_cash_bags','driver_cash_bag_counts','manager_vault_closures')
-SHARED_PHYSICAL_TABLES = {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations','shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
+# Restore orders first and immutable routes last; their nullable current pointer
+# is deferred, and the complete relationship is verified before constraints end.
+TABLES += ('order_preparation_routes',)
+SHARED_PHYSICAL_TABLES = {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures','shared_driver_closure_declarations','shared_driver_closure_returns','shared_driver_closure_receipts','shared_driver_closure_allocations',
+                          'shared_manager_closure_declarations','shared_manager_closure_returns','shared_manager_closure_receipts','shared_manager_closure_allocations'}
+# Combined physical actuals cannot be split into invented brand amounts in a brand export.
+# Full private archives retain the whole immutable declaration and its provenance.
 # Global bank statement originals can span sellers; private full archives retain them.
 SHARED_BANK_TABLES = {'bank_reconciliation_bank_lines'}
 AUTH_TABLES = {'dispatch_impact_quotes'} | TRACKING_PRIVATE_TABLES | SHARED_PHYSICAL_TABLES | SHARED_BANK_TABLES | {'central_manager_handovers', 'central_manager_handover_legs', 'central_workdays', 'central_workday_legs', 'delivery_tracking_links', 'staff_brand_memberships', 'driver_brand_dedications', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_refund_reconciliation', 'sessions', 'owner_phone_challenges', 'otp_challenges', 'rate_limits', 'idempotency_keys',
@@ -85,10 +94,6 @@ def _encode(value) -> bytes:
 
 
 def _scoped_sql(table, brand, *, bank_table_available=True):
-    # These physical cash records can cover both sellers. They belong only to
-    # the full private archive; a brand filter cannot invent an allocation.
-    if brand and table in {'driver_cash_bags','driver_cash_bag_counts','manager_vault_closures'}:
-        return 'FALSE', ()
     if brand and table in {'driver_route_eta_state', 'driver_route_eta_expectations'}:
         return 'FALSE', ()
     if brand and table in {'driver_tracking_points', 'driver_trip_stops'}:
@@ -115,30 +120,31 @@ def _scoped_sql(table, brand, *, bank_table_available=True):
         return 'clarification_id IN (SELECT id FROM financial_case_clarifications WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
     if brand and table in {'staff_geo_access_grants', 'legacy_delivery_attestations','legacy_invoice_imports'}:
         return 'brand_id=%s', (brand,)
-    if brand and table in {'prior_delivery_grants', 'prior_delivery_records'}:
+    if brand and table in {'prior_delivery_grants','prior_delivery_records'}:
         return 'brand_id=%s', (brand,)
     if brand and table == 'prior_delivery_revocations':
         return 'grant_id IN (SELECT id FROM prior_delivery_grants WHERE brand_id=%s)', (brand,)
+    if brand and table == 'driver_work_trips':
+        return 'brand_id=%s', (brand,)
+    if brand and table in {'driver_work_trip_orders', 'driver_work_trip_events'}:
+        return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if brand is None:
         return 'TRUE', ()
-    direct = {'operational_day_reclassifications', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests', 'promotion_report_closures', 'driver_location_health', 'delivery_tracking_links', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches','driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
+    direct = {'operational_day_reclassifications', 'complimentary_authorizations', 'complimentary_authorization_revocations', 'driver_support_requests', 'promotion_report_closures', 'delivery_tracking_links', 'driver_location_health', 'first_order_gift_claims', 'driver_latest_locations', 'branch_payment_attempts', 'branch_checkout_sessions', 'branch_payment_webhooks', 'branch_online_receipts', 'branch_online_refunds', 'branch_refund_reconciliation', 'branch_payment_renewals', 'fiscal_policy_decisions', 'fuel_exceptions', 'driver_break_policies', 'driver_breaks', 'driver_break_events', 'dispatch_offers', 'dispatch_offer_events', 'driver_float_requests','driver_float_decisions','manager_financial_matches', 'driver_accounting_settlements', 'accounting_daily_closures','customer_addresses','customer_identity_links','branches', 'products', 'catalog_owner_approvals', 'owner_display_decisions', 'owner_branch_location_decisions', 'users', 'assets', 'banners', 'shifts', 'orders', 'closure_reports',
               'conversations', 'otp_challenges', 'identity_channels', 'identity_tokens', 'email_outbox', 'email_webhook_events',
               'performance_provinces', 'performance_province_branches', 'province_performance_policies',
               'report_notifications', 'driver_evidence', 'vehicle_reports', 'branch_print_devices', 'branch_print_jobs',
-              'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles', 'driver_check_requests',
-              'customer_followups', 'customer_marketing_notices', 'customer_marketing_consents', 'benefit_programs', 'benefit_rules',
-              'customer_wallets', 'benefit_order_states', 'customer_wallet_entries'} | INFRASTRUCTURE_TABLES
+              'accounting_reviews', 'accounting_cases', 'accounting_months', 'fleet_vehicles', 'driver_check_requests'} | INFRASTRUCTURE_TABLES
     if table == 'brands':
         return 'id=%s', (brand,)
+    if table in {'customer_followups','customer_marketing_notices','customer_marketing_consents','benefit_programs','benefit_rules',
+                 'customer_wallets','benefit_order_states','customer_wallet_entries'}:
+        return 'brand_id=%s', (brand,)
     if table == 'app_settings' or table in direct:
         return 'brand_id=%s', (brand,)
-    if table == 'driver_work_trips':
-        return 'brand_id=%s', (brand,)
-    if table in {'driver_work_trip_orders', 'driver_work_trip_events'}:
-        return 'trip_id IN (SELECT id FROM driver_work_trips WHERE brand_id=%s)', (brand,)
     if table in {'delivery_hours_decisions','branch_opening_hours_decisions','order_daily_counters','order_branch_counters'}:
         return 'branch_id IN (SELECT id FROM branches WHERE brand_id=%s)', (brand,)
-    if table in {'order_amendments','order_revisions','order_revision_receipts','driver_tasks','order_driver_attribution_corrections', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
+    if table in {'order_preparation_routes','order_amendments','order_revisions','order_revision_receipts','driver_tasks','order_driver_attribution_corrections', 'driver_incentive_decisions', 'driver_incentive_decision_events', 'collections', 'refunds', 'fiscal_previews', 'fiscal_documents', 'channel_settlement_allocations', 'order_events', 'support_tickets', 'delivery_photos'}:
         return 'order_id IN (SELECT id FROM orders WHERE brand_id=%s)', (brand,)
     if table == 'support_ticket_events':
         return 'ticket_id IN (SELECT id FROM support_tickets WHERE order_id IN (SELECT id FROM orders WHERE brand_id=%s))', (brand,)
@@ -199,6 +205,17 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
     selected = [table for table in TABLES if table in available and (full or table not in AUTH_TABLES)]
     if available - set(TABLES) - {'schema_migrations'}:
         raise db.error(409, 'EXPORT_SCHEMA_UNSUPPORTED', 'أضيفت سجلات تشغيلية جديدة. يلزم تحديث صيغة التصدير قبل إخراج نسخة كاملة.')
+    if not full:
+        # A scoped export cannot carry staffing completion while omitting the
+        # cross-brand immutable receipt which justifies it. Preserve the exact
+        # source and direct the owner to a whole private archive instead.
+        for shared in ('shared_driver_closure_declarations','shared_manager_closure_declarations'):
+            if shared in available and conn.execute(sql.SQL(
+                'SELECT 1 FROM {} d JOIN central_workday_legs l ON l.workday_id=d.workday_id '
+                'JOIN shifts s ON s.id=l.shift_id WHERE s.brand_id=%s LIMIT 1'
+            ).format(sql.Identifier(shared)), (brand_id,)).fetchone():
+                raise db.error(409, 'EXPORT_SHARED_PHYSICAL_SCOPE',
+                    'توجد تقفيلات فعلية مشتركة بين البراندين. استخدم الأرشيف الخاص الكامل لحفظ الأصل والاستلام وإسناد المحاسبة معًا؛ لا يمكن فصلها في تصدير براند واحد.')
     migrations = conn.execute('SELECT version,sha256 FROM schema_migrations ORDER BY version').fetchall()
     with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         def add(name, content):
@@ -248,6 +265,7 @@ def build_archive(conn, *, brand_id=None, full=False, max_bytes=None) -> tuple[b
                     'credentials_included': bool(full),
                     'map_runtime_import_policy': 'Private database archives only; verify then discard signing key, counters, leases and location cache on isolated restore.',
                     'excluded_tables': [] if full else sorted(AUTH_TABLES),
+                    'shared_physical_exclusion_reason': None if full else 'Combined actual declarations require a full private archive; no invented brand allocation is exported.',
                     'infrastructure_tables': [table for table in selected if table in INFRASTRUCTURE_TABLES],
                     'infrastructure_import_policy': 'Preserve observations and failure queues as historical source records; do not activate source hosting configuration or replay alerts.'}
         archive.writestr('manifest.json', _encode(manifest))
@@ -331,6 +349,104 @@ def _restored_evidence(conn, archive, manifest):
     return identity_digests, binary_count
 
 
+def migration_manifest():
+    paths = list((db.ROOT / 'migrations').glob('*.sql'))
+    from . import multibrand
+    if multibrand.enabled():
+        multibrand.isolation_guard()
+        paths.extend((db.ROOT / 'app' / 'multibrand_migrations').glob('*.sql'))
+    return [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+            for path in sorted(paths, key=lambda path: path.name)]
+
+
+def _verify_staffing_markers(conn, available):
+    """Validate imported physical completion against immutable full-archive evidence."""
+    proofs = ["""(s.kind='driver' AND EXISTS (
+        SELECT 1 FROM central_workday_legs l
+        JOIN central_workdays w ON w.id=l.workday_id
+        JOIN shared_driver_closure_declarations d ON d.workday_id=w.id
+        JOIN shared_driver_closure_receipts r ON r.declaration_id=d.id
+        LEFT JOIN shared_driver_closure_allocations a ON a.declaration_id=d.id
+        WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at
+          AND coalesce(s.submission->>'manager_approval_required','false')<>'true'
+          AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns returned WHERE returned.declaration_id=d.id)
+          AND (a.id IS NOT NULL OR d.retained_halalas >=
+             (SELECT coalesce(sum((j->>'permanent_float_halalas')::bigint),0)
+              FROM jsonb_array_elements(d.expected_snapshot) j)
+             OR EXISTS (SELECT 1 FROM audit_events e JOIN users u ON u.id=e.details->>'responsible_user_id'
+                WHERE e.action='shared_driver.float_followup' AND e.entity_type='central_workday' AND e.entity_id=d.workday_id
+                  AND e.details->>'declaration_id'=d.id AND e.details->>'receipt_id'=r.id
+                  AND e.details->>'due_at' IS NOT NULL AND e.details->>'no_employee_liability_assumed'='true'
+                  AND (e.details->>'declared_retained_halalas')::bigint=d.retained_halalas))))"""]
+    if 'shared_manager_closure_receipts' in available:
+        proofs.append("""(s.kind='manager' AND EXISTS (
+            SELECT 1 FROM central_workday_legs l
+            JOIN central_workdays w ON w.id=l.workday_id
+            JOIN shared_manager_closure_declarations d ON d.workday_id=w.id
+            JOIN shared_manager_closure_receipts r ON r.declaration_id=d.id
+            WHERE l.shift_id=s.id AND w.user_id=s.user_id AND r.created_at=s.staffing_ended_at
+              AND r.received_by=d.recipient_user_id
+              AND NOT EXISTS (SELECT 1 FROM shared_manager_closure_returns returned
+                              WHERE returned.declaration_id=d.id)))""")
+    if 'driver_cash_bags' in available:
+        proofs.append("""(s.kind='driver' AND EXISTS (
+            SELECT 1 FROM driver_cash_bags b JOIN central_workday_legs l ON l.workday_id=b.workday_id
+            WHERE l.shift_id=s.id AND b.driver_id=s.user_id AND b.destination='branch'
+              AND b.deposited_at=s.staffing_ended_at
+              AND coalesce(s.submission->>'manager_approval_required','false')<>'true'))""")
+    if 'driver_cash_bags' in available:
+        proofs.append("""(s.kind='driver' AND EXISTS (
+    SELECT 1 FROM central_workday_legs l
+    JOIN central_workdays w ON w.id=l.workday_id
+    JOIN shared_driver_closure_declarations d ON d.workday_id=w.id
+    JOIN audit_events e ON e.entity_type='central_workday' AND e.entity_id=w.id
+      AND e.action='shared_driver.manager_approved'
+    WHERE l.shift_id=s.id AND w.user_id=s.user_id
+      AND d.id=s.submission->>'shared_declaration_id'
+      AND d.id=s.submission->'manager_approval'->>'declaration_id'
+      AND d.id=(SELECT newest.id FROM shared_driver_closure_declarations newest WHERE newest.workday_id=w.id ORDER BY newest.revision DESC LIMIT 1)
+      AND e.actor_id=s.submission->'manager_approval'->>'approved_by'
+      AND e.actor_id<>s.user_id
+      AND e.details @> (s.submission->'manager_approval')
+      AND e.details->>'submitted_by'=d.recorded_by
+      AND e.details->>'submission_reason'=d.reason
+      AND e.details->>'delegated_submission'=CASE WHEN d.recorded_by<>s.user_id THEN 'true' ELSE 'false' END
+      AND (d.recorded_by=s.user_id OR (d.recorded_by=e.actor_id AND length(btrim(d.reason))>0))
+      AND e.details->>'cash_receipt_recorded'='false'
+      AND (e.details->>'approved_at')::timestamptz=s.staffing_ended_at
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(d.expected_snapshot) j WHERE j->>'manager_user_id'<>e.actor_id)
+      AND NOT EXISTS (SELECT 1 FROM shared_driver_closure_returns returned WHERE returned.declaration_id=d.id)
+      AND (EXISTS (SELECT 1 FROM driver_cash_bags b WHERE b.declaration_id=d.id AND b.driver_id=s.user_id AND b.destination='branch')
+        OR EXISTS (SELECT 1 FROM shared_driver_closure_receipts r WHERE r.declaration_id=d.id))
+  ))""")
+    if 'manager_vault_closures' in available:
+        proofs.append("""(s.kind='manager' AND EXISTS (
+            SELECT 1 FROM manager_vault_closures v JOIN central_workday_legs l ON l.workday_id=v.workday_id
+            WHERE l.shift_id=s.id AND v.manager_id=s.user_id AND v.created_at=s.staffing_ended_at))""")
+    invalid = conn.execute("SELECT s.id FROM shifts s WHERE s.staffing_ended_at IS NOT NULL "
+        "AND (s.status NOT IN ('submitted','closed') OR NOT ("+' OR '.join(proofs)+")) LIMIT 1").fetchone()
+    if invalid:
+        raise ValueError('Restored staffing completion lacks its immutable physical receipt.')
+
+
+def _verify_preparation_routes(conn, actual):
+    if 'order_preparation_routes' not in actual:
+        return
+    if conn.execute("""SELECT 1 FROM order_preparation_routes r
+        LEFT JOIN orders o ON o.id=r.order_id
+        LEFT JOIN branches b ON b.id=r.target_branch_id
+        LEFT JOIN branches previous ON previous.id=r.previous_branch_id
+        WHERE o.id IS NULL OR b.id IS NULL OR previous.id IS NULL
+          OR r.brand_id<>o.brand_id OR r.source_branch_id<>o.branch_id
+          OR b.brand_id<>o.brand_id OR previous.brand_id<>o.brand_id
+          OR r.order_version>o.version LIMIT 1""").fetchone():
+        raise ValueError('Preparation routing history does not match its original order and branch scope.')
+    if conn.execute("""SELECT 1 FROM orders o LEFT JOIN order_preparation_routes r ON r.id=o.preparation_route_id
+        WHERE o.preparation_route_id IS NOT NULL AND (r.id IS NULL OR r.order_id<>o.id
+         OR (r.target_branch_id<>o.branch_id AND r.amendment_revision<>o.amendment_revision)) LIMIT 1""").fetchone():
+        raise ValueError('Current preparation destination does not match its immutable route and order revision.')
+
+
 def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                     target_database_id: str | None = None, asset_directory: str | Path | None = None) -> dict:
     """Restore to a NEW isolated test schema; no existing schema is overwritten.
@@ -343,8 +459,7 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
     if not re.fullmatch(r'kps_restore_[a-f0-9]{32}', target_schema):
         raise ValueError('Restore schema must be kps_restore_ plus a new UUID hex value.')
     _restore_target(target_url, target_database_id)
-    expected = [{'version': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-                for path in sorted((db.ROOT / 'migrations').glob('*.sql'))]
+    expected = migration_manifest()
     if manifest['migrations'] != expected:
         raise ValueError('Archive migrations do not match this code. Restore with matching code first.')
     destination, files_restored = Path(asset_directory) if asset_directory is not None else None, 0
@@ -371,15 +486,27 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             # the new isolated restore schema and this transaction.
             conn.execute('ALTER TABLE shifts DISABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users DISABLE TRIGGER register_fleet_vehicle')
+            conn.execute('ALTER TABLE customer_wallet_entries DISABLE TRIGGER wallet_entry_balance')
+            # Physical completion is imported with its exact historical receipt;
+            # its insert guard normally forbids creating already-ended staffing.
+            # Disable only in this newly created schema, then verify all markers
+            # against immutable receipts before restoring the live write guard.
+            restore_staffing_guard = 'shared_driver_closure_receipts' in actual
+            if restore_staffing_guard:
+                conn.execute('ALTER TABLE shifts DISABLE TRIGGER guarded_staffing_end')
             for table in manifest['table_order']:
-                columns = {row['column_name']: row['udt_name'] for row in conn.execute(
-                    'SELECT column_name,udt_name FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
-                    (target_schema, table)).fetchall()}
+                column_info = conn.execute(
+                    'SELECT column_name,udt_name,is_nullable,is_generated FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
+                    (target_schema, table)).fetchall()
+                columns = {row['column_name']: row['udt_name'] for row in column_info}
+                nullable = {row['column_name'] for row in column_info if row['is_nullable']=='YES'}
+                generated = {row['column_name'] for row in column_info if row['is_generated']=='ALWAYS'}
                 for row in json.loads(archive.read(f'data/{table}.json')):
                     if set(row) != set(columns):
                         raise ValueError('Backup columns do not match target.')
                     values = []
-                    for column, value in row.items():
+                    writable = {column: value for column,value in row.items() if column not in generated}
+                    for column, value in writable.items():
                         if columns[column] == 'bytea' and value is not None:
                             if not isinstance(value, dict) or set(value) != {'$binary', 'sha256', 'size_bytes'}:
                                 raise ValueError('Invalid binary reference.')
@@ -388,17 +515,29 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
                                 raise ValueError('Attachment checksum mismatch.')
                             values.append(payload)
                         elif columns[column] in {'json', 'jsonb'}:
-                            values.append(db.json(value))
+                            values.append(None if value is None and column in nullable else db.json(value))
                         elif isinstance(value, dict) and '$decimal' in value:
                             values.append(Decimal(value['$decimal']))
                         else:
                             values.append(value)
                     statement = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
-                        sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, row)),
-                        sql.SQL(',').join(sql.Placeholder() for _ in row))
+                        sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, writable)),
+                        sql.SQL(',').join(sql.Placeholder() for _ in writable))
                     conn.execute(statement, values)
+            # Validate deferred references/projections before changing trigger
+            # state: PostgreSQL refuses ALTER TABLE with pending FK events on
+            # a populated wallet ledger. A consistent snapshot has no new
+            # benefit delta to materialize here.
+            _verify_preparation_routes(conn, actual)
+            conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
             conn.execute('ALTER TABLE shifts ENABLE TRIGGER sync_vehicle_log')
             conn.execute('ALTER TABLE users ENABLE TRIGGER register_fleet_vehicle')
+            conn.execute('ALTER TABLE customer_wallet_entries ENABLE TRIGGER wallet_entry_balance')
+            if restore_staffing_guard:
+                _verify_staffing_markers(conn, actual)
+                conn.execute('ALTER TABLE shifts ENABLE TRIGGER guarded_staffing_end')
+            consent_sequence=conn.execute("SELECT pg_get_serial_sequence('customer_marketing_consents','seq') AS name").fetchone()['name']
+            conn.execute("SELECT setval(%s::regclass,greatest(coalesce((SELECT max(seq) FROM customer_marketing_consents),0),1),EXISTS(SELECT 1 FROM customer_marketing_consents))",(consent_sequence,))
             # Restores preserve history, never replay physical printing or
             # reactivate device credentials copied from an older snapshot.
             if 'branch_print_devices' in actual:
@@ -424,13 +563,14 @@ def restore_archive(contents: bytes, *, target_url: str, target_schema: str,
             if counts != manifest['counts'] or _totals(conn, None) != manifest['totals']:
                 raise ValueError('Restored counts or monetary totals differ from snapshot.')
             identities, binary_count = _restored_evidence(conn, archive, manifest)
-            # Verify the snapshot before retiring copied staff entry credentials.
-            # The source database is untouched; a restore is no owner approval.
+            # Snapshot verification precedes retirement. Restored entry links
+            # and browser exceptions must never become live capabilities again.
+            # This is a system restore action, not an invented owner approval.
             if 'staff_geo_access_grants' in actual:
                 revoked_geo_grants = conn.execute(
                     "UPDATE staff_geo_access_grants SET revoked_at=now(),revoked_by=NULL,"
                     "revocation_source='restore',revocation_reason='Retired after isolated restore' "
-                    "WHERE revoked_at IS NULL").rowcount
+                    'WHERE revoked_at IS NULL').rowcount
                 if revoked_geo_grants:
                     db.audit(conn, None, 'restore.staff_geo_grants_revoked', 'runtime', target_schema,
                              {'grants': revoked_geo_grants})

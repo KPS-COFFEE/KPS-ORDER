@@ -25,13 +25,13 @@ jobs:
       postgres:
         image: postgres:18.6
         env:
-          POSTGRES_DB: test_rollback
+          POSTGRES_DB: test_enbishan_rollback
           POSTGRES_USER: rollback_test
           POSTGRES_PASSWORD: isolated-synthetic-only
         ports: ['5432:5432']
-        options: --health-cmd "pg_isready -U rollback_test -d test_rollback" --health-interval 5s --health-timeout 5s --health-retries 12
+        options: --health-cmd "pg_isready -U rollback_test -d test_enbishan_rollback" --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      TEST_DATABASE_URL: postgresql://rollback_test:isolated-synthetic-only@127.0.0.1:5432/test_rollback
+      TEST_DATABASE_URL: postgresql://rollback_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_rollback
       APP_ENV: testing
       OTP_PROVIDER: disabled
       EMAIL_PROVIDER: disabled
@@ -72,10 +72,10 @@ jobs:
           python tools/rollback_prepare_compat.py --repository "$PWD" --output "$context" > evidence/rollback-source-identity.json
           baseline="$RUNNER_TEMP/raw-prior-application"
           mkdir "$baseline"
-          git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$baseline"
+          git archive b528f14c5ea93e32a15a5c37f43f7e93477136e8 | tar -x -C "$baseline"
           docker buildx build --target runtime --platform linux/amd64 --load --provenance=false \
             --label "org.opencontainers.image.revision=$CANDIDATE_SHA" \
-            --label "sa.kps.rollback.baseline=80a1d727f6695c4ce3685e726ab5b34674e1cfa0" \
+            --label "sa.kps.rollback.baseline=b528f14c5ea93e32a15a5c37f43f7e93477136e8" \
             --metadata-file evidence/build-metadata.json --tag "kps-application-rollback:$CANDIDATE_SHA" "$context" > evidence/image-build.log 2>&1
           image_id=$(docker image inspect --format '{{.Id}}' "kps-application-rollback:$CANDIDATE_SHA")
           printf '%s\n' "$image_id" > evidence/image-id.txt
@@ -99,6 +99,7 @@ jobs:
           docker run --rm --network host --entrypoint python \
             --mount "type=bind,src=$RUNNER_TEMP/rollback-test-tools,dst=/test-tools,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/prior-contract-tests,dst=/app/tests,readonly" \
+            --mount "type=bind,src=$ROLLBACK_BASELINE_DIR/docs/enbishan/menu-review/owner-final-20261022.json,dst=/app/docs/enbishan/menu-review/owner-final-20261022.json,readonly" \
             --mount "type=bind,src=$PWD/evidence,dst=/evidence" \
             --env PYTHONPATH=/test-tools:/app --env TEST_DATABASE_URL="$TEST_DATABASE_URL" \
             --env APP_ENV=testing --env OTP_PROVIDER=disabled --env EMAIL_PROVIDER=disabled \
@@ -111,6 +112,15 @@ jobs:
             tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py \
             tests/test_driver_work_hours_backup.py tests/test_branch_order_employee_closure.py \
             tests/test_owner_extra_permissions.py \
+            tests/test_aggregate_driver_closure.py tests/test_financial_clarifications.py \
+            tests/test_order_duplicates.py tests/test_delivery_partial_returns.py \
+            tests/test_financial_treatments.py tests/test_shared_financial_treatments.py \
+            tests/test_order_financial_treatments.py tests/test_manual_bank_matching.py \
+            tests/test_tracking_ingest.py tests/test_collection_tender_corrections.py tests/test_driver_duty.py \
+            tests/test_order_interventions.py tests/test_order_financial_cases.py \
+            tests/test_hardening_order_pipeline.py::test_atomic_checkout_response_matches_existing_projection_and_single_write \
+            tests/test_owner_test_void.py::test_stale_owner_cannot_void_paid_order_or_replay_after_authority_revocation[demoted-candidate] \
+            tests/test_owner_test_void.py::test_stale_owner_cannot_void_paid_order_or_replay_after_authority_revocation[disabled-candidate] \
             tests/test_fiscal.py::test_completed_driver_sale_automatically_issues_once_and_refunds \
             tests/test_fiscal.py::test_actual_issuance_and_credit_before_refund_atomicity \
             -k 'not real_browser' --junitxml=/evidence/prior-contracts.xml | tee evidence/prior-contracts.log
@@ -122,8 +132,9 @@ jobs:
       - name: Current database to exact prior image and back without restoring database
         run: |
           set -euo pipefail
-          python -m pytest -q tests/test_rollback_application_compatibility.py --junitxml=evidence/application-rollback.xml | tee evidence/application-rollback.log
+          python -m pytest -q tests/test_rollback_application_compatibility.py tests/test_preparation_rollback_compatibility.py tests/test_collected_rollback_guard.py --junitxml=evidence/application-rollback.xml | tee evidence/application-rollback.log
           cp test-artifacts/rollback-app-compatibility-drill.json evidence/
+          cp test-artifacts/preparation-rollback-unprinted.json test-artifacts/preparation-rollback-accepted.json evidence/
           python - <<'PY'
           import json,xml.etree.ElementTree as E
           cases=list(E.parse('evidence/application-rollback.xml').getroot().iter('testcase'))
@@ -131,6 +142,14 @@ jobs:
           d=json.load(open('evidence/rollback-app-compatibility-drill.json'))
           assert d['synthetic_only'] and d['database_restored'] is False
           assert d['compat']['return_confirmed'] and d['reupgrade_orders_preserved']==3
+          for scenario in ('unprinted','accepted'):
+              route=json.load(open('evidence/preparation-rollback-'+scenario+'.json'))
+              assert route['synthetic_only'] and route['database_restored'] is False
+              assert route['immutable_source_preserved'] and route['reupgrade_preserved']
+              assert route['target_queue'] and route['new_route_creation_denied']
+              if scenario=='accepted':
+                  assert route['accepted_at_preserved']
+                  assert route['driver_pickup']==route['trip_departure']==route['print_destination']
           PY
       - name: Prior image real runtime health and readiness
         run: |
@@ -198,4 +217,3 @@ jobs:
           if-no-files-found: error
           compression-level: 1
           retention-days: 14
-

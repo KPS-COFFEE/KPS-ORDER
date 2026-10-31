@@ -9,6 +9,7 @@
     ['/api/vehicle-maintenance/reports',['reports']], ['/api/dispatch/offers',['offers']],
     ['/api/fuel-exceptions',['requests']], ['/api/driver-breaks',['breaks']],
     ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/order-amendments/inbox',['orders','requests']], ['/api/tasks',['tasks']],
+    ['/api/preparation-routing/tasks',['preparation_tasks']],
     ['/api/conversations',['conversations']], ['/api/conversations/alerts',['awaiting_reply']],
     ['/api/shifts',['shifts','available_manager_shifts']],
     ['/api/shifts/current',['shifts','available_manager_shifts']],
@@ -180,6 +181,11 @@
       const reserved=new Set(['current','alerts','customer-search','customer-lookup','delivery-center','complimentary','promotions']);
       if(shiftAction?.[1]==='driver-closure')resource={kind:'shift',id:decodeURIComponent(shiftAction[2])};
       if(match&&!reserved.has(match[2]))resource={kind:kinds[match[1]],id:decodeURIComponent(match[2])};
+      // Cancellation delegates can review a scoped intervention without a
+      // general order grant. Resolve/cache that authority separately; the
+      // canonical read or decision still checks current permission and scope.
+      const intervention=url.pathname.match(/^\/api\/order-interventions\/orders\/([^/]+)(?:\/|$)/);
+      if(intervention)resource={kind:'order_intervention',id:decodeURIComponent(intervention[1])};
       for(const [parameter,kind] of [['order_id','order'],['task_id','task'],['branch_id','branch'],['return_branch_id','branch'],['shift_id','shift']]){
         const id=url.searchParams.get(parameter)||options.body?.[parameter];
         if(!resource&&id)resource={kind,id};

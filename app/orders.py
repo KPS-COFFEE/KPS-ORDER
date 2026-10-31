@@ -11,7 +11,7 @@ from fastapi.responses import Response
 from .responses import DatabaseJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
-from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations, invoice_profiles
+from . import auth, catalog, db, performance, service_hours, order_numbering, print_translations, invoice_profiles, preparation_routing
 
 from .complimentary import operational_view
 
@@ -38,6 +38,8 @@ def scoped_order(conn, order_id, user, lock=False):
 def customer_order_view(row):
     result=dict(row)
     result.pop('performance_snapshot',None)
+    result.pop('preparation_route_id',None)
+    result.pop('preparation_branch',None)
     if result.get('duplicate_review'):
         result['duplicate_review']={'status':result['duplicate_review']['status']}
     result['snapshot'] = operational_view(catalog.customer_quote_view(row['snapshot']))
@@ -381,7 +383,7 @@ def _create_order(body, request, user, idempotency_key, *, delivery_center=False
                     'created_audit AS (INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details) '
                     "SELECT %s,%s,'order.created','order',id,%s FROM created_order RETURNING id), "
                     + gift_cte + "operation_response AS (SELECT jsonb_build_object('order',"
-                    "(to_jsonb(o)-'performance_snapshot') || jsonb_build_object("
+                    "(to_jsonb(o)-'performance_snapshot'-'preparation_route_id') || jsonb_build_object("
                     "'branch_id',%s::text,'customer',%s::jsonb,"
                     "'snapshot',jsonb_set(%s::jsonb,'{order_reference}',o.snapshot->'order_reference'),"
                     "'created_at'," + _response_timestamp_sql('o.created_at') + ","
@@ -432,7 +434,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 sort: str | None = Query(default=None, max_length=20),
                 neighborhood: str | None = Query(default=None, max_length=120),
                 driver_id: str | None = Query(default=None, max_length=80),
-                search: str | None = Query(default=None, max_length=80),
+                search: str | None = Query(default=None, max_length=150),
                 phone: str | None = Query(default=None, min_length=8, max_length=30),
                 manager_view: str | None = None,
                 dispatch_workspace: bool = False, dispatch_scope: Literal['current','all'] = 'current',
@@ -452,6 +454,9 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
     elif user['role'] == 'branch_manager':
         conditions.append('o.branch_id=ANY(%s)')
         params.append(user['branch_ids'])
+    elif auth.has_admin_read_grant(user, 'orders_view'):
+        conditions.append('o.branch_id=ANY(%s)')
+        params.append(user.get('branch_ids', []))
     elif user['role'] in {'delivery_manager', 'delivery_staff'}:
         conditions.append("o.service='delivery'")
         conditions.append('o.branch_id=ANY(%s)')
@@ -503,11 +508,19 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         conditions.append("normalized_identity_phone(o.customer->>'phone')=%s")
         params.append(normalized_phone)
     if search:
-        term=search.strip()
+        raw_term=search.strip()
+        term=raw_term.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹','01234567890123456789'))
+        references=list(dict.fromkeys([raw_term,term]))
+        number_term=str(int(term)) if term.isascii() and term.isdigit() else term
         phone=search_phone(term)
-        conditions.append("(o.order_no::text=%s OR o.id=%s OR o.snapshot->>'order_reference'=%s" + (" OR normalized_identity_phone(o.customer->>'phone')=%s)" if phone else ")"))
-        params.extend([term,term,term]+([phone] if phone else []))
-    sort = sort or ('newest' if user['role']=='customer' else 'active_oldest')
+        conditions.append("(o.order_no::text=%s OR o.id=ANY(%s) OR o.snapshot->>'order_reference'=ANY(%s)"
+            " OR o.snapshot->'legacy_invoice'->>'invoice_reference'=ANY(%s)"
+            " OR o.snapshot->'prior_delivery'->>'source_reference'=ANY(%s)"
+            " OR EXISTS(SELECT 1 FROM prior_delivery_records pd WHERE pd.order_id=o.id AND pd.source_reference=ANY(%s))"
+            " OR EXISTS(SELECT 1 FROM fiscal_documents fd WHERE fd.order_id=o.id AND fd.number=ANY(%s))"
+            + (" OR normalized_identity_phone(o.customer->>'phone')=%s)" if phone else ")"))
+        params.extend([number_term,*([references]*6)]+([phone] if phone else []))
+    sort = sort or ('newest' if user['role']=='customer' or auth.has_admin_read_grant(user, 'orders_view') else 'active_oldest')
     if sort not in {'newest','oldest','active_oldest'}:
         raise db.error(422,'ORDER_SORT_INVALID','ترتيب الطلبات غير صحيح.')
     ordering = {'newest':'o.created_at DESC,o.order_no DESC', 'oldest':'o.created_at ASC,o.order_no ASC',
@@ -550,7 +563,11 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 conditions.append('NOT ('+predicate+')')
                 params.extend(workspace_params)
                 conditions.append('NOT ('+manager_workday.ACTIVE+')')
-        if period or start or end:
+        if period == 'all':
+            if start or end:
+                raise db.error(422, 'PERIOD_DATES_CONFLICT', 'اختر كل السجل أو حدد فترة مخصصة.')
+            period_info = {'all_history': True}
+        elif period or start or end:
             if period not in {None, 'today', 'yesterday', 'custom'}:
                 raise db.error(422, 'PERIOD_INVALID', 'الفترة غير صحيحة.')
             config = conn.execute('SELECT settings FROM app_settings WHERE brand_id=%s', (user['brand_id'],)).fetchone()
@@ -585,6 +602,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         enrich_duplicate_reviews(conn,rows[:limit])
         if user['role']!='customer':
             performance.enrich_orders(conn,rows[:limit])
+            preparation_routing.enrich_orders(conn,rows[:limit])
             from . import morning_dispatch
             morning_dispatch.enrich(conn,rows[:limit])
         else:
@@ -718,6 +736,7 @@ class DeliveryLocationChange(catalog._CheckoutModel):
 
 
 def apply_delivery_location_revision(conn,row,customer,user,body):
+    preparation_routing.guard_amendment(conn,row)
     # Keep the canonical immutable revision/consent chain. This address-only
     # operational path cannot change prices, fiscal values, ownership or items.
     from . import order_amendments
@@ -791,6 +810,7 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
         enrich_duplicate_reviews(conn,[row])
         if user['role']!='customer':
             performance.enrich_orders(conn,[row])
+            preparation_routing.enrich_orders(conn,[row])
             from . import morning_dispatch
             morning_dispatch.enrich(conn,[row])
             row['print_labels_en']=print_translations.for_order(conn,row)
@@ -837,6 +857,9 @@ def manager_accept(order_id: str, body: ManagerAcceptanceBody,
                      ('operations:' + user['brand_id'],))
         order = scoped_order(conn, order_id, user, lock=True)
         manager_shift_id = delivery_center_scope(conn, user, order['branch_id'])
+        preparation_id = preparation_routing.pickup_branch_id(conn, order, user=user)
+        if preparation_id != order['branch_id']:
+            delivery_center_scope(conn, user, preparation_id)
         morning = bool(user.get('_morning_manager_context')
                        and order['snapshot'].get('delivery_period') == 'morning')
         morning_branch = None
@@ -895,6 +918,9 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
     with db.tx() as conn:
         # Replay returns a saved response, so fresh scope authorization must precede replay lookup.
         visible = scoped_order(conn, order_id, user)
+        if body.status == 'cancelled':
+            from .collected_order_authority import require as require_collected_cancel
+            require_collected_cancel(conn, visible, user)
         from . import morning_delivery
         morning_delivery.authorize_order(conn,user,visible,preparation=user['role']=='branch_manager')
         from . import morning_dispatch
@@ -913,6 +939,7 @@ def preparation(order_id: str, body: PreparationBody, user=Depends(auth.require_
             morning_dispatch.require_driver_acceptance(conn,visible)
         def perform():
             order = scoped_order(conn, order_id, user, lock=True)
+            preparation_routing.guard_source_preparation(conn, order, body.status)
             if order['version'] != body.version:
                 raise db.error(409, 'ORDER_VERSION_CONFLICT', 'تغير الطلب. حدّث الصفحة قبل تنفيذ العملية.')
             current = order['preparation_status']

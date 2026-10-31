@@ -61,14 +61,24 @@ def test_manager_cannot_bypass_fulfillment_or_financial_guards(ops,case):
     manager,driver=shifts();oid=pending(order,'pickup' if case=='pickup' else 'delivery')
     body={'status':'accepted' if case=='prepare' else 'cancelled','version':1,'reason':'TEST reason'}
     if case=='paid':
-        with db.tx() as c:c.execute("UPDATE orders SET payment_status='paid' WHERE id=%s",(oid,))
+        with db.tx() as c:
+            c.execute("UPDATE orders SET payment_status='paid' WHERE id=%s",(oid,))
+            paid_order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+            paid_collections=c.execute('SELECT * FROM collections WHERE order_id=%s ORDER BY id',(oid,)).fetchall()
+            paid_refunds=c.execute('SELECT * FROM refunds WHERE order_id=%s ORDER BY id',(oid,)).fetchall()
     if case=='assigned':
         post('manager',f'/api/orders/{oid}/assign',{'driver_shift_id':driver})
         body['version']=2
     if case=='stale':body['version']=999
-    post('manager',f'/api/orders/{oid}/preparation',body,status=404 if case=='pickup' else 403 if case=='prepare' else 409)
+    denied=post('manager',f'/api/orders/{oid}/preparation',body,status=404 if case=='pickup' else 403 if case in {'prepare','paid'} else 409)
+    if case=='paid':
+        assert denied['detail']['code']=='COLLECTED_CANCELLATION_AUTHORITY'
     with db.tx() as c:
         assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='new'
+        if case=='paid':
+            assert c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()==paid_order
+            assert c.execute('SELECT * FROM collections WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==paid_collections
+            assert c.execute('SELECT * FROM refunds WHERE order_id=%s ORDER BY id',(oid,)).fetchall()==paid_refunds
 
 def test_accept_assign_races_rejection_without_orphan_task(ops):
     actor,post,order,shifts=ops

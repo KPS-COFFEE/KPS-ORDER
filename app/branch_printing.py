@@ -143,6 +143,8 @@ def operational_devices(order_id: str, user=Depends(operators)):
         if not order or not auth.can_access_order(user,order,conn):
             raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود ضمن صلاحياتك.')
         source=scope(conn,user,order['branch_id'])
+        from .preparation_routing import pickup_branch_id
+        preparation_id=pickup_branch_id(conn,order,user=user)
         rows=conn.execute('SELECT d.id,d.branch_id,d.label,d.printer_name,d.paper_mm,b.city '
                           'FROM branch_print_devices d JOIN branches b ON b.id=d.branch_id '
                           'WHERE d.brand_id=%s AND d.revoked_at IS NULL AND d.approved_at IS NOT NULL '
@@ -150,6 +152,7 @@ def operational_devices(order_id: str, user=Depends(operators)):
                           (user['brand_id'],)).fetchall()
         visible=[{k:v for k,v in row.items() if k!='city'} for row in rows
                  if can_access_branch(user, row['branch_id'])
+                 and (preparation_id==order['branch_id'] or row['branch_id']==preparation_id)
                  and same_print_city(source,row)]
         return {'devices':visible}
 
@@ -402,9 +405,13 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
         from .order_duplicates import guard as duplicate_guard
         duplicate_guard(conn, order)
         branch=scope(conn,user,order['branch_id'])
+        from .preparation_routing import pickup_branch_id
+        preparation_id=pickup_branch_id(conn,order,user=user)
         device=conn.execute('SELECT * FROM branch_print_devices WHERE id=%s AND brand_id=%s AND revoked_at IS NULL AND token_hash IS NOT NULL FOR UPDATE',(body.device_id,user['brand_id'])).fetchone()
         if not device:raise db.error(409,'PRINT_NOT_PAIRED','اربط طابعة هذا الفرع أولًا.')
         destination=scope(conn,user,device['branch_id'])
+        if preparation_id!=order['branch_id'] and destination['id']!=preparation_id:
+            raise db.error(409,'PRINT_PREPARATION_DESTINATION','أرسل الطباعة إلى فرع التحضير المكلف بهذا الطلب.')
         if not same_print_city(branch,destination):
             raise db.error(403,'PRINT_CITY_MISMATCH','اختر طابعة ضمن محافظة الطلب فقط.')
         if not device['approved_at']:
@@ -422,8 +429,11 @@ def enqueue(order_id:str, body:JobBody, user=Depends(operators), idem:str|None=H
                     from .fiscal import print_order
                     doc=original(conn,order_id)
                     if doc: printable={**order,**print_order(doc,order)}
-                payload=receipt(printable,branch,kind,body.language,translations)
+                payload=receipt(printable,destination if kind=='preparation' and preparation_id!=order['branch_id'] else branch,kind,body.language,translations)
                 payload['order_revision']=order.get('amendment_revision',0)
+                if preparation_id!=order['branch_id']:
+                    payload['preparation_branch_id']=preparation_id
+                    payload['lines'].insert(0,{'text':('فرع التحضير: ' if body.language=='ar' else 'Preparation branch: ')+destination['name'],'bold':True,'center':True})
                 if destination['id'] != branch['id']:
                     payload['lines'].insert(0,{'text':('وجهة الطباعة: '+destination['name'] if body.language=='ar' else 'Print destination: '+('ENBISHAN '+str(destination['branch_no']) if order['brand_id']=='enbishan' else destination['name'])),'bold':True,'center':True})
                 if previous:payload['lines'].insert(0,{'text':('إعادة طباعة' if body.language=='ar' else 'REPRINT'),'bold':True,'center':True})
@@ -447,14 +457,17 @@ def order_output_status(order_id:str,user=Depends(output_operator)):
     from .orders import scoped_order
     with db.tx() as conn:
         order=scoped_order(conn,order_id,user)
+        from .preparation_routing import pickup_branch_id, guard_source_preparation
+        if user['role']=='branch_manager':guard_source_preparation(conn,order,'print_output')
+        preparation_id=pickup_branch_id(conn,order,user=user)
         rows=conn.execute("""SELECT j.id,j.status,j.created_at,j.finished_at,
             (SELECT e.created_at FROM order_events e WHERE e.order_id=j.order_id
                AND e.event_type='order.print_output_confirmed' AND e.details->>'job_id'=j.id
                ORDER BY e.created_at LIMIT 1) confirmed_at
             FROM branch_print_jobs j WHERE j.order_id=%s AND j.branch_id=%s AND j.kind='order'
               AND coalesce((j.payload->>'order_revision')::int,0)=%s
-            ORDER BY j.created_at DESC LIMIT 10""",(order_id,order['branch_id'],order.get('amendment_revision',0))).fetchall()
-        return {'jobs':rows,'version':order['version'],'branch_id':order['branch_id']}
+            ORDER BY j.created_at DESC LIMIT 10""",(order_id,preparation_id,order.get('amendment_revision',0))).fetchall()
+        return {'jobs':rows,'version':order['version'],'branch_id':preparation_id}
 
 
 class OutputConfirmation(BaseModel):
@@ -472,6 +485,9 @@ def confirm_order_output(order_id:str,body:OutputConfirmation,user=Depends(outpu
         scoped_order(conn,order_id,user)
         def perform():
             order=scoped_order(conn,order_id,user,lock=True)
+            from .preparation_routing import pickup_branch_id, guard_source_preparation
+            if user['role']=='branch_manager':guard_source_preparation(conn,order,'print_output')
+            preparation_id=pickup_branch_id(conn,order,user=user)
             if not body.paper_confirmed:
                 raise db.error(422,'PRINT_OUTPUT_CONFIRMATION','أكد خروج فاتورة الطلب من طابعة الفرع فعليًا.')
             if order['completed_at'] or order['preparation_status'] in ('cancelled','rejected','completed') or order['delivery_status'] in ('cancelled','delivered'):
@@ -479,12 +495,12 @@ def confirm_order_output(order_id:str,body:OutputConfirmation,user=Depends(outpu
             if order['version']!=body.version:
                 raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث التفاصيل قبل تأكيد الطباعة.')
             job=conn.execute('SELECT * FROM branch_print_jobs WHERE id=%s AND order_id=%s FOR UPDATE',(body.job_id,order_id)).fetchone()
-            if not job or job['brand_id']!=order['brand_id'] or job['branch_id']!=order['branch_id']:
+            if not job or job['brand_id']!=order['brand_id'] or job['branch_id']!=preparation_id:
                 raise db.error(404,'PRINT_OUTPUT_JOB','فاتورة فرع تنفيذ الطلب غير متاحة.')
             if job['kind']!='order' or job['status']!='submitted' or job['payload'].get('order_revision',0)!=order.get('amendment_revision',0):
                 raise db.error(409,'PRINT_OUTPUT_NOT_SUBMITTED','انتظر إرسال فاتورة النسخة الحالية إلى طابعة فرع التنفيذ، ثم أكد خروج الورقة.')
             if not conn.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.print_output_confirmed' AND details->>'job_id'=%s",(order_id,body.job_id)).fetchone():
-                details={'job_id':body.job_id,'branch_id':order['branch_id'],
+                details={'job_id':body.job_id,'branch_id':preparation_id,
                          'revision':order.get('amendment_revision',0),'source':'operator_paper_confirmation'}
                 db.event(conn,order_id,user['id'],'order.print_output_confirmed',details)
                 db.audit(conn,user['id'],'printer.order_output_confirmed','order',order_id,details)
@@ -518,6 +534,10 @@ def resolve_print_alert(identifier: str, body: AlertAction, user=Depends(operato
         if job['order_id']:
             from .orders import scoped_order
             order = scoped_order(conn, job['order_id'], user, lock=True)
+            from .preparation_routing import pickup_branch_id
+            destination_id=pickup_branch_id(conn,order,user=user)
+            if destination_id!=order['branch_id'] and job['branch_id']!=destination_id:
+                raise db.error(409,'PRINT_PREPARATION_DESTINATION','راجع أمر طباعة فرع التحضير المكلف فقط.')
         def perform():
             current = conn.execute('SELECT * FROM branch_print_jobs WHERE id=%s FOR UPDATE', (identifier,)).fetchone()
             resolution = current['alert_resolution']
