@@ -1,7 +1,9 @@
 """Central routing witnesses use real isolated PostgreSQL and canonical sessions."""
+from uuid import uuid4
+
 import pytest
 
-from app import db
+from app import auth, db
 from test_enbishan_dual_brand import dual
 
 
@@ -356,3 +358,140 @@ def test_session_branch_map_pins_are_verified_minimal_and_revocation_scoped(cent
         c.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-manager' AND brand_id='enbishan'")
     scopes=actor('manager').get('/api/session').json()['user']['central_operations']['brands']
     assert [b['id'] for b in scopes]==['kps']
+
+
+@pytest.fixture
+def intervention_scope(central, monkeypatch):
+    monkeypatch.setenv('DELIVERY_INTERVENTIONS_ENFORCED', 'false')
+    with db.tx() as c:
+        c.execute("""INSERT INTO users(id,display_name,role,brand_id,branch_ids,
+                     extra_permissions,permission_denials)
+            VALUES('dual-cancel-delegate','SYNTHETIC cancellation delegate','admin','kps',%s,%s,%s)""",
+            (db.json(['kps-branch-1']), db.json(['orders_cancel_after_print']),
+             db.json(['orders_view', 'accounting_reports', 'accounting_review'])))
+        c.execute("""INSERT INTO staff_brand_memberships(user_id,brand_id,branch_ids,granted_by)
+            VALUES('dual-cancel-delegate','enbishan',%s,'dual-owner')""",
+            (db.json(['enbishan-test-1']),))
+    return central
+
+
+def _intervention_order(brand, *, snapshot=None):
+    # Confirmed snapshots are immutable; freeze policy when the fixture is born.
+    oid = 'central-intervention-' + uuid4().hex
+    branch = 'kps-branch-1' if brand == 'kps' else 'enbishan-test-1'
+    frozen = {'items': [], 'branch_name': branch, 'delivery_workflow': 'manager_dispatch',
+              'journey_controls_version': 1, 'delivery_period': 'evening', **(snapshot or {})}
+    with db.tx() as c:
+        c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,
+            delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+            VALUES(%s,%s,%s,%s,'delivery','ready','pending','cash',1000,0,1000,%s,%s)""",
+            (oid, brand, branch, 'dual-' + brand + '-customer', db.json(frozen),
+             db.json({'name': 'SYNTHETIC intervention order'})))
+    return oid
+
+
+def _resolve_intervention_context(actor, name, oid, kind='order_intervention'):
+    return actor(name).get('/api/central-operations/resource-context', params={
+        'kind': kind, 'resource_id': oid,
+    })
+
+
+@pytest.mark.parametrize('brand', ['kps', 'enbishan'])
+@pytest.mark.parametrize('delegate_role', ['admin', 'delivery_manager'])
+@pytest.mark.postgres
+def test_cancel_only_delegate_resolves_cold_intervention_without_general_order_access(intervention_scope, brand, delegate_role):
+    _, actor, _, _, _ = intervention_scope
+    oid = _intervention_order(brand)
+    with db.tx() as c:
+        c.execute("UPDATE users SET role=%s WHERE id='dual-cancel-delegate'", (delegate_role,))
+        db.event(c, oid, 'dual-manager', 'intervention.requested', {
+            'kind': 'cancel', 'reason_code': 'late_complaint', 'contact_result': 'not_contacted',
+            'pending_role': 'owner_or_cancel_delegate', 'revision': 0,
+        })
+        user = c.execute("SELECT * FROM users WHERE id='dual-cancel-delegate'").fetchone()
+        assert auth.has_permission(user, 'orders_cancel_after_print')
+        assert not auth.has_permission(user, 'orders_view')
+        assert not auth.has_permission(user, 'accounting_reports')
+    # A first click must resolve without a prior general-orders read or cache.
+    response = _resolve_intervention_context(actor, 'cancel-delegate', oid)
+    assert response.status_code == 200, response.text
+    assert response.json() == {'brand_id': brand}
+    assert _resolve_intervention_context(actor, 'cancel-delegate', oid, kind='order').status_code == 404
+    assert actor('cancel-delegate', brand).get(f'/api/orders/{oid}').status_code == 403
+    inbox = actor('cancel-delegate', brand).get('/api/order-interventions/pending-cancellations')
+    assert inbox.status_code == 200, inbox.text
+    assert [row['order_id'] for row in inbox.json()['requests']] == [oid]
+    detail = actor('cancel-delegate', brand).get(f'/api/order-interventions/orders/{oid}')
+    assert detail.status_code == 200, detail.text
+    assert detail.json()['high_authority'] is True
+    assert detail.json()['requests'][0]['details']['reason_code'] == 'late_complaint'
+    assert _resolve_intervention_context(actor, 'cancel-delegate', 'missing-order').status_code == 404
+
+
+@pytest.mark.parametrize('revocation,detail_status', [
+    ('permission', 403), ('branch', 404), ('membership', 403),
+])
+@pytest.mark.postgres
+def test_intervention_context_rechecks_revoked_scope(intervention_scope, revocation, detail_status):
+    _, actor, _, _, _ = intervention_scope
+    oid = _intervention_order('enbishan')
+    assert _resolve_intervention_context(actor, 'cancel-delegate', oid).status_code == 200
+    with db.tx() as c:
+        if revocation == 'permission':
+            c.execute("UPDATE users SET extra_permissions='[]' WHERE id='dual-cancel-delegate'")
+        elif revocation == 'branch':
+            c.execute("""UPDATE staff_brand_memberships SET branch_ids='["enbishan-test-2"]'
+                WHERE user_id='dual-cancel-delegate' AND brand_id='enbishan'""")
+        else:
+            c.execute("""UPDATE staff_brand_memberships SET active=false
+                WHERE user_id='dual-cancel-delegate' AND brand_id='enbishan'""")
+    response = _resolve_intervention_context(actor, 'cancel-delegate', oid)
+    assert response.status_code == 404, response.text
+    assert response.json()['detail']['code'] == 'CENTRAL_RECORD_UNAVAILABLE'
+    # Even a browser that cached the brand must pass the canonical endpoint.
+    detail = actor('cancel-delegate', 'enbishan').get(f'/api/order-interventions/orders/{oid}')
+    assert detail.status_code == detail_status, detail.text
+
+
+@pytest.mark.parametrize('snapshot', [
+    {'journey_controls_version': 0, 'delivery_period': 'evening'},
+    {'journey_controls_version': 1, 'delivery_period': 'morning'},
+])
+@pytest.mark.postgres
+def test_cancel_delegate_context_does_not_expand_to_legacy_or_morning_orders(intervention_scope, snapshot):
+    _, actor, _, _, _ = intervention_scope
+    oid = _intervention_order('enbishan', snapshot=snapshot)
+    assert _resolve_intervention_context(actor, 'cancel-delegate', oid).status_code == 404
+    assert actor('cancel-delegate', 'enbishan').get(f'/api/order-interventions/orders/{oid}').status_code == 404
+
+
+@pytest.mark.postgres
+def test_driver_intervention_context_requires_current_task_and_tasks_permission(intervention_scope):
+    _, actor, post, shifts, _ = intervention_scope
+    oid = _intervention_order('enbishan')
+    assert _resolve_intervention_context(actor, 'driver', oid).status_code == 404
+    _, driver_shift = shifts('enbishan')
+    post('manager', f'/api/orders/{oid}/assign', {'driver_shift_id': driver_shift}, brand='enbishan')
+    response = _resolve_intervention_context(actor, 'driver', oid)
+    assert response.status_code == 200, response.text
+    assert response.json() == {'brand_id': 'enbishan'}
+    with db.tx() as c:
+        c.execute("UPDATE users SET permission_denials='[\"tasks_view\"]' WHERE id='dual-driver'")
+    assert _resolve_intervention_context(actor, 'driver', oid).status_code == 404
+    with db.tx() as c:
+        c.execute("UPDATE users SET permission_denials='[]' WHERE id='dual-driver'")
+        c.execute("UPDATE driver_tasks SET status='delivered' WHERE order_id=%s", (oid,))
+    assert _resolve_intervention_context(actor, 'driver', oid).status_code == 404
+
+
+@pytest.mark.parametrize('role', ['branch_manager', 'delivery_staff'])
+@pytest.mark.postgres
+def test_intervention_context_keeps_the_read_endpoints_staff_roles(intervention_scope, role):
+    _, actor, _, _, _ = intervention_scope
+    oid = _intervention_order('enbishan')
+    with db.tx() as c:
+        c.execute("""UPDATE users SET role=%s,extra_permissions='[]',permission_denials='[]'
+            WHERE id='dual-cancel-delegate'""", (role,))
+    assert _resolve_intervention_context(actor, 'cancel-delegate', oid, kind='order').status_code == 200
+    assert _resolve_intervention_context(actor, 'cancel-delegate', oid).status_code == 404
+    assert actor('cancel-delegate', 'enbishan').get(f'/api/order-interventions/orders/{oid}').status_code == 403

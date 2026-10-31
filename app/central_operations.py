@@ -46,7 +46,7 @@ def context(conn, user, *, available_brands=None):
 
 
 @router.get('/resource-context')
-def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'branch', 'printer', 'report', 'staff', 'custody', 'fuel', 'break', 'offer', 'maintenance', 'notification', 'print_job', 'ticket', 'trip', 'vehicle'],
+def resource_context(kind: Literal['order', 'order_intervention', 'task', 'shift', 'conversation', 'branch', 'printer', 'report', 'staff', 'custody', 'fuel', 'break', 'offer', 'maintenance', 'notification', 'print_job', 'ticket', 'trip', 'vehicle'],
                      resource_id: str = Query(min_length=1, max_length=200),
                      user=Depends(auth.current_user)):
     """Resolve a clicked record without asking staff to choose its brand.
@@ -60,6 +60,7 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
         # Table identifiers are fixed here, never interpolated from a request.
         statements = {
             'order': 'SELECT * FROM orders WHERE id=%s',
+            'order_intervention': 'SELECT * FROM orders WHERE id=%s',
             'task': 'SELECT o.*,t.driver_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.id=%s',
             'shift': 'SELECT * FROM shifts WHERE id=%s',
             'conversation': 'SELECT * FROM conversations WHERE id=%s',
@@ -86,6 +87,18 @@ def resource_context(kind: Literal['order', 'task', 'shift', 'conversation', 'br
                 allowed = auth.has_permission(principal, 'tasks_view' if principal['role'] == 'driver' else 'orders_view') and auth.can_access_order(principal, row, conn)
                 if kind == 'task' and principal['role'] == 'driver':
                     allowed = allowed and row['driver_id'] == principal['id']
+            elif kind == 'order_intervention':
+                # Cancellation delegates do not acquire general order access.
+                # Resolve this workflow using its canonical read authorization.
+                from fastapi import HTTPException
+                from .order_interventions import require_access, scoped
+                if principal['role'] in {'owner', 'delivery_manager', 'admin', 'driver'}:
+                    try:
+                        require_access(principal)
+                        scoped(conn, resource_id, principal)
+                        allowed = True
+                    except HTTPException:
+                        allowed = False
             elif kind == 'conversation':
                 from .chat import allowed as chat_allowed
                 allowed = auth.has_permission(principal, 'chat_view') and chat_allowed(principal, row, conn)
@@ -319,3 +332,4 @@ def fleet_vehicles(user=Depends(auth.current_user)):
         # A card belongs to its canonical brand ledger; only anchor shifts create
         # physical operating segments, so shared workday legs add no duplicate.
         return {'vehicles':sorted(output,key=lambda v:(v['plate'],v['brand_id'],v['id']))}
+

@@ -57,3 +57,80 @@ test('a cancellation-only admin has an actionable inbox without general orders p
  ctx.state.user.effective_permissions=[];assert.equal(ctx.pageAllowed('interventionInbox'),false);
  ctx.state.user.role='driver';ctx.state.user.effective_permissions=['orders_cancel_after_print'];assert.equal(ctx.pageAllowed('interventionInbox'),false);
 });
+
+test('a fresh delegated inbox click reaches the actual widget and decision through central routing',async()=>{
+ const content={},elements=[],listeners={},calls=[],status=[];
+ class Element{
+  constructor(tag){this.tag=tag;this.children=[];this.elements={};this.isConnected=true;this.alert={};elements.push(this);}
+  set innerHTML(html){
+   this.html=html;this.children=[];this.elements={};
+   for(const input of html.matchAll(/<input\b([^>]*)>/g)){
+    const name=input[1].match(/name="([^"]+)"/),value=input[1].match(/value="([^"]*)"/);
+    if(name)this.elements[name[1]]={value:value?.[1]||''};
+   }
+   for(const select of html.matchAll(/<select name="([^"]+)">([\s\S]*?)<\/select>/g)){
+    const values=[...select[2].matchAll(/<option value="([^"]*)"/g)].map(option=>option[1]);
+    this.elements[select[1]]={value:values[0]||''};
+   }
+  }
+  get innerHTML(){return this.html;}
+  insertAdjacentHTML(_position,html){this.html+=html;this.form=new Element('form');this.form.innerHTML=html;this.children.push(this.form);}
+  append(child){this.children.push(child);}showModal(){}addEventListener(){}remove(){this.isConnected=false;}
+  querySelector(selector){if(selector==='[data-close]')return {};if(selector==='.amend-body')return this.body||(this.body=new Element('body'));if(selector==='[role=alert]')return this.alert;if(selector==='form')return this.form;return null;}
+  querySelectorAll(){return [];}
+ }
+ const oid='enb/order-old',rid='cancel/request',detail='/api/order-interventions/orders/'+encodeURIComponent(oid);
+ let decision=null;
+ const raw=async(path,options)=>{
+  calls.push({path,options});
+  if(path==='/api/order-interventions/pending-cancellations')return {requests:[{
+   id:rid,order_id:oid,order_no:'219',branch_name:'Enbishan branch',created_at:'2026-10-20T18:00:00Z',reason_label:'Late complaint',pending_label:'Delegate',
+  }]};
+  if(path.startsWith('/api/central-operations/resource-context?')){
+   const query=new URL(path,'https://central.invalid').searchParams;
+   assert.equal(query.get('resource_id'),oid);
+   if(query.get('kind')!=='order_intervention')throw new Error('السجل غير متاح.');
+   return {brand_id:'enbishan'};
+  }
+  assert.equal(options.brand,'enbishan');
+  if(path===detail+'/'+encodeURIComponent(rid)+'/decision'){
+   assert.equal(options.method,'POST');decision={status:'approved'};return decision;
+  }
+  assert.equal(path,detail);
+  return {enabled:true,printed:true,high_authority:true,version:7,requests:[{
+   id:rid,created_at:'2026-10-20T18:00:00Z',details:{kind:'cancel',reason_code:'late_complaint',pending_role:'owner_or_cancel_delegate'},decision,
+  }],reasons:{late_complaint:'شكوى تأخير'},contact_results:{not_contacted:'لم يتم التواصل',no_answer:'لا يرد'},pending_roles:{owner_or_cancel_delegate:'المالك أو المفوض بالإلغاء'},statuses:{approved:'معتمد'},customer_requests:[],attachments:[]};
+ };
+ const ctx={...base(),window:{},URL,URLSearchParams,centralOperations:require('../public/assets/central-operations.js').create(),scopedApi:raw,
+  document:{createElement:tag=>new Element(tag),body:{append(){}},addEventListener:(type,handler)=>{listeners[type]=handler;}},
+  FormData:class{constructor(form){this.form=form;}get(name){return this.form.elements[name]?.value??null;}},
+  heading:()=>{},$:()=>content,table:(_head,rows)=>rows.flat().join('|'),empty:String,loadPage:async()=>{},setStatus:message=>status.push(message),
+ };
+ ctx.state={user:{id:'delegate',role:'admin',brand_id:'enbishan',effective_permissions:['orders_cancel_after_print'],central_operations:{brands:[{id:'kps',branch_ids:['kps-1']},{id:'enbishan',branch_ids:['enb-1']}]}},page:'interventionInbox',orders:[],busy:new Set()};
+ ctx.can=permission=>ctx.state.user.effective_permissions.includes(permission);
+ vm.createContext(ctx);
+ vm.runInContext(between('  async function api(','  async function scopedApi(')+between('  async function mutation(','  async function ownerOperationalConfirm(')+between('  function pageLoadScope(','  function assertPageLoad(')+between('  function actionPermission(','  function hideUnavailableActions(')+between('  async function interventionInbox(','  async function accounting('),ctx);
+ vm.runInContext(fs.readFileSync('public/assets/order-interventions.js','utf8'),ctx);
+ vm.runInContext(between("  document.addEventListener('click',async e=>{\n    const page=","  $('#modal-close').addEventListener"),ctx);
+ await ctx.interventionInbox();
+ const buttonId=content.innerHTML.match(/data-action="order-intervention" data-id="([^"]+)"/)[1];
+ const button={dataset:{action:'order-intervention',id:buttonId}};
+ await listeners.click({target:{closest:selector=>selector==='[data-action]'?button:null}});
+ const form=elements.find(element=>element.tag==='form'&&element.elements.reason_code);
+ assert.ok(form,'the authorized pending request must render an actionable treatment form');
+ assert.match(form.html,/اعتماد وتنفيذ الإلغاء/);
+ assert.equal(calls.some(call=>call.options.method==='POST'),false,'opening a request must not decide it');
+ form.elements.contact_result.value='no_answer';form.elements.physical_resolution.value='returned_to_branch';
+ await form.onsubmit({preventDefault(){},target:form,submitter:{value:'approve'}});
+ const writes=calls.filter(call=>call.options.method==='POST');
+ assert.equal(writes.length,1);assert.equal(writes[0].path,detail+'/'+encodeURIComponent(rid)+'/decision');
+ assert.equal(writes[0].options.brand,'enbishan');
+ assert.equal(writes[0].options.body.action,'approve');assert.equal(writes[0].options.body.version,7);
+ assert.equal(writes[0].options.body.reason_code,'late_complaint');assert.equal(writes[0].options.body.physical_resolution,'returned_to_branch');
+ assert.equal(calls.filter(call=>call.path.includes('/resource-context?')).length,1);
+ assert.equal(calls.filter(call=>call.path===detail).length,2,'refresh the canonical record after the decision');
+ assert.equal(ctx.state.orders.length,0,'historical treatment does not depend on the current orders page');
+ assert.deepEqual(ctx.state.user.effective_permissions,['orders_cancel_after_print']);
+ assert.deepEqual(status,['Operation saved.']);
+});
+

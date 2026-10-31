@@ -52,6 +52,69 @@ test('failed context resolution never falls back to the home brand',async()=>{
   assert.equal(calls,1);
 });
 
+test('a cold intervention and its decision resolve the narrow authority and preserve the order brand',async()=>{
+  const adapter=create(),calls=[],delegate={...user,role:'admin',effective_permissions:['orders_cancel_after_print']};
+  const raw=async(path,opts)=>{
+    calls.push({path,opts});
+    if(path.includes('/resource-context?')){
+      const query=new URL(path,'https://central.invalid').searchParams;
+      assert.equal(query.get('kind'),'order_intervention');
+      assert.equal(query.get('resource_id'),'enb/old-order');
+      return {brand_id:'enbishan'};
+    }
+    assert.equal(opts.brand,'enbishan');
+    return {enabled:true,requests:[]};
+  };
+  const detail='/api/order-interventions/orders/enb%2Fold-order';
+  await adapter.request(detail,{},raw,delegate);
+  const body={action:'approve',version:7,reason_code:'late_complaint',contact_result:'no_answer'};
+  await adapter.request(detail+'/request%2F1/decision',{method:'POST',body},raw,delegate);
+  assert.equal(calls.length,3);
+  assert.equal(calls[1].path,detail);
+  assert.equal(calls[2].opts.body,body);
+  assert.equal(delegate.brand_id,'kps');
+});
+
+test('intervention and general order context caches cannot substitute for each other',async()=>{
+  for(const first of ['order','order_intervention']){
+    const adapter=create(),resolved=[];
+    const raw=async(path,opts)=>{
+      if(path.includes('/resource-context?')){
+        resolved.push(new URL(path,'https://central.invalid').searchParams.get('kind'));
+        return {brand_id:'enbishan'};
+      }
+      assert.equal(opts.brand,'enbishan');
+      return {};
+    };
+    const paths={order:'/api/orders/enb-order',order_intervention:'/api/order-interventions/orders/enb-order'};
+    const second=first==='order'?'order_intervention':'order';
+    await adapter.request(paths[first],{},raw,user);
+    await adapter.request(paths[second],{},raw,user);
+    assert.deepEqual(resolved,[first,second]);
+  }
+});
+
+test('a cached intervention brand cannot override a revoked canonical decision permission',async()=>{
+  const adapter=create(),calls=[],delegate={...user,role:'admin',effective_permissions:['orders_cancel_after_print']};
+  let revoked=false,writes=0;
+  const raw=async(path,opts)=>{
+    calls.push({path,opts});
+    if(path.includes('/resource-context?'))return {brand_id:'enbishan'};
+    assert.equal(opts.brand,'enbishan');
+    if(revoked)throw Object.assign(new Error('Permission revoked'),{status:403,code:'INTERVENTION_APPROVER'});
+    if(opts.method==='POST')writes++;
+    return {enabled:true,requests:[]};
+  };
+  const detail='/api/order-interventions/orders/enb-order';
+  await adapter.request(detail,{},raw,delegate);
+  revoked=true;
+  await assert.rejects(adapter.request(detail+'/request/decision',{method:'POST',body:{action:'approve'}},raw,delegate),{code:'INTERVENTION_APPROVER'});
+  await assert.rejects(adapter.request(detail,{},raw,delegate),{code:'INTERVENTION_APPROVER'});
+  assert.equal(calls.filter(call=>call.path.includes('/resource-context?')).length,1);
+  assert.equal(calls.length,4,'no fallback request is attempted after canonical rejection');
+  assert.equal(writes,0);
+});
+
 test('order-bound assignment reads only the order brand',async()=>{
   const api=create(),calls=[];
   await api.request('/api/orders',{},async(path,opts)=>({orders:opts.brand==='enbishan'?[{id:'enb-order'}]:[]}),user);
@@ -332,3 +395,4 @@ test('driver live counts deduplicate shared duty and include the busy brand leg'
     assert.deepEqual(result.driver_counts,{total:3,available:1,busy:1,no_shift:1});
   }
 });
+
