@@ -1,0 +1,19 @@
+/* Full inbox cards remain visible when a thread opens in its own window. */
+.support-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:14px;margin-block:12px}
+.support-followup-card,.response-action-card{min-width:0;border:1px solid var(--line,#d7dfd8);border-radius:14px;padding:16px;background:var(--surface,#fff);overflow-wrap:anywhere;text-align:start}
+.response-action-card{margin-block:12px}
+.support-followup-card p{white-space:pre-wrap}
+.support-photo{display:block;width:min(100%,240px);max-height:190px;object-fit:contain;border-radius:10px;margin-block:8px}
+#modal.conversation-dialog{width:min(980px,96vw);max-width:96vw;max-height:94dvh}
+.conversation-dialog #modal-body{min-width:0}
+.conversation-dialog #chat-detail{display:block;margin:0;border:0;padding:8px;min-width:0}
+.conversation-dialog .messages{height:42dvh;min-height:180px;max-height:52dvh;overflow:auto;overscroll-behavior:contain}
+.conversation-dialog .message{white-space:pre-wrap;overflow-wrap:anywhere}
+.conversation-dialog .message img{display:block;width:auto;max-width:min(100%,380px);max-height:300px;object-fit:contain;border-radius:12px}
+.conversation-dialog .compose{display:grid;gap:10px}
+.conversation-dialog textarea{min-height:85px;width:100%}
+.proximity-farther{background:#fff7e9}
+#proximity-results table{min-width:1050px}
+#proximity-results .table-scroll{max-height:60dvh;overflow:auto}
+.delivery-room #dispatch-panel-messages .conversation-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));max-height:420px;gap:12px}
+@media(max-width:650px){#modal.conversation-dialog{width:98vw;max-width:98vw;padding:12px}.conversation-dialog .messages{height:36dvh}.support-card-grid{grid-template-columns:minmax(0,1fr)}}

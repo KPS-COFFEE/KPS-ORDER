@@ -299,10 +299,18 @@ def upload(cid:str,body:Attachment,request:Request,user=Depends(auth.current_use
         return mutate(c,user,request,'chat.attachment:'+cid,{'sha256':digest,'content_type':body.content_type},perform)
 
 @router.get('/chat-attachments/{aid}')
-def download(aid:str,user=Depends(auth.current_user)):
+def download(aid:str,request:Request,user=Depends(auth.current_user)):
     with db.tx() as c:
         a=c.execute('SELECT * FROM chat_attachments WHERE id=%s',(aid,)).fetchone()
         if not a:fail(404,'المرفق غير موجود')
+        # Image navigation cannot supply X-Operations-Brand. Rebuild the same
+        # live membership before applying the normal conversation authorization.
+        from . import multibrand
+        target=c.execute('SELECT brand_id FROM conversations WHERE id=%s',(a['conversation_id'],)).fetchone()
+        if (target and target['brand_id']!=user['brand_id'] and user['role']!='customer'
+                and not request.headers.getlist('x-operations-brand') and multibrand.enabled()):
+            user=multibrand.project(c,user,target['brand_id'])
+            if not user:fail(404,'المرفق غير موجود')
         conversation(c,user,a['conversation_id'])
         return Response(bytes(a['data']),media_type=a['content_type'],headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Disposition':'inline; filename="image.'+{'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[a['content_type']]+'"'})
 

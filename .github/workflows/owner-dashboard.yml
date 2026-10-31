@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/branch_proximity.py
+      - app/chat.py
+      - app/branch_printing.py
+      - app/auth.py
       - app/owner_dashboard.py
       - app/accounting.py
       - app/main.py
@@ -13,6 +17,11 @@ on:
       - public/ops.js
       - public/ops.html
       - public/ops.css
+      - public/assets/branch-proximity.js
+      - public/assets/followup-cards.css
+      - tests/test_branch_proximity.py
+      - tests/test_chat_attachment_sessions.py
+      - tests/test_followup_window_browser.py
       - public/assets/owner-dashboard.*
       - tests/test_owner_dashboard*
       - tests/test_ops_background_recovery.cjs
@@ -25,12 +34,21 @@ on:
   push:
     branches: [agent/kps-order-emergency-v4]
     paths:
+      - app/branch_proximity.py
+      - app/chat.py
+      - app/branch_printing.py
+      - app/auth.py
       - app/owner_dashboard.py
       - app/accounting.py
       - app/main.py
       - public/ops.js
       - public/ops.html
       - public/ops.css
+      - public/assets/branch-proximity.js
+      - public/assets/followup-cards.css
+      - tests/test_branch_proximity.py
+      - tests/test_chat_attachment_sessions.py
+      - tests/test_followup_window_browser.py
       - public/assets/owner-dashboard.*
       - tests/test_owner_dashboard*
       - tests/test_ops_background_recovery.cjs
@@ -89,6 +107,13 @@ jobs:
       - name: Verify both brands, owner scope, shift-day accounting and responsive journeys
         run: >-
           python -m pytest -q --basetemp=qa-owner-dashboard
+          tests/test_branch_proximity.py
+          tests/test_chat_attachment_sessions.py
+          tests/test_chat_attachment_browser.py
+          tests/test_chat_refresh_browser.py
+          tests/test_followup_window_browser.py
+          tests/test_branch_printing.py
+          tests/test_context_cookie_isolation.py
           tests/test_owner_dashboard.py
           tests/test_owner_dashboard_browser.py
           tests/test_owner_shift_views_browser.py

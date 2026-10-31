@@ -10,6 +10,7 @@ from PIL import Image
 from app import auth, db
 from tests.test_core import _make_user
 from tests.test_context_cookie_isolation import establish
+from test_enbishan_dual_brand import dual
 
 
 @pytest.fixture(autouse=True)
@@ -149,3 +150,26 @@ def test_context_hint_cannot_cross_brands(client, monkeypatch, image_conversatio
     establish(client, foreign_owner, monkeypatch)
     client.headers.pop('X-KPS-Context', None)
     assert client.get(uploaded['url'].replace('context=customer', 'context=work')).status_code == 404
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('revocation',['membership','branch'])
+def test_native_foreign_brand_image_rebuilds_live_membership_without_central_ui(dual,monkeypatch,revocation):
+    _,actor,_,_,order=dual
+    monkeypatch.setenv('KPS_CENTRAL_OPERATIONS_ENABLED','false')
+    oid=order('enbishan');cid='image-conv-'+uuid4().hex;aid='image-'+uuid4().hex
+    picture=image_bytes()
+    import hashlib
+    with db.tx() as conn:
+        conn.execute("INSERT INTO conversations(id,order_id,brand_id,branch_id,customer_id,route) VALUES(%s,%s,'enbishan','enbishan-test-1','dual-enbishan-customer','delivery')",(cid,oid))
+        conn.execute("INSERT INTO chat_attachments(id,conversation_id,uploader_id,content_type,size_bytes,sha256,data) VALUES(%s,%s,'dual-enbishan-customer','image/png',%s,%s,%s)",(aid,cid,len(picture),hashlib.sha256(picture).hexdigest(),picture))
+    client=actor('manager')
+    result=client.get('/api/chat-attachments/'+aid+'?context=work')
+    assert result.status_code==200,result.text
+    assert result.content==picture
+    with db.tx() as conn:
+        if revocation=='membership':
+            conn.execute("UPDATE staff_brand_memberships SET active=false WHERE user_id='dual-manager' AND brand_id='enbishan'")
+        else:
+            conn.execute("UPDATE staff_brand_memberships SET branch_ids='[\"enbishan-test-2\"]' WHERE user_id='dual-manager' AND brand_id='enbishan'")
+    assert actor('manager').get('/api/chat-attachments/'+aid+'?context=work').status_code==404
