@@ -1,0 +1,13 @@
+{
+  "decision_id": "kps-branch-maps-owner-confirmation-2026-10-11",
+  "confirmed_at": "2026-10-11T12:25:37+03:00",
+  "source_sha256": "c748eeb39586fe2e024005165c160a20e2017722ffa1b93db5b7c216b73f3e66",
+  "destination_pins": [
+    {"branch_no": 4, "place_id": "ChIJaYGp-6tB1z8Rb8bBNgUZjfI", "destination_name": "كبز كافيه | KPS COFFEE، الستين، الشمالي, Hafar Al Batin 39956, Saudi Arabia", "destination_pin_data": "!1s0x3fd741abfba98169:0xf28d190536c1c66f!2m2!1d45.9600236!2d28.4546052", "location": {"lat": 28.4546052, "lng": 45.9600236}},
+    {"branch_no": 9, "place_id": "ChIJZdnl4lI51z8RDyi016qRLCA", "destination_name": "كبز كافيه | KPS COFFEE، طريق الأمير نايف, Al Muruj, Hafar Al Batin 39913, Saudi Arabia", "destination_pin_data": "!1s0x3fd73952e2e5d965:0x202c91aad7b4280f!2m2!1d46.000064!2d28.3956631", "location": {"lat": 28.3956631, "lng": 46.000064}},
+    {"branch_no": 11, "place_id": "ChIJwSVdlTkdzD8R3abKRHhv0_0", "destination_name": "KPS COFFEE, King Abdullah Rd, الستين، Khafji 39261, Saudi Arabia", "destination_pin_data": "!1s0x3fcc1d39955d25c1:0xfdd36f7844caa6dd!2m2!1d48.4937499!2d28.4400182", "location": {"lat": 28.4400182, "lng": 48.4937499}},
+    {"branch_no": 12, "place_id": "ChIJOcElampH1z8RTzgR8HgAO2E", "destination_name": "كبز كافيه | KPS COFFEE، الكويت، طريق الملك خالد ( طريق, Hafar Al Batin 39923, Saudi Arabia", "destination_pin_data": "!1s0x3fd7476a6a25c139:0x613b0078f011384f!2m2!1d45.9990508!2d28.4412916", "location": {"lat": 28.4412916, "lng": 45.9990508}},
+    {"branch_no": 13, "place_id": "ChIJ6Y_gAH3DfxURmBPLD-wOWhs", "destination_name": "كبز كافيه | KPS COFFEE, King Abdullah Rd, Al Sediq, Az Zulfi 15942, Saudi Arabia", "destination_pin_data": "!1s0x157fc37d00e08fe9:0x1b5a0eec0fcb1398!2m2!1d44.8324433!2d26.3027805", "location": {"lat": 26.3027805, "lng": 44.8324433}},
+    {"branch_no": 14, "place_id": "ChIJkZIme8L7ST4RExsODhjY9f0", "destination_name": "كبز كافيه | KPS COFFEE, Ali bin Abi Talib St, Al Nuzha, Dammam 32252, Saudi Arabia", "destination_pin_data": "!1s0x3e49fbc27b269291:0xfdf5d8180e0e1b13!2m2!1d50.1096884!2d26.4094312", "location": {"lat": 26.4094312, "lng": 50.1096884}}
+  ]
+}

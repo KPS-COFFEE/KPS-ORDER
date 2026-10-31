@@ -1,0 +1,276 @@
+{
+  "id": "enbishan-menu-c434c397f9072844ba9c93b4",
+  "brand_id": "enbishan",
+  "name": "ورق عنب وملفوف",
+  "category": "المحاشي",
+  "price_halalas": 1200,
+  "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg",
+  "description": null,
+  "variant_images": [
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+      },
+      "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-7b580db54a84af523166d2da"
+      },
+      "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+      },
+      "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+      },
+      "image_url": "/assets/enbishan-menu/approved-efbe25b8cecd6666.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+      },
+      "image_url": "/assets/enbishan-menu/approved-a403b7e8dc2e6242.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-7b580db54a84af523166d2da"
+      },
+      "image_url": "/assets/enbishan-menu/approved-a403b7e8dc2e6242.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+      },
+      "image_url": "/assets/enbishan-menu/approved-a403b7e8dc2e6242.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+      },
+      "image_url": "/assets/enbishan-menu/approved-a403b7e8dc2e6242.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+      },
+      "image_url": "/assets/enbishan-menu/approved-193cf5dc249e0086.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-7b580db54a84af523166d2da"
+      },
+      "image_url": "/assets/enbishan-menu/approved-193cf5dc249e0086.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+      },
+      "image_url": "/assets/enbishan-menu/approved-193cf5dc249e0086.jpg"
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+      },
+      "image_url": "/assets/enbishan-menu/approved-193cf5dc249e0086.jpg"
+    }
+  ],
+  "variant_price_matrix": [
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+      },
+      "price_halalas": 1200
+    },
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-7b580db54a84af523166d2da"
+      },
+      "price_halalas": 1200
+    },
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+      },
+      "price_halalas": 1200
+    },
+    {
+      "options": {
+        "SIZE": "v-a0c277ce10ff7c635fd1e9ec",
+        "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+      },
+      "price_halalas": 1200
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+      },
+      "price_halalas": 1450,
+      "compare_at_halalas": 2200
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-7b580db54a84af523166d2da"
+      },
+      "price_halalas": 1450,
+      "compare_at_halalas": 2200
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+      },
+      "price_halalas": 1450,
+      "compare_at_halalas": 2200
+    },
+    {
+      "options": {
+        "SIZE": "v-5eaf865e16c194c339bace33",
+        "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+      },
+      "price_halalas": 1450,
+      "compare_at_halalas": 2200
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-91f67e8b7351adcf1014135a"
+      },
+      "price_halalas": 4200
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-7b580db54a84af523166d2da"
+      },
+      "price_halalas": 4200
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-37d0336de98e6dc7d6d50959"
+      },
+      "price_halalas": 4200
+    },
+    {
+      "options": {
+        "SIZE": "v-b804a3f4814cc6028d7ef9da",
+        "FLAVOUR": "v-2606b799a8a89a992bffd12e"
+      },
+      "price_halalas": 4200
+    }
+  ],
+  "name_en": "Grape Leaves & Cabbage",
+  "category_en": "Stuffed",
+  "option_groups": [
+    {
+      "code": "SIZE",
+      "name": "الحجم",
+      "type": "select",
+      "values": [
+        {
+          "code": "v-a0c277ce10ff7c635fd1e9ec",
+          "name": "٦ حبات (٤ ورق عنب + ٢ ملفوف)",
+          "name_en": "6 pieces (4 grape leaves + 2 cabbage)",
+          "price_delta_halalas": 0,
+          "available": true,
+          "unavailable_reason": null
+        },
+        {
+          "code": "v-5eaf865e16c194c339bace33",
+          "name": "١٢ حبة (٨ ورق عنب + ٤ ملفوف)",
+          "name_en": "12 pieces (8 grape leaves + 4 cabbage)",
+          "price_delta_halalas": 0,
+          "available": true,
+          "unavailable_reason": null
+        },
+        {
+          "code": "v-b804a3f4814cc6028d7ef9da",
+          "name": "٢٤ حبة (١٦ ورق عنب + ٨ ملفوف)",
+          "name_en": "24 pieces (16 grape leaves + 8 cabbage)",
+          "price_delta_halalas": 0,
+          "available": true,
+          "unavailable_reason": null
+        }
+      ],
+      "name_en": "Size",
+      "required": true,
+      "max_select": 1,
+      "min_select": 1
+    },
+    {
+      "code": "FLAVOUR",
+      "name": "النكهة",
+      "type": "select",
+      "values": [
+        {
+          "code": "v-91f67e8b7351adcf1014135a",
+          "name": "دبس رمان",
+          "name_en": "Pomegranate molasses",
+          "price_delta_halalas": 0,
+          "available": true,
+          "unavailable_reason": null
+        },
+        {
+          "code": "v-37d0336de98e6dc7d6d50959",
+          "name": "سبايسي",
+          "name_en": "Spicy",
+          "price_delta_halalas": 0,
+          "available": true,
+          "unavailable_reason": null
+        },
+        {
+          "code": "v-7b580db54a84af523166d2da",
+          "name": "ليمون",
+          "name_en": "Lemon",
+          "price_delta_halalas": 0,
+          "available": true,
+          "unavailable_reason": null
+        },
+        {
+          "code": "v-2606b799a8a89a992bffd12e",
+          "name": "مشكل",
+          "name_en": "Mixed",
+          "price_delta_halalas": 0,
+          "available": true,
+          "unavailable_reason": null
+        }
+      ],
+      "name_en": "Flavour",
+      "required": true,
+      "max_select": 1,
+      "min_select": 1
+    }
+  ],
+  "variants": [],
+  "available_cities": [],
+  "enabled": true,
+  "source_verified": true,
+  "pending_owner_image": false,
+  "unified_khaliya": false,
+  "lifecycle": "active",
+  "available": true,
+  "unavailable_reason": null
+}

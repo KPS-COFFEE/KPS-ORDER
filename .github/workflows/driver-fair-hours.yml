@@ -1,0 +1,87 @@
+name: Fair driver work hours acceptance
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/driver_work_hours.py
+      - app/driver_hours_reports.py
+      - app/driver_auto_return.py
+      - app/tracking_ingest.py
+      - app/operations.py
+      - app/route_eta.py
+      - migrations/127_driver_automatic_return.sql
+      - public/assets/driver-hours.js
+      - public/assets/driver-location.js
+      - public/ops.js
+      - public/ops.html
+      - public/driver-hours.html
+      - tests/test_driver_hours*
+      - tests/test_driver_work_hours*
+      - tests/test_driver_auto_return*
+      - tests/test_driver_automatic_return_browser.py
+      - tests/test_driver_gps_browser.py
+      - tests/test_driver_location_capture.cjs
+      - tests/test_driver_trip_ui.cjs
+      - tests/test_tracking_ingest.py
+      - tests/test_route_eta*
+      - .github/workflows/driver-fair-hours.yml
+permissions:
+  contents: read
+jobs:
+  fair-hours:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_fair_driver_hours
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d test_enbishan_fair_driver_hours"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:isolated-test-only@127.0.0.1:5432/test_enbishan_fair_driver_hours
+      TEST_BROWSER: '1'
+      APP_ENV: testing
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Driver tracking capture and return UI contract
+        run: >-
+          node --check public/assets/driver-hours.js &&
+          node --check public/assets/driver-location.js &&
+          node --check public/ops.js &&
+          node --test tests/test_driver_location_capture.cjs tests/test_driver_trip_ui.cjs
+      - name: Work clock, PostgreSQL scope and export acceptance
+        run: >-
+          python -m pytest -q --strict-markers
+          tests/test_driver_hours_fairness.py tests/test_driver_hours_fairness_postgres.py
+          tests/test_driver_hours_shared_postgres.py
+          tests/test_driver_hours_fairness_browser.py tests/test_driver_automatic_return_browser.py
+          tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py
+          tests/test_driver_order_activity.py tests/test_driver_hours_reports.py
+          tests/test_hours_navigation_layout.py
+          tests/test_driver_auto_return*.py
+          tests/test_driver_automatic_return_browser.py tests/test_driver_gps_browser.py
+          tests/test_tracking_ingest.py
+          tests/test_route_eta_unit.py tests/test_route_eta_postgres.py
+          --junitxml=test-results/fair-driver-hours.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fair-driver-hours-${{ github.event.pull_request.head.sha }}
+          path: test-results/

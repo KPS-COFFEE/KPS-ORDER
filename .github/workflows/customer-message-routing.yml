@@ -1,0 +1,49 @@
+name: Customer message routing acceptance
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/auth.py
+      - app/chat.py
+      - app/customer_message_routing.py
+      - app/employee_permissions.py
+      - public/ops.js
+      - public/ops.html
+      - tests/test_customer_message_routing*.py
+      - .github/workflows/customer-message-routing.yml
+permissions:
+  contents: read
+jobs:
+  message-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: test_enbishan_message_routing
+          POSTGRES_USER: kps_test
+          POSTGRES_PASSWORD: isolated-ci-password
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U kps_test -d test_enbishan_message_routing" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://kps_test:isolated-ci-password@127.0.0.1:5432/test_enbishan_message_routing
+      TEST_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: node --check public/ops.js
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q tests/test_customer_message_routing.py tests/test_customer_message_routing_browser.py tests/test_employee_permissions.py tests/test_chat_attachment_sessions.py tests/test_driver_customer_chat.py --junitxml=test-results/message-routing.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-message-routing-evidence
+          path: |
+            test-results/message-routing.xml
+            test-artifacts/customer-message-routing-*.png

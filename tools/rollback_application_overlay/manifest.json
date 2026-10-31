@@ -1,0 +1,57 @@
+{
+  "kind": "isolated_prior_application_rollback_compatibility_candidate",
+  "baseline_sha": "b528f14c5ea93e32a15a5c37f43f7e93477136e8",
+  "production_tested": false,
+  "image_certified": false,
+  "retained": [
+    "Last verified deployed b528 application with an explicit SHA256-bound compatibility inventory",
+    "Secure candidate runtime, locked dependencies and immutable source identity",
+    "Baseline fiscal issuance, customer prices, original sale branch, tax entity, settlement beneficiary and ledger behavior",
+    "Baseline multibrand memberships, central workdays, duty hours, physical shared closure, financial clarification, duplicate review, partial returns, cash bags and collection correction contracts",
+    "Previously reviewed dedicated central intervention scope hotfix, without adding generic order access",
+    "Current collected-order cancellation authorization and return/resubmit workflow guards without broad generic read or financial grants",
+    "Existing preparation-route history, target-only minimal preparation queue and guarded preparation transitions",
+    "Actual routed print destination, driver pickup projection, local route stops, assignment eligibility and physical departure with original acceptance times",
+    "Explicit preparation-route export and preservation registry with scoped restore relationship verification",
+    "Per-route transaction-local compatibility checks protecting mixed-version operational writes",
+    "Database amendment invariant rejects old-worker basket revisions while preparation is assigned to another branch, including route-aware transactions; return to source preparation preserves the existing amendment path"
+  ],
+  "fallbacks": [
+    "b528 prior operations UI and original order search/listing remain distinct from the candidate",
+    "Existing preparation routes may be completed; new routing creation is disabled in the prior application",
+    "New delegated supervision, richer search and return/resubmit UI actions require the candidate UI; server authorization and workflow guards remain enforced",
+    "Preparation routing changes physical custody only and never changes the original sale or financial entitlement"
+  ],
+  "files": {
+    "app/auth.py": "8cd20017516f49cd4c9230e39b8f3c3f156cf50e0cff4d99fa72d9f918a0b07a",
+    "app/branch_printing.py": "822313d48163406b561a2a149843b12c5bf69f9e535a251cbc91b180f6f29452",
+    "app/central_operations.py": "f812c632c7bc82667b89a065135ddc4a87498f37a143a72f79fcc47cd1737969",
+    "app/collected_order_authority.py": "94b873b3f13ca247cf3255294913fe9a011c8e10a36b4c060a01010991887579",
+    "app/db.py": "e0f42097b02cbb1bd49adef197834eaa8dabc23ce09ca7b8854f8412fd425f6d",
+    "app/dispatch_impact.py": "642fe65518441cb3452526bb380fb25da2fe12c517d1cc6c3819dfb9f2e47d56",
+    "app/dispatch_map.py": "33d033492c0e690a3fd23f46a2625dafe056a15a7d3fe854dea575ce58d98a3e",
+    "app/driver_auto_return.py": "bda17455edf76783f9e22b91c2c4934c33e5470f85b570edd0b02a98ab720032",
+    "app/driver_work_hours.py": "1bd3116c194dd0fa15f8fa1db9de18e0c6532a50ad495dc068a6f24c57ba4980",
+    "app/employee_permissions.py": "c432ee41d13129743d2914a3b63ab98098706ceab68ffd0c8d250115be05ccde",
+    "app/exports.py": "1bbba6745cc08ec9015617a035e0329f5d3551533bbf0c6babff3fcd335e428d",
+    "app/main.py": "a7c0095075afec3a436af2a8aa955b834253b140d389f0e4235964a85c5335e1",
+    "app/operations.py": "72bb49f3f28574caf7a93e39d99224aa55c691e5d82dc0eb5d0d35479f6baeba",
+    "app/order_amendments.py": "05ee99822e778f50b3d610082d0160a21a1f8a57f0ba727bbc9537c114d9dec0",
+    "app/order_financial_cases.py": "f382f44285f52fb5bde76bb60a628ea1893772423f157e5027b774d6f7c086a2",
+    "app/order_interventions.py": "2e1d69f6b7f6e371570edd6245827c3c3b1e11e70eeacd444937b561a7da69ac",
+    "app/orders.py": "02fb5f3aa597a47dadf000730344018d1dfaab60e80aebc4b33e5abb83d9a799",
+    "app/preparation_routing.py": "e9b7fd974b727b932d3722bfb4773e480240c5ca5c4a1448524e1299e5b4e745",
+    "migrations/130_order_preparation_routing.sql": "7d2a5262bd6f432e97205ba473ba07e0da3264884b52b42303fb99d874dbbc0d",
+    "public/assets/central-operations.js": "f6ac0bd9d463494c0ebaa9e4e8cdab508530c0af21ef0cb66841156108301454",
+    "public/assets/preparation-routing.css": "6edf6c3293eb965a44aefb9371cf5df834574df13734aa009711999af82e2fd9",
+    "public/assets/preparation-routing.js": "a377a799a1fcca94f45bafedea2d92aa224a5a65a10f0d608d9d4ccfa4d132fa",
+    "public/ops.html": "696d3931b202468583a4621876781a7661547266c583d07d974f1caeb202f27e",
+    "public/ops.js": "def0ab09bd3d7c9269bfed215e7a4bc71c55561dcc6257af2a2b1774084fdc71"
+  },
+  "rollback_feature_policy": {
+    "operational_after_feature_use": false,
+    "current_aware_image_certified": false,
+    "behavior": "This candidate retains b528-supported operational contracts and adds narrow compatibility for existing preparation routes and collected-order cancellation. It never creates new preparation routes. Deployment after feature use requires the exact immutable prior image to pass its retained baseline contracts and populated candidate-to-prior-to-candidate witnesses.",
+    "certification": "No operational fallback claim is granted by source hashes alone. Prior-image suites, route printing/pickup/preparation witnesses, preservation checks, runtime health and security image gates must pass for the same source and image identity."
+  }
+}

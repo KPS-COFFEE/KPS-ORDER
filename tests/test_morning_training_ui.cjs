@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {initial,apply,next,bell}=require('../public/assets/morning-training/app.js');
+const rejects=(state,action,role,code,payload={})=>assert.throws(()=>apply(state,action,role,payload),e=>e.message===code);
+let s=initial();rejects(s,'create','customer','policy');s=apply(s,'approve','owner');rejects(s,'create','customer','managerDuty');
+rejects({...s,window:false},'openManager','manager','hours');s=apply(s,'openManager','manager');rejects(s,'openDriver','driver','readiness');
+s=apply(s,'openDriver','driver',{evidence:true});s.busy=2;s=apply(s,'create','customer',{branch:9});assert.equal(s.order.stage,'new');assert.equal(s.order.branch,9);assert.equal(s.prints,0);
+assert(bell(s,'preparer'));assert(bell(s,'manager'));rejects(s,'accept','driver','role');s=apply(s,'accept','preparer');assert.equal(s.prints,1);assert.equal(s.busy,3);assert.equal(s.order.assigned,true);assert.equal(s.events.find(e=>e.key==='assigned').actor,'system');
+assert(bell(s,'driver'));assert(!bell(s,'preparer'));rejects(s,'prepare','preparer','driverAcceptance');rejects(s,'pickup','driver','readyGate',{evidence:true});
+s=apply(s,'driverAccept','driver');assert(bell(s,'preparer'));rejects(s,'ready','preparer','sequence');rejects(s,'prepare','manager','reason',{reason:'x'});
+s=apply(s,'prepare','manager',{reason:'Delayed branch'});rejects(s,'ready','manager','reason',{reason:'\0bad'});s=apply(s,'ready','preparer');rejects(s,'pickup','driver','evidence');s=apply(s,'pickup','driver',{evidence:true});rejects(s,'deliver','driver','collection');s=apply(s,'deliver','driver',{evidence:true});assert.equal(next(s).role,'summary');assert.equal(s.busy,2);assert(!bell(s,'driver'));assert(s.manager);assert(s.driver);
+let p={...initial(),policy:true,manager:true,driver:true,busy:3};p=apply(p,'create','manager',{branch:9});assert.equal(p.order.origin,'whatsapp');assert.equal(p.order.branch,2);assert.equal(p.order.stage,'new');assert.equal(p.prints,0);p=apply(p,'accept','preparer');assert(!p.order.assigned);assert(bell(p,'manager'));rejects(p,'retry','manager','capacity');p=apply(p,'release','manager');assert(p.order.assigned);assert.equal(p.prints,1);
+let n={...initial(),policy:true,manager:true,driver:false};n=apply(n,'create','customer');n=apply(n,'accept','preparer');assert(!n.order.assigned);n=apply(n,'openDriver','driver',{evidence:true});assert(n.order.assigned);assert.equal(n.prints,1);
+rejects({...initial(),policy:true,manager:true,window:false},'create','customer','hours');
+const source=fs.readFileSync('public/assets/morning-training/app.js','utf8');assert(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|window\.print\s*\(/.test(source));assert(!source.includes('/api/'));assert(!source.includes('96655'));
+console.log('PASS: complete training journey, roles, morning admission, separate WhatsApp acceptance, capacity, print idempotence, driver evidence gates, reason validation, no live APIs or print.');
