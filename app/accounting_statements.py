@@ -5,9 +5,39 @@ from datetime import datetime, timedelta, time
 from . import db
 
 
+def filter_statement(data, driver_ids='', variance='all'):
+    """Filter an authorized statement without netting drivers or changing its source."""
+    selected = {value.strip() for value in driver_ids.split(',') if value.strip()}
+    if len(selected) > 250 or any(len(value) > 150 for value in selected):
+        raise db.error(422, 'STATEMENT_FILTER', 'اختر عددًا صالحًا من السائقين.')
+    predicates = {
+        'all': lambda row: True,
+        'shortage': lambda row: row.get('shortage', 0) > 0,
+        'pending': lambda row: row.get('pending_shortage', 0) > 0,
+        'outstanding': lambda row: row.get('outstanding_receivable_halalas', 0) > 0,
+    }
+    if variance not in predicates:
+        raise db.error(422, 'STATEMENT_FILTER', 'فلتر العجز غير صالح.')
+    rows = [row for row in data['rows'] if (not selected or row['driver_id'] in selected) and predicates[variance](row)]
+    pairs = {(str(row['driver_id']), str(row['day'])) for row in rows}
+    drivers = []
+    for driver in data.get('drivers', []):
+        entries = [row for row in rows if row['driver_id'] == driver['driver_id']]
+        if entries:
+            drivers.append({key: sum(row.get(key, 0) for row in entries) if type(value) is int else value
+                            for key, value in driver.items()})
+    result = dict(data, rows=rows, drivers=drivers,
+                  applied_filters={'driver_ids': sorted(selected), 'variance': variance})
+    for key in ('settlements', 'adjustment_history', 'incidents'):
+        result[key] = [row for row in data.get(key, []) if (str(row['driver_id']), str(row['day'])) in pairs]
+    report_ids = {row['id'] for row in result['settlements']}
+    result['deadline_extensions'] = [row for row in data.get('deadline_extensions', []) if row['entity_id'] in report_ids]
+    return result
+
+
 def source_rows(c,user,bids,ds=None,de=None,manager_shift_id='',manager_shift_ids=None):
     q="""SELECT r.*,s.manager_shift_id,s.submission,s.scheduled_end_at,s.delivery_window_snapshot,
-      s.closed_at shift_closed_at,mu.display_name manager_name,
+      s.closed_at shift_closed_at,s.shift_no,mu.display_name manager_name,
       u.display_name driver_name,
       coalesce(m.reporting_operational_date,s.reporting_operational_date,s.delivery_operational_date,(s.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day"
       FROM closure_reports r JOIN shifts s ON s.id=r.shift_id JOIN users u ON u.id=r.user_id
@@ -91,8 +121,9 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             daily[identifier,day]=dict(driver_id=identifier,driver=name,day=day,label=name,
                 completed_orders=0,bank=0,cash_due=0,cash_received=0,pending_cash=0,shortage=0,surplus=0,pending_shortage=0,pending_surplus=0,
                 violations=0,traffic=0,notes='',incident_notes='',traffic_notes='',adjustments='',
-                pending_balance=0,pending_receipt=0,closure_count=0,manager='',status='—',
+                pending_balance=0,pending_receipt=0,closure_count=0,manager='',status=('No recorded closure' if en else 'لا توجد تقفيلة مسجلة'),
                 outstanding_receivable_halalas=0,outstanding_payable_halalas=0,unresolved_channel_count=0)
+            daily[identifier,day].update(system_total=0,refund_cash=0,refund_card=0,shift_references='',branch_names='')
     # Delivered order IDs are selected once across all tasks, avoiding duplicate
     # counts when orders were reassigned or split across collection records.
     task_ids=defaultdict(set)
@@ -107,6 +138,13 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
         from .financial_treatments import reviewed_values
         v=reviewed_values(c,r,history[-1] if history else None,user=user)
         item=daily[r['user_id'],r['day']]
+        item['system_total']+=v['system_total_halalas']
+        summary=r['snapshot'].get('summary') or {}
+        item['refund_cash']+=summary.get('cash_refunded_halalas',sum(x.get('amount_halalas',0) for x in r['snapshot'].get('refunds',[]) if x.get('method')=='cash'))
+        item['refund_card']+=summary.get('card_refunded_halalas',sum(x.get('amount_halalas',0) for x in r['snapshot'].get('refunds',[]) if x.get('method')=='card'))
+        item['shift_references']+=(' / ' if item['shift_references'] else '')+('D-'+str(r['shift_no']).zfill(6) if r.get('shift_no') is not None else r['shift_id'])
+        branch_names={b['id']:b['name'] for b in bs}
+        item['branch_names']=' / '.join(sorted(set(item['branch_names'].split(' / ') if item['branch_names'] else []) | {branch_names.get(b,b) for b in r['branch_ids']}))
         item['completed_orders']+=len(task_ids[r['shift_id']])
         item['bank']+=v['bank_halalas'] if v['balance_approved'] else 0
         item['cash_due']+=v['cash_due_halalas']
@@ -162,7 +200,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             item['status']=('Review approved — outstanding under follow-up' if en else 'المراجعة معتمدة — مبلغ مستحق تحت المتابعة') if item['outstanding_receivable_halalas'] or item['outstanding_payable_halalas'] else ('Channel difference under review' if en else 'فرق الكاش والشبكة تحت المراجعة') if item['unresolved_channel_count'] else ('Pending balance' if en else 'بانتظار الموازنة') if item['pending_balance'] else ('Pending cash' if en else 'بانتظار الكاش') if item['pending_receipt'] else ('Variance pending confirmation' if en else 'فرق بانتظار تأكيد المحاسب') if item['pending_shortage'] or item['pending_surplus'] else ('Cash and recorded-card review approved' if en else 'مراجعة الكاش والشبكة المسجلة معتمدة')
     output=sorted(daily.values(),key=lambda r:(r['driver'],r['driver_id'],r['day']))
     summaries=[]
-    money=('completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','violations','traffic','outstanding_receivable_halalas','outstanding_payable_halalas')
+    money=('completed_orders','system_total','refund_cash','refund_card','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','violations','traffic','outstanding_receivable_halalas','outstanding_payable_halalas')
     for identifier,name in names.items():
         entries=[r for r in output if r['driver_id']==identifier]
         summaries.append(dict(driver_id=identifier,driver=name,**{k:sum(r[k] for r in entries) for k in money}))

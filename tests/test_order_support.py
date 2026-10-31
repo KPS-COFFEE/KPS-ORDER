@@ -66,6 +66,12 @@ def test_required_photos_scope_idempotency_and_closed_case_retention(ops):
     assert daily['summary']=={'created':1,'closed':1,'open':0}
     with db.tx() as c:c.execute("UPDATE delivery_photos SET expires_at=now()-interval '1 minute'")
     cleanup()
+    assert actor('manager').get('/api/delivery-photos/'+pickup).status_code==200
+    post('manager',f'/api/orders/{oid}/evidence-retention',{'decision':'retain','reason':'TEST keep evidence until formal review'})
+    cleanup()
+    assert actor('manager').get('/api/delivery-photos/'+pickup).status_code==200
+    post('manager',f'/api/orders/{oid}/evidence-retention',{'decision':'release','reason':'TEST formal review completed; retention expiry permitted'})
+    cleanup()
     assert actor('manager').get('/api/delivery-photos/'+pickup).status_code==410
     with db.tx() as c:
         assert c.execute('SELECT count(*) n FROM delivery_photos WHERE data IS NULL AND deleted_at IS NOT NULL').fetchone()['n']==2

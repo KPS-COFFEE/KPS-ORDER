@@ -29,12 +29,12 @@ class Decision(BaseModel):
 
 
 def rows(c, oid):
-    return c.execute("""SELECT e.id,e.created_at,e.details,
-        d.details decision,d.created_at decided_at
-        FROM order_events e LEFT JOIN LATERAL (
-          SELECT details,created_at FROM order_events
-          WHERE order_id=e.order_id AND event_type='customer_request.decided'
-            AND details->>'request_id'=e.id ORDER BY created_at DESC LIMIT 1
+    return c.execute("""SELECT e.id,e.created_at,e.details,u.display_name requester_name,
+        d.details decision,d.created_at decided_at,d.decider_name
+        FROM order_events e LEFT JOIN users u ON u.id=e.actor_id LEFT JOIN LATERAL (
+          SELECT x.details,x.created_at,du.display_name decider_name FROM order_events x LEFT JOIN users du ON du.id=x.actor_id
+          WHERE x.order_id=e.order_id AND x.event_type='customer_request.decided'
+            AND x.details->>'request_id'=e.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1
         ) d ON true WHERE e.order_id=%s AND e.event_type='customer_request.opened'
         ORDER BY e.created_at DESC LIMIT 100""", (oid,)).fetchall()
 

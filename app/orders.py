@@ -796,7 +796,7 @@ def get_order(order_id: str, user=Depends(auth.current_user), request: Request =
         row = scoped_order(conn, order_id, user)
         if user['role'] == 'customer':
             events = conn.execute("SELECT id,event_type,details,created_at FROM order_events WHERE order_id=%s "
-                                  "AND event_type NOT IN ('driver_evidence.observation','driver_evidence.observation_read') "
+                                  "AND event_type NOT IN ('driver_evidence.observation','driver_evidence.observation_read','evidence.retention_decided') "
                                   "ORDER BY created_at,id", (order_id,)).fetchall()
         else:
             events = conn.execute('SELECT e.id,e.event_type,e.details,e.created_at,e.actor_id,u.display_name AS actor_name '

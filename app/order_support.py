@@ -198,11 +198,38 @@ def photos(oid:str,user=Depends(auth.current_user)):
     with db.tx() as c:
         order_access(c,user,oid)
         result={'photos':c.execute('SELECT id,stage,created_at,deleted_at,used_at FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL ORDER BY created_at',(oid,)).fetchall()}
+        result['retention_decision']=c.execute("SELECT e.id,e.created_at,e.details,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.order_id=%s AND e.event_type='evidence.retention_decided' ORDER BY e.created_at DESC,e.id DESC LIMIT 1",(oid,)).fetchone()
+        result['can_decide_retention']=user['role'] in ('owner','delivery_manager') and auth.has_permission(user,'orders_view')
         if user['role'] in ('owner','delivery_manager') or auth.has_admin_read_grant(user,'orders_view'):
+            from .chat import allowed,attachment_url
+            attachments=c.execute('SELECT a.id,a.created_at,a.content_type,a.size_bytes,v.id conversation_id,v.order_id,v.customer_id,v.brand_id,v.branch_id,v.route,v.category,v.context_service,u.display_name uploader_name FROM chat_attachments a JOIN conversations v ON v.id=a.conversation_id LEFT JOIN users u ON u.id=a.uploader_id WHERE v.order_id=%s ORDER BY a.created_at,a.id',(oid,)).fetchall()
+            result['attachments']=[{'id':a['id'],'created_at':a['created_at'],'content_type':a['content_type'],'uploader_name':a['uploader_name'],'url':attachment_url(a['id'],user)} for a in attachments if allowed(user,a,c,supervision=True)]
             captures={p['id']:p['capture_location'] for p in c.execute('SELECT id,capture_location FROM delivery_photos WHERE order_id=%s AND used_at IS NOT NULL',(oid,)).fetchall()}
             for p in result['photos']:p['capture_location']=captures.get(p['id'])
             result['observations']=evidence_observations(c,oid)
         return safe(result)
+
+
+class EvidenceRetentionDecision(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    decision:Literal['retain','release']
+    reason:str=Field(min_length=5,max_length=1000)
+
+
+@router.post('/orders/{oid}/evidence-retention')
+def decide_evidence_retention(oid:str,body:EvidenceRetentionDecision,request:Request,user=Depends(auth.current_user)):
+    roles(user,'owner','delivery_manager')
+    if not auth.has_permission(user,'orders_view'):fail(403,'صلاحية مراجعة الطلب غير متاحة')
+    if not body.reason.strip():fail(422,'اكتب سبب القرار الرسمي')
+    with db.tx() as c:
+        def perform():
+            order_access(c,user,oid,True)
+            ids=[p['id'] for p in c.execute('SELECT id FROM delivery_photos WHERE order_id=%s AND data IS NOT NULL ORDER BY id',(oid,)).fetchall()]
+            details={'decision':body.decision,'reason':body.reason.strip(),'photo_ids':ids}
+            db.event(c,oid,user['id'],'evidence.retention_decided',details)
+            db.audit(c,user['id'],'evidence.retention_decided','order',oid,details)
+            return {'decision':body.decision,'photo_ids':ids}
+        return mutate(c,user,request,'evidence.retention:'+oid,body.model_dump(),perform)
 
 @router.get('/delivery-photos/{aid}')
 def photo(aid:str,user=Depends(auth.current_user)):
@@ -223,12 +250,35 @@ def cleanup():
             AND NOT EXISTS(SELECT 1 FROM support_tickets t WHERE t.order_id=o.id AND t.status<>'closed')
             AND NOT EXISTS(SELECT 1 FROM driver_tasks t WHERE t.order_id=o.id AND t.status='problem')
             AND NOT EXISTS(SELECT 1 FROM conversations v WHERE v.order_id=o.id AND v.status<>'resolved')
+            AND NOT EXISTS(SELECT 1 FROM order_amendments a WHERE a.order_id=o.id AND a.status IN ('requested','branch_confirmed','offered'))
+            AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='financial_case.opened' AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=o.id AND d.event_type='financial_case.resolved' AND d.details->>'case_id'=r.id))
+            AND NOT EXISTS(SELECT 1 FROM order_events r WHERE r.order_id=o.id AND r.event_type='customer_request.opened' AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=o.id AND d.event_type='customer_request.decided' AND d.details->>'request_id'=r.id))
+            AND (
+              (NOT EXISTS(SELECT 1 FROM order_amendments a WHERE a.order_id=o.id)
+               AND NOT EXISTS(SELECT 1 FROM support_tickets t WHERE t.order_id=o.id)
+               AND NOT EXISTS(SELECT 1 FROM conversations v WHERE v.order_id=o.id AND v.category IN ('complaint','change','refund','delivery_problem','other'))
+               AND NOT EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND
+                 (e.event_type IN ('customer_request.opened','intervention.customer_amend_requested','order.operationally_cancelled','order.refund','order.free_item_returned') OR e.event_type LIKE 'financial_case.%' OR e.event_type LIKE 'intervention.%' OR e.event_type LIKE 'task.problem%'))
+               AND o.preparation_status NOT IN ('cancelled','rejected') AND o.delivery_status<>'cancelled')
+              OR EXISTS(SELECT 1 FROM order_events decision WHERE decision.order_id=o.id AND decision.event_type='evidence.retention_decided'
+                AND decision.details->>'decision'='release'
+                AND decision.id=(SELECT e.id FROM order_events e WHERE e.order_id=o.id AND e.event_type='evidence.retention_decided' ORDER BY e.created_at DESC,e.id DESC LIMIT 1)
+                AND NOT EXISTS(SELECT 1 FROM order_events e WHERE e.order_id=o.id AND e.created_at>decision.created_at AND (e.event_type IN ('customer_request.opened','intervention.customer_amend_requested','order.operationally_cancelled','order.refund','order.free_item_returned') OR e.event_type LIKE 'financial_case.%' OR e.event_type LIKE 'intervention.%' OR e.event_type LIKE 'task.problem%'))
+                AND NOT EXISTS(SELECT 1 FROM order_amendments a WHERE a.order_id=o.id AND a.updated_at>decision.created_at)
+                AND NOT EXISTS(SELECT 1 FROM support_tickets t WHERE t.order_id=o.id AND t.updated_at>decision.created_at)
+                AND NOT EXISTS(SELECT 1 FROM chat_messages m JOIN conversations v ON v.id=m.conversation_id WHERE v.order_id=o.id AND m.sender_id=v.customer_id AND m.created_at>decision.created_at))
+            )
             ORDER BY o.id LIMIT 200 FOR UPDATE SKIP LOCKED""").fetchall()
         for o in orders:
             oid=o['id']
             hold=c.execute("SELECT 1 FROM support_tickets WHERE order_id=%s AND status<>'closed' UNION ALL SELECT 1 FROM driver_tasks WHERE order_id=%s AND status='problem' UNION ALL SELECT 1 FROM conversations WHERE order_id=%s AND status<>'resolved' LIMIT 1",(oid,oid,oid)).fetchone()
             if not hold:
-                c.execute('UPDATE delivery_photos SET data=NULL,deleted_at=now() WHERE order_id=%s AND expires_at<=now() AND data IS NOT NULL',(oid,))
+                decision=c.execute("SELECT details FROM order_events WHERE order_id=%s AND event_type='evidence.retention_decided' ORDER BY created_at DESC,id DESC LIMIT 1",(oid,)).fetchone()
+                if not decision:
+                    c.execute('UPDATE delivery_photos SET data=NULL,deleted_at=now() WHERE order_id=%s AND expires_at<=now() AND data IS NOT NULL',(oid,))
+                elif decision['details'].get('decision')=='release':
+                    deleted=c.execute('UPDATE delivery_photos SET data=NULL,deleted_at=now() WHERE order_id=%s AND id=ANY(%s) AND expires_at<=now() AND data IS NOT NULL RETURNING id',(oid,decision['details'].get('photo_ids',[]))).fetchall()
+                    if deleted:db.audit(c,None,'evidence.retention_expired','order',oid,{'photo_ids':[p['id'] for p in deleted]})
 
 async def poll_loop():
     while True:

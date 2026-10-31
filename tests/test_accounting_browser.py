@@ -13,8 +13,9 @@ def test_accountant_reports_exports_case_and_bilingual_layout(live_app,chromium_
     try:
         page.goto(live_app+'/ops')
         expect(page.locator('#navigation [data-page=accounting]')).to_be_visible()
-        expect(page.locator('#navigation button')).to_have_count(2)
-        assert set(page.locator('#navigation button').evaluate_all('(buttons)=>buttons.map(b=>b.dataset.page)'))=={'accounting','employeeTickets'}
+        expect(page.locator('#navigation button')).to_have_count(3)
+        expect(page.locator('#navigation [data-page=catalog]')).to_be_visible()
+        assert set(page.locator('#navigation button').evaluate_all('(buttons)=>buttons.map(b=>b.dataset.page)'))=={'accounting','catalog','employeeTickets'}
         expect(page.locator('#ac-results table')).to_be_visible()
         page.locator('#ac-filters [name=group]').select_option('driver_daily')
         page.locator('#ac-filters button[type=submit]').click()

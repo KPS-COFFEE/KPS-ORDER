@@ -392,10 +392,14 @@ def options(user=Depends(case_access)):
 
 Group=Literal['daily','branch','items','driver','driver_daily','driver_incentives','driver_incentive_details','deficits','actions','complimentary','driver_statement']
 @router.get('/reports')
-def reports(start:str='',end:str='',branch_ids:str='',driver_id:str='',product_id:str='',group:Group='daily',lang:Literal['ar','en']='ar',format:Literal['json','pdf','xlsx']='json',user=Depends(access)):
+def reports(start:str='',end:str='',branch_ids:str='',driver_id:str='',product_id:str='',group:Group='daily',lang:Literal['ar','en']='ar',format:Literal['json','pdf','xlsx']='json',driver_ids:str='',variance:Literal['all','shortage','pending','outstanding']='all',user=Depends(access)):
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         data=build(c,user,start,end,branch_ids,driver_id,product_id,group,lang)
+        if driver_ids or variance!='all':
+            if group!='driver_statement':fail('STATEMENT_FILTER','اختيار عدة سائقين والعجز متاح في كشف السائق.')
+            from .accounting_statements import filter_statement
+            data=filter_statement(data,driver_ids,variance)
     return export(data,format,lang)
 
 def export(data,format,lang):
@@ -592,7 +596,7 @@ def months(user=Depends(access)):
         return safe({'rows':[r for r in c.execute('SELECT id,month,branch_ids,reason,created_at FROM accounting_months WHERE brand_id=%s ORDER BY month DESC',(user['brand_id'],)).fetchall() if set(r['branch_ids'])<=bids]})
 
 @router.get('/months/{identifier}')
-def month(identifier:str,group:Group='driver_daily',driver_id:str='',format:Literal['json','pdf','xlsx']='json',lang:Literal['ar','en']='ar',user=Depends(access)):
+def month(identifier:str,group:Group='driver_daily',driver_id:str='',format:Literal['json','pdf','xlsx']='json',lang:Literal['ar','en']='ar',driver_ids:str='',variance:Literal['all','shortage','pending','outstanding']='all',user=Depends(access)):
     with db.tx() as c:
         r=c.execute('SELECT * FROM accounting_months WHERE id=%s AND brand_id=%s',(identifier,user['brand_id'])).fetchone()
         if not r or not set(r['branch_ids'])<={b['id'] for b in branches(c,user)}:fail('MONTH_SCOPE','الكشف غير متاح.',404)
@@ -601,6 +605,10 @@ def month(identifier:str,group:Group='driver_daily',driver_id:str='',format:Lite
         if driver_id and group=='driver_statement':
             for key in ('rows','drivers','settlements','adjustment_history','incidents'):
                 data[key]=[row for row in data.get(key,[]) if row['driver_id']==driver_id]
+        if driver_ids or variance!='all':
+            if group!='driver_statement':fail('STATEMENT_FILTER','اختيار عدة سائقين والعجز متاح في كشف السائق.')
+            from .accounting_statements import filter_statement
+            data=filter_statement(data,driver_ids,variance)
         return export(data,format,lang)
 
 
