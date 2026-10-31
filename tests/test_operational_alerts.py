@@ -82,6 +82,8 @@ def test_alert_sound_requires_gesture_repeats_and_stops(live_app,chromium_browse
     try:
         page.clock.install();page.goto(live_app+'/ops')
         expect(page.locator('#operational-alerts')).to_contain_text(marker)
+        if kind=='chat':
+            expect(page.locator('#operational-alerts [data-alert-group=messages] .response-action-card')).to_have_count(1)
         # Playwright evaluates with CDP userGesture=true. Count only trusted
         # pointer/key input, not activation introduced by assertion polling.
         assert page.evaluate('window.testGestureSeen') is False
@@ -97,7 +99,13 @@ def test_alert_sound_requires_gesture_repeats_and_stops(live_app,chromium_browse
         page.clock.run_for(31000)
         page.wait_for_function('(expected) => window.testBeeps === expected', arg=tones*2+1)
         pending.clear();page.clock.run_for(16000)
-        expect(page.locator('#operational-alerts')).not_to_contain_text(marker)
+        if kind=='chat':
+            # The owner keeps an empty messages panel for a stable layout.
+            # Pending cards and sound must clear; the panel title remains.
+            expect(page.locator('#operational-alerts [data-alert-group=messages] .response-action-card')).to_have_count(0)
+            expect(page.locator('#operational-alerts [data-alert-group=messages] summary')).to_have_text(marker+' (0)')
+        else:
+            expect(page.locator('#operational-alerts')).not_to_contain_text(marker)
         assert page.evaluate('window.testContinuousStopped')==1
         count=page.evaluate('window.testBeeps');page.clock.run_for(61000)
         assert page.evaluate('window.testBeeps')==count
