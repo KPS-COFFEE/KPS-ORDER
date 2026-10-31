@@ -15,5 +15,5 @@
 .proximity-farther{background:#fff7e9}
 #proximity-results table{min-width:1050px}
 #proximity-results .table-scroll{max-height:60dvh;overflow:auto}
-.delivery-room #dispatch-panel-messages .conversation-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));max-height:420px;gap:12px}
+.delivery-room #dispatch-panel-messages .conversation-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));max-height:125px;gap:12px}
 @media(max-width:650px){#modal.conversation-dialog{width:98vw;max-width:98vw;padding:12px}.conversation-dialog .messages{height:36dvh}.support-card-grid{grid-template-columns:minmax(0,1fr)}}

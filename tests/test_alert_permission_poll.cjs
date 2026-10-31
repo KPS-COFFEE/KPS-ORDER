@@ -28,6 +28,7 @@ function harness(role,permissions,{failOperations=false}={}){
         if(failOperations)throw Error('offline');
         return {unassigned:[{id:'pending-order'}]};
       }
+      if(path==='/api/support-tickets')return {tickets:[]};
       if(path==='/api/conversations/alerts')return {awaiting_reply:[]};
       if(path==='/api/driver-closure')return {requests:[]};
       if(path==='/api/order-amendments/inbox')return {orders:[]};
