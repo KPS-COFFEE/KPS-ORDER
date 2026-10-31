@@ -173,3 +173,28 @@ def test_staff_branch_dropdown_count_cancel_and_save(live_app,chromium_browser):
         expect(page.locator('#modal .staff-branch-options input:checked')).to_have_count(2)
         assert not errors
     finally:context.close()
+
+
+@pytest.mark.postgres
+def test_display_title_roundtrip_preserves_access_and_identity(client):
+    owner=owner_client(client)
+    target=_make_user('delivery_manager',username='custom-title-manager')
+    identifier=target['id']
+    preserved=('role','brand_id','branch_ids','active','display_name','phone',
+               'permissions','permission_denials','extra_permissions')
+    with db.tx() as conn:
+        before=conn.execute('SELECT * FROM users WHERE id=%s',(identifier,)).fetchone()
+    path='/api/identity/staff/'+identifier
+    result=client.patch(path,json={'job_title':' المدير ','reason':'Owner-approved presentation title'})
+    assert result.status_code==200,result.text
+    assert result.json()['user']['job_title']=='المدير'
+    with db.tx() as conn:
+        after=conn.execute('SELECT * FROM users WHERE id=%s',(identifier,)).fetchone()
+        assert {key:after[key] for key in preserved}=={key:before[key] for key in preserved}
+    assert client.patch(path,json={'job_title':'Bad\nTitle'}).status_code==422
+    assert client.patch(path,json={'job_title':'x'*81}).status_code==422
+    cleared=client.patch(path,json={'job_title':''})
+    assert cleared.status_code==200,cleared.text
+    assert cleared.json()['user']['job_title'] is None
+    _authenticate(client,target)
+    assert client.patch(path,json={'job_title':'المالك'}).status_code==403

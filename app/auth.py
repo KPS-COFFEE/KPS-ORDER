@@ -96,7 +96,7 @@ def public_user(user: dict, conn=None) -> dict:
     if conn is not None and '_message_capabilities' not in user:
         from .customer_message_routing import capabilities as message_capabilities
         user = dict(user, _message_capabilities=sorted(message_capabilities(conn, user)))
-    output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials', 'extra_permissions')}
+    output = {key: user.get(key) for key in ('id', 'role', 'brand_id', 'branch_ids', 'display_name', 'job_title', 'phone', 'active', 'identity_kind', 'email', 'email_verified_at', 'phone_verified_at', 'phone_sms_verified_at', 'phone_whatsapp_verified_at', 'invitation_status', 'employee_ref', 'vehicle', 'permissions', 'permission_denials', 'extra_permissions')}
     from .employee_ticket_workflow import enabled as factual_workflow_enabled
     output['admin_factual_workflow_enabled']=factual_workflow_enabled() if user.get('role')!='customer' else False
     from .manual_bank_matching import enabled as bank_preparation_enabled
@@ -1710,6 +1710,7 @@ class StaffUpdateBody(BaseModel):
     model_config=ConfigDict(extra='forbid')
     email:str|None=Field(default=None,min_length=3,max_length=254)
     display_name:str|None=Field(default=None,min_length=1,max_length=100)
+    job_title:str|None=Field(default=None,max_length=80)
     phone:str|None=Field(default=None,min_length=8,max_length=30)
     branch_ids:list[str]|None=Field(default=None,max_length=500)
     active:bool|None=None
@@ -1777,6 +1778,9 @@ def update_staff_in_tx(conn, identifier, body, user):
     name=body.display_name.strip() if body.display_name is not None else row['display_name']
     if not name or '\x00' in name:
         raise db.error(422,'STAFF_PROFILE_REQUIRED','أدخل الاسم الكامل.')
+    job_title = (body.job_title or '').strip() if 'job_title' in body.model_fields_set else row.get('job_title')
+    if job_title and any(ord(char) < 32 or ord(char) == 127 for char in job_title):
+        raise db.error(422,'STAFF_TITLE_INVALID','أدخل مسمى ظاهرًا من سطر واحد.')
     phone=normalize_phone(body.phone) if body.phone else row['phone']
     if phone!=row['phone'] and row['role']=='owner':
         require_owner_step_up(conn,user)
@@ -1806,6 +1810,9 @@ def update_staff_in_tx(conn, identifier, body, user):
     if active and (row['email_verified_at'] or sms_approved):
         status='active'
     output=conn.execute('UPDATE users SET display_name=%s,phone=%s,branch_ids=%s,active=%s,employee_ref=%s,vehicle=%s,invitation_status=%s,updated_at=now() WHERE id=%s RETURNING *',(name,phone,db.json(scope),active,body.employee_ref if 'employee_ref' in body.model_fields_set else row['employee_ref'],db.json(vehicle),status,identifier)).fetchone()
+    if 'job_title' in body.model_fields_set:
+        output=conn.execute('UPDATE users SET job_title=%s WHERE id=%s RETURNING *',
+                            (job_title or None,identifier)).fetchone()
     if phone_changed:
         output=conn.execute('UPDATE users SET phone_verified_at=NULL,phone_sms_verified_at=NULL,phone_whatsapp_verified_at=NULL WHERE id=%s RETURNING *',(identifier,)).fetchone()
     if body.permissions is not None or role_changed:
@@ -1826,7 +1833,7 @@ def update_staff_in_tx(conn, identifier, body, user):
         conn.execute('UPDATE sessions SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL',(identifier,))
         conn.execute('UPDATE identity_tokens SET revoked_at=now() WHERE user_id=%s AND consumed_at IS NULL',(identifier,))
         conn.execute("UPDATE email_outbox SET status='cancelled' WHERE dedupe_key IN (SELECT 'identity:'||id FROM identity_tokens WHERE user_id=%s) AND status IN ('pending','failed')",(identifier,))
-    db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_role':row['role'],'role':role,'old_extra_permissions':row.get('extra_permissions') or [],'extra_permissions':[]} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {}),**({'old_permission_denials':row.get('permission_denials') or [],'permission_denials':denials} if body.permission_denials is not None else {})})
+    db.audit(conn,user['id'],'staff.updated','user',identifier,{'fields':sorted(body.model_fields_set),'reason':body.reason,**({'old_job_title':row.get('job_title'),'job_title':job_title or None} if 'job_title' in body.model_fields_set else {}),**({'old_role':row['role'],'role':role,'old_extra_permissions':row.get('extra_permissions') or [],'extra_permissions':[]} if role_changed else {}),**({'permissions':permissions} if body.permissions is not None else {}),**({'old_permission_denials':row.get('permission_denials') or [],'permission_denials':denials} if body.permission_denials is not None else {})})
     return {'user':staff_public(conn,output)}
 
 
