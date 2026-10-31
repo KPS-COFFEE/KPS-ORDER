@@ -142,7 +142,11 @@ def test_paid_increase_collects_only_difference(amendment_case):
     post('branch','/api/orders/'+oid+'/collect',{'method':'cash','amount_halalas':1000,'tendered_halalas':1000})
     aid,p=propose(oid,qty=2);decision(aid,'offer');decision(aid,'accept',who='customer')
     o=actor('branch').get('/api/orders/'+oid).json()['order']
-    post('branch','/api/orders/'+oid+'/preparation',{'version':o['version'],'status':'cancelled','reason':'طلب العميل'},status=409)
+    cancel={'version':o['version'],'status':'cancelled','reason':'طلب العميل'}
+    denied=post('branch','/api/orders/'+oid+'/preparation',cancel,status=403)
+    assert denied['detail']['code']=='COLLECTED_CANCELLATION_AUTHORITY'
+    blocked=post('owner','/api/orders/'+oid+'/preparation',cancel,status=409)
+    assert blocked['detail']['code']=='REFUND_WORKFLOW_REQUIRED'
     post('branch','/api/order-amendments/orders/'+oid+'/receipt',{'revision':1,'kind':'branch'})
     post('branch','/api/orders/'+oid+'/collect',{'method':'cash','amount_halalas':2000,'tendered_halalas':2000},status=422)
     post('branch','/api/orders/'+oid+'/collect',{'method':'cash','amount_halalas':1000,'tendered_halalas':1000})

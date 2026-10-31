@@ -101,7 +101,7 @@ def resource_context(kind: Literal['order', 'order_intervention', 'task', 'shift
                         allowed = False
             elif kind == 'conversation':
                 from .chat import allowed as chat_allowed
-                allowed = auth.has_permission(principal, 'chat_view') and chat_allowed(principal, row, conn)
+                allowed = auth.has_permission(principal, 'chat_view') and chat_allowed(principal, row, conn, supervision=True)
             elif kind == 'shift':
                 from .operations import shift_access
                 from fastapi import HTTPException
@@ -332,4 +332,3 @@ def fleet_vehicles(user=Depends(auth.current_user)):
         # A card belongs to its canonical brand ledger; only anchor shifts create
         # physical operating segments, so shared workday legs add no duplicate.
         return {'vehicles':sorted(output,key=lambda v:(v['plate'],v['brand_id'],v['id']))}
-

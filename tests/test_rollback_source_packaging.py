@@ -5,7 +5,7 @@ import pytest
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('rollback_builder',ROOT/'tools/rollback_prepare_compat.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-BASE='80a1d727f6695c4ce3685e726ab5b34674e1cfa0'
+BASE='b528f14c5ea93e32a15a5c37f43f7e93477136e8'
 
 @pytest.mark.parametrize('name',['../outside.py','/tmp/outside.py','tools/outside.py'])
 def test_inventory_rejects_paths_outside_application_inputs(tmp_path,name):
@@ -44,7 +44,9 @@ def test_actual_context_retains_all_docker_inputs_and_distinct_prior_app(tmp_pat
  assert (output/'app/main.py').read_bytes()==(ROOT/'tools/rollback_application_overlay/app/main.py').read_bytes()
  for name in ('app/orders.py','public/ops.js'):
   assert (output/name).read_bytes()!=(ROOT/name).read_bytes()
- assert (output/'app/accounting.py').read_bytes()==module.git(ROOT,'show',BASE+':app/accounting.py')
+ for name in ('accounting','cash_bags','aggregate_driver_closure','aggregate_manager_closure','financial_clarifications','manual_bank_matching','order_duplicates','delivery_partial_returns','tracking_ingest'):
+  path='app/'+name+'.py'
+  assert (output/path).read_bytes()==module.git(ROOT,'show',BASE+':'+path),path
  # Every local Docker COPY source must exist. A path typo/new tooling input
  # must fail this assertion rather than being replaced by an empty placeholder.
  copy_inputs=[]

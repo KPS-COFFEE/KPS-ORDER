@@ -1533,8 +1533,15 @@ def test_void_order(oid:str,body:TestVoid,request:Request,user=Depends(auth.curr
     roles(user,'owner')
     with db.tx() as c:
         from .owner_test_void import perform
-        # Recheck brand/order scope even for an idempotency replay.
-        order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone())
+        # Preserve the mutation lane -> order -> employee lock order. The
+        # session snapshot may predate a lock wait or a revoked owner grant.
+        c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('operations:'+user['brand_id'],))
+        order=c.execute('SELECT * FROM orders WHERE id=%s AND brand_id=%s FOR UPDATE',(oid,user['brand_id'])).fetchone()
+        order_access(c,user,order)
+        from .collected_order_authority import current_actor
+        user=current_actor(c,user,order['brand_id'],lock=True)
+        roles(user,'owner')
+        order_access(c,user,order)
         return mutate(c,user,request,'order.test_void:'+oid,body.model_dump(),lambda:perform(c,user,oid,body))
 
 class Refund(OperationBody):

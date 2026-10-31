@@ -298,6 +298,13 @@ def choose(oid: str, body: RouteChoice, user=Depends(auth.current_user),
     _staff(user, write=True)
     with db.tx() as conn:
         order = _order(conn, oid, user, lock=True)
+        # Auth ran before this order lock, which may have waited behind another
+        # operation. Reuse the live employee/membership locking primitive; no
+        # collection permission is involved in choosing a preparation branch.
+        from .collected_order_authority import current_actor
+        user = current_actor(conn, user, order['brand_id'], lock=True)
+        _staff(user, write=True)
+        order = _order(conn, oid, user)
         current_id = pickup_branch_id(conn, order, user=user)
         if not _scope(user, order['brand_id'], body.target_branch_id):
             raise db.error(404, 'PREPARATION_BRANCH_NOT_FOUND', 'فرع التحضير غير متاح ضمن صلاحياتك.')
@@ -412,6 +419,10 @@ def prepare(oid: str, body: PreparationUpdate, user=Depends(auth.current_user),
     _prep_principal(user, write=True)
     with db.tx() as conn:
         order, route = _prep_order(conn, oid, user, lock=True)
+        from .collected_order_authority import current_actor
+        user = current_actor(conn, user, order['brand_id'], lock=True)
+        _prep_principal(user, write=True)
+        order, route = _prep_order(conn, oid, user)
         def perform():
             if (order['service'] != 'delivery' or order.get('completed_at')
                     or order['delivery_status'] in ('delivered', 'cancelled')):

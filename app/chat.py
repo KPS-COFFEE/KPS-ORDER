@@ -93,6 +93,18 @@ def create_conversation(body:CreateConversation,request:Request,user=Depends(aut
     if body.order_id is None:roles(user,'customer')
     if body.category=='other' and not body.details.strip():fail(422,'اكتب التفاصيل عند اختيار أخرى')
     with db.tx() as c:
+        if user['role']=='admin':
+            # A read grant can display every authorized conversation, but even
+            # a cached creation receipt must retain its original response team.
+            order=c.execute('SELECT * FROM orders WHERE id=%s',(body.order_id,)).fetchone()
+            if not order or not auth.can_access_order(user,order,c):fail(404,'الطلب غير موجود')
+            existing=None
+            if not body.details.strip() and 'category' not in body.model_fields_set:
+                existing=c.execute('SELECT * FROM conversations WHERE order_id=%s AND category=%s AND driver_task_id IS NULL',(order['id'],body.category)).fetchone()
+            target=existing or {'customer_id':order['customer_id'],'brand_id':order['brand_id'],
+                'branch_id':order['branch_id'],'route':route_for(body.category,order['service'],body.details),
+                'category':body.category,'order_id':order['id'],'context_service':order['service']}
+            if not allowed(user,target,c):fail(403,'المحادثة مخصصة لفريق المتابعة المختص')
         def perform():
             if body.order_id is not None:
                 o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(body.order_id,)).fetchone()

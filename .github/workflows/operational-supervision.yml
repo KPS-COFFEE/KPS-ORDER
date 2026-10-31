@@ -26,7 +26,11 @@ on:
       - tests/test_admin_operational_supervision.py
       - tests/test_admin_supervision_ui.cjs
       - tests/test_intervention_workflow*
+      - tests/test_intervention_supervision_browser.py
       - tests/test_preparation_routing*
+      - tests/test_collected_rollback_guard.py
+      - tests/test_owner_test_void.py
+      - tools/rollback_application_overlay/**
       - tests/test_order_interventions.py
       - tests/test_employee_permissions.py
       - tests/test_order_financial_cases.py
@@ -72,7 +76,7 @@ jobs:
       - name: Browser-side workflow and branch routing contracts
         run: node --test tests/test_intervention_workflow_ui.cjs tests/test_admin_supervision_ui.cjs tests/test_preparation_routing_ui.cjs tests/test_intervention_reachability.cjs tests/test_central_operations_adapter.cjs tests/test_alert_permission_poll.cjs
       - name: Real database permission, workflow, routing and accounting preservation
-        run: python tools/enbishan_test.py tests/test_admin_operational_supervision.py tests/test_employee_permissions.py tests/test_order_interventions.py tests/test_order_financial_cases.py tests/test_preparation_routing.py tests/test_central_operations.py tests/test_branch_printing.py tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py tests/test_order_amendments.py
+        run: python tools/enbishan_test.py tests/test_admin_operational_supervision.py tests/test_employee_permissions.py tests/test_order_interventions.py tests/test_order_financial_cases.py tests/test_preparation_routing.py tests/test_central_operations.py tests/test_branch_printing.py tests/test_driver_work_hours_unit.py tests/test_driver_work_hours_postgres.py tests/test_order_amendments.py tests/test_collected_rollback_guard.py tests/test_owner_test_void.py
       - name: Require executed database evidence
         run: |
           python - <<'PY'
@@ -87,4 +91,67 @@ jobs:
         with:
           name: operational-supervision-evidence
           path: test-results/enbishan/results.xml
+          retention-days: 14
+  arabic-supervision-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      TEST_BROWSER: '1'
+      APP_ENV: testing
+      KPS_SUPERVISION_SCREENSHOTS: test-artifacts/supervision
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Bound Ubuntu dependency downloads on the ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep Ubuntu suites, components and signing keys unchanged. Only the
+          # slow Azure mirror host is replaced with the official Ubuntu archive.
+          configured=false
+          processed=0
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$source"
+              # A local mirrorlist can select Azure even when the sources file
+              # itself has no Azure URL. Verify every observed configuration path.
+              sudo awk 'index($0,"azure.archive.ubuntu.com") { found=1 } END { exit found ? 1 : 0 }' "$source"
+              configured=true
+              processed=$((processed+1))
+            fi
+          done
+          if [ "$configured" != true ]; then
+            echo 'Expected Ubuntu APT sources were not found.' >&2
+            exit 1
+          fi
+          sudo tee /etc/apt/apt.conf.d/99-kps-ci-network > /dev/null <<'APT'
+          Acquire::Retries "2";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+          printf 'Ubuntu APT source files verified: %s\n' "$processed"
+      - run: python -m playwright install --with-deps chromium
+      - name: Actual Arabic review, return and accounting dialogs
+        run: python -m pytest -q tests/test_intervention_supervision_browser.py --junitxml=test-results/supervision-browser.xml
+      - name: Require all six responsive scenarios to execute
+        run: |
+          python - <<'CHECK'
+          import xml.etree.ElementTree as ET
+          cases = list(ET.parse('test-results/supervision-browser.xml').getroot().iter('testcase'))
+          assert len(cases) == 6
+          assert not any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped'))
+          CHECK
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arabic-supervision-browser-evidence
+          path: |
+            test-results/supervision-browser.xml
+            test-artifacts/supervision/
           retention-days: 14

@@ -166,7 +166,7 @@ jobs:
         run: |
           python tools/rollback_prepare_compat.py --repository "$PWD" --output "$ROLLBACK_COMPAT_DIR"
           mkdir "$ROLLBACK_BASELINE_DIR"
-          git archive 80a1d727f6695c4ce3685e726ab5b34674e1cfa0 | tar -x -C "$ROLLBACK_BASELINE_DIR"
+          git archive b528f14c5ea93e32a15a5c37f43f7e93477136e8 | tar -x -C "$ROLLBACK_BASELINE_DIR"
           mkdir "$PENDING_MIGRATION_BASELINE_DIR"
           git archive 4e4d781b4fa82b7459410694ff5c4ac06842e6e7 | tar -x -C "$PENDING_MIGRATION_BASELINE_DIR"
           python - <<'PYBASELINE'
@@ -488,5 +488,3 @@ jobs:
           path: all-test-results
       - name: Verify exact revision and complete nonduplicated test coverage
         run: python tools/full_regression.py --verify all-test-results --revision '${{ github.event.pull_request.head.sha || github.sha }}'
-
-

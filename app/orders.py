@@ -434,7 +434,7 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
                 sort: str | None = Query(default=None, max_length=20),
                 neighborhood: str | None = Query(default=None, max_length=120),
                 driver_id: str | None = Query(default=None, max_length=80),
-                search: str | None = Query(default=None, max_length=80),
+                search: str | None = Query(default=None, max_length=150),
                 phone: str | None = Query(default=None, min_length=8, max_length=30),
                 manager_view: str | None = None,
                 dispatch_workspace: bool = False, dispatch_scope: Literal['current','all'] = 'current',
@@ -508,11 +508,18 @@ def list_orders(user=Depends(auth.current_user), limit: int = Query(default=30, 
         conditions.append("normalized_identity_phone(o.customer->>'phone')=%s")
         params.append(normalized_phone)
     if search:
-        term=search.strip().translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹','01234567890123456789'))
+        raw_term=search.strip()
+        term=raw_term.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹','01234567890123456789'))
+        references=list(dict.fromkeys([raw_term,term]))
         number_term=str(int(term)) if term.isascii() and term.isdigit() else term
         phone=search_phone(term)
-        conditions.append("(o.order_no::text=%s OR o.id=%s OR o.snapshot->>'order_reference'=%s OR EXISTS(SELECT 1 FROM fiscal_documents fd WHERE fd.order_id=o.id AND fd.number=%s)" + (" OR normalized_identity_phone(o.customer->>'phone')=%s)" if phone else ")"))
-        params.extend([number_term,term,term,term]+([phone] if phone else []))
+        conditions.append("(o.order_no::text=%s OR o.id=ANY(%s) OR o.snapshot->>'order_reference'=ANY(%s)"
+            " OR o.snapshot->'legacy_invoice'->>'invoice_reference'=ANY(%s)"
+            " OR o.snapshot->'prior_delivery'->>'source_reference'=ANY(%s)"
+            " OR EXISTS(SELECT 1 FROM prior_delivery_records pd WHERE pd.order_id=o.id AND pd.source_reference=ANY(%s))"
+            " OR EXISTS(SELECT 1 FROM fiscal_documents fd WHERE fd.order_id=o.id AND fd.number=ANY(%s))"
+            + (" OR normalized_identity_phone(o.customer->>'phone')=%s)" if phone else ")"))
+        params.extend([number_term,*([references]*6)]+([phone] if phone else []))
     sort = sort or ('newest' if user['role']=='customer' or auth.has_admin_read_grant(user, 'orders_view') else 'active_oldest')
     if sort not in {'newest','oldest','active_oldest'}:
         raise db.error(422,'ORDER_SORT_INVALID','ترتيب الطلبات غير صحيح.')

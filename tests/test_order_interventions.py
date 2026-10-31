@@ -339,6 +339,11 @@ def test_collected_authority_is_an_explicit_staff_grant_never_a_name_or_job_titl
         assert authorized(user)==(role in ('admin','delivery_manager'))
         assert not authorized({**user,'permission_denials':['orders_cancel_collected']})
         assert not authorized({**user,'active':False})
+    morning={'role':'delivery_manager','_morning_manager_context':{'shift_id':'scoped-duty'}}
+    assert not authorized(morning)
+    assert authorized({**morning,'extra_permissions':['orders_cancel_collected']})
+    assert not authorized({**morning,'extra_permissions':['orders_cancel_collected'],
+                           'permission_denials':['orders_cancel_collected']})
 
 
 @pytest.mark.postgres
@@ -536,6 +541,8 @@ def test_return_and_resubmit_preserve_original_reason_and_money_with_explicit_re
     post('manager',path+'/resubmit',resubmit_body(revision=0),status=409)
     submitted=post('manager',path+'/resubmit',resubmit_body(),key='resubmit-for-owner')
     assert submitted=={'id':iid,'status':'resubmitted','workflow_revision':2}
+    review=actor('owner').get(f'/api/order-interventions/orders/{oid}').json()['requests'][0]['workflow']
+    assert review['current_responsible_user_id']=='ops-owner' and review['current_responsible_name']=='owner'
     post('owner',path+'/decision',decision_body(reason='wrong_address',workflow_revision=1),status=409)
     post('owner',path+'/decision',decision_body(reason='wrong_address'),status=409)
     post('owner',path+'/decision',decision_body(reason='late_complaint',workflow_revision=2),status=422)
@@ -559,6 +566,7 @@ def test_return_and_resubmit_preserve_original_reason_and_money_with_explicit_re
     assert customer.status_code==200,customer.text
     assert return_body()['note'] not in customer.text and 'workflow' not in customer.json()['requests'][0]
     assert customer.json()['return_targets']==[]
+    assert actor('manager').get(f'/api/order-interventions/orders/{oid}').json()['available_create_kinds']==[]
 
 
 @pytest.mark.postgres
@@ -657,6 +665,7 @@ def test_supervision_read_grant_exposes_history_but_never_workflow_mutations(ops
     view=actor('collected-delegate').get(f'/api/order-interventions/orders/{oid}')
     assert view.status_code==200,view.text
     assert view.json()['requests'][0]['workflow']['available_actions']==[]
+    assert view.json()['available_create_kinds']==[]
     post('collected-delegate',f'/api/order-interventions/orders/{oid}/{iid}/return',return_body(),status=403)
     post('collected-delegate',f'/api/order-interventions/orders/{oid}/{iid}/decision',decision_body(),status=403)
 
@@ -670,3 +679,84 @@ def test_workflow_commands_require_explicit_revision_and_explanatory_note():
         with pytest.raises(ValidationError):cls(**{**body,'note':'ملاحظة\x00غير صالحة'})
         with pytest.raises(ValidationError):cls(**{**body,'workflow_revision':True})
         with pytest.raises(ValidationError):cls(**{k:v for k,v in body.items() if k!='workflow_revision'})
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('state,refund',[('paid',0),('refunded',1000),('unpaid',0)])
+def test_customer_before_acceptance_cannot_auto_cancel_a_historical_collection(ops,state,refund):
+    actor,post,_,_=ops;oid=controlled_order(state='new');collection(oid,payment_status=state,refund=refund)
+    result=post('customer',f'/api/order-requests/orders/{oid}',{'kind':'cancel','note':'طلب عميل للمتابعة'})
+    assert result['status']=='requested'
+    with db.tx() as c:
+        assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='new'
+        assert not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='order.operationally_cancelled'",(oid,)).fetchone()
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('kind',['cancel','problem','amend'])
+def test_assigned_manager_inbox_filters_own_returned_work_before_limit_for_every_kind(ops,kind):
+    actor,post,_,_=ops;oid=controlled_order()
+    with db.tx() as c:
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('ops-manager2','Other Manager','delivery_manager','ops-brand',%s)",(db.json(['ops-branch']),))
+        if kind=='cancel':
+            # More than one page of unrelated approvals must not hide assigned
+            # work. Each synthetic order has its immutable snapshot at INSERT.
+            prefix='inbox-noise-'+uuid4().hex+'-'
+            c.execute("""WITH noise AS (
+                INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,
+                    payment_method,subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer)
+                SELECT %s||g.n,o.brand_id,o.branch_id,o.customer_id,o.service,'ready','pending','cash',
+                    o.subtotal_halalas,o.delivery_fee_halalas,o.total_halalas,o.snapshot,o.customer
+                FROM orders o CROSS JOIN generate_series(1,205) AS g(n) WHERE o.id=%s RETURNING id)
+                INSERT INTO order_events(id,order_id,actor_id,event_type,details,created_at)
+                SELECT 'request-'||id,id,'ops-manager2','intervention.requested',%s,now()-interval '1 day' FROM noise""",
+                (prefix,oid,db.json({'kind':'cancel','reason_code':'no_answer','contact_result':'not_contacted',
+                    'pending_role':'owner_or_cancel_delegate','revision':0})))
+        if kind=='amend':
+            iid='amend-followup-'+uuid4().hex
+            c.execute("INSERT INTO order_events(id,order_id,actor_id,event_type,details) VALUES(%s,%s,'ops-manager','intervention.requested',%s)",
+                (iid,oid,db.json({'kind':'amend','reason_code':'wrong_address','contact_result':'not_contacted',
+                    'pending_role':'delivery_manager','revision':0})))
+    if kind!='amend':
+        iid=post('manager',f'/api/order-interventions/orders/{oid}',{'kind':kind,'reason_code':'wrong_address','version':1})['id']
+    post('owner',f'/api/order-interventions/orders/{oid}/{iid}/return',return_body())
+    inbox=actor('manager').get('/api/order-interventions/pending-cancellations')
+    assert inbox.status_code==200,inbox.text
+    rows=inbox.json()['requests']
+    assert len(rows)==1 and rows[0]['id']==iid and rows[0]['kind']==kind
+    assert rows[0]['workflow']['current_responsible_user_id']=='ops-manager'
+    assert actor('manager2').get('/api/order-interventions/pending-cancellations').json()['requests']==[]
+    post('manager',f'/api/order-interventions/orders/{oid}/{iid}/resubmit',resubmit_body())
+    assert actor('manager').get('/api/order-interventions/pending-cancellations').json()['requests']==[]
+    if kind!='cancel':
+        review=actor('owner').get('/api/order-interventions/pending-cancellations').json()['requests']
+        returned=next(r for r in review if r['id']==iid)
+        assert returned['workflow']['status']=='resubmitted'
+        assert returned['workflow']['current_responsible_user_id']=='ops-owner'
+        assert returned['workflow']['current_responsible_role']=='owner'
+
+
+@pytest.mark.postgres
+def test_workflow_financial_handoff_tracks_the_linked_case_until_accounting_resolves_it(ops):
+    actor,post,_,_=ops;oid=controlled_order();collection(oid,payment_status='refunded',refund=1000)
+    iid=open_operational_request(post,oid)
+    post('owner',f'/api/order-interventions/orders/{oid}/{iid}/decision',decision_body())
+    pending=actor('owner').get(f'/api/order-interventions/orders/{oid}').json()['requests'][0]['workflow']
+    assert pending['financial_pending'] and pending['current_responsible_role']=='accounting'
+    assert pending['available_actions']==[]
+    post('owner',f'/api/order-financial-cases/orders/{oid}/resolve',{'reason':'مطابقة الاسترداد المسجل والتحصيل الأصلي'})
+    closed=actor('owner').get(f'/api/order-interventions/orders/{oid}').json()['requests'][0]['workflow']
+    assert not closed['financial_pending'] and closed['current_responsible_role'] is None
+    assert closed['available_actions']==[] and closed['status']=='approved'
+    assert closed['history'][-1]['event_type']=='financial_case.resolved'
+
+
+@pytest.mark.postgres
+def test_intervention_create_rechecks_live_role_after_session_dependency(ops):
+    actor,post,_,_=ops;oid=controlled_order();client=actor('manager')
+    with db.tx() as c:
+        c.execute("UPDATE users SET role='admin',extra_permissions='[\"orders_view\"]' WHERE id='ops-manager'")
+    response=client.post(f'/api/order-interventions/orders/{oid}',
+        json={'kind':'problem','reason_code':'wrong_address','version':1},headers={'Idempotency-Key':uuid4().hex})
+    assert response.status_code==403,response.text
+    with db.tx() as c:assert not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='intervention.requested'",(oid,)).fetchone()

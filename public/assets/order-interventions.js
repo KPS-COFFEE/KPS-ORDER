@@ -35,11 +35,14 @@
         return;
       }
       const pending=d.requests.filter(r=>!r.decision&&!['approved','rejected','resolved'].includes(r.workflow?.status)),driver=user.role==='driver';
-      root.innerHTML=`<p class="intervention-intro">${d.printed?'أرسلت الطباعة: الإلغاء يحتاج اعتماد المالك أو المفوض.':'راجع سبب الإحالة والمطلوب من المسؤول الحالي قبل اتخاذ القرار.'}</p><p role="alert" aria-live="polite"></p>`;
+      const financialPending=d.requests.some(r=>r.workflow?.financial_pending),pendingCancellation=pending.some(r=>r.details?.kind==='cancel');
+      const intro=financialPending?'الإلغاء التشغيلي معتمد؛ معالجة المبالغ ما زالت لدى المحاسبة. الاعتماد لا يسجل استردادًا للعميل.':pending.some(r=>r.workflow?.status==='returned')?'المعاملة معادة لمدير التوصيل المعيّن. يلزم استكمال التصحيح والأدلة ثم إعادة رفعها للمراجعة.':pendingCancellation&&d.has_recorded_collection?'هذا الطلب مسجل له تحصيل. اعتماد الإلغاء للمالك أو المفوض بإلغاء الطلبات المحصلة؛ معالجة المبالغ لدى المحاسبة.':pendingCancellation&&d.printed?'طلب الإلغاء بانتظار المراجع المخول بعد إرسال الطباعة. راجع سبب الإحالة والأدلة أدناه.':!pending.length&&d.requests.length?'القرارات المسجلة محفوظة أدناه. يوضح كل سجل الإجراء المنفذ والمسؤول عن أي متابعة متبقية.':'راجع سبب الإحالة والمطلوب من المسؤول الحالي قبل اتخاذ القرار.';
+      root.innerHTML=`<p class="intervention-intro">${intro}</p><p role="alert" aria-live="polite"></p>`;
       for(const r of d.requests){
         const section=document.createElement('section');section.className='panel intervention-request';const v=r.details||{},w=r.workflow,currentReason=w?.reason_code||v.reason_code,status=w?.status||r.decision?.status||'requested';
         const actions=w?new Set(w.available_actions||[]):new Set(!r.decision&&!driver&&(!d.printed||v.kind!=='cancel'||d.high_authority)?[v.kind==='cancel'?'approve':'resolve','reject']:[]);
-        const responsible=w?.current_responsible_name||d.pending_roles?.[w?.current_responsible_role||v.pending_role]||w?.current_responsible_role||v.pending_role||'—';
+        const responsibleRole=w?w.current_responsible_role:r.decision?null:v.pending_role;
+        const responsible=w?.current_responsible_name||d.pending_roles?.[responsibleRole]||responsibleRole||'لا يوجد إجراء معلق';
         const next=w?.next_action_label||(r.decision?'اكتمل القرار المسجل.':actions.size?'بانتظار مراجعتك واتخاذ القرار.':'بانتظار إجراء المسؤول المختص.');
         section.innerHTML=`<header class="intervention-request-heading"><h3>${esc(v.kind==='cancel'?'طلب إلغاء':v.kind==='amend'?'طلب تعديل':'بلاغ سائق')}</h3><span class="intervention-state">${esc(states[status]||d.statuses?.[status]||status)}</span></header><dl class="intervention-facts">${fact('رافع المعاملة',r.requested_by_name)}${fact('وقت الإحالة — الرياض',clock(r.created_at))}${fact('سبب الإحالة الأصلي',d.reasons?.[w?.original_reason_code||v.reason_code]||w?.original_reason_code||v.reason_code)}${currentReason!==(w?.original_reason_code||v.reason_code)?fact('السبب بعد التصحيح',d.reasons?.[currentReason]||currentReason):''}</dl><div class="intervention-next"><strong>المسؤول الحالي: ${esc(responsible)}</strong><p>${esc(next)}</p></div>${w?.return_note?`<div class="intervention-correction"><strong>توضيح التصحيح والاستكمال</strong><p class="intervention-note">${esc(w.return_note)}</p></div>`:''}${timeline(r,d)}`;
         const revision=w?{workflow_revision:w.revision}:{};
@@ -61,8 +64,10 @@
         }
         root.append(section);
       }
-      if(!pending.length&&user.role!=='admin'){
-        const kinds=driver?{problem:'رفع مشكلة'}:{cancel:'طلب إلغاء',problem:'متابعة مشكلة'};
+      const terminalCancellation=d.requests.some(r=>r.details?.kind==='cancel'&&(r.decision?.status==='approved'||r.workflow?.status==='approved'));
+      const createKinds=Array.isArray(d.available_create_kinds)?d.available_create_kinds:!pending.length&&user.role!=='admin'&&!terminalCancellation&&!financialPending?(driver?['problem']:['cancel','problem']):[];
+      const kinds=Object.fromEntries(Object.entries(driver?{problem:'رفع مشكلة'}:{cancel:'طلب إلغاء',problem:'متابعة مشكلة'}).filter(([kind])=>createKinds.includes(kind)));
+      if(!pending.length&&Object.keys(kinds).length){
         const form=appendForm(root,`${label('الإجراء',`<select name="kind">${options(kinds)}</select>`)}${label('السبب',`<select name="reason_code">${options(driver?Object.fromEntries(Object.entries(d.reasons).filter(([k])=>!customerReasons.has(k))):d.reasons)}</select>`)}${driver?'':contact(d)+evidence(d)+'<p>إرفاق صورة جديدة: افتح محادثة الطلب وأرفق الصورة، ثم ارجع لهذه الشاشة.</p>'}<button>رفع الطلب للمسؤول</button>`,f=>mutation(path,{version:d.version,kind:f.get('kind'),reason_code:f.get('reason_code'),contact_result:f.get('contact_result')||(f.get('reason_code')==='no_answer'?'no_answer':'not_contacted'),customer_request_id:f.get('customer_request_id')||null,evidence_attachment_id:f.get('evidence_attachment_id')||null}));
         if(initialReason&&form.elements.reason_code.querySelector(`option[value="${initialReason}"]`))form.elements.reason_code.value=initialReason;
         if(form.elements.contact_result)form.elements.contact_result.value='not_contacted';

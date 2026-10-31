@@ -45,3 +45,4 @@ tests/test_admin_operational_supervision.py
 tests/test_order_interventions.py
 tests/test_order_financial_cases.py
 tests/test_preparation_routing.py
+tests/test_collected_rollback_guard.py

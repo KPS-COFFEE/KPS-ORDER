@@ -39,7 +39,7 @@ def routing(ops):
             conn.execute("INSERT INTO branch_print_devices(id,brand_id,branch_id,label,printer_name,token_hash,approved_at,created_by) "
                          "VALUES(%s,'ops-brand',%s,'Synthetic','TEST',%s,now(),'ops-owner')", ('printer-' + bid, bid, 'synthetic-' + bid))
 
-    def order(*, workflow='branch_fulfillment', snapshot_changes=None, status='new'):
+    def order(*, workflow='branch_fulfillment', snapshot_changes=None, status='new', customer_phone='+966500000001'):
         oid = 'route-order-' + uuid4().hex
         snapshot = {'branch_id': source, 'branch_name': 'Original branch', 'branch_city': 'حفر الباطن',
             'branch_location': deepcopy(settings['location']), 'delivery_workflow': workflow,
@@ -54,7 +54,7 @@ def routing(ops):
             conn.execute("INSERT INTO orders(id,brand_id,branch_id,customer_id,service,preparation_status,delivery_status,payment_method,"
                          "subtotal_halalas,delivery_fee_halalas,total_halalas,snapshot,customer) "
                          "VALUES(%s,'ops-brand',%s,'ops-customer','delivery',%s,'pending','cash',1000,500,1500,%s,%s)",
-                         (oid, source, status, db.json(snapshot), db.json({'name': 'Synthetic customer', 'phone': '+966500000001',
+                         (oid, source, status, db.json(snapshot), db.json({'name': 'Synthetic customer', 'phone': customer_phone,
                              'address': 'Customer private address', 'location': {'lat': 28.408, 'lng': 45.908}})))
         return oid
 
@@ -130,7 +130,7 @@ def test_printer_and_output_follow_preparation_branch_without_repricing(routing)
         assert all(j['payload']['preparation_branch_id'] == r['target'] for j in jobs)
         assert conn.execute('SELECT delivery_fee_halalas FROM orders WHERE id=%s', (oid,)).fetchone()['delivery_fee_halalas'] == 500
         invoice = next(j for j in jobs if j['kind'] == 'order')
-        conn.execute("UPDATE branch_print_jobs SET status='submitted',finished_at=now() WHERE id=%s", (invoice['id'],))
+        conn.execute("UPDATE branch_print_jobs SET status='submitted',claimed_at=now(),finished_at=now() WHERE id=%s", (invoice['id'],))
     output = r['post']('manager', '/api/printing/orders/' + oid + '/output', {'version': 2, 'job_id': invoice['id'], 'paper_confirmed': True})
     assert output['confirmed']
     blocked = r['choose'](oid, destination=r['source'], status=409)
@@ -142,9 +142,11 @@ def test_printer_and_output_follow_preparation_branch_without_repricing(routing)
 def test_any_print_attempt_locks_branch_choice(routing, print_status):
     r = routing; oid = r['order']()
     with db.tx() as conn:
-        conn.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,status,payload,requested_by) "
-                     "VALUES(%s,'ops-brand',%s,%s,%s,'order',%s,'{}','ops-manager')",
-                     ('route-print-' + uuid4().hex, r['source'], 'printer-' + r['source'], oid, print_status))
+        conn.execute("INSERT INTO branch_print_jobs(id,brand_id,branch_id,device_id,order_id,kind,status,payload,requested_by,claimed_at,finished_at) "
+                     "VALUES(%s,'ops-brand',%s,%s,%s,'order',%s,'{}','ops-manager',"
+                     "CASE WHEN %s IN ('claimed','submitted','uncertain') THEN now() END,"
+                     "CASE WHEN %s IN ('submitted','uncertain','cancelled') THEN now() END)",
+                     ('route-print-' + uuid4().hex, r['source'], 'printer-' + r['source'], oid, print_status, print_status, print_status))
     assert r['choose'](oid, status=409)['detail']['code'] == 'PREPARATION_ROUTE_PRINTED'
 
 
@@ -191,9 +193,74 @@ def test_grant_revocation_version_and_replay_are_checked(routing):
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('command', ['route', 'prepare'])
+@pytest.mark.parametrize('change,expected_status', [
+    ('permission', 403), ('branch', 404), ('active', 403), ('role', 403),
+])
+def test_mutation_and_replay_recheck_live_grants_with_stale_dependency(routing, command, change, expected_status):
+    r = routing
+    first, second = r['order'](), r['order']()
+    if command == 'prepare':
+        r['choose'](first); r['choose'](second)
+        who, permission = 'target', 'orders_prepare'
+        paths = [f'/api/preparation-routing/tasks/{oid}/prepare' for oid in (first, second)]
+        body = {'version': 2, 'status': 'accepted'}
+        expected_versions = (3, 2)
+    else:
+        who, permission = 'manager', 'orders_route_preparation'
+        paths = [f'/api/preparation-routing/orders/{oid}' for oid in (first, second)]
+        body = {'version': 1, 'target_branch_id': r['target'],
+                'expected_preparation_branch_id': r['source'], 'reason': 'Synthetic live grant witness'}
+        expected_versions = (2, 1)
+    # Keep this exact dependency object for the successful request and both
+    # requests after revocation, reproducing an auth snapshot before lock wait.
+    client = r['actor'](who)
+    headers = {'Idempotency-Key': 'routing-stale-actor-replay'}
+    first_response = client.post(paths[0], json=body, headers=headers)
+    assert first_response.status_code == 200, first_response.text
+    with db.tx() as conn:
+        if change == 'permission':
+            conn.execute('UPDATE users SET permission_denials=%s WHERE id=%s', (db.json([permission]), 'ops-' + who))
+        elif change == 'branch':
+            conn.execute("UPDATE users SET branch_ids='[]' WHERE id=%s", ('ops-' + who,))
+        elif change == 'active':
+            conn.execute('UPDATE users SET active=false WHERE id=%s', ('ops-' + who,))
+        else:
+            conn.execute("UPDATE users SET role='admin',extra_permissions='[\"orders_view\"]' WHERE id=%s", ('ops-' + who,))
+    replay = client.post(paths[0], json=body, headers=headers)
+    assert replay.status_code == expected_status, replay.text
+    new_request = client.post(paths[1], json=body, headers={'Idempotency-Key': 'routing-stale-actor-new'})
+    assert new_request.status_code == expected_status, new_request.text
+    with db.tx() as conn:
+        rows = [conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone() for oid in (first, second)]
+        assert tuple(row['version'] for row in rows) == expected_versions
+        assert rows[1]['preparation_status'] == 'new'
+        assert conn.execute('SELECT count(*) n FROM order_preparation_routes WHERE order_id=%s',
+                            (second,)).fetchone()['n'] == (1 if command == 'prepare' else 0)
+
+
+@pytest.mark.postgres
+def test_target_branch_must_belong_to_source_brand_even_if_user_branch_list_contains_it(routing):
+    r = routing; oid = r['order']()
+    foreign = 'ops-branch-other'
+    with db.tx() as conn:
+        conn.execute('UPDATE users SET branch_ids=%s WHERE id=\'ops-manager\'',
+                     (db.json([r['source'], r['target'], foreign]),))
+    response = r['actor']('manager').get('/api/preparation-routing/orders/' + oid)
+    assert response.status_code == 200, response.text
+    assert foreign not in {row['id'] for row in response.json()['branches']}
+    r['choose'](oid, destination=foreign, status=404)
+    with db.tx() as conn:
+        row = conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
+        assert row['version'] == 1 and row['preparation_route_id'] is None
+        assert not conn.execute('SELECT 1 FROM order_preparation_routes WHERE order_id=%s', (oid,)).fetchone()
+
+
+@pytest.mark.postgres
 def test_assigned_driver_needs_both_sale_and_preparation_branch_scope(routing):
     r = routing; oid = r['order'](workflow='manager_dispatch'); r['choose'](oid)
-    _, driver = r['shifts']()
+    manager = r['post']('owner', '/api/shifts', {'kind': 'manager', 'user_id': 'ops-manager', 'branch_ids': [r['source']]})['shift']['id']
+    driver = r['post']('owner', '/api/shifts', {'kind': 'driver', 'user_id': 'ops-driver', 'branch_ids': [r['source']], 'manager_shift_id': manager})['shift']['id']
     r['post']('manager', '/api/orders/' + oid + '/assign', {'driver_shift_id': driver, 'accept_order': True}, status=409)
     with db.tx() as conn:
         assert conn.execute('SELECT count(*) n FROM driver_tasks WHERE order_id=%s', (oid,)).fetchone()['n'] == 0
@@ -227,7 +294,8 @@ def test_fixed_morning_and_catalog_routing_are_not_overridden(routing, snapshot)
     r = routing; oid = r['order'](snapshot_changes=snapshot)
     # Scope itself may already hide a morning order; never grant broader access.
     response = r['actor']('manager').post('/api/preparation-routing/orders/' + oid,
-        json={'version': 1, 'target_branch_id': r['target'], 'expected_preparation_branch_id': r['source'], 'reason': 'Attempt override'})
+        json={'version': 1, 'target_branch_id': r['target'], 'expected_preparation_branch_id': r['source'], 'reason': 'Attempt override'},
+        headers={'Idempotency-Key': uuid4().hex})
     assert response.status_code in (403, 404, 409), response.text
 
 
@@ -270,11 +338,74 @@ def test_unaware_worker_cannot_prepare_or_print_routed_order(routing):
 
 @pytest.mark.postgres
 def test_transaction_marker_cannot_authorize_another_route(routing):
-    r = routing; first = r['order'](); second = r['order']()
+    r = routing; first = r['order'](); second = r['order'](customer_phone='+966500000002')
     r['choose'](first); r['choose'](second)
     with pytest.raises(Exception, match='PREPARATION_ROUTE_RUNTIME_REQUIRED'), db.tx() as conn:
         pickup_branch_id(conn, conn.execute('SELECT * FROM orders WHERE id=%s', (first,)).fetchone())
         conn.execute("UPDATE orders SET preparation_status='accepted' WHERE id=%s", (second,))
+
+
+def _approved_prior_writer_revision(conn, oid):
+    """Write the ordinary approved revision chain, without the new app guard.
+
+    The existing immutable-snapshot trigger must accept this evidence, so a
+    refusal proves the route invariant rather than an incomplete SQL fixture.
+    """
+    before = conn.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE', (oid,)).fetchone()
+    after = deepcopy(before['snapshot'])
+    after.update(subtotal_halalas=before['subtotal_halalas'] + 100,
+                 delivery_fee_halalas=before['delivery_fee_halalas'], total_halalas=before['total_halalas'] + 100)
+    item = after['items'][0]
+    item['unit_price_halalas'] += 100
+    item['line_total_halalas'] += 100
+    item['units'][0]['price_halalas'] += 100
+    aid, revision = 'prior-writer-amendment-' + uuid4().hex, before['amendment_revision'] + 1
+    conn.execute("INSERT INTO order_amendments(id,order_id,requested_by,base_revision,proposal,status,reason,reviewed_by,"
+                 "branch_confirmed_by,consent_by,consent_channel,consent_note) "
+                 "VALUES(%s,%s,'ops-manager',%s,%s,'applied','Synthetic prior writer revision','ops-manager',"
+                 "'ops-branch','ops-customer','customer','Synthetic consent')",
+                 (aid, oid, before['amendment_revision'], db.json({'snapshot': after, 'customer': before['customer']})))
+    conn.execute('INSERT INTO order_revisions(order_id,revision,amendment_id,before_snapshot,before_customer,after_snapshot,'
+                 'after_customer,before_total,after_total,approved_by,consent_by,consent_channel) '
+                 "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'ops-manager','ops-customer','customer')",
+                 (oid, revision, aid, db.json(before['snapshot']), db.json(before['customer']), db.json(after),
+                  db.json(before['customer']), before['total_halalas'], after['total_halalas']))
+    conn.execute('UPDATE orders SET snapshot=%s,subtotal_halalas=%s,total_halalas=%s,amendment_revision=%s,'
+                 'version=version+1 WHERE id=%s',
+                 (db.json(after), after['subtotal_halalas'], after['total_halalas'], revision, oid))
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('route_aware', [False, True])
+def test_database_rejects_approved_old_writer_amendment_on_routed_order(routing, route_aware):
+    r = routing; oid = r['order'](); r['choose'](oid)
+    with db.tx() as conn:
+        before = conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
+        history = conn.execute('SELECT * FROM order_preparation_routes WHERE order_id=%s ORDER BY id', (oid,)).fetchall()
+    with pytest.raises(Exception, match='PREPARATION_ROUTE_AMENDMENT'), db.tx() as conn:
+        if route_aware:
+            pickup_branch_id(conn, conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone())
+        _approved_prior_writer_revision(conn, oid)
+    with db.tx() as conn:
+        assert conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone() == before
+        assert conn.execute('SELECT * FROM order_preparation_routes WHERE order_id=%s ORDER BY id', (oid,)).fetchall() == history
+        assert not conn.execute('SELECT 1 FROM order_amendments WHERE order_id=%s', (oid,)).fetchone()
+        assert not conn.execute('SELECT 1 FROM order_revisions WHERE order_id=%s', (oid,)).fetchone()
+        assert not conn.execute('SELECT 1 FROM collections WHERE order_id=%s', (oid,)).fetchone()
+        assert not conn.execute('SELECT 1 FROM fiscal_documents WHERE order_id=%s', (oid,)).fetchone()
+
+
+@pytest.mark.postgres
+def test_approved_revision_remains_available_after_return_to_original_preparation(routing):
+    r = routing; oid = r['order'](); r['choose'](oid)
+    r['choose'](oid, destination=r['source'])
+    with db.tx() as conn:
+        _approved_prior_writer_revision(conn, oid)
+    with db.tx() as conn:
+        order = conn.execute('SELECT * FROM orders WHERE id=%s', (oid,)).fetchone()
+        assert order['amendment_revision'] == 1 and order['total_halalas'] == 1600
+        assert pickup_branch_id(conn, order) == r['source']
+        assert conn.execute('SELECT count(*) n FROM order_revisions WHERE order_id=%s', (oid,)).fetchone()['n'] == 1
 
 
 @pytest.mark.postgres

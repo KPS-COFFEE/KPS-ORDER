@@ -21,9 +21,15 @@ def has_recorded_collection(c, order):
 
 
 def authorized(user):
+    # The morning view may add bounded operating capabilities; it must neither
+    # invent this grant nor hide an owner's explicit grant to the same staff ID.
+    principal=dict(user or {})
+    principal.pop('_morning_manager_context',None)
     return bool(user and user.get('active', True) and (
         user.get('role') == 'owner' or
-        user.get('role') in {'admin', 'delivery_manager'} and auth.has_permission(user, PERMISSION)))
+        user.get('role') in {'admin', 'delivery_manager'}
+        and PERMISSION in (principal.get('extra_permissions') or [])
+        and auth.has_permission(principal, PERMISSION)))
 
 
 def current_actor(c, user, brand_id, *, lock=False):

@@ -1,7 +1,8 @@
-"""Prior writer refuses new operational contracts before any migration/write.
+"""Historical 80a writer must continue to refuse unsupported operational state.
 
-This proves fail-closed incompatibility, not operational rollback support for
-shared closing. A current-aware rollback image requires its own later drill.
+The frozen original overlay remains an immutable negative compatibility witness.
+It is not the deployable fallback: the b528 fallback is separately certified
+inside its exact image against the operational contracts it supports.
 """
 import hashlib
 import importlib.util
@@ -14,7 +15,7 @@ from test_operations import ops
 from test_central_workdays import central
 
 ROOT=Path(__file__).resolve().parents[1]
-PATH=ROOT/'tools/rollback_application_overlay/app/db.py'
+PATH=ROOT/'tests/fixtures/rollback_80a/db.py'
 spec=importlib.util.spec_from_file_location('prior_shared_state_guard',PATH)
 prior=importlib.util.module_from_spec(spec)
 sys.modules[spec.name]=prior
@@ -51,7 +52,9 @@ def test_old_or_empty_new_schema_remains_eligible_for_separate_prior_contract_dr
 
 
 def test_overlay_manifest_hash_binds_guard_and_records_incompatibility():
-    manifest=json.loads((ROOT/'tools/rollback_application_overlay/manifest.json').read_text())
+    manifest=json.loads((ROOT/'tests/fixtures/rollback_80a/manifest.json').read_text())
+    assert manifest['baseline_sha']=='80a1d727f6695c4ce3685e726ab5b34674e1cfa0'
+    assert manifest['files']['app/db.py']=='1766f5c71ac2be2d25d4e80ec0d7c33e471fe0f5f771ac36db55a91e993facc6'
     assert manifest['files']['app/db.py']==hashlib.sha256(PATH.read_bytes()).hexdigest()
     assert manifest['rollback_feature_policy']['operational_after_feature_use'] is False
     assert manifest['rollback_feature_policy']['current_aware_image_certified'] is False

@@ -50,12 +50,16 @@ def supervisor(client, monkeypatch):
     for key,service,branch,brand in [('delivery','delivery','kps-branch-1','kps'),
                                    ('pickup','pickup','kps-branch-1','kps'),
                                    ('car','car','kps-branch-1','kps'),
+                                   ('legacy','delivery','kps-branch-1','kps'),
+                                   ('prior','delivery','kps-branch-1','kps'),
                                    ('outside','delivery','kps-branch-2','kps'),
                                    ('other','delivery','supervision-other-branch','supervision-other')]:
         oid='TEST-supervision-'+key+'-'+uuid4().hex
         snapshot={'order_reference':'HISTORY-'+key,'branch_name':'Frozen source branch',
                   'items':[{'product_id':'kps-01','name':'Synthetic coffee','quantity':1,
                             'line_total_halalas':1000,'unit_price_halalas':1000,'units':[]}]}
+        if key=='legacy':snapshot['legacy_invoice']={'source':'Sabad','invoice_reference':'SOURCE-قديم-١٢٣'}
+        if key=='prior':snapshot['prior_delivery']={'source_reference':'PRIOR-EXTERNAL-456'}
         with db.tx() as c:
             records[key]=c.execute("""INSERT INTO orders(id,brand_id,branch_id,customer_id,service,
                 preparation_status,delivery_status,payment_method,subtotal_halalas,delivery_fee_halalas,
@@ -81,14 +85,18 @@ def test_all_service_history_and_invoice_search_are_scoped_and_revocation_is_imm
     assert result.status_code==200,result.text
     first=result.json();assert first['period']=={'all_history':True}
     assert len(first['orders'])==2 and first['next_offset']==2
-    second=client.get('/api/orders?period=all&sort=newest&limit=2&offset=2').json()
-    assert {o['id'] for o in first['orders']+second['orders']}=={orders[k]['id'] for k in ('delivery','pickup','car')}
+    second=client.get('/api/orders?period=all&sort=newest&limit=100&offset=2').json()
+    assert {o['id'] for o in first['orders']+second['orders']}=={orders[k]['id'] for k in ('delivery','pickup','car','legacy','prior')}
     assert second['next_offset'] is None
     for term in (doc['number'],'HISTORY-delivery',str(orders['delivery']['order_no']).zfill(8),
                  str(orders['delivery']['order_no']).translate(str.maketrans('0123456789','٠١٢٣٤٥٦٧٨٩'))):
         found=client.get('/api/orders',params={'period':'all','search':term})
         assert found.status_code==200,found.text
         assert [o['id'] for o in found.json()['orders']]==[orders['delivery']['id']]
+    for key,reference in [('legacy','SOURCE-قديم-١٢٣'),('prior','PRIOR-EXTERNAL-456')]:
+        found=client.get('/api/orders',params={'period':'all','search':reference})
+        assert found.status_code==200,found.text
+        assert [o['id'] for o in found.json()['orders']]==[orders[key]['id']]
     assert not client.get('/api/orders?period=all&branch_id=kps-branch-2').json()['orders']
     assert client.get('/api/orders?period=all&start=2021-01-01').status_code==422
     detail=client.get('/api/orders/'+orders['delivery']['id'])
@@ -185,6 +193,9 @@ def test_conversation_history_does_not_expand_existing_routed_write_authority(su
     key=uuid4().hex;body={'text':'Allowed existing delivery response'}
     sent=client.post('/api/conversations/'+delivery+'/messages',json=body,headers={'Idempotency-Key':key})
     assert sent.status_code==200,sent.text
+    create_key=uuid4().hex;create_body={'order_id':orders['delivery']['id']}
+    created=client.post('/api/conversations',json=create_body,headers={'Idempotency-Key':create_key})
+    assert created.status_code==200,created.text
     with db.tx() as c:
         c.execute("UPDATE app_settings SET settings=settings||%s WHERE brand_id='kps'",
                   (db.json({'customer_message_routing':{'delivery':[],'care':[user['id']]}}),))
@@ -192,6 +203,8 @@ def test_conversation_history_does_not_expand_existing_routed_write_authority(su
     # Replaying a previously successful write must recheck its canonical team.
     replay=client.post('/api/conversations/'+delivery+'/messages',json=body,headers={'Idempotency-Key':key})
     assert replay.status_code==404,replay.text
+    replay_create=client.post('/api/conversations',json=create_body,headers={'Idempotency-Key':create_key})
+    assert replay_create.status_code==403,replay_create.text
     assert client.get('/api/conversations/'+delivery+'/messages').json()['conversation']['can_reply'] is False
     assert client.get('/api/conversations/'+branchless+'/messages').status_code==200
     with db.tx() as c:
@@ -199,6 +212,38 @@ def test_conversation_history_does_not_expand_existing_routed_write_authority(su
         c.execute('UPDATE users SET permission_denials=%s WHERE id=%s',(db.json(['chat_view']),user['id']))
     assert client.get('/api/conversations/'+privacy+'/messages').status_code==403
     assert client.get('/api/chat-attachments/'+aid+'?context=work').status_code==403
+
+
+@pytest.mark.postgres
+def test_cold_conversation_resolution_uses_current_supervisory_read_scope(supervisor, monkeypatch):
+    from app import central_operations
+    # Exercise the read resolver before any inbox or browser cache exists. Only
+    # the rollout switch is enabled here; canonical session/scopes remain real.
+    monkeypatch.setattr(central_operations, 'enabled', lambda: True)
+    client,user,customer,owner,orders=supervisor
+    privacy=conversation_row(orders['pickup'],customer,category='privacy',route='privacy')
+    outside=conversation_row(orders['outside'],customer,category='privacy',route='privacy')
+    other=conversation_row(orders['other'],customer,category='privacy',route='privacy')
+    branchless=conversation_row(orders['pickup'],customer,category='privacy',route='privacy',branchless=True)
+    with db.tx() as c:
+        c.execute("UPDATE app_settings SET settings=settings||%s WHERE brand_id='kps'",
+                  (db.json({'customer_message_routing':{'delivery':[],'care':[]}}),))
+    path='/api/central-operations/resource-context'
+    result=client.get(path,params={'kind':'conversation','resource_id':privacy})
+    assert result.status_code==200,result.text
+    assert result.json()=={'brand_id':'kps'}
+    history=client.get('/api/conversations/'+privacy+'/messages')
+    assert history.status_code==200,history.text
+    assert history.json()['conversation']['can_reply'] is False
+    assert history.json()['conversation']['can_manage'] is False
+    for cid in (outside,other,branchless):
+        response=client.get(path,params={'kind':'conversation','resource_id':cid})
+        assert response.status_code==404,response.text
+    with db.tx() as c:
+        c.execute('UPDATE users SET permission_denials=%s WHERE id=%s',(db.json(['chat_view']),user['id']))
+    revoked=client.get(path,params={'kind':'conversation','resource_id':privacy})
+    assert revoked.status_code==404,revoked.text
+    assert client.get('/api/conversations/'+privacy+'/messages').status_code==403
 
 
 @pytest.mark.postgres

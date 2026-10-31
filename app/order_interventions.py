@@ -17,7 +17,8 @@ CONTACT={'customer_requested':'طلب العميل داخل الموقع','agree
          'declined':'تم التواصل ولم يوافق','no_answer':'لا يرد','not_contacted':'لم يتم التواصل'}
 CUSTOMER_REASONS={'customer_cancel','customer_change','duplicate'}
 PENDING_ROLES={'delivery_manager':'مدير التوصيل','owner_or_cancel_delegate':'المالك أو المفوض بالإلغاء',
-               'owner_or_collected_cancel_delegate':'المالك أو المفوض بإلغاء الطلبات المحصلة','accounting':'المحاسب'}
+               'owner_or_collected_cancel_delegate':'المالك أو المفوض بإلغاء الطلبات المحصلة','accounting':'المحاسب',
+               'owner':'المالك','admin':'المراجع المفوض','reviewer':'المراجع الذي أعاد المعاملة'}
 STATUSES={'requested':'بانتظار المراجعة','returned':'معاد للاستكمال','resubmitted':'أعيد رفعه للاعتماد',
           'approved':'معتمد','rejected':'مرفوض','resolved':'تمت المعالجة'}
 Reason=Literal['customer_cancel','customer_change','no_answer','late_complaint','wrong_address','damaged','branch_unavailable','duplicate']
@@ -29,6 +30,11 @@ def controlled(o):
             and ((o.get('snapshot') or {}).get('journey_controls_version')==1
                  or os.getenv('DELIVERY_INTERVENTIONS_ENFORCED','false').lower()=='true')
             and (o.get('snapshot') or {}).get('delivery_period')!='morning')
+
+
+def terminal(o):
+    return bool(o.get('completed_at') or o['preparation_status'] in ('cancelled','rejected','completed')
+                or o.get('delivery_status') in ('delivered','cancelled'))
 
 
 def high_authority(user):
@@ -123,7 +129,7 @@ def workflow_state(r):
         d=event['details']
         revision=max(revision,d.get('workflow_revision',0))
         if event['event_type']=='intervention.returned':
-            status='returned';last_return=d
+            status='returned';last_return={**d,'reviewer_id':event['actor_id'],'reviewer_name':event.get('actor_name')}
             details['reason_code']=d['reason_code']
         elif event['event_type']=='intervention.resubmitted':
             status='resubmitted'
@@ -161,6 +167,17 @@ def workflow_view(r,user,has_print,has_collection=False):
     financial_pending=bool(r.get('financial_pending'))
     responsible=('accounting' if financial_pending else None) if terminal else ('delivery_manager' if is_returned else
         effective_pending_role(d,has_print,has_collection))
+    responsible_id=returned.get('target_manager_id') if is_returned else None
+    responsible_name=returned.get('target_manager_name') if is_returned else None
+    if state['status']=='resubmitted':
+        # This is the recorded handoff, never a permission grant. If printing or
+        # collection requires a higher reviewer, keep that explicit escalation.
+        same_reviewer=(d['kind']!='cancel' or
+            (not has_print or returned.get('reviewer_after_print')) and
+            (not has_collection or returned.get('reviewer_collected')))
+        if same_reviewer:
+            responsible_id=returned.get('reviewer_id');responsible_name=returned.get('reviewer_name')
+            if responsible=='delivery_manager':responsible=returned.get('reviewer_role') or 'reviewer'
     reviewer=can_review(user) and not (d['kind']=='cancel' and has_print and not high_authority(user))
     actions=[]
     if not terminal:
@@ -191,8 +208,8 @@ def workflow_view(r,user,has_print,has_collection=False):
     return {'revision':state['revision'],'status':state['status'],
         'original_reason_code':r['details']['reason_code'],'reason_code':d['reason_code'],
         'current_responsible_role':responsible,
-        'current_responsible_user_id':returned.get('target_manager_id') if is_returned else None,
-        'current_responsible_name':returned.get('target_manager_name') if is_returned else None,
+        'current_responsible_user_id':responsible_id,
+        'current_responsible_name':responsible_name,
         'next_action_label':next_action,'return_note':returned.get('note'),
         'financial_pending':financial_pending,
         'preferred_return_target_id':returned.get('target_manager_id') or r['actor_id'],
@@ -351,6 +368,12 @@ def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','adm
         rows=records(c,oid)
         has_print=printed(c,o)
         has_collection=collected_order_authority.has_recorded_collection(c,o)
+        create_kinds=[]
+        if controlled(o) and not terminal(o) and not any(not r['decision'] for r in rows):
+            if user['role']=='owner':create_kinds=['cancel','problem']
+            elif user['role']=='delivery_manager' and auth.has_permission(user,'orders_view'):
+                create_kinds=(['cancel'] if auth.has_permission(user,'orders_cancel') else [])+['problem']
+            elif user['role']=='driver' and auth.has_permission(user,'tasks_view'):create_kinds=['problem']
         if user['role']=='customer':
             rows=[{'id':r['id'],'created_at':r['created_at'],'kind':r['details']['kind'],
                    'status':(r['decision'] or {}).get('status','requested')} for r in rows]
@@ -378,10 +401,10 @@ def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','adm
             'high_authority':high_authority(user),'requests':rows,'reasons':REASONS,'contact_results':CONTACT,
             'pending_roles':PENDING_ROLES,'statuses':STATUSES,'attachments':attachments,'customer_requests':customer_requests,
             'return_targets':targets,'has_recorded_collection':has_collection,
+            'available_create_kinds':create_kinds,
             'collected_cancellation_authority':collected_order_authority.authorized(user),
             'legacy_cancel_allowed':not controlled(o) and (user['role']=='owner' or qualified_cancel_delegate(user))
-                and not o.get('completed_at') and o['delivery_status']!='delivered'
-                and o['preparation_status'] not in ('cancelled','rejected','completed')})
+                and not terminal(o)})
 
 
 @router.post('/orders/{oid}')
@@ -392,15 +415,19 @@ def create(oid:str,body:RequestBody,user=Depends(auth.require_roles('owner','del
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية المعالجة غير متاحة.')
     with db.tx() as c:
         _,current=live_scope(c,oid,user)
+        if current['role'] not in ('owner','delivery_manager','driver'):
+            raise db.error(403,'ROLE_FORBIDDEN','رفع المعالجة من مسؤول الخدمة أو السائق المكلف فقط.')
         require_access(current)
         if current['role']!='driver' and not auth.has_permission(current,'orders_cancel' if body.kind=='cancel' else 'orders_view'):
             raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية المعالجة غير متاحة.')
         def perform():
             o,actor=live_scope(c,oid,user,lock=True)
+            if actor['role'] not in ('owner','delivery_manager','driver'):
+                raise db.error(403,'ROLE_FORBIDDEN','رفع المعالجة من مسؤول الخدمة أو السائق المكلف فقط.')
             require_access(actor)
             if not controlled(o):raise db.error(409,'JOURNEY_CONTROL_LEGACY','هذا الطلب يتبع مسار المعالجة السابق.')
             if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث التفاصيل.')
-            if o.get('completed_at') or o['preparation_status'] in ('cancelled','rejected','completed'):
+            if terminal(o):
                 raise db.error(409,'INTERVENTION_TERMINAL','الطلب منتهٍ؛ استخدم المعالجة المالية المعتمدة.')
             if any(not r['decision'] for r in records(c,oid)):
                 raise db.error(409,'INTERVENTION_PENDING','يوجد إجراء مفتوح؛ أكمل متابعته أولًا.')
@@ -465,7 +492,7 @@ def require_print_reviewer(c,o,r,actor):
 def require_open_workflow(o,r,body):
     if r['decision']:raise db.error(409,'INTERVENTION_DECIDED','الإجراء معالج سابقًا.')
     if o['version']!=body.version:raise db.error(409,'ORDER_VERSION_CONFLICT','تغير الطلب؛ حدّث التفاصيل.')
-    if o.get('completed_at') or o['preparation_status'] in ('cancelled','rejected','completed'):
+    if terminal(o):
         raise db.error(409,'INTERVENTION_TERMINAL','الطلب منتهٍ؛ استخدم المعالجة المالية المعتمدة.')
     state=workflow_state(r)
     require_workflow_revision(body,state)
@@ -489,6 +516,8 @@ def return_request(oid:str,rid:str,body:ReturnBody,user=Depends(auth.require_rol
                 'original_reason_code':r['details']['reason_code'],'previous_reason_code':state['details']['reason_code'],
                 'reason_code':body.corrected_reason_code,'note':body.note,'target_manager_id':target['id'],
                 'target_manager_name':target['display_name'],'current_responsible_role':'delivery_manager',
+                'reviewer_role':actor['role'],'reviewer_after_print':high_authority(actor),
+                'reviewer_collected':collected_order_authority.authorized(actor),
                 'order_version':o['version'],'order_amendment_revision':o.get('amendment_revision',0),
                 'financial_approval':False}
             db.event(c,oid,actor['id'],'intervention.returned',details)

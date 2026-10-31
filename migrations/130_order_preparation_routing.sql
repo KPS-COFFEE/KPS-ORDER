@@ -52,6 +52,15 @@ $$ LANGUAGE sql;
 CREATE FUNCTION guard_preparation_runtime_order() RETURNS trigger AS $$
 DECLARE destination text;
 BEGIN
+ -- The same amendment policy applies to an old worker during a rolling
+ -- update. A runtime marker cannot authorize changing the frozen basket while
+ -- another branch owns preparation; restore the source destination first.
+ IF NEW.amendment_revision IS DISTINCT FROM OLD.amendment_revision AND EXISTS (
+  SELECT 1 FROM order_preparation_routes r WHERE r.id=OLD.preparation_route_id
+   AND r.order_id=OLD.id AND r.target_branch_id<>r.source_branch_id
+ ) THEN
+  RAISE EXCEPTION 'PREPARATION_ROUTE_AMENDMENT: restore source preparation before amending the order';
+ END IF;
  IF NEW.preparation_route_id IS NOT NULL AND (
    (NEW.preparation_status IS DISTINCT FROM OLD.preparation_status AND NEW.preparation_status NOT IN ('cancelled','rejected'))
    OR (NEW.delivery_status IS DISTINCT FROM OLD.delivery_status AND NEW.delivery_status<>'cancelled')
