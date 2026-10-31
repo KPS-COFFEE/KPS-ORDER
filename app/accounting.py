@@ -60,9 +60,12 @@ def in_period(value,lo,hi):return bool(value and lo<=value<hi)
 def new_row(label):
     return dict(label=label,orders=0,correct=0,processed=0,cancelled=0,gross=0,cash=0,card=0,refund_cash=0,refund_card=0,refunds=0,price_credits=0,sales_refunds=0,sales_price_credits=0,total=0,net_sales=0,notes='')
 
-def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar'):
+def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar',*,order_projection=False,reference_search=''):
     ds,de,lo,hi=period(start,end);bs=branches(c,u,branch_ids);bids=[b['id'] for b in bs];bn={b['id']:b['name'] for b in bs}
-    if driver_id:person(c,u,driver_id,bids)
+    # The owner dashboard authorizes historical drivers against effective tasks
+    # in these execution branches before requesting this private projection.
+    # Existing report endpoints retain their current-person scope policy.
+    if driver_id and not order_projection:person(c,u,driver_id,bids)
     if group=='driver_statement':
         if product_id:fail('STATEMENT_FILTER','كشف السائق يشمل التقفيلة كاملة؛ أزل فلتر الصنف.')
         from .accounting_statements import statement
@@ -94,8 +97,12 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     # Refunds may belong to a later duty. Select by their owning duty as well
     # as actual time; the original order's day is not rewritten by a refund.
     movement_day="(SELECT COALESCE(m.reporting_operational_date,s.reporting_operational_date) FROM shifts s LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id)"
+    # The dashboard needs only the frozen reference and complimentary value;
+    # avoid loading every product/customer snapshot for a three-month overview.
+    snapshot_sql=("jsonb_build_object('order_reference',o.snapshot->'order_reference') || "
+                  "CASE WHEN o.snapshot ? 'complimentary' THEN jsonb_build_object('complimentary',o.snapshot->'complimentary') ELSE '{}'::jsonb END") if order_projection else 'o.snapshot'
     q=f"""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
-      o.total_halalas,o.snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name,
+      o.total_halalas,{snapshot_sql} snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name,
       source.operational_date source_operational_date,source.ledger_shift_id source_ledger_shift_id,
       {reporting_day} reporting_day
       FROM orders o LEFT JOIN LATERAL (SELECT driver_id,shift_id FROM effective_driver_tasks WHERE order_id=o.id
@@ -120,9 +127,16 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     args=[u['brand_id'],bids,ds,de,lo,hi,lo,hi,lo,hi,ds,de,lo,hi,ds,de,lo,hi]
     if driver_id:q+=' AND t.driver_id=%s';args.append(driver_id)
     if product_id:q+=" AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.snapshot->'items') x WHERE x->>'product_id'=%s)";args.append(product_id)
-    if group!='items':q+=" AND NOT (o.snapshot ? 'complimentary')"
+    if reference_search:
+        q+=" AND (strpos(lower(COALESCE(o.snapshot->>'order_reference','')),lower(%s))>0 OR strpos(o.order_no::text,%s)>0 OR strpos(lower(o.id),lower(%s))>0)"
+        args.extend([reference_search]*3)
+    if group!='items' and not order_projection:q+=" AND NOT (o.snapshot ? 'complimentary')"
     if group!='actions':q+=" AND o.test_void IS NULL"
-    orders=c.execute(q,args).fetchall();ids=[o['id'] for o in orders];order_by_id={o['id']:o for o in orders}
+    candidates=c.execute(q,args).fetchall()
+    # Hospitality/compensation are visible operational orders on the dashboard;
+    # commercial finance still uses precisely the normal report population.
+    orders=[o for o in candidates if 'complimentary' not in o['snapshot']] if order_projection else candidates
+    ids=[o['id'] for o in orders];order_by_id={o['id']:o for o in orders}
     allocated_ids=[o['id'] for o in orders if o['reporting_day'] and ds<=o['reporting_day']<=de]
     # Read actual timestamps unchanged, with a separate reporting-only day.
     # No upper clock cutoff may discard a late collection on the same duty.
@@ -130,9 +144,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     cols=c.execute(f"SELECT x.*,{payment_day} movement_day FROM effective_collections x JOIN orders o ON o.id=x.order_id LEFT JOIN shifts s ON s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE x.order_id=ANY(%s) AND (x.created_at<%s OR {payment_day} BETWEEN %s AND %s OR x.order_id=ANY(%s)) ORDER BY x.created_at,x.id",(ids,hi,ds,de,allocated_ids)).fetchall()
     refs=c.execute(f"SELECT x.*,u.display_name actor_name,{payment_day} movement_day FROM refunds x JOIN orders o ON o.id=x.order_id JOIN users u ON u.id=x.authorized_by LEFT JOIN shifts s ON s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE x.order_id=ANY(%s) AND (x.created_at<%s OR {payment_day} BETWEEN %s AND %s) ORDER BY x.created_at,x.id",(ids,hi,ds,de)).fetchall()
     from .refund_line_values import with_allocated_quantities
-    refs=with_allocated_quantities(c,refs)
-    tickets=c.execute('SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
-    events=c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
+    if not order_projection:refs=with_allocated_quantities(c,refs)
+    tickets=c.execute('SELECT DISTINCT order_id FROM support_tickets WHERE order_id=ANY(%s) AND created_at<%s' if order_projection else 'SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
+    events=[] if order_projection else c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
     from .order_financial_treatments import price_credit_rows
     credits=[r for r in price_credit_rows(c,ids) if r['created_at']<hi]
     paid=defaultdict(int);refunded=defaultdict(int);treated={t['order_id'] for t in tickets}|{r['order_id'] for r in credits}
@@ -145,7 +159,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         if x.get('amendment_id'):paid[x['order_id']]-=x['amount_halalas']
         else:refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
     from .item_sales import new_item,add_line
-    rows={};items={};om={o['id']:o for o in orders}
+    rows={};items={};om={o['id']:o for o in orders};projected={}
     def day_boundary(day):
         return datetime.combine(day,time(4),TZ) if day else None
     def source_day_boundary(o):
@@ -165,16 +179,25 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         if group=='driver_daily':label=(o['driver_name'] or '—')+' / '+d
         if key not in rows:rows[key]={**new_row(label),'day':d,'driver_id':o['driver_id']}
         return rows[key]
+    def accumulate(o,at,**values):
+        # One set of financial postings feeds every accounting grouping and the
+        # owner detail projection. No second dashboard revenue formula exists.
+        targets=[bucket(o,at)]
+        if order_projection:
+            detail=projected.setdefault(o['id'],{'totals':new_row(''),'days':{}})
+            day=opday(at)
+            targets.extend([detail['totals'],detail['days'].setdefault(day,new_row(day))])
+        for target in targets:
+            for key,value in values.items():target[key]+=value
     for o in orders:
         reported_creation=source_day_boundary(o) or o['created_at']
         reported_completion=(source_day_boundary(o) or o['completed_at']) if o['completed_at'] or o['source_operational_date'] else None
         if in_period(reported_creation,lo,hi):
-            b=bucket(o,reported_creation);b['orders']+=1
-            if o['preparation_status'] in ('cancelled','rejected'):b['cancelled']+=1
+            accumulate(o,reported_creation,orders=1,cancelled=int(o['preparation_status'] in ('cancelled','rejected')))
         if in_period(reported_completion,lo,hi) and (group!='items' or (o['preparation_status'] not in ('cancelled','rejected') and o['delivery_status']!='cancelled')):
-            b=bucket(o,reported_completion);b['gross']+=o['total_halalas']
             correct=paid[o['id']]>=o['total_halalas'] and not refunded[o['id']] and o['preparation_status'] not in ('cancelled','rejected') and o['id'] not in treated
-            b['correct']+=int(correct);b['processed']+=int(not correct)
+            accumulate(o,reported_completion,gross=o['total_halalas'],correct=int(correct),processed=int(not correct))
+            if order_projection:continue
             seen=set()
             for x in o['snapshot'].get('items',[]):
                 pid=x['product_id']
@@ -185,7 +208,7 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     for x in cols:
         o=om[x['order_id']]
         reported_collection=movement_boundary(x,o,collection=True)
-        if in_period(reported_collection,lo,hi):bucket(o,reported_collection)[x['method']]+=x['amount_halalas']
+        if in_period(reported_collection,lo,hi):accumulate(o,reported_collection,**{x['method']:x['amount_halalas']})
     from .financial_totals import sales_adjustment_at
     for x in refs:
         order=om[x['order_id']]
@@ -193,9 +216,10 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         reported_refund=movement_boundary(x,order)
         recognized=sales_adjustment_at(completion,reported_refund)
         if not x.get('amendment_id') and in_period(recognized,lo,hi):
-            bucket(order,recognized)['sales_refunds']+=x['amount_halalas']
+            accumulate(order,recognized,sales_refunds=x['amount_halalas'])
         if not in_period(reported_refund,lo,hi):continue
-        b=bucket(order,reported_refund);b['refund_'+x['method']]+=x['amount_halalas'];b['refunds']+=x['amount_halalas']
+        accumulate(order,reported_refund,refunds=x['amount_halalas'],**{'refund_'+x['method']:x['amount_halalas']})
+        if order_projection:continue
         for pid,qty in x['line_quantities'].items():
             if product_id and pid!=product_id:continue
             if pid not in items:
@@ -206,8 +230,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         order=om[credit['order_id']]
         completion=(source_day_boundary(order) or order['completed_at']) if order['completed_at'] or order['source_operational_date'] else None
         recognized=sales_adjustment_at(completion,credit['created_at'])
-        if in_period(recognized,lo,hi):bucket(order,recognized)['sales_price_credits']+=credit['credit_halalas']
-        if in_period(credit['created_at'],lo,hi):bucket(order,credit['created_at'])['price_credits']+=credit['credit_halalas']
+        if in_period(recognized,lo,hi):accumulate(order,recognized,sales_price_credits=credit['credit_halalas'])
+        if in_period(credit['created_at'],lo,hi):accumulate(order,credit['created_at'],price_credits=credit['credit_halalas'])
+        if order_projection:continue
         if in_period(credit['created_at'],lo,hi) and credit['details'].get('source')=='delivery_partial_return':
             order=om[credit['order_id']]
             for line in credit['details']['lines']:
@@ -216,9 +241,36 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
                 if pid not in items:items[pid]=new_item(pid,original.get('name') or pid)
                 items[pid]['returned_quantity']+=line['quantity']
     from .financial_totals import net_sales
-    for b in rows.values():
+    financial_rows=list(rows.values())
+    if order_projection:
+        financial_rows.extend(row for detail in projected.values() for row in [detail['totals'],*detail['days'].values()])
+    for b in financial_rows:
         b['total']=b['cash']+b['card']-b['refunds']
         b['net_sales']=net_sales(b['gross'],b['sales_refunds'])-b['sales_price_credits']
+    if order_projection:
+        from .complimentary import accounting_values
+        details=[]
+        for order in candidates:
+            creation=source_day_boundary(order) or order['created_at']
+            counted=in_period(creation,lo,hi)
+            posting=projected.get(order['id'])
+            if not counted and not posting:continue
+            cancelled=order['preparation_status'] in ('cancelled','rejected') or order['delivery_status']=='cancelled'
+            status='cancelled' if cancelled else 'completed' if order['completed_at'] or order['source_operational_date'] else 'active'
+            complimentary='complimentary' in order['snapshot']
+            value=accounting_values(order)['amount'] if complimentary else 0
+            details.append({key:order[key] for key in ('id','order_no','branch_id','created_at','completed_at','driver_id','driver_name','preparation_status','delivery_status','payment_status')} | {
+                'reference':str(order['snapshot'].get('order_reference') or order['order_no']),
+                'operational_date':opday(creation),'status':status,'value_halalas':order['total_halalas'],
+                'is_complimentary':complimentary,'complimentary_value_halalas':value if type(value) is int else None,
+                'record_kind':'order' if counted else 'movement',
+                '_accounting':posting['totals'] if posting else new_row(''),
+                '_accounting_days':posting['days'] if posting else {},
+            })
+        # This private read model deliberately omits item/event/deficit and
+        # closure review expansion. The endpoint requests closure status once
+        # for its selected branches after all brand projections are assembled.
+        return {'orders':details,'branches':bs,'period':{'start':ds,'end':de,'from':lo,'until':hi}}
     if group=='daily':
         for n in range((de-ds).days+1):
             day=(ds+timedelta(days=n)).isoformat()

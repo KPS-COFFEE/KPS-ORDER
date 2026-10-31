@@ -1,0 +1,112 @@
+name: Owner dashboard accounting and access
+
+on:
+  pull_request:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/owner_dashboard.py
+      - app/accounting.py
+      - app/main.py
+      - app/multibrand.py
+      - app/central_operations.py
+      - app/service_hours.py
+      - public/ops.js
+      - public/ops.html
+      - public/ops.css
+      - public/assets/owner-dashboard.*
+      - tests/test_owner_dashboard*
+      - tests/test_ops_background_recovery.cjs
+      - tests/test_employee_access_recovery.cjs
+      - tests/test_employee_live_revocation.cjs
+      - tests/test_employee_access_recovery_browser.py
+      - tests/test_browser.py
+      - tests/test_accounting_statements_browser.py
+      - .github/workflows/owner-dashboard.yml
+  push:
+    branches: [agent/kps-order-emergency-v4]
+    paths:
+      - app/owner_dashboard.py
+      - app/accounting.py
+      - app/main.py
+      - public/ops.js
+      - public/ops.html
+      - public/ops.css
+      - public/assets/owner-dashboard.*
+      - tests/test_owner_dashboard*
+      - tests/test_ops_background_recovery.cjs
+      - tests/test_employee_access_recovery.cjs
+      - tests/test_employee_live_revocation.cjs
+      - tests/test_employee_access_recovery_browser.py
+      - tests/test_browser.py
+      - tests/test_accounting_statements_browser.py
+      - .github/workflows/owner-dashboard.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-dashboard-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  owner-dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: test_enbishan_owner_dashboard
+          POSTGRES_USER: dashboard_test
+          POSTGRES_PASSWORD: isolated-synthetic-only
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U dashboard_test -d test_enbishan_owner_dashboard" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://dashboard_test:isolated-synthetic-only@127.0.0.1:5432/test_enbishan_owner_dashboard
+      TEST_BROWSER: '1'
+      APP_ENV: testing
+      RUNTIME_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: node --check public/ops.js
+      - run: node --check public/assets/owner-dashboard.js
+      - name: Verify existing session recovery, revocation and page loading
+        run: >-
+          node --test
+          tests/test_ops_background_recovery.cjs
+          tests/test_employee_access_recovery.cjs
+          tests/test_employee_live_revocation.cjs
+      - name: Verify both brands, owner scope, shift-day accounting and responsive journeys
+        run: >-
+          python -m pytest -q --basetemp=qa-owner-dashboard
+          tests/test_owner_dashboard.py
+          tests/test_owner_dashboard_browser.py
+          tests/test_accounting_manager_shift_day.py
+          tests/test_delivery_reporting_boundaries.py
+          tests/test_morning_first_day.py
+          tests/test_accounting.py
+          tests/test_central_dashboard.py
+          tests/test_enbishan_dual_brand.py
+          tests/test_employee_access_recovery_browser.py
+          tests/test_browser.py::test_real_customer_car_order_chat_images_and_owner_operations
+          tests/test_accounting_statements_browser.py::test_variance_requires_evidenced_independent_treatment
+          --junitxml=test-results/owner-dashboard.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owner-dashboard-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            test-results/owner-dashboard.xml
+            qa-owner-dashboard/**/*.png
+            test-artifacts/**/*
+          if-no-files-found: warn
