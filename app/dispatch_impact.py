@@ -191,7 +191,9 @@ def context(c,user,order,shift):
         raise
     if not route_eta.complete_itinerary(c,user,ctx):return signature,absent('itinerary_scope_incomplete')
     if not route_eta.location_fresh(ctx.get('updated_at')):return signature,absent('location_stale')
-    branch=c.execute('SELECT * FROM branches WHERE id=%s',(order['branch_id'],)).fetchone()
+    from .preparation_routing import pickup_branch_id
+    preparation_id=pickup_branch_id(c,order,user=user,shift=shift)
+    branch=c.execute('SELECT * FROM branches WHERE id=%s',(preparation_id,)).fetchone()
     point=(branch.get('settings') or {}).get('location') if branch and catalog.location_verified(branch) else None
     if not point or not dispatch_map.route_point((order.get('customer') or {}).get('location')):return signature,absent('location_missing')
     now=datetime.now(timezone.utc)
@@ -200,7 +202,7 @@ def context(c,user,order,shift):
     specs={r['id']:r for r in visible}
     specs[order['id']]=dict(order,branch_city=branch['city'])
     common={'task_id':'candidate:'+order['id'],'order_id':order['id'],'order_no':order['order_no'],
-            'brand_id':order['brand_id'],'branch_id':order['branch_id'],'shift_id':shift['id'],'candidate':True}
+            'brand_id':order['brand_id'],'branch_id':preparation_id,'shift_id':shift['id'],'candidate':True}
     pickup='pickup:candidate:'+order['id']
     stops=list(ctx['stops'])+[
         dict(common,id=pickup,kind='pickup',location=point,prerequisite_ids=[]),

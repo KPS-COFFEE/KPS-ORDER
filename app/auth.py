@@ -258,6 +258,14 @@ def customer_ids(user):
     return [user['id'],*user.get('customer_alias_ids',[])]
 
 
+def has_admin_read_grant(user, permission):
+    """Explicit supervision is separate from routed/team write authority."""
+    return (permission in {'orders_view', 'chat_view'}
+            and user.get('role') == 'admin' and user.get('active', True)
+            and permission in (user.get('extra_permissions') or [])
+            and has_permission(user, permission))
+
+
 def can_access_order(user: dict, order: dict, conn) -> bool:
     from .morning_manager_context import order_allowed
     if not order_allowed(user, order, conn):
@@ -270,6 +278,8 @@ def can_access_order(user: dict, order: dict, conn) -> bool:
     if role == 'customer':
         return order['customer_id'] in customer_ids(user)
     if role == 'branch_manager':
+        return order['branch_id'] in user.get('branch_ids', [])
+    if has_admin_read_grant(user, 'orders_view'):
         return order['branch_id'] in user.get('branch_ids', [])
     if role in {'delivery_manager', 'delivery_staff'}:
         return order['service'] == 'delivery' and order['branch_id'] in user.get('branch_ids', [])
@@ -2002,5 +2012,3 @@ def update_identity_settings(body:ChannelUpdateBody,user=Depends(require_roles('
 def email_outbox_status(user=Depends(require_roles('owner'))):
     with db.tx() as conn:
         return {'messages':conn.execute('SELECT id,kind,status,attempts,last_error,created_at,delivery_at FROM email_outbox WHERE brand_id=%s ORDER BY created_at DESC LIMIT 100',(user['brand_id'],)).fetchall()}
-
-

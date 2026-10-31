@@ -184,7 +184,7 @@ def route_context(c, user, driver_id):
                 (user['role']=='owner' and (not central_enabled() or not user.get('home_brand_id')) or b in user.get('branch_ids',[]))]
     if not branches:
         raise HTTPException(403, 'السائق خارج نطاق الفروع المسموح.')
-    tasks = c.execute("SELECT t.id,t.order_id,t.status,o.branch_id,o.order_no,o.customer FROM driver_tasks t JOIN orders o ON o.id=t.order_id "
+    tasks = c.execute("SELECT t.id,t.order_id,t.status,o.branch_id,o.order_no,o.customer,o.preparation_route_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id "
                       "WHERE t.driver_id=%s AND t.shift_id=%s AND t.status IN ('assigned','accepted','picked_up') AND o.brand_id=%s "
                       "AND o.branch_id=ANY(%s) AND o.service='delivery' AND o.completed_at IS NULL "
                       "AND o.preparation_status NOT IN ('cancelled','rejected') AND o.delivery_status NOT IN ('delivered','cancelled') "
@@ -204,6 +204,10 @@ def route_context(c, user, driver_id):
                      for b in branch_rows if catalog.location_verified(b)}
     stops = []
     for task in tasks:
+        from .preparation_routing import pickup_branch_id
+        preparation_id=pickup_branch_id(c,task,user=user)
+        if preparation_id not in branches:
+            raise HTTPException(409, 'فرع تحضير مهمة قائمة خارج نطاق السائق أو شفته الحالي.')
         common = {'task_id': task['id'], 'order_id': task['order_id'], 'brand_id': user['brand_id'],
                   'shift_id': row['shift_id'], 'order_no': task['order_no'],
                   'customer_name': str((task['customer'] or {}).get('name') or '')[:200]}
@@ -211,8 +215,8 @@ def route_context(c, user, driver_id):
         if task['status'] != 'picked_up':
             pickup_id = 'pickup:' + task['id']
             prerequisites = [pickup_id]
-            stops.append({**common, 'id': pickup_id, 'kind': 'pickup', 'branch_id': task['branch_id'],
-                          'location': branch_points.get(task['branch_id']), 'prerequisite_ids': []})
+            stops.append({**common, 'id': pickup_id, 'kind': 'pickup', 'branch_id': preparation_id,
+                          'location': branch_points.get(preparation_id), 'prerequisite_ids': []})
         stops.append({**common, 'id': 'dropoff:' + task['id'], 'kind': 'dropoff',
                       'location': route_point((task['customer'] or {}).get('location')),
                       'prerequisite_ids': prerequisites})

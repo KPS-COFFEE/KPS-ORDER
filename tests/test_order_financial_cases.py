@@ -42,9 +42,11 @@ def test_paid_cancel_preserves_cash_closes_operations_and_requires_real_refund(o
         custody=c.execute('SELECT * FROM custody_events WHERE shift_id=%s ORDER BY id',(driver,)).fetchall()
     path='/api/order-financial-cases/orders/'+oid
     body={'version':version,'reason':'إلغاء موثق بعد استلام السائق'}
-    post('manager',path+'/cancel',body,status=409)
+    post('manager',path+'/cancel',body,status=403)
+    post('owner',path+'/cancel',body,status=409)
     body['physical_resolution']='returned_to_branch'
-    result=post('manager',path+'/cancel',body)
+    post('manager',path+'/cancel',body,status=403)
+    result=post('owner',path+'/cancel',body)
     assert result['payment_status']=='paid' and result['financial_case']['status']=='pending'
     assert result['financial_case']['opened_at'] and not result['financial_case']['operationally_blocking']
     post('manager',path+'/resolve',{'reason':'إقفال بلا صلاحية'},status=403)
@@ -130,7 +132,9 @@ def test_postclose_card_case_refund_keeps_frozen_closure_and_collection_lineage(
     post('driver','/api/orders/'+oid+'/collect',{'method':'card','amount_halalas':1000})
     with db.tx() as c:version=c.execute('SELECT version FROM orders WHERE id=%s',(oid,)).fetchone()['version']
     path='/api/order-financial-cases/orders/'+oid
-    post('manager',path+'/cancel',{'version':version,'reason':'إلغاء بعد الشبكة وإعادة الطلب للفرع','physical_resolution':'returned_to_branch'})
+    cancellation={'version':version,'reason':'إلغاء بعد الشبكة وإعادة الطلب للفرع','physical_resolution':'returned_to_branch'}
+    post('manager',path+'/cancel',cancellation,status=403)
+    post('owner',path+'/cancel',cancellation)
     def card_post(who,path,body=None,**kwargs):
         if path.endswith('/submit'):body={**body,'terminal_total_halalas':1000}
         return post(who,path,body,**kwargs)

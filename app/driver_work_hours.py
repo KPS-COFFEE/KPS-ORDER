@@ -248,8 +248,11 @@ def depart(body:Departure,request:Request,user=Depends(auth.current_user)):
             if len(set(body.order_ids))!=len(body.order_ids):raise db.error(422,'TRIP_DUPLICATE_ORDER','الطلب مكرر.')
             departure_task_ids=[]
             for oid in body.order_ids:
-                task=c.execute("SELECT t.id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.shift_id=%s AND t.driver_id=%s AND t.order_id=%s AND t.status='picked_up' AND o.brand_id=%s AND o.branch_id=%s",(s['id'],user['id'],oid,user['brand_id'],body.branch_id)).fetchone()
+                task=c.execute("SELECT t.id,o.id order_id,o.branch_id,o.brand_id,o.preparation_route_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.shift_id=%s AND t.driver_id=%s AND t.order_id=%s AND t.status='picked_up' AND o.brand_id=%s",(s['id'],user['id'],oid,user['brand_id'])).fetchone()
                 if not task:raise db.error(403,'TRIP_ORDER_SCOPE','استلم الطلبات المخصصة لك من الفرع أولاً.')
+                from .preparation_routing import pickup_branch_id
+                if pickup_branch_id(c,task,user=user,shift=s)!=body.branch_id:
+                    raise db.error(403,'TRIP_ORDER_SCOPE','أكد المغادرة من فرع التحضير الفعلي للطلبات المستلمة.')
                 departure_task_ids.append(task['id'])
                 if c.execute('SELECT 1 FROM driver_work_trip_orders x JOIN driver_work_trips w ON w.id=x.trip_id WHERE x.order_id=%s AND w.driver_id=%s AND w.shift_id=%s AND w.id<>%s',(oid,user['id'],s['id'],existing['id'] if automatic else '')).fetchone():raise db.error(409,'TRIP_ORDER_LINKED','الطلب مسجل في رحلة سابقة.')
             if automatic:
@@ -583,4 +586,3 @@ def guard_shift_completion(c,shift):
             'SELECT 1 FROM driver_work_trips WHERE shift_id=%s AND returned_at IS NULL',
             (shift['id'],)).fetchone():
         raise db.error(409,'TRIP_RETURN_REQUIRED','أكد العودة إلى الفرع قبل تقفيلة الشفت.')
-

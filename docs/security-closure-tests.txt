@@ -41,3 +41,7 @@ tests/test_employee_sms_diagnostics.py
 tests/test_tawked_otp.py
 tests/test_owner_sms_channel_probe.py
 tests/test_release_worker_profile.py
+tests/test_admin_operational_supervision.py
+tests/test_order_interventions.py
+tests/test_order_financial_cases.py
+tests/test_preparation_routing.py

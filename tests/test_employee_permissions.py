@@ -27,6 +27,60 @@ def test_admin_grants_and_owner_access_remain_explicit():
             auth.validate_permission_denials(values, 'driver')
 
 
+def test_supervisory_reads_are_explicit_additive_and_do_not_grant_mutations():
+    previous = {'role': 'admin', 'permissions': ['accounting_reports', 'products_manage'],
+                'extra_permissions': ['driver_hours_reports']}
+    grants = {'orders_view', 'chat_view'}
+    updated = dict(previous, extra_permissions=[*previous['extra_permissions'], *grants])
+    assert policy.effective(updated) == policy.effective(previous) | grants
+    assert not policy.effective(updated) & {
+        'orders_cancel', 'orders_cancel_after_print', 'orders_cancel_collected',
+        'payments_collect', 'refunds_manage', 'orders_print', 'chat_reply', 'chat_manage',
+        'delivery_assign', 'orders_route_preparation',
+    }
+    assert policy.effective(dict(updated, permission_denials=list(grants))) == policy.effective(previous)
+    for code in grants:
+        assert code not in policy.effective(dict(previous, permissions=[*previous['permissions'], code]))
+
+
+@pytest.mark.parametrize('role', ['admin', 'delivery_manager'])
+def test_collected_cancellation_requires_explicit_grant_and_honors_denial(role):
+    actor = {'role': role, 'extra_permissions': ['orders_cancel_after_print']}
+    assert 'orders_cancel_collected' not in policy.effective(actor)
+    actor['extra_permissions'].append('orders_cancel_collected')
+    assert 'orders_cancel_collected' in policy.effective(actor)
+    assert 'orders_cancel_collected' not in policy.effective(dict(actor, permission_denials=['orders_cancel_collected']))
+
+
+@pytest.mark.parametrize('role', ['driver', 'branch_manager', 'delivery_staff', 'customer'])
+def test_other_roles_cannot_receive_collected_cancellation_through_raw_extras(role):
+    assert 'orders_cancel_collected' not in policy.effective({'role': role, 'extra_permissions': ['orders_cancel_collected']})
+
+
+def test_preparation_choice_is_manager_capability_and_preserves_denial():
+    assert 'orders_route_preparation' in policy.effective({'role': 'delivery_manager'})
+    assert 'orders_route_preparation' in policy.effective({'role': 'owner'})
+    assert 'orders_route_preparation' not in policy.effective({'role': 'delivery_manager', 'permission_denials': ['orders_route_preparation']})
+    for role in ['admin', 'branch_manager', 'driver', 'delivery_staff', 'customer']:
+        assert 'orders_route_preparation' not in policy.effective({'role': role, 'extra_permissions': ['orders_route_preparation']})
+
+
+def test_supervision_and_preparation_route_contracts_preserve_distinct_authority():
+    def endpoint():
+        pass
+    endpoint.__module__ = 'app.order_financial_cases'
+    endpoint.__name__ = 'journey'
+    assert policy.required_for(endpoint, 'admin') == ('orders_view', 'accounting_review')
+    endpoint.__name__ = 'cancel'
+    assert policy.required_for(endpoint, 'admin') == ('orders_cancel_after_print', 'orders_cancel_collected')
+    assert policy.required_for(endpoint, 'delivery_manager') == 'orders_cancel'
+    endpoint.__module__ = 'app.preparation_routing'
+    endpoint.__name__ = 'choose'
+    assert policy.required_for(endpoint, 'delivery_manager') == 'orders_route_preparation'
+    endpoint.__name__ = 'prepare'
+    assert policy.required_for(endpoint, 'branch_manager') == 'orders_prepare'
+
+
 def _owner(client, monkeypatch):
     owner = _make_user('owner', username=db.new_id('permission_owner_'), password=PASSWORD)
     _authenticate(client, owner)

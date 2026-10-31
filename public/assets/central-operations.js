@@ -9,6 +9,7 @@
     ['/api/vehicle-maintenance/reports',['reports']], ['/api/dispatch/offers',['offers']],
     ['/api/fuel-exceptions',['requests']], ['/api/driver-breaks',['breaks']],
     ['/api/driver-closure',['requests']], ['/api/orders',['orders']], ['/api/order-amendments/inbox',['orders','requests']], ['/api/tasks',['tasks']],
+    ['/api/preparation-routing/tasks',['preparation_tasks']],
     ['/api/conversations',['conversations']], ['/api/conversations/alerts',['awaiting_reply']],
     ['/api/shifts',['shifts','available_manager_shifts']],
     ['/api/shifts/current',['shifts','available_manager_shifts']],
@@ -232,4 +233,3 @@
   if(typeof module!=='undefined'&&module.exports)module.exports=exported;
   else window.KPSCentralOperations=exported;
 })();
-
