@@ -81,8 +81,13 @@ DEFINITIONS.append(('complimentary_approve', 'اعتماد وإلغاء أوام
                     'Authorize and revoke unused courtesy fulfillment commands', 'orders', set()))
 DEFINITIONS.append(('driver_duty_manage', 'تحديد ساعات دوام السائقين', 'Configure driver duty hours', 'staff', set()))
 DEFINITIONS.append(('orders_cancel_after_print', 'اعتماد إلغاء طلب التوصيل بعد إرسال الطباعة', 'Approve delivery cancellation after print request', 'orders', set()))
+DEFINITIONS.append(('orders_cancel_collected', 'اعتماد إلغاء طلب سبق تحصيله مع حفظ القيود والمتابعة المحاسبية', 'Approve cancellation of an ever-collected order with accounting follow-up', 'orders', set()))
+DEFINITIONS.append(('orders_route_preparation', 'اختيار فرع تجهيز الطلب ضمن الفروع المخولة', 'Choose an authorized preparation branch', 'orders', MANAGER))
 REGISTRY = {row[0]: row for row in DEFINITIONS}
 EXTRA_GRANT_ROLES = {
+    'orders_view': {'admin'},
+    'chat_view': {'admin'},
+    'orders_cancel_collected': {'admin', 'delivery_manager'},
     'orders_cancel_after_print': {'admin', 'delivery_manager'},
     'driver_duty_manage': {'admin', 'delivery_manager'},
     'complimentary_approve': {'admin', 'delivery_manager'},
@@ -103,7 +108,10 @@ EXTRA_GRANT_ROLES.update({code: {'admin'} for code in SHIFT_DELEGATIONS})
 
 # Contracts are descriptive, never caller-selectable route authorization rules.
 EXTRA_API_CONTRACTS = {
-    'orders_cancel_after_print': {'methods':['GET','POST'], 'paths':['/api/order-interventions/pending-cancellations','/api/order-interventions/orders/{oid}','/api/order-interventions/orders/{oid}/{rid}/decision'], 'scope':'explicit_owner_grant_scoped_delivery_cancellation_only_no_refund_or_accounting_authority'},
+    'orders_view': {'methods': ['GET'], 'paths': ['/api/orders', '/api/orders/{oid}', '/api/order-financial-cases/orders/{oid}/journey', '/api/fiscal/orders/{order_id}/documents', '/api/orders/{oid}/delivery-photos', '/api/delivery-photos/{aid}'], 'scope': 'explicit_admin_supervision_current_brand_and_assigned_branches_read_only_no_issuance_collection_refund_or_cancellation'},
+    'chat_view': {'methods': ['GET', 'POST'], 'paths': ['/api/conversations', '/api/conversations/{cid}/messages', '/api/chat-attachments/{aid}', '/api/conversations/{cid}/read'], 'scope': 'explicit_admin_supervision_current_brand_and_assigned_branches_read_and_own_read_marker_only_no_reply_transfer_claim_or_resolve'},
+    'orders_cancel_collected': {'methods': ['POST'], 'paths': ['/api/order-interventions/orders/{oid}/{rid}/decision', '/api/order-financial-cases/orders/{oid}/cancel', '/api/orders/{oid}/preparation', '/api/tasks/{tid}/transition'], 'scope': 'explicit_owner_grant_rechecked_from_live_identity_before_any_ever_collected_cancellation_existing_resource_and_approval_guards_no_refund_or_ledger_override'},
+    'orders_cancel_after_print': {'methods':['GET','POST'], 'paths':['/api/order-interventions/pending-cancellations','/api/order-interventions/orders/{oid}','/api/order-interventions/orders/{oid}/{rid}/decision','/api/order-interventions/orders/{oid}/{rid}/return','/api/order-interventions/orders/{oid}/{rid}/resubmit'], 'scope':'explicit_owner_grant_scoped_cancellation_review_and_documented_return_only_no_refund_or_accounting_authority'},
     'driver_duty_manage': {'methods':['GET','PUT'], 'paths':['/api/driver-duty','/api/driver-duty/{identifier}'], 'scope':'current_brand_assigned_driver_branches_next_shift_only_no_financial_authority'},
     'complimentary_approve': {'methods':['GET','POST'], 'paths':['/api/orders/complimentary/quote','/api/orders/complimentary/authorizations','/api/orders/complimentary/authorizations/{identifier}/revoke'], 'scope':'explicit_owner_grant_current_brand_all_original_and_fulfillment_branches_no_refund_or_cash_permission'},
     'driver_support_approve': {'methods':['GET','POST'], 'paths':['/api/driver-support','/api/driver-support/{rid}/accept','/api/driver-support/{rid}/resolve'], 'scope':'owner_granted_staff_identity_all_affected_brand_and_branch_scopes_no_cash_transfer'},
@@ -167,7 +175,8 @@ def catalog():
 
 # Resolved endpoint -> required capability. Existing endpoint policies still run.
 ROUTES = {
-    'order_financial_cases': {'nonreceipt':'payments_collect','free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':'orders_cancel','journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':'accounting_review'},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
+    'order_financial_cases': {'nonreceipt':'payments_collect','free_item_return':'support_manage','recovery_context':'accounting_review','recover':'accounting_review','refund_context':'accounting_review','cancel':{'admin':('orders_cancel_after_print','orders_cancel_collected'),'delivery_manager':'orders_cancel','branch_manager':'orders_cancel'},'journey':{'driver':'tasks_view','delivery_manager':'orders_view','branch_manager':'orders_view','admin':('orders_view','accounting_review')},'inbox':('orders_view','accounting_review'),'resolve':'accounting_review'},
+    'preparation_routing': {'context': ('orders_view', 'delivery_assign'), 'choose': 'orders_route_preparation', 'queue': 'orders_view', 'task': 'orders_view', 'prepare': 'orders_prepare'},
     'task_recovery': {'listing':'tasks_resolve_delivery', 'detail':'tasks_resolve_delivery', 'review_revision':'tasks_resolve_delivery'},
     'driver_float': {'listing':('drivers_view','accounting_review'), 'propose':'custody_transfer', 'decide':'accounting_review'},
     'order_amendments': {'inbox':'orders_view', 'detail':'orders_view', 'preview':'orders_amend', 'request_amendment':'orders_amend', 'decide':'orders_amend',
@@ -247,4 +256,3 @@ def required_for(endpoint, role, *, user=None):
         return ('shifts_close', 'shifts_delegate_close')
     value = ROUTES.get(module, {}).get(endpoint.__name__)
     return value.get(role) if isinstance(value, dict) else value
-

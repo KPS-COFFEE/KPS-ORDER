@@ -26,9 +26,9 @@ def accounting(user):
 def scoped(c, oid, user, lock=False):
     o=c.execute('SELECT * FROM orders WHERE id=%s'+(' FOR UPDATE' if lock else ''),(oid,)).fetchone()
     allowed=False
-    from .order_interventions import high_authority, controlled
+    from .order_interventions import high_authority, controlled, qualified_cancel_delegate
     if o and user.get('active',True) and o['brand_id']==user['brand_id']:
-        if user['role']=='admin' and (accounting(user) or (high_authority(user) and controlled(o))):
+        if user['role']=='admin' and (accounting(user) or (high_authority(user) and controlled(o)) or qualified_cancel_delegate(user)):
             allowed=o['branch_id'] in user.get('branch_ids',[])
         elif user['role']=='driver':
             # Historical read access, never a new mutation permission.
@@ -36,6 +36,8 @@ def scoped(c, oid, user, lock=False):
         else:
             allowed=auth.can_access_order(user,o,c)
     if not allowed:raise db.error(404,'ORDER_NOT_FOUND','الطلب غير موجود ضمن صلاحياتك.')
+    from . import preparation_routing
+    preparation_routing.pickup_branch_id(c,o)
     return o
 
 
@@ -149,7 +151,9 @@ def guard_financial_closure(c, *, shift_id=None, brand_id=None, branch_ids=None,
 def needs_accounting(c,o):
     from .fiscal_issuance import original
     from .complimentary import is_free
-    return bool(original(c,o['id']) or c.execute('SELECT 1 FROM collections WHERE order_id=%s LIMIT 1',(o['id'],)).fetchone() or (o['payment_status']!='unpaid' and not is_free(o)))
+    return bool(original(c,o['id']) or c.execute('SELECT 1 FROM collections WHERE order_id=%s LIMIT 1',(o['id'],)).fetchone()
+                or c.execute('SELECT 1 FROM branch_online_receipts WHERE order_id=%s AND amount_halalas>0 LIMIT 1',(o['id'],)).fetchone()
+                or (o['payment_status']!='unpaid' and not is_free(o)))
 
 
 def invoice_guard(c,o):
@@ -160,15 +164,23 @@ def invoice_guard(c,o):
 
 def cancellation_scope(c, oid, user):
     """Authorize and acquire the morning lane before taking an order lock."""
-    from .order_interventions import high_authority
+    from .order_interventions import high_authority, controlled, qualified_cancel_delegate
+    from .collected_order_authority import current_actor, require as require_collected_cancel
+    visible=scoped(c,oid,user)
+    user=current_actor(c,user,visible['brand_id'])
+    visible=scoped(c,oid,user)
     if not auth.has_permission(user,'orders_cancel') and not high_authority(user):
         raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إلغاء الطلبات متوقفة.')
-    visible=scoped(c,oid,user)
+    if user['role']=='admin' and not controlled(visible) and not qualified_cancel_delegate(user):
+        raise db.error(403,'CANCELLATION_REVIEWER','الإلغاء من المسؤول المفوض بهذا النطاق.')
+    require_collected_cancel(c,visible,user)
     from .order_amendments import reviewer
     if not reviewer(visible,user) and not high_authority(user):raise db.error(403,'CANCELLATION_REVIEWER','الإلغاء من مسؤول الخدمة المختص.')
     from . import morning_delivery, morning_dispatch
-    morning_delivery.authorize_order(c,user,visible,preparation=user['role']=='branch_manager')
+    if not qualified_cancel_delegate(user):
+        morning_delivery.authorize_order(c,user,visible,preparation=user['role']=='branch_manager')
     if morning_dispatch.actual_morning(visible):morning_dispatch.lock_operations(c)
+    return user
 
 
 def cancel_locked(c, oid, body, user):
@@ -220,9 +232,9 @@ def cancel_locked(c, oid, body, user):
 
 
 @router.post('/orders/{oid}/cancel')
-def cancel(oid:str,body:Cancellation,user=Depends(auth.require_roles('owner','delivery_manager','branch_manager')),idempotency_key:str|None=Header(None)):
+def cancel(oid:str,body:Cancellation,user=Depends(auth.require_roles('owner','admin','delivery_manager','branch_manager')),idempotency_key:str|None=Header(None)):
     with db.tx() as c:
-        cancellation_scope(c,oid,user)
+        user=cancellation_scope(c,oid,user)
         return db.idempotent(c,user['id'],idempotency_key,'financial-case.cancel:'+oid,
             body.model_dump(),lambda:cancel_locked(c,oid,body,user))
 

@@ -44,6 +44,8 @@ def balance(c, o):
 
 
 def editable(o, c):
+    from .preparation_routing import guard_amendment
+    guard_amendment(c,o)
     if o['snapshot'].get('complimentary'):
         raise db.error(409,'COMPLIMENTARY_AMENDMENT','للتصحيح ألغِ طلب الضيافة أو التعويض مع السبب، ثم أنشئ الصحيح.')
     from .branch_payments import online_order

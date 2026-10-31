@@ -90,7 +90,8 @@ def test_prior_application_failure_and_compatibility_rollback_without_database_r
  raw=probe(BASE,'baseline',spec)
  assert raw['health']==raw['ready']==200
  assert raw['export']=={'status':'rejected','code':'EXPORT_SCHEMA_UNSUPPORTED'}
- assert raw['pending_close']=={'status':200,'shift_status':'closing'}
+ # The latest deployed baseline already protects unfinished trips.
+ assert raw['pending_close']=={'status':409,'code':'TRIP_RETURN_REQUIRED'}
  with db.tx() as c:assert exact_rows(c,tuple(before))==before
  result=probe(COMPAT,'compat',spec)
  manifest=json.loads((ROOT/'tools/rollback_application_overlay/manifest.json').read_text())

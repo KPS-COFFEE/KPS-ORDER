@@ -115,6 +115,50 @@ def test_permissions_confirmation_staleness_and_closed_shift_block_without_side_
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize('application', ['candidate', 'prior'])
+@pytest.mark.parametrize('change', ['demoted', 'disabled'])
+def test_stale_owner_cannot_void_paid_order_or_replay_after_authority_revocation(ops, application, change):
+    from fastapi import HTTPException, Request
+    from app import operations
+    from test_collected_rollback_guard import prior_module
+    module = operations if application == 'candidate' else prior_module('operations')
+    first, second = seed(ops, (2050, 2400))
+    with db.tx() as c:
+        stale_owner = c.execute("SELECT * FROM users WHERE id='ops-owner'").fetchone()
+        receipts = c.execute('SELECT * FROM collections ORDER BY id').fetchall()
+
+    def invoke(item, key):
+        oid, values = item
+        request = Request({'type': 'http', 'method': 'POST', 'path': f'/api/orders/{oid}/test-void',
+                           'headers': [(b'idempotency-key', key.encode())]})
+        return module.test_void_order(oid, module.TestVoid(**values), request, stale_owner)
+
+    saved = invoke(first, 'owner-void-live-replay')
+    assert saved['no_cash_disbursed'] and saved['amount_halalas'] == 2050
+    with db.tx() as c:
+        orders = c.execute('SELECT * FROM orders ORDER BY id').fetchall()
+        immutable = {table: c.execute(f'SELECT * FROM {table} ORDER BY id').fetchall()
+                     for table in ('collections', 'refunds', 'driver_tasks', 'custody_events')}
+        if change == 'demoted':
+            c.execute("UPDATE users SET role='admin',extra_permissions='[\"orders_view\"]' WHERE id='ops-owner'")
+        else:
+            c.execute("UPDATE users SET active=false WHERE id='ops-owner'")
+    # Both calls retain the owner's earlier dependency object. Revocation must
+    # stop the saved response and a new paid-order reversal before any write.
+    for item, key in ((first, 'owner-void-live-replay'), (second, 'owner-void-new-after-revoke')):
+        with pytest.raises(HTTPException) as denied:
+            invoke(item, key)
+        assert denied.value.status_code == 403
+    with db.tx() as c:
+        assert c.execute('SELECT * FROM orders ORDER BY id').fetchall() == orders
+        assert c.execute('SELECT * FROM collections ORDER BY id').fetchall() == receipts
+        for table, rows in immutable.items():
+            assert c.execute(f'SELECT * FROM {table} ORDER BY id').fetchall() == rows
+        untouched = c.execute('SELECT payment_status,test_void FROM orders WHERE id=%s', (second[0],)).fetchone()
+        assert untouched['payment_status'] == 'paid' and untouched['test_void'] is None
+
+
+@pytest.mark.postgres
 def test_backup_restores_test_correction_and_ordinary_nullable_marker(ops,independent_restore_database):
     import psycopg
     from psycopg.rows import dict_row

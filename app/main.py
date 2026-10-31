@@ -324,3 +324,5 @@ app.include_router(cash_bags.router)
 
 from . import order_interventions
 app.include_router(order_interventions.router)
+from . import preparation_routing
+app.include_router(preparation_routing.router)

@@ -152,12 +152,14 @@ def ensure_mission(c, user, shift, task, now=None):
     now = now or c.execute('SELECT now() n').fetchone()['n']
     scope = _optional_scope(c,user,shift)
     if not scope: return None
-    actual=c.execute('SELECT t.*,o.brand_id AS order_brand_id,o.branch_id,o.test_void FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.id=%s FOR UPDATE OF t',(task['id'],)).fetchone()
+    actual=c.execute('SELECT t.*,o.brand_id AS order_brand_id,o.branch_id,o.test_void,o.preparation_route_id FROM driver_tasks t JOIN orders o ON o.id=t.order_id WHERE t.id=%s FOR UPDATE OF t',(task['id'],)).fetchone()
     accepted = actual.get('accepted_at') if actual else None
     if (not actual or actual['driver_id']!=user['id'] or actual['shift_id']!=shift['id'] or
             actual['status'] not in ('accepted','picked_up') or not accepted or not 0 <= (now-accepted).total_seconds() <= 30 or
             actual['order_brand_id']!=shift['brand_id'] or actual['branch_id'] not in shift['branch_ids'] or actual['test_void'] is not None):
         return None
+    from .preparation_routing import pickup_branch_id
+    preparation_id=pickup_branch_id(c,actual,user=user,shift=shift)
     c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('automatic-driver-mission:'+user['id'],))
     trip=c.execute('SELECT * FROM driver_work_trips WHERE driver_id=%s AND returned_at IS NULL FOR UPDATE',(user['id'],)).fetchone()
     if trip and trip['shift_id'] not in scope: return None
@@ -165,11 +167,11 @@ def ensure_mission(c, user, shift, task, now=None):
     if linked: return linked
     if not trip:
         evidence={'source':'automatic_task_acceptance','task_id':actual['id'],'accepted_at':accepted.isoformat()}
-        target=choose_initial_target(c,user,scope,actual)
+        target=choose_initial_target(c,user,scope,{**actual,'branch_id':preparation_id})
         trip=c.execute('INSERT INTO driver_work_trips(id,brand_id,shift_id,driver_id,departure_branch_id,departed_at,departure_evidence,planned_return_branch_id,auto_task_ids) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *',
-            (str(uuid4()),shift['brand_id'],shift['id'],user['id'],actual['branch_id'],accepted,db.json(evidence),target,db.json([actual['id']]))).fetchone()
+            (str(uuid4()),shift['brand_id'],shift['id'],user['id'],preparation_id,accepted,db.json(evidence),target,db.json([actual['id']]))).fetchone()
         from .driver_work_hours import record_event
-        record_event(c,user,trip['id'],'depart',actual['branch_id'],evidence)
+        record_event(c,user,trip['id'],'depart',preparation_id,evidence)
     elif trip.get('auto_task_ids'):
         ids=list(trip['auto_task_ids'])+[actual['id']]
         trip=c.execute('UPDATE driver_work_trips SET auto_task_ids=%s WHERE id=%s RETURNING *',(db.json(ids),trip['id'])).fetchone()

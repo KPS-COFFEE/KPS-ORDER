@@ -181,6 +181,11 @@ def print_invoice(order_id: str, user=Depends(auth.require_roles('owner','admin'
     from . import invoice_profiles, print_translations
     with db.tx() as conn:
         order = scoped_order(conn,order_id,user,lock=True)
+        # Viewing history must not silently issue a new financial document.
+        # This check precedes idempotent replay, so revoking print authority
+        # cannot be bypassed by a previously used request key.
+        if user['role']=='admin' and not auth.has_permission(user,'orders_print') and not original(conn,order_id):
+            raise db.error(403,'FISCAL_READ_ONLY','صلاحية الاطلاع تعرض الفاتورة الصادرة فقط؛ إصدار فاتورة جديدة يحتاج صلاحية الطباعة.')
         from .order_duplicates import guard as duplicate_guard
         duplicate_guard(conn, order)
         def perform():

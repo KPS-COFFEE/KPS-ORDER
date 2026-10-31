@@ -74,6 +74,7 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
 
         page.route('**/*', local_only)
         page.route('**/api/**', api)
+        context.add_init_script("""window.__managerScrollTrace=[]; const previousScroll=window.scrollTo; window.scrollTo=function(...args){window.__managerScrollTrace.push({action:'scrollTo',args,from:scrollY,at:performance.now()});return previousScroll.apply(this,args)}; window.addEventListener('scroll',()=>{window.__managerScrollTrace.push({action:'scroll',y:scrollY,at:performance.now()});if(window.__managerScrollTrace.length>40)window.__managerScrollTrace.shift()});""")
         page.goto(static_customer + '/ops.html')
         expect(page.locator('#dispatch-orders')).to_be_visible()
         if screen == 'orders':
@@ -86,9 +87,16 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
         heading = page.locator('#page-heading h1').inner_text()
         # Give both real views enough document height to check restored position.
         page.add_style_tag(content='body::after{content:"";display:block;height:1800px}' )
-        page.evaluate('window.scrollTo(0, 280)')
-        page.wait_for_function('Math.abs(window.scrollY-280)<=1')
-        customer_order.evaluate('(button)=>button.click()')
+        # CI traced a legitimate initial alert-height adjustment 280 -> 225
+        # between separate browser commands, before the form opened. Set the
+        # intended origin and click in one task so this tests save/return only.
+        opened_y = customer_order.evaluate('''(button)=>{
+            window.scrollTo(0, 280);
+            const originY = window.scrollY;
+            button.click();
+            return originY;
+        }''')
+        assert opened_y == pytest.approx(280, abs=1)
         form = page.locator('#staff-order-form')
         expect(form).to_be_visible()
         form.locator('input[name=phone]').fill('0531041449')
@@ -115,7 +123,16 @@ def test_failed_save_retains_draft_then_returns_to_manager_screen(static_custome
         # Refresh restores focus on its next animation frame; an already-restored
         # scroll position must not turn this into a synchronous focus check.
         expect(customer_order).to_be_focused()
-        page.wait_for_function('Math.abs(window.scrollY-280)<=1')
+        try:
+            page.wait_for_function('Math.abs(window.scrollY-280)<=1')
+        except Exception:
+            from pathlib import Path
+            diagnostic = page.evaluate('({y:scrollY,trace:window.__managerScrollTrace,contentTop:document.querySelector("#content").getBoundingClientRect().top,active:document.activeElement?.outerHTML,alerts:document.querySelector("#operational-alerts")?.outerHTML})')
+            evidence = Path('test-results')
+            evidence.mkdir(exist_ok=True)
+            page.screenshot(path=str(evidence/f'manager-return-{brand}-{screen}-{lang}-{width}.png'), full_page=True)
+            print('Manager screen position:', json.dumps(diagnostic, ensure_ascii=False))
+            raise
         saved = [item for item in writes if item[0] == '/api/orders/delivery-center']
         assert len(saved) == 2 and saved[0][1] == saved[1][1]
         assert saved[0][2] and saved[0][2] == saved[1][2]

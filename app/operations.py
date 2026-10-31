@@ -58,6 +58,8 @@ def same_scope(user, row):
 
 def order_access(c, user, order):
     if not order or not auth.can_access_order(user, order, c): fail(404, 'الطلب غير موجود')
+    from .preparation_routing import pickup_branch_id
+    pickup_branch_id(c,order)
 
 def delegated_shift(user, capability):
     """An explicit accounting grant, never an alternate employee role."""
@@ -973,12 +975,15 @@ def _eligible_driver_shift(c, s, order, *, observational):
         else:
             multibrand.dedication_guard(c,s['user_id'],order['brand_id'])
     if not driver or not driver['active'] or driver['role']!='driver' or driver['brand_id']!=order['brand_id'] or order['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
+    from .preparation_routing import pickup_branch_id
+    pickup_branch_id(c,order,user=driver,shift=s)
     manager=(c.execute('SELECT * FROM shifts WHERE id=%s', (s['manager_shift_id'],)).fetchone()
              if observational else lock_shift(c,s['manager_shift_id']))
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')
     principal=c.execute('SELECT * FROM users WHERE id=%s',(manager['user_id'],)).fetchone()
     if multibrand.enabled():principal=multibrand.project(c,principal,order['brand_id'])
     if not principal or not principal['active'] or principal['role'] not in ('owner','delivery_manager') or (not unrestricted_owner(principal) and order['branch_id'] not in principal['branch_ids']):fail(409,'مدير المناوبة غير مخول')
+    pickup_branch_id(c,order,user=principal,shift=manager)
     if order.get('snapshot', {}).get('delivery_period') == 'morning':
         from . import morning_delivery
         morning_delivery.authorize_order(c, principal, order)
@@ -1008,6 +1013,8 @@ class Assignment(OperationBody):
 
 def assign_in_transaction(c,user,oid,body):
     o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
+    from .preparation_routing import pickup_branch_id
+    pickup_branch_id(c,o,user=user)
     from . import morning_delivery
     morning_delivery.authorize_order(c, user, o)
     if o.get('snapshot', {}).get('delivery_period') == 'morning' and o['preparation_status'] == 'new':
@@ -1093,6 +1100,8 @@ def tasks(order_id: str | None=Query(None,max_length=100), user=Depends(auth.cur
                     r['snapshot']=safe(r['snapshot']);r['snapshot'].pop('notes',None);r['snapshot'].pop('note',None)
                     for item in r['snapshot'].get('items',[]):item.pop('note',None)
         if user['role']=='driver':rows=[blind_closure.driver_view(user,r,shift_money=True) if r['status'] in TERMINAL or r['driver_id']!=user['id'] else r for r in rows]
+        from .preparation_routing import enrich_orders
+        enrich_orders(c,rows)
         counts=None
         if user['role']=='driver':
             counts=c.execute("SELECT count(DISTINCT t.order_id) completed FROM effective_driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.id=(SELECT id FROM shifts WHERE user_id=%s AND brand_id=%s ORDER BY opened_at DESC,id DESC LIMIT 1) AND t.status='delivered' AND o.test_void IS NULL AND o.brand_id=%s AND o.branch_id=ANY(%s)",(user['id'],user['id'],user['brand_id'],user['brand_id'],user.get('branch_ids',[]))).fetchone()
@@ -1180,6 +1189,20 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
     if body.status == 'cancelled' and not auth.has_permission(user, 'orders_cancel'):
         raise db.error(403, 'STAFF_PERMISSION_FORBIDDEN', 'صلاحية إلغاء المهام متوقفة لحسابك.')
     with db.tx() as c:
+        if body.status == 'cancelled':
+            # A replay must not outlive the current collection authority or
+            # task/shift scope; the canonical guard repeats this under locks.
+            visible_task=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
+            if not visible_task:fail(404,'المهمة غير موجودة')
+            visible_order=c.execute('SELECT * FROM orders WHERE id=%s',(visible_task['order_id'],)).fetchone()
+            from .collected_order_authority import current_actor,require as require_collected_cancel
+            current=current_actor(c,user,user['brand_id'])
+            if current['role'] not in ('owner','delivery_manager') or not auth.has_permission(current,'orders_cancel'):
+                raise db.error(403,'STAFF_PERMISSION_FORBIDDEN','صلاحية إلغاء المهام متوقفة لحسابك.')
+            order_access(c,current,visible_order)
+            visible_shift=c.execute('SELECT * FROM shifts WHERE id=%s',(visible_task['shift_id'],)).fetchone()
+            shift_access(c,current,visible_shift)
+            require_collected_cancel(c,visible_order,current)
         def perform():
             t=c.execute('SELECT * FROM driver_tasks WHERE id=%s',(tid,)).fetchone()
             if not t:fail(404,'المهمة غير موجودة')
@@ -1196,6 +1219,12 @@ def task_transition(tid:str,body:TaskTransition,request:Request,user=Depends(aut
                 from .driver_receipt_trial import assignment_guard
                 assignment_guard(s,o)
             if user['role']=='driver' and t['driver_id']!=user['id']:fail(403,'المهمة لسائق آخر')
+            if body.status in ('accepted','picked_up'):
+                from .preparation_routing import pickup_branch_id
+                pickup_branch_id(c,o,user=user,shift=s)
+            else:
+                from .preparation_routing import pickup_branch_id
+                pickup_branch_id(c,o)
             resolving_problem=t['status']=='problem' and body.status!='problem'
             if resolving_problem:
                 roles(user,'owner','delivery_manager')
@@ -1504,8 +1533,15 @@ def test_void_order(oid:str,body:TestVoid,request:Request,user=Depends(auth.curr
     roles(user,'owner')
     with db.tx() as c:
         from .owner_test_void import perform
-        # Recheck brand/order scope even for an idempotency replay.
-        order_access(c,user,c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone())
+        # Preserve the mutation lane -> order -> employee lock order. The
+        # session snapshot may predate a lock wait or a revoked owner grant.
+        c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',('operations:'+user['brand_id'],))
+        order=c.execute('SELECT * FROM orders WHERE id=%s AND brand_id=%s FOR UPDATE',(oid,user['brand_id'])).fetchone()
+        order_access(c,user,order)
+        from .collected_order_authority import current_actor
+        user=current_actor(c,user,order['brand_id'],lock=True)
+        roles(user,'owner')
+        order_access(c,user,order)
         return mutate(c,user,request,'order.test_void:'+oid,body.model_dump(),lambda:perform(c,user,oid,body))
 
 class Refund(OperationBody):
@@ -2200,4 +2236,3 @@ def set_shift_availability(sid:str,body:AvailabilityUpdate,request:Request,user=
             db.audit(c,user['id'],'shift.availability','shift',sid,{'available':body.available})
             return {'shift_id':sid,'available':body.available}
         return mutate(c,user,request,'shift.availability:'+sid,body.model_dump(),perform)
-
