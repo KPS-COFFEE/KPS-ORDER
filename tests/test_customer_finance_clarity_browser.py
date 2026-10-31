@@ -23,12 +23,21 @@ def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromiu
             c.execute("UPDATE users SET display_name=%s WHERE id=%s",('TEST DRIVER '+str(n),driver['id']))
             c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,manager_shift_id) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]','closed',%s,%s,'clarity-manager')",(sid,driver['id'],now-timedelta(hours=3),now))
             c.execute("INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES(%s,%s,'driver','kps','[\"kps-branch-1\"]',%s,%s)",('clarity-report-'+str(n),sid,driver['id'],db.json(_documented_snapshot(driver['id']))))
+    from app.accounting import build
+    from datetime import date
+    with db.tx() as c:
+        viewer=c.execute('SELECT * FROM users WHERE id=%s',(accountant['id'],)).fetchone()
+        snapshot={group:build(c,viewer,day,day,'kps-branch-1',group=group) for group in ('daily','driver_statement')}
+        c.execute("INSERT INTO accounting_months(id,brand_id,month,branch_ids,scope_hash,snapshot,closed_by,reason) VALUES('clarity-frozen','kps',%s,'[\"kps-branch-1\"]',%s,%s,%s,'TEST saved closed statement fixture')",(date.fromisoformat(day).replace(day=1),'e'*64,db.json(snapshot),accountant['id']))
     context,page,errors=_context(chromium_browser,live_app);_owner_login(context,live_app,accountant)
     try:
         page.set_viewport_size({'width':width,'height':950});page.goto(live_app+'/ops')
         page.locator('[data-page=accounting]').click();page.locator('[data-ac=reports]').click()
-        page.locator('[name=group]').select_option('driver_statement')
         page.locator('[name=start]').fill(day);page.locator('[name=end]').fill(day)
+        page.locator('[name=branch_ids]').select_option('kps-branch-1')
+        page.locator('[name=group]').select_option('driver_statement')
+        expect(page.locator('[name=start]')).to_have_value(day);expect(page.locator('[name=end]')).to_have_value(day)
+        assert page.locator('[name=branch_ids]').evaluate('(el)=>Array.from(el.selectedOptions).map(o=>o.value)')==['kps-branch-1']
         page.locator('[name=driver_ids]').select_option([d['id'] for d in drivers])
         page.locator('#ac-filters button[type=submit]').click()
         expect(page.locator('[data-statement-driver]')).to_have_count(2)
@@ -39,6 +48,14 @@ def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromiu
         expect(page.locator('[data-statement-driver]')).to_have_count(1)
         page.locator('[name=variance]').select_option('shortage');page.locator('#ac-filters button[type=submit]').click()
         expect(page.locator('[data-statement-driver]')).to_have_count(0)
+        page.locator('[name=branch_ids]').select_option([])
+        page.locator('[name=group]').select_option('daily')
+        assert page.locator('[name=branch_ids]').evaluate('(el)=>Array.from(el.selectedOptions).map(o=>o.value)')==[]
+        expect(page.locator('[name=start]')).to_have_value(day)
+        page.locator('[data-ac=months]').click();page.locator('[data-ac=frozen][data-id=clarity-frozen]').click()
+        expect(page.locator('#ac-description')).to_contain_text('كشف شهر مقفل محفوظ')
+        page.locator('[name=group]').select_option('driver_statement')
+        expect(page.locator('#ac-description')).to_contain_text('كشف شهر مقفل محفوظ')
         page.locator('[data-page=catalog]').click()
         expect(page.locator('#staff-catalog-items .product-admin-card').first).to_be_visible()
         page.screenshot(path=f'test-artifacts/clarity-branch-catalog-{width}.png',full_page=True)
