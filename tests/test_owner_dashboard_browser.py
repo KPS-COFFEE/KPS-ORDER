@@ -33,7 +33,7 @@ def synthetic_rows():
         ('kps', BRANCHES[0], DRIVERS[0], 'cancelled', 5000),
     )):
         rows.append({
-            'id': f'qa-order-{i}', 'reference': f'QA-{i+1:04}', 'order_no': f'QA-{i+1:04}',
+            'id': f'qa-order-{i}', 'reference': f'QA-{i+1:04}', 'order_no': 900+i,
             'brand_id': brand, 'brand_name': branch['brand_name'],
             'branch_id': branch['id'], 'branch_name': branch['name'], 'city': branch['city'],
             'driver_id': driver['id'], 'driver_name': driver['name'], 'status': status,
@@ -159,6 +159,8 @@ def test_owner_widget_filters_pagination_refresh_faults_and_mobile_layout(width,
         count = page.locator('.owner-metric').filter(has=page.get_by_role('heading', name='إجمالي الطلبات', exact=True)).locator('.owner-number')
         expect(count).to_have_text('3')
         assert page.locator('#owner-orders tbody tr').count() == 2
+        expect(page.locator('[data-owner-order]').first).to_contain_text('QA-0003')
+        expect(page.locator('[data-owner-order]').first).not_to_contain_text('902')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert not re.search('[٠-٩]', page.locator('#owner-metrics').inner_text())
         page.screenshot(path=str(tmp_path/f'owner-dashboard-{width}.png'), full_page=True)
@@ -237,6 +239,19 @@ def test_owner_widget_filters_pagination_refresh_faults_and_mobile_layout(width,
         assert 'start=2026-10-27' in control['requests'][-1] and 'end=2026-10-28' in control['requests'][-1]
         page.locator('[data-owner-order]').first.click()
         assert page.evaluate('()=>openedOrders') == [{'id': 'qa-order-1', 'brand': 'enbishan'}]
+        # A same-filter refresh must not swallow a visible invoice click.
+        control['mode'] = 'hold'
+        page.evaluate('()=>{window.linkRefresh=widget.refresh({force:true})}')
+        page.wait_for_timeout(100)
+        assert control['held']
+        page.locator('[data-owner-order]').first.click()
+        assert page.evaluate('()=>openedOrders') == [{'id': 'qa-order-1', 'brand': 'enbishan'}]*2
+        for pending in control['held']:
+            pending.fulfill(json=payload(pending.request.url))
+        control['held'].clear()
+        control['mode'] = 'ok'
+        page.evaluate('()=>linkRefresh')
+
 
         control['mode'] = 'denied'
         page.evaluate('()=>widget.refresh({force:true})')
@@ -254,7 +269,7 @@ def test_owner_widget_filters_pagination_refresh_faults_and_mobile_layout(width,
 def test_actual_ops_lands_owners_on_dashboard_and_rejects_other_roles(brand):
     source = (ROOT/'public/ops.js').read_text()
     source, count = re.subn(r'  init\(\);\s*\}\)\(\);\s*$',
-        '  window.qa={state,showApp,canPage,navigation,loadPage};\n})();', source)
+        '  window.qa={state,showApp,canPage,navigation,loadPage,refreshOperationalAlerts};\n})();', source)
     assert count == 1, 'Acceptance hook only replaces automatic startup'
     html = re.sub(r'<script[\s\S]*?</script>|<link[^>]*>', '', (ROOT/'public/ops.html').read_text())
     requests, request_headers = [], []
@@ -274,6 +289,15 @@ def test_actual_ops_lands_owners_on_dashboard_and_rejects_other_roles(brand):
                 requests.append(route.request.url)
                 request_headers.append(route.request.headers)
                 return route.fulfill(json=payload(route.request.url))
+            if path == '/api/operations/alerts':
+                return route.fulfill(json={'unassigned': [{'id': 'qa-order-0', 'order_no': 'QA-0001'}]})
+            if path == '/api/conversations/alerts':
+                return route.fulfill(json={'awaiting_reply': [{'id': 'qa-chat', 'sender_name': 'رسالة تجريبية', 'last_message': 'نص الرسالة'}]})
+            if path == '/api/conversations':
+                return route.fulfill(json={'conversations': [{'id': 'qa-chat', 'sender_name': 'رسالة تجريبية'}]})
+            if path == '/api/conversations/qa-chat/messages':
+                return route.fulfill(json={'conversation': {'id': 'qa-chat', 'can_reply': True, 'can_manage': False},
+                    'messages': [{'id': 'qa-message', 'text': 'نص الرسالة', 'created_at': '2026-10-31T10:00:00Z'}]})
             if path == '/api/catalog':
                 return route.fulfill(json={'brand': {'id': brand, 'name': brand, 'theme': {}}, 'products': []})
             if path == '/api/branches':
@@ -302,6 +326,27 @@ def test_actual_ops_lands_owners_on_dashboard_and_rejects_other_roles(brand):
         assert requests and f'brand_id={brand}' in requests[0]
         assert 'x-operations-brand' not in request_headers[0], 'A normal brand session must not require the multibrand rollout'
         assert request_headers[0]['x-kps-context'] == 'work'
+        notices=page.locator('[data-alert-group=owner-notifications]')
+        messages=page.locator('[data-alert-group=messages]')
+        expect(notices).to_be_visible()
+        assert not notices.evaluate('el=>el.open') and not messages.evaluate('el=>el.open')
+        expect(page.get_by_role('button', name='فتح المحادثة والرد')).not_to_be_visible()
+        messages.locator(':scope > summary').click()
+        expect(page.get_by_role('button', name='فتح المحادثة والرد')).to_be_visible()
+        # Force rerender with a different latest message; user's open choice survives.
+        page.evaluate('''async()=>{document.querySelector('#operational-alerts').dataset.rendered='';await qa.refreshOperationalAlerts()}''')
+        assert messages.evaluate('el=>el.open') and not notices.evaluate('el=>el.open')
+        messages.locator(':scope > summary').click()
+        assert not messages.evaluate('el=>el.open')
+        notices.locator(':scope > summary').click()
+        expect(page.get_by_role('button', name='QA-0001', exact=True)).to_be_visible()
+        notices.locator(':scope > summary').click()
+        messages.locator(':scope > summary').click()
+        page.get_by_role('button', name='فتح المحادثة والرد').click()
+        expect(page.locator('#chat-detail')).to_contain_text('نص الرسالة')
+        page.get_by_role('button', name='لوحة الملاك', exact=True).click()
+        expect(page.locator('#owner-filters')).to_be_visible()
+
         page.evaluate('''async user=>{qa.state.user=user;await qa.loadPage();}''', owner(brand, both=True))
         expect(page.locator('#owner-brand')).to_have_value('all')
         assert 'brand_id=all' in requests[-1]

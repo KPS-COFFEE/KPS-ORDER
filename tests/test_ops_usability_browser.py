@@ -101,6 +101,7 @@ def test_owner_bell_policy_saved_only_after_confirmation(live_app,chromium_brows
     try:
         _owner_login(context,live_app,user)
         page.goto(live_app+'/ops',wait_until='networkidle')
+        page.locator('[data-alert-group=owner-notifications] > summary').click()
         page.locator('[data-action=alert-policy]').click()
         form=page.locator('#modal form')
         form.locator('[name=first_after_seconds]').fill('5')
