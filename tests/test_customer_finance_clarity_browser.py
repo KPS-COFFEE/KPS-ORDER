@@ -1,6 +1,6 @@
 """Real HTTP browser acceptance; no production data, messages, or mocked responses."""
 import os
-from datetime import datetime,timedelta
+from datetime import datetime,time,timedelta
 from zoneinfo import ZoneInfo
 import pytest
 from app import db
@@ -14,15 +14,22 @@ pytestmark=[pytest.mark.postgres,pytest.mark.skipif(os.getenv('TEST_BROWSER')!='
 def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromium_browser,width):
     from playwright.sync_api import expect
     accountant=_staff('admin');manager=_staff('delivery_manager');drivers=[_staff('driver'),_staff('driver')]
-    now=datetime.now(ZoneInfo('Asia/Riyadh'));day=(now-timedelta(days=1)).date().isoformat()
+    tz=ZoneInfo('Asia/Riyadh')
+    operational_day=(datetime.now(tz)-timedelta(days=1)).date();day=operational_day.isoformat()
+    # The report follows generated reporting_operational_date, so anchor every
+    # shift timestamp inside the selected day rather than the wall-clock hour.
+    closed_at=datetime.combine(operational_day,time(20),tz)
     with db.tx() as c:
         c.execute("UPDATE users SET permissions='[\"accounting_reports\"]' WHERE id=%s",(accountant['id'],))
-        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,delivery_operational_date) VALUES('clarity-manager','manager',%s,'kps','[\"kps-branch-1\"]','closed',%s,%s,%s)",(manager['id'],now-timedelta(hours=4),now,day))
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,delivery_operational_date) VALUES('clarity-manager','manager',%s,'kps','[\"kps-branch-1\"]','closed',%s,%s,%s)",(manager['id'],closed_at-timedelta(hours=4),closed_at,day))
         for n,driver in enumerate(drivers):
             sid='clarity-driver-'+str(n)
             c.execute("UPDATE users SET display_name=%s WHERE id=%s",('TEST DRIVER '+str(n),driver['id']))
-            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,manager_shift_id) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]','closed',%s,%s,'clarity-manager')",(sid,driver['id'],now-timedelta(hours=3),now))
+            c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,status,opened_at,closed_at,manager_shift_id) VALUES(%s,'driver',%s,'kps','[\"kps-branch-1\"]','closed',%s,%s,'clarity-manager')",(sid,driver['id'],closed_at-timedelta(hours=3),closed_at))
             c.execute("INSERT INTO closure_reports(id,shift_id,kind,brand_id,branch_ids,user_id,snapshot) VALUES(%s,%s,'driver','kps','[\"kps-branch-1\"]',%s,%s)",('clarity-report-'+str(n),sid,driver['id'],db.json(_documented_snapshot(driver['id']))))
+        reporting_days=c.execute("SELECT reporting_operational_date FROM shifts WHERE id=ANY(%s)",(['clarity-manager','clarity-driver-0','clarity-driver-1'],)).fetchall()
+        assert len(reporting_days)==3
+        assert {row['reporting_operational_date'] for row in reporting_days}=={operational_day}
     from app.accounting import build
     from datetime import date
     with db.tx() as c:

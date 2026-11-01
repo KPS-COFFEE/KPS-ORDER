@@ -8,12 +8,12 @@ const base=()=>({enabled:true,printed:true,high_authority:true,version:7,
  customer_requests:[{id:'customer-proof',created_at:'2026-10-29T12:00:00Z',details:{note:'طلب العميل الموثق'}}],attachments:[{id:'image-proof',created_at:'2026-10-29T12:00:00Z'}],return_targets:[{id:'manager-1',display_name:'مدير التوصيل الأول'}],
  requests:[{id:'request/1',created_at:'2026-10-28T12:00:00Z',requested_by_name:'رافع المعاملة',details:{kind:'cancel',reason_code:'late_complaint',pending_role:'owner_or_cancel_delegate'},decision:null,
  workflow:{revision:0,status:'requested',original_reason_code:'late_complaint',reason_code:'late_complaint',current_responsible_role:'owner_or_cancel_delegate',current_responsible_name:null,next_action_label:'بانتظار اعتمادك أو إرجاعها للاستكمال',preferred_return_target_id:'manager-1',available_actions:['approve','reject','return'],history:[]}}]});
-function harness(initial,role='admin'){
- let data=structuredClone(initial),writes=[],reads=[],failure=null,afterWrite=null,dialog;
+function harness(initial,role='admin',{uploadEvidence}={}){
+ let data=structuredClone(initial),writes=[],attempts=[],reads=[],failure=null,afterWrite=null,dialog;
  class Element{
   constructor(tag){this.tag=tag;this.children=[];this.elements={};this.isConnected=true;this.alert={textContent:''};this.buttons=[];}
   set innerHTML(html){this.html=html;this.children=[];this.elements={};this.buttons=[];
-   for(const m of html.matchAll(/<input\b([^>]*)>/g)){const name=m[1].match(/name="([^"]+)"/),v=m[1].match(/value="([^"]*)"/);if(name)this.elements[name[1]]={value:v?.[1]||''};}
+   for(const m of html.matchAll(/<input\b([^>]*)>/g)){const name=m[1].match(/name="([^"]+)"/),v=m[1].match(/value="([^"]*)"/);if(name)this.elements[name[1]]={value:v?.[1]||'',...(/type="file"/.test(m[1])?{files:[]}:{} )};}
    for(const m of html.matchAll(/<select name="([^"]+)">([\s\S]*?)<\/select>/g)){const values=[...m[2].matchAll(/<option value="([^"]*)"/g)].map(v=>v[1]);this.elements[m[1]]={value:values[0]||'',querySelector:q=>values.includes(q.match(/value="([^"]*)"/)?.[1])?{}:null};}
    for(const m of html.matchAll(/<textarea name="([^"]+)"[^>]*>([\s\S]*?)<\/textarea>/g))this.elements[m[1]]={value:m[2]};
    for(const _ of html.matchAll(/<button\b/g))this.buttons.push({disabled:false});
@@ -22,10 +22,10 @@ function harness(initial,role='admin'){
   querySelector(q){if(q==='[data-close]')return {};if(q==='.amend-body')return this.body||(this.body=new Element('body'));if(q==='[role=alert]')return this.alert;return null;}
   querySelectorAll(q){return q==='button'?this.buttons:[];}
  }
- const ctx={window:{},document:{createElement:tag=>new Element(tag),body:{append:d=>dialog=d}},FormData:class{constructor(form){this.form=form;}get(key){return this.form.elements[key]?.value??null;}}};vm.createContext(ctx);vm.runInContext(widget,ctx);
+ const ctx={window:{},document:{createElement:tag=>new Element(tag),body:{append:d=>dialog=d}},FormData:class{constructor(form){this.values=new Map(Object.entries(form.elements).map(([key,field])=>[key,field.files?field.files[0]||null:field.value]));}get(key){return this.values.get(key)??null;}}};vm.createContext(ctx);vm.runInContext(widget,ctx);
  const all=root=>[root,...root.children.flatMap(all)];
- return {writes,reads,get data(){return data;},set data(value){data=structuredClone(value);},set failure(value){failure=value;},set afterWrite(value){afterWrite=value;},get text(){return all(dialog.body).map(n=>n.html||'').join('');},get alert(){return dialog.body.alert.textContent;},forms:()=>all(dialog.body).filter(n=>n.tag==='form'),
-  open:()=>ctx.window.KPSInterventions.open({oid:'order/1',user:{id:role==='admin'?'delegate':'manager-1',role},api:async path=>{reads.push(path);return structuredClone(data);},mutation:async(path,body)=>{if(failure)throw failure;writes.push({path,body});if(afterWrite)afterWrite(path,body);return {status:'returned'};}}),
+ return {writes,attempts,reads,get data(){return data;},set data(value){data=structuredClone(value);},set failure(value){failure=value;},set afterWrite(value){afterWrite=value;},get text(){return all(dialog.body).map(n=>n.html||'').join('');},get alert(){return dialog.body.alert.textContent;},forms:()=>all(dialog.body).filter(n=>n.tag==='form'),
+  open:()=>ctx.window.KPSInterventions.open({oid:'order/1',user:{id:role==='admin'?'delegate':'manager-1',role},uploadEvidence,api:async path=>{reads.push(path);return structuredClone(data);},mutation:async(path,body)=>{attempts.push({path,body});if(failure)throw failure;writes.push({path,body});if(afterWrite)afterWrite(path,body);return {status:'returned'};}}),
   submit:(form,action)=>form.onsubmit({target:form,preventDefault(){},submitter:action?{value:action}:undefined})};
 }
 test('return preserves the original reason, records correction and named responsibility, and refreshes from the server',async()=>{
@@ -65,4 +65,76 @@ test('terminal delivery manager never gets a new request form and accounting int
 });
 test('server creation policy wins even when a driver cannot see another employee’s pending request',async()=>{
  const d=base();d.requests=[];d.available_create_kinds=[];const h=harness(d,'driver');await h.open();assert.equal(h.forms().length,0);const allowed=base();allowed.requests=[];allowed.available_create_kinds=['problem'];const manager=harness(allowed,'delivery_manager');await manager.open();const f=manager.forms()[0];assert.match(f.html,/value="problem"/);assert.doesNotMatch(f.html,/value="cancel"/);
+});
+
+function evidenceFormData(mode){
+ const d=base();
+ if(mode==='create'){d.requests=[];d.available_create_kinds=['cancel','problem'];}
+ else d.requests[0].workflow={...d.requests[0].workflow,revision:3,status:'returned',reason_code:'customer_cancel',available_actions:['resubmit']};
+ return d;
+}
+function fillEvidenceForm(form,mode,file){
+ form.elements.contact_result.value='agreed';form.elements.customer_request_id.value='customer-proof';form.elements.evidence_attachment_id.value='image-proof';
+ if(mode==='create'){form.elements.kind.value='cancel';form.elements.reason_code.value='customer_cancel';}
+ else form.elements.note.value='استكملت الدليل المطلوب مع الاحتفاظ بالسبب الأصلي';
+ if(file)form.elements.evidence_image.files=[file];
+}
+const picture=()=>new File(['synthetic evidence'],'evidence.png',{type:'image/png',lastModified:1});
+for(const mode of ['create','resubmit']){
+ test(`${mode} uploads selected evidence only on submit and uses it instead of an existing attachment`,async()=>{
+  const uploads=[],h=harness(evidenceFormData(mode),'delivery_manager',{uploadEvidence:async file=>{uploads.push(file);return {id:'uploaded-proof'};}});
+  await h.open();const form=h.forms()[0],file=picture();fillEvidenceForm(form,mode,file);
+  assert.equal(uploads.length,0);assert.equal(h.writes.length,0);assert.match(form.html,/name="evidence_image" type="file"/);
+  assert.doesNotMatch(form.html,/افتح محادثة الطلب وأرفق الصورة/);
+  await h.submit(form);
+  assert.equal(uploads.length,1);assert.equal(uploads[0],file);assert.equal(h.writes.length,1);
+  const saved=h.writes[0];assert.equal(saved.path,'/api/order-interventions/orders/order%2F1'+(mode==='resubmit'?'/request%2F1/resubmit':''));
+  assert.equal(saved.body.version,7);assert.equal(saved.body.evidence_attachment_id,'uploaded-proof');assert.equal(saved.body.customer_request_id,'customer-proof');assert.equal(saved.body.contact_result,'agreed');
+  if(mode==='resubmit'){assert.equal(saved.body.workflow_revision,3);assert.equal(saved.body.note,'استكملت الدليل المطلوب مع الاحتفاظ بالسبب الأصلي');assert.equal(saved.body.reason_code,undefined);}
+  else{assert.equal(saved.body.kind,'cancel');assert.equal(saved.body.reason_code,'customer_cancel');}
+  assert.equal(h.reads.length,2);assert.ok(h.writes.every(write=>!write.path.includes('/messages')));
+ });
+ test(`${mode} preserves the complete draft after a mutation failure and reuses only the same selected File`,async()=>{
+  const uploads=[],h=harness(evidenceFormData(mode),'delivery_manager',{uploadEvidence:async file=>{uploads.push(file);return {id:'uploaded-'+uploads.length};}});
+  await h.open();const form=h.forms()[0],file=picture();fillEvidenceForm(form,mode,file);
+  const fields=Object.fromEntries(Object.entries(form.elements).filter(([,field])=>!field.files).map(([name,field])=>[name,field.value]));
+  h.failure=new Error('تعذر تأكيد حفظ المعاملة؛ أعد المحاولة');await h.submit(form);
+  assert.equal(uploads.length,1);assert.equal(h.writes.length,0);assert.equal(h.forms()[0],form);assert.equal(h.reads.length,1);assert.equal(form.elements.evidence_image.files[0],file);
+  for(const [name,value] of Object.entries(fields))assert.equal(form.elements[name].value,value);
+  assert.ok(form.buttons.every(button=>!button.disabled));assert.match(h.alert,/تعذر تأكيد حفظ المعاملة/);
+  await h.submit(form);assert.equal(uploads.length,1);assert.equal(h.attempts[1].body.evidence_attachment_id,'uploaded-1');
+  const replacement=picture();assert.notEqual(replacement,file);form.elements.evidence_image.files=[replacement];
+  await h.submit(form);assert.equal(uploads.length,2);assert.equal(uploads[1],replacement);assert.equal(h.attempts[2].body.evidence_attachment_id,'uploaded-2');
+  h.failure=null;await h.submit(form);assert.equal(uploads.length,2);assert.equal(h.writes.length,1);assert.equal(h.writes[0].body.evidence_attachment_id,'uploaded-2');
+ });
+ test(`${mode} keeps the existing attachment selector usable without an upload callback`,async()=>{
+  const h=harness(evidenceFormData(mode),'delivery_manager');await h.open();const form=h.forms()[0];fillEvidenceForm(form,mode);
+  assert.equal(form.elements.evidence_image,undefined);await h.submit(form);assert.equal(h.writes.length,1);assert.equal(h.writes[0].body.evidence_attachment_id,'image-proof');
+ });
+}
+test('failed or unconfirmed image uploads preserve the draft and retry before any treatment mutation',async()=>{
+ let count=0;const h=harness(evidenceFormData('create'),'delivery_manager',{uploadEvidence:async()=>{count++;if(count===1)throw new Error('تعذر رفع الصورة');return count===2?{}:{id:'confirmed-proof'};}});
+ await h.open();const form=h.forms()[0],file=picture();fillEvidenceForm(form,'create',file);
+ await h.submit(form);assert.equal(h.attempts.length,0);assert.equal(form.elements.evidence_image.files[0],file);assert.equal(form.elements.reason_code.value,'customer_cancel');assert.match(h.alert,/تعذر رفع الصورة/);assert.ok(form.buttons.every(button=>!button.disabled));
+ await h.submit(form);assert.equal(count,2);assert.equal(h.attempts.length,0);assert.equal(h.forms()[0],form);assert.match(h.alert,/تعذر تأكيد حفظ الصورة/);
+ await h.submit(form);assert.equal(count,3);assert.equal(h.writes.length,1);assert.equal(h.writes[0].body.evidence_attachment_id,'confirmed-proof');
+});
+test('clearing a selected image restores the chosen existing attachment without another upload',async()=>{
+ let uploads=0;const h=harness(evidenceFormData('create'),'delivery_manager',{uploadEvidence:async()=>{uploads++;return {id:'uploaded-proof'};}});
+ await h.open();const form=h.forms()[0];fillEvidenceForm(form,'create',picture());h.failure=new Error('أعد المحاولة');await h.submit(form);
+ form.elements.evidence_image.files=[];h.failure=null;await h.submit(form);
+ assert.equal(uploads,1);assert.equal(h.writes[0].body.evidence_attachment_id,'image-proof');
+});
+test('a non-customer returned reason can carry new evidence without inventing a customer request',async()=>{
+ const d=evidenceFormData('resubmit');d.requests[0].workflow.reason_code='no_answer';const h=harness(d,'delivery_manager',{uploadEvidence:async()=>({id:'contact-proof'})});
+ await h.open();const form=h.forms()[0];assert.equal(form.elements.customer_request_id,undefined);assert.ok(form.elements.evidence_image);form.elements.note.value='استكملت محاولة التواصل وأرفقت الإثبات';form.elements.contact_result.value='no_answer';form.elements.evidence_image.files=[picture()];
+ await h.submit(form);assert.equal(h.writes[0].body.evidence_attachment_id,'contact-proof');assert.equal(h.writes[0].body.customer_request_id,null);assert.equal(h.writes[0].body.workflow_revision,3);
+});
+test('the optional image callback grants no driver, read-only, terminal or legacy action',async()=>{
+ let uploads=0;const callback={uploadEvidence:async()=>{uploads++;return {id:'unexpected'};}};
+ const driverData=evidenceFormData('create');driverData.available_create_kinds=['problem'];const driver=harness(driverData,'driver',callback);await driver.open();assert.equal(driver.forms()[0].elements.evidence_image,undefined);
+ const readonly=base();readonly.requests[0].workflow.available_actions=[];const noActions=harness(readonly,'delivery_manager',callback);await noActions.open();assert.equal(noActions.forms().length,0);
+ const terminal=base();terminal.available_create_kinds=[];terminal.requests[0].decision={status:'approved'};terminal.requests[0].workflow.available_actions=[];terminal.requests[0].workflow.status='approved';const closed=harness(terminal,'delivery_manager',callback);await closed.open();assert.equal(closed.forms().length,0);
+ const legacy=harness({...base(),enabled:false,legacy_cancel_allowed:true},'delivery_manager',callback);await legacy.open();assert.equal(legacy.forms()[0].elements.evidence_image,undefined);
+ assert.equal(uploads,0);
 });

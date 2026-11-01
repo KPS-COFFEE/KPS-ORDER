@@ -1160,17 +1160,29 @@ if(can('accounting_review'))$('#page-heading').insertAdjacentHTML('beforeend',`<
   function financialCasesButton(brand){
     return `<button class="quiet" data-action="financial-cases" data-brand="${esc(brand||'')}">${esc(tr('المعالجات المحاسبية المعلقة','Pending accounting treatment'))}</button>`;
   }
+  async function openOrderIntervention(oid,initialReason){
+    let conversationId;
+    const uploadEvidence=can('chat_reply')&&state.user.role!=='driver'?async file=>{
+      if(!conversationId){
+        const created=await mutation('/api/conversations',{order_id:oid});
+        conversationId=(created.conversation||created).id;
+        if(!conversationId)throw new Error(tr('تعذر فتح محادثة الطلب لحفظ الصورة.','Could not open the order conversation to save the image.'));
+      }
+      return imageUpload(`/api/conversations/${encodeURIComponent(conversationId)}/attachments`,file);
+    }:undefined;
+    return window.KPSInterventions.open({oid,api,mutation,user:state.user,onChanged:loadPage,initialReason,uploadEvidence});
+  }
   async function openTaskIntervention(tid,oid,initialReason){
     const task=(state.tasks||[]).find(t=>t.id===tid);
     const orderId=oid||task?.order_id;if(!orderId)throw new Error(tr('حدّث قائمة المهام.','Refresh the task list.'));
     const data=await api(`/api/order-interventions/orders/${encodeURIComponent(orderId)}`);
     if(!data.enabled)return false;
-    await window.KPSInterventions.open({oid:orderId,api,mutation,user:state.user,onChanged:loadPage,initialReason});return true;
+    await openOrderIntervention(orderId,initialReason);return true;
   }
   async function cancelOrderWithJourney(id){
     const {order:o}=await api(`/api/orders/${encodeURIComponent(id)}`);
     const intervention=await api(`/api/order-interventions/orders/${encodeURIComponent(id)}`);
-    if(intervention.enabled){await window.KPSInterventions.open({oid:id,api,mutation,user:state.user,onChanged:loadPage});return;}
+    if(intervention.enabled){await openOrderIntervention(id);return;}
     modal(tr('إلغاء الطلب مع حفظ سجله','Cancel order and retain its history'),`<form>
       ${notice(tr('يبقى الطلب مرتبطًا بسائقه وسجله. إذا سُجل تحصيل أو فاتورة، تُفتح متابعة للمحاسبة؛ هذا الإجراء لا يرد مبلغًا للعميل.','The order retains its driver and history. Collections or an invoice create an accounting case; this action does not refund money.'))}
       ${textarea(tr('سبب الإلغاء ومن طلبه','Cancellation reason and requester'),'reason','',true)}
@@ -3042,7 +3054,7 @@ heading(tr('السائقون','Drivers'),tr('إدارة الموظف وفروع�
       else if(a==='remove-option-value')button.closest('.option-value').remove();
       else if(a==='prepare'){const o=state.orders.find(x=>x.id===id),status=button.dataset.status;if(state.user.delivery_context){modal(tr('تجهيز الطلب بدل الفرع','Prepare on behalf of the branch'),`<form><p>${esc(tr('أكد حالة الفرع الفعلية قبل تسجيل الإجراء. لا يثبت هذا الإجراء قبول السائق أو استلامه.','Confirm the actual branch state before recording this action. This does not record driver acceptance or pickup.'))}</p><label>${esc(tr('سبب التدخل وتأكيد حالة الفرع','Intervention reason and branch confirmation'))}<textarea name="reason" required minlength="3" maxlength="500"></textarea></label>${formEnd(status==='preparing'?tr('تحضير الطلب بدل الفرع','Prepare order for branch'):tr('تم التجهيز بدل الفرع','Mark ready for branch'))}</form>`,async(fd,form,submit)=>{await mutation(`/api/orders/${encodeURIComponent(id)}/preparation`,{status,version:o.version,reason:String(fd.get('reason')||'').trim()},submit);closeModal();await loadPage();});}else{await mutation(`/api/orders/${encodeURIComponent(id)}/preparation`,{status,version:o.version},button);closeModal();await loadPage();}}
       else if(a==='reject')await cancelOrderWithJourney(id);
-      else if(a==='order-intervention')await window.KPSInterventions.open({oid:id,api,mutation,user:state.user,onChanged:loadPage});
+      else if(a==='order-intervention')await openOrderIntervention(id);
       else if(a==='assign')await assign(id);
       else if(a==='manager-accept'){await mutation(`/api/orders/${encodeURIComponent(id)}/manager-accept`,{version:Number(button.dataset.version)},button);closeModal();await loadPage();await refreshOperationalAlerts();}
       else if(a==='handover-task')await assign(null,id);

@@ -16,13 +16,29 @@
     const history=[{id:r.id,event_type:'requested',created_at:r.created_at,actor_name:r.requested_by_name,reason_code:r.details?.reason_code},...(r.workflow?.history||[]).filter(h=>h.id!==r.id)];
     return `<details class="intervention-history"><summary>تسلسل الإجراءات (${history.length})</summary><ol>${history.map(h=>{const type=String(h.event_type||'').split('.').at(-1);return `<li><div><strong>${esc(events[h.event_type]||events[type]||h.event_type)}</strong><time>${esc(clock(h.created_at))} · الرياض</time></div><p>${esc(h.actor_name||'المسؤول المسجل')}${h.target_manager_name?' ← '+esc(h.target_manager_name):''}</p>${h.reason_code?`<p>السبب: ${esc(d.reasons?.[h.reason_code]||h.reason_code)}</p>`:''}${h.note?`<p class="intervention-note">${esc(h.note)}</p>`:''}</li>`;}).join('')}</ol></details>`;
   }
-  window.KPSInterventions={async open({oid,api,mutation,user,onChanged=()=>{},initialReason}){
+  window.KPSInterventions={async open({oid,api,mutation,user,onChanged=()=>{},initialReason,uploadEvidence}){
     const dialog=document.createElement('dialog');dialog.className='amend-dialog intervention-dialog';dialog.dir='rtl';
     dialog.innerHTML='<header><h2>معالجة الطلب</h2><button type="button" data-close aria-label="إغلاق">×</button></header><div class="amend-body"></div>';
     document.body.append(dialog);dialog.showModal();dialog.querySelector('[data-close]').onclick=()=>dialog.close();
     dialog.addEventListener('close',()=>{dialog.remove();onChanged();});
     const root=dialog.querySelector('.amend-body'),path='/api/order-interventions/orders/'+encodeURIComponent(oid);
     let d,legacyResult;
+    const mayUploadEvidence=user.role!=='driver'&&typeof uploadEvidence==='function',evidenceUploads=new WeakMap();
+    const newEvidence=()=>mayUploadEvidence?label('إرفاق صورة جديدة','<input name="evidence_image" type="file" accept="image/jpeg,image/png,image/webp">')+'<p>تُحفظ الصورة عند رفع المعاملة، دون إرسال رسالة للعميل.</p>':'';
+    async function selectedEvidence(f,form){
+      const file=mayUploadEvidence&&form.elements.evidence_image?.files?.[0];
+      if(!file)return f.get('evidence_attachment_id')||null;
+      let upload=evidenceUploads.get(file);
+      if(!upload){
+        upload=Promise.resolve().then(()=>uploadEvidence(file)).then(saved=>{
+          if(typeof saved?.id!=='string'||!saved.id.trim())throw new Error('تعذر تأكيد حفظ الصورة. أعد المحاولة.');
+          return saved.id;
+        });
+        evidenceUploads.set(file,upload);
+      }
+      try{return await upload;}
+      catch(error){if(evidenceUploads.get(file)===upload)evidenceUploads.delete(file);throw error;}
+    }
     const appendForm=(host,html,run)=>{const form=document.createElement('form');form.innerHTML=html;form.onsubmit=e=>submit(e,f=>run(f,e));host.append(form);return form;};
     async function refresh(){
       d=await api(path);if(!dialog.isConnected)return;
@@ -60,7 +76,7 @@
           });form.elements.corrected_reason_code.value=currentReason;form.elements.target_manager_id.value=preferred;section.append(box);
         }
         if(actions.has('resubmit')){
-          const form=appendForm(section,`<h4>استكمال المعاملة وإعادتها للمراجعة</h4><p>السبب الحالي: ${esc(d.reasons?.[currentReason]||currentReason)}</p>${contact(d)}${customerReasons.has(currentReason)?`<p>هذا السبب يحتاج طلب عميل أو دليل موثق قبل إعادة الرفع.</p>${evidence(d)}`:''}${label('ما الذي استُكمل؟','<textarea name="note" required minlength="3" maxlength="1500" rows="3"></textarea>')}<button>إعادة الرفع للمراجعة</button>`,f=>mutation(path+'/'+encodeURIComponent(r.id)+'/resubmit',{version:d.version,...revision,contact_result:f.get('contact_result'),note:String(f.get('note')||'').trim(),customer_request_id:f.get('customer_request_id')||null,evidence_attachment_id:f.get('evidence_attachment_id')||null}));form.elements.contact_result.value='not_contacted';
+          const form=appendForm(section,`<h4>استكمال المعاملة وإعادتها للمراجعة</h4><p>السبب الحالي: ${esc(d.reasons?.[currentReason]||currentReason)}</p>${contact(d)}${customerReasons.has(currentReason)?`<p>هذا السبب يحتاج طلب عميل أو دليل موثق قبل إعادة الرفع.</p>${evidence(d)}`:''}${newEvidence()}${label('ما الذي استُكمل؟','<textarea name="note" required minlength="3" maxlength="1500" rows="3"></textarea>')}<button>إعادة الرفع للمراجعة</button>`,async(f,e)=>mutation(path+'/'+encodeURIComponent(r.id)+'/resubmit',{version:d.version,...revision,contact_result:f.get('contact_result'),note:String(f.get('note')||'').trim(),customer_request_id:f.get('customer_request_id')||null,evidence_attachment_id:await selectedEvidence(f,e.target)}));form.elements.contact_result.value='not_contacted';
         }
         root.append(section);
       }
@@ -68,7 +84,7 @@
       const createKinds=Array.isArray(d.available_create_kinds)?d.available_create_kinds:!pending.length&&user.role!=='admin'&&!terminalCancellation&&!financialPending?(driver?['problem']:['cancel','problem']):[];
       const kinds=Object.fromEntries(Object.entries(driver?{problem:'رفع مشكلة'}:{cancel:'طلب إلغاء',problem:'متابعة مشكلة'}).filter(([kind])=>createKinds.includes(kind)));
       if(!pending.length&&Object.keys(kinds).length){
-        const form=appendForm(root,`${label('الإجراء',`<select name="kind">${options(kinds)}</select>`)}${label('السبب',`<select name="reason_code">${options(driver?Object.fromEntries(Object.entries(d.reasons).filter(([k])=>!customerReasons.has(k))):d.reasons)}</select>`)}${driver?'':contact(d)+evidence(d)+'<p>إرفاق صورة جديدة: افتح محادثة الطلب وأرفق الصورة، ثم ارجع لهذه الشاشة.</p>'}<button>رفع الطلب للمسؤول</button>`,f=>mutation(path,{version:d.version,kind:f.get('kind'),reason_code:f.get('reason_code'),contact_result:f.get('contact_result')||(f.get('reason_code')==='no_answer'?'no_answer':'not_contacted'),customer_request_id:f.get('customer_request_id')||null,evidence_attachment_id:f.get('evidence_attachment_id')||null}));
+        const form=appendForm(root,`${label('الإجراء',`<select name="kind">${options(kinds)}</select>`)}${label('السبب',`<select name="reason_code">${options(driver?Object.fromEntries(Object.entries(d.reasons).filter(([k])=>!customerReasons.has(k))):d.reasons)}</select>`)}${driver?'':contact(d)+evidence(d)+(mayUploadEvidence?newEvidence():'<p>إرفاق صورة جديدة: افتح محادثة الطلب وأرفق الصورة، ثم ارجع لهذه الشاشة.</p>')}<button>رفع الطلب للمسؤول</button>`,async(f,e)=>mutation(path,{version:d.version,kind:f.get('kind'),reason_code:f.get('reason_code'),contact_result:f.get('contact_result')||(f.get('reason_code')==='no_answer'?'no_answer':'not_contacted'),customer_request_id:f.get('customer_request_id')||null,evidence_attachment_id:await selectedEvidence(f,e.target)}));
         if(initialReason&&form.elements.reason_code.querySelector(`option[value="${initialReason}"]`))form.elements.reason_code.value=initialReason;
         if(form.elements.contact_result)form.elements.contact_result.value='not_contacted';
       }
