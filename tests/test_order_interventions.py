@@ -12,6 +12,8 @@ def test_control_is_prospective_delivery_in_both_shifts():
     assert not controlled({'service':'delivery','snapshot':{}})
     assert controlled({**base,'snapshot':{'journey_controls_version':1,'delivery_period':'morning'}})
     assert not controlled({**base,'service':'pickup'})
+    assert controlled({**base,'brand_id':'kps','snapshot':{'delivery_period':'morning'}})
+    assert not controlled({**base,'brand_id':'enbishan','snapshot':{'journey_controls_version':1,'delivery_period':'morning'}})
 
 
 def test_names_never_grant_high_authority():

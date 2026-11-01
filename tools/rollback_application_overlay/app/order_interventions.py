@@ -28,6 +28,7 @@ ContactResult=Literal['agreed','declined','no_answer','not_contacted']
 
 def controlled(o):
     return (o.get('service')=='delivery'
+            and not (o.get('brand_id')=='enbishan' and (o.get('snapshot') or {}).get('delivery_period')=='morning')
             and (o.get('brand_id')=='kps'
                  or (o.get('snapshot') or {}).get('delivery_period')=='morning'
                  or (o.get('snapshot') or {}).get('journey_controls_version')==1
@@ -384,6 +385,7 @@ def pending_cancellations(user=Depends(auth.require_roles('owner','delivery_mana
                 ORDER BY (w.details->>'workflow_revision')::int DESC,w.created_at DESC,w.id DESC LIMIT 1) w ON true
             LEFT JOIN LATERAL ({current_manager_candidate_sql()}) live_duty ON true
             WHERE o.brand_id=%s AND o.service='delivery'
+            AND (o.brand_id<>'enbishan' OR o.snapshot->>'delivery_period' IS DISTINCT FROM 'morning')
             AND (o.brand_id='kps' OR o.snapshot->>'journey_controls_version'='1' OR o.snapshot->>'delivery_period'='morning' OR %s)
             AND (%s OR o.branch_id=ANY(%s))
             AND e.event_type='intervention.requested'

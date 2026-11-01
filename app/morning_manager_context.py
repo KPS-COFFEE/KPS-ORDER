@@ -130,13 +130,14 @@ def apply(conn, user, request, *, session=False):
     module = getattr(endpoint, '__module__', '').rsplit('.', 1)[-1]
     name = getattr(endpoint, '__name__', '')
     scoped = resolve(conn, user, allow_bootstrap=session or module == 'operations' and name in {'open_shift', 'shifts'})
-    if request.method=='GET' and ((module=='order_financial_cases' and name in {'journey','inbox'}) or (module=='orders' and name=='get_order')):
+    if request.method=='GET' and ((module=='order_financial_cases' and name in {'journey','inbox'}) or (module=='orders' and name=='get_order') or (module=='order_interventions' and name=='read')):
         scoped['_morning_history_read']=True
     if module=='financial_clarifications' and name in {'listing','decide'}:
         # Evidence follow-up reads its immutable source before its own versioned
         # transition; current-duty historical provenance remains mandatory.
         scoped['_morning_history_read']=True
-    if request.method=='POST' and module=='order_financial_cases' and name=='cancel':
+    if request.method=='POST' and ((module=='order_financial_cases' and name=='cancel')
+            or (module=='order_interventions' and name=='decide')):
         scoped['_morning_cancellation_replay']=True
     if request.method=='POST' and module=='driver_incentives' and name=='decide':
         scoped['_morning_cancelled_incentive_review']=True
