@@ -88,6 +88,13 @@ def payload(url):
         'summary': s, 'status_breakdown': [{'status': state, 'count': s[state]} for state in ('completed', 'active', 'cancelled')],
         'brand_breakdown': [{'brand_id': b['id'], 'brand_name': b['name'], **summary([r for r in rows if r['brand_id'] == b['id']])}
                             for b in BRANDS if brand == 'all' or b['id'] == brand],
+        'product_sales': [{'product_id': 'qa-khaliya', 'label': 'الخلية — بيكان',
+                           'brand_name': 'كبز', 'quantity': 3, 'returned_quantity': 1,
+                           'net_quantity': 2, 'gross': 5850},
+                          {'product_id': 'qa-coffee', 'label': 'قهوة اليوم بارد',
+                           'brand_name': 'كبز', 'quantity': 5, 'returned_quantity': 0,
+                           'net_quantity': 5, 'gross': 2500}],
+        'product_sales_unallocated_refunds': 0,
         'trend': [{'day': '2026-10-28', **s}], 'rows': rows[offset:offset+limit],
         'pagination': {'offset': offset, 'limit': limit, 'total': total, 'next_offset': offset+limit if offset+limit < total else None},
         'generated_at': '2026-10-28T23:15:00+03:00', 'financial_completion_blocked': False,
@@ -158,6 +165,15 @@ def test_owner_widget_filters_pagination_refresh_faults_and_mobile_layout(width,
         expect(page.locator('#owner-dashboard')).to_have_attribute('dir', 'rtl')
         count = page.locator('.owner-metric').filter(has=page.get_by_role('heading', name='إجمالي الطلبات', exact=True)).locator('.owner-number')
         expect(count).to_have_text('3')
+        expect(page.get_by_role('heading', name='مبيعات المنتجات', exact=True)).to_be_visible()
+        assert page.locator('#owner-products tbody tr').count() == 2
+        page.get_by_role('searchbox', name='ابحث عن منتج', exact=True).fill('الخلية')
+        expect(page.locator('#owner-products tbody tr')).to_have_count(1)
+        expect(page.locator('#owner-products tbody tr')).to_contain_text('بيكان')
+        expect(page.locator('#owner-products tbody tr td').nth(1)).to_have_text('3')
+        expect(page.locator('#owner-products tbody tr td').nth(3)).to_have_text('2')
+        page.get_by_role('searchbox', name='ابحث عن منتج', exact=True).fill('')
+        expect(page.locator('#owner-products tbody tr')).to_have_count(2)
         assert page.locator('#owner-orders tbody tr').count() == 2
         expect(page.locator('[data-owner-order]').first).to_contain_text('QA-0003')
         expect(page.locator('[data-owner-order]').first).not_to_contain_text('902')

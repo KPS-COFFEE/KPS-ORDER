@@ -990,7 +990,14 @@
           options:remapped?{...mapping.options}:options,note:typeof item.note==='string'?item.note.slice(0,300):'',
           restoredName:remapped?mapping.original_name:typeof item.restoredName==='string'?item.restoredName.slice(0,100):'',rowId:key()};
       }).filter((item)=>state.products.some((product)=>product.id===item.productId)||state.legacyItemMappings[item.productId]);
-      if(state.cart.some((item)=>item.restoredName))toast(t("saved_khaliya_items_are_linked_to_their_original_types_review_the"));
+      // Former promotional placements can restore to the same product. Combine
+      // only identical selections and notes, preserving quantities and limits.
+      state.cart=state.cart.reduce((lines,item)=>{
+        const same=lines.find(line=>line.productId===item.productId&&line.note===item.note&&JSON.stringify(line.options)===JSON.stringify(item.options)&&line.quantity+item.quantity<=30);
+        if(same)same.quantity+=item.quantity;else lines.push(item);
+        return lines;
+      },[]);
+      if(state.cart.some((item)=>item.restoredName&&item.options?.TYPE))toast(t("saved_khaliya_items_are_linked_to_their_original_types_review_the"));
     } catch {}
   }
   function syncMobileBasket() {if(requestedBrandId==='enbishan'&&$('enbishan-basket-dialog')){$('mobile-basket').hidden=!state.cart.length||!!document.querySelector('dialog[open]');return;}const basket=$('basket'),viewport=window.visualViewport,height=viewport?.height||innerHeight,top=viewport?.offsetTop||0;basket.classList.toggle('basket-scroll-flow',basket.offsetHeight>height-40);const rect=basket.getBoundingClientRect(),visible=rect.bottom>top&&rect.top<top+height;$('mobile-basket').hidden=!state.cart.length||visible||state.entryEnabled&&basket.hidden;}

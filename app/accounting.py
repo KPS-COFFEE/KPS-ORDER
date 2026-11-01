@@ -60,12 +60,12 @@ def in_period(value,lo,hi):return bool(value and lo<=value<hi)
 def new_row(label):
     return dict(label=label,orders=0,correct=0,processed=0,cancelled=0,gross=0,cash=0,card=0,refund_cash=0,refund_card=0,refunds=0,price_credits=0,sales_refunds=0,sales_price_credits=0,total=0,net_sales=0,notes='')
 
-def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar',*,order_projection=False,reference_search=''):
+def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='daily',lang='ar',*,order_projection=False,reference_search='',item_projection=False):
     ds,de,lo,hi=period(start,end);bs=branches(c,u,branch_ids);bids=[b['id'] for b in bs];bn={b['id']:b['name'] for b in bs}
     # The owner dashboard authorizes historical drivers against effective tasks
     # in these execution branches before requesting this private projection.
     # Existing report endpoints retain their current-person scope policy.
-    if driver_id and not order_projection:person(c,u,driver_id,bids)
+    if driver_id and not (order_projection or item_projection):person(c,u,driver_id,bids)
     if group=='driver_statement':
         if product_id:fail('STATEMENT_FILTER','كشف السائق يشمل التقفيلة كاملة؛ أزل فلتر الصنف.')
         from .accounting_statements import statement
@@ -101,6 +101,8 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     # avoid loading every product/customer snapshot for a three-month overview.
     snapshot_sql=("jsonb_build_object('order_reference',o.snapshot->'order_reference') || "
                   "CASE WHEN o.snapshot ? 'complimentary' THEN jsonb_build_object('complimentary',o.snapshot->'complimentary') ELSE '{}'::jsonb END") if order_projection else 'o.snapshot'
+    if item_projection:
+        snapshot_sql="jsonb_build_object('order_reference',o.snapshot->'order_reference','items',o.snapshot->'items') || CASE WHEN o.snapshot ? 'complimentary' THEN jsonb_build_object('complimentary',o.snapshot->'complimentary') ELSE '{}'::jsonb END"
     q=f"""SELECT o.id,o.order_no,o.branch_id,o.created_at,o.completed_at,o.preparation_status,
       o.total_halalas,{snapshot_sql} snapshot,o.test_void,o.payment_status,o.delivery_status,t.driver_id,u.display_name driver_name,
       source.operational_date source_operational_date,source.ledger_shift_id source_ledger_shift_id,
@@ -135,18 +137,19 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
     candidates=c.execute(q,args).fetchall()
     # Hospitality/compensation are visible operational orders on the dashboard;
     # commercial finance still uses precisely the normal report population.
-    orders=[o for o in candidates if 'complimentary' not in o['snapshot']] if order_projection else candidates
+    orders=[o for o in candidates if 'complimentary' not in o['snapshot']] if (order_projection or item_projection) else candidates
     ids=[o['id'] for o in orders];order_by_id={o['id']:o for o in orders}
     allocated_ids=[o['id'] for o in orders if o['reporting_day'] and ds<=o['reporting_day']<=de]
     # Read actual timestamps unchanged, with a separate reporting-only day.
     # No upper clock cutoff may discard a late collection on the same duty.
     payment_day="CASE WHEN o.service='delivery' THEN COALESCE(m.reporting_operational_date,s.reporting_operational_date) END"
-    cols=c.execute(f"SELECT x.*,{payment_day} movement_day FROM effective_collections x JOIN orders o ON o.id=x.order_id LEFT JOIN shifts s ON s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE x.order_id=ANY(%s) AND (x.created_at<%s OR {payment_day} BETWEEN %s AND %s OR x.order_id=ANY(%s)) ORDER BY x.created_at,x.id",(ids,hi,ds,de,allocated_ids)).fetchall()
+    cols=[] if item_projection else c.execute(f"SELECT x.*,{payment_day} movement_day FROM effective_collections x JOIN orders o ON o.id=x.order_id LEFT JOIN shifts s ON s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE x.order_id=ANY(%s) AND (x.created_at<%s OR {payment_day} BETWEEN %s AND %s OR x.order_id=ANY(%s)) ORDER BY x.created_at,x.id",(ids,hi,ds,de,allocated_ids)).fetchall()
     refs=c.execute(f"SELECT x.*,u.display_name actor_name,{payment_day} movement_day FROM refunds x JOIN orders o ON o.id=x.order_id JOIN users u ON u.id=x.authorized_by LEFT JOIN shifts s ON s.id=x.shift_id AND s.kind IN ('driver','manager') AND s.brand_id=o.brand_id LEFT JOIN shifts m ON m.id=s.manager_shift_id AND m.kind='manager' AND m.brand_id=s.brand_id WHERE x.order_id=ANY(%s) AND (x.created_at<%s OR {payment_day} BETWEEN %s AND %s) ORDER BY x.created_at,x.id",(ids,hi,ds,de)).fetchall()
     from .refund_line_values import with_allocated_quantities
     if not order_projection:refs=with_allocated_quantities(c,refs)
-    tickets=c.execute('SELECT DISTINCT order_id FROM support_tickets WHERE order_id=ANY(%s) AND created_at<%s' if order_projection else 'SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
-    events=[] if order_projection else c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
+    tickets=[] if item_projection else c.execute('SELECT DISTINCT order_id FROM support_tickets WHERE order_id=ANY(%s) AND created_at<%s' if order_projection else 'SELECT t.*,u.display_name actor_name FROM support_tickets t JOIN users u ON u.id=t.created_by WHERE order_id=ANY(%s) AND t.created_at<%s',(ids,hi)).fetchall()
+    events=(c.execute("SELECT details FROM order_events WHERE order_id=ANY(%s) AND event_type='order.refund'",
+                      (list({r['order_id'] for r in refs}),)).fetchall() if item_projection else []) if (order_projection or item_projection) else c.execute('SELECT e.*,u.display_name actor_name FROM order_events e LEFT JOIN users u ON u.id=e.actor_id WHERE order_id=ANY(%s) AND e.created_at<%s ORDER BY e.created_at,e.id',(ids,hi)).fetchall()
     from .order_financial_treatments import price_credit_rows
     credits=[r for r in price_credit_rows(c,ids) if r['created_at']<hi]
     paid=defaultdict(int);refunded=defaultdict(int);treated={t['order_id'] for t in tickets}|{r['order_id'] for r in credits}
@@ -159,7 +162,9 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         if x.get('amendment_id'):paid[x['order_id']]-=x['amount_halalas']
         else:refunded[x['order_id']]+=x['amount_halalas'];treated.add(x['order_id'])
     from .item_sales import new_item,add_line
-    rows={};items={};om={o['id']:o for o in orders};projected={}
+    rows={};items={};om={o['id']:o for o in orders};projected={};ambiguous_item_returns=set()
+    def commercial_fulfilled(order):
+        return bool(order['completed_at'] or order['source_operational_date']) and order['preparation_status'] not in ('cancelled','rejected') and order['delivery_status']!='cancelled'
     def day_boundary(day):
         return datetime.combine(day,time(4),TZ) if day else None
     def source_day_boundary(o):
@@ -219,8 +224,15 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
             accumulate(order,recognized,sales_refunds=x['amount_halalas'])
         if not in_period(reported_refund,lo,hi):continue
         accumulate(order,reported_refund,refunds=x['amount_halalas'],**{'refund_'+x['method']:x['amount_halalas']})
-        if order_projection:continue
+        if order_projection or (item_projection and not commercial_fulfilled(order)):continue
         for pid,qty in x['line_quantities'].items():
+            if item_projection:
+                original=[line for line in order['snapshot'].get('items',[]) if line['product_id']==pid]
+                paid_lines=[line for line in original if not line.get('is_gift') and int(line.get('line_total_halalas',0))>0 and order['total_halalas']>0]
+                if not paid_lines:continue
+                if len(paid_lines)!=len(original):
+                    ambiguous_item_returns.add((order['id'],pid))
+                    continue
             if product_id and pid!=product_id:continue
             if pid not in items:
                 name=next((i.get('name',pid) for i in om[x['order_id']]['snapshot'].get('items',[]) if i['product_id']==pid),pid)
@@ -232,11 +244,12 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         recognized=sales_adjustment_at(completion,credit['created_at'])
         if in_period(recognized,lo,hi):accumulate(order,recognized,sales_price_credits=credit['credit_halalas'])
         if in_period(credit['created_at'],lo,hi):accumulate(order,credit['created_at'],price_credits=credit['credit_halalas'])
-        if order_projection:continue
+        if order_projection or (item_projection and not commercial_fulfilled(order)):continue
         if in_period(credit['created_at'],lo,hi) and credit['details'].get('source')=='delivery_partial_return':
             order=om[credit['order_id']]
             for line in credit['details']['lines']:
                 original=order['snapshot']['items'][line['line_index']];pid=original['product_id']
+                if item_projection and (original.get('is_gift') or int(original.get('line_total_halalas',0))==0 or order['total_halalas']==0):continue
                 if product_id and pid!=product_id:continue
                 if pid not in items:items[pid]=new_item(pid,original.get('name') or pid)
                 items[pid]['returned_quantity']+=line['quantity']
@@ -275,6 +288,13 @@ def build(c,u,start='',end='',branch_ids='',driver_id='',product_id='',group='da
         for n in range((de-ds).days+1):
             day=(ds+timedelta(days=n)).isoformat()
             rows.setdefault(day,{**new_row(day),'day':day})
+    if item_projection:
+        # Private owner projection reuses the item ledger without expanding
+        # driver deficits or actions. An unallocated refund never invents units.
+        from .refund_line_values import unallocated_prior_ids
+        period_refs=[r for r in refs if commercial_fulfilled(om[r['order_id']]) and in_period(movement_boundary(r,om[r['order_id']]),lo,hi)]
+        unresolved=unallocated_prior_ids(period_refs,events)
+        return {'rows':list(items.values()),'unallocated_refund_count':len(unresolved)+len(ambiguous_item_returns)}
     deficits=deficit_rows(c,u,lo,hi,bids,driver_id,lang)
     if group=='daily':
         for d in deficits:

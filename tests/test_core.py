@@ -161,7 +161,7 @@ class TestPostgreSQLCore:
         assert len({branch['id'] for branch in branches}) == 20
         assert all(not branch['services']['delivery']['available'] for branch in branches)
         catalog_response = client.get('/api/catalog').json()
-        assert len(catalog_response['products']) == 34
+        assert len(catalog_response['products']) == 31
         assert catalog_response['source_verified'] is True
         assert client.get('/ready').json()['ordering_configured'] is False
 

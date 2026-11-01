@@ -33,6 +33,40 @@ DELIVERY_CITIES = {'حفر الباطن', 'الذيبية', 'القيصومة', 
 FINAL_MENU_APPROVAL_ID = 'owner-final-2026-10-10'
 FINAL_MENU_MANIFEST_SHA256 = '57d67963b0ac752a179ffe60ce25f81fe06ab1b6c19a161769bd39fd4cd870f6'
 KHALIYA_SOURCES = {'classic': 'kps-34', 'pecan': 'kps-33'}
+# The imported menu stored promotional placements as separate product rows.
+# Keep those source IDs for historical orders and old baskets; new menu entries
+# use the ordinary category's identity only when their current terms agree.
+KPS_PRODUCT_ALIASES = {'kps-01': 'kps-08', 'kps-02': 'kps-05', 'kps-03': 'kps-21'}
+
+
+def canonical_product_id(brand_id, product_id):
+    return KPS_PRODUCT_ALIASES.get(product_id, product_id) if brand_id == 'kps' else product_id
+
+
+def collapse_menu_aliases(products):
+    """Read-only presentation collapse, never stock or pricing redirection.
+
+    Deliberate later differences remain separate. In particular, do not replace
+    an available placement with an unavailable canonical product, or change a
+    saved basket's options. Old API IDs continue through their own quote checks.
+    """
+    by_id = {p['id']: p for p in products if p.get('brand_id') == 'kps'}
+    aliases = {}
+    fields = ('name', 'price_halalas', 'option_groups', 'variants',
+              'variant_price_matrix', 'available_cities', 'enabled',
+              'source_verified', 'lifecycle', 'available', 'unavailable_reason', 'pickup_only')
+    for source_id, target_id in KPS_PRODUCT_ALIASES.items():
+        source, target = by_id.get(source_id), by_id.get(target_id)
+        if not source or not target:
+            continue
+        # Legacy basket remapping is safe only for these option-free products.
+        if source.get('option_groups') or source.get('variants') or source.get('variant_price_matrix'):
+            continue
+        if any(source.get(field) != target.get(field) for field in fields):
+            continue
+        aliases[source_id] = {'product_id': target_id, 'options': {},
+                              'original_name': source['name'], 'kind': 'placement_alias'}
+    return [p for p in products if not (p.get('brand_id') == 'kps' and p['id'] in aliases)], aliases
 
 
 def menu_display_order(products, brand_id):
@@ -492,8 +526,9 @@ def catalog(brand_id: str | None = Query(default=None, max_length=80), branch_id
                            if key in {'accent', 'background', 'text', 'font', 'profile'}}
     # This allowlisted projection already consists entirely of JSON values.
     # Serialize it once here instead of traversing it again on the event loop.
+    public_products, placement_mappings = collapse_menu_aliases(public_products)
     return JSONResponse({'brand': safe_brand, 'products': public_products,
-            'legacy_item_mappings': legacy_item_mappings(products),
+            'legacy_item_mappings': legacy_item_mappings(products) | placement_mappings,
             'source_verified': bool(public_products) and all(p['source_verified'] for p in public_products)})
 
 

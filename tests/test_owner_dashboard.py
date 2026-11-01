@@ -394,3 +394,111 @@ def test_grant_narrowed_or_revoked_during_snapshot_is_rechecked_before_response(
         monkeypatch.setattr(accounting, 'build', original_build)
         current = dashboard(actor, brand_id='all')
         assert ids(current) == ({visible} if change == 'narrow' else set())
+
+
+@pytest.mark.postgres
+def test_product_sales_complete_quantities_exclude_free_pending_and_cancelled(ops):
+    actor, _, _, _ = ops
+    def items(qty, gift=False):
+        return [{'product_id': 'ops-product', 'name': 'Synthetic coffee',
+                 'quantity': qty, 'line_total_halalas': 500*qty,
+                 'unit_price_halalas': 500, 'is_gift': gift}]
+    with db.tx() as c:
+        shift = duty(c, 'product-sales')
+        sale(c, 'product-paid', shift, 1500, DAY+'T18:00:00',
+             snapshot={'items': items(3)})
+        sale(c, 'product-pending', shift, 1000, DAY+'T18:00:00', complete=False,
+             snapshot={'items': items(2)})
+        sale(c, 'product-cancelled', shift, 1500, DAY+'T18:00:00', cancelled=True,
+             snapshot={'items': items(3)})
+        sale(c, 'product-free', shift, 0, DAY+'T18:00:00',
+             snapshot={'items': items(4), 'complimentary': {'kind': 'completion'}})
+        sale(c, 'product-gift', shift, 1000, DAY+'T18:00:00',
+             snapshot={'items': items(2, True)})
+    result = dashboard(actor)
+    row = next(row for row in result['product_sales'] if row['product_id'] == 'ops-product')
+    assert row['quantity'] == 3
+    assert row['gross'] == 1500
+    assert row['returned_quantity'] == 0
+    assert row['net_quantity'] == 3
+    assert row['gift_quantity'] == 2
+    assert result['product_sales_unallocated_refunds'] == 0
+    assert all(row['quantity'] == 0 for row in dashboard(actor, search='OD-product-pending')['product_sales'])
+
+
+def test_product_sales_aliases_only_join_within_explicit_brand():
+    from app.owner_dashboard import merge_product_rows
+    rows = [{'product_id': 'kps-02', 'label': 'Cold', 'quantity': 3, 'gross': 1500},
+            {'product_id': 'kps-05', 'label': 'Daily cold', 'quantity': 2, 'gross': 1000,
+             'returned_quantity': 1}]
+    result = merge_product_rows(rows, {'id': 'kps', 'name': 'KPS'})
+    assert len(result) == 1
+    assert result[0]['quantity'] == 5
+    assert result[0]['net_quantity'] == 4
+    assert result[0]['gross'] == 2500
+    assert result[0]['label'] == 'Daily cold'
+    assert merge_product_rows(rows, {'id': 'kps', 'name': 'KPS'}, 1)[0]['net_quantity'] is None
+    assert len(merge_product_rows(rows, {'id': 'enbishan', 'name': 'Enbishan'})) == 2
+
+
+@pytest.mark.postgres
+def test_product_returns_use_documented_quantities_and_unallocated_money_stays_unknown(ops):
+    actor, _, _, _ = ops
+    with db.tx() as c:
+        shift = duty(c, 'product-return')
+        oid = sale(c, 'product-return', shift, 1500, DAY+'T18:00:00', DAY+'T18:10:00',
+                   snapshot={'items': [{'product_id': 'ops-product', 'name': 'Coffee',
+                                         'quantity': 3, 'line_total_halalas': 1500,
+                                         'unit_price_halalas': 500}]})
+        collection = c.execute('SELECT id FROM collections WHERE order_id=%s', (oid,)).fetchone()['id']
+        c.execute("INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,reason,authorized_by,created_at,line_quantities) "
+                  "VALUES('od-documented-return',%s,%s,%s,'card',500,'synthetic','ops-owner',%s,%s)",
+                  (collection, oid, shift, at(DAY+'T19:00:00'), db.json({'ops-product': 1})))
+    row = next(r for r in dashboard(actor)['product_sales'] if r['product_id'] == 'ops-product')
+    assert (row['quantity'], row['returned_quantity'], row['net_quantity']) == (3, 1, 2)
+    with db.tx() as c:
+        c.execute("INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,reason,authorized_by,created_at) "
+                  "VALUES('od-unallocated-return',%s,%s,%s,'card',100,'synthetic','ops-owner',%s)",
+                  (collection, oid, shift, at(DAY+'T19:30:00')))
+    result = dashboard(actor)
+    row = next(r for r in result['product_sales'] if r['product_id'] == 'ops-product')
+    assert row['returned_quantity'] == 1
+    assert row['net_quantity'] is None
+    assert result['product_sales_unallocated_refunds'] == 1
+
+
+@pytest.mark.postgres
+def test_product_partial_return_does_not_subtract_gift_units_from_paid_sales(ops):
+    actor, _, _, _ = ops
+    with db.tx() as c:
+        shift = duty(c, 'mixed-gift-return')
+        oid = sale(c, 'mixed-gift-return', shift, 1000, DAY+'T18:00:00',
+                   snapshot={'items': [
+                       {'product_id': 'ops-product', 'name': 'Coffee', 'quantity': 2,
+                        'line_total_halalas': 1000, 'unit_price_halalas': 500},
+                       {'product_id': 'ops-product', 'name': 'Gift coffee', 'quantity': 1,
+                        'line_total_halalas': 0, 'unit_price_halalas': 0, 'is_gift': True}]})
+        c.execute("INSERT INTO audit_events(id,actor_id,action,entity_type,entity_id,details,created_at) "
+                  "VALUES(%s,'ops-owner','accounting.order_financial_treatment.approved','order',%s,%s,%s)",
+                  (uuid4().hex, oid, db.json({'kind': 'price_correction',
+                   'source': 'delivery_partial_return', 'credit_halalas': 500,
+                   'lines': [{'line_index': 0, 'quantity': 1}, {'line_index': 1, 'quantity': 1}]}), at(DAY+'T19:00:00')))
+    result = dashboard(actor)
+    row = next(r for r in result['product_sales'] if r['product_id'] == 'ops-product')
+    assert (row['quantity'], row['returned_quantity'], row['net_quantity']) == (2, 1, 1)
+    assert row['gift_quantity'] == 1
+
+
+@pytest.mark.postgres
+def test_product_refund_of_cancelled_deposit_does_not_reverse_a_sale(ops):
+    actor, _, _, _ = ops
+    with db.tx() as c:
+        shift = duty(c, 'cancelled-deposit')
+        oid = sale(c, 'cancelled-deposit', shift, 500, DAY+'T18:00:00', DAY+'T18:01:00', cancelled=True)
+        collection = c.execute('SELECT id FROM collections WHERE order_id=%s', (oid,)).fetchone()['id']
+        c.execute("INSERT INTO refunds(id,collection_id,order_id,shift_id,method,amount_halalas,reason,authorized_by,created_at,line_quantities) "
+                  "VALUES(%s,%s,%s,%s,'card',500,'synthetic','ops-owner',%s,%s)",
+                  (uuid4().hex, collection, oid, shift, at(DAY+'T19:00:00'), db.json({'ops-product': 1})))
+    result = dashboard(actor)
+    assert all(row['quantity'] == row['returned_quantity'] == row['net_quantity'] == 0 for row in result['product_sales'])
+    assert result['product_sales_unallocated_refunds'] == 0

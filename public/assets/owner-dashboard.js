@@ -15,6 +15,7 @@
     let host = null, scope = null, data = null, dataKey = '', sequence = 0;
     let controller = null, searchTimer = null, requestPromise = null, lastFetch = 0;
     let filters = null, options = {brands:[],cities:[],branches:[],drivers:[]};
+    let productSearch = '';
     let language = '', dateDraft = false, loading = false, error = '', stale = false;
     const renderedHTML = new WeakMap();
     const tr = (ar,en) => getLang() === 'en' ? en : ar;
@@ -58,6 +59,7 @@
     }
 
     function reset() {
+      productSearch = '';
       pause(); data = null; dataKey = ''; filters = null; scope = null; lastFetch = 0;
       options = {brands:[],cities:[],branches:[],drivers:[]}; error = ''; stale = false; dateDraft = false;
       if (host) { host.replaceChildren(); host.removeAttribute('aria-busy'); }
@@ -88,6 +90,11 @@
           <section id="owner-finance-context" class="owner-finance-context" aria-label="${escape(tr('تفاصيل التحصيل والضيافة','Collections and complimentary orders'))}"></section>
           <div class="owner-analysis"><section id="owner-status-chart" class="owner-panel" aria-label="${escape(tr('توزيع حالات الطلبات','Order status distribution'))}"></section><section id="owner-brand-breakdown" class="owner-panel" aria-label="${escape(tr('الأرقام حسب البراند','Values by brand'))}"></section></div>
         </div>
+        <section class="owner-panel owner-details" aria-labelledby="owner-products-title">
+          <div class="owner-section-heading"><div><h2 id="owner-products-title">${escape(tr('مبيعات المنتجات','Product sales'))}</h2><p>${escape(tr('نفس الفترة والفرع والمدينة والسائق المحددين أعلاه. الكمية من الطلبات المكتملة؛ دون الملغي والضيافة والهدايا.','Uses the period, branch, city and driver above. Completed commercial quantities only; excludes cancellations, complimentary orders and gifts.'))}</p></div></div>
+          <div class="owner-table-tools"><label for="owner-product-search"><span>${escape(tr('ابحث عن منتج','Find a product'))}</span><input id="owner-product-search" type="search" maxlength="120" value="${escape(productSearch)}" placeholder="${escape(tr('مثال: الخلية','Example: Khaliya'))}"></label></div>
+          <div id="owner-products"></div>
+        </section>
         <section id="owner-details" class="owner-panel owner-details" aria-labelledby="owner-orders-title">
           <div class="owner-section-heading"><div><span class="owner-eyebrow">${escape(tr('من المؤشرات إلى التفاصيل','FROM OVERVIEW TO DETAIL'))}</span><h2 id="owner-orders-title">${escape(tr('الطلبات والحركات','Orders and movements'))}</h2><p id="owner-rows-note">${escape(tr('نفس البراند والفترة والفلاتر المختارة أعلاه.','The same brand, period and filters selected above.'))}</p></div><span id="owner-record-count" class="owner-record-count"></span></div>
           <div class="owner-table-tools"><label for="owner-search"><span>${escape(tr('البحث في جميع النتائج','Search all results'))}</span><input id="owner-search" type="search" maxlength="120" autocomplete="off" placeholder="${escape(tr('رقم الطلب أو المرجع','Order number or reference'))}" value="${escape(filters.search)}" aria-describedby="owner-search-note"></label><label for="owner-sort"><span>${escape(tr('ترتيب النتائج','Sort results'))}</span><select id="owner-sort">${[[sorts[0],tr('الأحدث أولًا','Newest first')],[sorts[1],tr('الأقدم أولًا','Oldest first')],[sorts[2],tr('الأعلى قيمة','Highest value')],[sorts[3],tr('الأقل قيمة','Lowest value')]].map(([value,label]) => `<option value="${value}"${filters.sort === value ? ' selected' : ''}>${escape(label)}</option>`).join('')}</select></label><p id="owner-search-note">${escape(tr('يُطبّق البحث على المؤشرات والتفاصيل معًا.','Search applies to both the metrics and details.'))}</p></div>
@@ -137,6 +144,7 @@
     function renderLoading() {
       setHTML('#owner-metrics',Array.from({length:6},(_,index) => `<div class="owner-metric owner-skeleton${index < 2 ? ' owner-metric-featured' : ''}" aria-hidden="true"><span></span><strong></strong><span></span></div>`).join(''));
       setHTML('#owner-finance-context','');
+      setHTML('#owner-products',`<p role="status">${escape(tr('جاري تحميل مبيعات المنتجات…','Loading product sales…'))}</p>`);
       setHTML('#owner-status-chart',`<h3>${escape(tr('حالات الطلبات','Order status'))}</h3><div class="owner-chart-placeholder" aria-hidden="true"></div>`);
       setHTML('#owner-brand-breakdown',`<h3>${escape(tr('حسب البراند','By brand'))}</h3><div class="owner-chart-placeholder" aria-hidden="true"></div>`);
       setHTML('#owner-orders',`<div class="owner-empty owner-loading" role="status">${escape(tr('جاري تحميل النتائج…','Loading results…'))}</div>`);
@@ -145,6 +153,7 @@
 
     function renderError() {
       if (data && dataKey === key()) return;
+      setHTML('#owner-products','');
       setHTML('#owner-metrics',''); setHTML('#owner-finance-context',''); setHTML('#owner-status-chart',''); setHTML('#owner-brand-breakdown','');
       setHTML('#owner-orders',`<div class="owner-empty owner-error"><strong>${escape(tr('تعذر تحميل البيانات','Could not load data'))}</strong><p>${escape(tr('أعد المحاولة لعرض أرقام مؤكدة من النظام.','Retry to load confirmed values from the system.'))}</p><button type="button" class="quiet" data-owner-action="refresh">${escape(tr('إعادة المحاولة','Try again'))}</button></div>`);
       setHTML('#owner-pagination',''); setHTML('#owner-record-count','');
@@ -189,6 +198,16 @@
       setHTML('#owner-brand-breakdown',`<div class="owner-section-heading"><div><h3>${escape(tr('الأداء حسب البراند','Performance by brand'))}</h3><p>${escape(tr('نفس الفترة والفلاتر','Same period and filters'))}</p></div></div>${brands.length ? `<div class="owner-brand-table"><div class="owner-brand-table-head"><span>${escape(tr('البراند / الطلبات','Brand / orders'))}</span><span>${escape(tr('صافي المبيعات','Net sales'))}</span><span>${escape(tr('صافي التحصيل','Net collected'))}</span></div>${brands.map(brand => `<div class="owner-brand-line"><div><strong>${escape(brand.brand_name)}</strong><span><bdi>${number(brand.orders)}</bdi> ${escape(tr('طلب','orders'))}</span></div><strong>${money(brand.net_sales_halalas)}</strong><strong>${money(brand.net_collected_halalas)}</strong></div>`).join('')}</div>` : `<div class="owner-chart-empty">${escape(tr('لا توجد نتائج للبراندات المختارة.','No results for the selected brands.'))}</div>`}`);
     }
 
+    function renderProducts() {
+      const query = productSearch.trim().toLocaleLowerCase();
+      const rows = (data.product_sales || []).filter(row => !query || [row.label,row.product_id,row.brand_name].some(value => String(value || '').toLocaleLowerCase().includes(query)));
+      const columns = [tr('المنتج','Product'),tr('المباع','Sold'),tr('المرتجع الموثق','Documented returns'),tr('صافي الكمية','Net quantity'),tr('قيمة الأصناف','Item value')];
+      const td = (index,content) => `<td data-label="${escape(columns[index])}">${content}</td>`;
+      const warning = data.product_sales_unallocated_refunds ? `<p class="owner-notice owner-notice-warning">${escape(tr('توجد استردادات لم توثق كمياتها؛ صافي الكمية غير مؤكد حتى تخصيص المحاسبة للأصناف.','Some refunds have no documented item quantities. Net quantity remains unconfirmed until accounting allocates them.'))}</p>` : '';
+      const note = `<p>${escape(tr('المرتجع حسب يوم تنفيذه وقد يخص مبيعات سابقة. قيمة الأصناف قبل خصومات الطلب وتسوياته ورسوم التوصيل؛ لا تمثل صافي التحصيل.','Returns follow their execution day and may relate to earlier sales. Item values precede order discounts, adjustments and delivery fees; they are not net collections.'))}</p>`;
+      setHTML('#owner-products',warning + (rows.length ? `<div class="owner-table-scroll" tabindex="0" role="region" aria-label="${escape(tr('جدول مبيعات المنتجات','Product sales table'))}"><table class="owner-table"><caption class="owner-visually-hidden">${escape(tr('مبيعات المنتجات ضمن الفترة والفلاتر الحالية','Product sales for the current period and filters'))}</caption><thead><tr>${columns.map(label => `<th scope="col">${escape(label)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${td(0,`<strong>${escape(row.label)}</strong><small>${escape(row.brand_name)}</small>`)}${td(1,number(row.quantity))}${td(2,number(row.returned_quantity))}${td(3,number(row.net_quantity))}${td(4,money(row.gross))}</tr>`).join('')}</tbody></table></div>` : `<p class="owner-empty">${escape(tr('لا توجد منتجات مطابقة.','No matching products.'))}</p>`) + note);
+    }
+
     function renderRows() {
       const rows = data.rows || [], pagination = data.pagination || {};
       const columns = [tr('الطلب','Order'),tr('اليوم التشغيلي','Operational date'),tr('الفرع / المدينة','Branch / city'),tr('السائق','Driver'),tr('الحالة','Status'),tr('قيمة الفاتورة','Invoice value'),tr('صافي تحصيل الفترة','Period net collected'),tr('استرداد الفترة','Period refunds')];
@@ -205,7 +224,7 @@
     }
 
     function renderData() {
-      renderMeta(); renderMetrics(); renderCharts(); renderRows();
+      renderMeta(); renderMetrics(); renderCharts(); renderProducts(); renderRows();
       if (data.financial_completion_blocked) showNotice(tr('توجد تقفيلات مشتركة معلّقة. الأرقام المعروضة لا تعني اكتمال الإقفال المالي.','Shared closures are pending. These values do not confirm final financial closure.'),'warning');
       else showNotice();
     }
@@ -254,6 +273,11 @@
     }
 
     function handleInput(event) {
+      if (event.target.id === 'owner-product-search') {
+        productSearch = event.target.value;
+        if (data && dataKey === key()) renderProducts();
+        return;
+      }
       if (event.target.id === 'owner-start' || event.target.id === 'owner-end') {
         dateDraft = true;
         showNotice(tr('التواريخ المعدلة لم تُطبّق بعد. اضغط تطبيق الفترة لتحديث المؤشرات.','Date changes are not applied yet. Select Apply period to update the metrics.'),'warning');
