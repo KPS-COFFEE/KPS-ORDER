@@ -68,7 +68,7 @@ def test_independent_color_stop_global_and_branch_rechecks_order_and_preserves_h
     client, mutate = owner
     _ready_branches(mutate)
     previous = _product(client)
-    assert len(client.get('/api/catalog').json()['products']) == 34
+    assert len(client.get('/api/catalog').json()['products']) == 31
     owner_cookies, owner_csrf = dict(client.cookies), client.headers['X-CSRF-Token']
     client.cookies.clear()
     client.headers.pop('X-CSRF-Token', None)
@@ -120,7 +120,7 @@ def test_independent_color_stop_global_and_branch_rechecks_order_and_preserves_h
         assert saved['snapshot']['items'][0]['units'][0]['option_snapshot']['COLOR']['choices'][0]['code'] == 'BLK'
         assert conn.execute('SELECT count(*) n FROM orders').fetchone()['n'] == 1
     db.migrate()
-    assert len(client.get('/api/catalog').json()['products']) == 34
+    assert len(client.get('/api/catalog').json()['products']) == 31
     restarted = _product(client)
     assert restarted['settings']['option_groups'][0]['values'] == groups[0]['values']
     assert client.post('/api/quote', json=_body()).status_code == 409

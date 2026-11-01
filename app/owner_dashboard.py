@@ -187,6 +187,30 @@ def add_order(target, order):
             target['complimentary_value_halalas'] += value
 
 
+def merge_product_rows(rows, brand, unallocated_refunds=0):
+    """Explicit aliases join historical IDs; names alone never merge products."""
+    grouped = {}
+    fields = ('quantity', 'returned_quantity', 'gross', 'gift_quantity',
+              'hospitality_quantity', 'advertising_quantity',
+              'compensation_quantity', 'zero_value_quantity')
+    for item in rows:
+        pid = catalog.canonical_product_id(brand['id'], item['product_id'])
+        target = grouped.setdefault(pid, dict(product_id=pid, label=item['label'],
+            brand_id=brand['id'], brand_name=brand['name'],
+            **{field: 0 for field in fields}))
+        if item['product_id'] == pid:
+            target['label'] = item['label']
+        for field in fields:
+            target[field] += item.get(field, 0)
+    output = []
+    for row in grouped.values():
+        row['net_quantity'] = None if unallocated_refunds else row['quantity'] - row['returned_quantity']
+        # Keep active zero-sales products discoverable; archived aliases have
+        # already joined their canonical row and never duplicate quantities.
+        output.append(row)
+    return output
+
+
 @router.get('')
 def overview(
     response: Response,
@@ -234,7 +258,8 @@ def overview(
         summary = empty_summary()
         trend = {(first + timedelta(days=n)).isoformat(): empty_summary()
                  for n in range((last - first).days + 1)}
-        breakdown, rows = [], []
+        breakdown, rows, product_rows = [], [], []
+        unallocated_product_refunds = 0
         financial_completion_blocked = False
         branches_by_id = {branch['id']: branch for branch in selected_branches}
         from .aggregate_driver_closure import pending_financial_rows
@@ -250,6 +275,14 @@ def overview(
                 branch_ids=','.join(bids), driver_id=driver_id,
                 order_projection=True, reference_search=search,
             )
+            item_report = accounting.build(
+                conn, scope['principal'], first.isoformat(), last.isoformat(),
+                branch_ids=','.join(bids), driver_id=driver_id, group='items',
+                reference_search=search, item_projection=True,
+            )
+            unallocated_product_refunds += item_report['unallocated_refund_count']
+            product_rows.extend(merge_product_rows(item_report['rows'], brand,
+                                item_report['unallocated_refund_count']))
             financial_completion_blocked = bool(pending_financial_rows(
                 conn, brand_id=brand['id'], branch_ids=bids, before=projection['period']['until'],
             )) or financial_completion_blocked
@@ -293,6 +326,8 @@ def overview(
                                  for status in ('completed', 'active', 'cancelled')],
             'trend': [dict(day=day, **values) for day, values in trend.items()],
             'brand_breakdown': breakdown,
+            'product_sales': sorted(product_rows, key=lambda row: (-row['quantity'], row['label'], row['product_id'])),
+            'product_sales_unallocated_refunds': unallocated_product_refunds,
             'rows': page,
             'pagination': {'offset': offset, 'limit': limit, 'total': total, 'next_offset': next_offset},
             'generated_at': datetime.now(service_hours.RIYADH),

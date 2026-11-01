@@ -117,6 +117,8 @@ jobs:
       - name: Verify existing session recovery, revocation and page loading
         run: >-
           node --test
+          tests/test_catalog_placement_cart.cjs
+          tests/test_owner_dashboard_actions.cjs
           tests/test_manager_notifications_ui.cjs
           tests/test_admin_supervision_ui.cjs
           tests/test_alert_permission_poll.cjs

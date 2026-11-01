@@ -79,7 +79,7 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
         page.goto('/')
         expect(page.locator('html')).to_have_attribute('lang', 'ar')
         expect(page.locator('html')).to_have_attribute('dir', 'rtl')
-        expect(page.locator('.product-card')).to_have_count(34)
+        expect(page.locator('.product-card')).to_have_count(31)
         expect(page.locator('#announcement-ticker')).not_to_be_visible()
         expect(page.locator('#brand-logo')).to_be_visible()
         expect(page.locator('#banner-area')).to_be_visible()
@@ -120,7 +120,7 @@ def test_customer_language_guest_car_order_arrival_chat_and_persistence(live_app
             id:el.dataset.productId,image:el.querySelector('img')?.getAttribute('src'),
             title:el.querySelector('h3')?.textContent}))""")
         assert [(c['id'], c['image']) for c in translated_cards] == [(c['id'], c['image']) for c in source_cards]
-        assert translated_cards[0]['title'] == 'Cold Brew'
+        assert next(card for card in translated_cards if card['id'] == 'kps-08')['title'] == 'Cold Brew'
         assert all(not re.search(r'[\u0600-\u06ff]', c['title']) for c in translated_cards)
         assert 'Drinks' in page.locator('#categories').inner_text()
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')

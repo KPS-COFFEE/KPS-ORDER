@@ -47,7 +47,7 @@ def test_owner_image_is_exact_original_and_web_copy_is_present():
 def test_final_catalog_one_card_exact_types_image_source_approval_and_no_branch_invention(client):
     result = client.get('/api/catalog?branch_id=kps-branch-2').json()
     assert result['source_verified'] is True
-    assert len(result['products']) == 34
+    assert len(result['products']) == 31
     assert not any(p['id'] == 'kps-34' for p in result['products'])
     parent = next(p for p in result['products'] if p['id'] == 'kps-33')
     assert parent['name'] == 'الخلية'

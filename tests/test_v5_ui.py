@@ -59,7 +59,7 @@ def test_v5_guest_zoom_focus_orientation_and_delivery_neighborhood(live_app, chr
     context, page, errors = _context(chromium_browser, live_app)
     try:
         page.goto('/')
-        expect(page.locator('.product-card')).to_have_count(34)
+        expect(page.locator('.product-card')).to_have_count(31)
         fonts = _assert_real_fonts(page)
         page.locator('#branch-select').select_option('kps-branch-1')
         page.wait_for_timeout(150)

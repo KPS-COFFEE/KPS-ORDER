@@ -61,7 +61,7 @@ def test_owner_authorizes_manager_executes_once_and_customer_copy_has_no_amounts
         form.locator('[name=lng]').fill('45.9')
         form.locator('[name=reason]').fill('TEST PRIVATE missing or damaged item')
         form.locator('[data-menu-category=coffee]').click()
-        form.locator('.staff-menu-photo[data-menu-add="kps-01"]').click()
+        form.locator('.staff-menu-photo[data-menu-add="kps-08"]').click()
         expect(form.locator('#staff-cart > div')).to_have_count(1)
         with owner_page.expect_response(lambda response:response.url.endswith('/api/orders/complimentary/quote')) as quoted:
             form.locator('[type=submit]').click()

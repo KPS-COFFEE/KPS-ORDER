@@ -97,7 +97,7 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
     from playwright.sync_api import expect
     context,page,errors = _context(chromium_browser,live_app)
     page.goto('/')
-    expect(page.locator('.product-card')).to_have_count(34)
+    expect(page.locator('.product-card')).to_have_count(31)
     original_styles = _settled_store_appearance(page)
     original = page.screenshot(path=str(ARTIFACTS/'original-store-1280.png'),animations='disabled')
     page.set_viewport_size({'width':390,'height':900})
@@ -105,7 +105,7 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
     page.screenshot(path=str(ARTIFACTS/'original-menu-390.png'))
     page.set_viewport_size({'width':1280,'height':900})
     page.goto('/?theme=CHARCOAL')
-    expect(page.locator('.product-card')).to_have_count(34)
+    expect(page.locator('.product-card')).to_have_count(31)
     page.evaluate('document.fonts.ready')
     assert page.evaluate('getComputedStyle(document.body).backgroundColor') == 'rgb(38, 38, 38)'
     _capture_theme(page,'store')
@@ -179,7 +179,7 @@ def test_appearance_real_customer_owner_rollback_and_all_staff_pages(live_app, c
                 # Owner versus anonymous header differs. Compare in a fresh session.
                 restored_ctx,restored_page,_=_context(chromium_browser,live_app)
                 restored_page.goto('/')
-                expect(restored_page.locator('.product-card')).to_have_count(34)
+                expect(restored_page.locator('.product-card')).to_have_count(31)
                 assert _settled_store_appearance(restored_page) == original_styles
                 restored=restored_page.screenshot(path=str(ARTIFACTS/'original-restored-1280.png'),animations='disabled')
                 # Decode actual pixels; Chromium can vary rounded-edge antialias

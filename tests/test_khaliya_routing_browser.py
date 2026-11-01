@@ -28,6 +28,7 @@ def test_explicit_pickup_transfer_preserves_basket(live_app,chromium_browser,ser
         expect(page.locator('#branch-select')).to_have_value('kps-branch-2')
         expect(card.locator('.product-add-button')).to_be_enabled()
         saved=page.evaluate("JSON.parse(localStorage.getItem('kps-unconfirmed-basket-v2:kps')).cart")
-        assert len(saved)==1 and saved[0]['productId']=='kps-01' and saved[0]['quantity']==2
+        # The saved promotional ID keeps its own server stock identity after transfer.
+        assert len(saved)==1 and saved[0]['productId']=='kps-01' and saved[0]['quantity']==2 and saved[0]['note']=='keep me'
         assert not errors
     finally:context.close()
