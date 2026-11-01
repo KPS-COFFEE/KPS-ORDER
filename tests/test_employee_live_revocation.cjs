@@ -285,3 +285,16 @@ test('a session response for another principal revokes instead of replacing iden
   assert.equal(t.state.user,null);
   assert.equal(t.modal.children.length,0);
 });
+
+
+test('an offline recovery waits for connectivity without repeatedly queueing session reads',async()=>{
+  const t=setup();t.context.window.navigator={onLine:false};
+  t.events.get('offline')();
+  await t.context.refreshEmployeeAccess();
+  assert.equal(t.calls.length,0);
+  assert.equal(t.attrs.has('data-work-access-pending'),true);
+  t.context.window.navigator.onLine=true;t.events.get('online')();
+  await new Promise(r=>setImmediate(r));
+  assert.equal(t.calls.length,1);
+  assert.equal(t.attrs.has('data-work-access-pending'),false);
+});

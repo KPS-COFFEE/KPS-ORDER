@@ -146,3 +146,12 @@
 
 .ac-statement-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:12px 0}.ac-statement-metrics>div{padding:12px;background:#f8f6f3;border-radius:10px;min-width:0}.ac-statement-metrics dt{font-size:.82rem;color:#675246}.ac-statement-metrics dd{margin:6px 0 0;font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums}.ac-driver-statement{min-width:0;margin-block:16px}.ac-driver-statement details{min-width:200px}.ac-driver-statement .ac-text{white-space:pre-wrap}.ac-driver-statement table{min-width:1100px}.ac-driver-statement td{white-space:nowrap}.ac-driver-statement td:last-child{white-space:normal}
 @media(max-width:650px){.ac-driver-statement .ac-table{overflow:visible}.ac-driver-statement table,.ac-driver-statement tbody,.ac-driver-statement tr,.ac-driver-statement td{display:block;min-width:0;width:auto}.ac-driver-statement thead{display:none}.ac-driver-statement tr{margin-block:14px;border:1px solid #e5ddd5;border-radius:12px;padding:10px}.ac-driver-statement td{display:flex;justify-content:space-between;gap:12px;padding:8px;border:0;white-space:normal;overflow-wrap:anywhere}.ac-driver-statement td::before{content:attr(data-label);font-size:.8rem;color:#675246;flex:0 0 45%}.ac-driver-statement td:last-child{display:block}.ac-driver-statement td:last-child::before{display:none}.ac-driver-statement details{min-width:0}}
+.ac-shift-meta{line-height:1.8;overflow-wrap:anywhere;color:var(--muted,#605951)}
+.ac-card-blockers{padding:12px 16px;margin:12px 0;border-inline-start:4px solid #b65a21;background:#fff6e9;border-radius:8px}
+.ac-card-blockers ul{margin:8px 0 0;padding-inline-start:22px;line-height:1.8}
+.ac-driver-heading>strong small{display:block;font-weight:normal;margin-top:5px}
+.ac-card-pages{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:12px;margin:18px 0}
+
+@media(max-width:650px){.ac-driver-statement tfoot{display:block}.ac-driver-statement tfoot th{display:block;padding:8px}.ac-driver-statement tfoot tr{background:#f5f0e9}}
+
+.accounting.ac-direct-statement .ac-tabs{display:none}

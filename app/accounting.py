@@ -11,7 +11,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Request, Response, UploadFile, File
+from fastapi import APIRouter, Depends, Request, Query, Response, UploadFile, File
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool
 from . import auth, db, service_hours
 from .operations import safe
@@ -392,7 +392,7 @@ def options(user=Depends(case_access)):
 
 Group=Literal['daily','branch','items','driver','driver_daily','driver_incentives','driver_incentive_details','deficits','actions','complimentary','driver_statement']
 @router.get('/reports')
-def reports(start:str='',end:str='',branch_ids:str='',driver_id:str='',product_id:str='',group:Group='daily',lang:Literal['ar','en']='ar',format:Literal['json','pdf','xlsx']='json',driver_ids:str='',variance:Literal['all','shortage','pending','outstanding']='all',user=Depends(access)):
+def reports(start:str='',end:str='',branch_ids:str='',driver_id:str='',product_id:str='',group:Group='daily',lang:Literal['ar','en']='ar',format:Literal['json','pdf','xlsx']='json',driver_ids:str='',variance:Literal['all','shortage','shortage_any','pending','outstanding']='all',user=Depends(access)):
     with db.tx() as c:
         c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         data=build(c,user,start,end,branch_ids,driver_id,product_id,group,lang)
@@ -596,7 +596,7 @@ def months(user=Depends(access)):
         return safe({'rows':[r for r in c.execute('SELECT id,month,branch_ids,reason,created_at FROM accounting_months WHERE brand_id=%s ORDER BY month DESC',(user['brand_id'],)).fetchall() if set(r['branch_ids'])<=bids]})
 
 @router.get('/months/{identifier}')
-def month(identifier:str,group:Group='driver_daily',driver_id:str='',format:Literal['json','pdf','xlsx']='json',lang:Literal['ar','en']='ar',driver_ids:str='',variance:Literal['all','shortage','pending','outstanding']='all',user=Depends(access)):
+def month(identifier:str,group:Group='driver_daily',driver_id:str='',format:Literal['json','pdf','xlsx']='json',lang:Literal['ar','en']='ar',driver_ids:str='',variance:Literal['all','shortage','shortage_any','pending','outstanding']='all',user=Depends(access)):
     with db.tx() as c:
         r=c.execute('SELECT * FROM accounting_months WHERE id=%s AND brand_id=%s',(identifier,user['brand_id'])).fetchone()
         if not r or not set(r['branch_ids'])<={b['id'] for b in branches(c,user)}:fail('MONTH_SCOPE','الكشف غير متاح.',404)
@@ -1087,10 +1087,14 @@ def confirm_driver_variance(report_id:str,body:DriverVarianceConfirmation,reques
 
 
 @router.get('/manager-cards')
-def accounting_manager_cards(user=Depends(access)):
+def accounting_manager_cards(offset:int=Query(0,ge=0),page_size:int=Query(20,ge=1,le=50),focus_id:str=Query('',max_length=150),user=Depends(access)):
     from .accounting_statements import manager_cards
     with db.tx() as c:
-        return manager_cards(c,user,[b['id'] for b in branches(c,user)])
+        bids=[b['id'] for b in branches(c,user)]
+        result=manager_cards(c,user,bids,page_size=page_size,offset=offset)
+        if focus_id and not any(card['id']==focus_id for card in result['cards']):
+            result['cards'].extend(manager_cards(c,user,bids,manager_shift_ids=[focus_id])['cards'])
+        return result
 
 
 @router.post('/driver-settlements/{report_id}/extend-deadline')

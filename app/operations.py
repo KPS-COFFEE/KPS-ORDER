@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import json as jsonlib
 from uuid import uuid4
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator
 from . import db, auth, service_hours, shift_vehicle, shift_order_counts, blind_closure
 
@@ -1888,6 +1888,26 @@ class AuthorizedCash(OperationBody):
     amount_halalas:StrictInt=Field(ge=-MAX_HALALAS-1,le=MAX_HALALAS)
     reason:str=Field(min_length=1,max_length=2000)
     reference:str=Field(min_length=1,max_length=200)
+
+@router.get('/operations/replay-status')
+def replay_status(response: Response, key: str = Query(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_.:-]+$'), user=Depends(auth.current_user)):
+    """Opaque commit receipt only; never return a historical mutation payload.
+
+    A missing row is deliberately NOT permission to resend changed data: the
+    original request might still be executing. Canonical same-key replay owns
+    atomic verification and execution. Membership/session remain live here.
+    """
+    roles(user, 'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver')
+    response.headers['Cache-Control'] = 'private, no-store'
+    from . import multibrand
+    plain_brand = 'kps' if multibrand.enabled() else user['brand_id']
+    with db.tx() as c:
+        recorded = bool(c.execute(
+            "SELECT 1 FROM idempotency_keys WHERE user_id=%s AND key=%s AND "
+            "((%s=%s AND operation NOT LIKE 'brand:%%') OR (operation LIKE 'brand:%%' AND split_part(operation,':',2)=%s)) LIMIT 1",
+            (user['id'], key, user['brand_id'], plain_brand, user['brand_id'])).fetchone())
+    return {'recorded': recorded}
+
 
 @router.post('/shifts/{sid}/cash-event')
 def authorized_cash(sid:str,body:AuthorizedCash,request:Request,user=Depends(auth.current_user)):

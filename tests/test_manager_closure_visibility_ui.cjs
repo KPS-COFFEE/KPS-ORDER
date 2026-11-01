@@ -9,7 +9,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
   const base={day:'2026-10-28',drivers:[],total:0,review_completed:0,completed:0,completion_percent:0,balance_completed:0,cash_completed:0,overdue_count:0,ready:false,pending_driver_count:1};
   const cards=[{...base,id:'ali',manager_name:'علي',period:'evening',shift_no:'M-440',financial_ledger_closed:false},
     {...base,id:'ahmed',manager_name:'أحمد عبدالناصر',period:'morning',financial_ledger_closed:true,manager_report_id:'saved-report'}];
-  const context={host,tab,api:async()=>({cards}),options:{can_review:true},user:{id:'accountant'},tr,esc,text:(ar,en)=>esc(tr(ar,en)),money:v=>(v/100).toFixed(2),dateTime:()=>'',settlementStates:()=>({}),bindSettlementActions:()=>{}};
+  const context={saveManagerCardView:()=>{},window:{scrollY:0,scrollTo:()=>{}},managerCardOffset:0,managerCardFocus:'',managerCardOpenIds:new Set(),URLSearchParams,host,tab,api:async()=>({cards}),options:{can_review:true},user:{id:'accountant'},tr,esc,text:(ar,en)=>esc(tr(ar,en)),money:v=>(v/100).toFixed(2),dateTime:()=>'',settlementStates:()=>({}),bindSettlementActions:()=>{}};
   vm.createContext(context);vm.runInContext(code,context);await context.loadManagerCards();
   assert(html.includes('علي')&&html.includes('أحمد عبدالناصر'));
   assert(html.includes(tr('صباحي','Morning'))&&html.includes(tr('مسائي','Evening')));

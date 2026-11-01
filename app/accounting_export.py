@@ -48,11 +48,11 @@ LABELS={
  'advertising_quantity':('كمية الإعلان','Advertising quantity'),'compensation_quantity':('كمية التعويض','Compensation quantity'),
  'zero_value_quantity':('كمية صفرية أخرى','Other zero-value quantity'),
  'weekday':('اليوم','Day'),'period':('الفترة بتوقيت الرياض','Period, Riyadh')}
-LABELS.update(system_total=('المطلوب حسب النظام','System amount due'),shift_references=('الشفتات','Shifts'),branch_names=('الفروع','Branches'))
+LABELS.update(approval_status=('اعتماد يوم المدير','Manager-day approval'),approval_references=('مراجع اعتماد اليوم','Day approval references'),system_total=('المطلوب حسب النظام','System amount due'),shift_references=('الشفتات','Shifts'),branch_names=('الفروع','Branches'))
 MONEY={'system_total','price_credits','outstanding_receivable_halalas','outstanding_payable_halalas','bank','cash_due','cash_received','pending_cash','violations','traffic','gross','cash','card','refund_cash','refund_card','refunds','total','net_sales','shortage','surplus','pending_shortage','pending_surplus','approved_shortage','amount','delivery_value','payable'}
 COMMON=['orders','correct','processed','cancelled','cash','card','refund_cash','refund_card','total','gross','price_credits','net_sales','notes']
 COLUMNS={
- 'driver_statement':['driver','day','branch_names','shift_references','completed_orders','system_total','refund_cash','refund_card','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','outstanding_receivable_halalas','outstanding_payable_halalas','status','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
+ 'driver_statement':['driver','day','branch_names','shift_references','completed_orders','system_total','refund_cash','refund_card','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','outstanding_receivable_halalas','outstanding_payable_halalas','status','approval_status','approval_references','notes','incident_notes','violations','traffic_notes','traffic','adjustments'],
  'complimentary':['day','label','kind','branch','driver','amount','delivery_value','payable','treatment','reason','authorized_name','authorized_at','original_invoice_number','original_order_id','actor','action','notes'],
  'driver_incentives':['label','eligible','excluded','pending_review','awaiting_approval','open_shifts','cumulative','tier_1','tier_2','tier_3','tier_4'],
  'driver_incentive_details':['day','driver','label','review','responsibility','reason','actor'],'daily':['weekday','day','period',*COMMON], 'branch':['label',*COMMON], 'driver':['label',*COMMON],
@@ -67,6 +67,8 @@ def presentation(data,lang='ar'):
     keys=COLUMNS[data['group']];rows=[]
     for source in data['rows']:
         r=dict(source)
+        if data['group']=='driver_statement':
+            for key in ('approval_status','approval_references'):r.setdefault(key,('غير موثقة','Not recorded')[lang=='en'])
         for key in ('system_total','refund_cash','refund_card','price_credits','outstanding_receivable_halalas','outstanding_payable_halalas'):
             if key in keys:r.setdefault(key,('غير موثقة','Not recorded')[lang=='en'])
         if data['group']=='complimentary':
@@ -121,9 +123,20 @@ def render(data,format,lang):
     title=('المحاسبة - ' if lang=='ar' else 'Accounting - ')+titles[data['group']][lang=='en']
     headers=[column_label(data,k,lang) for k in keys]
     summary={keys[0]:'الإجمالي / Total',**totals}
-    values=[[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k), (int,float)) else r.get(k,'') for k in keys] for r in [*rows,summary]]
+    export_rows=rows
+    if data['group']=='driver_statement':
+        export_rows=[]
+        for driver in dict.fromkeys(r['driver_id'] for r in rows):
+            entries=[r for r in rows if r['driver_id']==driver]
+            _,_,subtotal=presentation({**data,'rows':entries},lang)
+            export_rows.extend(entries)
+            export_rows.append({keys[0]:('إجمالي السائق / ' if lang=='ar' else 'Driver total / ')+entries[0]['driver'],**subtotal})
+    values=[[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k), (int,float)) else r.get(k,'') for k in keys] for r in [*export_rows,summary]]
     units="" if data['group'].startswith('driver_incentive') else "SAR | "
     meta=f"{data['period']['start']} — {data['period']['end']} | Asia/Riyadh | "+units+('كشف مقفل / Closed statement' if data.get('frozen') else 'تقرير مباشر / Live report')
+    if data['group']=='driver_statement':
+        meta+=' | '+('الفروع: ' if lang=='ar' else 'Branches: ')+', '.join(b['name'] for b in data.get('branches',[]))
+        meta+=' | '+str(data.get('applied_filters',{}).get('variance','all'))
     definitions=data['definitions']
     if data['group']=='driver_statement':
         # Present the scope for old frozen statements too, preserving their data.
@@ -138,7 +151,7 @@ def render(data,format,lang):
         for driver in dict.fromkeys(r['driver_id'] for r in rows):
             entries=[r for r in rows if r['driver_id']==driver]
             for section_keys in (['day','branch_names','shift_references','system_total','refund_cash','refund_card'],['day','completed_orders','bank','cash_due','cash_received','pending_cash','shortage','surplus','pending_shortage','pending_surplus','status'],
-                                 ['day','outstanding_receivable_halalas','outstanding_payable_halalas','status'],
+                                 ['day','outstanding_receivable_halalas','outstanding_payable_halalas','status','approval_status','approval_references'],
                                  ['day','notes','incident_notes','violations','traffic_notes','traffic'],['day','adjustments']):
                 section_rows=[[LABELS[k][lang=='en'] for k in section_keys]]
                 section_rows += [[r.get(k,'')/100 if k in MONEY and isinstance(r.get(k),(int,float)) else r.get(k,'') for k in section_keys] for r in entries]
@@ -150,6 +163,11 @@ def render(data,format,lang):
                     return sum(r.get(key,0) for r in entries) if key=='completed_orders' else ''
                 section_rows.append([('الإجمالي' if lang=='ar' else 'Total') if i==0 else section_total(k) for i,k in enumerate(section_keys)])
                 sections.append(dict(title=entries[0]['driver'],keys=section_keys,rows=section_rows))
+        if rows:
+            # A shared grand total across all selected drivers complements each driver's daily subtotal.
+            for summary_keys in (['driver','completed_orders','system_total','refund_cash','refund_card','bank','cash_due','cash_received'],['driver','pending_cash','shortage','surplus','pending_shortage','pending_surplus','outstanding_receivable_halalas','outstanding_payable_halalas','violations','traffic']):
+                summary_values=[('إجمالي المحددين' if lang=='ar' else 'Selected total') if k=='driver' else totals.get(k,'')/100 if k in MONEY and isinstance(totals.get(k),(int,float)) else totals.get(k,'') for k in summary_keys]
+                sections.append(dict(title=('إجمالي السواقين المحددين' if lang=='ar' else 'Selected driver totals'),keys=summary_keys,rows=[[LABELS[k][lang=='en'] for k in summary_keys],summary_values]))
         return pdf([headers,*values],keys,title,meta,definitions,lang,sections=sections or None,compact=True)
     return pdf([headers,*values],keys,title,meta,definitions,lang)
 

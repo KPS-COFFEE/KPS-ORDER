@@ -215,8 +215,13 @@ def _find_session(conn, request: Request):
             user['operations_brands'] = available_brands
             from .central_operations import context as central_context
             user['central_operations'] = central_context(conn, user, available_brands=available_brands)
-            from .central_workdays import drain_metadata
-            user['central_workday_drain'] = drain_metadata(conn,user)
+            # Drain groups are presentation metadata returned by /session only.
+            # Computing them on every alert/order/GPS read repeated historical
+            # shift lookups before the actual operation could even start. Every
+            # canonical endpoint still reads current membership and record scope.
+            if request.url.path == '/api/session':
+                from .central_workdays import drain_metadata
+                user['central_workday_drain'] = drain_metadata(conn,user)
     return user
 
 
