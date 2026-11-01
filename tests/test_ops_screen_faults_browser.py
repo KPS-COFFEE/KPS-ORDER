@@ -5,10 +5,22 @@ Set TEST_CHROMIUM_EXECUTABLE for a preinstalled Chromium; no production requests
 """
 import os
 import re
+import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def wait_for_held_order_route(page, control, timeout_ms=5000):
+    """Pump browser events until interception occurs, independent of CI speed."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not control['held']:
+        assert time.monotonic() < deadline, 'Expected an intercepted order refresh before exercising its race'
+        # Playwright dispatches Python route callbacks while pumping its event
+        # loop. Stop as soon as the route exists, rather than assuming a request
+        # was issued within an arbitrary 100ms sleep on a busy runner.
+        page.wait_for_timeout(10)
 
 
 def run_acceptance(root=ROOT):
@@ -91,14 +103,17 @@ def run_acceptance(root=ROOT):
                 control['session']='ok';page.evaluate('()=>qa.refreshEmployeeAccess()')
                 expect(page.locator('#app-shell')).to_have_css('visibility','visible')
                 expect(page.locator('#work-access-recovery')).not_to_be_visible()
+            page.wait_for_function('()=>qa.state.loading===false')
             control['orders']='hold';page.evaluate('()=>{window.first=qa.loadPage(true)}')
-            page.wait_for_timeout(100);assert control['held']
+            wait_for_held_order_route(page,control)
             calls=control['calls'];page.evaluate('()=>qa.loadPage(true)');assert control['calls']==calls
             page.locator('input[name=start]').fill('2026-10-02')
             control['held'].pop().fulfill(json={'orders':[],'next_offset':None})
             page.evaluate('()=>window.first')
             assert page.locator('input[name=start]').input_value()=='2026-10-02'
-            page.evaluate('()=>{window.first=qa.loadPage(true)}');page.wait_for_timeout(100)
+            page.wait_for_function('()=>qa.state.loading===false')
+            page.evaluate('()=>{window.first=qa.loadPage(true)}')
+            wait_for_held_order_route(page,control)
             page.evaluate("()=>{qa.state.page='interventionInbox';void qa.loadPage()}")
             control['held'].pop().fulfill(json={'orders':[],'next_offset':None})
             page.evaluate('()=>window.first')
