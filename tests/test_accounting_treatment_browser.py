@@ -32,6 +32,10 @@ def test_treatment_forms_preserve_evidence_and_independent_decisions(lang,width)
           await KPSAccounting.open(ctx);
         }''',lang)
         page.locator('[data-ac=settlements]').click()
+        # Follow the accountant's actual shift-card entry before driver actions.
+        card=page.locator('[data-manager-card=manager]')
+        card.locator('summary').click()
+        expect(card).to_have_js_property('open',True)
         page.locator('[data-variance-confirm]').click()
         page.locator('[data-treatment-propose]').click()
         form=page.locator('[data-treatment-form]')
