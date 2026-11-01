@@ -335,3 +335,6 @@ from . import order_interventions
 app.include_router(order_interventions.router)
 from . import preparation_routing
 app.include_router(preparation_routing.router)
+
+from . import owner_employee_activity
+app.include_router(owner_employee_activity.router)
