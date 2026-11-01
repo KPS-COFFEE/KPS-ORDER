@@ -1570,6 +1570,8 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
                 o=scoped(c,oid,user,True)
                 pending=case(c,oid)
                 if not pending or pending['status']!='pending':fail(409,'يلزم ملف معالجة مالية معلق')
+                if pending['kind']=='customer_request_review':
+                    raise db.error(409,'REQUEST_REVIEW_ONLY','إحالة طلب العميل للمراجعة لا تمنح صلاحية رد مبلغ.')
             else:
                 o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone();order_access(c,user,o)
             from .order_amendments import active,balance as paid_balance
@@ -1615,7 +1617,8 @@ def refund(oid:str,body:Refund,request:Request,user=Depends(auth.current_user)):
                 from .order_financial_cases import accounting,case
                 financial_case=case(c,oid)
                 postclose_card=(body.method=='card' and body.shift_id is None and not body.amendment_id
-                    and s['status']=='closed' and accounting(user) and financial_case and financial_case['status']=='pending')
+                    and s['status']=='closed' and accounting(user) and financial_case and financial_case['status']=='pending'
+                    and financial_case['kind']!='customer_request_review')
                 if postclose_card:
                     # No new cash custody exists: retain collection lineage, never reopen the saved shift.
                     sid=None

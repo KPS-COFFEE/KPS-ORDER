@@ -24,6 +24,19 @@ const ctx={state:{user:{role:'delivery_manager'}},tr:(a,e)=>e,esc,money:n=>(n/10
  await ctx.resolveFinancialCase('o1','enbishan');await submit(new Map([['reason','Actual refund matched']]));
  assert.equal(writes.at(-1)[2].brand,'enbishan');
  assert.match(source,/else if\(a==='reject'\)await cancelOrderWithJourney\(id\)/);
+ const originalApi=ctx.api;
+ ctx.api=async()=>({cases:[{id:'terminal-review',order_no:'O-R',financial_case:{kind:'customer_request_review',review_only:true,status:'pending',reason:'Formal review',pending_amount_halalas:0}}]});
+ await ctx.financialCases('enbishan');
+ assert.match(dialog,/Document customer request review/);assert.match(dialog,/data-kind="customer_request_review"/);
+ assert.doesNotMatch(dialog,/data-action="case-refund"|data-action="case-recover"/);
+ await ctx.resolveFinancialCase('terminal-review','enbishan','customer_request_review');
+ assert.match(dialog,/does not refund or collect money/);
+ const writeCount=writes.length;
+ await submit(new Map([['reason','Formal review completed, no funds posted']]));
+ assert.equal(writes.length,writeCount+1);
+ assert.equal(writes.at(-1)[0],'/api/order-financial-cases/orders/terminal-review/resolve');
+ assert.deepEqual(JSON.parse(JSON.stringify(writes.at(-1)[1])),{reason:'Formal review completed, no funds posted'});
+ assert.equal(writes.at(-1)[2].brand,'enbishan');ctx.api=originalApi;
  console.log('PASS: retained cancellation, version/physical attestation, accounting scope and role restrictions.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 

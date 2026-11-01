@@ -136,6 +136,10 @@ def apply(conn, user, request, *, session=False):
         # Evidence follow-up reads its immutable source before its own versioned
         # transition; current-duty historical provenance remains mandatory.
         scoped['_morning_history_read']=True
+    if request.method=='POST' and module=='order_requests' and name=='decide':
+        # Closed-order follow-up changes the request decision only; historical
+        # duty and accepted-handover provenance still constrain this read.
+        scoped['_morning_history_read']=True
     if request.method=='POST' and ((module=='order_financial_cases' and name=='cancel')
             or (module=='order_interventions' and name=='decide')):
         scoped['_morning_cancellation_replay']=True
