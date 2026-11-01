@@ -12,6 +12,7 @@ def filter_statement(data, driver_ids='', variance='all'):
         raise db.error(422, 'STATEMENT_FILTER', 'اختر عددًا صالحًا من السائقين.')
     predicates = {
         'all': lambda row: True,
+        'shortage_any': lambda row: row.get('shortage', 0) > 0 or row.get('pending_shortage', 0) > 0,
         'shortage': lambda row: row.get('shortage', 0) > 0,
         'pending': lambda row: row.get('pending_shortage', 0) > 0,
         'outstanding': lambda row: row.get('outstanding_receivable_halalas', 0) > 0,
@@ -101,6 +102,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
     rows=source_rows(c,user,bids,ds,de,manager_shift_id)
     if driver_id:rows=[r for r in rows if r['user_id']==driver_id]
     changes=histories(c,user,rows)
+    approvals={r['manager_shift_id']:r['id'] for r in c.execute('SELECT id,manager_shift_id FROM accounting_daily_closures WHERE brand_id=%s AND manager_shift_id=ANY(%s)',(user['brand_id'],list({r['manager_shift_id'] for r in rows}))).fetchall()}
     cases=c.execute("""SELECT a.*,u.display_name driver_name FROM accounting_cases a
       JOIN users u ON u.id=a.subject_id WHERE a.brand_id=%s AND a.branch_id=ANY(%s)
       AND a.occurred_on BETWEEN %s AND %s AND u.role='driver' ORDER BY a.occurred_on,a.case_no""",
@@ -122,7 +124,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
                 completed_orders=0,bank=0,cash_due=0,cash_received=0,pending_cash=0,shortage=0,surplus=0,pending_shortage=0,pending_surplus=0,
                 violations=0,traffic=0,notes='',incident_notes='',traffic_notes='',adjustments='',
                 pending_balance=0,pending_receipt=0,closure_count=0,manager='',status=('No recorded closure' if en else 'لا توجد تقفيلة مسجلة'),
-                outstanding_receivable_halalas=0,outstanding_payable_halalas=0,unresolved_channel_count=0)
+                outstanding_receivable_halalas=0,outstanding_payable_halalas=0,unresolved_channel_count=0,approved_closure_count=0,approval_references='')
             daily[identifier,day].update(system_total=0,refund_cash=0,refund_card=0,shift_references='',branch_names='')
     # Delivered order IDs are selected once across all tasks, avoiding duplicate
     # counts when orders were reassigned or split across collection records.
@@ -167,6 +169,10 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             item['adjustments']+=f"{confirmation['actor_name']} · {confirmation['created_at'].astimezone(TZ).strftime('%Y/%m/%d %H:%M')} · {confirmation['details'].get('action_taken','')} · {confirmation['details'].get('reason','')}\n"
         item['pending_balance']+=int(not v['balance_approved']);item['pending_receipt']+=int(not v['cash_recorded'])
         item['closure_count']+=1
+        if r['manager_shift_id'] in approvals:
+            item['approved_closure_count']+=1
+            reference=approvals[r['manager_shift_id']]
+            if reference not in item['approval_references'].split(' / '):item['approval_references']+=(' / ' if item['approval_references'] else '')+reference
         item['manager']+=(' / ' if item['manager'] else '')+r['manager_name']
         notes=[(r['snapshot'].get('shift',{}).get('submission') or {}).get('notes','')]
         notes.extend(e['note'] for e in history)
@@ -196,6 +202,7 @@ def statement(c,user,ds,de,bids,bs,driver_id='',lang='ar',manager_shift_id=''):
             f"{'Cash due' if en else 'الكاش المطلوب'}: {before} {e['before_cash']/100:.2f} / {after} {e['after_cash']/100:.2f}; " + \
             f"{'Received' if en else 'المستلم'}: {before} {('—' if e['before_received'] is None else format(e['before_received']/100,'.2f'))} / {after} {('—' if e['after_received'] is None else format(e['after_received']/100,'.2f'))}\n"
     for item in daily.values():
+        item['approval_status']=(('No recorded closure' if en else 'لا توجد تقفيلة مسجلة') if not item['closure_count'] else ('Manager-day approval saved' if en else 'اعتماد يوم المدير محفوظ') if item['approved_closure_count']==item['closure_count'] else ('Some manager days await approval' if en else 'بعض أيام المدير بانتظار الاعتماد') if item['approved_closure_count'] else ('Awaiting manager-day accounting approval' if en else 'بانتظار اعتماد المحاسبة ليوم المدير'))
         if item['closure_count']:
             item['status']=('Review approved — outstanding under follow-up' if en else 'المراجعة معتمدة — مبلغ مستحق تحت المتابعة') if item['outstanding_receivable_halalas'] or item['outstanding_payable_halalas'] else ('Channel difference under review' if en else 'فرق الكاش والشبكة تحت المراجعة') if item['unresolved_channel_count'] else ('Pending balance' if en else 'بانتظار الموازنة') if item['pending_balance'] else ('Pending cash' if en else 'بانتظار الكاش') if item['pending_receipt'] else ('Variance pending confirmation' if en else 'فرق بانتظار تأكيد المحاسب') if item['pending_shortage'] or item['pending_surplus'] else ('Cash and recorded-card review approved' if en else 'مراجعة الكاش والشبكة المسجلة معتمدة')
     output=sorted(daily.values(),key=lambda r:(r['driver'],r['driver_id'],r['day']))
@@ -231,18 +238,20 @@ def closure_deadline(row, local, extension=None):
     return dict(shift_end_at=end,deadline_policy=policy,original_due_at=original,due_at=due,extension=extension)
 
 
-def manager_cards(c,user,bids,manager_shift_ids=None):
+def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
     from .accounting import driver_settlement_values,variance_confirmation,cash_correction_requests,can_request_cash_correction,TZ
     from .catalog import normalize_city
     from .operations import safe
-    rows=source_rows(c,user,bids,manager_shift_ids=manager_shift_ids)
-    changes=histories(c,user,rows);groups={}
-    local={b['id'] for b in c.execute('SELECT id,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall() if normalize_city(b['city'])=='حفر الباطن'}
+    groups={}
+    branch_rows=c.execute('SELECT id,name,city FROM branches WHERE brand_id=%s',(user['brand_id'],)).fetchall()
+    branch_names={b['id']:b['name'] for b in branch_rows}
+    local={b['id'] for b in branch_rows if normalize_city(b['city'])=='حفر الباطن'}
     approved={r['manager_shift_id']:r for r in c.execute('SELECT id,manager_shift_id,created_at FROM accounting_daily_closures WHERE brand_id=%s',(user['brand_id'],)).fetchall()}
     # Physical completion enters accounting immediately. A manager awaiting bag
     # allocation must remain visible even without a final financial snapshot.
     q="""SELECT m.id,m.status,(to_jsonb(m)->>'staffing_ended_at')::timestamptz staffing_ended_at,m.shift_no,m.delivery_window_snapshot,
-        m.branch_ids,u.display_name manager_name,m.reporting_operational_date AS "day",
+        m.branch_ids,m.opened_at,m.closed_at,m.scheduled_end_at,u.display_name manager_name,
+        coalesce(m.reporting_operational_date,m.delivery_operational_date,(m.opened_at AT TIME ZONE 'Asia/Riyadh'-interval '4 hours')::date) AS "day",
         (SELECT count(*) FROM shifts child WHERE child.manager_shift_id=m.id AND child.kind='driver') expected_driver_count,
         (SELECT r.id FROM closure_reports r WHERE r.shift_id=m.id AND r.kind='manager' ORDER BY r.version DESC,r.created_at DESC LIMIT 1) manager_report_id
         FROM shifts m JOIN users u ON u.id=m.user_id
@@ -250,13 +259,25 @@ def manager_cards(c,user,bids,manager_shift_ids=None):
         AND m.branch_ids ?| %s"""
     args=[user['brand_id'],bids]
     if manager_shift_ids is not None:q+=' AND m.id=ANY(%s)';args.append(manager_shift_ids)
-    for manager in c.execute(q,args).fetchall():
+    if user['role']!='owner' or user.get('home_brand_id'):
+        q+=' AND m.branch_ids <@ %s::jsonb';args.append(db.json(user.get('branch_ids',[])))
+    q+=' ORDER BY EXISTS(SELECT 1 FROM accounting_daily_closures a WHERE a.manager_shift_id=m.id),"day" DESC,m.id'
+    if page_size is not None:q+=' LIMIT %s OFFSET %s';args.extend([page_size+1,offset])
+    manager_rows=c.execute(q,args).fetchall()
+    has_more=page_size is not None and len(manager_rows)>page_size
+    if page_size is not None:manager_rows=manager_rows[:page_size]
+    for manager in manager_rows:
         if (user['role']!='owner' or user.get('home_brand_id')) and not set(manager['branch_ids'])<=set(user.get('branch_ids',[])):continue
         groups[manager['id']]=dict(id=manager['id'],manager_name=manager['manager_name'],day=manager['day'],
             period=(manager['delivery_window_snapshot'] or {}).get('period','evening'),
             shift_no=manager['shift_no'],manager_report_id=manager['manager_report_id'],
+            opened_at=manager['opened_at'],closed_at=manager['closed_at'] or manager['staffing_ended_at'],
+            scheduled_end_at=manager['scheduled_end_at'],branch_ids=manager['branch_ids'],
+            branch_names=[branch_names.get(b,b) for b in manager['branch_ids']],
             operationally_closed=True,financial_ledger_closed=manager['status']=='closed',
             expected_driver_count=manager['expected_driver_count'],drivers=[],approved_day=approved.get(manager['id']),due_on=None)
+    rows=source_rows(c,user,bids,manager_shift_ids=list(groups))
+    changes=histories(c,user,rows)
     extensions={r['entity_id']:r for r in c.execute("SELECT a.*,u.display_name actor_name FROM audit_events a JOIN users u ON u.id=a.actor_id WHERE a.action='accounting.deadline.extended' AND a.entity_id=ANY(%s)",([r['id'] for r in rows],)).fetchall()}
     for r in rows:
         history=changes[r['id']]
@@ -271,21 +292,55 @@ def manager_cards(c,user,bids,manager_shift_ids=None):
         group=groups.setdefault(r['manager_shift_id'],dict(id=r['manager_shift_id'],manager_name=r['manager_name'],day=r['day'],drivers=[],approved_day=approved.get(r['manager_shift_id']),due_on=None))
         tickets=cash_correction_requests(c,user,r['id'])
         may_request=can_request_cash_correction(c,user,r['id'])
-        group['drivers'].append(dict(id=r['id'],user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,cash_correction_requests=tickets,can_request_cash_correction=may_request,**v,**deadline))
+        group['drivers'].append(dict(id=r['id'],shift_id=r['shift_id'],completed_orders=(r['snapshot'].get('summary') or {}).get('completed_orders',0),user_id=r['user_id'],driver_name=r['driver_name'],day=r['day'],history=history,variance_pending=variance_pending,variance_confirmation=confirmation,cash_correction_requests=tickets,can_request_cash_correction=may_request,**v,**deadline))
+    # Show the precise missing driver record and its owner, rather than an
+    # unexplained disabled day-approval button. Match by manager id, never clock date.
+    children=defaultdict(list)
+    for child in c.execute("""SELECT s.id,s.manager_shift_id,s.status,u.display_name driver_name
+      FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='driver' AND s.brand_id=%s
+      AND s.manager_shift_id=ANY(%s) ORDER BY s.opened_at,s.id""",(user['brand_id'],list(groups))).fetchall():
+        children[child['manager_shift_id']].append(child)
     for group in groups.values():
+        reported={r['shift_id'] for r in group['drivers']}
+        group['pending_drivers']=[dict(child,reason='driver_shift_open' if child['status']!='closed' else 'driver_report_missing',
+            responsible='delivery_manager') for child in children[group['id']] if child['status']!='closed' or child['id'] not in reported]
         group['completed']=sum(r['financially_complete'] for r in group['drivers'])
         group['review_completed']=sum(r['period_approval_allowed'] for r in group['drivers'])
         group['outstanding_receivable_halalas']=sum(r['outstanding_receivable_halalas'] for r in group['drivers'])
         group['outstanding_payable_halalas']=sum(r['outstanding_payable_halalas'] for r in group['drivers'])
         group['total']=len(group['drivers'])
         group['pending_driver_count']=max(0,group.get('expected_driver_count',group['total'])-group['total'])
-        group['ready']=bool(group['total']) and not group['pending_driver_count'] and group.get('financial_ledger_closed',True) and group['review_completed']==group['total']
+        group['ready']=bool(group['total']) and not group['pending_drivers'] and not group['pending_driver_count'] and group.get('financial_ledger_closed',True) and group['review_completed']==group['total']
         group['balance_completed']=sum(r['balance_approved'] for r in group['drivers'])
         group['cash_completed']=sum(r['cash_recorded'] for r in group['drivers'])
         variance_count=sum(bool(r['has_channel_variance']) for r in group['drivers'])
         confirmed_count=sum(bool(r['financial_treatment'] and r['financial_treatment']['status']=='approved' and r['period_approval_allowed']) for r in group['drivers'])
         group['completion_percent']=int(100*(group['balance_completed']+group['cash_completed']+confirmed_count)/(2*group['total']+variance_count)) if group['total'] else 0
-        if group['pending_driver_count'] or not group.get('financial_ledger_closed',True):group['completion_percent']=min(99,group['completion_percent'])
+        if group['pending_drivers'] or group['pending_driver_count'] or not group.get('financial_ledger_closed',True):group['completion_percent']=min(99,group['completion_percent'])
+        group['remaining_count']=max(len(group['pending_drivers']),max(group.get('expected_driver_count',group['total']),group['total'])-group['review_completed'])
+        group['review_needed_count']=sum(r['variance_pending'] for r in group['drivers'])
+        group['blockers']=[]
+        if not group.get('financial_ledger_closed',True):group['blockers'].append(dict(reason='manager_allocation_pending',responsible='delivery_manager'))
+        if group['pending_drivers']:group['blockers'].append(dict(reason='driver_records_pending',responsible='delivery_manager'))
+        if group['balance_completed']<group['total']:group['blockers'].append(dict(reason='balance_approval_pending',responsible='accounting'))
+        if group['cash_completed']<group['total']:group['blockers'].append(dict(reason='cash_receipt_pending',responsible='accounting'))
+        if group['review_needed_count']:group['blockers'].append(dict(reason='variance_treatment_pending',responsible='accounting'))
+        from .financial_integrity import inspect_snapshot
+        if any(not inspect_snapshot(r['snapshot'])['verified'] for r in rows if r['manager_shift_id']==group['id']):
+            group['blockers'].append(dict(reason='financial_integrity_pending',responsible='accounting'))
+            group['ready']=False
+        # Reuse the approval guard only for otherwise ready cards. No writes or
+        # locks occur here; the mutation rechecks the guard inside its transaction.
+        if group['ready'] and not group['approved_day']:
+            from fastapi import HTTPException
+            from .order_financial_cases import guard_financial_closure
+            try:guard_financial_closure(c,shift_id=group['id'],brand_id=user['brand_id'])
+            except HTTPException as exc:
+                if exc.status_code!=409:raise
+                detail=exc.detail if isinstance(exc.detail,dict) else {'message':str(exc.detail)}
+                group['blockers'].append(dict(reason=detail.get('code','financial_case_pending'),message=detail.get('message',''),responsible='accounting'))
+                group['ready']=False
+        if not group['ready']:group['completion_percent']=min(99,group['completion_percent'])
         group['completion_scope']='accounting_review'
         group['financial_completion_scope']='closure_cash_and_recorded_card'
         group['bank_settlement_included']=False
@@ -295,7 +350,7 @@ def manager_cards(c,user,bids,manager_shift_ids=None):
         group['due_on']=group['due_at'].date() if group['due_at'] else None
         group['overdue_count']=sum(r['overdue'] for r in pending)
         group['overdue']=bool(group['overdue_count'])
-    return safe({'cards':sorted(groups.values(),key=lambda g:(bool(g['approved_day']),-g['day'].toordinal(),g['manager_name']))})
+    return safe({'cards':sorted(groups.values(),key=lambda g:(bool(g['approved_day']),-g['day'].toordinal(),g['id'])),'has_more':has_more,'offset':offset,'page_size':page_size})
 
 
 def extend_deadline(c,user,report_id,note):
@@ -346,10 +401,15 @@ def approve_day(c,user,manager_shift_id,note):
     bs=[b for b in branches(c,user) if b['id'] in manager['branch_ids']]
     # Snapshot is generated in the same transaction as approval and never edited.
     report=statement(c,user,ds,de,[b['id'] for b in bs],bs,manager_shift_id=manager_shift_id)
+    identifier=db.new_id('acd_')
+    for item in report['rows']:
+        if item.get('closure_count'):
+            item['approved_closure_count']=item['closure_count']
+            item['approval_status']='اعتماد يوم المدير محفوظ'
+            item['approval_references']=identifier
     report['financial_state']='review_approved_outstanding' if any(r.get('outstanding_receivable_halalas') or r.get('outstanding_payable_halalas') for r in report.get('settlements',[])) else 'matched'
     report['outstanding_receivable_halalas']=sum(r.get('outstanding_receivable_halalas',0) for r in report.get('settlements',[]))
     report['outstanding_payable_halalas']=sum(r.get('outstanding_payable_halalas',0) for r in report.get('settlements',[]))
-    identifier=db.new_id('acd_')
     row=c.execute("""INSERT INTO accounting_daily_closures(id,manager_shift_id,brand_id,branch_ids,operational_date,snapshot,approved_by,note)
       VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,created_at""",(identifier,manager_shift_id,user['brand_id'],db.json(manager['branch_ids']),ds,db.json(report),user['id'],note)).fetchone()
     db.audit(c,user['id'],'accounting.day.closed','accounting_day',identifier,{'manager_shift_id':manager_shift_id,'note':note})

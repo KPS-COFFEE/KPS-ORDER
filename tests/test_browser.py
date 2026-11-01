@@ -698,6 +698,11 @@ def _match_manager_finances(page,base,context,report_id,bank,cash):
     page.locator('#navigation [data-page=accounting]').click()
     page.locator('[data-ac=matching]').click()
     action=page.locator(f'[data-driver-balance="{report_id}"]')
+    # Follow the same manager-card drill-down as the accountant. Driver actions
+    # intentionally remain inside their shift until its card is opened.
+    card=action.locator('xpath=ancestor::details[@data-manager-card]')
+    expect(card).to_be_visible()
+    if card.get_attribute('open') is None:card.locator(':scope > summary').click()
     expect(action).to_be_visible()
     expect(action.locator('xpath=ancestor::tr')).to_contain_text('بانتظار اعتماد الموازنة')
     action.click()

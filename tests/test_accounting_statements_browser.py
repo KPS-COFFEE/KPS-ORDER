@@ -39,7 +39,7 @@ def test_accountant_card_cash_first_then_paper_and_saved_report(live_app,chromiu
         if lang=='en':page.get_by_role('button',name='English',exact=True).click()
         page.locator('[data-ac=settlements]').click()
         card=page.locator('[data-manager-card=browser-statement-manager]')
-        expect(card).to_be_visible();expect(card.locator('[data-day-approve]')).to_be_disabled()
+        expect(card).to_be_visible();card.locator('summary').click();expect(card.locator('[data-day-approve]')).to_be_disabled()
         expect(card.locator('.ac-completion')).to_have_text('0%')
         expect(card).not_to_contain_text('بانتظار الورقة')
         expect(card.locator('[data-driver-balance]')).to_be_visible()
@@ -90,24 +90,24 @@ def test_variance_requires_evidenced_independent_treatment(live_app,chromium_bro
         if lang=='en':page.get_by_role('button',name='English',exact=True).click()
         page.locator('[data-ac=settlements]').click()
         card=page.locator('[data-manager-card=browser-variance-manager]')
-        expect(card).to_be_visible()
+        expect(card).to_be_visible();card.locator('summary').click()
         expect(card.locator('[data-variance-confirm]')).to_have_count(0)
         card.locator('[data-driver-balance]').click()
         # Hold the real post-save card GET: a committed approval must not
         # expose history/edit handlers still bound to the pre-save snapshot.
         pending_refresh=[]
         def hold_card_refresh(route):pending_refresh.append(route)
-        page.route('**/api/accounting/manager-cards',hold_card_refresh)
+        page.route('**/api/accounting/manager-cards?*',hold_card_refresh)
         page.locator('#modal [name=bank]').fill('50.00')
         page.locator('#modal [name=cash_due]').fill('100.00')
         page.locator('#modal [name=note]').fill('TEST unchanged approval')
-        with page.expect_request('**/api/accounting/manager-cards'):
+        with page.expect_request('**/api/accounting/manager-cards?*'):
             page.locator('#modal button[type=submit]').click()
         expect(page.locator('#modal button[type=submit]')).to_be_disabled()
         expect(page.locator('#modal')).to_be_visible()
         assert len(pending_refresh)==1
         pending_refresh.pop().continue_()
-        page.unroute('**/api/accounting/manager-cards',hold_card_refresh)
+        page.unroute('**/api/accounting/manager-cards?*',hold_card_refresh)
         expect(page.locator('#modal')).not_to_be_visible()
         expect(card.locator('[data-driver-balance]')).to_have_text('تعديل الموازنة مع السبب' if lang=='ar' else 'Amend balance with reason')
         expect(card.locator('[data-variance-confirm]')).to_have_count(0)
@@ -148,6 +148,7 @@ def test_variance_requires_evidenced_independent_treatment(live_app,chromium_bro
             accounting_navigation.click()
             review_page.locator('[data-ac=settlements]').click()
             review_card=review_page.locator('[data-manager-card=browser-variance-manager]')
+            review_card.locator('summary').click()
             review_card.locator('[data-variance-confirm]').click()
             review_page.locator('[data-treatment-review][data-decision=approve]').click()
             expect(review_page.locator('#modal [name=confirmed]')).not_to_be_checked()

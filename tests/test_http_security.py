@@ -334,3 +334,31 @@ def test_checkout_router_precedence_is_disjoint_and_preserves_dependency_objects
                     asyncio.run(guard(user=principal))
                 assert denied.value.status_code == 403
                 assert denied.value.detail['code'] == 'ROLE_FORBIDDEN'
+
+
+@pytest.mark.parametrize('path,method,status,content_type,allowed', [
+    ('/ops','GET',200,'text/html; charset=utf-8',True),
+    ('/ops.html','GET',200,'text/html',True),
+    ('/ops','HEAD',200,'text/html',True),
+    ('/ops','GET',403,'text/html',False),
+    ('/ops','GET',302,'text/html',False),
+    ('/ops','POST',200,'text/html',False),
+    ('/ops','GET',200,'application/json',False),
+    ('/ops/','GET',200,'text/html',False),
+    ('/ops-evil','GET',200,'text/html',False),
+    ('/','GET',200,'text/html',False),
+    ('/index.html','GET',200,'text/html',False),
+    ('/delivery-track','GET',200,'text/html',False),
+    ('/api/tasks/task/photos','GET',200,'application/json',False),
+])
+def test_only_canonical_work_html_permits_self_camera(path,method,status,content_type,allowed):
+    async def app(request_scope,receive,send):
+        await send({'type':'http.response.start','status':status,
+                    'headers':[(b'content-type',content_type.encode())]})
+        await send({'type':'http.response.body','body':b'work camera test'})
+    messages=run(app,scope(path,method,[(b'origin',b'http://testserver')]))
+    headers=dict(messages[0]['headers'])
+    camera='(self)' if allowed else '()'
+    assert headers[b'permissions-policy'].decode()==f'camera={camera}, microphone=(), geolocation=(self)'
+    assert headers[b'x-frame-options']==b'DENY'
+    assert b"frame-ancestors 'none'" in headers[b'content-security-policy']

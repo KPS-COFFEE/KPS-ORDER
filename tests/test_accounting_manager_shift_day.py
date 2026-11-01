@@ -10,12 +10,12 @@ from test_accounting import accountant
 
 TZ=ZoneInfo('Asia/Riyadh')
 
-def duty(c,label,day,morning=False,driver_day=None,manager_user='ops-manager',manager_status='closed'):
+def duty(c,label,day,morning=False,driver_day=None,manager_user='ops-manager',manager_status='closed',driver_status='closed'):
     manager='test-manager-'+label;driver='test-driver-'+label
     opened=datetime.fromisoformat(day+('T06:00:00' if morning else 'T16:00:00')).replace(tzinfo=TZ)
     for sid,kind,user,parent in [(manager,'manager',manager_user,None),(driver,'driver','ops-driver',manager)]:
         c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,status,opened_at,closed_at,delivery_operational_date,delivery_window_snapshot) VALUES(%s,%s,%s,'ops-brand','[\"ops-branch\"]',%s,%s,%s,%s,%s,%s)",
-          (sid,kind,user,parent,manager_status if kind=='manager' else 'closed',opened,opened+timedelta(hours=14),driver_day if kind=='driver' and driver_day else day,db.json({'period':'morning' if morning else 'evening'})))
+          (sid,kind,user,parent,manager_status if kind=='manager' else driver_status,opened,opened+timedelta(hours=14),driver_day if kind=='driver' and driver_day else day,db.json({'period':'morning' if morning else 'evening'})))
     return driver
 
 def sale(order,c,shift,amount,created,collected,complete=True,split=False):
@@ -153,6 +153,43 @@ def test_all_manager_duties_remain_visible_before_financial_allocation(ops):
     assert cards['علي']['pending_driver_count']==1
     assert cards['علي']['total']==0 and cards['علي']['completion_percent']==0
     assert not cards['علي']['ready'] and cards['علي']['manager_report_id'] is None
+    assert cards['علي']['pending_drivers'][0]['id']=='test-driver-ali'
+    assert cards['علي']['pending_drivers'][0]['reason']=='driver_report_missing'
+    assert cards['علي']['pending_drivers'][0]['responsible']=='delivery_manager'
+    assert cards['علي']['remaining_count']==1
+    assert cards['علي']['branch_names'] and cards['علي']['opened_at'] and cards['علي']['closed_at']
+    assert cards['علي']['blockers']==[{'reason':'driver_records_pending','responsible':'delivery_manager'}]
     post('accountant','/api/accounting/manager-cards/test-manager-ali/approve-day',{'note':'TEST no premature financial approval'},status=409)
     assert actor('other').get('/api/accounting/manager-cards').json()['cards']==[]
     assert actor('driver').get('/api/accounting/manager-cards').status_code==403
+
+@pytest.mark.postgres
+def test_accounting_card_identifies_open_child_after_midnight(ops):
+    actor,_,_,_=ops;accountant()
+    with db.tx() as c:
+        driver=duty(c,'late-open','2026-10-28',driver_day='2026-10-29',driver_status='open')
+    response=actor('accountant').get('/api/accounting/manager-cards')
+    assert response.status_code==200,response.text
+    card=next(card for card in response.json()['cards'] if card['id']=='test-manager-late-open')
+    assert card['day']=='2026-10-28'
+    assert card['pending_drivers'][0]['reason']=='driver_shift_open'
+    assert card['pending_drivers'][0]['responsible']=='delivery_manager'
+    assert card['remaining_count']==1
+    assert not card['ready'] and card['completion_percent']<100
+
+@pytest.mark.postgres
+def test_accounting_shift_cards_page_without_losing_archive_or_scope(ops):
+    actor,_,_,_=ops;accountant()
+    with db.tx() as c:
+        for index in range(23):duty(c,'page-'+str(index),'2026-10-28')
+    first=actor('accountant').get('/api/accounting/manager-cards').json()
+    second=actor('accountant').get('/api/accounting/manager-cards?offset=20').json()
+    assert len(first['cards'])==20 and first['has_more']
+    assert len(second['cards'])==3 and not second['has_more']
+    assert not ({row['id'] for row in first['cards']}&{row['id'] for row in second['cards']})
+    assert actor('other').get('/api/accounting/manager-cards').json()['cards']==[]
+    focus=first['cards'][0]['id']
+    focused=actor('accountant').get('/api/accounting/manager-cards',params={'offset':20,'focus_id':focus}).json()
+    assert len(focused['cards'])==4 and focused['cards'][-1]['id']==focus
+    assert actor('other').get('/api/accounting/manager-cards',params={'focus_id':focus}).json()['cards']==[]
+    assert actor('accountant').get('/api/accounting/manager-cards?page_size=51').status_code==422

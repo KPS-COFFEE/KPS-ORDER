@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import json as jsonlib
 from uuid import uuid4
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator
 from . import db, auth, service_hours, shift_vehicle, shift_order_counts, blind_closure
 
@@ -1889,6 +1889,26 @@ class AuthorizedCash(OperationBody):
     reason:str=Field(min_length=1,max_length=2000)
     reference:str=Field(min_length=1,max_length=200)
 
+@router.get('/operations/replay-status')
+def replay_status(response: Response, key: str = Query(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_.:-]+$'), user=Depends(auth.current_user)):
+    """Opaque commit receipt only; never return a historical mutation payload.
+
+    A missing row is deliberately NOT permission to resend changed data: the
+    original request might still be executing. Canonical same-key replay owns
+    atomic verification and execution. Membership/session remain live here.
+    """
+    roles(user, 'owner', 'admin', 'delivery_manager', 'delivery_staff', 'branch_manager', 'driver')
+    response.headers['Cache-Control'] = 'private, no-store'
+    from . import multibrand
+    plain_brand = 'kps' if multibrand.enabled() else user['brand_id']
+    with db.tx() as c:
+        recorded = bool(c.execute(
+            "SELECT 1 FROM idempotency_keys WHERE user_id=%s AND key=%s AND "
+            "((%s=%s AND operation NOT LIKE 'brand:%%') OR (operation LIKE 'brand:%%' AND split_part(operation,':',2)=%s)) LIMIT 1",
+            (user['id'], key, user['brand_id'], plain_brand, user['brand_id'])).fetchone())
+    return {'recorded': recorded}
+
+
 @router.post('/shifts/{sid}/cash-event')
 def authorized_cash(sid:str,body:AuthorizedCash,request:Request,user=Depends(auth.current_user)):
     roles(user,'owner')
@@ -2134,6 +2154,8 @@ def driver_roster(user=Depends(auth.current_user)):
                        "FROM users u LEFT JOIN LATERAL (SELECT s.* FROM shifts s WHERE s.user_id=u.id AND s.brand_id=u.brand_id "
                        "AND s.kind='driver' AND s.status<>'closed'" + staffing_filter + " ORDER BY s.opened_at DESC,s.id DESC LIMIT 1) s ON true "
                        "WHERE u.brand_id=%s AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
+        from .driver_readiness import ReadinessObservation
+        observation = ReadinessObservation(c)
         visible=[]
         for row in rows:
             if not unrestricted_owner(user):
@@ -2151,7 +2173,7 @@ def driver_roster(user=Depends(auth.current_user)):
                     continue
                 row['active_tasks'] = c.execute("SELECT count(*) AS n FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.manager_shift_id=%s AND o.brand_id=%s AND o.branch_id=ANY(%s) AND o.snapshot->>'delivery_period'='morning' AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')", (row['id'], context['shift_id'], user['brand_id'], user['branch_ids'])).fetchone()['n']
             from .driver_readiness import describe, live_status
-            row['availability'],row['readiness_action'],row['eligible_branch_ids']=describe(c,row)
+            row['availability'],row['readiness_action'],row['eligible_branch_ids']=describe(observation,row)
             row['assignment_eligible']=row['availability']=='available'
             row['live_status']=live_status(row)
             visible.append(row)

@@ -116,6 +116,7 @@ def test_manager_card_independent_driver_receipts_day_snapshot_and_audit(ops):
     assert post('accountant',path+'/settlement-manager/approve-day',{'note':'TEST reviewed all drivers'},key='day-final')==approved
     saved=actor('accountant').get('/api/accounting/days/'+approved['id']).json()
     assert saved['frozen'] and saved['totals']['completed_orders']==1
+    assert all(r['approval_references']==approved['id'] and r['approved_closure_count']==r['closure_count'] for r in saved['rows'] if r['closure_count'])
     assert saved['totals']['shortage']==0 and saved['totals']['surplus']==200
     assert saved['totals']['pending_shortage']==saved['totals']['pending_surplus']==0
     assert actor('other').get('/api/accounting/days/'+approved['id']).status_code==404

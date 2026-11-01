@@ -163,7 +163,7 @@ def session_context(request):
             '/api/identity/owner-phone','/api/identity/owner/','/api/identity/owner-sms','/api/identity/step-up',
             '/api/central-operations','/api/shifts','/api/tasks','/api/operations','/api/dashboard','/api/admin','/api/custody','/api/drivers',
             '/api/branch-proximity','/api/reports','/api/crm','/api/driver-work-hours','/api/printing','/api/internal-documents','/api/invoice-profiles','/api/fiscal',
-            '/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
+            '/api/owner-employee-activity','/api/accounting','/api/channel-settlements','/api/orders/delivery-center','/api/delivery-photos'))
             or path.startswith(('/ops','/owner-phone','/sms-login-test','/report','/driver-hours','/customer-crm','/customer-report','/docs/metrics'))):
         return 'work'
     return context
@@ -215,8 +215,13 @@ def _find_session(conn, request: Request):
             user['operations_brands'] = available_brands
             from .central_operations import context as central_context
             user['central_operations'] = central_context(conn, user, available_brands=available_brands)
-            from .central_workdays import drain_metadata
-            user['central_workday_drain'] = drain_metadata(conn,user)
+            # Drain groups are presentation metadata returned by /session only.
+            # Computing them on every alert/order/GPS read repeated historical
+            # shift lookups before the actual operation could even start. Every
+            # canonical endpoint still reads current membership and record scope.
+            if request.url.path == '/api/session':
+                from .central_workdays import drain_metadata
+                user['central_workday_drain'] = drain_metadata(conn,user)
     return user
 
 
@@ -339,7 +344,7 @@ def establish_session(conn, user: dict, response: Response, *, request: Request 
     cookie_name,csrf_name=context_cookie_names('customer' if user['role']=='customer' else 'work') if context_cookies_enabled(conn) else (COOKIE,CSRF_COOKIE)
     response.set_cookie(cookie_name, token, max_age=hours * 3600, httponly=True, secure=secure_cookie(), samesite='strict', path='/')
     response.set_cookie(csrf_name, csrf, max_age=hours * 3600, httponly=False, secure=secure_cookie(), samesite='strict', path='/')
-    db.audit(conn, user['id'], 'session.created', 'user', user['id'])
+    db.audit(conn, user['id'], 'session.created', 'user', user['id'], {'brand_id':user['brand_id']})
     return {'user': public_user(dict(user, session_id=session_id), conn=conn), 'csrf_token': csrf, 'customer_verified': bool(customer_verified)}
 
 
@@ -433,7 +438,7 @@ def login(body: LoginBody, request: Request, response: Response):
 def logout(request: Request, response: Response, user=Depends(current_user)):
     with db.tx() as conn:
         conn.execute('UPDATE sessions SET revoked_at=now() WHERE id=%s AND user_id=%s', (user['session_id'], user['id']))
-        db.audit(conn, user['id'], 'session.revoked', 'user', user['id'])
+        db.audit(conn, user['id'], 'session.revoked', 'user', user['id'], {'brand_id':user['brand_id']})
     if context_cookies_enabled():
         context='customer' if user['role']=='customer' else 'work'
         cookie_name,csrf_name=context_cookie_names(context)

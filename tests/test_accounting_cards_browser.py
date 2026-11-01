@@ -118,12 +118,17 @@ def test_manager_settlement_cards_keep_full_money_and_actions_visible(width,prof
           window.layoutRows=rows;window.layoutUser={id:'test-owner',role:'owner'};
           await KPSAccounting.open({lang,user:window.layoutUser,tr:(ar,en)=>lang==='ar'?ar:en,esc,money,cents:v=>Math.round(Number(v)*100),heading:t=>document.querySelector('#heading').textContent=t,modal:(title,html)=>{const dialog=document.querySelector('#history-modal');dialog.querySelector('h2').textContent=title;dialog.querySelector('.history-body').innerHTML=html;dialog.showModal();},closeModal:()=>document.querySelector('#history-modal').close(),mutation:async()=>{window.layoutMutations++;throw Error('Layout acceptance must never post financial data');},api:async url=>{
             if(url.includes('/options'))return {today:'2026-10-23',can_report:true,can_review:true,branches:[{id:'branch',name:'TEST Branch',city:'حفر الباطن'}],people:[],products:[],categories:{},states:{},responsibilities:{}};
-            if(url.includes('/manager-cards'))return {cards:[{id:'manager',manager_name:lang==='ar'?'مدير توصيل تجريبي — شفت مسائي حفر الباطن':'Synthetic delivery manager — Hafar evening shift',day:'2026-10-23',drivers:rows,total:3,completed:1,balance_completed:3,cash_completed:2,overdue_count:0,completion_percent:71,ready:false,due_on:'2026-10-24',due_at:'2026-10-24T16:00:00+03:00'}]};
+            if(url.includes('/manager-cards'))return {cards:[{id:'manager',manager_name:lang==='ar'?'مدير توصيل تجريبي — شفت مسائي حفر الباطن':'Synthetic delivery manager — Hafar evening shift',day:'2026-10-23',period:'evening',opened_at:'2026-10-23T16:00:00+03:00',closed_at:'2026-10-24T04:00:00+03:00',branch_names:[lang==='ar'?'حفر الباطن — فرع اختبار':'Hafar — TEST branch'],expected_driver_count:3,review_completed:1,remaining_count:2,review_needed_count:1,blockers:[{reason:'cash_receipt_pending',responsible:'accounting'},{reason:'variance_treatment_pending',responsible:'accounting'}],drivers:rows,total:3,completed:1,balance_completed:3,cash_completed:2,overdue_count:0,completion_percent:71,ready:false,due_on:'2026-10-24',due_at:'2026-10-24T16:00:00+03:00'}]};
             if(url.includes('/driver-settlements'))return {settlements:rows};
             return {rows:[],columns:[],totals:{},definitions:'SYNTHETIC LAYOUT ONLY'};
           }});
         }''',{'lang':lang,'profile':profile})
         page.locator('[data-ac=settlements]').click()
+        assert not page.locator('[data-manager-card]').first.evaluate('(card)=>card.open')
+        if profile=='realistic':
+            output=ROOT/'test-artifacts';output.mkdir(exist_ok=True)
+            page.screenshot(path=str(output/f'accounting-manager-shifts-collapsed-{lang}-{width}.png'),full_page=True)
+        page.locator('[data-manager-card] summary').first.click()
         rows=page.locator('[data-driver-row]')
         expect(rows).to_have_count(3)
         expected=page.evaluate('window.layoutExpected')

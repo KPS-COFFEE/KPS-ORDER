@@ -169,3 +169,25 @@ def test_unlisted_routing_avoids_membership_work_but_config_remains_live(monkeyp
     project.return_value = None
     assert customer_message_routing.capabilities(None, user, available_brands=listing) == set()
     assert project.call_count == 2
+
+
+def test_non_session_reads_skip_only_presentation_drain_metadata(monkeypatch):
+    from app import central_workdays
+    conn = configured(monkeypatch)
+    drain = Mock(return_value=[{'id': 'synthetic-group'}])
+    monkeypatch.setattr(central_workdays, 'drain_metadata', drain)
+    incoming = request()
+    incoming.scope['path'] = '/api/tasks'
+    user = auth._find_session(conn, incoming)
+    drain.assert_not_called()
+    assert user['active']
+    assert user['_message_capabilities']
+    assert {b['id'] for b in user['central_operations']['brands']} == {'kps', 'enbishan'}
+    assert conn.listing_count() == 1
+    # Same live checks on the following request; no authorization result cache.
+    conn.session_live = False
+    assert auth._find_session(conn, incoming) is None
+    conn.session_live = True
+    user = auth._find_session(conn, request())
+    assert user['central_workday_drain'] == [{'id': 'synthetic-group'}]
+    drain.assert_called_once()

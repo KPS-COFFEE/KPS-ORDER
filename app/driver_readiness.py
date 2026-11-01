@@ -1,6 +1,62 @@
 """Explain canonical assignment guards without granting assignment eligibility."""
+from copy import deepcopy
 from fastapi import HTTPException
 from . import db
+
+class ReadinessObservation:
+    """Reuse point reads only inside one roster's read-only SQL snapshot.
+
+    No result outlives that request/transaction. This is deliberately not used
+    by assignment, which retains fresh reads and its reservation/lock protocol.
+    Exact SQL and scalar parameters are allowlisted; locks, business writes,
+    aggregates and arbitrary SQL always go directly to the real connection.
+    """
+    _reads = frozenset({
+        'SELECT * FROM shifts WHERE id=%s',
+        'SELECT * FROM users WHERE id=%s',
+        "SELECT 1 FROM driver_breaks WHERE shift_id=%s AND status='active'",
+        'SELECT brand_id,branch_ids FROM users WHERE id=%s AND active',
+        'SELECT m.branch_ids FROM staff_brand_memberships m '
+        'JOIN brands b ON b.id=m.brand_id WHERE m.user_id=%s AND m.brand_id=%s AND m.active AND b.active',
+        'SELECT brand_id FROM driver_brand_dedications WHERE driver_id=%s '
+        'AND cancelled_at IS NULL AND starts_at<=now() AND ends_at>now()',
+        'SELECT w.* FROM central_workdays w JOIN central_workday_legs l '
+        'ON l.workday_id=w.id WHERE l.shift_id=%s',
+    })
+
+    class _PointResult:
+        def __init__(self, row):
+            self.row = row
+            self.consumed = False
+
+        def fetchone(self):
+            if self.consumed:
+                return None
+            self.consumed = True
+            return deepcopy(self.row)
+
+        def fetchall(self):
+            row = self.fetchone()
+            return [] if row is None else [row]
+
+    def __init__(self, connection):
+        self._connection = connection
+        self._rows = {}
+
+    def execute(self, statement, params=()):
+        if (not isinstance(statement, str) or statement not in self._reads
+                or not isinstance(params, (tuple, list))
+                or not all(value is None or isinstance(value, str) for value in params)):
+            return self._connection.execute(statement, params)
+        key = (statement, tuple(params))
+        if key not in self._rows:
+            row = self._connection.execute(statement, params).fetchone()
+            # A large roster stays bounded; uncached results remain correct.
+            if len(self._rows) >= 4096:
+                return self._PointResult(row)
+            self._rows[key] = deepcopy(row)
+        return self._PointResult(self._rows[key])
+
 
 def describe(c, row):
     if not row['active']: return 'inactive', 'owner_reactivate_employee', []

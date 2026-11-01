@@ -14,7 +14,7 @@ function harness(role,permissions,{failOperations=false}={}){
     stopAlertChannel(){},refreshAlertPolicy:async()=>{},ensureMandatoryAlertSound:async()=>{},
     tr:(_ar,en)=>en,esc:value=>String(value??''),num:String,orderLabel:row=>row.id,printAlertRow:()=>'',
     syncAlertChannel:(kind,ids)=>channels.push({kind,ids:[...ids]}),concealAlertControls(){},
-    window:{scrollY:0},document:{activeElement:null,querySelectorAll:()=>[],
+    navigator:{onLine:true},window:{scrollY:0},document:{hidden:false,documentElement:{hasAttribute:()=>false},activeElement:null,querySelectorAll:()=>[],
       createElement(tag){assert.equal(tag,'template');return {innerHTML:'',get content(){return {html:this.innerHTML};}};}},
     $:selector=>selector==='#operational-alerts'?host:selector==='#content'?{getBoundingClientRect:()=>({top:0})}:null,
     can:permission=>role==='owner'||permissions.includes(permission),
