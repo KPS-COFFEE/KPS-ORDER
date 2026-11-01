@@ -193,3 +193,45 @@ def test_accounting_shift_cards_page_without_losing_archive_or_scope(ops):
     assert len(focused['cards'])==4 and focused['cards'][-1]['id']==focus
     assert actor('other').get('/api/accounting/manager-cards',params={'focus_id':focus}).json()['cards']==[]
     assert actor('accountant').get('/api/accounting/manager-cards?page_size=51').status_code==422
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('driver_status,physically_ended,expected_reason,expected_responsible', [
+    ('submitted',True,'driver_accounting_pending','accounting'),
+    ('closed',True,'driver_accounting_pending','accounting'),
+    ('submitted',False,'driver_shift_open','delivery_manager'),
+    ('closed',False,'driver_report_missing','delivery_manager'),
+    ('open',True,'driver_shift_open','delivery_manager'),
+])
+def test_released_driver_financial_record_is_accounting_not_manager_work(ops,driver_status,physically_ended,expected_reason,expected_responsible):
+    actor,post,_,_=ops;accountant()
+    with db.tx() as c:
+        # This fixture normally exercises the legacy single-brand schema.
+        # Model the optional physical-duty column without changing production migrations.
+        c.execute('ALTER TABLE shifts ADD COLUMN IF NOT EXISTS staffing_ended_at timestamptz')
+        released=duty(c,'released','2026-10-28',driver_day='2026-10-29',manager_status='submitted',driver_status='submitted' if physically_ended and driver_status=='closed' else driver_status)
+        c.execute("UPDATE shifts SET staffing_ended_at=closed_at WHERE id='test-manager-released'")
+        if physically_ended:c.execute('UPDATE shifts SET staffing_ended_at=closed_at,status=%s WHERE id=%s',(driver_status,released))
+        if driver_status=='submitted' and not physically_ended:
+            c.execute("UPDATE shifts SET submission='{}'::jsonb || %s::jsonb WHERE id=%s",(db.json({'manager_approval_required':True,'physical_state':'bag_at_branch'}),released))
+        # A genuinely open child of the same manager must remain the manager's
+        # responsibility, independently of the released driver's financial work.
+        c.execute("INSERT INTO users(id,display_name,role,brand_id,branch_ids) VALUES('test-still-open-user','TEST OPEN DRIVER','driver','ops-brand','[\"ops-branch\"]')")
+        c.execute("INSERT INTO shifts(id,kind,user_id,brand_id,branch_ids,manager_shift_id,status,opened_at) VALUES('test-still-open','driver','test-still-open-user','ops-brand','[\"ops-branch\"]','test-manager-released','open',now())")
+        before=c.execute("SELECT id,status,staffing_ended_at,submission FROM shifts WHERE manager_shift_id='test-manager-released' ORDER BY id").fetchall()
+    response=actor('accountant').get('/api/accounting/manager-cards')
+    assert response.status_code==200,response.text
+    card=next(row for row in response.json()['cards'] if row['id']=='test-manager-released')
+    pending={row['id']:row for row in card['pending_drivers']}
+    assert pending[released]['reason']==expected_reason
+    assert pending[released]['responsible']==expected_responsible
+    assert pending['test-still-open']['reason']=='driver_shift_open'
+    assert pending['test-still-open']['responsible']=='delivery_manager'
+    assert card['day']=='2026-10-28'
+    assert {'reason':'manager_allocation_pending','responsible':'accounting'} in card['blockers']
+    assert {'reason':'driver_records_pending','responsible':'delivery_manager'} in card['blockers']
+    assert ({'reason':'driver_accounting_records_pending','responsible':'accounting'} in card['blockers']) == (expected_responsible=='accounting')
+    assert not card['ready'] and card['completion_percent']<100
+    post('accountant','/api/accounting/manager-cards/test-manager-released/approve-day',{'note':'TEST still missing financial records'},status=409)
+    assert actor('other').get('/api/accounting/manager-cards').json()['cards']==[]
+    with db.tx() as c:
+        assert c.execute("SELECT id,status,staffing_ended_at,submission FROM shifts WHERE manager_shift_id='test-manager-released' ORDER BY id").fetchall()==before
