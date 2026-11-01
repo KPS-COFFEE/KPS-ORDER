@@ -56,7 +56,7 @@
     "app/morning_manager_context.py": "f72303ce025577d7df9dd09e142c594649be7f4bbba2d83cdf2a69591cf76911",
     "app/order_issue_ownership.py": "6a6ec57a4221e16efa9311a117cce3167031bf64755373e24393d5665d95b36c",
     "migrations/134_routed_approved_amendments.sql": "de596fed07f23b700c5f8d774e6e96f107c66e19b8d1db98cba0c4fcf845d7d7",
-    "app/driver_city_scope.py": "270811907d1268f4acc2fbc587e61f4867ff494185cb73be5f12e4fad2440af1"
+    "app/driver_city_scope.py": "8c9478afe56aaec8da8c2da263626c1131ee122555063d835e2f45672ad45c37"
   },
   "rollback_feature_policy": {
     "operational_after_feature_use": false,

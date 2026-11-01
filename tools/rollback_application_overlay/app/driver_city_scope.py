@@ -19,8 +19,8 @@ def guard(conn, shift, order, pickup_branch_id, *, physical_shift=None):
         JOIN orders o ON o.id=t.order_id
         LEFT JOIN order_preparation_routes r ON r.id=o.preparation_route_id
         JOIN branches b ON b.id=coalesce(r.target_branch_id,o.branch_id)
-        WHERE t.driver_id=%s AND t.order_id<>%s
+        WHERE t.driver_id=%s AND t.order_id IS DISTINCT FROM %s
           AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')""",
-        (shift['user_id'], order['id'])).fetchall()
+        (shift['user_id'], order.get('id'))).fetchall()
     if any(catalog.normalize_city(row.get('city') or '') != target for row in active):
         raise db.error(409, 'DRIVER_CITY_ACTIVE_TASK', 'السائق مسؤول عن طلب نشط في مدينة أخرى؛ أكمل العهدة قبل الإسناد.')
