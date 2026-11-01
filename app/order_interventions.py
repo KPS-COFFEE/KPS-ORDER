@@ -85,6 +85,7 @@ def effective_pending_role(details,has_print,has_collection=False):
     if details.get('kind')=='cancel':
         if has_collection:return 'owner_or_collected_cancel_delegate'
         if has_print:return 'owner_or_cancel_delegate'
+    if details.get('escalate'):return 'owner_or_cancel_delegate'
     return details['pending_role']
 
 
@@ -135,7 +136,7 @@ def workflow_state(r):
             status='resubmitted'
             # Resubmission validates fresh evidence against the current order
             # revision. Do not carry evidence from a superseded explanation.
-            for key in ('customer_request_id','evidence_attachment_id','evidence_message_id'):
+            for key in ('customer_request_id','evidence_attachment_id','evidence_message_id','customer_message_confirmed'):
                 details.pop(key,None)
             details.update(d.get('proof') or {})
             details.update(reason_code=d['reason_code'],contact_result=d['contact_result'],
@@ -178,7 +179,7 @@ def workflow_view(r,user,has_print,has_collection=False):
         if same_reviewer:
             responsible_id=returned.get('reviewer_id');responsible_name=returned.get('reviewer_name')
             if responsible=='delivery_manager':responsible=returned.get('reviewer_role') or 'reviewer'
-    reviewer=can_review(user) and not (d['kind']=='cancel' and has_print and not high_authority(user))
+    reviewer=can_review(user) and (not d.get('escalate') or high_authority(user)) and not (d['kind']=='cancel' and has_print and not high_authority(user))
     actions=[]
     if not terminal:
         if is_returned:
@@ -273,6 +274,9 @@ class RequestBody(BaseModel):
     contact_result:ContactResult='not_contacted'
     customer_request_id:str|None=Field(None,max_length=100)
     evidence_attachment_id:str|None=Field(None,max_length=100)
+    evidence_message_id:str|None=Field(None,max_length=100)
+    customer_message_confirmed:bool=False
+    escalate:bool=False
     amendment_id:str|None=Field(None,max_length=100)
     version:StrictInt=Field(ge=1)
 
@@ -282,6 +286,22 @@ def evidence(c,o,user,body):
     result={'source':source}
     if body.reason_code not in CUSTOMER_REASONS:
         # Operational causes are explicit, never relabelled as customer consent.
+        return result
+    if body.evidence_message_id:
+        # Staff explicitly selects the customer's own message and attests that
+        # its request matches this action. No synthetic customer consent/event.
+        if not body.customer_message_confirmed:
+            raise db.error(422,'CUSTOMER_MESSAGE_CONFIRMATION_REQUIRED','أكد أن رسالة العميل تطلب الإجراء المختار صراحة.')
+        m=c.execute('''SELECT v.*,m.id evidence_id,m.text FROM chat_messages m JOIN conversations v ON v.id=m.conversation_id
+            JOIN users u ON u.id=m.sender_id
+            WHERE m.id=%s AND v.order_id=%s AND v.brand_id=%s AND u.role='customer'
+            AND (m.sender_id=%s OR EXISTS(SELECT 1 FROM customer_identity_links l
+                WHERE l.brand_id=%s AND l.source_id=%s AND l.customer_id=m.sender_id))''',
+            (body.evidence_message_id,o['id'],o['brand_id'],o['customer_id'],o['brand_id'],o['customer_id'])).fetchone()
+        from .chat import allowed
+        if not m or not m['text'].strip() or not allowed(user,m,c,supervision=True):
+            raise db.error(422,'CUSTOMER_REQUEST_REQUIRED','اختر رسالة العميل من محادثة هذا الطلب المتاحة ضمن صلاحياتك.')
+        result.update(evidence_message_id=m['evidence_id'],customer_message_confirmed=True)
         return result
     if source=='delivery_center':
         a=c.execute('''SELECT a.id FROM chat_attachments a JOIN conversations v ON v.id=a.conversation_id
@@ -331,7 +351,7 @@ def pending_cancellations(user=Depends(auth.require_roles('owner','delivery_mana
             AND (o.snapshot->>'journey_controls_version'='1' OR %s)
             AND (%s OR o.branch_id=ANY(%s))
             AND e.event_type='intervention.requested'
-            AND ((%s AND (e.details->>'kind'='cancel' OR w.event_type IN ('intervention.returned','intervention.resubmitted')))
+            AND ((%s AND (e.details->>'kind'='cancel' OR e.details->>'escalate'='true' OR w.event_type IN ('intervention.returned','intervention.resubmitted')))
                 OR (w.event_type='intervention.returned' AND w.details->>'target_manager_id'=%s
                     AND (e.details->>'kind'<>'cancel' OR %s)))
             AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=e.order_id
@@ -377,7 +397,7 @@ def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','adm
         if user['role']=='customer':
             rows=[{'id':r['id'],'created_at':r['created_at'],'kind':r['details']['kind'],
                    'status':(r['decision'] or {}).get('status','requested')} for r in rows]
-        attachments=[];customer_requests=[];targets=[]
+        attachments=[];customer_requests=[];customer_messages=[];targets=[]
         if user['role'] in ('owner','delivery_manager','admin'):
             active_kind=next((r['details']['kind'] for r in rows if not r['decision']),None)
             targets=return_targets(c,o,active_kind)
@@ -394,12 +414,22 @@ def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','adm
             attachments=c.execute('''SELECT a.id,a.created_at FROM chat_attachments a JOIN conversations v ON v.id=a.conversation_id
                 WHERE v.order_id=%s AND a.data IS NOT NULL AND a.content_type IN ('image/jpeg','image/png','image/webp') ORDER BY a.created_at DESC LIMIT 50''',(oid,)).fetchall()
             customer_requests=c.execute("SELECT id,created_at,details FROM order_events WHERE order_id=%s AND event_type IN ('customer_request.opened','intervention.customer_amend_requested') AND details ? 'evidence_message_id' ORDER BY created_at DESC LIMIT 50",(oid,)).fetchall()
+            message_rows=c.execute('''SELECT v.*,m.id evidence_id,m.text,m.created_at message_created_at FROM chat_messages m
+                JOIN conversations v ON v.id=m.conversation_id JOIN users u ON u.id=m.sender_id
+                WHERE v.order_id=%s AND v.brand_id=%s AND u.role='customer'
+                AND (m.sender_id=%s OR EXISTS(SELECT 1 FROM customer_identity_links l
+                    WHERE l.brand_id=%s AND l.source_id=%s AND l.customer_id=m.sender_id))
+                ORDER BY m.created_at DESC,m.id DESC LIMIT 100''',
+                (oid,o['brand_id'],o['customer_id'],o['brand_id'],o['customer_id'])).fetchall()
+            from .chat import allowed
+            customer_messages=[{'id':m['evidence_id'],'text':m['text'],'created_at':m['message_created_at']}
+                for m in message_rows if m['text'].strip() and allowed(user,m,c,supervision=True)]
         elif user['role']=='driver':
             rows=[{'id':r['id'],'created_at':r['created_at'],'details':{'kind':r['details']['kind'],'pending_role':effective_pending_role(r['details'],has_print,has_collection),'reason_code':r['details']['reason_code'],'contact_result':r['details'].get('contact_result')},'decision':{'status':(r['decision'] or {}).get('status')} if r['decision'] else None} for r in rows if r['actor_id']==user['id']]
         from .operations import safe
         return safe({'enabled':controlled(o),'printed':has_print,'version':o['version'],
             'high_authority':high_authority(user),'requests':rows,'reasons':REASONS,'contact_results':CONTACT,
-            'pending_roles':PENDING_ROLES,'statuses':STATUSES,'attachments':attachments,'customer_requests':customer_requests,
+            'pending_roles':PENDING_ROLES,'statuses':STATUSES,'attachments':attachments,'customer_requests':customer_requests,'customer_messages':customer_messages,
             'return_targets':targets,'has_recorded_collection':has_collection,
             'available_create_kinds':create_kinds,
             'collected_cancellation_authority':collected_order_authority.authorized(user),
@@ -441,7 +471,7 @@ def create(oid:str,body:RequestBody,user=Depends(auth.require_roles('owner','del
             if body.kind=='amend':
                 a=c.execute('SELECT id FROM order_amendments WHERE id=%s AND order_id=%s',(body.amendment_id,oid)).fetchone()
                 if not a:raise db.error(422,'AMENDMENT_REQUIRED','اربط طلب التعديل بتعديل الأصناف أو العنوان المطلوب.')
-            pending=effective_pending_role({'kind':body.kind,'pending_role':'delivery_manager'},
+            pending=effective_pending_role({'kind':body.kind,'escalate':body.escalate,'pending_role':'delivery_manager'},
                 printed(c,o),collected_order_authority.has_recorded_collection(c,o))
             details={**body.model_dump(),**proof,'revision':o.get('amendment_revision',0),
                 'pending_role':pending,'requester_id':actor['id'],'financial_approval':False}
@@ -472,6 +502,8 @@ class ReturnBody(WorkflowAction):
 
 
 class ResubmitBody(WorkflowAction):
+    evidence_message_id:str|None=Field(None,max_length=100)
+    customer_message_confirmed:bool=False
     contact_result:ContactResult='not_contacted'
     customer_request_id:str|None=Field(None,max_length=100)
     evidence_attachment_id:str|None=Field(None,max_length=100)
@@ -485,6 +517,8 @@ def request_record(c,oid,rid):
 
 def require_print_reviewer(c,o,r,actor):
     require_reviewer(actor)
+    if r['details'].get('escalate') and not high_authority(actor):
+        raise db.error(403,'INTERVENTION_ESCALATED','المعاملة مصعدة للمالك أو المفوض؛ يلزم اعتماده.')
     if r['details']['kind']=='cancel' and printed(c,o) and not high_authority(actor):
         raise db.error(403,'CANCEL_AFTER_PRINT_AUTHORITY','الإلغاء بعد إرسال الطباعة للمالك أو المفوض فقط.')
 
@@ -550,7 +584,8 @@ def resubmit_request(oid:str,rid:str,body:ResubmitBody,user=Depends(auth.require
             reason=state['details']['reason_code']
             proof=evidence(c,o,actor,RequestBody(kind=r['details']['kind'],reason_code=reason,
                 contact_result=body.contact_result,version=o['version'],customer_request_id=body.customer_request_id,
-                evidence_attachment_id=body.evidence_attachment_id))
+                evidence_attachment_id=body.evidence_attachment_id,evidence_message_id=body.evidence_message_id,
+                customer_message_confirmed=body.customer_message_confirmed))
             details={'request_id':rid,'workflow_revision':state['revision']+1,'status':'resubmitted',
                 'original_reason_code':r['details']['reason_code'],'reason_code':reason,'note':body.note,
                 'contact_result':body.contact_result,'proof':proof,
@@ -611,7 +646,8 @@ def decide(oid:str,rid:str,body:Decision,user=Depends(auth.require_roles('owner'
                 proof=evidence(c,o,actor,RequestBody(kind=kind,reason_code=body.reason_code,
                     contact_result=body.contact_result,version=o['version'],
                     customer_request_id=effective.get('customer_request_id'),
-                    evidence_attachment_id=effective.get('evidence_attachment_id')))
+                    evidence_attachment_id=effective.get('evidence_attachment_id'),evidence_message_id=effective.get('evidence_message_id') if effective.get('customer_message_confirmed') else None,
+                    customer_message_confirmed=effective.get('customer_message_confirmed',False)))
             details={'request_id':rid,'status':status,'reason_code':body.reason_code,
                 'original_reason_code':r['details']['reason_code'],'workflow_revision':state['revision']+1,
                 'order_amendment_revision':effective['revision'],

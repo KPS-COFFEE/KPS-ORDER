@@ -138,3 +138,10 @@ test('the optional image callback grants no driver, read-only, terminal or legac
  const legacy=harness({...base(),enabled:false,legacy_cancel_allowed:true},'delivery_manager',callback);await legacy.open();assert.equal(legacy.forms()[0].elements.evidence_image,undefined);
  assert.equal(uploads,0);
 });
+
+test('manager selects customer chat proof without duplicate image and can escalate a problem',async()=>{
+ const d=base();d.requests=[];d.available_create_kinds=['cancel','problem'];d.customer_messages=[{id:'message-1',text:'أطلب إلغاء طلبي <script>',created_at:'2026-11-01T15:00:00Z'}];
+ const h=harness(d,'delivery_manager');await h.open();assert.match(h.text,/محادثة الموقع تكفي/);assert.match(h.text,/&lt;script&gt;/);const f=h.forms()[0];
+ f.elements.kind.value='problem';f.elements.reason_code.value='wrong_address';f.elements.evidence_message_id.value='message-1';f.elements.customer_message_confirmed.value='on';f.elements.escalate.value='on';await h.submit(f);
+ assert.equal(h.writes[0].body.evidence_message_id,'message-1');assert.equal(h.writes[0].body.customer_message_confirmed,true);assert.equal(h.writes[0].body.evidence_attachment_id,null);assert.equal(h.writes[0].body.escalate,true);
+});
