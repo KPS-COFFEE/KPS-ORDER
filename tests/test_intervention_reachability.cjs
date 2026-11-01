@@ -7,7 +7,7 @@ function base(){return {state:{user:{id:'driver',role:'driver'},tasks:[{id:'t/1'
 test('controlled driver entry points open the structured widget without a task mutation or a forced call',async()=>{
  const calls=[],writes=[],dialogs=[];const ctx={...base(),window:{KPSInterventions:{open:async x=>calls.push(x)}},api:async()=>({enabled:true}),mutation:async(...x)=>writes.push(x),loadPage:async()=>{},modal:(...x)=>dialogs.push(x)};
  vm.createContext(ctx);
- vm.runInContext(between('  async function openTaskIntervention(','  async function cancelOrderWithJourney(')+between('  async function reportNoAnswer(','  setInterval(refreshOperationalAlerts,')+between('  async function driverProblem(','  async function partialReturn('),ctx);
+ vm.runInContext(between('  async function openOrderIntervention(','  async function cancelOrderWithJourney(')+between('  async function reportNoAnswer(','  setInterval(refreshOperationalAlerts,')+between('  async function driverProblem(','  async function partialReturn('),ctx);
  await ctx.reportNoAnswer('t/1');await ctx.driverProblem('t/1',null,'o/1');
  assert.equal(calls.length,2);assert.equal(calls[0].oid,'o/1');assert.equal(calls[0].initialReason,'no_answer');assert.equal(calls[1].initialReason,undefined);
  assert.equal(writes.length,0);assert.equal(dialogs.length,0);assert.equal(ctx.state.tasks[0].status,'picked_up');
@@ -109,7 +109,7 @@ test('a fresh delegated inbox click reaches the actual widget and decision throu
  ctx.state={user:{id:'delegate',role:'admin',brand_id:'enbishan',effective_permissions:['orders_cancel_after_print'],central_operations:{brands:[{id:'kps',branch_ids:['kps-1']},{id:'enbishan',branch_ids:['enb-1']}]}},page:'interventionInbox',orders:[],busy:new Set()};
  ctx.can=permission=>ctx.state.user.effective_permissions.includes(permission);
  vm.createContext(ctx);
- vm.runInContext(between('  async function api(','  async function scopedApi(')+between('  async function mutation(','  async function ownerOperationalConfirm(')+between('  function pageLoadScope(','  function assertPageLoad(')+between('  function actionPermission(','  function hideUnavailableActions(')+between('  async function interventionInbox(','  async function accounting('),ctx);
+ vm.runInContext(between('  async function api(','  async function scopedApi(')+between('  async function mutation(','  async function ownerOperationalConfirm(')+between('  function pageLoadScope(','  function assertPageLoad(')+between('  function actionPermission(','  function hideUnavailableActions(')+between('  async function openOrderIntervention(','  async function openTaskIntervention(')+between('  async function interventionInbox(','  async function accounting('),ctx);
  vm.runInContext(fs.readFileSync('public/assets/order-interventions.js','utf8'),ctx);
  vm.runInContext(between("  document.addEventListener('click',async e=>{\n    const page=","  $('#modal-close').addEventListener"),ctx);
  await ctx.interventionInbox();
