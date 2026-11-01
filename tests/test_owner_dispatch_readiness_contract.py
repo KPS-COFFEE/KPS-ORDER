@@ -7,6 +7,10 @@ from app import operations
 class Rows:
     def __init__(self, values): self.values = values
     def execute(self, query, params=()):
+        if 'SELECT id,city FROM branches' in query:
+            return type('Result', (), {'fetchall': lambda _: [{'id': bid, 'city': 'Test city'} for bid in params[0]]})()
+        if 'FROM effective_driver_tasks' in query:
+            return type('Result', (), {'fetchall': lambda _: []})()
         if 'driver_breaks' in query: value = self.values.get('break')
         elif 'FROM shifts' in query: value = self.values.get('supervisor')
         elif 'FROM users' in query: value = self.values.get(params[0])
