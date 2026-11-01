@@ -72,7 +72,7 @@
       host.innerHTML = `
         <section class="owner-intro" aria-label="${escape(tr('ملخص الملاك','Owner overview'))}">
           <div><span class="owner-eyebrow">${escape(tr('رؤية موحّدة لأعمالك','YOUR BUSINESS AT A GLANCE'))}</span><h2 id="owner-period-title">${escape(presetName(filters.period))}</h2><div id="owner-brand-context" class="owner-brand-context"></div></div>
-          <div class="owner-freshness"><span class="owner-access-badge">${escape(tr('خاص بالملاك','Owners only'))}</span><span id="owner-updated">${escape(tr('بانتظار البيانات','Waiting for data'))}</span><button type="button" class="quiet owner-refresh" data-owner-action="refresh"><span aria-hidden="true">↻</span> ${escape(tr('تحديث','Refresh'))}</button></div>
+          <div class="owner-freshness"><span class="owner-access-badge">${escape(tr('خاص بالملاك','Owners only'))}</span><button type="button" class="quiet owner-products-shortcut" data-owner-action="products">${escape(tr('مبيعات المنتجات','Product sales'))}</button><span id="owner-updated">${escape(tr('بانتظار البيانات','Waiting for data'))}</span><button type="button" class="quiet owner-refresh" data-owner-action="refresh"><span aria-hidden="true">↻</span> ${escape(tr('تحديث','Refresh'))}</button></div>
         </section>
         <form id="owner-filters" class="owner-filters" aria-label="${escape(tr('تصفية جميع مؤشرات اللوحة','Filter all dashboard values'))}">
           <label for="owner-brand"><span>${escape(tr('البراند','Brand'))}</span><select id="owner-brand" name="brand_id"></select></label>
@@ -304,6 +304,7 @@
         return;
       }
       const action = button.dataset.ownerAction;
+      if (action === 'products') { $('#owner-product-search')?.focus(); return; }
       if (action === 'refresh') { clearTimeout(searchTimer); void refresh({force:true}); }
       if (action === 'reset') {
         const brand = filters.brand_id; filters = {...initialFilters(),brand_id:brand}; dateDraft = false; syncControls(); void refresh({force:true});

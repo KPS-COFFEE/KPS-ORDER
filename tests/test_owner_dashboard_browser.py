@@ -166,6 +166,8 @@ def test_owner_widget_filters_pagination_refresh_faults_and_mobile_layout(width,
         count = page.locator('.owner-metric').filter(has=page.get_by_role('heading', name='إجمالي الطلبات', exact=True)).locator('.owner-number')
         expect(count).to_have_text('3')
         expect(page.get_by_role('heading', name='مبيعات المنتجات', exact=True)).to_be_visible()
+        page.get_by_role('button', name='مبيعات المنتجات', exact=True).click()
+        expect(page.locator('#owner-product-search')).to_be_focused()
         assert page.locator('#owner-products tbody tr').count() == 2
         page.get_by_role('searchbox', name='ابحث عن منتج', exact=True).fill('الخلية')
         expect(page.locator('#owner-products tbody tr')).to_have_count(1)
