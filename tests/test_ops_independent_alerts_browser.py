@@ -57,12 +57,18 @@ def run_acceptance(root=ROOT, source=None):
                     window.initial=qa.loadPage();}''',user)
                 page.wait_for_timeout(100);assert 'page' in held
                 page.evaluate('()=>{window.alerts=qa.refreshOperationalAlerts()}')
-                page.wait_for_timeout(100);assert 'alert' in held
+                page.wait_for_timeout(100)
+                if role=='driver':
+                    # Identical task reads now share one in-flight HTTP request.
+                    # Page-render cancellation must still leave the independent
+                    # alert consumer alive, with its own live-scope validation.
+                    assert len(task_calls)==1
+                else:assert 'alert' in held
                 page.evaluate('''()=>{qa.state.page=qa.state.user.role==='driver'?'shifts':'drivers';void qa.loadPage();}''')
-                held['page'].fulfill(json={'orders':[]} if role!='driver' else {'tasks':[]})
-                page.evaluate('()=>window.initial')
                 if revoked_scope:page.evaluate("()=>{qa.state.user={...qa.state.user,branch_ids:['other-branch']}}")
-                held['alert'].fulfill(json={'requests':[]} if role!='driver' else {'tasks':[{'id':'private-task','status':'assigned'}]})
+                held['page'].fulfill(json={'orders':[]} if role!='driver' else {'tasks':[{'id':'private-task','status':'assigned'}]})
+                page.evaluate('()=>window.initial')
+                if role!='driver':held['alert'].fulfill(json={'requests':[]})
                 page.evaluate('()=>window.alerts')
                 if role=='delivery_manager':
                     assert page.evaluate('()=>qa.state.page')=='drivers'

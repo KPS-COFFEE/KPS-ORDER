@@ -2154,6 +2154,8 @@ def driver_roster(user=Depends(auth.current_user)):
                        "FROM users u LEFT JOIN LATERAL (SELECT s.* FROM shifts s WHERE s.user_id=u.id AND s.brand_id=u.brand_id "
                        "AND s.kind='driver' AND s.status<>'closed'" + staffing_filter + " ORDER BY s.opened_at DESC,s.id DESC LIMIT 1) s ON true "
                        "WHERE u.brand_id=%s AND u.role='driver' ORDER BY u.display_name,u.id",(user['brand_id'],)).fetchall()
+        from .driver_readiness import ReadinessObservation
+        observation = ReadinessObservation(c)
         visible=[]
         for row in rows:
             if not unrestricted_owner(user):
@@ -2171,7 +2173,7 @@ def driver_roster(user=Depends(auth.current_user)):
                     continue
                 row['active_tasks'] = c.execute("SELECT count(*) AS n FROM driver_tasks t JOIN shifts s ON s.id=t.shift_id JOIN orders o ON o.id=t.order_id WHERE t.driver_id=%s AND s.manager_shift_id=%s AND o.brand_id=%s AND o.branch_id=ANY(%s) AND o.snapshot->>'delivery_period'='morning' AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')", (row['id'], context['shift_id'], user['brand_id'], user['branch_ids'])).fetchone()['n']
             from .driver_readiness import describe, live_status
-            row['availability'],row['readiness_action'],row['eligible_branch_ids']=describe(c,row)
+            row['availability'],row['readiness_action'],row['eligible_branch_ids']=describe(observation,row)
             row['assignment_eligible']=row['availability']=='available'
             row['live_status']=live_status(row)
             visible.append(row)
