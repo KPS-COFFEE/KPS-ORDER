@@ -8,6 +8,7 @@ from app import operations, multibrand
 class Result:
     def __init__(self, row): self.row = row
     def fetchone(self): return self.row
+    def fetchall(self): return self.row
 
 
 class Connection:
@@ -22,12 +23,19 @@ class Connection:
         self.principal = dict(id='manager', role='delivery_manager', active=True, brand_id='kps', branch_ids=['branch'])
         self.dedicated = None
         self.on_break = None
+        self.branches = {'branch': {'id': 'branch', 'city': 'حفر الباطن'}}
+        self.active_task_cities = []
 
     def execute(self, query, params=()):
         self.queries.append((query, params))
         if query.startswith('SELECT pg_advisory_xact_lock'): return Result(None)
         if query.startswith('SELECT 1 FROM driver_breaks'): return Result(self.on_break)
         if query.startswith('SELECT brand_id FROM driver_brand_dedications'): return Result(self.dedicated)
+        if query.startswith('SELECT id,city FROM branches WHERE id=ANY'):
+            return Result([self.branches[branch] for branch in params[0] if branch in self.branches])
+        if query.startswith('SELECT b.city FROM effective_driver_tasks t'):
+            assert params == ('driver', 'order')
+            return Result(self.active_task_cities)
         if query.startswith('SELECT * FROM shifts WHERE id='):
             return Result(self.manager if params[0] == 'manager-shift' else self.shift)
         if query.startswith('SELECT * FROM users WHERE id='):
@@ -42,7 +50,7 @@ def enabled_multibrand(monkeypatch):
 
 def outcome(function, conn):
     try:
-        return ('eligible', function(conn, conn.shift, dict(brand_id='kps', branch_id='branch'))['id'])
+        return ('eligible', function(conn, conn.shift, dict(id='order', brand_id='kps', branch_id='branch'))['id'])
     except HTTPException as error:
         return ('denied', error.status_code, error.detail)
 

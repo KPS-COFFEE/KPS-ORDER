@@ -61,16 +61,34 @@ def test_customer_request_persists_in_manager_inbox_until_decision(sms_browser_a
         expect(manager_page.locator('.service-request h3')).to_contain_text(pending)
         manager_page.locator('.amend-dialog [data-close]').click()
         expect(alert).to_be_visible();alert.click()
-        manager_page.locator('.service-request [name=request_decision]').fill('تمت مراجعة الطلب مع العميل')
-        assert manager_page.locator('.amend-dialog').evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
+        # Current controlled requests enter the documented intervention flow;
+        # opening the request alone must never resolve or cancel it.
+        expect(manager_page.locator('.service-request [name=request_decision]')).to_have_count(0)
+        manager_page.get_by_role('button',name='إلغاء أو بلاغ وتصعيد للمدير' if lang=='ar' else 'Documented cancellation or issue',exact=True).click()
+        dialog=manager_page.locator('.intervention-dialog')
+        create=dialog.locator('form:has([name=kind])')
+        create.locator('[name=kind]').select_option('cancel')
+        create.locator('[name=reason_code]').select_option('customer_cancel' if kind=='cancel' else 'duplicate')
+        create.locator('[name=note]').fill('تمت مراجعة الطلب مع العميل')
+        # Leave evidence selectors empty: the matching website request must
+        # link automatically, without a duplicate screenshot.
+        create.locator('button').first.click()
+        approval=dialog.locator('.intervention-request form:has(button[value=approve])')
+        expect(approval.locator('button[value=approve]')).to_be_visible()
+        approval.locator('[name=contact_result]').select_option('agreed')
+        approval.locator('[name=note]').fill('تمت مراجعة الطلب مع العميل واعتماد الإلغاء')
+        assert dialog.evaluate('(el)=>el.scrollWidth<=el.clientWidth+1')
         manager_page.screenshot(path=str(ARTIFACTS/f'manager-request-{lang}-{width}.png'),full_page=True)
-        manager_page.locator('[data-request-decision=resolved]').click()
-        expect(manager_page.locator('.service-request h3')).to_contain_text('تمت المعالجة' if lang=='ar' else 'Processed')
+        approval.locator('button[value=approve]').click()
+        expect(dialog.locator('.intervention-state')).to_have_text('تم الاعتماد')
         page.locator('.amend-dialog [data-close]').click();open_customer()
         expect(page.locator('.service-request h3')).to_contain_text('تمت المعالجة' if lang=='ar' else 'Processed')
         with db.tx() as c:
             assert c.execute('SELECT preparation_status FROM orders WHERE id=%s',(oid,)).fetchone()['preparation_status']=='cancelled'
             assert c.execute("SELECT actor_id FROM order_events WHERE order_id=%s AND event_type='customer_request.decided'",(oid,)).fetchone()['actor_id']==manager['id']
+            evidence=c.execute("SELECT details FROM order_events WHERE order_id=%s AND event_type='intervention.requested'",(oid,)).fetchone()['details']
+            assert evidence['customer_request_id'] and evidence['evidence_message_id']
+            assert not evidence.get('evidence_attachment_id') and not evidence.get('attachment_unavailable')
         assert not errors and not manager_errors
     finally:
         ctx.close();manager_ctx.close()

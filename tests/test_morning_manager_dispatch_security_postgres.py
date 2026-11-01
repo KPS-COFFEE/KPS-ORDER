@@ -108,8 +108,9 @@ def test_manager_preparation_intervention_requires_actual_driver_acceptance_and_
         for invalid in ('cancelled', 'completed', 'handed_over', 'accepted'):
             denied = post(client, path, {'status': invalid, 'version': version, 'reason': 'Forbidden intervention'})
             if invalid == 'cancelled':
-                # Same manager cancellation guard: an active task blocks cancellation.
-                assert denied.status_code == 409 and denied.json()['detail']['code'] == 'DELIVERY_TASK_ACTIVE', denied.text
+                # Controlled cancellation first requires its documented approval;
+                # preparation cannot bypass that guard even with an active task.
+                assert denied.status_code == 409 and denied.json()['detail']['code'] == 'CANCELLATION_REQUEST_REQUIRED', denied.text
             else:
                 assert denied.status_code == 403, denied.text
         missing = post(client, path, {'status': state, 'version': version})
