@@ -24,12 +24,12 @@ class RequestBody(BaseModel):
 
 class Decision(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    action: Literal['resolved', 'rejected']
+    action: Literal['resolved', 'rejected', 'refer_financial']
     note: str = Field(min_length=1, max_length=500)
 
 
 def rows(c, oid):
-    return c.execute("""SELECT e.id,e.created_at,e.details,u.display_name requester_name,
+    found=c.execute("""SELECT e.id,e.created_at,e.details,u.display_name requester_name,
         d.details decision,d.created_at decided_at,d.decider_name
         FROM order_events e LEFT JOIN users u ON u.id=e.actor_id LEFT JOIN LATERAL (
           SELECT x.details,x.created_at,du.display_name decider_name FROM order_events x LEFT JOIN users du ON du.id=x.actor_id
@@ -37,23 +37,56 @@ def rows(c, oid):
             AND x.details->>'request_id'=e.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1
         ) d ON true WHERE e.order_id=%s AND e.event_type='customer_request.opened'
         ORDER BY e.created_at DESC LIMIT 100""", (oid,)).fetchall()
+    if not found:return found
+    referrals=c.execute("""SELECT e.details,e.created_at,EXISTS(SELECT 1 FROM order_events r
+        WHERE r.order_id=e.order_id AND r.event_type='financial_case.resolved' AND r.details->>'case_id'=e.details->>'case_id') resolved
+        FROM order_events e WHERE e.order_id=%s AND e.event_type='customer_request.referred' ORDER BY e.created_at DESC,e.id DESC""",(oid,)).fetchall()
+    linked={}
+    for referral in referrals:
+        linked.setdefault(referral['details']['request_id'],{**referral['details'],'created_at':referral['created_at'],
+            'status':'reviewed' if referral['resolved'] else 'pending'})
+    for request in found:request['referral']=linked.get(request['id'])
+    return found
+
+
+def project_actions(c,o,user,requests):
+    if not requests:
+        return requests
+    from .order_amendments import reviewer
+    from .order_interventions import high_authority,terminal
+    allowed=reviewer(o,user) and (auth.has_permission(user,'orders_cancel') or user.get('role')=='admin' and high_authority(user))
+    cancelled=o['preparation_status']=='cancelled' or o['delivery_status']=='cancelled'
+    for request in requests:
+        actions=[]
+        if allowed and not request['decision']:
+            if not request.get('referral'):
+                actions.append('rejected')
+                if cancelled:actions.append('resolved')
+                elif terminal(o):actions.append('refer_financial')
+        request['available_actions']=actions
+        request['pending_role']='accounting' if request.get('referral') and not request['decision'] else ('delivery_manager' if not request['decision'] else None)
+        request['required_action']='مراجعة طلب العميل وتوثيق القرار المالي' if request.get('referral') and not request['decision'] else ('مراجعة طلب العميل واتخاذ الإجراء المناسب' if not request['decision'] else None)
+    return requests
 
 
 def pending_inbox(c, user):
+    from .order_interventions import high_authority
     if not auth.has_permission(user, 'orders_view'):
         return []
     result = c.execute("""SELECT o.id,o.order_no,o.snapshot->>'order_reference' order_reference,o.service,e.id request_id,
-        e.details->>'kind' request_kind,'requested' status
+        e.details->>'kind' request_kind,
+        CASE WHEN EXISTS(SELECT 1 FROM order_events rf WHERE rf.order_id=o.id AND rf.event_type='customer_request.referred' AND rf.details->>'request_id'=e.id) THEN 'referred' ELSE 'requested' END status,
+        CASE WHEN EXISTS(SELECT 1 FROM order_events rf WHERE rf.order_id=o.id AND rf.event_type='customer_request.referred' AND rf.details->>'request_id'=e.id) THEN 'accounting' ELSE 'delivery_manager' END current_responsible_role
         FROM orders o JOIN order_events e ON e.order_id=o.id
         WHERE o.brand_id=%s AND (%s OR o.branch_id=ANY(%s))
           AND (%s='owner' OR o.service=CASE WHEN %s='delivery_manager' THEN 'delivery' ELSE 'pickup' END
-               OR (%s='branch_manager' AND o.service='car'))
+               OR (%s='branch_manager' AND o.service='car') OR (%s AND o.service='delivery'))
           AND e.event_type='customer_request.opened'
           AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=o.id
             AND d.event_type='customer_request.decided' AND d.details->>'request_id'=e.id)
         ORDER BY e.created_at LIMIT 100""",
         (user['brand_id'], user['role']=='owner' and not user.get('home_brand_id'), user.get('branch_ids', []),
-         user['role'], user['role'], user['role'])).fetchall()
+         user['role'], user['role'], user['role'],user.get('role')=='admin' and high_authority(user))).fetchall()
     if user.get('_morning_manager_context'):
         from .morning_manager_context import order_allowed
         result=[r for r in result if order_allowed(user,c.execute('SELECT * FROM orders WHERE id=%s',(r['id'],)).fetchone(),c)]
@@ -103,15 +136,25 @@ def create(oid: str, body: RequestBody, user=Depends(auth.require_roles('custome
 
 @router.post('/orders/{oid}/{rid}/decision')
 def decide(oid: str, rid: str, body: Decision,
-           user=Depends(auth.require_roles('owner','delivery_manager','branch_manager')),
+           user=Depends(auth.require_roles('owner','delivery_manager','branch_manager','admin')),
            idempotency_key: str | None=Header(default=None)):
     with db.tx() as c:
         o = scoped_order(c, oid, user)
         from .order_amendments import reviewer
-        if not reviewer(o, user) or not auth.has_permission(user, 'orders_cancel'):
-            raise db.error(403, 'REQUEST_REVIEWER', 'المعالجة من المسؤول المختص المصرح له فقط.')
+        from .order_interventions import high_authority
+        from .collected_order_authority import current_actor
+        def require_reviewer(actor,order):
+            if (not reviewer(order,actor) or not (auth.has_permission(actor,'orders_cancel')
+                    or actor.get('role')=='admin' and high_authority(actor))):
+                raise db.error(403, 'REQUEST_REVIEWER', 'المعالجة من المسؤول المختص المصرح له فقط.')
+        current=current_actor(c,user,o['brand_id'])
+        scoped_order(c,oid,current)
+        require_reviewer(current,o)
         def perform():
             o = scoped_order(c, oid, user, lock=True)
+            actor=current_actor(c,user,o['brand_id'],lock=True)
+            scoped_order(c,oid,actor)
+            require_reviewer(actor,o)
             request = next((r for r in rows(c, oid) if r['id']==rid), None)
             if not request:
                 raise db.error(404, 'REQUEST_NOT_FOUND', 'طلب المعالجة غير موجود.')
@@ -119,6 +162,28 @@ def decide(oid: str, rid: str, body: Decision,
                 raise db.error(409, 'REQUEST_DECIDED', 'تمت معالجة هذا الطلب مسبقًا.')
             if not body.note.strip():
                 raise db.error(422, 'REQUEST_NOTE', 'اكتب نتيجة المعالجة.')
+            if body.action=='refer_financial':
+                from .order_interventions import terminal
+                if not terminal(o):
+                    raise db.error(409,'REQUEST_REFERRAL_TERMINAL_ONLY','الطلب النشط يعالج من مسار التعديل أو الإلغاء المعتاد.')
+                if request.get('referral'):return {'request_id':rid,'status':'referred','referral':request['referral']}
+                from .order_financial_cases import case
+                pending=case(c,oid)
+                if pending and pending['status']=='pending':case_id=pending['id']
+                else:
+                    case_id=db.new_id('financial_case_')
+                    details={'kind':'customer_request_review','reason':body.note.strip(),'customer_request_id':rid,
+                        'requester_id':actor['id'],'responsible_role':'accounting','financial_status':'pending',
+                        'operationally_blocking':False,'review_only':True,'no_money_posted':True}
+                    c.execute("INSERT INTO order_events(id,order_id,actor_id,event_type,details) VALUES(%s,%s,%s,'financial_case.opened',%s)",(case_id,oid,actor['id'],db.json(details)))
+                    db.audit(c,actor['id'],'financial_case.opened','order',oid,{'case_id':case_id,**details})
+                referral={'request_id':rid,'case_id':case_id,'responsible_role':'accounting',
+                    'required_action':'مراجعة طلب العميل وتوثيق القرار المالي','note':body.note.strip(),'no_money_posted':True}
+                db.event(c,oid,actor['id'],'customer_request.referred',referral)
+                db.audit(c,actor['id'],'customer_request.referred','order',oid,referral)
+                return {'request_id':rid,'status':'referred','referral':referral}
+            if request.get('referral'):
+                raise db.error(409,'REQUEST_ACCOUNTING_PENDING','طلب العميل محال للمحاسبة؛ يلزم استكمال القرار من المعالجة المالية.')
             if body.action == 'resolved' and o['preparation_status'] != 'cancelled' and o['delivery_status'] != 'cancelled':
                 raise db.error(409, 'REQUEST_CANCELLATION_REQUIRED', 'أكمل إلغاء الطلب وتسوية التحصيل والمهمة بالمسار المعتمد أولًا.')
             details = {'request_id':rid, 'status':body.action, 'note':body.note.strip()}

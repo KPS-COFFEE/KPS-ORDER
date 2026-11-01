@@ -1,5 +1,6 @@
 """Independent adversarial coverage; synthetic records, never production sessions."""
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from uuid import uuid4
 
 import pytest
@@ -11,7 +12,7 @@ BASE='/api/owner-employee-activity'
 
 
 def query(kind='login', **extra):
-    today=datetime.now(timezone.utc).date().isoformat()
+    today=datetime.now(ZoneInfo('Asia/Riyadh')).date().isoformat()
     return dict(kind=kind,start=today,end=today,**extra)
 
 

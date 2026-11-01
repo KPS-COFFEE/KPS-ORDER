@@ -38,6 +38,22 @@ def order(order, *, financial_case=None, requests=(), amendments=(), viewer_role
     for request in requests:
         if request.get('decision'):
             continue
+        if request.get('referral'):
+            stages.append(step('customer_request_financial_followup','accounting',
+                ('راجع إحالة طلب العميل من صندوق المعالجات المحاسبية وسجل القرار الرسمي.', 'Review the customer request referral in the accounting inbox and record the formal decision.'),
+                ('طلب العميل الأصلي، سبب الإحالة والمستندات المرتبطة؛ الإحالة وحدها لا تعتمد صرفا أو استردادا.', 'Original customer request, referral reason and linked evidence; referral alone authorizes no payment or refund.'),
+                ('يبقى طلب العميل معلقا لدى المحاسبة حتى المراجعة الرسمية، مع بقاء أي قبض أو رد معلق في مساره المالي.', 'The customer request remains with accounting until formal review, and any pending collection or refund retains its financial workflow.'),
+                ('لا تسجل إلغاء جديدا لطلب مغلق أو استردادا لم يحدث؛ استكمل المعالجة المالية الموجودة.', 'Do not cancel a closed order again or record a refund that did not occur; complete the existing financial review.'),
+                source_id=request.get('id'),case_id=request['referral'].get('case_id'),return_supported=False))
+            continue
+        if cancelled or delivered or order.get('completed_at'):
+            stages.append(step('terminal_request_review',reviewer,
+                ('راجع طلب العميل وسجل رفضا مسببا، أو أكد معالجته إذا كان الطلب ملغى فعلا، أو أحله للمحاسبة.', 'Review the customer request and record a reasoned rejection, confirm it only if the order is already cancelled, or refer it to accounting.'),
+                ('سبب القرار وحالة الطلب الفعلية والفاتورة والتحصيل؛ المراجعة لا تعيد كتابة هذه السجلات.', 'Decision reason, actual order state, invoice and collection; review does not rewrite these records.'),
+                ('عند الإحالة تنتقل المتابعة للمحاسبة حتى القرار الرسمي؛ مراجعة الطلب لا تعني تنفيذ إلغاء أو رد مبلغ.', 'Referral moves follow-up to accounting until a formal decision; reviewing the request does not establish cancellation or a refund.'),
+                ('إذا كان الطلب مسلما أو مكتملا فلا تستخدم تأكيد المعالجة كبديل عن الإلغاء أو التسوية المالية.', 'For a delivered or completed order, do not use request acknowledgement as a substitute for cancellation or financial settlement.'),
+                source_id=request.get('id'),return_supported=False))
+            continue
         stages.append(step('cancellation_review', reviewer,
             ('راجع طلب الإلغاء وسجّل التنفيذ أو الرفض من نفس النافذة.', 'Review the cancellation request and record cancellation or rejection in this dialog.'),
             ('سبب القرار، ومصير الطلب الفعلي إذا استلمه السائق.', 'Decision reason and actual disposition if the driver picked up the order.'),
@@ -61,7 +77,15 @@ def order(order, *, financial_case=None, requests=(), amendments=(), viewer_role
             ('إذا تعذر التعديل استخدم الرفض مع السبب أو سحب طلب التعديل؛ لا تطبق إجماليًا دون موافقة.', 'If the change cannot proceed, reject with a reason or withdraw the amendment; do not apply a total without consent.'),
             source_id=active.get('id'), return_supported=False))
     pending=financial_case and financial_case['status']=='pending'
-    if pending:
+    review_only=pending and financial_case.get('kind')=='customer_request_review'
+    if review_only:
+        stages.append(step('customer_request_accounting_review','accounting',
+            ('راجع طلب العميل وأدلته وسجل نتيجة المراجعة الرسمية من المعالجة المحاسبية.', 'Review the customer request and evidence, then record the formal outcome in the accounting case.'),
+            ('سبب المراجعة والقرار الرسمي المرتبط بطلب العميل؛ لا يلزم مرجع رد مبلغ لم ينفذ.', 'Review reason and formal decision linked to the customer request; no refund reference is required for a refund that did not occur.'),
+            ('بعد القرار تظهر مراجعة رسمية مكتملة؛ لا يسجل هذا الإجراء إلغاء أو تحصيلا أو استردادا.', 'After the decision, the request shows formal review completed; this action records no cancellation, collection or refund.'),
+            ('إذا وجدت معالجة قبض أو رد معلقة فاستكمل مسارها المالي؛ لا تعتبر الإحالة اعتمادا للصرف.', 'Complete any pending collection or refund through its financial workflow; referral is not payment approval.'),
+            source_id=financial_case['id'],return_supported=False))
+    if pending and not review_only:
         shortfall=financial_case.get('kind')=='collection_shortfall'
         outstanding=financial_case.get('pending_amount_halalas',0)>0
         stages.append(step('collection_recovery' if shortfall and outstanding else 'refund_execution' if outstanding else 'financial_case_review', 'accounting',

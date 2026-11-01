@@ -49,11 +49,12 @@ def case(c, oid):
     from .fiscal_issuance import original
     order=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
     invoice=original(c,oid)
-    kind='cancellation' if order['preparation_status'] in ('cancelled','rejected') else row['details'].get('kind','cancellation')
+    review_only=row['details'].get('kind')=='customer_request_review'
+    kind='customer_request_review' if review_only else 'cancellation' if order['preparation_status'] in ('cancelled','rejected') else row['details'].get('kind','cancellation')
     collected=balance(c,order)
     from .order_financial_treatments import state as source_state
     financial=source_state(c,order,row['id'],collected_halalas=collected,review_resolved=bool(resolved)) if kind=='collection_shortfall' else {}
-    return {**financial,'kind':kind,'collected_halalas':collected,'pending_amount_halalas':financial.get('pending_amount_halalas',max(0,order['total_halalas']-collected)) if kind=='collection_shortfall' else collected,'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
+    return {**financial,'kind':kind,'collected_halalas':collected,'pending_amount_halalas':financial.get('pending_amount_halalas',max(0,order['total_halalas']-collected)) if kind=='collection_shortfall' else (0 if review_only else collected),'review_only':review_only,'original_amount_halalas':order['total_halalas'],'payment_status':order['payment_status'],'invoice_number':invoice['number'] if invoice else None,'id':row['id'],'opened_at':row['created_at'],'requester_id':row['actor_id'],
             'responsible_role':'accounting','status':'resolved' if resolved else 'pending',
             'reason':row['details']['reason'],'resolution':resolved,'operationally_blocking':False}
 
@@ -243,9 +244,17 @@ def cancel(oid:str,body:Cancellation,user=Depends(auth.require_roles('owner','ad
 def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_key:str|None=Header(None)):
     if not accounting(user):raise db.error(403,'ACCOUNTING_REVIEW_REQUIRED','المعالجة المالية للمحاسبة فقط.')
     with db.tx() as c:
-        scoped(c,oid,user)
+        visible=scoped(c,oid,user)
+        from .collected_order_authority import current_actor
+        current=current_actor(c,user,visible['brand_id'])
+        if not accounting(current):raise db.error(403,'ACCOUNTING_REVIEW_REQUIRED','صلاحية المحاسبة متوقفة.')
+        scoped(c,oid,current)
         def perform():
-            o=scoped(c,oid,user,True); pending=case(c,oid)
+            o=scoped(c,oid,user,True)
+            actor=current_actor(c,user,o['brand_id'],lock=True)
+            if not accounting(actor):raise db.error(403,'ACCOUNTING_REVIEW_REQUIRED','صلاحية المحاسبة متوقفة.')
+            scoped(c,oid,actor)
+            pending=case(c,oid)
             if not pending or pending['status']!='pending':raise db.error(409,'FINANCIAL_CASE_NOT_PENDING','لا توجد معالجة مالية معلقة.')
             from .financial_clarifications import guard_case_resolution
             guard_case_resolution(c,oid,pending['id'])
@@ -254,9 +263,9 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
                 from .order_financial_treatments import effective_claim
                 if balance(c,o)!=effective_claim(c,o) or (o['payment_status']!='paid' and effective_claim(c,o)==o['total_halalas']):
                     raise db.error(409,'ACTUAL_COLLECTION_REQUIRED','فرق التحصيل ما زال قائمًا؛ وثّق تحصيل المتبقي قبل الإقفال. الملاحظة لا تسوّي المبلغ.')
-            elif balance(c,o)!=0 or o['payment_status'] not in ('unpaid','refunded'):
+            elif pending['kind']!='customer_request_review' and (balance(c,o)!=0 or o['payment_status'] not in ('unpaid','refunded')):
                 raise db.error(409,'ACTUAL_REFUND_REQUIRED','أكمل الاسترداد الفعلي بالمسار المعتمد أولًا؛ الإلغاء ليس استردادًا.')
-            if pending['kind']!='collection_shortfall':
+            if pending['kind'] not in ('collection_shortfall','customer_request_review'):
                 from .fiscal_issuance import credit_on_cancellation
                 credit_on_cancellation(c,o,user,body.reason)
             details={'case_id':pending['id'],'reason':body.reason,'approver_id':user['id'],'executor_id':user['id']}
@@ -264,6 +273,14 @@ def resolve(oid:str,body:Resolution,user=Depends(auth.current_user),idempotency_
                 from .order_financial_treatments import state as source_state
                 details['source_financial_state']=source_state(c,o,pending['id'])
             db.event(c,oid,user['id'],'financial_case.resolved',details)
+            # The formal accounting decision closes the referral, without
+            # claiming that a delivered order was cancelled or money was paid.
+            references=c.execute("SELECT details->>'request_id' request_id FROM order_events WHERE order_id=%s AND event_type='customer_request.referred' AND details->>'case_id'=%s",(oid,pending['id'])).fetchall()
+            for reference in references:
+                if not c.execute("SELECT 1 FROM order_events WHERE order_id=%s AND event_type='customer_request.decided' AND details->>'request_id'=%s",(oid,reference['request_id'])).fetchone():
+                    db.event(c,oid,user['id'],'customer_request.decided',{'request_id':reference['request_id'],
+                        'status':'reviewed','note':body.reason,'case_id':pending['id'],
+                        'financial_review_only':True,'no_money_posted_by_review':True})
             db.audit(c,user['id'],'financial_case.resolved','order',oid,details)
             return {'financial_case':case(c,oid)}
         return db.idempotent(c,user['id'],idempotency_key,'financial-case.resolve:'+oid,body.model_dump(),perform)
@@ -434,6 +451,7 @@ def refund_context(oid:str,user=Depends(auth.current_user)):
         o=scoped(c,oid,user)
         pending=case(c,oid)
         if not pending or pending['status']!='pending':raise db.error(409,'FINANCIAL_CASE_NOT_PENDING','لا توجد معالجة مالية معلقة.')
+        if pending['kind']=='customer_request_review':raise db.error(409,'REQUEST_REVIEW_ONLY','هذه مراجعة طلب عميل فقط؛ الإحالة لا تعتمد صرفا أو استردادا.')
         if pending['kind']=='collection_shortfall':raise db.error(409,'COLLECTION_NOT_REFUND','هذه معالجة نقص تحصيل، وليست استردادًا للعميل.')
         from .operations import available_balance,shift_access
         shifts=[]

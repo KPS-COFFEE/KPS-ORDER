@@ -182,7 +182,8 @@ def summary(c, o, u):
     from .order_financial_treatments import effective_claim, effective_total
     claim = effective_claim(c, o)
     effective = effective_total(c, o)
-    requests=request_rows(c,o['id'])
+    from .order_requests import project_actions
+    requests=project_actions(c,o,u,request_rows(c,o['id']))
     from .administrative_guidance import order as order_guidance, with_names
     from .order_financial_cases import case
     guidance=with_names(c,o,order_guidance(o,financial_case=case(c,o['id']),requests=requests,amendments=amendments,viewer_role=u['role'])) if u['role'] not in ('driver','customer') else None
