@@ -296,14 +296,22 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
     # Show the precise missing driver record and its owner, rather than an
     # unexplained disabled day-approval button. Match by manager id, never clock date.
     children=defaultdict(list)
-    for child in c.execute("""SELECT s.id,s.manager_shift_id,s.status,u.display_name driver_name
+    for child in c.execute("""SELECT s.id,s.manager_shift_id,s.status,(to_jsonb(s)->>'staffing_ended_at')::timestamptz staffing_ended_at,u.display_name driver_name
       FROM shifts s JOIN users u ON u.id=s.user_id WHERE s.kind='driver' AND s.brand_id=%s
       AND s.manager_shift_id=ANY(%s) ORDER BY s.opened_at,s.id""",(user['brand_id'],list(groups))).fetchall():
         children[child['manager_shift_id']].append(child)
     for group in groups.values():
         reported={r['shift_id'] for r in group['drivers']}
-        group['pending_drivers']=[dict(child,reason='driver_shift_open' if child['status']!='closed' else 'driver_report_missing',
-            responsible='delivery_manager') for child in children[group['id']] if child['status']!='closed' or child['id'] not in reported]
+        group['pending_drivers']=[]
+        for child in children[group['id']]:
+            if child['status']=='closed' and child['id'] in reported:continue
+            # Submitted is not financially closed. Once physical duty has ended,
+            # its missing financial report belongs to accounting, not another
+            # manager handover. Keep legacy records without that evidence intact.
+            released=child['status'] in {'submitted','closed'} and bool(child['staffing_ended_at'])
+            group['pending_drivers'].append(dict(child,
+                reason='driver_accounting_pending' if released else 'driver_shift_open' if child['status']!='closed' else 'driver_report_missing',
+                responsible='accounting' if released else 'delivery_manager'))
         group['completed']=sum(r['financially_complete'] for r in group['drivers'])
         group['review_completed']=sum(r['period_approval_allowed'] for r in group['drivers'])
         group['outstanding_receivable_halalas']=sum(r['outstanding_receivable_halalas'] for r in group['drivers'])
@@ -320,8 +328,10 @@ def manager_cards(c,user,bids,manager_shift_ids=None,*,page_size=None,offset=0):
         group['remaining_count']=max(len(group['pending_drivers']),max(group.get('expected_driver_count',group['total']),group['total'])-group['review_completed'])
         group['review_needed_count']=sum(r['variance_pending'] for r in group['drivers'])
         group['blockers']=[]
-        if not group.get('financial_ledger_closed',True):group['blockers'].append(dict(reason='manager_allocation_pending',responsible='delivery_manager'))
-        if group['pending_drivers']:group['blockers'].append(dict(reason='driver_records_pending',responsible='delivery_manager'))
+        if not group.get('financial_ledger_closed',True):group['blockers'].append(dict(reason='manager_allocation_pending',responsible='accounting'))
+        for responsible in ('delivery_manager','accounting'):
+            if any(driver['responsible']==responsible for driver in group['pending_drivers']):
+                group['blockers'].append(dict(reason='driver_accounting_records_pending' if responsible=='accounting' else 'driver_records_pending',responsible=responsible))
         if group['balance_completed']<group['total']:group['blockers'].append(dict(reason='balance_approval_pending',responsible='accounting'))
         if group['cash_completed']<group['total']:group['blockers'].append(dict(reason='cash_receipt_pending',responsible='accounting'))
         if group['review_needed_count']:group['blockers'].append(dict(reason='variance_treatment_pending',responsible='accounting'))

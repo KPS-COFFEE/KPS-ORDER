@@ -17,5 +17,10 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
  assert(html.includes('TEST PENDING')&&html.includes('End the driver shift and send its closure'));
  assert(html.includes('TEST BRANCH')&&html.includes('Shift time'));
  assert(html.includes('data-manager-page="previous"')&&html.includes('data-manager-page="next"'));
+ const mixed=context.managerCardBlockers({blockers:[{reason:'manager_allocation_pending',responsible:'accounting'}],pending_drivers:[{driver_name:'RELEASED',reason:'driver_accounting_pending',responsible:'accounting'},{driver_name:'OPEN',reason:'driver_shift_open',responsible:'delivery_manager'}]});
+ assert.match(mixed,/Complete bag counts and accounting allocation — Responsible: accounting/);
+ assert.match(mixed,/RELEASED: Driver duty ended;[^<]+Responsible: accounting/);
+ assert.match(mixed,/OPEN: End the driver shift and send its closure — Responsible: delivery manager/);
+
  console.log('PASS: accounting card reload preserves opened cards, scroll, scope and pending-driver reasons; archive pagination stays selected');
 })().catch(error=>{console.error(error);process.exitCode=1;});
