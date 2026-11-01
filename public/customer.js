@@ -16,6 +16,7 @@
     "phone_whatsapp":{"ar": "الهاتف / واتساب", "en": "Phone / WhatsApp"},
     "international_phone":{"ar": "دولي", "en": "International"},
     "contact_support_hint":{"ar": "للطلبات والشكاوى والخصوصية، افتح طلب تواصل داخل الخدمة لمتابعته برقم مرجعي.", "en": "For orders, complaints and privacy, open an in-service support request to follow it with a reference number."},
+    "contact_general_no_branch":{ar:"تواصل عام — بدون تحديد فرع",en:"General contact — no branch selected"},
     "contact_support_action":{"ar": "فتح طلب تواصل", "en": "Open a support request"},
     "social_whatsapp":{"ar": "واتساب", "en": "WhatsApp"},
     "social_instagram":{"ar": "إنستغرام", "en": "Instagram"},
@@ -458,7 +459,7 @@
     "saved_order_amount": {ar:"مبلغ الطلب المحفوظ", en:"Saved order amount"},
     "available_only_in_hafar_al_batin": {ar:"متوفر في حفر الباطن فقط", en:"Available only in Hafar Al Batin"},
     "available_only_in_hafar_al_batin_choose_an_eligible_branch": {ar:"متوفر في حفر الباطن فقط؛ اختر فرعًا مؤهلًا.", en:"Available only in Hafar Al Batin. Choose an eligible branch."},
-    "your_conversations_are_saved_in_your_account_choose_a_service_and": {ar:"محادثاتك محفوظة في حسابك. حدد الخدمة والفرع للتواصل مع الفريق المختص، ويمكنك ربط المحادثة بأحد طلباتك.", en:"Your conversations are saved in your account. Choose a service and branch to contact the right team; you can link an order."},
+    "your_conversations_are_saved_in_your_account_choose_a_service_and": {ar:"محادثاتك محفوظة في حسابك. يمكنك بدء تواصل عام دون فرع، أو اختيار الفرع أو ربط المحادثة بأحد طلباتك.", en:"Your conversations are saved in your account. Start general contact without a branch, choose a branch, or link one of your orders."},
     "my_conversations": {ar:"محادثاتي", en:"My conversations"},
     "order_conversation": {ar:"محادثة الطلب", en:"Order conversation"},
     "conversation_without_an_order": {ar:"محادثة دون طلب", en:"Conversation without an order"},
@@ -1057,7 +1058,7 @@
     for(const [value,label] of cities)citySelect.append(new Option(label,value));
     citySelect.value=state.cityFilter;
     const select=$('branch-select');
-    select.replaceChildren(new Option(state.lang==='en'?'General contact — no branch selected':'تواصل عام — بدون تحديد فرع',''));
+    select.replaceChildren(new Option(t("choose_a_branch"),''));
     for(const b of state.branches){
       if(state.entryEnabled&&state.service==='delivery'&&(!state.location||state.nearest.pending||!state.nearest.branches.some(row=>row.id===b.id)))continue;
       // An existing choice remains visible when the city filter changes.
@@ -1528,7 +1529,7 @@
     if(!requireCustomer(openContacts))return;
     closeDialog('chat-dialog');closeDialog('orders-dialog');openDialog('contacts-dialog');showError('contacts-error','');
     $('contacts-list').replaceChildren(node('div','empty-state',t("loading_your_conversations")));
-    const select=$('contact-branch');select.replaceChildren(new Option(t("choose_a_branch"),''));state.branches.forEach((b)=>select.append(new Option(`${b.branch_no} · ${sourceText(b)}`,b.id)));select.value=state.branchId;
+    const select=$('contact-branch');select.replaceChildren(new Option(t("contact_general_no_branch"),''));state.branches.forEach((b)=>select.append(new Option(`${b.branch_no} · ${sourceText(b)}`,b.id)));select.value=state.branchId;
     try{$('contact-details').value=sessionStorage.getItem(contactDraftKey())||'';}catch{}$('contact-service').value=state.service;$('contact-order').replaceChildren(new Option(t("conversation_without_an_order"),''));updateContactContext();
     const results=await Promise.allSettled([api('/api/conversations'),api('/api/orders?limit=30')]);
     if(!$('contacts-dialog').open)return;

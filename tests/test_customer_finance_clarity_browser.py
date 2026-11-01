@@ -33,9 +33,11 @@ def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromiu
     try:
         page.set_viewport_size({'width':width,'height':950});page.goto(live_app+'/ops')
         page.locator('[data-page=accounting]').click();page.locator('[data-ac=reports]').click()
+        expect(page.locator('#ac-description')).not_to_have_text('')
         page.locator('[name=start]').fill(day);page.locator('[name=end]').fill(day)
         page.locator('[name=branch_ids]').select_option('kps-branch-1')
         page.locator('[name=group]').select_option('driver_statement')
+        expect(page.locator('#ac-description')).not_to_have_text('')
         expect(page.locator('[name=start]')).to_have_value(day);expect(page.locator('[name=end]')).to_have_value(day)
         assert page.locator('[name=branch_ids]').evaluate('(el)=>Array.from(el.selectedOptions).map(o=>o.value)')==['kps-branch-1']
         page.locator('[name=driver_ids]').select_option([d['id'] for d in drivers])
@@ -67,13 +69,17 @@ def test_multi_driver_rows_filters_and_read_only_branch_catalog(live_app,chromiu
     finally:context.close()
 
 
-def test_customer_general_complaint_without_selecting_branch(live_app,chromium_browser):
+@pytest.mark.parametrize('language',['ar','en'])
+def test_customer_general_complaint_without_selecting_branch(live_app,chromium_browser,language):
     from playwright.sync_api import expect
     customer,token,csrf=_customer_session();context,page,errors=_context(chromium_browser,live_app,token,csrf)
+    context.add_init_script(f'localStorage.setItem("kps_customer_lang","{language}")')
     try:
         page.set_viewport_size({'width':390,'height':950});page.goto(live_app+'/')
+        expect(page.locator('#branch-select option[value=""]')).to_have_text('Choose a branch' if language=='en' else 'اختر الفرع')
         page.locator('#quick-contact').click()
         expect(page.locator('#contacts-dialog')).to_be_visible()
+        expect(page.locator('#contact-branch option[value=""]')).to_have_text('General contact — no branch selected' if language=='en' else 'تواصل عام — بدون تحديد فرع')
         page.locator('#contact-order').select_option('');page.locator('#contact-branch').select_option('')
         page.locator('#contact-category').select_option('complaint')
         page.locator('#contact-details').fill('TEST synthetic complaint without branch or order')
