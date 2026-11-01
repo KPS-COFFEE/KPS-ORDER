@@ -60,3 +60,15 @@ test('target preparation queue submits a limited transition in its own brand',as
   assert.deepEqual(JSON.parse(JSON.stringify(h.mutations[0][1])),{version:3,status:'preparing'});
   assert.equal(h.mutations[0][3].brand,'enbishan');
 });
+
+test('postpickup approved revision is acknowledged without replaying physical handover',async()=>{
+ const h=harness();const task={id:'routed-picked-up',brand_id:'enbishan',version:8,preparation_status:'handed_over',workflow:'manager_dispatch',next_status:'reviewed',items:[],operational_instructions:'Approved <script> extra item'};
+ h.helpers.api=async()=>({preparation_tasks:[task]});let handler;
+ const container={innerHTML:'',addEventListener:(_event,fn)=>handler=fn,removeEventListener:()=>{},contains:()=>true};
+ await h.ui.renderQueue(container);
+ assert.match(container.innerHTML,/Acknowledge approved revision/);
+ assert.match(container.innerHTML,/Approved &lt;script&gt; extra item/);assert.doesNotMatch(container.innerHTML,/<script>|data-prep-status="handed_over"/);
+ await handler({target:{closest:()=>({disabled:false,dataset:{prepTask:task.id,prepStatus:'reviewed'}})}});
+ assert.equal(h.mutations.length,1);assert.equal(h.mutations[0][0],'/api/preparation-routing/tasks/routed-picked-up/prepare');
+ assert.deepEqual(JSON.parse(JSON.stringify(h.mutations[0][1])),{version:8,status:'reviewed'});
+});

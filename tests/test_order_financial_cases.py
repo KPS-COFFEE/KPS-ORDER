@@ -94,9 +94,13 @@ def test_issued_unpaid_invoice_waits_for_accounting_without_invented_refund(fisc
     with db.tx() as c:version=c.execute('SELECT version FROM orders WHERE id=%s',(oid,)).fetchone()['version']
     assert post('/api/orders/'+oid+'/preparation',{'version':version,'status':'cancelled','reason':'Legacy route must not credit automatically'}).status_code==409
     path='/api/order-financial-cases/orders/'+oid
-    cancelled=post(path+'/cancel',{'version':version,'reason':'Customer requested cancellation'})
+    assert post(path+'/cancel',{'version':version,'reason':'Direct route requires documented approval'}).status_code==409
+    intervention=post('/api/order-interventions/orders/'+oid,{'version':version,'kind':'cancel','reason_code':'branch_unavailable'})
+    assert intervention.status_code==200,intervention.text
+    cancelled=post('/api/order-interventions/orders/'+oid+'/'+intervention.json()['id']+'/decision',{'version':version,'action':'approve','reason_code':'branch_unavailable','contact_result':'not_contacted'})
     assert cancelled.status_code==200,cancelled.text
-    pending=cancelled.json()['financial_case']
+    from app.order_financial_cases import case
+    with db.tx() as c:pending=case(c,oid)
     assert pending['status']=='pending' and pending['invoice_number'] and pending['pending_amount_halalas']==0
     with db.tx() as c:
         assert c.execute("SELECT count(*) n FROM fiscal_documents WHERE order_id=%s AND kind='credit_note'",(oid,)).fetchone()['n']==0

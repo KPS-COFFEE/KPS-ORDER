@@ -135,7 +135,7 @@ def financial_or_item_change(o,proposal):
 
 def collected_amendment_authority(c,o,proposal,actor):
     from . import collected_order_authority
-    if financial_or_item_change(o,proposal):
+    if o['service']=='delivery' and financial_or_item_change(o,proposal):
         return collected_order_authority.require(c,o,actor,lock=True)
     return None
 

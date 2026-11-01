@@ -440,6 +440,13 @@ def _preparation_view(conn, order):
                          | {'options': options(item)}
                          for item in snapshot.get('items') or []],
                   workflow=snapshot.get('delivery_workflow', 'branch_fulfillment'))
+    revision=order.get('amendment_revision',0)
+    if revision:
+        approval=conn.execute("SELECT e.details FROM order_events e JOIN order_revisions r ON r.order_id=e.order_id AND r.amendment_id=e.details->>'amendment_id' WHERE e.order_id=%s AND e.event_type='amendment.manager_approved' AND r.revision=%s ORDER BY e.created_at DESC,e.id DESC LIMIT 1",(order['id'],revision)).fetchone()
+        result['operational_instructions']=(approval or {}).get('details',{}).get('goods_instructions')
+        pending=not conn.execute("SELECT 1 FROM order_revision_receipts WHERE order_id=%s AND revision=%s AND kind='branch'",(order['id'],revision)).fetchone()
+        if pending and order['preparation_status']=='handed_over':
+            result.update(next_status='reviewed',next_status_label='تأكيد مراجعة التعديل المعتمد')
     enrich_orders(conn, [result])
     return result
 
@@ -451,7 +458,7 @@ def queue(user=Depends(auth.current_user)):
         rows = conn.execute("SELECT o.* FROM orders o JOIN latest_order_preparation_routes r ON r.order_id=o.id "
             "WHERE o.brand_id=%s AND r.brand_id=o.brand_id AND r.target_branch_id<>o.branch_id "
             "AND (%s OR r.target_branch_id=ANY(%s)) AND o.completed_at IS NULL "
-            "AND o.preparation_status NOT IN ('cancelled','rejected','completed','handed_over') "
+            "AND o.preparation_status NOT IN ('cancelled','rejected','completed') AND (o.preparation_status<>'handed_over' OR (o.amendment_revision>0 AND NOT EXISTS(SELECT 1 FROM order_revision_receipts rr WHERE rr.order_id=o.id AND rr.revision=o.amendment_revision AND rr.kind='branch'))) "
             "AND o.delivery_status NOT IN ('cancelled','delivered') ORDER BY o.created_at,o.id LIMIT 200",
             (user['brand_id'], user['role'] == 'owner' and not user.get('home_brand_id'), user.get('branch_ids', []))).fetchall()
         return {'preparation_tasks': [_preparation_view(conn, row) for row in rows]}
@@ -468,7 +475,7 @@ def task(oid: str, user=Depends(auth.current_user)):
 class PreparationUpdate(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     version: StrictInt = Field(ge=1)
-    status: Literal['accepted', 'preparing', 'ready', 'handed_over']
+    status: Literal['accepted', 'preparing', 'ready', 'handed_over', 'reviewed']
 
 
 @router.post('/tasks/{oid}/prepare')
@@ -488,9 +495,14 @@ def prepare(oid: str, body: PreparationUpdate, user=Depends(auth.current_user),
             if order['version'] != body.version:
                 raise db.error(409, 'ORDER_VERSION_CONFLICT', 'تغير الطلب؛ حدّث قائمة التحضير.')
             transitions = {'new': 'accepted', 'accepted': 'preparing', 'preparing': 'ready', 'ready': 'handed_over'}
-            if transitions.get(order['preparation_status']) != body.status:
+            review_only=body.status=='reviewed'
+            revision=order.get('amendment_revision',0)
+            if review_only:
+                if not revision or order['preparation_status']!='handed_over' or conn.execute("SELECT 1 FROM order_revision_receipts WHERE order_id=%s AND revision=%s AND kind='branch'",(oid,revision)).fetchone():
+                    raise db.error(409,'PREPARATION_REVISION_REVIEW','لا توجد نسخة معدلة بانتظار تأكيد الفرع.')
+            elif transitions.get(order['preparation_status']) != body.status:
                 raise db.error(409, 'PREPARATION_TRANSITION_INVALID', 'انتقال حالة التحضير غير مسموح.')
-            if order['snapshot'].get('delivery_workflow') == 'manager_dispatch':
+            if order['snapshot'].get('delivery_workflow') == 'manager_dispatch' and not review_only:
                 raise db.error(409, 'PREPARATION_MANAGER_DISPATCH', 'هذا الطلب يعمل بتجهيز مدير التوصيل واستلام السائق.')
             from .order_amendments import guard
             revision=order.get('amendment_revision',0)
@@ -505,6 +517,9 @@ def prepare(oid: str, body: PreparationUpdate, user=Depends(auth.current_user),
                 db.event(conn,oid,user['id'],'amendment.received',receipt_details)
                 db.audit(conn,user['id'],'amendment.received','order',oid,receipt_details)
             guard(conn, order)
+            if review_only:
+                conn.execute('UPDATE orders SET version=version+1 WHERE id=%s',(oid,))
+                return {'preparation_task':_preparation_view(conn,{**order,'version':order['version']+1})}
             if body.status in ('preparing', 'ready'):
                 from .branch_payments import require_verified
                 require_verified(conn, order)

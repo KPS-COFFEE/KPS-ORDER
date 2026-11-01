@@ -63,11 +63,12 @@
     container.innerHTML = `<section class="prep-target-queue"><h2>${esc(tr('طلبات التحضير المسندة لفرعك', 'Preparation assigned to your branch'))}</h2>
       <p>${esc(tr('تحديث التحضير والتسليم فقط؛ المحاسبة ومعالجة الطلب لدى الفريق المخول.', 'Update preparation and handover. Authorized staff handle accounting and order interventions.'))}</p>
       ${tasks.length ? tasks.map(task => {
-        const transition = next[task.preparation_status];
+        const transition = task.next_status==='reviewed' ? ['reviewed', task.next_status_label||'تأكيد مراجعة التعديل المعتمد', 'Acknowledge approved revision'] : next[task.preparation_status];
         return `<article class="prep-target-card"><header><strong>${esc(task.order_reference || task.order_no)}</strong><span>${esc(task.preparation_branch?.name)}</span></header>
           <ul>${(task.items || []).map(item => `<li><strong>${esc(item.quantity)} × ${esc(item.name)}</strong>${optionsText(item) ? `<span>${esc(optionsText(item))}</span>` : ''}${item.note ? `<span>${esc(item.note)}</span>` : ''}</li>`).join('')}</ul>
           ${task.notes ? `<p>${esc(task.notes)}</p>` : ''}
-          ${transition && h.can('orders_prepare') && task.workflow !== 'manager_dispatch' ? `<button type="button" data-prep-task="${esc(task.id)}" data-prep-status="${esc(transition[0])}">${esc(tr(transition[1], transition[2]))}</button>` : ''}
+          ${task.operational_instructions ? `<p><strong>${esc(tr('تعليمات المدير المعتمدة', 'Approved manager instructions'))}</strong>: ${esc(task.operational_instructions)}</p>` : ''}
+          ${transition && h.can('orders_prepare') && (task.workflow !== 'manager_dispatch'||transition[0]==='reviewed') ? `<button type="button" data-prep-task="${esc(task.id)}" data-prep-status="${esc(transition[0])}">${esc(tr(transition[1], transition[2]))}</button>` : ''}
           ${task.workflow === 'manager_dispatch' ? `<p>${esc(tr('الاستلام يؤكده السائق المكلف.', 'The assigned driver confirms pickup.'))}</p>` : ''}</article>`;
       }).join('') : `<p>${esc(tr('لا توجد طلبات تحضير محولة حاليًا.', 'No redirected preparation tasks.'))}</p>`}</section>`;
     if (container._preparationHandler) container.removeEventListener('click', container._preparationHandler);

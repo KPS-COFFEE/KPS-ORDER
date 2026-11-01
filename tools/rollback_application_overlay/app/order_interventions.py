@@ -365,13 +365,14 @@ def evidence(c,o,user,body):
 
 @router.get('/pending-cancellations')
 def pending_cancellations(user=Depends(auth.require_roles('owner','delivery_manager','admin'))):
-    """Reviewers see approvals; managers see only work explicitly returned to them."""
+    """Reviewers see scoped decisions; managers see current duty and returned work."""
     reviewer=high_authority(user)
     assignee=user['role']=='delivery_manager' and auth.has_permission(user,'orders_view')
     if not user.get('active',True) or not (reviewer or assignee):
         raise db.error(403,'INTERVENTION_INBOX_AUTHORITY','قائمة المعالجة للمراجع المخول أو مدير التوصيل المكلف بالاستكمال.')
+    from .order_issue_ownership import current_manager_candidate_sql
     with db.tx() as c:
-        rows=c.execute("""SELECT o.*,e.id request_id,e.actor_id requested_by,e.created_at requested_at,e.details request_details,
+        rows=c.execute(f"""SELECT o.*,e.id request_id,e.actor_id requested_by,e.created_at requested_at,e.details request_details,
             u.display_name requested_by_name,b.name branch_name,
             (EXISTS(SELECT 1 FROM branch_print_jobs p WHERE p.order_id=o.id) OR EXISTS(SELECT 1 FROM fiscal_documents f WHERE f.order_id=o.id AND f.kind='invoice')) has_print,
             (EXISTS(SELECT 1 FROM collections p WHERE p.order_id=o.id AND p.amount_halalas>0)
@@ -381,12 +382,13 @@ def pending_cancellations(user=Depends(auth.require_roles('owner','delivery_mana
             LEFT JOIN LATERAL (SELECT w.event_type,w.details FROM order_events w WHERE w.order_id=e.order_id
                 AND w.details->>'request_id'=e.id AND w.event_type IN ('intervention.returned','intervention.resubmitted')
                 ORDER BY (w.details->>'workflow_revision')::int DESC,w.created_at DESC,w.id DESC LIMIT 1) w ON true
+            LEFT JOIN LATERAL ({current_manager_candidate_sql()}) live_duty ON true
             WHERE o.brand_id=%s AND o.service='delivery'
             AND (o.brand_id='kps' OR o.snapshot->>'journey_controls_version'='1' OR o.snapshot->>'delivery_period'='morning' OR %s)
             AND (%s OR o.branch_id=ANY(%s))
             AND e.event_type='intervention.requested'
             AND ((%s AND e.details->>'kind' IN ('cancel','amend','problem'))
-                OR (%s AND e.details->>'kind' IN ('cancel','amend','problem'))
+                OR (%s AND live_duty.manager_user_id=%s AND e.details->>'kind' IN ('cancel','amend','problem'))
                 OR (w.event_type='intervention.returned' AND w.details->>'target_manager_id'=%s
                     AND (e.details->>'kind'<>'cancel' OR %s)))
             AND NOT EXISTS(SELECT 1 FROM order_events d WHERE d.order_id=e.order_id
@@ -395,7 +397,7 @@ def pending_cancellations(user=Depends(auth.require_roles('owner','delivery_mana
             ORDER BY e.created_at,e.id LIMIT 200""",(user['brand_id'],
             os.getenv('DELIVERY_INTERVENTIONS_ENFORCED','false').lower()=='true',
             user['role']=='owner' and not user.get('home_brand_id'),user.get('branch_ids',[]),
-            reviewer,assignee,user['id'],auth.has_permission(user,'orders_cancel'))).fetchall()
+            reviewer,assignee,user['id'],user['id'],auth.has_permission(user,'orders_cancel'))).fetchall()
         visible=[o for o in rows if user['role']=='admin' or auth.can_access_order(user,o,c)]
         related=workflow_events(c,[o['request_id'] for o in visible],[o['id'] for o in visible])
         from .order_issue_ownership import current_managers,with_current_manager

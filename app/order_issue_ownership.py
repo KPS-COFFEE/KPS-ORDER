@@ -5,23 +5,7 @@ follow the live task's manager after an accepted duty or custody transfer.
 """
 
 
-def current_managers(c, order_ids):
-    if not order_ids:
-        return {}
-    rows = c.execute("""SELECT o.id order_id,o.brand_id,o.branch_id,s.*,
-            s.id manager_shift_id,s.user_id manager_user_id,u.display_name manager_name,
-            ARRAY(WITH RECURSIVE prior(shift_id) AS (
-              SELECT h.from_shift_id FROM manager_handovers h
-              WHERE h.to_shift_id=s.id AND h.status='accepted'
-                AND h.operational_snapshot->'order_ids' ? o.id
-              UNION
-              SELECT h.from_shift_id FROM manager_handovers h JOIN prior p ON h.to_shift_id=p.shift_id
-              WHERE h.status='accepted' AND h.operational_snapshot->'order_ids' ? o.id
-            ) SELECT DISTINCT previous.user_id FROM prior p JOIN shifts previous ON previous.id=p.shift_id
-            ) handover_predecessor_user_ids
-        FROM orders o
-        JOIN LATERAL (
-          SELECT candidates.shift_id FROM (
+_CURRENT_MANAGER_SQL = """SELECT candidates.shift_id,duty.user_id manager_user_id FROM (
             SELECT ds.manager_shift_id shift_id,0 priority,t.created_at observed
               FROM effective_driver_tasks t JOIN shifts ds ON ds.id=t.shift_id
               WHERE t.order_id=o.id AND t.status NOT IN ('delivered','cancelled','transferred','reassigned')
@@ -36,7 +20,31 @@ def current_managers(c, order_ids):
           ) candidates JOIN shifts duty ON duty.id=candidates.shift_id
           WHERE duty.kind='manager' AND duty.status IN ('open','closing') AND duty.brand_id=o.brand_id
             AND duty.branch_ids ? o.branch_id
-          ORDER BY candidates.priority,candidates.observed DESC,candidates.shift_id LIMIT 1
+          ORDER BY candidates.priority,candidates.observed DESC,candidates.shift_id LIMIT 1"""
+
+
+def current_manager_candidate_sql():
+    """Trusted lateral SQL shared with the pre-pagination scoped inbox filter."""
+    return _CURRENT_MANAGER_SQL
+
+
+def current_managers(c, order_ids):
+    if not order_ids:
+        return {}
+    rows = c.execute(f"""SELECT o.id order_id,o.brand_id,o.branch_id,s.*,
+            s.id manager_shift_id,s.user_id manager_user_id,u.display_name manager_name,
+            ARRAY(WITH RECURSIVE prior(shift_id) AS (
+              SELECT h.from_shift_id FROM manager_handovers h
+              WHERE h.to_shift_id=s.id AND h.status='accepted'
+                AND h.operational_snapshot->'order_ids' ? o.id
+              UNION
+              SELECT h.from_shift_id FROM manager_handovers h JOIN prior p ON h.to_shift_id=p.shift_id
+              WHERE h.status='accepted' AND h.operational_snapshot->'order_ids' ? o.id
+            ) SELECT DISTINCT previous.user_id FROM prior p JOIN shifts previous ON previous.id=p.shift_id
+            ) handover_predecessor_user_ids
+        FROM orders o
+        JOIN LATERAL (
+          {_CURRENT_MANAGER_SQL}
         ) live ON true
         JOIN shifts s ON s.id=live.shift_id JOIN users u ON u.id=s.user_id
         WHERE o.id=ANY(%s) AND u.active AND u.role IN ('owner','delivery_manager')""", (list(order_ids),)).fetchall()

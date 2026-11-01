@@ -67,7 +67,7 @@ def test_arabic_workflow_fits_and_keeps_reason_responsibility_and_actions(superv
         expect(dialog.locator('.intervention-next')).to_contain_text('المسؤول الحالي:')
         if stage=='review':
             dialog.locator('.intervention-return summary').click()
-            dialog.locator('[name=note]').fill('راجع الملاحظة واستكمل الدليل ثم أعد المعاملة للاعتماد.')
+            dialog.locator('.intervention-return [name=note]').fill('راجع الملاحظة واستكمل الدليل ثم أعد المعاملة للاعتماد.')
             expect(dialog.locator('[name=target_manager_id]')).to_have_value('TEST-manager')
             expect(dialog.get_by_role('button',name='إرجاع المعاملة للاستكمال')).to_be_visible()
         elif stage=='returned':

@@ -15,10 +15,18 @@ def proposal(r,oid):
         'attachment_unavailable':True,'attachment_unavailable_reason':'Customer screenshot upload failed'}
 
 
-def offered(r):
-    oid=r['order'](snapshot_changes={'journey_controls_version':'1'})
+def offered(r, *, picked_up=False):
+    oid=r['order'](snapshot_changes={'journey_controls_version':1})
     chosen=r['choose'](oid)
     r['post']('owner','/api/printing/orders/'+oid,{'device_id':'printer-'+r['target'],'kind':'both'})
+    if picked_up:
+        _,driver=r['both_shifts']()
+        assigned=r['post']('manager','/api/orders/'+oid+'/assign',{'driver_shift_id':driver,'accept_order':True})
+        with db.tx() as c:
+            o=c.execute('SELECT * FROM orders WHERE id=%s FOR UPDATE',(oid,)).fetchone()
+            preparation_routing.pickup_branch_id(c,o)
+            c.execute("UPDATE driver_tasks SET status='picked_up',accepted_at=now(),picked_up_at=now() WHERE id=%s",(assigned['task']['id'],))
+            c.execute("UPDATE orders SET preparation_status='handed_over',delivery_status='picked_up',version=version+1 WHERE id=%s",(oid,))
     p=proposal(r,oid)
     created=r['post']('owner','/api/order-amendments/orders/'+oid,p)
     aid=created['amendment_id']
@@ -78,3 +86,28 @@ def test_old_worker_cannot_apply_routed_revision_without_exact_new_route(routing
     with db.tx() as c:
         o=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
         assert o['amendment_revision']==0 and o['preparation_route_id']==chosen['route_id']
+
+
+@pytest.mark.postgres
+def test_postpickup_target_reviews_revision_without_changing_physical_status(routing):
+    from app.order_amendments import guard
+    from fastapi import HTTPException
+    r=routing;oid,aid,_=offered(r,picked_up=True)
+    r['post']('owner','/api/order-amendments/'+aid+'/decision',{'action':'accept','channel':'phone','note':'Customer agreed'})
+    queue=r['actor']('target').get('/api/preparation-routing/tasks')
+    row=next(t for t in queue.json()['preparation_tasks'] if t['id']==oid)
+    assert row['next_status']=='reviewed' and row['items'][0]['quantity']==2
+    assert row['operational_instructions']=='Approved exact revised basket'
+    with db.tx() as c:
+        o=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        with pytest.raises(HTTPException) as missing:guard(c,o,driver_id='ops-driver')
+        assert missing.value.detail['code']=='AMENDMENT_BRANCH_RECEIPT'
+    response=r['post']('target','/api/preparation-routing/tasks/'+oid+'/prepare',{'version':row['version'],'status':'reviewed'})
+    assert response['preparation_task']['preparation_status']=='handed_over'
+    r['post']('driver','/api/order-amendments/orders/'+oid+'/receipt',{'revision':1,'kind':'driver'})
+    with db.tx() as c:
+        o=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
+        assert o['preparation_status']=='handed_over' and o['delivery_status']=='picked_up'
+        guard(c,o,driver_id='ops-driver')
+    queue=r['actor']('target').get('/api/preparation-routing/tasks')
+    assert oid not in {t['id'] for t in queue.json()['preparation_tasks']}

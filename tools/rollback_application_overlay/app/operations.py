@@ -976,7 +976,9 @@ def _eligible_driver_shift(c, s, order, *, observational):
             multibrand.dedication_guard(c,s['user_id'],order['brand_id'])
     if not driver or not driver['active'] or driver['role']!='driver' or driver['brand_id']!=order['brand_id'] or order['branch_id'] not in driver['branch_ids']:fail(409,'صلاحية السائق غير سارية')
     from .preparation_routing import pickup_branch_id
-    pickup_branch_id(c,order,user=driver,shift=s)
+    pickup_id=pickup_branch_id(c,order,user=driver,shift=s)
+    from .driver_city_scope import guard as city_guard
+    city_guard(c,s,order,pickup_id,physical_shift=physical)
     manager=(c.execute('SELECT * FROM shifts WHERE id=%s', (s['manager_shift_id'],)).fetchone()
              if observational else lock_shift(c,s['manager_shift_id']))
     if not manager or manager['status']!='open' or manager['brand_id']!=order['brand_id'] or order['branch_id'] not in manager['branch_ids']:fail(409,'مناوبة المدير لا تستقبل مهام جديدة')

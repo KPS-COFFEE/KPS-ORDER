@@ -48,7 +48,7 @@ jobs:
       - name: Current journey and morning preservation
         run: >-
           python -m pytest -q tests/test_order_journey_closure.py tests/test_order_journey_concurrency.py
-          tests/test_order_journey_visual_preservation.py tests/test_order_issue_ownership.py
+          tests/test_order_journey_visual_preservation.py tests/test_order_issue_ownership.py tests/test_driver_city_scope.py
           tests/test_fiscal_amendment_corrections.py tests/test_routed_amendment_corrections.py tests/test_order_interventions.py
           tests/test_intervention_customer_messages.py tests/test_order_amendments.py
           tests/test_order_financial_cases.py tests/test_order_financial_case_morning.py

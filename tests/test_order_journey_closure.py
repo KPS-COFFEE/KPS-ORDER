@@ -117,7 +117,8 @@ def test_real_morning_header_authorizes_scoped_intervention_without_dispatch_cha
         assert c.execute("SELECT permission_denials FROM users WHERE id='ops-manager'").fetchone()['permission_denials']==before['permission_denials']
 
 
-def test_driver_pickup_and_cancellation_hold_serialize_on_same_order(ops):
+@pytest.mark.parametrize('attempt',range(5))
+def test_driver_pickup_and_cancellation_hold_serialize_on_same_order(ops,attempt):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
     import base64,io
@@ -152,8 +153,13 @@ def test_driver_pickup_and_cancellation_hold_serialize_on_same_order(ops):
         except HTTPException as exc:return exc.status_code
     with ThreadPoolExecutor(max_workers=2) as pool:
         first=pool.submit(pickup);second=pool.submit(hold);pickup_status,hold_status=first.result(),second.result()
-    assert hold_status==200
+    assert hold_status in (200,409)
     assert pickup_status in (200,409)
+    assert 200 in (hold_status,pickup_status)
+    if hold_status==409:
+        assert pickup_status==200
+        with db.tx() as c:current_version=c.execute('SELECT version FROM orders WHERE id=%s',(oid,)).fetchone()['version']
+        order_interventions.create(oid,order_interventions.RequestBody(kind='cancel',reason_code='no_answer',version=current_version),manager,uuid4().hex)
     with db.tx() as c:
         row=c.execute('SELECT * FROM orders WHERE id=%s',(oid,)).fetchone()
         event=c.execute("SELECT created_at FROM order_events WHERE order_id=%s AND event_type='intervention.requested'",(oid,)).fetchone()
