@@ -50,6 +50,8 @@ def rows(c, oid):
 
 
 def project_actions(c,o,user,requests):
+    if not requests:
+        return requests
     from .order_amendments import reviewer
     from .order_interventions import high_authority,terminal
     allowed=reviewer(o,user) and (auth.has_permission(user,'orders_cancel') or user.get('role')=='admin' and high_authority(user))
