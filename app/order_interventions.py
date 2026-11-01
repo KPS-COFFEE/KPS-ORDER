@@ -281,6 +281,16 @@ class RequestBody(BaseModel):
     version:StrictInt=Field(ge=1)
 
 
+def customer_message_access(c,user,message):
+    # Scoped order access is checked by the caller. Keep the same explicit
+    # supervisory read grant in both current and prior chat implementations.
+    from .chat import allowed
+    if (auth.has_admin_read_grant(user,'chat_view') and user['brand_id']==message['brand_id']
+            and message['branch_id'] in user.get('branch_ids',[])):
+        return True
+    return allowed(user,message,c)
+
+
 def evidence(c,o,user,body):
     source='delivery_center' if o['snapshot'].get('order_source')=='delivery_center' else 'website'
     result={'source':source}
@@ -298,8 +308,7 @@ def evidence(c,o,user,body):
             AND (m.sender_id=%s OR EXISTS(SELECT 1 FROM customer_identity_links l
                 WHERE l.brand_id=%s AND l.source_id=%s AND l.customer_id=m.sender_id))''',
             (body.evidence_message_id,o['id'],o['brand_id'],o['customer_id'],o['brand_id'],o['customer_id'])).fetchone()
-        from .chat import allowed
-        if not m or not m['text'].strip() or not allowed(user,m,c,supervision=True):
+        if not m or not m['text'].strip() or not customer_message_access(c,user,m):
             raise db.error(422,'CUSTOMER_REQUEST_REQUIRED','اختر رسالة العميل من محادثة هذا الطلب المتاحة ضمن صلاحياتك.')
         result.update(evidence_message_id=m['evidence_id'],customer_message_confirmed=True)
         return result
@@ -421,12 +430,11 @@ def read(oid:str,user=Depends(auth.require_roles('owner','delivery_manager','adm
                     WHERE l.brand_id=%s AND l.source_id=%s AND l.customer_id=m.sender_id))
                 ORDER BY m.created_at DESC,m.id DESC LIMIT 100''',
                 (oid,o['brand_id'],o['customer_id'],o['brand_id'],o['customer_id'])).fetchall()
-            from .chat import allowed
             conversation_access={}
             for m in message_rows:
                 if not m['text'].strip():continue
                 if m['id'] not in conversation_access:
-                    conversation_access[m['id']]=allowed(user,m,c,supervision=True)
+                    conversation_access[m['id']]=customer_message_access(c,user,m)
                 if conversation_access[m['id']]:
                     customer_messages.append({'id':m['evidence_id'],'text':m['text'],'created_at':m['message_created_at']})
         elif user['role']=='driver':
